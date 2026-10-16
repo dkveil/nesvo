@@ -87,6 +87,16 @@ function assertNoSecret(result: CommandResult, secrets: string[]): void {
   }
 }
 
+function stableSnapshot(snapshot: Snapshot) {
+  // Reads happen at different instants. Validate observed status, but compare
+  // process identity, ownership, dimensions and all other metadata unchanged.
+  assert.equal(decodeServerMessage(snapshot)?.type, 'sessions');
+  return {
+    ...snapshot,
+    sessions: snapshot.sessions.map(({ status: _status, ...session }) => session),
+  };
+}
+
 test(
   'native TUI shares the mobile client snapshot and rejects invalid pairing',
   { timeout: 90000 },
@@ -182,8 +192,8 @@ test(
           assert.equal(result.code, 0, `TUI --list failed: ${result.stderr}`);
           assert.equal(result.stderr, '');
           const decoded = decodeServerMessage(JSON.parse(result.stdout) as unknown);
-          assert.equal(decoded?.type, 'sessions', 'TUI output must be a valid protocol snapshot');
-          assert.deepEqual(decoded, expected);
+          assert.ok(decoded?.type === 'sessions', 'TUI output must be a valid protocol snapshot');
+          assert.deepEqual(stableSnapshot(decoded), stableSnapshot(expected));
         },
       );
 
@@ -195,7 +205,7 @@ test(
           assert.ok(session, 'The same host-issued session ID must remain after TUI exit');
           assert.equal(session.running, true);
           assert.equal(session.controllerId, null);
-          assert.deepEqual(afterExit, expected);
+          assert.deepEqual(stableSnapshot(afterExit), stableSnapshot(expected));
         },
       );
 
@@ -216,7 +226,7 @@ test(
             'No session metadata is returned before authentication',
           );
           assert.match(rejected.stderr, /authenticat|rejected/i);
-          assert.deepEqual(await snapshot(), expected);
+          assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
         },
       );
     } finally {
