@@ -154,7 +154,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         {tab === 'sessions' && (
           <>
             <View style={s.workspaceBar}>
-              <Text style={s.workspaceLabel}>workspace</Text>
+              <Text style={s.workspaceLabel}>SESJE</Text>
               <Text style={s.workspaceCount}>
                 {sessions.length.toString().padStart(2, '0')} sesji
                 {attentionCount ? ` · ${attentionCount} wymagają uwagi` : ''}
@@ -168,18 +168,38 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               onPress={() => (mode === 'demo' ? setConnectOpen(true) : navigateTo('hosts'))}
               style={({ pressed }) => [s.connection, pressed && s.pressed]}
             >
-              <Icon name={mode === 'demo' ? 'link-outline' : 'laptop-outline'} size={20} />
+              <View style={s.hostIcon}>
+                <Icon
+                  name={mode === 'demo' ? 'link-outline' : 'desktop-outline'}
+                  size={20}
+                  color={c.text}
+                />
+              </View>
               <View style={s.grow}>
                 <Text style={s.connectionTitle}>
                   {mode === 'demo'
-                    ? 'Połącz komputer'
+                    ? 'Twój komputer'
                     : pairing
                       ? new URL(pairing.url).hostname
                       : 'Połącz komputer'}
                 </Text>
-                <Text style={s.meta}>
-                  {mode === 'demo' ? 'Tryb demo · sesje poniżej są przykładowe' : connectionLabel}
-                </Text>
+                <View style={s.connectionState}>
+                  <View
+                    style={[
+                      s.connectionDot,
+                      {
+                        backgroundColor: connected
+                          ? c.success
+                          : mode === 'demo'
+                            ? c.faint
+                            : c.warning,
+                      },
+                    ]}
+                  />
+                  <Text style={s.meta}>
+                    {mode === 'demo' ? 'Tryb demo · sesje poniżej są przykładowe' : connectionLabel}
+                  </Text>
+                </View>
               </View>
               <Icon name="chevron-forward" size={16} />
             </Pressable>
@@ -222,25 +242,27 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                 />
               </View>
             )}
-            <View style={s.search}>
-              <Icon name="search-outline" size={18} />
-              <TextInput
-                accessibilityLabel="Szukaj sesji"
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Szukaj sesji"
-                placeholderTextColor={c.faint}
-                selectionColor={c.accent}
-                style={s.searchInput}
-              />
-              {!!query && (
-                <IconButton
-                  name="close"
-                  label="Wyczyść wyszukiwanie"
-                  onPress={() => setQuery('')}
+            {(sessions.length >= 5 || !!query) && (
+              <View style={s.search}>
+                <Icon name="search-outline" size={18} />
+                <TextInput
+                  accessibilityLabel="Szukaj sesji"
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Szukaj sesji"
+                  placeholderTextColor={c.faint}
+                  selectionColor={c.accent}
+                  style={s.searchInput}
                 />
-              )}
-            </View>
+                {!!query && (
+                  <IconButton
+                    name="close"
+                    label="Wyczyść wyszukiwanie"
+                    onPress={() => setQuery('')}
+                  />
+                )}
+              </View>
+            )}
             <View style={s.filters}>
               {(['all', 'attention'] as const).map(value => (
                 <Pressable
@@ -342,52 +364,60 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         {tab === 'hosts' && (
           <>
             <View style={s.intro}>
-              <Text style={s.title}>Hosty</Text>
-              <Text style={s.subtitle}>
-                Praca zostaje na komputerze. Ty możesz wrócić do niej z telefonu.
-              </Text>
+              <Text style={s.title}>Komputery</Text>
             </View>
+            <Text style={s.eyebrow}>POŁĄCZENIA</Text>
             {pairing ? (
-              <View style={s.settingsGroup}>
-                <View style={common.row}>
-                  <Icon name="laptop-outline" size={24} color={c.text} />
+              <View style={s.hostCard}>
+                <View style={s.hostCardHeader}>
+                  <View style={s.hostIcon}>
+                    <Icon name="desktop-outline" size={22} color={c.text} />
+                  </View>
                   <View style={s.grow}>
-                    <Text style={s.sectionTitle}>Sparowany komputer</Text>
-                    <Text style={s.meta}>{connected ? 'Połączono' : 'Rozłączono'}</Text>
+                    <Text style={s.sectionTitle}>{new URL(pairing.url).hostname}</Text>
+                    <View style={s.connectionState}>
+                      <View
+                        style={[
+                          s.connectionDot,
+                          { backgroundColor: connected ? c.success : c.warning },
+                        ]}
+                      />
+                      <Text style={s.meta}>{connectionLabel}</Text>
+                    </View>
                   </View>
                 </View>
                 <Text selectable style={s.address}>
                   {pairing.url}
                 </Text>
-                <Button
-                  label={connected ? 'Rozłącz' : 'Połącz'}
-                  secondary
-                  disabled={connecting}
-                  onPress={() => (connected ? client.disconnect() : void connect(pairing))}
-                />
-                <Button label="Zapomnij host" secondary onPress={() => void forget()} />
+                <View style={s.hostActions}>
+                  <Button
+                    label={connected ? 'Rozłącz' : 'Połącz'}
+                    secondary
+                    disabled={connecting}
+                    onPress={() => (connected ? client.disconnect() : void connect(pairing))}
+                  />
+                  <Button label="Zapomnij" secondary onPress={() => void forget()} />
+                </View>
               </View>
             ) : (
-              <View style={s.settingsGroup}>
-                <Icon name="laptop-outline" size={30} color={c.text} />
-                <Text style={s.sectionTitle}>Dodaj swój komputer</Text>
-                <Text style={common.body}>
-                  Zeskanuj jego kod QR. Na początek możesz połączyć jeden komputer.
-                </Text>
+              <View style={s.hostCard}>
+                <View style={s.hostCardHeader}>
+                  <View style={s.hostIcon}>
+                    <Icon name="desktop-outline" size={22} color={c.text} />
+                  </View>
+                  <View style={s.grow}>
+                    <Text style={s.sectionTitle}>Brak połączonego komputera</Text>
+                    <Text style={s.meta}>Sparuj hosta nesvo kodem QR.</Text>
+                  </View>
+                </View>
               </View>
             )}
+            <Text style={s.eyebrow}>SZYBKIE DZIAŁANIA</Text>
             <Button
               label="Sparuj komputer"
               icon="scan-outline"
               onPress={() => setConnectOpen(true)}
             />
-            <View style={s.plainSection}>
-              <Text style={s.sectionTitle}>Także na serwerze</Text>
-              <Text style={common.body}>
-                Host może działać na VPS-ie dostępnym w Twojej sieci VPN. Bezpośrednie łączenie
-                przez SSH pojawi się w kolejnym etapie.
-              </Text>
-            </View>
           </>
         )}
         {tab === 'settings' && (
@@ -585,6 +615,27 @@ const s = StyleSheet.create({
   workspaceLabel: { fontFamily: mono, color: c.muted, fontSize: 12 },
   workspaceCount: { fontFamily: mono, color: c.faint, fontSize: 10 },
   intro: { paddingTop: 12, paddingBottom: 8, gap: 8 },
+  eyebrow: { color: c.faint, fontFamily: mono, fontSize: 10, letterSpacing: 1.2, marginTop: 12 },
+  hostCard: {
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.border,
+    borderRadius: 10,
+    padding: 14,
+    gap: 12,
+  },
+  hostCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  hostActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  hostIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: c.elevated,
+    borderRadius: 7,
+  },
+  connectionState: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  connectionDot: { width: 7, height: 7, borderRadius: 4 },
   title: {
     color: c.text,
     fontFamily: mono,
@@ -598,10 +649,13 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    minHeight: 54,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: c.border,
+    minHeight: 68,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.border,
+    borderRadius: 10,
   },
   connectionTitle: {
     color: c.text,

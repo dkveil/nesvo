@@ -101,7 +101,7 @@ export function ConnectSheet({
               indicatorStyle="white"
             >
               <Text style={s.body}>
-                Zeskanuj kod QR z komputera, aby otworzyć jego terminale na telefonie.
+                Połącz telefon bezpośrednio z hostem nesvo w tej samej sieci lub prywatnym VPN.
               </Text>
               <View style={s.steps}>
                 <View style={s.step}>
@@ -117,10 +117,14 @@ export function ConnectSheet({
                   <Text style={s.stepNumber}>2</Text>
                   <View style={s.stepContent}>
                     <Text style={s.title}>Otwórz kod QR</Text>
-                    <Text style={s.body}>
-                      Otwórz plik pairing.svg wskazany w terminalu. Na początek użyj tej samej sieci
-                      Wi-Fi.
-                    </Text>
+                    <Text style={s.body}>Otwórz plik pairing.svg wskazany przez hosta.</Text>
+                  </View>
+                </View>
+                <View style={s.step}>
+                  <Text style={s.stepNumber}>3</Text>
+                  <View style={s.stepContent}>
+                    <Text style={s.title}>Zeskanuj kod telefonem</Text>
+                    <Text style={s.body}>Połączenie pojawi się na ekranie Komputery.</Text>
                   </View>
                 </View>
               </View>
@@ -234,10 +238,10 @@ const s = StyleSheet.create({
     alignSelf: 'center',
   },
   body: { color: c.muted, fontSize: 14, lineHeight: 22 },
-  steps: { gap: 24 },
+  steps: { gap: 16 },
   step: { flexDirection: 'row', gap: 16 },
   stepNumber: { color: c.accent, fontFamily: mono, fontSize: 14, lineHeight: 24, width: 12 },
-  stepContent: { flex: 1, gap: 10 },
+  stepContent: { flex: 1, gap: 4 },
   title: { color: c.text, fontFamily: mono, fontSize: 14, fontWeight: '500', lineHeight: 24 },
   code: {
     color: c.muted,

@@ -188,10 +188,10 @@ export function SessionScreen({
           {!!showControl && (
             <Text style={s.controlLabel} numberOfLines={1}>
               {controlling
-                ? 'Sterowanie lokalne'
+                ? '● Sterujesz tą sesją'
                 : control?.controllerId != null
-                  ? 'Podgląd · steruje inne urządzenie'
-                  : 'Podgląd'}
+                  ? '○ Podgląd · steruje inne urządzenie'
+                  : '○ Podgląd · możesz przejąć sterowanie'}
             </Text>
           )}
         </View>
@@ -264,12 +264,12 @@ export function SessionScreen({
         >
           {[
             { label: 'esc', value: '\u001b' },
-            { label: 'ctrl C', value: '\u0003' },
             { label: 'tab', value: '\t' },
             { label: '↑', value: '\u001b[A' },
             { label: '↓', value: '\u001b[B' },
             { label: '←', value: '\u001b[D' },
             { label: '→', value: '\u001b[C' },
+            { label: 'ctrl C', value: '\u0003' },
           ].map(key => (
             <Pressable
               key={key.label}
@@ -291,8 +291,7 @@ export function SessionScreen({
           onPress={dismissKeyboard}
           style={({ pressed }) => [s.hideKeyboard, pressed && s.keyPressed]}
         >
-          <Icon name="chevron-down" size={16} color={c.muted} />
-          <Text style={s.keyText}>Ukryj</Text>
+          <Icon name="chevron-down" size={20} color={c.muted} />
         </Pressable>
       </View>
       <View style={s.composerArea}>
@@ -415,7 +414,7 @@ const s = StyleSheet.create({
   pathSummary: { flex: 1, minWidth: 0 },
   pathLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   status: { color: c.orange, fontFamily: mono, fontSize: 11 },
-  controlLabel: { color: c.faint, fontSize: 10, lineHeight: 15 },
+  controlLabel: { color: c.accent, fontSize: 10, lineHeight: 15 },
   controlButton: {
     minHeight: 44,
     justifyContent: 'center',
@@ -438,36 +437,41 @@ const s = StyleSheet.create({
   terminal: {
     flex: 1,
     minHeight: 0,
-    marginHorizontal: 4,
     overflow: 'hidden',
   },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: c.border,
+    backgroundColor: c.surface,
   },
   keyScroll: { flex: 1, minWidth: 0 },
   keys: { flexDirection: 'row', flexGrow: 1 },
   key: {
     flexGrow: 1,
-    minWidth: 44,
-    minHeight: 44,
+    minWidth: 38,
+    minHeight: 38,
     alignItems: 'center',
     justifyContent: 'center',
   },
   keyPressed: { backgroundColor: c.elevated },
   keyText: { color: c.muted, fontFamily: mono, fontSize: 12 },
   hideKeyboard: {
-    width: 44,
-    minHeight: 44,
+    width: 40,
+    minHeight: 38,
     alignItems: 'center',
     justifyContent: 'center',
     borderLeftWidth: StyleSheet.hairlineWidth,
     borderColor: c.border,
   },
-  composerArea: { flexShrink: 0, paddingHorizontal: 10, paddingBottom: 4 },
+  composerArea: {
+    flexShrink: 0,
+    paddingHorizontal: 10,
+    paddingBottom: 6,
+    backgroundColor: c.surface,
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
