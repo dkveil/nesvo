@@ -8,6 +8,8 @@ To wczesny prototyp. Ekrany demonstracyjne są oznaczone jako **DEMO**; przykła
 
 [Architektura i diagram](docs/architecture.md) · [Wyniki i plan testów](docs/testing.md) · [Bezpieczeństwo](SECURITY.md)
 
+[Plan wersji terminalowej na Windows i macOS](docs/terminal-client.md): interfejs inspirowany Herdr, grupy i podgrupy oraz te same sesje na komputerze i telefonie. To projekt kolejnego etapu; klient TUI nie jest jeszcze zaimplementowany.
+
 ## Co jest dostępne
 
 - Lista wielu sesji terminalowych, tworzenie, dołączanie i kończenie sesji.
