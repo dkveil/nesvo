@@ -114,7 +114,19 @@ test('Rust host interoperates with TweetNaCl and preserves real PTYs securely', 
       try { return parsePairing(await readFile(join(fixture, 'pairing.json'), 'utf8')); }
       catch { return undefined; }
     }, 'private pairing file');
-    assert.match(await readFile(join(fixture, 'pairing.svg'), 'utf8'), /<svg/);
+    // JSON is written before QR generation. Its presence does not mean the SVG
+    // is ready yet, especially on slower Windows runners.
+    const pairingSvg = await until(async () => {
+      if (host.exitCode !== null) throw new Error(`Rust host exited: ${stderr}`);
+      try {
+        const svg = await readFile(join(fixture, 'pairing.svg'), 'utf8');
+        return svg.trimEnd().endsWith('</svg>') ? svg : undefined;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw error;
+      }
+    }, 'complete pairing QR file');
+    assert.match(pairingSvg, /<svg/);
 
     await suite.test('wrong secret is rejected before any session is created', async () => {
       const invalid = peer(randomBytes(32).toString('hex'));
