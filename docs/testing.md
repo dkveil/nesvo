@@ -38,6 +38,8 @@ A subsequent native ConPTY check verified the compact workspace, F11 full-screen
 
 On October 17, the updated Windows ConPTY check created a live PowerShell session in a private host and exercised the spaces/agents sidebar, tab strip, full-screen toggle, Ctrl+Q return to navigation, and Esc detach from navigation. The shell remained running, while the alternate screen and cursor were restored. TUI unit tests cover direct Escape forwarding to the shell and mouse hit testing for sidebar rows and tabs. The same interactive flow remains unverified on macOS; some terminal emulators may reserve Ctrl+Q before nesvo receives it.
 
+The subsequent minimalist TUI pass used a fresh Windows ConPTY and private host to open the three-item start menu, change and persist the Graphite theme in Settings, create a PowerShell session through the keyboard form, return with Ctrl+Q, toggle and restore the focused view with `z`, and detach with Esc. A new authenticated listing confirmed the shell survived; alternate-screen and cursor modes were restored. Unit tests additionally cover nested group filtering, the combined group/subgroup form, agent-banner display inference, and the absence of a nesvo F11 binding. Agent-banner detection is a local display hint while the banner remains on the visible terminal screen; it does not alter the host's launcher identity or the terminal's own colors.
+
 The latest mobile bundles include the SVG renderer and new icons. Expo Go can preview the app UI; installed application icons and splash behavior require a development or production build. The new theme and keyboard behavior still require a physical iPhone retest.
 
 ### What the synchronization tests prove
