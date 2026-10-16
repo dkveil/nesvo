@@ -24,6 +24,8 @@ On macOS/Linux, use a path such as `--workspace /Users/you/projects/my-app`. The
 
 The host writes a private pairing JSON and QR code, normally under `host/.local/` when started from the repository. This data location is preserved across the source-layout migration. The terminal prints their paths. Keep the host running. See [host configuration](../apps/host/README.md) for the address, port, storage and key-rotation options.
 
+If port 8787 is already in use, reuse your running host and its pairing file. For a second host, choose an unused port and a separate pairing directory, such as `--port 8788 --pairing-dir host/.local/secondary-8788`; each host needs its own credentials and metadata directory.
+
 `--lan` makes the host reachable on the network. The phone must reach its advertised IP and port through the firewall. For the first test, use the same Wi-Fi. A privately configured VPN can provide reachability outside the LAN; nesvo does not configure it or provide a relay.
 
 ## 3. Open the terminal client

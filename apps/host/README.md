@@ -12,6 +12,8 @@ The Cargo package and executable are named `nesvo-host` (`nesvo-host.exe` on Win
 
 The default listener is loopback-only. `--lan` binds all interfaces; `--advertise` chooses the address in the pairing file. `--port` and `--bind` override the listener. Port zero chooses an unused port for tests. `POCKET_HOST_PORT` and `POCKET_HOST_ADDRESS` are equivalent environment settings. A phone needs access to that address and port through the host firewall. No port forwarding is required for a LAN test.
 
+If startup reports that the address is already in use, a host may already be listening on the selected port (8787 by default). Reuse that host and its existing pairing file if it is yours. To run a second host, choose an unused port **and a separate pairing directory**, for example `--port 8788 --pairing-dir host/.local/secondary-8788`. Do not run two hosts against one pairing directory; it contains both the reusable key and the metadata database.
+
 Pairing is saved in ignored `host/.local/pairing.json` when launched from the repository root. The matching `pairing.svg` can be opened locally and scanned from the phone. A standalone binary defaults to `%LOCALAPPDATA%/PocketSessions/pairing` on Windows or `$XDG_STATE_HOME/pocket-sessions` (fallback `~/.local/state/pocket-sessions`) on Unix. `--pairing-dir` overrides this directory.
 
 The standalone data directories and `POCKET_*` environment variable names are retained for compatibility with existing installations. The nesvo rename does not change the pairing format, rotate the shared secret or move saved groups. Existing pairing files remain valid when the host address is unchanged.

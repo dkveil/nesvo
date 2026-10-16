@@ -16,7 +16,8 @@ use qrcode::{QrCode, render::svg};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    net::{IpAddr, Ipv4Addr, UdpSocket},
+    io::ErrorKind,
+    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -94,9 +95,17 @@ async fn main() -> Result<()> {
     } else {
         Ipv4Addr::LOCALHOST
     }));
-    let listener = TcpListener::bind((bind, args.port))
-        .await
-        .context("Could not bind the terminal host port")?;
+    let listen_address = SocketAddr::new(bind, args.port);
+    let listener = TcpListener::bind(listen_address).await.map_err(|error| {
+        let message = if error.kind() == ErrorKind::AddrInUse {
+            format!(
+                "Could not listen on {listen_address}: address already in use. If a nesvo host is running, reuse it. To start another, choose an unused --port and a separate --pairing-dir."
+            )
+        } else {
+            format!("Could not bind the terminal host to {listen_address}")
+        };
+        anyhow::Error::new(error).context(message)
+    })?;
     let actual_port = listener.local_addr()?.port();
     let advertised = args.advertise.unwrap_or_else(|| {
         if bind.is_unspecified() {
