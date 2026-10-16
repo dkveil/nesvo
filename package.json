@@ -1,5 +1,5 @@
 {
-  "name": "pocket-sessions",
+  "name": "nesvo",
   "version": "0.1.0",
   "main": "expo-router/entry",
   "dependencies": {
@@ -55,9 +55,14 @@
     "host:test": "cargo test --manifest-path host/Cargo.toml",
     "test:web": "node tests/app.browser.mjs",
     "lint": "eslint src App.tsx index.ts",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/*.{ts,mjs}\" \"*.{json,js,md}\" \"docs/*.md\" \"host/README.md\" \"tui/README.md\" \".github/workflows/*.yml\"",
     "test:live": "tsx tests/live.browser.ts",
-    "test:client": "node --import tsx --test tests/client-replay.test.ts",
+    "test:client": "node --import tsx --test tests/client-replay.test.ts tests/client-contract.test.ts tests/client-control.test.ts",
     "test:host": "node --import tsx --test tests/host.integration.test.ts",
+    "test:sync": "node --import tsx --test tests/sync.integration.test.ts",
+    "test:tui": "node --import tsx --test tests/tui.integration.test.ts",
+    "tui": "cargo run --manifest-path tui/Cargo.toml --",
+    "tui:test": "cargo test --manifest-path tui/Cargo.toml --locked",
     "test:terminal": "node src/terminal/tests/backpressure.browser.mjs"
   },
   "private": true,

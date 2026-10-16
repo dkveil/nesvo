@@ -1,17 +1,17 @@
-# Kierunek interfejsu
+# Interface direction
 
-Aktualizacja 16.10.2026 po pierwszym podglądzie. Nazwa produktu nie została wybrana. W interfejsie i nazwie aplikacji używamy tymczasowo „Sesje”; identyfikatory pakietów, hosta i repozytorium pozostają bez migracji.
+Updated October 16, 2026 after the first preview. The product name is **nesvo**, chosen by the project owner. App display names, the repository and native binaries use this name. Internal storage and Expo identifiers are preserved where migration would affect existing installations or pairing; see [branding](branding.md).
 
-Punktem odniesienia jest czarny interfejs mobilnego ChatGPT oraz mobilne podglądy [Orca](https://www.onorca.dev/#mobile). Własna implementacja Expo / React Native, bez kopiowania ich kodu, logo czy zasobów.
+The visual references are ChatGPT's dark mobile interface and the mobile previews of [Orca](https://www.onorca.dev/#mobile). This is an independent Expo / React Native implementation, without copying their code, logos or assets.
 
-- Tło `#0B0B0B`, powierzchnie `#191919`, dymki i zaznaczenia `#242424`. Biel dla głównych działań, szarości dla opisu. Kolor tylko dla informacji wymagającej uwagi, błędów i składni terminala.
-- Systemowa typografia telefonu. Treść rozmowy 16/26, tytuły wierszy 16, opisy 14. Brak dekoracyjnych wersalików i kolorowych kart agentów.
-- Główna lista jako płaskie wiersze: temat, ostatnia aktywność, agent i projekt. Wyszukiwanie oraz filtr wymagających uwagi.
-- Menu boczne: sesje, komputery i ustawienia; skróty do ostatnich sesji. Przycisk tworzenia nowej sesji dostępny także na dole ekranu.
-- Rozmowa: dymek użytkownika po prawej, odpowiedź na płaskim tle, zaokrąglone pole wiadomości i okrągłe wysyłanie.
-- Terminal: zwarty nagłówek, duży obszar wyjścia, pasek klawiszy specjalnych i pole polecenia. Prawdziwe sesje nadal używają PTY hosta Rust.
-- Parowanie: dwa krótkie kroki, główne działanie skanowania QR i możliwość wklejenia kodu.
+- Background `#0B0B0B`, surfaces `#191919`, bubbles and selections `#242424`. White for primary actions and grays for supporting text. Reserve color for items needing attention, errors and terminal syntax.
+- System typography on the phone. Conversation text at 16/26, row titles at 16, descriptions at 14. No decorative uppercase labels or colorful agent cards.
+- The main list uses flat rows: topic, latest activity, agent and project. Include search and a filter for items needing attention.
+- Side menu: sessions, computers and settings, with shortcuts to recent sessions. The new-session button is also available at the bottom of the screen.
+- Conversation: a user bubble on the right, responses on a flat background, a rounded message field and a circular send button.
+- Terminal: a compact header, large output area, special-key bar and command field. Real sessions continue to use the Rust host's PTY.
+- Pairing: two short steps, QR scanning as the primary action and an option to paste a code.
 
-Widok rozmowy jest demonstracyjny i jest tak opisany w aplikacji. Nie sugeruje działającej integracji z modelem AI. Zmiana wyglądu nie dodaje połączeń z API modeli ani nie zmienia sposobu logowania w oryginalnych CLI.
+The conversation view is a demo and is labeled accordingly in the app. It does not imply a working AI model integration. The visual changes add no model API connections and do not alter the original CLI login mechanisms.
 
-Podglądy i testy przeglądarkowe nie zastępują sprawdzenia klawiatury, obszarów bezpiecznych oraz kamery na fizycznym telefonie.
+Browser previews and tests do not replace checking the keyboard, safe areas and camera on a physical phone.

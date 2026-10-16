@@ -14,7 +14,7 @@ async function main() {
   await mkdir(pairingDir, { recursive: true });
   const binary = path.resolve(
     'host/target/debug',
-    `pocket-sessions-host${process.platform === 'win32' ? '.exe' : ''}`,
+    `nesvo-host${process.platform === 'win32' ? '.exe' : ''}`,
   );
   const host = spawn(
     binary,
@@ -62,11 +62,44 @@ async function main() {
     await page.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
     await page.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
     await page.getByText('Połączono', { exact: true }).filter({ visible: true }).waitFor();
+    // Organize on one client and observe the authoritative hierarchy on another.
+    await page.getByRole('button', { name: 'Zarządzaj grupami', exact: true }).click();
+    await page.getByRole('button', { name: 'Dodaj grupę', exact: true }).click();
+    await page.getByLabel('Nazwa grupy', { exact: true }).fill('Live workspace');
+    await page.getByRole('button', { name: 'Utwórz grupę', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'Dodaj podgrupę do Live workspace', exact: true })
+      .click();
+    await page.getByLabel('Nazwa grupy', { exact: true }).fill('Phone');
+    await page.getByRole('button', { name: 'Utwórz grupę', exact: true }).click();
+    await page.getByRole('button', { name: 'Pokaż grupę Phone', exact: true }).click();
+    const observer = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+    observer.on('pageerror', (error) => errors.push(error.message));
+    await observer.goto(appUrl, { waitUntil: 'networkidle' });
+    await observer.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
+    await observer.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
+    await observer.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
+    await observer.getByRole('button', { name: 'Zarządzaj grupami', exact: true }).click();
+    await observer.getByRole('button', { name: 'Pokaż grupę Phone', exact: true }).waitFor();
+    await observer.screenshot({ path: 'artifacts/groups-live.png' });
+    // Selecting a parent includes sessions in its descendants.
+    await observer.getByRole('button', { name: 'Pokaż grupę Live workspace', exact: true }).click();
     await page.getByRole('button', { name: 'Nowa sesja', exact: true }).click();
     await page.getByLabel('Nazwa sesji', { exact: true }).fill('Rust live verification');
     await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
     const terminal = page.frameLocator('iframe[title="Terminal sesji"]');
     await terminal.locator('.xterm-screen').waitFor();
+    await page.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).click();
+    await observer
+      .getByRole('button', { name: 'Otwórz sesję Rust live verification', exact: true })
+      .click();
+    const observerTerminal = observer.frameLocator('iframe[title="Terminal sesji"]');
+    await observerTerminal.locator('.xterm-screen').waitFor();
+    assert.notEqual(
+      await observer.getByLabel('Polecenie terminala', { exact: true }).getAttribute('readonly'),
+      null,
+      'passive terminal must not accept input',
+    );
     // The expected output does not appear contiguously in the input, avoiding an echo-only false positive.
     const command =
       process.platform === 'win32'
@@ -78,6 +111,31 @@ async function main() {
       .locator('.xterm-rows')
       .filter({ hasText: 'RUST_BROWSER_EXECUTED' })
       .waitFor({ timeout: 20000 });
+    await observerTerminal
+      .locator('.xterm-rows')
+      .filter({ hasText: 'RUST_BROWSER_EXECUTED' })
+      .waitFor();
+    await observer.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).click();
+    await page.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).waitFor();
+    assert.notEqual(
+      await page.getByLabel('Polecenie terminala', { exact: true }).getAttribute('readonly'),
+      null,
+      'takeover disables the previous controller',
+    );
+    await observer
+      .getByLabel('Polecenie terminala', { exact: true })
+      .fill(
+        process.platform === 'win32'
+          ? "Write-Output ('DESKTOP_' + 'TAKEOVER')"
+          : "printf '%s%s\\n' DESKTOP_ TAKEOVER",
+      );
+    await observer.getByRole('button', { name: 'Wyślij', exact: true }).click();
+    await terminal.locator('.xterm-rows').filter({ hasText: 'DESKTOP_TAKEOVER' }).waitFor();
+    // Moving a live session changes its group on both devices without replacing its process.
+    await observer.getByRole('button', { name: 'Przenieś sesję do grupy', exact: true }).click();
+    await observer.getByRole('radio', { name: 'Grupa: Live workspace', exact: true }).click();
+    await observer.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
+    await observer.close();
     await page.screenshot({ path: 'artifacts/terminal-live.png' });
     await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
     await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
@@ -93,6 +151,7 @@ async function main() {
       .getByRole('button', { name: 'Otwórz sesję Rust live verification', exact: true })
       .click();
     await terminal.locator('.xterm-rows').filter({ hasText: 'RUST_BROWSER_EXECUTED' }).waitFor();
+    await page.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).click();
     await page
       .getByLabel('Polecenie terminala', { exact: true })
       .fill(
@@ -112,7 +171,7 @@ async function main() {
       .waitFor();
     assert.deepEqual(errors, [], 'No browser runtime errors in live session');
     console.log(
-      'PASS: Rust host -> authenticated browser -> real PTY -> disconnect/reconnect/replay -> close.',
+      'PASS: two authenticated browsers -> groups/subgroups -> shared PTY output -> takeover -> move -> disconnect/reconnect/replay -> close.',
     );
   } finally {
     await browser?.close();

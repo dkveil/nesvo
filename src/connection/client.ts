@@ -1,9 +1,10 @@
 import { decodeFrame, encodeFrame, keyBytes, MAX_FRAME_BYTES, parsePairing } from './wire';
 import { randomBytes } from './random';
-import type { ClientCommand, HostEvent, Pairing, ServerMessage } from './types';
+import { decodeServerMessage } from './messages';
+import type { ClientCommand, HostEvent, Pairing, SessionControl, SessionGroup } from './types';
 
 export { parsePairing } from './wire';
-export type { HostEvent, Pairing, TerminalSession } from './types';
+export type { HostEvent, Pairing, TerminalSession, SessionGroup, SessionControl } from './types';
 
 /** Sessions live on the host. Reconnect is explicit: input is never queued or replayed. */
 export class HostClient {
@@ -15,7 +16,23 @@ export class HostClient {
   private incomingSeq = 0;
   private outgoingSeq = 0;
   private ready = false;
+  private identity: number | null = null;
+  private controls = new Map<string, SessionControl>();
   private authTimer: ReturnType<typeof setTimeout> | undefined;
+
+  get clientId(): number | null {
+    return this.identity;
+  }
+  get isConnected(): boolean {
+    return this.ready;
+  }
+  getControl(sessionId: string): SessionControl | undefined {
+    return this.controls.get(sessionId);
+  }
+  hasControl(sessionId: string): boolean {
+    const control = this.controls.get(sessionId);
+    return this.ready && control?.controllerId === this.identity && !!control?.leaseId;
+  }
 
   subscribe(listener: (event: HostEvent) => void): () => void {
     this.listeners.add(listener);
@@ -32,61 +49,140 @@ export class HostClient {
       const validated = parsePairing(JSON.stringify(pairing));
       this.key = keyBytes(validated.key);
       this.challenge = '';
-      this.clientNonce = Array.from(randomBytes(32), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      this.clientNonce = Array.from(randomBytes(32), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
       this.incomingSeq = 0;
       this.outgoingSeq = 0;
       const socket = new WebSocket(validated.url);
       this.socket = socket;
       this.authTimer = setTimeout(() => {
         if (this.socket !== socket || this.ready) return;
-        this.emit({ type: 'error', message: 'Connection timed out. Check that the host is running and reachable.' });
+        this.emit({
+          type: 'error',
+          message: 'Connection timed out. Check that the host is running and reachable.',
+        });
         socket.close();
       }, 10000);
       socket.onmessage = (event) => {
         if (this.socket !== socket) return;
         try {
-          if (typeof event.data !== 'string' || event.data.length > MAX_FRAME_BYTES) throw new Error('Invalid host message.');
+          if (typeof event.data !== 'string' || event.data.length > MAX_FRAME_BYTES)
+            throw new Error('Invalid host message.');
           if (!this.challenge) {
             const hello = JSON.parse(event.data);
-            if (hello.type !== 'challenge' || hello.version !== 1 || typeof hello.challenge !== 'string' || !/^[a-f0-9]{64}$/.test(hello.challenge)) {
+            if (
+              hello.type !== 'challenge' ||
+              hello.version !== 1 ||
+              typeof hello.challenge !== 'string' ||
+              !/^[a-f0-9]{64}$/.test(hello.challenge)
+            ) {
               throw new Error('Invalid host handshake.');
             }
             this.challenge = hello.challenge;
             this.send({ type: 'auth', clientNonce: this.clientNonce }, true);
             return;
           }
-          const message = decodeFrame(event.data, this.key!, this.challenge, 'host-to-client', this.incomingSeq + 1) as ServerMessage;
+          const payload = decodeFrame(
+            event.data,
+            this.key!,
+            this.challenge,
+            'host-to-client',
+            this.incomingSeq + 1,
+          );
+          if (
+            payload &&
+            typeof payload === 'object' &&
+            'type' in payload &&
+            payload.type === 'connected' &&
+            (!('protocolVersion' in payload) || payload.protocolVersion !== 2)
+          ) {
+            this.emit({
+              type: 'error',
+              message:
+                'Ten host wymaga aktualizacji. Uruchom najnowszą wersję hosta Rust i połącz się ponownie.',
+            });
+            socket.close();
+            return;
+          }
+          const message = decodeServerMessage(payload);
           this.incomingSeq++;
-          if (!message || typeof message !== 'object' || typeof message.type !== 'string') throw new Error('Invalid host event.');
-          if (!this.ready && message.type !== 'connected') throw new Error('Host has not authenticated.');
+          if (!message || typeof message !== 'object' || typeof message.type !== 'string')
+            throw new Error('Invalid host event.');
+          if (!this.ready && message.type !== 'connected')
+            throw new Error('Host has not authenticated.');
           if (message.type === 'connected') {
             if (this.ready) throw new Error('Repeated authentication response.');
             // The host must prove it saw this connection's fresh client nonce.
             // A server-chosen challenge alone permits replaying a recorded host.
-            if (message.clientNonce !== this.clientNonce) throw new Error('Stale host authentication response.');
+            if (message.clientNonce !== this.clientNonce)
+              throw new Error('Stale host authentication response.');
+            if (message.protocolVersion !== 2 || !Number.isSafeInteger(message.clientId)) {
+              this.emit({
+                type: 'error',
+                message:
+                  'Ten host wymaga aktualizacji. Uruchom najnowszą wersję hosta Rust i połącz się ponownie.',
+              });
+              socket.close();
+              return;
+            }
+            this.identity = message.clientId;
             this.ready = true;
             clearTimeout(this.authTimer);
           }
-          this.emit(message.type === 'connected' ? { type: 'connected' } : message);
+          if (message.type === 'control') {
+            if (message.leaseId && message.controllerId !== this.identity)
+              throw new Error('Unexpected control lease.');
+            this.controls.set(message.sessionId, message);
+          }
+          if (message.type === 'sessions') {
+            const ids = new Set(message.sessions.map((session) => session.id));
+            for (const id of this.controls.keys()) if (!ids.has(id)) this.controls.delete(id);
+          }
+          this.emit(
+            message.type === 'connected'
+              ? { type: 'connected', clientId: message.clientId, protocolVersion: 2 }
+              : message,
+          );
         } catch {
-          this.emit({ type: 'error', message: 'Could not authenticate the host. Scan the current pairing code and reconnect.' });
+          this.emit({
+            type: 'error',
+            message:
+              'Could not authenticate the host. Scan the current pairing code and reconnect.',
+          });
           socket.close();
         }
       };
       socket.onerror = () => {
-        if (this.socket === socket) this.emit({ type: 'error', message: 'Connection failed. Check the address, network and host firewall.' });
+        if (this.socket === socket)
+          this.emit({
+            type: 'error',
+            message: 'Connection failed. Check the address, network and host firewall.',
+          });
       };
       socket.onclose = (event) => {
         if (this.socket !== socket) return;
         clearTimeout(this.authTimer);
         this.socket = null;
         this.ready = false;
+        this.identity = null;
+        this.controls.clear();
         this.key = null;
         this.clientNonce = '';
-        this.emit({ type: 'disconnected', reason: event.reason || (event.code === 4003 ? 'Pairing authentication failed.' : 'Disconnected. Sessions remain on the host.') });
+        this.emit({
+          type: 'disconnected',
+          reason:
+            event.reason ||
+            (event.code === 4003
+              ? 'Pairing authentication failed.'
+              : 'Disconnected. Sessions remain on the host.'),
+        });
       };
     } catch (error) {
-      this.emit({ type: 'error', message: error instanceof Error ? error.message : 'Could not connect.' });
+      this.emit({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Could not connect.',
+      });
     }
   }
 
@@ -95,6 +191,8 @@ export class HostClient {
     const socket = this.socket;
     this.socket = null;
     this.ready = false;
+    this.identity = null;
+    this.controls.clear();
     this.key = null;
     this.clientNonce = '';
     if (socket) {
@@ -104,28 +202,117 @@ export class HostClient {
   }
 
   private send(payload: ClientCommand, handshake = false): void {
-    if (!this.socket || this.socket.readyState !== 1 || !this.key || !this.challenge || (!handshake && !this.ready)) {
-      this.emit({ type: 'error', message: 'Connect to a host first.' });
+    const requestId = 'requestId' in payload ? payload.requestId : undefined;
+    if (
+      !this.socket ||
+      this.socket.readyState !== 1 ||
+      !this.key ||
+      !this.challenge ||
+      (!handshake && !this.ready)
+    ) {
+      this.emit({ type: 'error', message: 'Connect to a host first.', requestId });
       return;
     }
     if (this.socket.bufferedAmount > 256 * 1024) {
-      this.emit({ type: 'error', message: 'Connection is too slow. Input was not sent; reconnect before continuing.' });
+      this.emit({
+        type: 'error',
+        message: 'Connection is too slow. Input was not sent; reconnect before continuing.',
+      });
       this.disconnect();
       return;
     }
     try {
-      const frame = encodeFrame(payload, this.key, this.challenge, 'client-to-host', this.outgoingSeq + 1, randomBytes);
+      const frame = encodeFrame(
+        payload,
+        this.key,
+        this.challenge,
+        'client-to-host',
+        this.outgoingSeq + 1,
+        randomBytes,
+      );
       this.socket.send(frame);
       this.outgoingSeq++;
     } catch (error) {
-      this.emit({ type: 'error', message: error instanceof Error ? error.message : 'Message could not be sent.' });
+      this.emit({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Message could not be sent.',
+        requestId,
+      });
     }
   }
 
-  listSessions(): void { this.send({ type: 'list' }); }
-  createSession(name: string): void { this.send({ type: 'create', name }); }
-  attachSession(sessionId: string, cols = 80, rows = 24): void { this.send({ type: 'attach', sessionId, cols, rows }); }
-  sendInput(sessionId: string, data: string): void { this.send({ type: 'input', sessionId, data }); }
-  resizeSession(sessionId: string, cols: number, rows: number): void { this.send({ type: 'resize', sessionId, cols, rows }); }
-  closeSession(sessionId: string): void { this.send({ type: 'close', sessionId }); }
+  listSessions(): void {
+    this.send({ type: 'list' });
+  }
+  createSession(name: string, groupId: string | null = null, requestId = this.requestId()): string {
+    this.send({ type: 'create', name, groupId, requestId });
+    return requestId;
+  }
+  requestId(): string {
+    return Array.from(randomBytes(16), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  createGroup(name: string, parentId: string | null, expectedRevision: number): void {
+    this.send({ type: 'createGroup', name, parentId, expectedRevision });
+  }
+  updateGroup(group: SessionGroup, expectedRevision: number): void {
+    this.send({
+      type: 'updateGroup',
+      groupId: group.id,
+      name: group.name,
+      parentId: group.parentId,
+      order: group.order,
+      expectedRevision,
+    });
+  }
+  deleteGroup(groupId: string, expectedRevision: number): void {
+    this.send({ type: 'deleteGroup', groupId, expectedRevision });
+  }
+  moveSession(sessionId: string, groupId: string | null, expectedRevision: number): void {
+    this.send({ type: 'moveSession', sessionId, groupId, expectedRevision });
+  }
+  subscribeSession(sessionId: string): void {
+    this.send({ type: 'subscribe', sessionId });
+  }
+  unsubscribeSession(sessionId: string): void {
+    if (!this.ready) return;
+    this.releaseControl(sessionId);
+    this.send({ type: 'unsubscribe', sessionId });
+  }
+  acquireControl(sessionId: string, cols: number, rows: number, takeOver = false): void {
+    this.send({ type: 'acquireControl', sessionId, ...this.dimensions(cols, rows), takeOver });
+  }
+  releaseControl(sessionId: string): void {
+    const leaseId = this.controls.get(sessionId)?.leaseId;
+    if (!leaseId || !this.hasControl(sessionId)) return;
+    // Clear locally before writing so stale renderer callbacks cannot send input.
+    this.controls.delete(sessionId);
+    this.send({ type: 'releaseControl', sessionId, leaseId });
+  }
+  attachSession(sessionId: string, cols = 80, rows = 24): void {
+    this.send({ type: 'attach', sessionId, cols, rows });
+  }
+  sendInput(sessionId: string, data: string): void {
+    const control = this.controls.get(sessionId);
+    if (!this.ready || control?.controllerId !== this.identity || !control?.leaseId) return;
+    this.send({ type: 'input', sessionId, data, leaseId: control.leaseId });
+  }
+  resizeSession(sessionId: string, cols: number, rows: number): void {
+    const control = this.controls.get(sessionId);
+    if (!this.ready || control?.controllerId !== this.identity || !control?.leaseId) return;
+    this.send({
+      type: 'resize',
+      sessionId,
+      ...this.dimensions(cols, rows),
+      leaseId: control.leaseId,
+    });
+  }
+  private dimensions(cols: number, rows: number) {
+    return {
+      cols: Math.max(10, Math.min(300, Math.floor(cols))),
+      rows: Math.max(2, Math.min(150, Math.floor(rows))),
+    };
+  }
+  closeSession(sessionId: string): void {
+    this.send({ type: 'close', sessionId });
+  }
 }

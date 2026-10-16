@@ -1,20 +1,31 @@
 export interface TerminalHandle {
-  write(data: string): void;
+  write(data: string, options?: { allowResponses?: boolean }): void;
   reset(): void;
   focus(): void;
+  configure(options: TerminalViewport): void;
 }
+
+export type TerminalViewport = { readOnly: boolean; cols?: number; rows?: number };
 
 export interface TerminalViewProps {
   onData: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
   initialOutput?: string;
   onReady?: () => void;
+  readOnly?: boolean;
 }
 
 export const TERMINAL_CHANNEL = 'pocket-terminal';
 
 export type TerminalCommand =
-  | { channel: typeof TERMINAL_CHANNEL; id: number; type: 'write'; data: string }
+  | {
+      channel: typeof TERMINAL_CHANNEL;
+      id: number;
+      type: 'write';
+      data: string;
+      allowResponses: boolean;
+    }
+  | ({ channel: typeof TERMINAL_CHANNEL; id: number; type: 'configure' } & TerminalViewport)
   | { channel: typeof TERMINAL_CHANNEL; id: number; type: 'reset' | 'focus' };
 
 export type TerminalEvent =

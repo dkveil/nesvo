@@ -1,78 +1,77 @@
-# Propozycja klienta terminalowego
+# Terminal client and synchronization
 
-**Status: projekt architektury, jeszcze niewdrożony.** Dokument opisuje kolejny etap Pocket Sessions. Obecna wersja nie zawiera klienta TUI, grup ani współdzielonych układów paneli.
+**Status: initial groups and synchronization implementation; the TUI client lives in `tui/`.** Shared groups, subgroups, session processes and control belong to the host. Pane layout is local to each client. Full screen snapshots and persistent window layouts remain future work.
 
-Budujemy klienta terminalowego w Rust na Windowsa i macOS, obok aplikacji Expo. Kierunkiem interfejsu jest preferowany przez użytkownika Herdr: drzewo grup, czytelne zakładki, podzielony obszar pracy i szybkie przełączanie sesji. To inspiracja układem i obsługą; nie deklaracja zgodności z protokołem Herdr.
+We are building a Rust terminal client for Windows and macOS alongside the Expo app. The interface direction follows the user's preference for Herdr: a group tree, clear tabs, a split workspace and fast session switching. This is an interaction and layout reference, not a claim of compatibility with Herdr's protocol.
 
-Na 16.10.2026 aktualny [Herdr](https://herdr.dev/) deklaruje natywne wsparcie Windows i macOS; jego [oficjalne repozytorium](https://github.com/herdrdev/herdr) jest napisane w Rust. [Agent Deck](https://github.com/asheshgoplani/agent-deck) opiera się na Go i tmux, a na Windowsie wskazuje WSL. U nas oba systemy otrzymają osobne natywne binarki z jednego kodu Rust. Budowanie i testy trzeba wykonywać na runnerach Windows i macOS; samo skompilowanie na Windowsie nie potwierdza obsługi macOS.
+As of October 16, 2026, [Herdr](https://herdr.dev/) advertises native Windows and macOS support; its [official repository](https://github.com/herdrdev/herdr) is written in Rust. [Agent Deck](https://github.com/asheshgoplani/agent-deck) uses Go and tmux, and directs Windows users to WSL. Our two platforms receive separate native binaries from one Rust codebase. Builds and tests must run on Windows and macOS runners; compiling on Windows alone does not establish macOS support.
 
-## Jeden host, dwa interfejsy
+## One host, two interfaces
 
-Procesy uruchamia wyłącznie host. Klient terminalowy i telefon otwierają widoki tych samych identyfikatorów sesji. Zamknięcie klienta pozostawia host i procesy aktywne. TUI może uruchomić osobny proces hosta przy pierwszym użyciu, ale nie przechowuje PTY we własnym procesie.
+Only the host starts processes. The terminal client and phone open views of the same session IDs. Closing a client leaves the host and processes running. At this stage, the host starts separately; the TUI does not own local PTYs. Commands and shortcuts are described in the [TUI guide](../tui/README.md).
 
 ```mermaid
 flowchart LR
-    TUI["Klient TUI w Rust<br/>Grupy, zakładki, panele"]
-    Mobile["Aplikacja Expo<br/>Te same sesje i grupy"]
-    Host["Host Rust<br/>Stan, subskrypcje, kontrola"]
-    Store[("Trwałe metadane")]
-    Screen["Model ekranu<br/>Snapshoty i kolejność wyjścia"]
+    TUI["Rust TUI client<br/>Groups, session views, panes"]
+    Mobile["Expo app<br/>The same sessions and groups"]
+    Host["Rust host<br/>State, subscriptions, control"]
+    Store[("Persistent metadata")]
+    Screen["Bounded output history<br/>Full snapshots: future work"]
     PTY["portable-pty<br/>ConPTY / Unix PTY"]
-    Shell["Powłoki i oryginalne CLI<br/>Claude Code / Codex"]
-    TUI <-->|"Wspólny protokół"| Host
-    Mobile <-->|"Wspólny protokół"| Host
+    Shell["Shells and original CLIs<br/>Claude Code / Codex"]
+    TUI <-->|"Shared protocol"| Host
+    Mobile <-->|"Shared protocol"| Host
     Host <--> Store
     Host <--> Screen
     Host <--> PTY
     PTY <--> Shell
 ```
 
-Pierwszy TUI korzysta z istniejącego transportu WebSocket i parowania. Nie wymaga tmux ani WSL do działania na Windowsie. Obsługa wielu komputerów będzie używała identyfikatorów sesji poprzedzonych identyfikatorem hosta; synchronizacja nie oznacza migracji procesu między komputerami.
+The initial TUI uses the existing WebSocket transport and pairing. It does not require tmux or WSL on Windows. Support for multiple computers will use session IDs scoped by host ID; synchronization does not mean migrating a process between computers.
 
-## Wspólny model danych
+## Shared data model
 
-| Obiekt | Znaczenie |
-| --- | --- |
-| `Group { id, parentId, name, order }` | Grupa lub podgrupa. Host odrzuca cykle i nieistniejącego rodzica. |
-| `Workspace { id, rootPath }` | Katalog projektu, niezależny od grupowania widoków. Nie jest sandboxem. |
-| `Window { id, groupId, title, order, layout }` | Obszar pracy prezentowany jako zakładka. Bez dodatkowej, dublującej encji `Tab`. |
-| `Layout` | Drzewo podziałów poziomych/pionowych z proporcjami; liście wskazują panele. |
-| `Pane { id, sessionId }` | Widok konkretnej sesji. Kilka paneli może wskazywać ten sam proces. |
-| `Session { id, workspaceId, ... }` | Proces PTY należący do hosta, jego stan i rozmiar terminala. |
+| Object                                | Current implementation / future direction                                                                      |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Group { id, parentId, name, order }` | Implemented. The host rejects cycles and nonexistent parents; SQLite stores the metadata.                      |
+| `Session { id, groupId, cwd, ... }`   | Implemented. A PTY process, state, controller and canonical dimensions.                                        |
+| Workspace                             | Currently the initial directory selected by `--workspace`; a multi-project catalog is planned.                 |
+| Window / Layout                       | Persistent windows and a split tree are planned. The initial TUI has a local view of one or two sessions.      |
+| Pane                                  | A local view referencing `sessionId`, independent of the process. It is not a synchronized protocol v2 object. |
 
-Grupy, kolejność i logiczne układy zapisuje host. Telefon może prezentować panele kolejno zamiast obok siebie, zachowując ich tożsamość. Fokus, przewijanie i otwarta klawiatura pozostają lokalne; ewentualne śledzenie aktywnego panelu drugiego urządzenia będzie osobną opcją.
+The host stores groups and their ordering. The phone opens one session at a time; the TUI can show two panes. Focus, scrolling and the open keyboard remain local. Persistent layouts and following another device's active pane will be separate features.
 
-Utworzenie sesji jest jednym żądaniem do hosta z `requestId`; odpowiedź wskazuje jej `sessionId`. Klienci nie dopasowują nowych procesów po nazwie ani nie tworzą lokalnych kopii sesji. Zmiany metadanych mają numer rewizji, aby konflikt dwóch edycji nie nadpisywał danych po cichu.
+Creating a session is one host request with a `requestId`; the response identifies its `sessionId`. Clients do not match new processes by name or create local copies of sessions. Metadata changes carry a revision number so conflicting edits cannot silently overwrite data.
 
-## Oglądanie, kontrola i rozmiar
+## Watching, control and dimensions
 
-`subscribe/unsubscribe` pozwalają jednemu klientowi oglądać wiele sesji. `acquire/releaseControl` nadają kontrolę nad konkretną sesją. Wielu obserwatorów może widzieć wyjście, ale w danej chwili tylko jeden kontroler wysyła wejście i zmienia rozmiar PTY.
+`subscribe/unsubscribe` let one client watch multiple sessions. `acquireControl/releaseControl` grant and release control of a specific session. Multiple viewers can receive output, but only one controller at a time sends input and changes PTY dimensions.
 
-Kontroler otrzymuje dzierżawę z identyfikatorem i generacją. Przejęcie sterowania, odłączenie lub wygaśnięcie dzierżawy unieważnia stare wejście. Operacja przejęcia jest jawna; wejście nie jest automatycznie powtarzane po reconnect. Kontrola dotyczy sesji i wybranego widoku, nie całego połączenia klienta.
+The controller receives a fresh random lease ID. Takeover or disconnection invalidates the old lease; a heartbeat detects lost connections. Takeover is explicit, and input is not automatically resent after reconnecting. Control applies to a session, not the client's entire connection.
 
-PTY ma **jeden obowiązujący rozmiar**. Ustala go panel kontrolera. Obserwatorzy dopasowują podgląd przez przewijanie, kadrowanie lub skalowanie; nie wywołują resize. Przejęcie na telefonie może zmienić rozmiar procesu i musi zostać rozgłoszone do pozostałych widoków.
+The PTY has **one canonical size**, set by the controller's pane. Viewers adapt their presentation through scrolling, cropping or scaling; they do not send resize commands. Taking over on the phone can change the process dimensions, which must be broadcast to the other views.
 
-Host przechowuje model ekranu i wydaje snapshot wraz z numerem wyjścia, po którym klient odbiera kolejne zdarzenia. Odpowiedzi na zapytania terminalowe muszą mieć jednego właściciela; pasywne widoki nie mogą dopisywać odpowiedzi do powłoki. Sam parser ekranu nie rozwiązuje całej negocjacji terminala.
+The host currently stores a bounded output stream, which clients interpret in their own renderers. Full snapshots with an output sequence number are planned after engine compatibility testing. Terminal query responses have one owner; passive views must not write replies into the shell. The first acquisition on Windows replays ConPTY startup negotiation only to the controller.
 
-## Technologie i zapis
+## Technology and persistence
 
-- **Ratatui + Crossterm:** układ TUI, rysowanie, klawiatura, mysz i resize. Crossterm obsługuje Windows oraz systemy Unix; Ratatui używa go domyślnie. Obecny Ratatui 0.30.2 wymaga Rust 1.88, podczas gdy host deklaruje 1.85 — minimum toolchainu trzeba ujednolicić. [Ratatui](https://docs.rs/ratatui/latest/ratatui/), [manifest](https://docs.rs/crate/ratatui/latest/source/Cargo.toml), [Crossterm](https://docs.rs/crossterm/latest/crossterm/).
-- **portable-pty:** pozostaje na hoście, z Windows ConPTY i Unix PTY. TUI nie uruchamia własnego kontrolera procesów. [Dokumentacja](https://docs.rs/portable-pty/0.9.0/portable_pty/).
-- **Silnik ekranu:** pierwszy kandydat to `vt100`, który udostępnia siatkę, tryby wejścia i snapshoty. Wybór finalny nastąpi po próbie zgodności z Claude Code, Codex, Unicode, alternate screen i ponownym dołączeniem. `alacritty_terminal` pozostaje kandydatem, jeżeli potrzebna będzie pełniejsza emulacja. [vt100](https://docs.rs/vt100/latest/vt100/), [stan ekranu](https://docs.rs/vt100/latest/vt100/struct.Screen.html), [Alacritty](https://docs.rs/alacritty_terminal/latest/alacritty_terminal/).
-- **Renderer panelu:** można użyć `tui-term` albo niewielkiego renderera komórek Ratatui. `tui-term` 0.3 zależy od vt100 0.15, podczas gdy dostępny vt100 to 0.16; wersje trzeba dobrać świadomie. Eksperymentalny kontroler PTY tej biblioteki nie będzie używany. [Manifest tui-term](https://docs.rs/crate/tui-term/0.3.0/source/Cargo.toml), [ograniczenia](https://docs.rs/tui-term/0.3.0/tui_term/).
-- **SQLite na hoście:** grupy, katalogi projektów, układy i konfiguracja sesji. Zapis metadanych nie oznacza przetrwania procesów po restarcie hosta lub komputera. Po restarcie można odtworzyć układ i oznaczyć sesje jako zakończone; uruchomienie nowego procesu wymaga osobnej operacji.
+- **Ratatui + Crossterm:** TUI layout, drawing, keyboard, mouse and resize. Crossterm supports Windows and Unix systems; this client uses its 0.29 backend with Ratatui 0.30. Both host and TUI manifests declare Rust 1.88 as the minimum version. [Ratatui](https://docs.rs/ratatui/latest/ratatui/), [manifest](https://docs.rs/crate/ratatui/latest/source/Cargo.toml), [Crossterm](https://docs.rs/crossterm/latest/crossterm/).
+- **portable-pty:** remains on the host, using Windows ConPTY and Unix PTYs. The TUI does not run its own process controller. [Documentation](https://docs.rs/portable-pty/0.9.0/portable_pty/).
+- **TUI screen engine:** `vt100` 0.16 is implemented in the client, providing the cell grid, input modes and alternate-screen state. Compatibility with Claude Code, Codex, Unicode and reconnection still needs broader testing. This choice does not implement authoritative host screen snapshots. `alacritty_terminal` remains an option if fuller emulation becomes necessary. [vt100](https://docs.rs/vt100/latest/vt100/), [screen state](https://docs.rs/vt100/latest/vt100/struct.Screen.html), [Alacritty](https://docs.rs/alacritty_terminal/latest/alacritty_terminal/).
+- **Pane renderer:** the TUI uses its own small Ratatui cell renderer over `vt100`. It does not use `tui-term` or that library's experimental PTY controller. Keeping process ownership on the host avoids creating separate local sessions. [Current renderer](../tui/src/terminal.rs).
+- **SQLite on the host:** currently stores groups and revisions. Project catalogs, layouts and session configuration are planned. Persisting metadata does not make processes survive a host or computer restart. After restart, groups remain and the process list is empty.
 
-Kod Rust warto podzielić na wspólny protokół, bibliotekę modelu ekranu, host i klienta TUI. Aplikacja Expo pozostaje oddzielnym klientem tego samego kontraktu.
+The Rust code separates the wire codec, host and TUI, with terminal interpretation in the TUI's terminal module. A shared screen-model library can be introduced if the host snapshot implementation needs it. The Expo app remains a separate client of the same contract.
 
-## Luki obecnej wersji
+## Implemented behavior and remaining stages
 
-Host już przechowuje wspólną listę sesji, ale `attach` łączy oglądanie z kontrolą i zwalnia poprzednią sesję klienta. Wyjście trafia tylko do kontrolera. Nie ma wielu subskrypcji, trwałych grup, rewizji metadanych ani odpowiedzi powiązanych z `requestId`.
+Protocol v2 separates watching from control and supports multiple subscriptions, persistent groups, metadata revisions and `requestId`. Legacy `attach` remains for compatibility. The integration test starts a real host and multiple clients; it also checks stale-lease rejection and preservation of a shell variable after takeover.
 
-Obecne 128 KiB historii jest fragmentem strumienia wyjścia, a nie kompletnym snapshotem terminala. Dane sesji istnieją w pamięci; zapis parowania nie jest zapisem projektu ani układu.
+The current 128 KiB history is a fragment of the output stream, not a complete terminal snapshot. Session data lives in memory; saved pairing data is not a saved project or layout.
 
-## Cztery etapy z kryterium odbioru
+## Acceptance criteria
 
-1. **Protokół i wspólny stan.** Dodać `requestId`, grupy z podgrupami, okna i układy oraz zapis metadanych. Test: dwa klienty widzą te same identyfikatory i zmiany; równoczesne utworzenie sesji zwraca właściwe odpowiedzi; restart zachowuje układ, bez udawania żywych procesów.
-2. **Obserwatorzy i przekazywanie kontroli.** Oddzielić subskrypcje, dzierżawę i resize. Test: dwa klienty oglądają dwie sesje równocześnie; tylko kontroler zmienia wejście/rozmiar; stare wejście po przejęciu zostaje odrzucone.
-3. **Ekran i odtwarzanie.** Przeprowadzić próbę zgodności silnika, następnie wdrożyć snapshoty i uporządkowane wyjście. Test: dołączenie podczas intensywnego wyjścia, alternate screen, Unicode i zmiana rozmiaru nie gubią stanu ani nie powtarzają zapytań terminalowych do powłoki.
-4. **Klient TUI i wspólny przebieg pracy.** Dodać drzewo grup, zakładki, podziały, fokus i tryby nawigacji/wpisywania. Test na Windowsie i macOS: utworzenie sesji w TUI, przejęcie tej samej powłoki na telefonie i powrót z zachowaną zmienną powłoki; wyjście z TUI nie kończy sesji hosta.
+1. **Protocol and shared state — implemented for groups and sessions.** Two clients see the same IDs and changes; session creation returns the matching `requestId`; restarting preserves groups. Persistent windows and layouts remain to be implemented.
+2. **Viewers and control transfer — implemented.** Tests cover multiple subscriptions, one controller, resizing and rejection of stale input after takeover.
+3. **Screen state and replay — remaining work.** Run engine compatibility checks, then implement snapshots and ordered output. Test that joining during heavy output, alternate-screen use, Unicode and resizing preserve state without repeating terminal queries into the shell.
+4. **TUI and shared workflow — initial client implemented; broader validation remains.** The client has a group tree, local split panes, focus and navigation/input modes. Persistent windows and tabs are future work. Verify on Windows and macOS that a session created in the TUI can be taken over on the phone and returned with a shell variable intact, and that exiting the TUI leaves the host session running. Record completed checks separately in the [test matrix](testing.md).

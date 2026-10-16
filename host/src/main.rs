@@ -1,7 +1,10 @@
+mod groups;
 mod process;
+mod protocol;
 mod sessions;
+mod storage;
 mod transport;
-mod wire;
+use nesvo_host::wire;
 
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
@@ -21,7 +24,7 @@ use tokio::{
 #[derive(Parser)]
 #[command(
     version,
-    about = "Private terminal companion. Shells run only when requested in the paired app."
+    about = "nesvo private terminal companion. Shells run only when requested in a paired client."
 )]
 struct Args {
     #[arg(long)]
@@ -114,6 +117,7 @@ async fn main() -> Result<()> {
             std::env::var_os("LOCALAPPDATA")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("."))
+                // Preserve the existing data directory and pairing credentials.
                 .join("PocketSessions")
                 .join("pairing")
         } else {
@@ -123,6 +127,7 @@ async fn main() -> Result<()> {
                     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
                 })
                 .unwrap_or_else(|| PathBuf::from(".local"))
+                // Preserve the existing data directory and pairing credentials.
                 .join("pocket-sessions")
         }
     });
@@ -159,11 +164,15 @@ async fn main() -> Result<()> {
     let qr_path = pairing_dir.join("pairing.svg");
     private_write(&qr_path, svg.as_bytes())?;
 
-    let state = Arc::new(Mutex::new(sessions::State::new(workspace.clone())));
+    let metadata = storage::MetadataStore::open(&pairing_dir.join("metadata.sqlite3"))?;
+    let state = Arc::new(Mutex::new(sessions::State::new(
+        workspace.clone(),
+        metadata,
+    )));
     let (event_tx, event_rx) = mpsc::channel(128);
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
     let permits = Arc::new(Semaphore::new(16));
-    println!("Pocket Sessions Rust host listening on {bind}:{actual_port}");
+    println!("nesvo Rust host listening on {bind}:{actual_port}");
     println!("Workspace: {}", workspace.display());
     println!("Private pairing file: {}", pairing_path.display());
     println!("Private pairing QR: {}", qr_path.display());

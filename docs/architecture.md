@@ -1,95 +1,104 @@
-# Architektura Pocket Sessions
+# nesvo architecture
 
-Decyzja: **Expo / React Native + TypeScript na telefonie, Rust na komputerze lub VPS-ie**. Jeden monorepo obejmuje klienta, hosta i protokół. Host uruchamia procesy i utrzymuje sesje, a telefon jest interfejsem sterowania. Node.js pozostaje narzędziem do budowania aplikacji i testów; docelowa binarka hosta nie wymaga środowiska Node.
+Decision: **Expo / React Native + TypeScript on the phone, Rust on the computer or VPS**. One monorepo contains the clients, host and protocol. The host starts processes and maintains sessions; the phone provides the control interface. Node.js remains a tool for app builds and tests; the host binary does not require a Node runtime.
 
-## Podział odpowiedzialności
+## Responsibilities
 
-| Część | Technologia | Odpowiedzialność |
-| --- | --- | --- |
-| Aplikacja iOS / Android | React Native, Expo, TypeScript | Lista sesji, parowanie, nawigacja, klawiatura, stan połączenia |
-| Terminal w aplikacji | xterm.js + lokalny WebView | Interpretacja ANSI, bufor ekranu, kursor, zaznaczanie i wejście terminalowe |
-| Podgląd w przeglądarce | React Native Web + izolowany iframe | Rozwijanie interfejsu na Windowsie i testy przeglądarkowe |
-| Host | Rust | Własność sesji, procesy, historia wyjścia, limity i komunikacja |
-| Powłoka | `portable-pty` | Windows ConPTY oraz PTY na systemach Unix |
-| Sieć i współbieżność hosta | Tokio, `tokio-tungstenite` | Asynchroniczne połączenia, ograniczone kolejki, oddzielne odczyty PTY |
-| Protokół | WebSocket + wersjonowany JSON | Tworzenie, lista, dołączanie, wejście, wyjście, rozmiar i zamykanie sesji |
-| Szyfrowanie komunikatów | TweetNaCl w kliencie, `crypto_secretbox` w Rust | Zgodny format XSalsa20-Poly1305 |
-| Dane parowania | Expo SecureStore; QR przez Expo Camera | Sekret hosta zapisany w magazynie systemowym na telefonie |
-| Budowanie i dystrybucja | Cargo; Expo / EAS | Osobne artefakty hosta oraz aplikacji mobilnej |
+| Component                       | Technology                                                 | Responsibility                                                                           |
+| ------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| iOS / Android app               | React Native, Expo, TypeScript                             | Session list, pairing, navigation, keyboard, connection state                            |
+| In-app terminal                 | xterm.js + local WebView                                   | ANSI interpretation, screen buffer, cursor, selection and terminal input                 |
+| Browser preview                 | React Native Web + isolated iframe                         | Interface development on Windows and browser tests                                       |
+| Host                            | Rust                                                       | Session ownership, processes, output history, limits and communication                   |
+| Metadata                        | SQLite through rusqlite                                    | Groups, parent/subgroup relationships, ordering and change revisions                     |
+| Terminal client                 | Rust, Ratatui, Crossterm, vt100                            | Group tree, views of the same sessions, keyboard and split panes                         |
+| Shell                           | `portable-pty`                                             | Windows ConPTY and Unix PTYs                                                             |
+| Host networking and concurrency | Tokio, `tokio-tungstenite`                                 | Asynchronous connections, bounded queues, separate PTY readers                           |
+| Protocol                        | WebSocket + versioned JSON                                 | Session creation, listing, subscriptions, control, input, output, dimensions and closing |
+| Message encryption              | TweetNaCl in the mobile client, `crypto_secretbox` in Rust | Compatible XSalsa20-Poly1305 format                                                      |
+| Pairing data                    | Expo SecureStore; QR scanning through Expo Camera          | Host secret saved in the phone's system storage                                          |
+| Builds and distribution         | Cargo; Expo / EAS                                          | Separate host and mobile app artifacts                                                   |
 
-`portable-pty` pochodzi z projektu WezTerm i udostępnia wspólne API do terminali systemowych. Jego implementacja wybiera ConPTY na Windowsie oraz PTY na Unixie. Przenośne API nie zastępuje testów na każdym systemie. [Dokumentacja biblioteki](https://docs.rs/portable-pty/0.9.0/portable_pty/), [wybór implementacji](https://docs.rs/crate/portable-pty/0.9.0/source/src/lib.rs).
+`portable-pty` comes from the WezTerm project and provides a shared API for system terminals. Its implementation selects ConPTY on Windows and PTYs on Unix. A portable API does not replace testing on each system. [Library documentation](https://docs.rs/portable-pty/0.9.0/portable_pty/), [implementation selection](https://docs.rs/crate/portable-pty/0.9.0/source/src/lib.rs).
 
-Tokio obsługuje połączenia asynchroniczne, a blokujące odczyty PTY są wykonywane poza jego zadaniami sieciowymi. Ograniczone kanały zapobiegają niekontrolowanemu kolejkowaniu wyjścia dla wolnego klienta. `tokio-tungstenite` dostarcza WebSocket oparty na strumieniach Tokio. [Dokumentacja WebSocket](https://docs.rs/tokio-tungstenite/0.30.0/tokio_tungstenite/), [łączenie kodu synchronicznego i asynchronicznego](https://tokio.rs/tokio/topics/bridging).
+Tokio handles asynchronous connections, while blocking PTY reads run outside its networking tasks. Bounded channels prevent output from accumulating without limits for a slow client. `tokio-tungstenite` provides WebSockets over Tokio streams. [WebSocket documentation](https://docs.rs/tokio-tungstenite/0.30.0/tokio_tungstenite/), [bridging synchronous and asynchronous code](https://tokio.rs/tokio/topics/bridging).
 
 ```mermaid
 flowchart TB
-    subgraph Phone[Telefon: iPhone lub Android]
-        UI[Expo / React Native\nSesje, hosty, parowanie]
-        Terminal[xterm.js w WebView\nTerminal ANSI]
-        Secret[SecureStore\nSekret parowania]
+    subgraph Phone[Phone: iPhone or Android]
+        UI[Expo / React Native\nSessions, hosts, pairing]
+        Terminal[xterm.js in WebView\nANSI terminal]
+        Secret[SecureStore\nPairing secret]
         UI <--> Terminal
         Secret --> UI
     end
 
-    UI <-->|WebSocket: szyfrowane komunikaty| Host
+    UI <-->|WebSocket: encrypted messages| Host
+    TUI[Rust terminal client\nRatatui + Crossterm] <-->|Same protocol| Host
 
-    subgraph Computer[Komputer lub VPS]
-        Host[Host Rust\nSesje, kolejki, historia]
+    subgraph Computer[Computer or VPS]
+        Host[Rust host\nSessions, queues, history]
+        Metadata[(SQLite\nGroups and revisions)]
         PTY[portable-pty\nConPTY / Unix PTY]
         Shell[PowerShell / bash / zsh]
-        CLI[Oryginalne Claude Code / Codex CLI]
-        Files[Repozytoria i pliki]
+        CLI[Original Claude Code / Codex CLI]
+        Files[Repositories and files]
         Host <--> PTY
+        Host <--> Metadata
         PTY <--> Shell
         Shell --> CLI
         Shell <--> Files
         CLI <--> Files
     end
 
-    CLI <-->|Własne logowanie użytkownika| Provider[Usługa dostawcy AI]
+    CLI <-->|Provider's own user login| Provider[AI provider service]
 ```
 
-Połączenie potrzebuje osiągalnego adresu hosta. LAN jest pierwszą ścieżką testową. Prywatny VPN może później zapewnić dostęp z internetu; sam WebSocket ani QR nie rozwiązują NAT-u. Własny relay i bezpośredni klient SSH są osobnymi etapami.
+The connection needs a reachable host address. LAN is the first testing path. A private VPN can later provide access over the internet; neither WebSocket nor a QR code solves NAT traversal. A relay and a direct SSH client are separate stages.
 
-## Dlaczego Rust jest tu użyteczny
+## Why Rust is useful here
 
-Największy sens ma w procesie hosta, który działa długo, obsługuje wiele terminali i powinien być łatwy do zainstalowania. Kompilowana binarka pozwala dostarczać hosta bez instalowania Node.js i pakietów npm u użytkownika. Konkretne wymagania systemowe nadal zależą od sposobu kompilacji i dołączanych bibliotek. [Rust: aplikacje CLI](https://rust-lang.org/what/cli/).
+Rust is most useful in the host process, which runs for long periods, manages multiple terminals and should be easy to install. A compiled binary lets us distribute the host without requiring users to install Node.js and npm packages. Specific system requirements still depend on the build and linked libraries. [Rust: CLI applications](https://rust-lang.org/what/cli/).
 
-Kontrola własności zasobów pomaga jawnie określić, kto zamyka PTY, kto przechowuje proces i co dzieje się po odłączeniu klienta. To korzyść architektoniczna, nie gwarancja braku błędów. Ograniczone bufory i poprawne kończenie procesów trzeba zaprogramować i sprawdzić niezależnie od języka.
+Resource ownership helps make it explicit who closes a PTY, who holds the process and what happens when a client disconnects. This is an architectural benefit, not a guarantee against bugs. Bounded buffers and correct process termination still need to be implemented and tested, regardless of language.
 
-Koszt wyboru to drugi język, oddzielny zestaw testów oraz budowanie binarek dla Windowsa, macOS i Linuksa. Dla tego projektu akceptujemy go od początku: host jest centralną częścią produktu, a jego instalacja i niezawodność będą ważne także po prototypie. Nie zakładamy przewagi wydajności bez pomiarów; pierwsze ograniczenia mogą wynikać z renderera, łącza lub działania samego CLI.
+The cost is a second language, a separate test suite and binary builds for Windows, macOS and Linux. This project accepts that cost from the start: the host is central to the product, and installation and reliability will remain important beyond the prototype. We do not assume a performance advantage without measurements; the first bottlenecks may be the renderer, network or CLI itself.
 
-Rust nie przyspiesza zdalnego modelu AI, nie zmienia limitów abonamentu i nie daje iOS dodatkowych uprawnień do procesów w tle. Nie ma obecnie potrzeby przenoszenia mobilnego UI ani parsera terminala do Rusta.
+Rust does not speed up a remote AI model, change subscription limits or grant iOS additional background-process permissions. There is currently no need to move the mobile UI or mobile terminal parser to Rust.
 
-## Dlaczego Expo pozostaje na telefonie
+## Why Expo remains on the phone
 
-Expo pozwala współdzielić ekran i logikę między iOS i Androidem. Renderer xterm.js działa wewnątrz WebView dołączonego do aplikacji; pozostałe kontrolki są komponentami React Native. Jest to terminal z webowym rendererem, a nie własny silnik terminala napisany w Swift. `react-native-webview` jest dostępny w zestawie Expo SDK 57. [Dokumentacja WebView dla SDK 57](https://docs.expo.dev/versions/v57.0.0/sdk/webview/).
+Expo allows screens and logic to be shared between iOS and Android. The xterm.js renderer runs inside a WebView bundled with the app; other controls are React Native components. This is a terminal with a web renderer, rather than a custom terminal engine written in Swift. `react-native-webview` is available in Expo SDK 57. [WebView documentation for SDK 57](https://docs.expo.dev/versions/v57.0.0/sdk/webview/).
 
-Pierwszy punkt kontrolny to fizyczny iPhone: wpisywanie, klawisze specjalne, przewijanie, zmiana orientacji i przywracanie połączenia. Test w przeglądarce nie rozstrzyga jakości tych interakcji. Jeżeli renderer nie spełni wymagań, można wymienić komponent terminala, zachowując protokół i hosta.
+The first checkpoint is a physical iPhone: typing, special keys, scrolling, orientation changes and reconnection. A browser test cannot establish the quality of these interactions. If the renderer does not meet requirements, the terminal component can be replaced while retaining the protocol and host.
 
-Expo Go ma ustalony zestaw modułów natywnych. Własny moduł Swift/Kotlin lub ewentualna biblioteka Rust przez natywny most wymaga development buildu. Expo umożliwia taką rozbudowę bez przepisywania całej aplikacji. EAS buduje aplikacje iOS na serwerach macOS, więc pracę nad kodem można prowadzić na Windowsie. [Development builds](https://docs.expo.dev/develop/development-builds/introduction/), [infrastruktura EAS Build](https://docs.expo.dev/build/introduction/).
+Expo Go has a fixed set of native modules. A custom Swift/Kotlin module or a Rust library accessed through a native bridge requires a development build. Expo supports that extension without rewriting the app. EAS builds iOS apps on macOS servers, so code development can take place on Windows. [Development builds](https://docs.expo.dev/develop/development-builds/introduction/), [EAS Build infrastructure](https://docs.expo.dev/build/introduction/).
 
-## Sesja i granice prototypu
+## Sessions and prototype boundaries
 
-Host jest właścicielem sesji. Zerwanie WebSocketu nie oznacza zakończenia powłoki. Ponowne dołączenie odtwarza ograniczoną historię wyjścia; nie gwarantuje idealnego odtworzenia każdego programu pełnoekranowego. Zatrzymanie hosta lub komputera kończy tę ciągłość. Nie przejmujemy dowolnego terminala otwartego wcześniej w innym programie.
+The host owns sessions. Losing the WebSocket connection does not terminate the shell. Reconnecting replays bounded output history; it does not guarantee a perfect reconstruction of every full-screen program. Stopping the host or computer ends that continuity. We do not take over arbitrary terminals previously opened in another program.
 
-Claude Code i Codex pozostają oryginalnymi programami uruchamianymi przez użytkownika na hoście. Telefon nie pobiera ich tokenów OAuth i nie zamienia abonamentu w własny dostęp do API. Widoki rozmów, zgód i zmian są obecnie demonstracją; ich rzeczywista integracja wymaga osobnych adapterów i sprawdzenia oficjalnych interfejsów oraz zasad dostawców.
+Claude Code and Codex remain the original programs, launched by the user on the host. The phone does not extract their OAuth tokens or turn a subscription into its own API access. Conversation, approval and change views are currently demonstrations; real integration requires separate adapters and verification of the providers' official interfaces and policies.
 
-Pierwszy host nie potrzebuje bazy danych ani usługi chmurowej. Lista sesji i bufor wyjścia należą do procesu hosta. Trwałe metadane, wznowienie po restarcie, wiele zaufanych urządzeń i odwoływanie ich uprawnień są kolejnymi funkcjami.
+The host saves groups and their revisions in local SQLite. The process list, live sessions' group assignments and output buffers belong to the host process. After a restart, groups remain, but previous shells are not restored. No cloud service is required.
 
-## Protokół i zaufanie
+Multiple clients can subscribe to the output of the same session. A separate control lease determines who can send input and set the PTY dimensions. Takeover is explicit, creates a new lease and invalidates the previous one. A viewer neither resizes the process nor answers terminal queries. Metadata uses revisions, and session creation uses `requestId` correlation, so names are not used to identify responses. Details: [v2 contract](protocol-v2.md).
 
-Parowanie przenosi adres hosta i losowy 32-bajtowy sekret. Jest to poświadczenie dostępu do powłoki, a nie klucz API dostawcy AI. QR jest wielokrotnego użytku; nie należy przedstawiać go jako jednorazowego zaproszenia. SecureStore chroni zapis na natywnym kliencie przy użyciu mechanizmów iOS i Androida. Klient przeglądarkowy zachowuje parowanie tylko w pamięci strony. [Expo SecureStore](https://docs.expo.dev/versions/v57.0.0/sdk/securestore/).
+Module boundaries, data validation and testing rules are described in the [engineering conventions](engineering.md).
 
-Komunikat secretbox zawiera challenge bieżącego połączenia, kierunek, numer kolejny i dane polecenia. Klient dodaje własny świeży 32-bajtowy nonce do zaszyfrowanego żądania uwierzytelnienia i wymaga jego powtórzenia w uwierzytelnionej odpowiedzi hosta. Dzięki temu odtworzenie nagranego handshake nie udaje nowego połączenia z hostem. Każda wiadomość używa dodatkowo losowego 24-bajtowego nonce szyfru. Odbiorca weryfikuje uwierzytelnienie i oczekiwany numer wiadomości; nie odtwarza automatycznie wpisanych poleceń po reconnect. Klucz nie jest wysyłany w URL-u ani w handshake WebSocketu.
+## Protocol and trust
 
-Format secretbox wybrano dla zgodności między obecnym klientem TweetNaCl a hostem Rust. Biblioteka `crypto_secretbox` deklaruje brak niezależnego audytu; cały protokół również wymaga przeglądu przed wdrożeniem produkcyjnym. Szyfrowanie treści nie ukrywa metadanych ruchu i nie chroni przed przejętym telefonem lub komputerem. Prototyp jest przeznaczony do LAN-u albo prywatnego VPN-u, bez bezpośredniego wystawiania hosta do internetu. [Dokumentacja RustCrypto secretbox](https://docs.rs/crypto_secretbox/0.1.1/crypto_secretbox/).
+Pairing transfers the host address and a random 32-byte secret. This is a shell-access credential, not an AI provider API key. The QR code is reusable and must not be presented as a one-time invitation. SecureStore protects storage in the native client using iOS and Android facilities. The browser client keeps pairing data only in page memory. [Expo SecureStore](https://docs.expo.dev/versions/v57.0.0/sdk/securestore/).
 
-## Kolejne zastosowania Rusta
+A secretbox message contains the current connection challenge, direction, sequence number and command data. The client adds its own fresh 32-byte nonce to the encrypted authentication request and requires the authenticated host response to echo it. This prevents a recorded handshake from impersonating a fresh connection to the host. Every message also uses a random 24-byte cipher nonce. The receiver verifies authentication and the expected message number; it does not automatically resend typed commands after reconnecting. The key is not sent in the URL or WebSocket handshake.
 
-- Pakowanie hosta jako usługi i podpisanych binarek dla trzech systemów.
-- Zarządzanie katalogami projektów i worktree na hoście, z jawnymi operacjami i limitami.
-- Wspólny moduł SSH lub parser strumieni, jeśli pomiary i wymagania uzasadnią bibliotekę natywną.
-- Opcjonalna aplikacja desktopowa korzystająca z istniejącego hosta. Wybór jej frameworka nie jest potrzebny do obecnej wersji mobilnej.
+The secretbox format was chosen for compatibility between the current TweetNaCl client and Rust host. The `crypto_secretbox` library states that it has not undergone an independent audit; the entire protocol also needs review before production deployment. Payload encryption does not hide traffic metadata or protect against a compromised phone or computer. The prototype is intended for LAN or private VPN use, without exposing the host directly to the internet. [RustCrypto secretbox documentation](https://docs.rs/crypto_secretbox/0.1.1/crypto_secretbox/).
 
-Stan architektury: 16 października 2026. Wyniki faktycznie wykonanych sprawdzeń i pozostałe testy urządzeń opisuje [macierz testów](testing.md).
+## Further uses of Rust
+
+- Packaging the host as a service and signed binaries for three operating systems.
+- Managing project directories and worktrees on the host, with explicit operations and limits.
+- A shared SSH module or stream parser, if measurements and requirements justify a native library.
+- An optional desktop app using the existing host. Choosing its framework is unnecessary for the current mobile version.
+
+Architecture status: October 16, 2026. The [test matrix](testing.md) records checks actually performed and remaining device tests.

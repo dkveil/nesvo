@@ -62,10 +62,14 @@ terminal.textarea?.setAttribute('autocapitalize', 'off');
 terminal.textarea?.setAttribute('autocorrect', 'off');
 terminal.textarea?.setAttribute('spellcheck', 'false');
 
-terminal.onData((data) => emit({ channel: TERMINAL_CHANNEL, type: 'data', data }));
-terminal.onResize(({ cols, rows }) =>
-  emit({ channel: TERMINAL_CHANNEL, type: 'resize', cols, rows }),
-);
+let readOnly = false;
+let suppressWriteResponses = false;
+let previousWriteAllowedResponses = true;
+let fixedSize: { cols: number; rows: number } | null = null;
+
+terminal.onData((data) => {
+  if (!readOnly && !suppressWriteResponses) emit({ channel: TERMINAL_CHANNEL, type: 'data', data });
+});
 
 let lastCommandId = 0;
 function receive(event: MessageEvent) {
@@ -88,29 +92,84 @@ function receive(event: MessageEvent) {
   if (
     message.type === 'write' &&
     typeof message.data === 'string' &&
-    message.data.length <= 1_048_576
+    message.data.length <= 1_048_576 &&
+    typeof message.allowResponses === 'boolean'
   ) {
     lastCommandId = message.id;
     const id = message.id;
-    terminal.write(message.data, () => emit({ channel: TERMINAL_CHANNEL, type: 'written', id }));
+    suppressWriteResponses = !message.allowResponses;
+    // CAN prevents an unfinished historical query from becoming an allowed
+    // response when its final byte happens to arrive in the first live chunk.
+    const prefix = message.allowResponses && !previousWriteAllowedResponses ? '\x18' : '';
+    previousWriteAllowedResponses = message.allowResponses;
+    terminal.write(prefix + message.data, () => {
+      suppressWriteResponses = false;
+      emit({ channel: TERMINAL_CHANNEL, type: 'written', id });
+    });
   } else if (message.type === 'reset') {
     lastCommandId = message.id;
     // The bridge sends resets only after the previous write's completion ACK.
     terminal.reset();
   } else if (message.type === 'focus') {
     lastCommandId = message.id;
-    terminal.focus();
+    if (!readOnly) terminal.focus();
+  } else if (
+    message.type === 'configure' &&
+    typeof message.readOnly === 'boolean' &&
+    ((message.cols === undefined && message.rows === undefined) ||
+      (Number.isInteger(message.cols) &&
+        message.cols >= 10 &&
+        message.cols <= 300 &&
+        Number.isInteger(message.rows) &&
+        message.rows >= 2 &&
+        message.rows <= 150))
+  ) {
+    lastCommandId = message.id;
+    readOnly = message.readOnly;
+    terminal.options.disableStdin = readOnly;
+    terminal.options.cursorBlink = !readOnly;
+    if (readOnly) terminal.blur();
+    fixedSize = message.cols === undefined ? null : { cols: message.cols, rows: message.rows };
+    applyViewport();
   }
 }
 window.addEventListener('message', receive);
 document.addEventListener('message', receive as EventListener);
 
 let resizeFrame: number | null = null;
+let localSize = '';
+function applyViewport() {
+  if (!container || !container.clientWidth || !container.clientHeight) return;
+  // Report the local available grid separately from the canonical host grid.
+  const local = fit.proposeDimensions();
+  if (local && `${local.cols}:${local.rows}` !== localSize) {
+    localSize = `${local.cols}:${local.rows}`;
+    emit({ channel: TERMINAL_CHANNEL, type: 'resize', ...local });
+  }
+  const element = terminal.element;
+  if (!element) return;
+  element.style.transform = '';
+  element.style.width = '';
+  element.style.height = '';
+  if (fixedSize) {
+    terminal.resize(fixedSize.cols, fixedSize.rows);
+    const screen = element.querySelector<HTMLElement>('.xterm-screen');
+    if (screen) {
+      const width = screen.offsetWidth + 3;
+      const height = screen.offsetHeight;
+      const scale = Math.min(1, container.clientWidth / width, container.clientHeight / height);
+      element.style.width = `${width}px`;
+      element.style.height = `${height}px`;
+      element.style.transformOrigin = 'top left';
+      element.style.transform = `scale(${scale})`;
+    }
+  } else fit.fit();
+}
 function scheduleFit() {
   if (resizeFrame !== null) return;
   resizeFrame = requestAnimationFrame(() => {
     resizeFrame = null;
-    if (container && container.clientWidth > 0 && container.clientHeight > 0) fit.fit();
+    applyViewport();
   });
 }
 new ResizeObserver(scheduleFit).observe(container);
@@ -121,7 +180,7 @@ document.fonts.ready.then(scheduleFit);
 // The user gesture is required to show the software keyboard on iOS.
 container.addEventListener('click', (event) => {
   if ((event.target as Element | null)?.closest('a')) event.preventDefault();
-  if (!terminal.hasSelection()) terminal.focus();
+  if (!readOnly && !terminal.hasSelection()) terminal.focus();
 });
 document.addEventListener(
   'click',

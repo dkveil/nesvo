@@ -1,149 +1,162 @@
-# Testowanie Pocket Sessions
+# Testing
 
-Ten dokument jest planem testów prototypu. Niezaznaczone przypadki pozostają do wykonania. Działanie w Chromium ani poprawna kompilacja nie oznaczają, że aplikację sprawdzono na fizycznym iPhonie.
+This document separates automated checks from physical-device testing. Unchecked scenarios remain unverified. A Chromium viewport test is not a native iOS keyboard or safe-area test.
 
-## Stan weryfikacji
+## Verified behavior — October 16, 2026
 
-Sprawdzono osobno lokalny renderer terminala w Chromium: uruchomienie w sandboxowanym iframe, renderowanie wyjścia i ANSI, wejście `pwd` + Enter bez powielania znaków, zmianę rozmiaru, bracketed paste oraz traktowanie ciągu przypominającego HTML jako tekstu.
+| Environment                        | Result                                                                                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TypeScript / ESLint                | Passed with strict indexed access and import-layer rules                                                                                                |
+| Expo dependencies                  | SDK 57 dependency alignment passed                                                                                                                      |
+| Expo export                        | iOS bundle export passed; this is not a signed native build                                                                                             |
+| Client protocol tests              | Authentication replay, malformed messages, group navigation and control-lease lifecycle passed                                                          |
+| Rust host unit tests               | Groups, SQLite revisions/reload, replay filtering and bounded queue behavior passed                                                                     |
+| Real host integration, Windows     | Legacy authentication/PTY lifecycle and v2 multi-client synchronization passed                                                                          |
+| Mobile web + real host             | Two Chromium clients: nested groups, session creation, shared output, takeover, move, reconnect and close passed                                        |
+| Terminal renderer                  | ANSI/input smoke, bounded backpressure, canonical observer grid and query-response suppression passed                                                   |
+| Rust TUI                           | Build, formatting, Clippy and unit tests passed locally on Windows                                                                                      |
+| Interactive TUI, Windows ConPTY    | Group/subgroup creation, real PowerShell input, two panes and detach passed                                                                             |
+| TUI ↔ mobile web handoff           | A variable set in the TUI shell was read after mobile takeover and again after returning to TUI; mobile group rename appeared in TUI                    |
+| Physical iPhone / Expo Go          | Launch, demo conversation, demo terminal and pairing form confirmed by user screenshots. Keyboard overlap was reported; corrections await device retest |
+| Physical Android                   | Not tested                                                                                                                                              |
+| iOS development build / TestFlight | No verified distribution                                                                                                                                |
+| LTE/5G over private VPN            | Not tested                                                                                                                                              |
 
-Sprawdzono osobno silnik demonstracyjny: polecenia, Ctrl+C, backspace, CRLF przekazane w osobnych porcjach, pomijanie sekwencji nawigacji, czyszczenie widoku oraz jawne oznaczenie demo. Te kontrole nie potwierdzają integracji z Rustem ani zachowania natywnego WebView.
+CI builds and tests the Rust programs natively on Windows, macOS and Linux. Check the relevant commit's workflow result before claiming a particular platform passed. A native CI build does not verify every interactive terminal emulator or a physical phone.
 
-| Środowisko                        | Stan                                                                                                                  |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Renderer w Chromium               | Ograniczony smoke test wykonany                                                                                       |
-| Silnik fikcyjnej powłoki          | Smoke test wykonany                                                                                                   |
-| Cała aplikacja webowa + host Rust | PASS na Windows / Chromium, 16.10.2026: polecenie w PowerShell, reconnect, odtworzenie, kolejne polecenie, zamknięcie |
-| Fizyczny iPhone + Expo Go         | Uruchomienie, rozmowa demo, terminal demo i formularz potwierdzone zrzutami 16.10.2026. Zgłoszone zasłanianie pól przez klawiaturę; poprawka czeka na ponowny test na urządzeniu |
-| Fizyczny Android + Expo Go        | Do wykonania                                                                                                          |
-| iOS development build             | Do wykonania po zbudowaniu                                                                                            |
-| TestFlight                        | Brak potwierdzonego wydania                                                                                           |
-| LTE/5G przez prywatny VPN         | Do wykonania po konfiguracji                                                                                          |
+### What the synchronization tests prove
 
-W pierwszej wersji wykonano także TypeScript, ESLint, Expo Doctor (20/20) i eksport kodu klienta dla iOS, Androida oraz web. Eksport nie jest kompilacją podpisanej aplikacji natywnej. Test autoryzacji klienta odrzuca nagrane uzgadnianie połączenia. Test przeciążenia renderera wysyła 8 MiB przy zatrzymanym potwierdzeniu przetworzenia: najwyżej jeden fragment pozostaje w locie, a ograniczony bufor sygnalizuje pominięcie starych danych.
+`tests/sync.integration.test.ts` uses a real host and separately authenticated clients. It verifies:
 
-Po zmianie wyglądu ponownie sprawdzono listę, filtrowanie, wyszukiwanie, demo rozmowy, tworzenie sesji, wejście terminala, menu boczne i walidację parowania w Chromium przy szerokości 390 px. Ponowny test prawdziwego hosta Rust na Windowsie przeszedł wykonanie polecenia, rozłączenie i ponowne połączenie, odtworzenie wyjścia oraz zamknięcie. Eksport klienta iOS i Android również przeszedł. Wyniki nie potwierdzają jeszcze zachowania na fizycznym telefonie.
+- Parent and child groups are visible on both clients.
+- Invalid parents, hierarchy cycles, nonempty deletion and stale revisions are rejected.
+- Same-name session creation is correlated by request ID.
+- Session moves propagate without creating another process.
+- Both viewers receive output; only the current private lease can input or resize.
+- Explicit takeover and reacquisition invalidate older leases.
+- A shell variable survives switching controllers and client disconnect.
+- One connection can observe several sessions; unsubscribe stops that stream.
+- SQLite preserves groups and revisions across host restart without inventing live processes.
 
-Po zgłoszeniu niezgodności Expo Go dopasowano cały klient do SDK 57, zgodnego z wersją 57.0.9 dostępną w polskim App Store 16.10.2026. Sprawdzono `expo install --check`, Expo Doctor (21/21), TypeScript, ESLint, testy przeglądarkowe i połączenie z prawdziwym hostem Rust. Manifest serwera dla iOS zwraca `sdkVersion: 57.0.0` oraz `runtimeVersion: exposdk:57.0.0`, a wskazany pakiet startowy iOS jest dostępny (HTTP 200). To potwierdza naprawę konfiguracji serwera, ale uruchomienie na telefonie nadal wymaga ponownego testu użytkownika.
+`tests/live.browser.ts` exercises the corresponding UI with two browser contexts. It asserts passive input is read-only and verifies real command output using markers that do not appear contiguously in the input.
 
-Po logowaniu kodem urządzenia potwierdzono konto przez `expo whoami` oraz powiązanie z projektem EAS `bc10f67e-42f9-4878-af56-7eefd9ad89d9` przez `eas project:info`. Zrestartowano Metro; manifest iOS zawiera właściwy identyfikator projektu, właściciela oraz SDK 57, a pakiet startowy zwraca HTTP 200. To sprawdzenie serwera nie potwierdza jeszcze logowania Expo Go ani uruchomienia aplikacji na telefonie.
+The renderer tests also verify that historical CSI/DCS queries cannot inject responses into the shell, while authorized live queries can. These tests cover the bundled xterm implementation; they do not prove complete compatibility with every CLI.
 
-Po otrzymaniu zrzutów z fizycznego iPhone'a poprawiono kompensację górnego safe area w ekranie sesji, zmniejszanie terminala, lokalne safe area modali oraz natywne przewijanie formularza parowania nad klawiaturą. TypeScript, ESLint, test przeglądarkowy i eksport iOS przeszły. Test przeglądarkowy sprawdza dodatkowo pola i przyciski przy wysokości 300–440 px; **nie symuluje klawiatury iOS ani jej animacji**.
+### Interactive TUI check performed
 
-Retest na iPhonie po przeładowaniu:
+A real Windows ConPTY hosted the TUI. The check created a group, subgroup and shell through keyboard forms, acquired control with `i`, assigned a PowerShell variable, and printed a marker. A mobile-size Chromium client attached to that same session, observed the marker, took control and read the variable. Renaming the subgroup in the mobile UI updated the live TUI tree.
 
-- [ ] Rozmowa i terminal: pole wpisywania oraz przycisk wysyłania są całkowicie nad klawiaturą, także po jej kilkukrotnym otwarciu.
-- [ ] Terminal: wysokość wyjścia dopasowuje się do klawiatury, a klawisze pomocnicze pozostają osiągalne.
-- [ ] Parowanie: aktywne pole JSON przewija się nad klawiaturę; można przewinąć do przycisków wklejania i łączenia. „Gotowe” chowa klawiaturę.
-- [ ] Nowa sesja: utworzenie sesji i anulowanie zamykają klawiaturę przed przejściem dalej.
-- [ ] Obrót z otwartą klawiaturą oraz duży rozmiar tekstu: brak przyciętych przycisków i konfliktu z wycięciem ekranu.
+The TUI then reacquired control, read the same variable, opened a second pane and executed another command. Ctrl+G followed by `q` restored the outer terminal. A new `--list` invocation confirmed both shells still running with no controller. This is an interactive Windows test, not a physical iPhone or interactive macOS test.
 
-Powtarzalne testy przeglądarkowe (najpierw uruchom `npm run web` w drugim terminalu):
+## Local checks
+
+Run from the repository root. On Windows, `.cmd` avoids the PowerShell execution-policy issue.
 
 ```powershell
-npx playwright install chromium
-npm run test:web
-npm run test:terminal
-cargo build --manifest-path host/Cargo.toml
-npm run test:live
+npm.cmd ci
+npm.cmd run terminal:build
+npx.cmd expo install --check
+npm.cmd run typecheck
+npm.cmd run lint
+npm.cmd run test:client
+cargo fmt --manifest-path host/Cargo.toml --check
+cargo clippy --manifest-path host/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path host/Cargo.toml --locked
+cargo build --manifest-path host/Cargo.toml --locked
+npm.cmd run test:host
+npm.cmd run test:sync
+cargo fmt --manifest-path tui/Cargo.toml --check
+cargo clippy --manifest-path tui/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path tui/Cargo.toml --locked
+cargo build --manifest-path tui/Cargo.toml --locked
 ```
 
-`APP_URL` zmienia domyślny adres `http://localhost:8081`. Opcjonalne `PLAYWRIGHT_CHROMIUM_EXECUTABLE` wskazuje istniejący plik wykonywalny Chrome/Chromium. Test live uruchamia własny host na losowym porcie, tworzy testowe powłoki i zamyka je po teście. Pliki parowania i zrzuty trafiają do ignorowanego `artifacts/`.
-
-Testy protokołu:
+For browser tests, start the Expo web preview first. Set `APP_URL` if it is not on port 8081. Use an installed Playwright Chromium or specify its executable:
 
 ```powershell
-npm run test:client
-cargo test --manifest-path host/Cargo.toml
-npm run test:host
+$env:APP_URL = 'http://localhost:8082'
+$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+npm.cmd run test:web
+npm.cmd run test:live
+npm.cmd run test:terminal
 ```
 
-## Przygotowanie
+Browser test screenshots and temporary pairing files belong in ignored `artifacts/`, never in Git. Do not share a pairing QR, key or private terminal content in reports.
 
-1. Zapisz commit lub datę testowanej wersji, model telefonu, wersję systemu, wersję Expo Go i system hosta.
-2. Zainstaluj zależności klienta: `npm install`.
-3. Uruchom `npx tsc --noEmit` oraz `cargo test --manifest-path host/Cargo.toml`. Zapisz rzeczywiste wyniki; obecność tej instrukcji nie oznacza ich zaliczenia.
-4. W jednym terminalu uruchom `npm start`. Na iPhonie otwórz aplikację z kodu Expo.
-   Przed otwarciem na fizycznym iPhonie zaloguj CLI przez `npx.cmd eas-cli@latest login --device` oraz Expo Go do tego samego konta. Sprawdź `npx.cmd expo whoami`; samo działanie serwera bez błędów nie potwierdza logowania. Na Windowsie można używać `npm.cmd` i `npx.cmd`, gdy PowerShell blokuje skrypty `.ps1`.
-5. W drugim terminalu uruchom `cargo run --manifest-path host/Cargo.toml -- --lan --workspace "C:\Users\Damian\dev"`, używając istniejącego katalogu własnego komputera.
-6. Zapewnij dostęp telefonu do adresu hosta. Na pierwszą próbę użyj tego samego Wi-Fi i aktywnego komputera.
-7. W aplikacji zeskanuj kod **hosta Pocket Sessions**. To inny kod niż QR Expo.
+## Phone setup
 
-Nie umieszczaj kodu parowania ani jego klucza w nagraniu lub raporcie. Wystarczy wynik połączenia oraz adres hosta bez sekretu.
+1. Install dependencies and rebuild the terminal asset.
+2. Run `npm.cmd start`.
+3. Sign into the same Expo account in CLI and Expo Go. Use `npx.cmd eas-cli@latest login --device` and verify with `npx.cmd expo whoami`.
+4. Scan Expo's QR to open the mobile app.
+5. In another terminal, start the host with `--lan` and an existing workspace directory.
+6. Ensure the phone can reach the advertised host address and port; start on the same Wi-Fi.
+7. Scan the host's separate pairing QR inside the app.
+8. Create or open a session and choose **Przejmij sterowanie** (take control) before typing.
 
-## Podstawowy test na fizycznym iPhonie
+The app was aligned to Expo SDK 57 after an incompatibility report from the physical iPhone. Dependency checks and the iOS manifest verified the matching runtime. EAS project linkage and CLI sign-in were also verified. These infrastructure checks do not substitute for device interaction.
 
-| Przypadek            | Czynność                                                  | Oczekiwany wynik                                                             | Wynik |
-| -------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------- | ----- |
-| Uruchomienie         | Otwórz projekt w Expo Go                                  | Ekran nie jest przycięty przez wycięcie i dolny obszar systemu               | ☐     |
-| Demo                 | Otwórz przykładową rozmowę i terminal                     | Demo jest wyraźnie oznaczone; nic nie sugeruje aktywnego połączenia z AI     | ☐     |
-| Aparat               | Otwórz skaner i przyznaj dostęp                           | QR hosta prowadzi do połączenia bez wielokrotnych prób dla jednego skanu     | ☐     |
-| Brak aparatu         | Odmów dostępu, wróć do formularza                         | Dostępna jest czytelna informacja i ręczne wklejenie kodu                    | ☐     |
-| Błędne parowanie     | Wklej niepełny JSON lub niewłaściwy klucz                 | Aplikacja pokazuje błąd; nie tworzy sesji                                    | ☐     |
-| Nowa sesja           | Utwórz sesję po podłączeniu                               | Pojawia się prawdziwa powłoka hosta i katalog zgodny z workspace             | ☐     |
-| Pole polecenia       | Wyślij `echo POCKET_PHONE_1` osobnym polem                | Polecenie wykonuje się dokładnie raz                                         | ☐     |
-| Klawiatura terminala | Dotknij terminala i wpisz `pwd` + Enter                   | Klawiatura się otwiera; brak pomijania albo powielania znaków                | ☐     |
-| Edycja               | Wpisz omyłkę, użyj backspace i popraw ją                  | Ostateczna treść zgadza się z wpisaną komendą                                | ☐     |
-| Polskie znaki        | Wpisz `echo Zażółć gęślą jaźń`                            | Unicode jest czytelny i nie uszkadza kolejnych wierszy                       | ☐     |
-| Klawisze pomocnicze  | Sprawdź strzałki historii i Tab w obsługującej je powłoce | Klawisze trafiają do powłoki jako sterowanie                                 | ☐     |
-| Ctrl+C               | Przerwij nieszkodliwe dłuższe polecenie, np. lokalny ping | Polecenie się zatrzymuje; powłoka pozostaje dostępna                         | ☐     |
-| Schowanie klawiatury | Zamknij i otwórz klawiaturę kilka razy                    | Terminal zmienia rozmiar; pole wejścia pozostaje osiągalne                   | ☐     |
-| Obrót                | Obróć telefon podczas pracy                               | Terminal otrzymuje nowy rozmiar; można dalej wpisywać                        | ☐     |
-| Schowek              | Wklej krótki tekst, następnie tekst wielowierszowy        | Tekst zachowuje treść; zachowanie Entera zależy od aktywnej powłoki/programu | ☐     |
-| Zaznaczanie          | Zaznacz fragment wyjścia i spróbuj skopiować              | Można skopiować właściwy tekst bez przypadkowego wysłania polecenia          | ☐     |
-| Historia             | Wygeneruj wiele nieszkodliwych wierszy i przewiń          | Przewijanie jest płynne, a widok pozwala wrócić do bieżącego wyjścia         | ☐     |
-| VoiceOver            | Otwórz listę i terminal z aktywnym VoiceOver              | Przyciski mają etykiety; można znaleźć pole wejścia i wrócić do listy        | ☐     |
+## Physical-device checklist
 
-Wynik „wymaga poprawki” dla zaznaczania, klawiatury czy przewijania jest ważnym wynikiem prototypu. To kryteria oceny renderera WebView, nie funkcje uznane za gotowe bez testu na urządzeniu.
+| Scenario            | Expected behavior                                                  | Verified |
+| ------------------- | ------------------------------------------------------------------ | -------- |
+| Launch / safe areas | Content clears the notch and home indicator                        | ☐        |
+| Demo                | Sample content remains explicitly labeled                          | ☐        |
+| Pairing / camera    | Permission, denial and manual JSON fallback are usable             | ☐        |
+| Invalid pairing     | Clear error; no shell is created                                   | ☐        |
+| Groups / subgroups  | Create, rename, reparent and assign sessions; other client updates | ☐        |
+| Keyboard / composer | Input and send action stay visible; fields scroll above keyboard   | ☐        |
+| Terminal typing     | Characters and Enter execute exactly once                          | ☐        |
+| Editing             | Backspace, Unicode, arrows and Tab reach the intended shell        | ☐        |
+| Ctrl+C              | Interrupts a harmless running command without closing the client   | ☐        |
+| Keyboard hide/show  | Repeated transitions preserve input and layout                     | ☐        |
+| Rotation            | Controller resize updates the host; observer does not resize it    | ☐        |
+| Clipboard           | Short and multiline paste behave correctly for the active shell    | ☐        |
+| Selection / history | Copying and scrolling do not accidentally send input               | ☐        |
+| VoiceOver           | Controls have useful labels and input can be reached               | ☐        |
+| Two sessions        | Output and input stay isolated while switching                     | ☐        |
+| Takeover            | Other device becomes read-only and stale input is rejected         | ☐        |
+| Background / lock   | Host continues work; foreground return reauthenticates             | ☐        |
+| Network loss        | Disconnection is visible; input is not queued or replayed          | ☐        |
+| Reconnect           | Existing process and available output remain accessible            | ☐        |
+| Stop / shell exit   | Correct session ends; other sessions continue                      | ☐        |
+| Host restart        | Groups persist; old processes are not reported as running          | ☐        |
+| Computer sleep      | Unreachable host is reported honestly                              | ☐        |
 
-## Wiele sesji i powrót do pracy
+The keyboard fix adjusts top safe-area compensation, shrinking terminal space, modal safe areas and pairing-form scrolling. Browser compact-height regressions pass, but the original iPhone screenshots require a new device check.
 
-| Przypadek             | Czynność                                                        | Oczekiwany wynik                                                               | Wynik |
-| --------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----- |
-| Dwie sesje            | Utwórz A i B; w każdej wypisz inne oznaczenie                   | Każda ma własny proces i wyjście                                               | ☐     |
-| Przełączanie          | Wróć do listy i kilka razy przełącz A / B                       | Wyjście i polecenia nie trafiają do niewłaściwej sesji                         | ☐     |
-| Powrót po rozłączeniu | Rozłącz klienta, zostaw host aktywny, połącz ponownie           | Istniejące sesje pozostają na liście i można do nich dołączyć                  | ☐     |
-| Praca w tle           | Uruchom nieszkodliwe polecenie, zablokuj telefon na minutę      | Host może kontynuować pracę; po powrocie odtwarza się dostępna historia        | ☐     |
-| Brak sieci            | Wyłącz Wi-Fi przy braku alternatywnej trasy                     | Aplikacja sygnalizuje rozłączenie; nie obiecuje wysłania komendy               | ☐     |
-| Bez powtórzeń         | Podczas braku sieci spróbuj wysłać oznaczenie, następnie połącz | Niewysłane wejście nie wykonuje się automatycznie po powrocie                  | ☐     |
-| Zakończenie           | Zamknij A przez potwierdzenie zakończenia                       | A kończy proces; B pozostaje aktywna                                           | ☐     |
-| Wyjście powłoki       | Wpisz `exit` w jednej sesji                                     | Stan sesji wskazuje zakończenie; reszta aplikacji działa                       | ☐     |
-| Restart hosta         | Zatrzymaj host, uruchom ponownie                                | Poprzednie procesy nie są przedstawiane jako nadal aktywne                     | ☐     |
-| Uśpienie komputera    | Uśpij host i spróbuj się połączyć                               | Brak dostępnego hosta jest czytelny; aplikacja nie deklaruje kontynuacji pracy | ☐     |
+## Agent CLI compatibility
 
-Powrót do terminala odtwarza ograniczoną historię tekstową, a nie pełny snapshot programu. Osobno odnotuj potrzebę odświeżenia ekranu w aplikacjach pełnoekranowych.
+- [ ] Start an installed `claude` or `codex` using its existing subscription login.
+- [ ] Run a small task and handle a prompt or approval in the terminal.
+- [ ] Switch sessions, return, and verify alternate-screen and Unicode rendering.
+- [ ] Transfer control between TUI and phone during a running task.
+- [ ] Record any redraw needed after late attachment.
+- [ ] Confirm the app never asks for an AI API key or presents demo conversation as live output.
 
-## Narzędzia agentowe
+This uses the user's real subscription limits. No provider login automation or universal CLI compatibility is assumed.
 
-- [ ] Uruchom wcześniej zainstalowane `codex` lub `claude` z terminala hosta.
-- [ ] Sprawdź istniejące logowanie użytkownika albo przejdź oryginalny proces logowania danego narzędzia.
-- [ ] Wyślij małe zadanie i sprawdź czytelność wyjścia oraz obsługę pytań w terminalu.
-- [ ] Przejdź do drugiej sesji, wróć i sprawdź ciągłość pracy.
-- [ ] Potwierdź, że Pocket Sessions nie wymaga klucza API i nie wyświetla fikcyjnej rozmowy jako wyniku aktywnego agenta.
+## Remaining platform checks
 
-Test wykorzystuje rzeczywiste limity własnego konta. Nie zakłada automatyzacji logowania ani zgodności każdej wersji CLI.
+- [ ] Android keyboard, paste, system Back, camera, rotation and reconnect.
+- [ ] Native SecureStore restore and forgetting a host.
+- [ ] Interactive macOS/Linux TUI, signals and platform keyboard behavior.
+- [ ] Full-screen programs and high-output reconnect across all renderers.
+- [ ] LTE/5G and Wi-Fi transitions after private VPN configuration.
+- [ ] Development build / TestFlight installation, signing and device behavior.
 
-## Osobne testy platformowe
-
-- [ ] Android: powtórz parowanie, klawiaturę, wklejanie, przycisk systemowy Wstecz, obrót i reconnect.
-- [ ] Przeglądarka: sprawdź ręczne wklejenie kodu, zmianę rozmiaru i brak zachowania parowania po przeładowaniu strony.
-- [ ] Natywny klient: po ponownym otwarciu sprawdź odczyt parowania z SecureStore oraz możliwość usunięcia połączenia.
-- [ ] Mac/Linux jako host: osobno zweryfikuj tworzenie i zamykanie procesów, Unicode, sygnały i resize PTY.
-- [ ] Prywatny VPN: dopiero po jego konfiguracji przetestuj iPhone na LTE/5G oraz powrót na Wi-Fi. Brak tego testu oznacza niezweryfikowany dostęp spoza LAN.
-- [ ] Development build / TestFlight: powtórz podstawową macierz na zbudowanej aplikacji; wynik Expo Go nie obejmuje podpisywania, instalacji ani konfiguracji wydania.
-
-## Raport z testu
+## Report template
 
 ```text
-Wersja / commit:
-Data:
-Telefon i system:
+Commit:
+Date:
+Phone and OS:
 Expo Go / development build / TestFlight:
-System hosta:
-Sieć: LAN / VPN / inne
-Przypadek:
-Kroki:
-Oczekiwany wynik:
-Wynik rzeczywisty:
-Czy problem się powtarza:
-Załącznik bez kodu parowania i prywatnej treści terminala:
+Host OS and terminal emulator:
+Network: LAN / VPN / other
+Scenario and steps:
+Expected behavior:
+Actual behavior:
+Reproducible:
+Attachment with pairing secrets and private terminal content removed:
 ```

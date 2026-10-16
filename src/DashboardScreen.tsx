@@ -13,6 +13,7 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, common, Icon, IconButton } from './components';
 import { openSession, useAppState } from './state/AppState';
+import { groupDescendants, groupPath } from './groups';
 import { colors as c, mono } from './theme';
 
 const navigation = [
@@ -41,8 +42,17 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
     connect,
     forget,
     resetDemo,
+    groups,
+    selectedGroup,
+    setSessionGroup,
   } = useAppState();
   const [menuOpen, setMenuOpen] = useState(false);
+  function newSession() {
+    setSessionGroup(selectedGroup === 'all' ? null : selectedGroup);
+    setCreateOpen(true);
+  }
+  const groupIds =
+    selectedGroup && selectedGroup !== 'all' ? groupDescendants(groups, selectedGroup) : null;
   const connectionLabel =
     mode === 'demo'
       ? 'Tryb demo'
@@ -53,6 +63,10 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
           : 'Rozłączono';
   const visible = sessions.filter(
     (session) =>
+      (selectedGroup === 'all' ||
+        (selectedGroup === null
+          ? !session.groupId
+          : !!session.groupId && groupIds?.has(session.groupId))) &&
       (filter === 'all' || session.status === 'attention') &&
       `${session.name} ${session.project} ${session.agent}`
         .toLocaleLowerCase()
@@ -64,7 +78,7 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
       <View style={s.header}>
         <IconButton name="menu-outline" label="Otwórz menu" onPress={() => setMenuOpen(true)} />
         <Text style={s.headerTitle}>{navigation.find((item) => item.id === tab)?.label}</Text>
-        <IconButton name="create-outline" label="Nowa sesja" onPress={() => setCreateOpen(true)} />
+        <IconButton name="create-outline" label="Nowa sesja" onPress={newSession} />
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
         {tab === 'sessions' && (
@@ -139,6 +153,18 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
                 </Pressable>
               ))}
             </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Zarządzaj grupami"
+              onPress={() => router.navigate('/groups')}
+              style={s.groupFilter}
+            >
+              <Icon name="folder-outline" size={18} />
+              <Text style={s.groupFilterText} numberOfLines={1}>
+                {selectedGroup === 'all' ? 'Wszystkie grupy' : groupPath(groups, selectedGroup)}
+              </Text>
+              <Icon name="chevron-forward" size={16} />
+            </Pressable>
             <View style={s.sessionList}>
               {visible.map((session) => (
                 <Pressable
@@ -171,6 +197,7 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
                     </Text>
                     <Text style={s.meta} numberOfLines={1}>
                       {session.agent} · {session.project}
+                      {session.groupId ? ` · ${groupPath(groups, session.groupId)}` : ''}
                       {session.status === 'done' ? ' · zakończona' : ''}
                     </Text>
                   </View>
@@ -269,12 +296,12 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
             </View>
             <View style={s.plainSection}>
               <Text style={s.sectionTitle}>Projekt open source</Text>
-              <Text style={common.body}>Rozwijany otwarcie, na licencji MIT.</Text>
+              <Text style={common.body}>nesvo · rozwijane otwarcie, na licencji MIT.</Text>
               <Button
                 label="Kod na GitHubie"
                 icon="logo-github"
                 secondary
-                onPress={() => void Linking.openURL('https://github.com/dkveil/pocket-sessions')}
+                onPress={() => void Linking.openURL('https://github.com/dkveil/nesvo')}
               />
             </View>
             <Text style={s.footnote}>
@@ -300,7 +327,7 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Rozpocznij nową sesję"
-            onPress={() => setCreateOpen(true)}
+            onPress={newSession}
             style={({ pressed }) => [s.newSession, pressed && s.pressed]}
           >
             <Icon name="add" size={23} color={c.text} />
@@ -331,7 +358,7 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
           />
           <SafeAreaView style={s.menu}>
             <View style={s.menuHeader}>
-              <Text style={s.headerTitle}>Twoja przestrzeń</Text>
+              <Text style={s.headerTitle}>nesvo</Text>
               <IconButton
                 name="close"
                 label="Zamknij nawigację"
@@ -359,6 +386,18 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
                   <Text style={s.menuLabel}>{item.label}</Text>
                 </Pressable>
               ))}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Grupy i podgrupy"
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.navigate('/groups');
+                }}
+                style={s.menuItem}
+              >
+                <Icon name="folder-outline" color={c.text} size={21} />
+                <Text style={s.menuLabel}>Grupy i podgrupy</Text>
+              </Pressable>
               {!!sessions.length && <Text style={s.menuSection}>Ostatnie sesje</Text>}
               {sessions.slice(0, 8).map((session) => (
                 <Pressable
@@ -443,6 +482,14 @@ const s = StyleSheet.create({
     paddingVertical: 10,
   },
   filters: { flexDirection: 'row', gap: 6, marginTop: -8 },
+  groupFilter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 44,
+    marginTop: -14,
+  },
+  groupFilterText: { color: c.muted, fontSize: 13, flex: 1 },
   filter: {
     minHeight: 44,
     paddingHorizontal: 14,

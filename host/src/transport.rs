@@ -1,5 +1,7 @@
 use crate::{
-    sessions::{Client, Command, PtyEvent, State},
+    protocol::Command,
+    sessions::{Client, PtyEvent, State},
+    storage::RevisionConflict,
     wire,
 };
 use anyhow::{Result, anyhow, ensure};
@@ -27,6 +29,10 @@ use tokio_tungstenite::{
 };
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
+// Eight simultaneous subscriptions can enqueue 8 * (32 replay chunks + 2
+// acknowledgments) before this connection's writer is scheduled again. Keep
+// this bounded, but leave room for that legitimate burst (~2 MiB of output).
+pub(crate) const CLIENT_EVENT_CAPACITY: usize = 512;
 
 fn origin_allowed(origin: Option<&str>, extra: &[String]) -> bool {
     let Some(origin) = origin else {
@@ -129,7 +135,7 @@ pub async fn handle(
         return Err(anyhow!("Authentication failed"));
     }
     let id = NEXT_CLIENT.fetch_add(1, Ordering::Relaxed);
-    let (event_tx, mut event_rx) = mpsc::channel(64);
+    let (event_tx, mut event_rx) = mpsc::channel(CLIENT_EVENT_CAPACITY);
     let (cancel_tx, mut cancelled) = watch::channel(false);
     {
         let mut state = state.lock().unwrap();
@@ -142,7 +148,7 @@ pub async fn handle(
         );
         state.send(
             id,
-            json!({"type":"connected", "clientNonce":client_nonce.unwrap()}),
+            json!({"type":"connected", "clientNonce":client_nonce.unwrap(), "clientId":id, "protocolVersion":2}),
         );
         state.send(id, state.list());
     }
@@ -177,12 +183,17 @@ pub async fn handle(
                     Some(Ok(Message::Text(text))) => {
                         if rate_start.elapsed() >= Duration::from_secs(1) { rate_start = Instant::now(); rate_count = 0; }
                         rate_count += 1;
-                        let decoded = (|| -> Result<Command> {
+                        let decoded = (|| -> Result<(Command, Option<String>)> {
                             ensure!(rate_count <= 300, "Message rate exceeded");
                             let value = wire::decode(&text, &key, &challenge, incoming_seq + 1)?;
-                            Ok(serde_json::from_value(value)?)
+                            let request_id = value.get("requestId").map(|value| {
+                                let id = value.as_str().ok_or_else(|| anyhow!("Invalid request ID"))?;
+                                ensure!(!id.is_empty() && id.len() <= 128 && !id.chars().any(char::is_control), "Invalid request ID");
+                                Ok(id.to_owned())
+                            }).transpose()?;
+                            Ok((serde_json::from_value(value)?, request_id))
                         })();
-                        let command = match decoded {
+                        let (command, request_id) = match decoded {
                             Ok(command) => command,
                             Err(_) => {
                                 let _ = timeout(Duration::from_secs(1), outgoing.send(Message::Close(Some(CloseFrame { code: CloseCode::Library(4003), reason: "Authentication or protocol validation failed".into() })))).await;
@@ -191,8 +202,14 @@ pub async fn handle(
                         };
                         incoming_seq += 1;
                         let mut state = state.lock().unwrap();
-                        if let Err(error) = state.command(id, command, &pty_events) {
-                            state.send(id, json!({"type":"error", "message":error.to_string()}));
+                        if let Err(error) = state.command(id, command, request_id.as_deref(), &pty_events) {
+                            let mut event = json!({"type":"error", "message":error.to_string()});
+                            if let Some(request_id) = request_id { event["requestId"] = request_id.into(); }
+                            if let Some(conflict) = error.downcast_ref::<RevisionConflict>() {
+                                event["code"] = "revision_conflict".into();
+                                event["revision"] = conflict.0.into();
+                            }
+                            state.send(id, event);
                         }
                     }
                     Some(Ok(Message::Ping(data))) => { timeout(Duration::from_secs(3), outgoing.send(Message::Pong(data))).await??; }

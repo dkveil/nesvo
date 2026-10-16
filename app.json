@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Sesje",
+    "name": "nesvo",
     "slug": "reveil-development",
     "version": "0.1.0",
     "scheme": "pocketsessions",
@@ -26,9 +26,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "android.permission.CAMERA"
-      ]
+      "permissions": ["android.permission.CAMERA"]
     },
     "web": {
       "favicon": "./assets/favicon.png"

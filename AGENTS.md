@@ -1,6 +1,10 @@
 This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 
+The product is **nesvo**. Write repository documentation and code comments in English. Keep important architectural decisions, protocol contracts, launch instructions and verification guidance versioned with their implementation. Preserve legacy pairing/storage and EAS identifiers unless a migration is explicitly implemented and tested.
+
 The host is Rust (`host/`); Node.js is only used by Expo tooling and tests. Do not replace the Rust host with a Node server. AI tools run as original CLI programs on the user's host, with their own subscription login; do not add AI API keys or direct model API calls.
+
+Follow `docs/engineering.md` for architecture and language conventions. Keep domain rules, application commands, adapters and rendering separate. Host state is authoritative; clients derive their views and never identify sessions by display name. Use strict TypeScript, validate protocol boundaries, keep render paths free of I/O, and test lifecycle/concurrency invariants. New Rust changes require fmt, Clippy and relevant tests on the supported CI platforms.
 
 The mobile preview targets Expo SDK 57 to match the physical iPhone's App Store Expo Go (verified 2026-10-16). Before a major SDK upgrade, verify the store app supports it or that a compatible development build is available. The latest npm SDK can ship before Expo Go. Never fake compatibility by changing only app.config sdkVersion; align all native dependencies with `expo install` and run `expo install --check`.
 

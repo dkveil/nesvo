@@ -11,14 +11,18 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { HostClient } from './connection/client';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { HostClient, type SessionControl } from './connection/client';
 import TerminalView, { type TerminalHandle } from './terminal/TerminalView';
-import { createDemoShell, demoConversations, type DemoSession } from './demo';
+import { createDemoShell, demoConversations } from './demo';
+import type { Session } from './session';
 import { Button, common, Icon, IconButton } from './components';
 import { colors as c, mono } from './theme';
+import { useAppState } from './state/AppState';
+import { GroupPicker } from './GroupPicker';
+import { groupPath } from './groups';
 
-export type Session = DemoSession & { live?: boolean; running?: boolean };
+export type { Session } from './session';
 export default function SessionScreen({
   session,
   client,
@@ -39,36 +43,72 @@ export default function SessionScreen({
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState('');
   const [confirmClose, setConfirmClose] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [control, setControl] = useState<SessionControl | undefined>(() =>
+    client.getControl(session.id),
+  );
+  const [watching, setWatching] = useState(false);
+  const { groups, moveSession } = useAppState();
+  const controlling =
+    !!session.live && connected && control?.controllerId === client.clientId && !!control?.leaseId;
+  const canType = !session.live || (controlling && session.running !== false);
   const terminal = useRef<TerminalHandle>(null);
   const size = useRef({ cols: 80, rows: 24 });
   const ready = useRef(false);
+  const subscribed = useRef(false);
   const demo = useRef<ReturnType<typeof createDemoShell> | null>(null);
   useEffect(
     () =>
       client.subscribe((event) => {
         if (!session.live) return;
-        if (event.type === 'attached' && event.sessionId === session.id) {
+        if (event.type === 'subscribed' && event.sessionId === session.id) {
+          setWatching(true);
           terminal.current?.reset();
+          terminal.current?.configure({ readOnly: true, cols: event.cols, rows: event.rows });
           setNotice('');
         }
+        if (event.type === 'control' && event.sessionId === session.id) {
+          setControl(event);
+          const owns = event.controllerId === client.clientId && !!event.leaseId;
+          terminal.current?.configure(
+            owns ? { readOnly: false } : { readOnly: true, cols: event.cols, rows: event.rows },
+          );
+          if (!owns) Keyboard.dismiss();
+        }
+        if (event.type === 'disconnected') {
+          setControl(undefined);
+          setWatching(false);
+          subscribed.current = false;
+          terminal.current?.configure({ readOnly: true });
+        }
         if (event.type === 'output' && event.sessionId === session.id)
-          terminal.current?.write(event.data);
+          terminal.current?.write(event.data, {
+            allowResponses:
+              client.hasControl(session.id) && (!event.replay || event.allowResponses === true),
+          });
         if (event.type === 'error') setNotice(event.message);
       }),
     [client, session.id, session.live],
   );
   useEffect(() => {
-    if (session.live && connected && ready.current)
-      client.attachSession(session.id, size.current.cols, size.current.rows);
+    if (session.live && connected && ready.current && !subscribed.current) {
+      subscribed.current = true;
+      client.subscribeSession(session.id);
+    }
+    return () => {
+      if (session.live && subscribed.current) client.unsubscribeSession(session.id);
+      subscribed.current = false;
+    };
   }, [connected, client, session.id, session.live]);
   function input(data: string) {
     if (session.live) {
-      if (connected && session.running !== false) client.sendInput(session.id, data);
-      else setNotice('Host jest rozłączony lub sesja zakończona. Polecenie nie zostało wysłane.');
+      // Check the current lease, not a React closure: takeover can happen during a renderer frame.
+      if (client.hasControl(session.id) && session.running !== false)
+        client.sendInput(session.id, data);
     } else demo.current?.input(data);
   }
   function submit() {
-    if (!draft.trim()) return;
+    if (!draft.trim() || !canType) return;
     if (tab === 'conversation')
       setNotice(
         'To podgląd. Wiadomość nie została wysłana. Połącz host i otwórz agenta w terminalu.',
@@ -101,6 +141,14 @@ export default function SessionScreen({
             {session.live ? session.host : `${session.agent} · Demo`}
           </Text>
         </View>
+        <IconButton
+          name="folder-outline"
+          label="Przenieś sesję do grupy"
+          onPress={() => {
+            Keyboard.dismiss();
+            setGroupOpen(true);
+          }}
+        />
         <IconButton
           name="close"
           label="Zakończ sesję"
@@ -146,21 +194,53 @@ export default function SessionScreen({
           </Text>
         </View>
       )}
+      {session.live && connected && session.running !== false && (
+        <View style={s.controlBar}>
+          <Text style={s.controlLabel}>
+            {controlling
+              ? 'Sterujesz z tego urządzenia'
+              : control?.controllerId != null
+                ? 'Podgląd · steruje inne urządzenie'
+                : 'Podgląd · terminal bez sterowania'}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={controlling ? 'Oddaj sterowanie' : 'Przejmij sterowanie'}
+            disabled={!watching}
+            onPress={() => {
+              if (controlling) client.releaseControl(session.id);
+              else
+                client.acquireControl(
+                  session.id,
+                  size.current.cols,
+                  size.current.rows,
+                  control?.controllerId != null,
+                );
+            }}
+            style={s.controlButton}
+          >
+            <Text style={s.controlAction}>{controlling ? 'Oddaj' : 'Przejmij sterowanie'}</Text>
+          </Pressable>
+        </View>
+      )}
       {tab === 'terminal' ? (
         <View style={s.terminal}>
           <TerminalView
             ref={terminal}
+            readOnly={!!session.live}
             onData={input}
             onResize={(cols, rows) => {
               size.current = { cols, rows };
-              if (session.live && ready.current && connected)
+              if (session.live && ready.current && client.hasControl(session.id))
                 client.resizeSession(session.id, cols, rows);
             }}
             onReady={() => {
               ready.current = true;
               if (session.live) {
-                if (connected)
-                  client.attachSession(session.id, size.current.cols, size.current.rows);
+                if (connected && !subscribed.current) {
+                  subscribed.current = true;
+                  client.subscribeSession(session.id);
+                }
               } else {
                 demo.current = createDemoShell(
                   (text) => terminal.current?.write(text),
@@ -220,8 +300,9 @@ export default function SessionScreen({
               key={key.label}
               accessibilityRole="button"
               accessibilityLabel={`Klawisz ${key.label}`}
+              disabled={!canType}
               onPress={() => input(key.value)}
-              style={({ pressed }) => [s.key, pressed && s.keyPressed]}
+              style={({ pressed }) => [s.key, !canType && s.inactive, pressed && s.keyPressed]}
             >
               <Text style={s.keyText}>{key.label}</Text>
             </Pressable>
@@ -232,9 +313,16 @@ export default function SessionScreen({
         <View style={s.composer}>
           <TextInput
             accessibilityLabel={tab === 'terminal' ? 'Polecenie terminala' : 'Przykładowy prompt'}
-            placeholder={tab === 'terminal' ? 'Wpisz polecenie' : 'Wiadomość'}
+            placeholder={
+              !canType
+                ? 'Przejmij sterowanie, aby pisać'
+                : tab === 'terminal'
+                  ? 'Wpisz polecenie'
+                  : 'Wiadomość'
+            }
             placeholderTextColor={c.muted}
             value={draft}
+            editable={canType}
             onChangeText={setDraft}
             onSubmitEditing={submit}
             returnKeyType="send"
@@ -247,13 +335,13 @@ export default function SessionScreen({
             style={s.draft}
           />
           <Pressable
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || !canType}
             accessibilityRole="button"
             accessibilityLabel="Wyślij"
             onPress={submit}
             style={({ pressed }) => [
               s.send,
-              !draft.trim() && s.sendDisabled,
+              (!draft.trim() || !canType) && s.sendDisabled,
               pressed && s.sendPressed,
             ]}
           >
@@ -264,6 +352,39 @@ export default function SessionScreen({
           <Text style={s.composerHint}>Demo · wiadomości nie są wysyłane do AI</Text>
         )}
       </View>
+      <Modal
+        visible={groupOpen}
+        transparent
+        animationType="none"
+        onRequestClose={() => setGroupOpen(false)}
+      >
+        <SafeAreaProvider>
+          <SafeAreaView style={s.groupOverlay}>
+            <View style={s.groupSheet} accessibilityViewIsModal>
+              <View style={s.groupHeader}>
+                <Text style={s.name}>Przenieś sesję</Text>
+                <IconButton
+                  name="close"
+                  label="Zamknij wybór grupy"
+                  onPress={() => setGroupOpen(false)}
+                />
+              </View>
+              <Text style={common.body}>{groupPath(groups, session.groupId)}</Text>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                <GroupPicker
+                  groups={groups}
+                  value={session.groupId ?? null}
+                  disabled={!!session.live && !connected}
+                  onChange={(groupId) => {
+                    moveSession(session.id, groupId);
+                    setGroupOpen(false);
+                  }}
+                />
+              </ScrollView>
+            </View>
+          </SafeAreaView>
+        </SafeAreaProvider>
+      </Modal>
       <Modal
         visible={confirmClose}
         transparent
@@ -310,6 +431,33 @@ const s = StyleSheet.create({
   },
   pathText: { fontFamily: mono, color: c.faint, fontSize: 11, flex: 1 },
   status: { color: c.muted, fontSize: 11 },
+  controlBar: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    marginBottom: 6,
+  },
+  controlLabel: { color: c.faint, fontSize: 11, lineHeight: 17, flex: 1 },
+  controlButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: c.surface,
+  },
+  controlAction: { color: c.text, fontSize: 12, fontWeight: '500' },
+  inactive: { opacity: 0.4 },
+  groupOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000099' },
+  groupSheet: {
+    maxHeight: '80%',
+    backgroundColor: c.surface,
+    padding: 22,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    gap: 14,
+  },
+  groupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   tabs: {
     flexDirection: 'row',
     alignSelf: 'center',

@@ -16,10 +16,12 @@ jobs:
       - run: npx expo install --check
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run test:client
       - run: npx expo export --platform all
   host:
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -34,7 +36,44 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --manifest-path host/Cargo.toml --check
-      - run: cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path host/Cargo.toml
-      - run: cargo build --manifest-path host/Cargo.toml
+      - run: cargo clippy --manifest-path host/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path host/Cargo.toml --locked
+      - run: cargo build --manifest-path host/Cargo.toml --locked
       - run: node --import tsx --test tests/host.integration.test.ts
+      - run: npm run test:sync
+      - run: cargo fmt --manifest-path tui/Cargo.toml --check
+      - run: cargo clippy --manifest-path tui/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path tui/Cargo.toml --locked
+      - run: cargo build --manifest-path tui/Cargo.toml --locked
+      - run: cargo run --manifest-path tui/Cargo.toml --locked -- --help
+      - run: npm run test:tui
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path host/Cargo.toml --locked
+      - run: npx playwright install --with-deps chromium
+      - run: npm run terminal:build
+      - name: Verify mobile UI and two-client live synchronization
+        env:
+          CI: '1'
+          APP_URL: http://localhost:8081
+        run: |
+          npx expo start --web --go --port 8081 > /tmp/nesvo-metro.log 2>&1 &
+          metro_pid=$!
+          trap 'kill "$metro_pid" || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://localhost:8081/status; then break; fi
+            sleep 1
+          done
+          curl --silent --fail http://localhost:8081/status
+          npm run test:web
+          npm run test:live
+          npm run test:terminal

@@ -1,9 +1,10 @@
-import React, { type PropsWithChildren } from 'react';
+import React, { useState, type PropsWithChildren } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +15,8 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ConnectSheet from './ConnectSheet';
 import { Button, common, IconButton } from './components';
+import { GroupPicker } from './GroupPicker';
+import { groupPath } from './groups';
 import { AppStateProvider, useAppState } from './state/AppState';
 import { colors as c } from './theme';
 export { DashboardScreen, type DashboardTab } from './DashboardScreen';
@@ -29,7 +32,11 @@ function AppModals() {
     setSessionName,
     create,
     connected,
+    groups,
+    sessionGroup,
+    setSessionGroup,
   } = useAppState();
+  const [chooseGroup, setChooseGroup] = useState(false);
   function createSession() {
     Keyboard.dismiss();
     create();
@@ -94,6 +101,17 @@ function AppModals() {
                     onSubmitEditing={createSession}
                     style={common.input}
                   />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Wybierz grupę nowej sesji"
+                    onPress={() => setChooseGroup(!chooseGroup)}
+                    style={s.groupChoice}
+                  >
+                    <Text style={common.body}>Grupa: {groupPath(groups, sessionGroup)}</Text>
+                  </Pressable>
+                  {chooseGroup && (
+                    <GroupPicker groups={groups} value={sessionGroup} onChange={setSessionGroup} />
+                  )}
                   <Button
                     label="Utwórz sesję"
                     icon="add"
@@ -158,4 +176,5 @@ const s = StyleSheet.create({
   },
   sheetScroll: { flexGrow: 0, flexShrink: 1 },
   sheetBody: { gap: 20, paddingBottom: 24 },
+  groupChoice: { minHeight: 44, justifyContent: 'center' },
 });

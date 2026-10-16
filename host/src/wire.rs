@@ -33,9 +33,23 @@ pub fn random<const N: usize>() -> [u8; N] {
 }
 
 pub fn encode(payload: Value, key: &[u8; 32], challenge: &str, seq: u64) -> Result<String> {
+    encode_direction(payload, key, challenge, seq, "host-to-client")
+}
+
+pub fn encode_client(payload: Value, key: &[u8; 32], challenge: &str, seq: u64) -> Result<String> {
+    encode_direction(payload, key, challenge, seq, "client-to-host")
+}
+
+fn encode_direction(
+    payload: Value,
+    key: &[u8; 32],
+    challenge: &str,
+    seq: u64,
+    direction: &str,
+) -> Result<String> {
     let plaintext = serde_json::to_vec(&Envelope {
         challenge: challenge.into(),
-        direction: "host-to-client".into(),
+        direction: direction.into(),
         seq,
         payload,
     })?;
@@ -52,6 +66,25 @@ pub fn encode(payload: Value, key: &[u8; 32], challenge: &str, seq: u64) -> Resu
 }
 
 pub fn decode(text: &str, key: &[u8; 32], challenge: &str, expected_seq: u64) -> Result<Value> {
+    decode_direction(text, key, challenge, expected_seq, "client-to-host")
+}
+
+pub fn decode_host(
+    text: &str,
+    key: &[u8; 32],
+    challenge: &str,
+    expected_seq: u64,
+) -> Result<Value> {
+    decode_direction(text, key, challenge, expected_seq, "host-to-client")
+}
+
+fn decode_direction(
+    text: &str,
+    key: &[u8; 32],
+    challenge: &str,
+    expected_seq: u64,
+    direction: &str,
+) -> Result<Value> {
     ensure!(text.len() <= MAX_FRAME, "Frame too large");
     let frame: Frame = serde_json::from_str(text)?;
     let nonce = STANDARD.decode(frame.nonce)?;
@@ -67,7 +100,7 @@ pub fn decode(text: &str, key: &[u8; 32], challenge: &str, expected_seq: u64) ->
     let envelope: Envelope = serde_json::from_slice(&plaintext)?;
     ensure!(
         envelope.challenge == challenge
-            && envelope.direction == "client-to-host"
+            && envelope.direction == direction
             && envelope.seq == expected_seq
             && envelope.seq <= 9_007_199_254_740_991,
         "Invalid context or replayed frame"
@@ -79,6 +112,20 @@ pub fn decode(text: &str, key: &[u8; 32], challenge: &str, expected_seq: u64) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn public_client_codec_interoperates_without_allowing_reflection() {
+        let payload = json!({"type":"auth", "clientNonce":"nonce"});
+        let client = encode_client(payload.clone(), &[9; 32], "fresh", 1).unwrap();
+        assert_eq!(decode(&client, &[9; 32], "fresh", 1).unwrap(), payload);
+        assert!(decode_host(&client, &[9; 32], "fresh", 1).is_err());
+        let host = encode(json!({"type":"connected"}), &[9; 32], "fresh", 1).unwrap();
+        assert_eq!(
+            decode_host(&host, &[9; 32], "fresh", 1).unwrap()["type"],
+            "connected"
+        );
+        assert!(decode_host(&host, &[9; 32], "stale", 1).is_err());
+    }
 
     fn client_frame(key: &[u8; 32], challenge: &str, seq: u64) -> String {
         let data = serde_json::to_vec(&Envelope {

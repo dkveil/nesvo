@@ -1,44 +1,46 @@
-# Współtworzenie Pocket Sessions
+# Contributing to nesvo
 
-Projekt jest na etapie prototypu. Najbardziej przydatne zmiany poprawiają prawdziwą pracę w terminalu: klawiaturę na telefonie, ciągłość sesji, poprawną komunikację z hostem i czytelne stany połączenia.
+The project is a prototype. The most useful contributions improve real terminal work: the phone keyboard, session continuity, correct host communication and clear connection states.
 
-## Środowisko
+Follow the [architecture, Rust and TypeScript conventions](docs/engineering.md). They draw on reviewed patterns from accounting-app and Herdr, along with language documentation. TypeScript, ESLint, Clippy and CI tests on Windows/macOS/Linux enforce some of these rules.
 
-Przeczytaj [README](README.md) i lokalne [AGENTS.md](AGENTS.md). Klient używa Expo 57 / React Native, a host jest osobnym programem w Rust. Zacznij od `npm install`; host kompiluj przez Cargo z katalogu `host/`.
+## Environment
 
-Biblioteki związane z Expo instaluj przez `npx expo install`, aby zachować zgodność z SDK. Przed zmianą API sprawdzaj dokumentację odpowiedniej wersji. Nie dopisuj ręcznie wygenerowanych projektów `ios/` i `android/`; konfiguracja natywna należy do konfiguracji Expo i odpowiednich pluginów.
+Read the [README](README.md) and local [AGENTS.md](AGENTS.md). The client uses Expo 57 / React Native, and the host is a separate Rust program. Start with `npm install`; build the host with Cargo from the `host/` directory.
 
-## Zakres zmian
+Install Expo-related libraries with `npx expo install` to maintain SDK compatibility. Check the documentation for the matching version before changing API usage. Do not manually add generated `ios/` and `android/` projects; native configuration belongs in Expo configuration and the appropriate plugins.
 
-- Oddziel kod klienta, protokół połączenia i wykonanie poleceń na hoście.
-- Zachowaj jasny podział między demonstracją a rzeczywistą sesją. Przykładowe rozmowy muszą mieć oznaczenie demo.
-- Nie wprowadzaj wymaganego klucza API do AI. Uruchamiane CLI zachowują własny mechanizm logowania użytkownika.
-- Nie zapisuj kodów parowania, kluczy ani prywatnego wyjścia terminala w repozytorium, logach diagnostycznych i zgłoszeniach.
-- Przy zmianie protokołu aktualizuj obie strony i sprawdź odrzucanie nieprawidłowych komunikatów.
-- Nie ponawiaj automatycznie wejścia terminala po zerwaniu połączenia. Podwójne wykonanie polecenia jest zmianą zachowania, nie niewinnym retry.
-- Nie edytuj ręcznie `src/terminal/generated.ts`. Zmień źródła renderera i uruchom `node scripts/build-terminal.mjs`.
+## Change scope
 
-## Sprawdzenie przed PR
+- Keep client code, the connection protocol and host command execution separate.
+- Distinguish demos clearly from real sessions. Example conversations must be labeled as demos.
+- Do not introduce a required AI API key. CLI tools retain their own user login mechanisms.
+- Do not save pairing codes, keys or private terminal output in the repository, diagnostic logs or issue reports.
+- When changing the protocol, update both sides and verify that malformed messages are rejected.
+- Do not automatically resend terminal input after a disconnection. Executing a command twice changes behavior; it is not a harmless retry.
+- Do not edit `src/terminal/generated.ts` manually. Change the renderer sources and run `node scripts/build-terminal.mjs`.
 
-Uruchom sprawdzenie typów i testy odpowiednie dla zmiany:
+## Checks before a pull request
+
+Run type checking and the tests appropriate to the change:
 
 ```powershell
 npx tsc --noEmit
 cargo test --manifest-path host/Cargo.toml
 ```
 
-Uruchom także lint klienta zgodnie ze skryptami repozytorium; komenda Expo to `npx expo lint`. Jeśli narzędzie proponuje instalację lub konfigurację, potraktuj ją jako osobną zmianę w zależnościach i sprawdź powstały diff.
+Also lint the client using the repository scripts; the Expo command is `npx expo lint`. If the tool proposes an installation or configuration change, treat it as a separate dependency change and review the resulting diff.
 
-Zmiany w terminalu sprawdzaj z rzeczywistym hostem. Zmiany klawiatury, WebView, schowka, aparatu i układu przy otwartej klawiaturze wymagają fizycznego telefonu. Skorzystaj z [macierzy testów](docs/testing.md) i podaj, które przypadki rzeczywiście wykonano. Nie opisuj testu webowego jako testu iOS.
+Test terminal changes against a real host. Changes involving the keyboard, WebView, clipboard, camera or layout with the keyboard open require a physical phone. Use the [test matrix](docs/testing.md) and state which cases were actually run. Do not describe a web test as an iOS test.
 
-## Commity i pull requesty
+## Commits and pull requests
 
-Używaj tematów conventional commit, np. `fix: preserve terminal input after resize`. Opis PR powinien krótko wyjaśniać problem, efekt zmiany i wykonaną weryfikację. Wskaż również testy na urządzeniu, które pozostały do wykonania.
+Use conventional commit subjects, such as `fix: preserve terminal input after resize`. A pull request description should briefly explain the problem, the resulting behavior and the verification performed. Also identify any device testing that remains to be done.
 
-Commity i opisy PR nie zawierają podpisów AI, dopisków `Co-Authored-By: Codex`, stopki „Generated with Codex” ani linków `Codex-Session`.
+Commits and pull request descriptions must not include AI attribution, `Co-Authored-By: Codex` trailers, “Generated with Codex” footers or `Codex-Session` links.
 
-## Zgłoszenia
+## Issue reports
 
-Przy błędzie podaj wersję aplikacji, system hosta, model telefonu, wersję systemu oraz krótkie kroki odtworzenia. Usuwaj z załączników klucze parowania i prywatne dane. W przypadku problemu z bezpieczeństwem nie publikuj działającego klucza ani danych umożliwiających dostęp do hosta; najpierw skontaktuj się prywatnie z opiekunem projektu.
+For a bug report, include the app version, host operating system, phone model, phone OS version and short reproduction steps. Remove pairing keys and private data from attachments. For security issues, do not publish a working key or information that grants access to the host; contact the project maintainer privately first.
 
-Wkład w projekt jest udostępniany na jego [licencji MIT](LICENSE).
+Contributions are provided under the project's [MIT license](LICENSE).

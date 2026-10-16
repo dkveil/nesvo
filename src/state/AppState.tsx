@@ -10,17 +10,25 @@ import {
 } from 'react';
 import { AppState as NativeAppState, Platform } from 'react-native';
 
-import { HostClient, parsePairing, type Pairing } from '../connection/client';
+import { HostClient, parsePairing, type Pairing, type SessionGroup } from '../connection/client';
 import { demoSessions } from '../demo';
-import type { Session } from '../SessionScreen';
+import { demoGroups, validGroupName } from '../groups';
+import type { Session } from '../session';
 
 const SAVED_HOST = 'pocket-sessions.host.v1';
+type LiveSnapshot = { sessions: Session[]; groups: SessionGroup[]; revision: number };
+const EMPTY_SNAPSHOT: LiveSnapshot = { sessions: [], groups: [], revision: 0 };
 
 function useAppStateValue() {
   const [client] = useState(() => new HostClient());
   const [mode, setMode] = useState<'demo' | 'live'>('demo');
   const [examples, setExamples] = useState<Session[]>(demoSessions);
-  const [live, setLive] = useState<Session[]>([]);
+  const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot>(EMPTY_SNAPSHOT);
+  const { sessions: live, groups: liveGroups, revision } = liveSnapshot;
+  const [exampleGroups, setExampleGroups] = useState<SessionGroup[]>(demoGroups);
+  // 'all' is distinct from null: null selects sessions outside every group.
+  const [selectedGroup, setSelectedGroup] = useState<string | null>('all');
+  const [sessionGroup, setSessionGroup] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [pairing, setPairing] = useState<Pairing | null>(null);
@@ -31,7 +39,7 @@ function useAppStateValue() {
   const [filter, setFilter] = useState<'all' | 'attention'>('all');
   const [notice, setNotice] = useState('');
   const pairingRef = useRef<Pairing | null>(null);
-  const pendingCreate = useRef<{ name: string; existingIds: Set<string> } | null>(null);
+  const pendingCreate = useRef<{ requestId: string; sessionId?: string } | null>(null);
 
   useEffect(() => {
     const unsubscribe = client.subscribe((event) => {
@@ -45,9 +53,21 @@ function useAppStateValue() {
         setConnecting(false);
         pendingCreate.current = null;
       } else if (event.type === 'error') {
-        setNotice(event.message);
+        setNotice(
+          event.code === 'revision_conflict'
+            ? 'Grupy zmieniły się na innym urządzeniu. Lista została odświeżona; ponów zmianę.'
+            : event.message,
+        );
+        if (event.code === 'revision_conflict') client.listSessions();
         setConnecting(false);
-        pendingCreate.current = null;
+        if (event.requestId && event.requestId === pendingCreate.current?.requestId)
+          pendingCreate.current = null;
+      } else if (event.type === 'created') {
+        if (pendingCreate.current && event.requestId === pendingCreate.current.requestId) {
+          pendingCreate.current = { requestId: event.requestId, sessionId: event.sessionId };
+          // Wait for the authoritative snapshot before opening the new route.
+          client.listSessions();
+        }
       } else if (event.type === 'sessions') {
         const sessions: Session[] = event.sessions.map((session) => ({
           ...session,
@@ -60,17 +80,32 @@ function useAppStateValue() {
             : 'Proces terminala zakończony',
           live: true,
         }));
-        setLive(sessions);
+        setLiveSnapshot({ sessions, groups: event.groups, revision: event.revision });
+        setSelectedGroup((current) =>
+          current && current !== 'all' && !event.groups.some((group) => group.id === current)
+            ? 'all'
+            : current,
+        );
+        setSessionGroup((current) =>
+          current && !event.groups.some((group) => group.id === current) ? null : current,
+        );
         const pending = pendingCreate.current;
-        if (pending) {
-          const created = sessions.find(
-            (session) => session.name === pending.name && !pending.existingIds.has(session.id),
-          );
+        if (pending?.sessionId) {
+          const created = sessions.find((session) => session.id === pending.sessionId);
           if (created) {
             pendingCreate.current = null;
             openSession(created.id);
           }
         }
+      } else if (event.type === 'control') {
+        setLiveSnapshot((snapshot) => ({
+          ...snapshot,
+          sessions: snapshot.sessions.map((item) =>
+            item.id === event.sessionId
+              ? { ...item, controllerId: event.controllerId, cols: event.cols, rows: event.rows }
+              : item,
+          ),
+        }));
       }
     });
     return () => {
@@ -112,7 +147,9 @@ function useAppStateValue() {
     pairingRef.current = value;
     setPairing(value);
     setMode('live');
-    setLive([]);
+    setLiveSnapshot(EMPTY_SNAPSHOT);
+    setSelectedGroup('all');
+    setSessionGroup(null);
     setQuery('');
     setFilter('all');
     setConnectOpen(false);
@@ -135,7 +172,7 @@ function useAppStateValue() {
     client.disconnect();
     pairingRef.current = null;
     setPairing(null);
-    setLive([]);
+    setLiveSnapshot(EMPTY_SNAPSHOT);
     if (Platform.OS !== 'web') {
       try {
         await SecureStore.deleteItemAsync(SAVED_HOST);
@@ -153,8 +190,9 @@ function useAppStateValue() {
         setNotice('Połącz host przed utworzeniem sesji.');
         return;
       }
-      pendingCreate.current = { name, existingIds: new Set(live.map((session) => session.id)) };
-      client.createSession(name);
+      const requestId = client.requestId();
+      pendingCreate.current = { requestId };
+      client.createSession(name, sessionGroup, requestId);
     } else {
       const example: Session = {
         id: `demo-${Date.now()}`,
@@ -165,6 +203,7 @@ function useAppStateValue() {
         cwd: '~/projects/workspace',
         status: 'ready',
         preview: 'Przykładowy terminal — wpisz help',
+        groupId: sessionGroup,
       };
       setExamples((current) => [example, ...current]);
       openSession(example.id);
@@ -183,9 +222,66 @@ function useAppStateValue() {
     client.disconnect();
     setMode('demo');
     setExamples(demoSessions);
+    setExampleGroups(demoGroups);
+    setSelectedGroup('all');
+    setSessionGroup(null);
     setQuery('');
     setFilter('all');
     router.navigate('/');
+  }
+
+  const groups = mode === 'demo' ? exampleGroups : liveGroups;
+  function createGroup(
+    name: string,
+    parentId: string | null,
+    expectedRevision = revision,
+  ): boolean {
+    if (!validGroupName(name) || (mode === 'live' && !connected)) return false;
+    if (mode === 'live') client.createGroup(name.trim(), parentId, expectedRevision);
+    else
+      setExampleGroups((items) => [
+        ...items,
+        {
+          id: `demo-group-${client.requestId()}`,
+          name: name.trim(),
+          parentId,
+          order: items.length,
+        },
+      ]);
+    return true;
+  }
+  function updateGroup(group: SessionGroup, expectedRevision = revision): boolean {
+    if (!validGroupName(group.name) || (mode === 'live' && !connected)) return false;
+    if (mode === 'live')
+      client.updateGroup({ ...group, name: group.name.trim() }, expectedRevision);
+    else
+      setExampleGroups((items) =>
+        items.map((item) => (item.id === group.id ? { ...group, name: group.name.trim() } : item)),
+      );
+    return true;
+  }
+  function deleteGroup(groupId: string, expectedRevision = revision): boolean {
+    if (
+      (mode === 'live' && !connected) ||
+      groups.some((item) => item.parentId === groupId) ||
+      (mode === 'demo' ? examples : live).some((item) => item.groupId === groupId)
+    )
+      return false;
+    if (mode === 'live') client.deleteGroup(groupId, expectedRevision);
+    else {
+      setExampleGroups((items) => items.filter((item) => item.id !== groupId));
+      if (selectedGroup === groupId) setSelectedGroup('all');
+      if (sessionGroup === groupId) setSessionGroup(null);
+    }
+    return true;
+  }
+  function moveSession(sessionId: string, groupId: string | null): void {
+    if (mode === 'live') {
+      if (connected) client.moveSession(sessionId, groupId, revision);
+    } else
+      setExamples((items) =>
+        items.map((item) => (item.id === sessionId ? { ...item, groupId } : item)),
+      );
   }
 
   return {
@@ -214,6 +310,16 @@ function useAppStateValue() {
     closeSession,
     resetDemo,
     sessions: mode === 'demo' ? examples : live,
+    groups,
+    revision,
+    selectedGroup,
+    setSelectedGroup,
+    sessionGroup,
+    setSessionGroup,
+    createGroup,
+    updateGroup,
+    deleteGroup,
+    moveSession,
   };
 }
 

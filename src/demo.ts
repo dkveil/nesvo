@@ -8,11 +8,13 @@ export type DemoSession = {
   status: 'attention' | 'ready' | 'done';
   preview: string;
   cwd: string;
+  groupId?: string | null;
 };
 
 export const demoSessions: DemoSession[] = [
   {
     id: 'demo-codex',
+    groupId: 'demo-mobile',
     name: 'Widok sesji mobilnych',
     agent: 'Codex',
     project: 'workspace',
@@ -23,6 +25,7 @@ export const demoSessions: DemoSession[] = [
   },
   {
     id: 'demo-claude',
+    groupId: 'demo-workspace',
     name: 'Przegląd zmian',
     agent: 'Claude',
     project: 'workspace',

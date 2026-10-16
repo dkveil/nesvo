@@ -21,8 +21,8 @@ const bundle = await build({
         const iframe = useRef(null);
         const state = useRef({ ready: false, hold: false, held: [], outstanding: 0,
           maxOutstanding: 0, writes: 0, maxChunk: 0, characters: 0, resets: 0,
-          overflowNotice: false });
-        const bridge = useTerminalBridge({ onData() {}, onResize() {} }, command => {
+          overflowNotice: false, inputs: [] });
+        const bridge = useTerminalBridge({ onData(data) { state.current.inputs.push(data); }, onResize() {} }, command => {
           const stats = state.current;
           if (command.type === 'write') {
             stats.outstanding++;
@@ -53,8 +53,10 @@ const bundle = await build({
           window.addEventListener('message', receive);
           window.harness = {
             stats: state.current,
-            write: data => handle.current.write(data),
+            write: (data, options) => handle.current.write(data, options),
             reset: () => handle.current.reset(),
+            configure: options => handle.current.configure(options),
+            rendererInput: () => receiver.current({ channel: 'pocket-terminal', type: 'data', data: 'blocked' }),
             hold: () => { state.current.hold = true; },
             release: () => {
               state.current.hold = false;
@@ -141,9 +143,73 @@ try {
   const text = await terminal.locator('.xterm-rows').innerText();
   assert.ok(!text.includes('BEFORE_RESET'));
   assert.equal(await page.evaluate(() => window.harness.stats.maxOutstanding), 1);
+  await page.evaluate(() => {
+    window.harness.configure({ readOnly: true, cols: 80, rows: 24 });
+    window.harness.reset();
+    window.harness.rendererInput();
+    window.harness.write('x'.repeat(79) + 'Z\r\nOBSERVER_GRID\x1b[6n');
+  });
+  await terminal.getByText('OBSERVER_GRID', { exact: false }).first().waitFor();
+  const canonicalLine = (await terminal.locator('.xterm-rows > div').allTextContents())[0];
+  assert.equal(
+    canonicalLine,
+    'x'.repeat(79) + 'Z',
+    'Observer keeps the host 80-column grid on a narrow phone viewport',
+  );
+  assert.equal(await terminal.locator('.xterm-rows > div').count(), 24);
+  assert.deepEqual(
+    await page.evaluate(() => window.harness.stats.inputs),
+    [],
+    'Passive terminal suppresses query replies and bridge input',
+  );
+  const screenBounds = await terminal.locator('.xterm-screen').boundingBox();
+  assert.ok(screenBounds.width <= 390, 'Canonical grid is scaled to the mobile viewport');
+  await page.evaluate(() => {
+    window.harness.configure({ readOnly: false });
+    window.harness.write('\x1b[6n');
+  });
+  await page.waitForFunction(() => window.harness.stats.inputs.length > 0);
+  assert.match(
+    (await page.evaluate(() => window.harness.stats.inputs)).join(''),
+    /\x1b\[\d+;\d+R/,
+    'Controller may answer terminal queries',
+  );
+  await terminal.locator('textarea').focus();
+  await page.evaluate(() => {
+    window.harness.stats.inputs.length = 0;
+    // Both writes are queued before a frame flush: coalescing must preserve the
+    // historical/live boundary even though this client currently owns the PTY.
+    window.harness.write('\x1b[6n\x1bP$qm\x1b\\\r\nREPLAY_SILENT', { allowResponses: false });
+    window.harness.write('\x1b[6n\x1bP$qm\x1b\\\r\nLIVE_REPLIES', { allowResponses: true });
+  });
+  await terminal.getByText('LIVE_REPLIES', { exact: false }).first().waitFor();
+  await page.waitForFunction(() => window.harness.stats.outstanding === 0);
+  const replies = await page.evaluate(() => window.harness.stats.inputs);
+  assert.equal(replies.length, 2, 'Only the live CSI and DCS query may generate responses');
+  assert.match(replies[0], /\x1b\[\d+;\d+R/);
+  assert.match(replies[1], /\x1bP1\$r.*\x1b\\/);
+  assert.equal(
+    await terminal.locator('textarea').evaluate((element) => document.activeElement === element),
+    true,
+    'Replay suppression must not blur keyboard focus',
+  );
+  await page.evaluate(() => {
+    window.harness.stats.inputs.length = 0;
+    window.harness.write('\x1b[6', { allowResponses: false });
+    window.harness.write('n\r\nSPLIT_QUERY_DONE', { allowResponses: true });
+  });
+  await terminal.getByText('SPLIT_QUERY_DONE', { exact: false }).first().waitFor();
+  assert.deepEqual(
+    await page.evaluate(() => window.harness.stats.inputs),
+    [],
+    'A historical query cannot complete as an allowed response across the replay/live boundary',
+  );
+  await terminal.locator('textarea').press('x');
+  await page.waitForFunction(() => window.harness.stats.inputs.includes('x'));
+  assert.equal(await page.evaluate(() => window.harness.stats.maxOutstanding), 1);
   assert.deepEqual(errors, []);
   console.log(
-    'PASS: 8 MiB flood, one in-flight chunk, bounded 2 MiB pending output, overflow notice, stale ACK rejection and ordered reset.',
+    'PASS: bounded backpressure, canonical observer grid, per-write replay query suppression, live replies and preserved keyboard focus.',
   );
 } finally {
   await browser.close();

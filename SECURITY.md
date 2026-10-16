@@ -1,17 +1,17 @@
-# Bezpieczeństwo prototypu
+# Prototype security
 
-Host daje dostęp do powłoki z uprawnieniami użytkownika, który go uruchomił. `--workspace` ustawia katalog początkowy, nie jest sandboxem. Używaj prototypu w zaufanej sieci lokalnej lub prywatnej sieci VPN. Nie udostępniaj publicznie portu hosta.
+The host grants shell access with the permissions of the user who started it. `--workspace` sets the initial directory; it is not a sandbox. Use the prototype on a trusted local network or private VPN. Do not expose the host port to the public internet.
 
-Kod QR / JSON zawiera współdzielony klucz dostępu do terminala. Nie publikuj go, plików `.local/`, zrzutów kodu ani nagrań ekranu parowania. „Zapomnij host” usuwa zapis w aplikacji; nie unieważnia kodu na komputerze. Zasady generowania i wymiany klucza opisuje `host/README.md`.
+The QR code / JSON contains the shared terminal access key. Do not publish it, `.local/` files, screenshots of the code or recordings of the pairing screen. “Zapomnij host” (Forget host) removes the app's saved entry; it does not revoke the code on the computer. Key generation and rotation are described in [host/README.md](host/README.md).
 
-Treść poleceń i wyjścia jest szyfrowana za pomocą XSalsa20-Poly1305 (secretbox). Protokół obejmuje losowe wyzwanie połączenia, kierunek wiadomości i sekwencję. Nie zapewnia ukrycia adresów, rozmiarów i czasu ruchu ani forward secrecy. Nie przeszedł niezależnego audytu. Skanujący musi zweryfikować, że kod pochodzi z jego komputera.
+Command and output contents are encrypted with XSalsa20-Poly1305 (secretbox). The protocol includes a random connection challenge, message direction and sequence. It does not conceal addresses, traffic sizes or timing, and does not provide forward secrecy. It has not undergone an independent audit. The person scanning must verify that the code comes from their computer.
 
-Transport prototypu to WebSocket z szyfrowaniem treści. Android dopuszcza `ws://` przez `usesCleartextTraffic`; iOS ma wyjątek dla sieci lokalnej. Renderer terminala nie łączy się z hostem bezpośrednio, nie ładuje CDN i ma osobną restrykcyjną politykę CSP. Przed publiczną usługą potrzebne są TLS, cykl życia urządzeń i kluczy, limity nadużyć oraz audyt protokołu.
+The prototype uses WebSocket transport with encrypted payloads. Android permits `ws://` through `usesCleartextTraffic`; iOS has a local-network exception. The terminal renderer does not connect directly to the host, does not load resources from CDNs and has its own restrictive CSP. A public service would require TLS, device and key lifecycle management, abuse limits and a protocol audit.
 
-Na telefonie sekret trafia do SecureStore. W przeglądarce pozostaje tylko w pamięci. Nie umieszczamy go w URL, localStorage ani logach. Wyjście terminala może zawierać wrażliwe dane; jego ograniczony bufor pozostaje w pamięci hosta.
+On the phone, the secret is saved in SecureStore. In the browser, it stays in memory only. It is never placed in a URL, localStorage or logs. Terminal output can contain sensitive data; its bounded buffer stays in host memory.
 
-## Stan zależności
+## Dependency status
 
-Kontrola npm z 16 października 2026 nadal wykrywa zgłoszenia w przechodnich zależnościach narzędzi Expo: `braces`, `node-forge` i `uuid`. Samo przejście testów nie oznacza zerowego wyniku audytu. W momencie kontroli proponowana przez npm automatyczna naprawa obejmowała niezgodną zmianę do Expo 44; nie zastosowano jej. `ws` używany przez testy ma aktualizację do 8.22.0. Host wykonawczy jest oddzielnym programem Rust.
+The npm audit on October 16, 2026 still reported advisories in transitive Expo tooling dependencies: `braces`, `node-forge` and `uuid`. Passing tests does not mean the audit has no findings. At the time of the check, npm's proposed automatic fix included an incompatible change to Expo 44; it was not applied. The tests' `ws` dependency has been updated to 8.22.0. The execution host is a separate Rust program.
 
-Przed publikacją binarek i dystrybucją produkcyjną ponów `npm audit` oraz sprawdzenie zależności Cargo. Zgłoszenia bezpieczeństwa nie powinny zawierać kluczy parowania ani wyjścia prywatnych sesji.
+Before publishing binaries or distributing a production build, rerun `npm audit` and check Cargo dependencies. Security reports must not include pairing keys or private session output.
