@@ -31,7 +31,9 @@ npm install
 npm start
 ```
 
-Na iPhonie zainstaluj Expo Go i zeskanuj kod wyświetlany przez Expo. Komputer oraz telefon powinny mieć łączność w sieci lokalnej. Wersja Expo Go musi obsługiwać SDK użyte w projekcie — obecnie Expo 58.
+Na iPhonie zainstaluj Expo Go i zeskanuj kod wyświetlany przez Expo. Komputer oraz telefon powinny mieć łączność w sieci lokalnej. Projekt używa **Expo SDK 57**, zgodnego z Expo Go 57 dostępnym w App Store w chwili przygotowania podglądu (16.10.2026).
+
+Najnowsze SDK i najnowsza aplikacja Expo Go w sklepie mogą mieć różne wersje. [Informacja o wydaniu SDK 58](https://expo.dev/changelog/sdk-58#expo-go) zapowiada aktualizację sklepowej aplikacji dopiero w kolejnych tygodniach. Przed zmianą głównej wersji SDK sprawdź zgodność z wersją Expo Go na telefonie. Samo wpisanie starszego `sdkVersion` w konfiguracji nie zapewnia zgodności — cały zestaw natywnych zależności musi odpowiadać SDK.
 
 Podgląd w przeglądarce na komputerze:
 

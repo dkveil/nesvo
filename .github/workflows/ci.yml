@@ -13,6 +13,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run terminal:build
+      - run: npx expo install --check
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:client

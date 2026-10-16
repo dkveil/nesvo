@@ -63,7 +63,7 @@ Rust nie przyspiesza zdalnego modelu AI, nie zmienia limitów abonamentu i nie d
 
 ## Dlaczego Expo pozostaje na telefonie
 
-Expo pozwala współdzielić ekran i logikę między iOS i Androidem. Renderer xterm.js działa wewnątrz WebView dołączonego do aplikacji; pozostałe kontrolki są komponentami React Native. Jest to terminal z webowym rendererem, a nie własny silnik terminala napisany w Swift. `react-native-webview` jest dostępny w zestawie Expo SDK 58. [Dokumentacja WebView dla SDK 58](https://docs.expo.dev/versions/v58.0.0/sdk/webview/).
+Expo pozwala współdzielić ekran i logikę między iOS i Androidem. Renderer xterm.js działa wewnątrz WebView dołączonego do aplikacji; pozostałe kontrolki są komponentami React Native. Jest to terminal z webowym rendererem, a nie własny silnik terminala napisany w Swift. `react-native-webview` jest dostępny w zestawie Expo SDK 57. [Dokumentacja WebView dla SDK 57](https://docs.expo.dev/versions/v57.0.0/sdk/webview/).
 
 Pierwszy punkt kontrolny to fizyczny iPhone: wpisywanie, klawisze specjalne, przewijanie, zmiana orientacji i przywracanie połączenia. Test w przeglądarce nie rozstrzyga jakości tych interakcji. Jeżeli renderer nie spełni wymagań, można wymienić komponent terminala, zachowując protokół i hosta.
 
@@ -79,7 +79,7 @@ Pierwszy host nie potrzebuje bazy danych ani usługi chmurowej. Lista sesji i bu
 
 ## Protokół i zaufanie
 
-Parowanie przenosi adres hosta i losowy 32-bajtowy sekret. Jest to poświadczenie dostępu do powłoki, a nie klucz API dostawcy AI. QR jest wielokrotnego użytku; nie należy przedstawiać go jako jednorazowego zaproszenia. SecureStore chroni zapis na natywnym kliencie przy użyciu mechanizmów iOS i Androida. Klient przeglądarkowy zachowuje parowanie tylko w pamięci strony. [Expo SecureStore](https://docs.expo.dev/versions/v58.0.0/sdk/securestore/).
+Parowanie przenosi adres hosta i losowy 32-bajtowy sekret. Jest to poświadczenie dostępu do powłoki, a nie klucz API dostawcy AI. QR jest wielokrotnego użytku; nie należy przedstawiać go jako jednorazowego zaproszenia. SecureStore chroni zapis na natywnym kliencie przy użyciu mechanizmów iOS i Androida. Klient przeglądarkowy zachowuje parowanie tylko w pamięci strony. [Expo SecureStore](https://docs.expo.dev/versions/v57.0.0/sdk/securestore/).
 
 Komunikat secretbox zawiera challenge bieżącego połączenia, kierunek, numer kolejny i dane polecenia. Klient dodaje własny świeży 32-bajtowy nonce do zaszyfrowanego żądania uwierzytelnienia i wymaga jego powtórzenia w uwierzytelnionej odpowiedzi hosta. Dzięki temu odtworzenie nagranego handshake nie udaje nowego połączenia z hostem. Każda wiadomość używa dodatkowo losowego 24-bajtowego nonce szyfru. Odbiorca weryfikuje uwierzytelnienie i oczekiwany numer wiadomości; nie odtwarza automatycznie wpisanych poleceń po reconnect. Klucz nie jest wysyłany w URL-u ani w handshake WebSocketu.
 

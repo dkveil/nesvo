@@ -42,7 +42,15 @@
       ],
       "expo-font",
       "expo-router",
-      ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "expo-status-bar"
     ]
   }
 }

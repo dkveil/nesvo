@@ -13,7 +13,7 @@ Sprawdzono osobno silnik demonstracyjny: polecenia, Ctrl+C, backspace, CRLF prze
 | Renderer w Chromium               | Ograniczony smoke test wykonany                                                                                       |
 | Silnik fikcyjnej powłoki          | Smoke test wykonany                                                                                                   |
 | Cała aplikacja webowa + host Rust | PASS na Windows / Chromium, 16.10.2026: polecenie w PowerShell, reconnect, odtworzenie, kolejne polecenie, zamknięcie |
-| Fizyczny iPhone + Expo Go         | Do wykonania                                                                                                          |
+| Fizyczny iPhone + Expo Go         | SDK 58 odrzucone przez sklepową wersję Expo Go; ponowna próba po dopasowaniu do SDK 57 do potwierdzenia                  |
 | Fizyczny Android + Expo Go        | Do wykonania                                                                                                          |
 | iOS development build             | Do wykonania po zbudowaniu                                                                                            |
 | TestFlight                        | Brak potwierdzonego wydania                                                                                           |
@@ -22,6 +22,8 @@ Sprawdzono osobno silnik demonstracyjny: polecenia, Ctrl+C, backspace, CRLF prze
 W pierwszej wersji wykonano także TypeScript, ESLint, Expo Doctor (20/20) i eksport kodu klienta dla iOS, Androida oraz web. Eksport nie jest kompilacją podpisanej aplikacji natywnej. Test autoryzacji klienta odrzuca nagrane uzgadnianie połączenia. Test przeciążenia renderera wysyła 8 MiB przy zatrzymanym potwierdzeniu przetworzenia: najwyżej jeden fragment pozostaje w locie, a ograniczony bufor sygnalizuje pominięcie starych danych.
 
 Po zmianie wyglądu ponownie sprawdzono listę, filtrowanie, wyszukiwanie, demo rozmowy, tworzenie sesji, wejście terminala, menu boczne i walidację parowania w Chromium przy szerokości 390 px. Ponowny test prawdziwego hosta Rust na Windowsie przeszedł wykonanie polecenia, rozłączenie i ponowne połączenie, odtworzenie wyjścia oraz zamknięcie. Eksport klienta iOS i Android również przeszedł. Wyniki nie potwierdzają jeszcze zachowania na fizycznym telefonie.
+
+Po zgłoszeniu niezgodności Expo Go dopasowano cały klient do SDK 57, zgodnego z wersją 57.0.9 dostępną w polskim App Store 16.10.2026. Sprawdzono `expo install --check`, Expo Doctor (21/21), TypeScript, ESLint, testy przeglądarkowe i połączenie z prawdziwym hostem Rust. Manifest serwera dla iOS zwraca `sdkVersion: 57.0.0` oraz `runtimeVersion: exposdk:57.0.0`, a wskazany pakiet startowy iOS jest dostępny (HTTP 200). To potwierdza naprawę konfiguracji serwera, ale uruchomienie na telefonie nadal wymaga ponownego testu użytkownika.
 
 Powtarzalne testy przeglądarkowe (najpierw uruchom `npm run web` w drugim terminalu):
 

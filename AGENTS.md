@@ -2,6 +2,8 @@ This is an Expo/React Native mobile application. Prioritize mobile-first pattern
 
 The host is Rust (`host/`); Node.js is only used by Expo tooling and tests. Do not replace the Rust host with a Node server. AI tools run as original CLI programs on the user's host, with their own subscription login; do not add AI API keys or direct model API calls.
 
+The mobile preview targets Expo SDK 57 to match the physical iPhone's App Store Expo Go (verified 2026-10-16). Before a major SDK upgrade, verify the store app supports it or that a compatible development build is available. The latest npm SDK can ship before Expo Go. Never fake compatibility by changing only app.config sdkVersion; align all native dependencies with `expo install` and run `expo install --check`.
+
 Commits use conventional subjects and Damian as author. Do not add AI attribution, Co-Authored-By trailers, generated-by footers, or session links to commits and PRs.
 
 ## Expo has changed — do not trust your training data

@@ -4,7 +4,7 @@ Projekt jest na etapie prototypu. Najbardziej przydatne zmiany poprawiają prawd
 
 ## Środowisko
 
-Przeczytaj [README](README.md) i lokalne [AGENTS.md](AGENTS.md). Klient używa Expo 58 / React Native, a host jest osobnym programem w Rust. Zacznij od `npm install`; host kompiluj przez Cargo z katalogu `host/`.
+Przeczytaj [README](README.md) i lokalne [AGENTS.md](AGENTS.md). Klient używa Expo 57 / React Native, a host jest osobnym programem w Rust. Zacznij od `npm install`; host kompiluj przez Cargo z katalogu `host/`.
 
 Biblioteki związane z Expo instaluj przez `npx expo install`, aby zachować zgodność z SDK. Przed zmianą API sprawdzaj dokumentację odpowiedniej wersji. Nie dopisuj ręcznie wygenerowanych projektów `ios/` i `android/`; konfiguracja natywna należy do konfiguracji Expo i odpowiednich pluginów.
 

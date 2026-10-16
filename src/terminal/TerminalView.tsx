@@ -12,8 +12,7 @@ const HTML_SOURCE = { html: TERMINAL_HTML };
 
 const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
   function TerminalView(props, ref) {
-    // WebView 14 defaults its extra-props generic to undefined, which intersects
-    // the props to never under TypeScript 6. unknown preserves its actual props.
+    // Keep the extra-props generic neutral across supported WebView versions.
     const webView = useRef<WebView<unknown>>(null);
     const bridge = useTerminalBridge(props, (command) => {
       webView.current?.postMessage(JSON.stringify(command));
