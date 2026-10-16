@@ -16,7 +16,8 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 | Command                                                                        | Result                                                                                                         |
 | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `getCapabilities { requestId? }`                                               | Targeted `capabilities { workspace, programs:[{id,label,available}], requestId? }`.                            |
+| `getCapabilities { requestId? }`                                               | Targeted `capabilities { workspace, programs:[{id,label,available}], directoryBrowser:true, requestId? }`.     |
+| `listDirectories { path?, requestId? }`                                        | Targeted `directories { path, parent, entries:[{name,path}], requestId? }`; entries are subdirectories only.   |
 | `create { name, program?, cwd?, groupId?, requestId? }`                        | Targeted `created { sessionId, requestId? }`, then broadcast snapshot. No automatic subscription/control.      |
 | `renameSession { sessionId, name, requestId? }`                                | Targeted `updated { revision, requestId? }`, then snapshot; runtime name does not increment metadata revision. |
 | `close { sessionId, requestId? }`                                              | Terminates the session and broadcasts a snapshot.                                                              |
@@ -30,6 +31,8 @@ Group and parent IDs are strings or `null` for the root. `create` may omit `grou
 `program` is one of `shell`, `claude`, `gemini`, or `codex`; omission selects `shell`. A missing or blank `cwd` uses the host's workspace. Relative paths resolve against that workspace; absolute paths can select any existing directory accessible to the host user. Paths are canonicalized before process creation. The workspace is a default, not a sandbox. An unavailable program or invalid directory returns an application error with the supplied `requestId`, without creating a session.
 
 Capabilities contain all four program IDs. Discovery inspects PATH once at startup; requests only read the cache, and installation/PATH changes require a host restart. `available` means a supported launcher was found, not that subscription login is complete. The host starts the original CLI without injecting model API credentials or automating authentication. Native executables launch directly. Windows npm wrappers resolve through the known package's JavaScript bin entry and `node.exe`; unsupported custom wrappers are unavailable. No user-supplied command string or directory is interpolated into shell source.
+
+The directory browser starts at the host workspace if `path` is omitted. Each response has the canonical absolute `path`, its optional `parent`, and up to 512 sorted child directories. The TUI sends a new request when the user opens a child or parent and applies only the matching `requestId`. Older hosts omit `directoryBrowser`; the TUI keeps the launch form open and asks for a host update instead of sending an unsupported command. Newly launched PTYs receive `NESVO_SESSION=1`; interactive TUI startup refuses to run inside one of those sessions, while `--list` remains available for scripts.
 
 ## Observed session status
 

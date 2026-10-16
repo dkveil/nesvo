@@ -75,6 +75,7 @@ impl Launcher {
         command.cwd(crate::process::display_path(cwd));
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        command.env("NESVO_SESSION", "1");
         // Codex and CI commonly run the host with NO_COLOR=1. That setting
         // belongs to the host's own output, not to the interactive PTY viewed
         // on another terminal or phone. Let each CLI emit its native colors.
@@ -272,6 +273,10 @@ mod tests {
         assert_eq!(
             command.get_env("COLORTERM"),
             Some(std::ffi::OsStr::new("truecolor"))
+        );
+        assert_eq!(
+            command.get_env("NESVO_SESSION"),
+            Some(std::ffi::OsStr::new("1"))
         );
     }
 

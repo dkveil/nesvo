@@ -44,6 +44,12 @@ async fn main() -> Result<()> {
     let arguments = Arguments::parse();
     if !arguments.list {
         ensure!(
+            std::env::var_os("NESVO_SESSION").is_none(),
+            "nesvo is already running inside this terminal session. Open a separate terminal to start another client."
+        );
+    }
+    if !arguments.list {
+        ensure!(
             std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
             "Interactive mode needs a terminal. Use --list for a JSON snapshot."
         );

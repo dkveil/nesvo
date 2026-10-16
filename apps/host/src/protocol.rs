@@ -12,6 +12,9 @@ pub enum Command {
     },
     List,
     GetCapabilities,
+    ListDirectories {
+        path: Option<String>,
+    },
     Create {
         name: String,
         cwd: Option<String>,

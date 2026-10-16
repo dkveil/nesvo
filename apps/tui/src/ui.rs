@@ -416,12 +416,12 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                     continue;
                 };
                 let status = session.status.as_ref();
-                let marker = match status.map(|status| status.state) {
-                    Some(State::Working) => "●",
-                    Some(State::Question) => "?",
-                    Some(State::Blocked) => "!",
-                    Some(State::Done) => "✓",
-                    Some(State::Failed) => "×",
+                let marker = match status.map(|status| (status.source, status.state)) {
+                    Some((Source::Screen, State::Working)) => "●",
+                    Some((_, State::Question)) => "?",
+                    Some((_, State::Blocked)) => "!",
+                    Some((_, State::Done)) => "✓",
+                    Some((_, State::Failed)) => "×",
                     _ => "○",
                 };
                 let available = usize::from(entry.width).saturating_sub(4 + indent.len());
@@ -608,7 +608,7 @@ fn status_color(status: Option<&Status>, theme: Theme) -> Color {
         Some((Source::Screen, State::Question | State::Blocked)) => WARNING,
         Some((Source::Process | Source::Screen, State::Failed)) => DANGER,
         Some((Source::Process | Source::Screen, State::Done)) => SUCCESS,
-        Some((_, State::Working)) => theme.accent(),
+        Some((Source::Screen, State::Working)) => theme.accent(),
         _ => MUTED,
     }
 }
@@ -722,9 +722,10 @@ pub fn dialog_area(size: Rect, dialog: &Dialog) -> Option<Rect> {
         Dialog::ExitConfirm { .. } => 10,
         Dialog::NewGroup { .. } => 18,
         Dialog::Help => 27,
-        Dialog::NewSession(_) => 24,
+        Dialog::NewSession(_) | Dialog::FolderPicker { .. } => 27,
         Dialog::PairPhone => 20,
         Dialog::Move { choices, .. } => (choices.len() + 8).min(22) as u16,
+        Dialog::QuickSwitch { .. } => 19,
         _ => 10,
     }
     .min(size.height.saturating_sub(2))
@@ -744,6 +745,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
     frame.render_widget(Clear, area);
     let title = match dialog {
         Dialog::Menu => "Menu",
+        Dialog::QuickSwitch { .. } => "Jump to session",
         Dialog::ExitConfirm { .. } => "Leave nesvo?",
         Dialog::Settings { .. } => "Settings",
         Dialog::NewGroup { .. } => "New group",
@@ -751,6 +753,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         Dialog::Move { .. } => "Move to group",
         Dialog::Help => "Keyboard",
         Dialog::NewSession(_) => "New session",
+        Dialog::FolderPicker { .. } => "Choose folder",
         Dialog::PairPhone => "Pair your phone",
     };
     let block = Block::bordered()
@@ -796,6 +799,78 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
     }
     match dialog {
         Dialog::Menu => {}
+        Dialog::QuickSwitch { query, selected } => {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "  / {}",
+                    if query.is_empty() {
+                        "Search name, agent, folder…"
+                    } else {
+                        query
+                    }
+                ))
+                .style(Style::default().fg(TEXT).bg(app.theme.selection())),
+                Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height)),
+            );
+            let matches = app.quick_switch_results(query);
+            if inner.height > 2 {
+                frame.render_widget(
+                    Paragraph::new(format!(
+                        "{} matches · ↑↓ select · Enter open",
+                        matches.len()
+                    ))
+                    .style(Style::default().fg(MUTED)),
+                    Rect::new(inner.x, inner.y + 2, inner.width, 1),
+                );
+            }
+            let visible = inner.height.saturating_sub(5);
+            let offset = ui_controls::move_offset(*selected, visible);
+            for (index, session) in matches
+                .iter()
+                .enumerate()
+                .skip(offset)
+                .take(usize::from(visible))
+            {
+                let y = inner.y + 3 + (index - offset) as u16;
+                if y >= inner.bottom() {
+                    break;
+                }
+                let label = format!(
+                    "  {:<8} {}",
+                    app.effective_program(session).label(),
+                    session.name
+                );
+                frame.render_widget(
+                    Paragraph::new(truncate_cells(&label, usize::from(inner.width))).style(
+                        if index == *selected {
+                            Style::default()
+                                .fg(TEXT)
+                                .bg(app.theme.selection())
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(MUTED)
+                        },
+                    ),
+                    Rect::new(inner.x, y, inner.width, 1),
+                );
+            }
+            if let Some(session) = matches.get(*selected)
+                && inner.height > 1
+            {
+                let detail = format!("{} · {}", display_status(session), session.cwd);
+                frame.render_widget(
+                    Paragraph::new(truncate_cells(&detail, usize::from(inner.width)))
+                        .style(Style::default().fg(MUTED)),
+                    Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
+                );
+            }
+            if app.dialog_button.is_none() && inner.width > 4 && inner.height > 0 {
+                frame.set_cursor_position((
+                    inner.x + (4 + query.chars().count()).min(usize::from(inner.width - 1)) as u16,
+                    inner.y,
+                ));
+            }
+        }
         Dialog::ExitConfirm { .. } => {
             frame.render_widget(
                 Paragraph::new(vec![
@@ -834,11 +909,13 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                             ),
                             Span::styled(label, Style::default().fg(TEXT)),
                         ]))
-                        .style(if index == *selected {
-                            Style::default().bg(app.theme.selection())
-                        } else {
-                            Style::default()
-                        }),
+                        .style(
+                            if index == *selected && app.dialog_button.is_none() {
+                                Style::default().bg(app.theme.selection())
+                            } else {
+                                Style::default()
+                            },
+                        ),
                         Rect::new(inner.x, inner.y + row, inner.width, 1),
                     );
                 }
@@ -858,11 +935,21 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         } => {
             if inner.height > 1 {
                 frame.render_widget(
-                    Paragraph::new(format!("Name: {name}")).style(if !editing_parent {
-                        Style::default().bg(app.theme.selection())
-                    } else {
-                        Style::default()
-                    }),
+                    Paragraph::new(format!(
+                        "  {}",
+                        if name.is_empty() {
+                            "Type a group name…"
+                        } else {
+                            name
+                        }
+                    ))
+                    .style(
+                        if !editing_parent && app.dialog_button.is_none() {
+                            Style::default().fg(TEXT).bg(app.theme.selection())
+                        } else {
+                            Style::default().fg(TEXT).bg(BORDER)
+                        },
+                    ),
                     Rect::new(inner.x, inner.y + 1, inner.width, 1),
                 );
             }
@@ -891,37 +978,62 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                                 " "
                             }
                         ))
-                        .style(if index == *parent_index {
-                            Style::default().fg(TEXT).bg(app.theme.selection())
-                        } else {
-                            Style::default().fg(MUTED)
-                        }),
+                        .style(
+                            if index == *parent_index && app.dialog_button.is_none() {
+                                Style::default().fg(TEXT).bg(app.theme.selection())
+                            } else {
+                                Style::default().fg(MUTED)
+                            },
+                        ),
                         Rect::new(inner.x, inner.y + row, inner.width, 1),
                     );
                 }
             }
-            if !editing_parent && inner.height > 1 {
+            if !editing_parent && app.dialog_button.is_none() && inner.height > 1 {
                 frame.set_cursor_position((
-                    inner.x + (6 + name.len()).min(inner.width.saturating_sub(1) as usize) as u16,
+                    inner.x + (2 + name.len()).min(inner.width.saturating_sub(1) as usize) as u16,
                     inner.y + 1,
                 ));
             }
         }
         Dialog::NewSession(form) => ui_launch::render_form(frame, app, form, inner),
+        Dialog::FolderPicker { .. } => ui_launch::render_folder_picker(frame, app, inner),
         Dialog::PairPhone => ui_launch::render_pairing(frame, app, inner),
         Dialog::Text { value, .. } => {
             frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(Span::styled("NEW NAME", Style::default().fg(MUTED))),
-                    Line::from(value.as_str()),
-                ]),
-                inner,
+                Paragraph::new("NEW NAME").style(Style::default().fg(MUTED)),
+                Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height)),
             );
+            if inner.height > 1 {
+                frame.render_widget(
+                    Paragraph::new(format!(
+                        "  {}",
+                        if value.is_empty() {
+                            "Type a name…"
+                        } else {
+                            value
+                        }
+                    ))
+                    .style(Style::default().fg(TEXT).bg(
+                        if app.dialog_button.is_none() {
+                            app.theme.selection()
+                        } else {
+                            BORDER
+                        },
+                    )),
+                    Rect::new(inner.x, inner.y + 1, inner.width, 1),
+                );
+            }
             if inner.height > 1 && inner.width > 0 {
                 let offset = Line::from(value.as_str())
                     .width()
                     .min(usize::from(inner.width - 1)) as u16;
-                frame.set_cursor_position((inner.x + offset, inner.y + 1));
+                if app.dialog_button.is_none() {
+                    frame.set_cursor_position((
+                        inner.x + (2 + offset).min(inner.width - 1),
+                        inner.y + 1,
+                    ));
+                }
             }
         }
         Dialog::Move {
@@ -933,7 +1045,11 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     .map(|(_, label)| ListItem::new(label.as_str()))
                     .collect::<Vec<_>>(),
             )
-            .highlight_style(Style::default().bg(app.theme.selection()))
+            .highlight_style(Style::default().bg(if app.dialog_button.is_none() {
+                app.theme.selection()
+            } else {
+                BORDER
+            }))
             .highlight_symbol("› ");
             let mut state = ListState::default()
                 .with_selected(Some(*selected))
@@ -945,14 +1061,27 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                 Paragraph::new(detail.as_str())
                     .style(Style::default().fg(TEXT))
                     .wrap(Wrap { trim: false }),
-                inner,
+                Rect::new(
+                    inner.x,
+                    inner.y,
+                    inner.width,
+                    inner.height.saturating_sub(1),
+                ),
             );
+            if inner.height > 1 {
+                frame.render_widget(
+                    Paragraph::new("← → choose   Enter select   Esc cancel")
+                        .style(Style::default().fg(MUTED)),
+                    Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
+                );
+            }
         }
         Dialog::Help => {
             frame.render_widget(
                 Paragraph::new(concat!(
-                    "~ status: screen inference; activity/quiet: I/O.\n\n",
+                    "~ status: screen inference; open/quiet: I/O.\n\n",
                     "↑/↓ or j/k   Select and preview · Enter opens / expands\n",
+                    "/ or Ctrl+K   Search sessions by name, agent, folder or group\n",
                     "i / t / x    Type / take over (confirm) / release\n",
                     "n / g        New session / group (choose parent)\n",
                     "r / m / d    Rename / move / delete (confirmation)\n",
@@ -990,6 +1119,7 @@ mod tests {
             detail: "Example will be removed. Its running process will stop.".into(),
             command: json!({"type":"close","sessionId":"example"}),
         });
+        app.dialog_button = Some(1);
         let area = Rect::new(0, 0, 100, 30);
         let popup = dialog_area(area, app.dialog.as_ref().unwrap()).unwrap();
         let content = Block::bordered().inner(popup);
@@ -1009,7 +1139,21 @@ mod tests {
             .into_iter()
             .find(|control| control.action == ui_controls::Action::Submit)
             .unwrap();
-        assert_eq!(buffer[(delete.area.x, delete.area.y)].bg, DANGER);
+        assert_eq!(buffer[(delete.area.x, delete.area.y)].bg, BACKGROUND);
+        let cancel = ui_controls::controls(&app, area)
+            .into_iter()
+            .find(|control| control.action == ui_controls::Action::Cancel)
+            .unwrap();
+        assert_eq!(
+            buffer[(cancel.area.x, cancel.area.y)].bg,
+            app.theme.accent()
+        );
+        app.dialog_button = Some(0);
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(delete.area.x, delete.area.y)].bg,
+            DANGER
+        );
         assert_eq!(
             ui_controls::hit_test(&app, area, delete.area.x, delete.area.y),
             Some(ui_controls::Action::Submit)
@@ -1058,6 +1202,41 @@ mod tests {
     }
 
     #[test]
+    fn launch_input_and_focused_footer_have_full_width_highlights() {
+        let area = Rect::new(0, 0, 100, 32);
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::NewSession(Default::default()));
+        let popup = dialog_area(area, app.dialog.as_ref().unwrap()).unwrap();
+        let body = ui_controls::dialog_body(Block::bordered().inner(popup));
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(body.x + body.width - 1, body.y + 3)].bg,
+            app.theme.selection()
+        );
+        assert_eq!(buffer[(body.x + body.width - 1, body.y + 6)].bg, BORDER);
+        if let Some(Dialog::NewSession(form)) = &mut app.dialog {
+            form.field = crate::launch::Field::Directory;
+        }
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(body.x + body.width - 1, body.y + 6)].bg,
+            app.theme.selection()
+        );
+        app.dialog_button = Some(1);
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let cancel = ui_controls::controls(&app, area)
+            .into_iter()
+            .find(|control| control.action == ui_controls::Action::Cancel)
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(cancel.area.x, cancel.area.y)].bg,
+            app.theme.accent()
+        );
+    }
+
+    #[test]
     fn start_menu_actions_render_as_full_clickable_buttons() {
         let mut app = App::new(1);
         app.dialog = Some(Dialog::Menu);
@@ -1101,6 +1280,40 @@ mod tests {
             .collect();
         assert!(line.contains("open"), "{line}");
         assert!(!line.contains("unknown"), "{line}");
+    }
+
+    #[test]
+    fn terminal_io_alone_is_not_shown_as_agent_activity() {
+        let mut app = App::new(1);
+        app.event(
+            json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+                {"id":"agent","name":"Claude task","cwd":".","cols":80,"rows":24,
+                 "running":true,"program":"claude","groupId":null,"controllerId":null,
+                 "status":{"state":"working","source":"activity","updatedAt":1}}
+            ]}),
+        )
+        .unwrap();
+        let status = app.sessions[0].status.as_ref().unwrap();
+        assert_eq!(display_status(&app.sessions[0]), "open");
+        assert_eq!(status_color(Some(status), app.theme), MUTED);
+        let area = Rect::new(0, 0, 100, 30);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let tree = tree_content(geometry(area, &app).tree);
+        let row: String = (tree.x..tree.right())
+            .map(|x| terminal.backend().buffer()[(x, tree.y + 1)].symbol())
+            .collect();
+        assert!(row.contains("○"), "{row}");
+        app.sessions[0].status = Some(Status {
+            state: State::Working,
+            source: Source::Screen,
+            _updated_at: 2,
+        });
+        assert_eq!(display_status(&app.sessions[0]), "~working");
+        assert_eq!(
+            status_color(app.sessions[0].status.as_ref(), app.theme),
+            app.theme.accent()
+        );
     }
 
     #[test]
@@ -1303,6 +1516,10 @@ mod tests {
         let mut app = App::new(1);
         for dialog in [
             Dialog::Menu,
+            Dialog::QuickSwitch {
+                query: String::new(),
+                selected: 0,
+            },
             Dialog::Settings { selected: 0 },
             Dialog::NewGroup {
                 name: String::new(),
@@ -1312,6 +1529,14 @@ mod tests {
             Dialog::Help,
             Dialog::PairPhone,
             Dialog::NewSession(Default::default()),
+            Dialog::FolderPicker {
+                form: Default::default(),
+                path: "C:\\work".into(),
+                parent: None,
+                entries: vec![],
+                selected: 0,
+                loading: false,
+            },
         ] {
             app.dialog = Some(dialog);
             for (width, height) in [(120, 40), (60, 20), (20, 4), (1, 1), (0, 0)] {

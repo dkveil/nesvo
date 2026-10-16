@@ -327,7 +327,44 @@ impl State {
         match command {
             Command::Auth { .. } => return Err(anyhow!("Already authenticated.")),
             Command::List => self.send(client_id, self.list()),
-            Command::GetCapabilities => self.respond(client_id, json!({"type":"capabilities", "workspace":crate::process::display_path(&self.workspace), "programs":self.launchers.capabilities()}), request_id),
+            Command::GetCapabilities => self.respond(client_id, json!({"type":"capabilities", "workspace":crate::process::display_path(&self.workspace), "programs":self.launchers.capabilities(), "directoryBrowser":true}), request_id),
+            Command::ListDirectories { path } => {
+                let directory = match path.as_deref().filter(|value| !value.is_empty()) {
+                    Some(value) => {
+                        ensure!(value.len() <= 4096 && !value.chars().any(char::is_control), "Invalid folder path.");
+                        let requested = PathBuf::from(value);
+                        if requested.is_absolute() { requested } else { self.workspace.join(requested) }
+                    }
+                    None => self.workspace.clone(),
+                };
+                let directory = directory.canonicalize()?;
+                ensure!(directory.is_dir(), "This folder does not exist.");
+                let mut entries = std::fs::read_dir(&directory)?
+                    .filter_map(|item| item.ok())
+                    .filter(|item| item.path().is_dir() && !item.file_name().to_string_lossy().chars().any(char::is_control))
+                    .map(|item| json!({
+                        "name": item.file_name().to_string_lossy(),
+                        "path": crate::process::display_path(&item.path()),
+                    }))
+                    .collect::<Vec<_>>();
+                #[cfg(windows)]
+                if directory.parent().is_none() {
+                    for letter in b'A'..=b'Z' {
+                        let drive = format!("{}:\\", char::from(letter));
+                        if Path::new(&drive).is_dir() {
+                            entries.push(json!({"name":drive, "path":drive}));
+                        }
+                    }
+                }
+                entries.sort_by(|a, b| a["name"].as_str().unwrap_or_default().to_lowercase().cmp(&b["name"].as_str().unwrap_or_default().to_lowercase()));
+                entries.truncate(512);
+                self.respond(client_id, json!({
+                    "type": "directories",
+                    "path": crate::process::display_path(&directory),
+                    "parent": directory.parent().map(crate::process::display_path),
+                    "entries": entries,
+                }), request_id);
+            }
             Command::Create {
                 name,
                 cwd,
@@ -669,6 +706,53 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
 mod tests {
     use super::*;
     use crate::replay::BACKLOG_BYTES;
+    #[test]
+    fn directory_browser_returns_host_paths_and_echoes_request_id() {
+        let workspace = std::env::temp_dir().join(format!(
+            "nesvo-folder-test-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        let child = workspace.join("child folder");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(workspace.join("file.txt"), "not a directory").unwrap();
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(workspace.clone(), metadata, Launchers::discover());
+        let (events, mut receiver) = mpsc::channel(8);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(1, Client { events, cancelled });
+        let (pty_events, _) = mpsc::channel(1);
+        state
+            .command(
+                1,
+                Command::ListDirectories { path: None },
+                Some("browse-1"),
+                &pty_events,
+            )
+            .unwrap();
+        let event = receiver.try_recv().unwrap();
+        assert_eq!(event["type"], "directories");
+        assert_eq!(event["requestId"], "browse-1");
+        assert_eq!(event["path"], crate::process::display_path(&workspace));
+        assert_eq!(event["entries"][0]["name"], "child folder");
+        assert_eq!(
+            event["entries"][0]["path"],
+            crate::process::display_path(&child)
+        );
+        assert_eq!(event["entries"].as_array().unwrap().len(), 1);
+        state
+            .command(
+                1,
+                Command::ListDirectories {
+                    path: Some(child.to_string_lossy().into_owned()),
+                },
+                Some("browse-2"),
+                &pty_events,
+            )
+            .unwrap();
+        let nested = receiver.try_recv().unwrap();
+        assert_eq!(nested["parent"], crate::process::display_path(&workspace));
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
     #[test]
     fn shutdown_rejects_new_commands() {
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();

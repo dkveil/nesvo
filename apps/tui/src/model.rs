@@ -1,5 +1,5 @@
 use crate::{
-    launch::{Capabilities, Program, SessionForm},
+    launch::{Capabilities, DirectoryEntry, Program, SessionForm},
     status::Status,
     terminal::TerminalState,
     theme::Theme,
@@ -8,6 +8,13 @@ use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+
+fn fuzzy_contains(haystack: &str, needle: &str) -> bool {
+    let mut chars = haystack.chars();
+    needle
+        .chars()
+        .all(|character| chars.any(|candidate| candidate == character))
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +74,10 @@ pub enum MoveTarget {
 
 pub enum Dialog {
     Menu,
+    QuickSwitch {
+        query: String,
+        selected: usize,
+    },
     ExitConfirm {
         from_menu: bool,
         leave_selected: bool,
@@ -80,6 +91,14 @@ pub enum Dialog {
         editing_parent: bool,
     },
     NewSession(SessionForm),
+    FolderPicker {
+        form: SessionForm,
+        path: String,
+        parent: Option<String>,
+        entries: Vec<DirectoryEntry>,
+        selected: usize,
+        loading: bool,
+    },
     PairPhone,
     Text {
         title: String,
@@ -117,6 +136,7 @@ pub struct App {
     pub focused: usize,
     pub mode: Mode,
     pub dialog: Option<Dialog>,
+    pub dialog_button: Option<usize>,
     pub menu_selected: usize,
     pub theme: Theme,
     pub onboarded: bool,
@@ -129,6 +149,7 @@ pub struct App {
     pending_create: Option<String>,
     pending_create_form: Option<SessionForm>,
     pending_selection: Option<String>,
+    pending_directory: Option<String>,
 }
 
 impl App {
@@ -151,6 +172,7 @@ impl App {
             focused: 0,
             mode: Mode::Navigate,
             dialog: None,
+            dialog_button: None,
             menu_selected: 0,
             theme: Theme::default(),
             onboarded: false,
@@ -163,6 +185,7 @@ impl App {
             pending_create: None,
             pending_create_form: None,
             pending_selection: None,
+            pending_directory: None,
         }
     }
 
@@ -224,6 +247,67 @@ impl App {
             RowKind::Group(id) => Some(id),
             RowKind::Session(id) => self.session(&id).and_then(|s| s.group_id.clone()),
         }
+    }
+
+    pub fn quick_switch_results(&self, query: &str) -> Vec<&Session> {
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let mut matches: Vec<(&Session, u32)> = self
+            .sessions
+            .iter()
+            .filter_map(|session| {
+                let mut terms = format!(
+                    "{} {} {}",
+                    session.name,
+                    session.cwd,
+                    self.effective_program(session).label()
+                );
+                let mut parent = session.group_id.as_deref();
+                let mut seen = HashSet::new();
+                while let Some(id) = parent {
+                    if !seen.insert(id) {
+                        break;
+                    }
+                    let Some(group) = self.groups.iter().find(|group| group.id == id) else {
+                        break;
+                    };
+                    terms.push(' ');
+                    terms.push_str(&group.name);
+                    parent = group.parent_id.as_deref();
+                }
+                let haystack = terms.to_lowercase();
+                let mut score = 0;
+                for word in &words {
+                    if session.name.to_lowercase().starts_with(word) {
+                        score += 6;
+                    } else if haystack.contains(word) {
+                        score += 3;
+                    } else if fuzzy_contains(&haystack, word) {
+                        score += 1;
+                    } else {
+                        return None;
+                    }
+                }
+                score += u32::from(
+                    session
+                        .status
+                        .as_ref()
+                        .is_some_and(|status| status.attention_priority() > 0),
+                );
+                Some((session, score))
+            })
+            .collect();
+        matches.sort_by(|(a, a_score), (b, b_score)| {
+            b_score
+                .cmp(a_score)
+                .then_with(|| {
+                    b.status
+                        .as_ref()
+                        .map_or(0, Status::attention_priority)
+                        .cmp(&a.status.as_ref().map_or(0, Status::attention_priority))
+                })
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        matches.into_iter().map(|(session, _)| session).collect()
     }
 
     pub fn group_attention(&self, group_id: &str) -> Option<&Status> {
@@ -401,6 +485,26 @@ impl App {
             "capabilities" => {
                 self.capabilities = Some(serde_json::from_value(event)?);
             }
+            "directories" => {
+                if event["requestId"].as_str() == self.pending_directory.as_deref() {
+                    self.pending_directory = None;
+                    if let Some(Dialog::FolderPicker {
+                        path,
+                        parent,
+                        entries,
+                        selected,
+                        loading,
+                        ..
+                    }) = &mut self.dialog
+                    {
+                        *path = event["path"].as_str().unwrap_or_default().to_owned();
+                        *parent = event["parent"].as_str().map(str::to_owned);
+                        *entries = serde_json::from_value(event["entries"].clone())?;
+                        *selected = 0;
+                        *loading = false;
+                    }
+                }
+            }
             "sessions" => {
                 let selected = self
                     .pending_selection
@@ -520,6 +624,12 @@ impl App {
                 if event["code"] == "revision_conflict" {
                     commands.push(json!({"type":"list"}));
                 }
+                if event["requestId"].as_str() == self.pending_directory.as_deref() {
+                    self.pending_directory = None;
+                    if let Some(Dialog::FolderPicker { loading, .. }) = &mut self.dialog {
+                        *loading = false;
+                    }
+                }
                 if self.pending_create.is_some()
                     && event["requestId"].as_str() == self.pending_create.as_deref()
                 {
@@ -539,6 +649,8 @@ impl App {
         self.leases.clear();
         self.mode = Mode::Navigate;
         self.dialog = None;
+        self.dialog_button = None;
+        self.pending_directory = None;
         self.notice = if self.capabilities.is_none() {
             "Host disconnected during setup; update nesvo-host and reconnect.".into()
         } else {
@@ -572,8 +684,23 @@ impl App {
         command
     }
 
+    pub fn browse_directory(&mut self, path: String) -> Value {
+        if let Some(Dialog::FolderPicker { loading, .. }) = &mut self.dialog {
+            *loading = true;
+        }
+        let command = self.request(json!({"type":"listDirectories", "path":path}));
+        self.pending_directory = command["requestId"].as_str().map(str::to_owned);
+        command
+    }
+
+    pub fn pending_directory_cancel(&mut self) {
+        self.pending_directory = None;
+    }
+
     pub fn submit_dialog(&mut self) -> Option<Value> {
-        match self.dialog.take()? {
+        let dialog = self.dialog.take()?;
+        self.dialog_button = None;
+        match dialog {
             Dialog::NewSession(form) => {
                 let name = form.name.trim();
                 let error = if name.is_empty() || name.chars().count() > 80 {
@@ -667,9 +794,11 @@ impl App {
             }
             Dialog::Confirm { command, .. } => Some(self.request(command)),
             Dialog::Help
+            | Dialog::QuickSwitch { .. }
             | Dialog::PairPhone
             | Dialog::Menu
             | Dialog::ExitConfirm { .. }
+            | Dialog::FolderPicker { .. }
             | Dialog::Settings { .. } => None,
         }
     }
@@ -762,6 +891,21 @@ mod tests {
         assert_eq!(app.tree().len(), 4);
         assert_eq!(app.selected, 3);
         assert_eq!(app.sessions[0].program, Program::Shell);
+    }
+
+    #[test]
+    fn quick_switch_finds_agent_folder_and_group_with_fuzzy_terms() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":1,"groups":[
+            {"id":"work","parentId":null,"name":"Workspace","order":0}
+        ],"sessions":[
+            {"id":"claude","name":"Repair login","cwd":"C:/dev/auth","program":"claude","cols":80,"rows":24,"running":true,"groupId":"work","controllerId":null},
+            {"id":"codex","name":"Refactor UI","cwd":"C:/dev/app","program":"codex","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        assert_eq!(app.quick_switch_results("repair auth")[0].id, "claude");
+        assert_eq!(app.quick_switch_results("codex")[0].id, "codex");
+        assert_eq!(app.quick_switch_results("wrkspace")[0].id, "claude");
+        assert!(app.quick_switch_results("missing").is_empty());
     }
 
     #[test]

@@ -1,6 +1,12 @@
 //! Session launch choices and form editing; no filesystem or process detection.
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct DirectoryEntry {
+    pub name: String,
+    pub path: String,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Program {
@@ -34,6 +40,8 @@ pub struct ProgramCapability {
 pub struct Capabilities {
     pub workspace: String,
     pub programs: Vec<ProgramCapability>,
+    #[serde(default, rename = "directoryBrowser")]
+    pub directory_browser: bool,
 }
 
 impl Capabilities {
@@ -62,14 +70,6 @@ pub struct SessionForm {
 }
 
 impl SessionForm {
-    pub fn cycle_field(&mut self, backward: bool) {
-        self.field = match (self.field, backward) {
-            (Field::Name, false) | (Field::Program, true) => Field::Directory,
-            (Field::Directory, false) | (Field::Name, true) => Field::Program,
-            (Field::Program, false) | (Field::Directory, true) => Field::Name,
-        };
-    }
-
     pub fn cycle_program(&mut self, backward: bool) {
         let position = Program::ALL
             .iter()
@@ -82,8 +82,7 @@ impl SessionForm {
     pub fn append(&mut self, text: &str) {
         let (value, limit) = match self.field {
             Field::Name => (&mut self.name, 80usize),
-            Field::Directory => (&mut self.cwd, 4096usize),
-            Field::Program => return,
+            Field::Directory | Field::Program => return,
         };
         let remaining = limit.saturating_sub(value.chars().count());
         value.extend(text.chars().filter(|c| !c.is_control()).take(remaining));
@@ -94,10 +93,7 @@ impl SessionForm {
             Field::Name => {
                 self.name.pop();
             }
-            Field::Directory => {
-                self.cwd.pop();
-            }
-            Field::Program => {}
+            Field::Directory | Field::Program => {}
         }
     }
 }
@@ -107,21 +103,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn directory_paste_preserves_spaces_and_filters_control_characters() {
+    fn only_name_accepts_text() {
         let mut form = SessionForm {
             field: Field::Directory,
             ..Default::default()
         };
         form.append("C:\\My Projects\\api\r\n");
-        assert_eq!(form.cwd, "C:\\My Projects\\api");
-        form.cycle_field(false);
+        assert!(form.cwd.is_empty());
+        form.field = Field::Program;
         form.cycle_program(false);
         form.append("not text");
         assert_eq!(form.program, Program::Claude);
-        assert_eq!(form.cwd, "C:\\My Projects\\api");
-        form.cycle_field(false);
-        assert_eq!(form.field, Field::Name);
-        form.cycle_field(true);
-        assert_eq!(form.field, Field::Program);
+        assert!(form.cwd.is_empty());
+        form.field = Field::Name;
+        form.append("A\r\nB");
+        assert_eq!(form.name, "AB");
     }
 }

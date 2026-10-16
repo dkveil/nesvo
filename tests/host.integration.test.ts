@@ -37,6 +37,10 @@ type Event = {
   requestId?: string;
   workspace?: string;
   programs?: { id: string; label: string; available: boolean }[];
+  directoryBrowser?: boolean;
+  path?: string;
+  parent?: string | null;
+  entries?: { name: string; path: string }[];
   sessions?: TerminalSession[];
 };
 
@@ -290,6 +294,15 @@ test(
           const encrypted = first.send({ type: 'input', sessionId: id, data: initialCommand });
           assert.ok(!encrypted.includes('pocketValue'), 'shell input is encrypted on wire');
           await first.output(id, 'SHELL_OK');
+          first.send({
+            type: 'input',
+            sessionId: id,
+            data:
+              process.platform === 'win32'
+                ? "Write-Output ('NESTED_MARKER=' + $env:NESVO_SESSION)\r"
+                : 'printf "NESTED_MARKER=%s\\n" "$NESVO_SESSION"\r',
+          });
+          await first.output(id, 'NESTED_MARKER=1');
 
           const second = peer();
           await second.authenticate();
@@ -431,6 +444,20 @@ done
     const capabilities = await peer.next('capabilities');
     assert.equal(capabilities.requestId, 'capabilities-1');
     assert.equal(capabilities.workspace, workspace);
+    assert.equal(capabilities.directoryBrowser, true);
+    peer.send({ type: 'listDirectories', requestId: 'browse-workspace' });
+    const directory = await peer.next('directories');
+    assert.equal(directory.requestId, 'browse-workspace');
+    assert.equal(directory.path, workspace);
+    assert.deepEqual(directory.entries, [{ name: 'nested', path: join(workspace, 'nested') }]);
+    peer.send({
+      type: 'listDirectories',
+      path: join(workspace, 'nested'),
+      requestId: 'browse-child',
+    });
+    const childDirectory = await peer.next('directories');
+    assert.equal(childDirectory.requestId, 'browse-child');
+    assert.equal(childDirectory.parent, workspace);
     assert.deepEqual(
       capabilities.programs?.map(({ id, available }) => ({ id, available })),
       [

@@ -1,4 +1,4 @@
-//! Host-reported state. Activity is not evidence that an agent task completed.
+//! Host-reported state. Terminal I/O alone is not evidence that an agent is working.
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -42,7 +42,7 @@ impl Status {
 
     pub fn label(&self) -> &'static str {
         match (self.source, self.state) {
-            (Source::Activity, State::Working) => "activity",
+            (Source::Activity, State::Working) => "open",
             (Source::Activity, State::Idle) => "quiet",
             (Source::Activity, _) => "unknown",
             (Source::Screen, State::Working) => "~working",
@@ -63,13 +63,13 @@ impl Status {
 mod tests {
     use super::*;
     #[test]
-    fn activity_labels_do_not_claim_task_outcome_and_screen_is_inferred() {
+    fn terminal_io_does_not_claim_agent_work_and_screen_is_inferred() {
         let mut status = Status {
             state: State::Working,
             source: Source::Activity,
             _updated_at: 1,
         };
-        assert_eq!(status.label(), "activity");
+        assert_eq!(status.label(), "open");
         status.state = State::Idle;
         assert_eq!(status.label(), "quiet");
         status.state = State::Done;

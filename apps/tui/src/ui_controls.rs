@@ -33,7 +33,9 @@ pub enum Action {
     Cancel,
     Field(Field),
     Program(Program),
+    DirectoryChoice(usize),
     MoveChoice(usize),
+    QuickChoice(usize),
     OpenRow(usize),
     FocusTab(usize),
     FocusPane(usize),
@@ -149,6 +151,24 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         let body = dialog_body(inner);
         match dialog {
             Dialog::Menu => unreachable!("Menu has its own full-screen geometry"),
+            Dialog::QuickSwitch { query, selected } => {
+                let count = app.quick_switch_results(query).len();
+                let visible = body.height.saturating_sub(5);
+                let offset = move_offset(*selected, visible);
+                for index in offset..count.min(offset + usize::from(visible)) {
+                    output.push(Control {
+                        area: row(body, 3 + (index - offset) as u16),
+                        label: None,
+                        action: Action::QuickChoice(index),
+                        enabled: true,
+                    });
+                }
+                buttons(
+                    dialog_actions(inner),
+                    [("Close", Action::Cancel, true)],
+                    &mut output,
+                );
+            }
             Dialog::ExitConfirm { .. } => {
                 buttons(
                     dialog_actions(inner),
@@ -205,7 +225,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                 );
             }
             Dialog::NewSession(form) => {
-                for (offset, field) in [(2, Field::Name), (4, Field::Directory)] {
+                for (offset, field) in [(3, Field::Name), (6, Field::Directory)] {
                     output.push(Control {
                         area: row(body, offset),
                         label: None,
@@ -215,7 +235,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                 }
                 for (index, program) in Program::ALL.into_iter().enumerate() {
                     output.push(Control {
-                        area: row(body, 8 + index as u16),
+                        area: row(body, 10 + index as u16),
                         label: None,
                         action: Action::Program(program),
                         enabled: true,
@@ -234,6 +254,32 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                                     .is_some_and(|caps| caps.available(form.program)),
                         ),
                         ("Cancel", Action::Cancel, true),
+                    ],
+                    &mut output,
+                );
+            }
+            Dialog::FolderPicker {
+                parent,
+                entries,
+                selected,
+                ..
+            } => {
+                let visible = body.height.saturating_sub(4);
+                let count = entries.len() + usize::from(parent.is_some());
+                let offset = move_offset(*selected, visible);
+                for index in offset..count.min(offset + usize::from(visible)) {
+                    output.push(Control {
+                        area: row(body, 3 + (index - offset) as u16),
+                        label: None,
+                        action: Action::DirectoryChoice(index),
+                        enabled: true,
+                    });
+                }
+                buttons(
+                    dialog_actions(inner),
+                    [
+                        ("Use this folder", Action::Submit, true),
+                        ("Back", Action::Cancel, true),
                     ],
                     &mut output,
                 );
@@ -378,10 +424,28 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
+    let footer_has_submit = matches!(
+        app.dialog,
+        Some(
+            Dialog::NewGroup { .. }
+                | Dialog::NewSession(_)
+                | Dialog::FolderPicker { .. }
+                | Dialog::Text { .. }
+                | Dialog::Move { .. }
+                | Dialog::Confirm { .. }
+        )
+    );
     for control in controls(app, frame.area()) {
         if let Some(label) = control.label {
             let in_dialog = app.dialog.is_some() && !matches!(app.dialog, Some(Dialog::Menu));
-            let primary = in_dialog && matches!(control.action, Action::Submit);
+            let selected_button = match control.action {
+                Action::Submit => app.dialog_button == Some(0),
+                Action::Cancel => app.dialog_button == Some(usize::from(footer_has_submit)),
+                _ => false,
+            };
+            let primary = in_dialog
+                && (selected_button
+                    || (app.dialog_button.is_none() && matches!(control.action, Action::Submit)));
             let exit_choice = match (&app.dialog, control.action) {
                 (Some(Dialog::ExitConfirm { leave_selected, .. }), Action::Submit) => {
                     Some(*leave_selected)
@@ -402,7 +466,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         .bg(if primary && control.enabled {
                             if exit_choice == Some(false) {
                                 BACKGROUND
-                            } else if destructive {
+                            } else if destructive && matches!(control.action, Action::Submit) {
                                 DANGER
                             } else {
                                 app.theme.accent()
