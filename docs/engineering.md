@@ -2,6 +2,21 @@
 
 These are project rules, not a requirement to introduce a framework for every abstraction. Prefer the smallest explicit boundary that makes behavior testable. Improve touched modules incrementally; do not reorganize the whole application during an unrelated feature.
 
+## Workspace layout
+
+| Path                | Responsibility                                                                |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `apps/mobile`       | Expo application, npm workspace `@nesvo/mobile`                               |
+| `apps/host`         | Rust `nesvo-host` executable; authoritative processes and metadata            |
+| `apps/tui`          | Rust `nesvo` executable; native terminal client                               |
+| `crates/nesvo-wire` | Shared authenticated frame codec; no sockets, processes or credential storage |
+| `tests`             | Cross-application contracts, integration and browser checks                   |
+| `scripts`           | Repository tooling, terminal bundle generation and lint conventions           |
+
+Install JavaScript dependencies at the repository root using its `package-lock.json`. Root npm scripts forward application commands to `@nesvo/mobile`. Rust packages share the root Cargo workspace, dependency declarations, `Cargo.lock` and `target/` directory. Use locked builds; do not recreate independent application lockfiles.
+
+The source move does not migrate credentials. The repository host still uses the private `host/.local/` pairing directory by default, and existing external data directories and EAS identifiers remain compatible.
+
 ## Responsibilities and dependencies
 
 The Rust host owns processes, groups, canonical terminal dimensions and control leases. Clients own presentation, focus and local pane layout. A session ID identifies a process independently of a group's position, tab index or visible pane. A client disappearing must not destroy that process.
@@ -15,14 +30,32 @@ Keep four responsibilities separate:
 
 Use functions and concrete types by default. Add a trait/interface where multiple implementations or a meaningful test seam justify it. Do not add generic repositories, dependency-injection containers, event buses or inheritance hierarchies preemptively.
 
-Current code maps to `src/connection`, `src/state`, group helpers, screens and terminal adapters; Rust separates groups/storage, session orchestration, process and transport modules. Route files in `src/app` remain composition points. ESLint prevents the domain/transport from importing UI and prevents screens from implementing wire encryption.
+## Mobile layers and public interfaces
+
+The mobile application uses feature slices under `apps/mobile/src`:
+
+| Layer      | Current responsibilities                                         | Allowed dependencies                             |
+| ---------- | ---------------------------------------------------------------- | ------------------------------------------------ |
+| `app`      | Expo Router routes and application composition                   | Widgets, features, entities, shared              |
+| `widgets`  | App shell and session dashboard                                  | Features, entities, shared                       |
+| `features` | Pair host, create session, manage groups, terminal session       | Entities, shared                                 |
+| `entities` | Session and group models; workspace state and commands           | Other entities through public interfaces, shared |
+| `shared`   | Generic UI/theme, terminal rendering and host transport adapters | Shared only                                      |
+
+`entities/workspace` coordinates connection state and session/group commands. It consumes the public interfaces of the session and group slices. `shared` must not accumulate product rules, demo sessions, group hierarchy logic or application navigation. Its host transport represents validated protocol data; mapping that data into product state belongs to entities.
+
+Cross-slice imports use the target slice's `index.ts`. Relative internal imports stay within their own slice. Do not bypass a public interface through `features/create-session/new-session-sheet` or similar deep imports. A feature must not import a sibling feature; compose them in a widget or route. Keep public exports small and intentional.
+
+`eslint.config.js` enforces layer direction and public entrypoints with `eslint-plugin-boundaries`, and blocks Router imports in entities/shared. The host transport cannot import React, React Native, Router, UI or product slices. `npm run test:architecture` checks repository conventions separately from runtime tests. TypeScript aliases mirror these layers; an alias is not permission to cross a forbidden boundary.
 
 ## TypeScript and React Native
 
 - Keep `strict`, `noUncheckedIndexedAccess` and `noImplicitOverride` enabled. Narrow `unknown` at external boundaries. Use discriminated unions for events and explicit nullable parent IDs.
 - Avoid `any`, unverified assertions and silent fallback values that disguise malformed messages. Handle missing array/map entries explicitly.
 - Prefer `import type` for type dependencies. Expose a small module interface; avoid reaching into another feature's internals.
-- Use descriptive feature names; PascalCase for components/types, camelCase for functions and values. Keep existing file conventions when modifying a module.
+- Use `kebab-case` TypeScript filenames and feature directories, including component files: `new-session-sheet.tsx` exports `NewSessionSheet`. Platform suffixes remain explicit, for example `terminal-view.web.tsx` and `random.native.ts`.
+- Use `PascalCase` components/types, `camelCase` functions/local values and `SCREAMING_SNAKE_CASE` module constants. Expo Router's `_layout.tsx` and bracketed dynamic route filenames are framework exceptions; keep non-route code out of `app`.
+- ESLint rejects explicit `any`, unused variables unless intentionally prefixed with `_`, leaked JSX conditionals, invalid filenames and forbidden imports. Prefer explicit booleans or a ternary when a numeric value could otherwise render in JSX.
 - Keep state minimal. Use host revisions for conflicting metadata changes and request IDs for results; never infer a newly created session from its display name.
 - Keep effects and cleanup paired. On leave/disconnect, remove subscriptions and release owned control. Reconnect with a fresh handshake; never automatically replay terminal input.
 - Safe areas and the keyboard have one owner per screen/modal. Web checks do not replace testing the iPhone keyboard, WebView, camera or lifecycle.
@@ -30,13 +63,22 @@ Current code maps to `src/connection`, `src/state`, group helpers, screens and t
 
 ## Rust
 
-- Follow Rust API naming: `snake_case` modules/functions, `PascalCase` types/traits, `SCREAMING_SNAKE_CASE` constants. Use `Option` and `Result` for absence and failure, enums for modes and private fields for invariants.
+- Follow Rust API naming: `snake_case` files/modules/functions, `PascalCase` types/traits, `SCREAMING_SNAKE_CASE` constants. Cargo package and crate-directory names use kebab-case, such as `nesvo-wire`; Rust imports use `nesvo_wire`. Do not apply TypeScript filename rules to Rust. Use `Option` and `Result` for absence and failure, enums for modes and private fields for invariants.
+- The host separates group rules, SQLite storage, session orchestration, launcher discovery, native PTY I/O, replay handling and transport. The TUI separates its app model, input/controller, launch form, network adapter, terminal emulator, pure render functions and lifecycle runner. Both depend directly on `nesvo-wire`; the TUI must not depend on the host application.
 - Use ownership and RAII to release terminal raw mode, cursor state, channels and process handles. Keep platform branches near platform adapters.
 - Return contextual errors at application boundaries. Do not `unwrap`/`expect` on network, filesystem or user input; test assertions may use them. Add typed domain errors when callers need to distinguish outcomes.
 - Keep public APIs narrow and document security/lifecycle guarantees. Prefer `pub(crate)` or private helpers unless a client needs the API.
 - Never hold shared state locks while awaiting network I/O. Use bounded queues; define how overflow, cancellation and disconnect behave. Isolate blocking PTY/SQLite work from async network tasks when it can block other clients.
-- Run `cargo fmt`, Clippy with warnings denied, and meaningful tests. Commit Cargo lockfiles for these applications and use locked builds in CI.
+- Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` and meaningful tests from the root. Commit the single workspace `Cargo.lock` and use locked builds in CI.
 - Do not enable every Clippy restriction or pedantic lint wholesale. Add rules when they prevent an observed class of failure; explain local allowances.
+
+## Formatting and tooling
+
+`.editorconfig` sets UTF-8, LF, final newlines and spaces: two-space indentation for text/code and four for Rust. Rustfmt owns Rust formatting. Prettier owns JavaScript/TypeScript, JSON, Markdown and configuration formatting: semicolons, single quotes, trailing commas, 100-column target and `arrowParens: "avoid"`.
+
+The configured import sorter groups React, React Native, third-party packages, application aliases and relative imports, with separation and sorted specifiers. Run the installed formatter instead of maintaining a competing manual order. Generated `apps/mobile/src/shared/terminal/generated.ts` is rebuilt with `npm run terminal:build`; never edit it by hand.
+
+Root commands are the common entrypoints: `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run test:architecture`, `npm run dependencies:check` and `npm run export`. Run native Expo/EAS commands from `apps/mobile` when they are not exposed by a root script. The [testing guide](testing.md) lists behavioral checks and their scope.
 
 ## Protocol, persistence and tests
 

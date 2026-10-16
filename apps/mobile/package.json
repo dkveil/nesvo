@@ -1,0 +1,49 @@
+{
+  "name": "@nesvo/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "license": "MIT",
+  "scripts": {
+    "start": "expo start --go",
+    "web": "expo start --web --go",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "terminal:build": "node ../../scripts/build-terminal.mjs",
+    "prestart": "npm run terminal:build",
+    "preweb": "npm run terminal:build",
+    "typecheck": "tsc --noEmit",
+    "export": "expo export --platform all",
+    "dependencies:check": "expo install --check"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "buffer": "6.0.3",
+    "expo": "~57.0.30",
+    "expo-build-properties": "~57.0.22",
+    "expo-camera": "~57.0.6",
+    "expo-clipboard": "~57.0.2",
+    "expo-constants": "~57.0.22",
+    "expo-crypto": "~57.0.4",
+    "expo-dev-client": "~57.0.20",
+    "expo-font": "~57.0.4",
+    "expo-linking": "~57.0.13",
+    "expo-router": "~57.0.28",
+    "expo-secure-store": "~57.0.4",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-web": "~0.21.0",
+    "react-native-webview": "13.16.1",
+    "tweetnacl": "1.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.4",
+    "typescript": "~6.0.3"
+  }
+}

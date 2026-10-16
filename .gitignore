@@ -39,6 +39,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+/apps/mobile/ios
+/apps/mobile/android
 
 # Host pairing secrets, build output and local verification artifacts
 .local/

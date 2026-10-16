@@ -3,7 +3,6 @@ dist
 .expo
 .local
 artifacts
-host/target
-tui/target
-src/terminal/generated.ts
+**/target
+apps/mobile/src/shared/terminal/generated.ts
 package-lock.json

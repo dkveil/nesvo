@@ -1,21 +1,85 @@
-// https://docs.expo.dev/guides/using-eslint/
+const path = require('node:path');
 const { defineConfig } = require('eslint/config');
 const expoConfig = require('eslint-config-expo/flat');
+const boundaries = require('eslint-plugin-boundaries');
+const conventions = require('./scripts/eslint-conventions.cjs');
+
+const layerPolicies = [
+  ['app', ['widgets', 'features', 'entities', 'shared']],
+  ['widgets', ['features', 'entities', 'shared']],
+  ['features', ['entities', 'shared']],
+  ['entities', ['entities', 'shared']],
+  ['shared', ['shared']],
+].map(([from, to]) => ({
+  from: { element: { type: from } },
+  allow: { to: { element: { type: to } } },
+}));
 
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/*'],
+    ignores: ['**/dist/**', '**/.expo/**', '**/target/**', '**/generated.ts', 'artifacts/**'],
   },
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['apps/mobile/src/**/*.{ts,tsx}'],
+    plugins: { boundaries, conventions },
+    settings: {
+      'import/resolver': {
+        typescript: { project: path.join(__dirname, 'apps/mobile/tsconfig.json') },
+      },
+      'boundaries/elements': [
+        { type: 'app', pattern: 'apps/mobile/src/app/**' },
+        { type: 'widgets', pattern: 'apps/mobile/src/widgets/*' },
+        { type: 'features', pattern: 'apps/mobile/src/features/*' },
+        { type: 'entities', pattern: 'apps/mobile/src/entities/*' },
+        { type: 'shared', pattern: 'apps/mobile/src/shared/**' },
+      ],
+    },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      'react/jsx-no-leaked-render': ['error', { validStrategies: ['coerce', 'ternary'] }],
+      'conventions/kebab-case': 'error',
+      'boundaries/no-unknown-files': 'error',
+      'boundaries/dependencies': [
+        'error',
+        {
+          default: 'disallow',
+          policies: [
+            ...layerPolicies,
+            {
+              disallow: {
+                to: {
+                  element: {
+                    type: ['features', 'entities', 'widgets'],
+                    fileInternalPath: '!index.ts',
+                  },
+                },
+              },
+            },
+          ],
+        },
+      ],
     },
   },
   {
-    // Transport and domain code must remain usable without the mobile UI.
-    files: ['src/connection/**/*.ts', 'src/groups.ts', 'src/types.ts'],
+    files: ['apps/mobile/src/{entities,shared}/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'expo-router', message: 'Inject navigation from the app composition layer.' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/mobile/src/shared/api/host/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -26,37 +90,12 @@ module.exports = defineConfig([
                 'react',
                 'react-native',
                 'expo-router',
-                '**/state/**',
-                '**/screens/**',
-                '**/AppRoot',
-                '**/components/**',
+                '@widgets/*',
+                '@features/*',
+                '@entities/*',
+                '@shared/ui*',
               ],
-              message:
-                'Keep domain and transport independent from UI. Inject effects through the application layer.',
-            },
-          ],
-        },
-      ],
-    },
-  },
-  {
-    files: [
-      'src/app/**/*.{ts,tsx}',
-      'src/screens/**/*.{ts,tsx}',
-      'src/components/**/*.{ts,tsx}',
-      'src/*Screen.tsx',
-      'src/AppRoot.tsx',
-      'src/GroupPicker.tsx',
-    ],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['**/connection/wire', 'tweetnacl', 'ws'],
-              message:
-                'Use the application state or HostClient; screens must not implement transport or encryption.',
+              message: 'Keep host transport independent from UI and product domains.',
             },
           ],
         },

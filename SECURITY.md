@@ -2,7 +2,7 @@
 
 The host grants shell access with the permissions of the user who started it. `--workspace` sets the initial directory; it is not a sandbox. Use the prototype on a trusted local network or private VPN. Do not expose the host port to the public internet.
 
-The QR code / JSON contains the shared terminal access key. Do not publish it, `.local/` files, screenshots of the code or recordings of the pairing screen. “Zapomnij host” (Forget host) removes the app's saved entry; it does not revoke the code on the computer. Key generation and rotation are described in [host/README.md](host/README.md).
+The QR code / JSON contains the shared terminal access key. Do not publish it, `.local/` files, screenshots of the code or recordings of the pairing screen. “Zapomnij host” (Forget host) removes the app's saved entry; it does not revoke the code on the computer. Key generation and rotation are described in [host configuration](apps/host/README.md).
 
 Command and output contents are encrypted with XSalsa20-Poly1305 (secretbox). The protocol includes a random connection challenge, message direction and sequence. It does not conceal addresses, traffic sizes or timing, and does not provide forward secrecy. It has not undergone an independent audit. The person scanning must verify that the code comes from their computer.
 

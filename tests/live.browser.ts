@@ -5,17 +5,17 @@ import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
-import { HostClient, parsePairing, type Pairing } from '../src/connection/client';
 
-// Run after `cargo build --manifest-path host/Cargo.toml`, with the web app serving.
+import { HostClient, type Pairing, parsePairing } from '../apps/mobile/src/shared/api/host/client';
+
+// Run after `cargo build --manifest-path apps/host/Cargo.toml`, with the web app serving.
 async function main() {
   const appUrl = process.env.APP_URL || 'http://localhost:8081';
   const pairingDir = path.resolve('artifacts', `.live-${randomUUID()}`);
   await mkdir(pairingDir, { recursive: true });
-  const binary = path.resolve(
-    'host/target/debug',
-    `nesvo-host${process.platform === 'win32' ? '.exe' : ''}`,
-  );
+  const binary =
+    process.env.NESVO_HOST_BINARY ||
+    path.resolve('target/debug', `nesvo-host${process.platform === 'win32' ? '.exe' : ''}`);
   const host = spawn(
     binary,
     [
@@ -31,7 +31,7 @@ async function main() {
     { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   let startupError: Error | undefined;
-  host.on('error', (error) => {
+  host.on('error', error => {
     startupError = error;
   });
   host.stderr.on('data', () => {});
@@ -56,7 +56,7 @@ async function main() {
     });
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     const errors: string[] = [];
-    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('pageerror', error => errors.push(error.message));
     await page.goto(appUrl, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
     await page.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
@@ -74,7 +74,7 @@ async function main() {
     await page.getByRole('button', { name: 'Utwórz grupę', exact: true }).click();
     await page.getByRole('button', { name: 'Pokaż grupę Phone', exact: true }).click();
     const observer = await browser.newPage({ viewport: { width: 1200, height: 900 } });
-    observer.on('pageerror', (error) => errors.push(error.message));
+    observer.on('pageerror', error => errors.push(error.message));
     await observer.goto(appUrl, { waitUntil: 'networkidle' });
     await observer.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
     await observer.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
@@ -177,9 +177,9 @@ async function main() {
     await browser?.close();
     // Even on a failed browser assertion, ask the host to close its test shells before exiting.
     if (pairing && host.exitCode === null) {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         const timeout = setTimeout(resolve, 3000);
-        const unsubscribe = cleanup.subscribe((event) => {
+        const unsubscribe = cleanup.subscribe(event => {
           if (event.type === 'connected') cleanup.listSessions();
           if (event.type === 'sessions') {
             for (const session of event.sessions) cleanup.closeSession(session.id);
@@ -195,7 +195,7 @@ async function main() {
     host.kill();
   }
 }
-main().catch((error) => {
+main().catch(error => {
   console.error(error);
   process.exitCode = 1;
 });

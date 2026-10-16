@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import test from 'node:test';
-import { HostClient, type HostEvent } from '../src/connection/client';
-import { decodeFrame, encodeFrame } from '../src/connection/wire';
+
+import { HostClient, type HostEvent } from '../apps/mobile/src/shared/api/host/client';
+import { decodeFrame, encodeFrame } from '../apps/mobile/src/shared/api/host/wire';
 
 class FakeWebSocket {
   static latest: FakeWebSocket;
@@ -35,7 +36,7 @@ test('host authentication rejects a complete recorded handshake after reconnect'
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
   const client = new HostClient();
   const events: HostEvent[] = [];
-  client.subscribe((event) => events.push(event));
+  client.subscribe(event => events.push(event));
   const key = new Uint8Array(32).fill(7);
   const challenge = 'c'.repeat(64);
   const pairing = {
@@ -94,8 +95,8 @@ test('host authentication rejects a complete recorded handshake after reconnect'
     replay.receive(recordedResponse);
     replay.receive(recordedOutput);
     assert.equal(replay.readyState, 3);
-    assert.ok(events.some((event) => event.type === 'error'));
-    assert.ok(!events.some((event) => event.type === 'connected' || event.type === 'output'));
+    assert.ok(events.some(event => event.type === 'error'));
+    assert.ok(!events.some(event => event.type === 'connected' || event.type === 'output'));
   } finally {
     client.disconnect();
     globalThis.WebSocket = originalWebSocket;

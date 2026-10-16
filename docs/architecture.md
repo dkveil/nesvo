@@ -2,6 +2,8 @@
 
 Decision: **Expo / React Native + TypeScript on the phone, Rust on the computer or VPS**. One monorepo contains the clients, host and protocol. The host starts processes and maintains sessions; the phone provides the control interface. Node.js remains a tool for app builds and tests; the host binary does not require a Node runtime.
 
+`apps/mobile` is an npm workspace; `apps/host`, `apps/tui` and `crates/nesvo-wire` form the Cargo workspace. Each application owns its build configuration. The shared Rust crate contains only encrypted-frame encoding and decoding, so the TUI does not pull in the host's database, PTY or QR implementation. Mobile domain slices and their allowed imports are described in the [engineering conventions](engineering.md).
+
 ## Responsibilities
 
 | Component                       | Technology                                                 | Responsibility                                                                           |
@@ -78,7 +80,7 @@ Expo Go has a fixed set of native modules. A custom Swift/Kotlin module or a Rus
 
 The host owns sessions. Losing the WebSocket connection does not terminate the shell. Reconnecting replays bounded output history; it does not guarantee a perfect reconstruction of every full-screen program. Stopping the host or computer ends that continuity. We do not take over arbitrary terminals previously opened in another program.
 
-Claude Code and Codex remain the original programs, launched by the user on the host. The phone does not extract their OAuth tokens or turn a subscription into its own API access. Conversation, approval and change views are currently demonstrations; real integration requires separate adapters and verification of the providers' official interfaces and policies.
+Claude Code, Gemini and Codex remain the original programs. Session creation selects a detected host program and an existing working directory; the host starts it directly with structured arguments. The phone does not extract their OAuth tokens or turn a subscription into its own API access. Conversation, approval and change views are currently demonstrations; real integration requires separate adapters and verification of the providers' official interfaces and policies.
 
 The host saves groups and their revisions in local SQLite. The process list, live sessions' group assignments and output buffers belong to the host process. After a restart, groups remain, but previous shells are not restored. No cloud service is required.
 

@@ -1,0 +1,15 @@
+[package]
+name = "nesvo-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared authenticated wire codec for nesvo clients and hosts"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64 = "0.22"
+crypto_secretbox = "0.1.1"
+rand = "0.8"
+serde.workspace = true
+serde_json.workspace = true

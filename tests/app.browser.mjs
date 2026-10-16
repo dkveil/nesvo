@@ -9,7 +9,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
 const errors = [];
-page.on('pageerror', (error) => errors.push(error.message));
+page.on('pageerror', error => errors.push(error.message));
 async function expectInViewport(locator, message) {
   const bounds = await locator.boundingBox();
   const viewport = page.viewportSize();
@@ -17,13 +17,18 @@ async function expectInViewport(locator, message) {
 }
 await mkdir('artifacts', { recursive: true });
 try {
-  await page.goto(process.env.APP_URL || 'http://localhost:8081', { waitUntil: 'networkidle' });
+  await page.goto(process.env.APP_URL || 'http://localhost:8081', {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
   await page.getByText('Tryb demo · sesje poniżej są przykładowe').waitFor();
-  assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 3);
+  assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 7);
   await page.screenshot({ path: 'artifacts/sessions.png' });
   await page
     .getByRole('button', { name: 'Otwórz sesję Widok sesji mobilnych', exact: true })
     .click();
+  await page.frameLocator('iframe[title="Terminal sesji"]').locator('.xterm-screen').waitFor();
+  await page.getByRole('tab', { name: 'Rozmowa', exact: true }).click();
   await page
     .getByText('Przygotuj czytelną listę sesji do obsługi jedną ręką.', { exact: true })
     .waitFor();
@@ -43,7 +48,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
   await page.getByRole('tab', { name: 'Wymagają uwagi' }).click();
-  assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 3);
   await page.getByRole('tab', { name: 'Wszystkie', exact: true }).click();
   await page.getByLabel('Szukaj sesji').fill('nieistniejąca sesja');
   await page.getByText('Brak pasujących sesji').waitFor();
@@ -53,8 +58,11 @@ try {
   await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
   const frame = page.frameLocator('iframe[title="Terminal sesji"]');
   await frame.locator('.xterm-screen').waitFor();
+  await frame.locator('textarea').focus();
   await page.getByRole('button', { name: 'Zakończ sesję', exact: true }).click();
   await page.getByRole('button', { name: 'Zostaw otwartą', exact: true }).waitFor();
+  await frame.locator('textarea:disabled').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('iframe').evaluate(element => element.inert), true);
   for (let i = 0; i < 8; i++) {
     await page.keyboard.press('Tab');
     assert.notEqual(
@@ -90,7 +98,7 @@ try {
   await page.screenshot({ path: 'artifacts/terminal-compact.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
-  assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 4);
+  assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 8);
   await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
   await page.getByRole('tab', { name: 'Komputery', exact: true }).waitFor();
   await page.waitForTimeout(250);

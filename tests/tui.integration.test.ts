@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { HostClient, parsePairing, type HostEvent } from '../src/connection/client';
-import { decodeServerMessage } from '../src/connection/messages';
+import {
+  HostClient,
+  type HostEvent,
+  parsePairing,
+} from '../apps/mobile/src/shared/api/host/client';
+import { decodeServerMessage } from '../apps/mobile/src/shared/api/host/messages';
 
 type Snapshot = Extract<HostEvent, { type: 'sessions' }>;
 type CommandResult = { code: number | null; stdout: string; stderr: string };
@@ -30,7 +34,7 @@ async function stopProcess(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   // An executable that could not spawn has no process to stop.
   if (child.pid === undefined) return;
-  const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()));
+  const exited = new Promise<void>(resolveExit => child.once('exit', () => resolveExit()));
   child.kill();
   await exited;
 }
@@ -63,10 +67,10 @@ function runTui(
     };
     child.stdout.on('data', (chunk: Buffer) => collect('stdout', chunk));
     child.stderr.on('data', (chunk: Buffer) => collect('stderr', chunk));
-    child.once('error', (error) => {
+    child.once('error', error => {
       failure = error;
     });
-    child.once('close', (code) => {
+    child.once('close', code => {
       clearTimeout(timeout);
       running.delete(child);
       if (failure) reject(failure);
@@ -86,13 +90,14 @@ function assertNoSecret(result: CommandResult, secrets: string[]): void {
 test(
   'native TUI shares the mobile client snapshot and rejects invalid pairing',
   { timeout: 90000 },
-  async (suite) => {
+  async suite => {
     const temporaryRoot = resolve(tmpdir());
     const fixture = await mkdtemp(join(temporaryRoot, 'nesvo-tui-'));
     await chmod(fixture, 0o700);
     const suffix = process.platform === 'win32' ? '.exe' : '';
-    const hostBinary = resolve('host/target/debug', `nesvo-host${suffix}`);
-    const tuiBinary = resolve('tui/target/debug', `nesvo${suffix}`);
+    const hostBinary =
+      process.env.NESVO_HOST_BINARY || resolve('target/debug', `nesvo-host${suffix}`);
+    const tuiBinary = process.env.NESVO_TUI_BINARY || resolve('target/debug', `nesvo${suffix}`);
     const pairingPath = join(fixture, 'pairing.json');
     const host = spawn(
       hostBinary,
@@ -105,27 +110,27 @@ test(
       hostOutput = (hostOutput + chunk.toString()).slice(-32768);
     });
     host.stderr.on('data', () => {});
-    host.on('error', (error) => {
+    host.on('error', error => {
       hostError = error;
     });
 
     const client = new HostClient();
     const events: HostEvent[] = [];
     const runningTuis = new Set<ChildProcess>();
-    const unsubscribe = client.subscribe((event) => events.push(event));
+    const unsubscribe = client.subscribe(event => events.push(event));
 
     async function next<T extends HostEvent['type']>(
       type: T,
       predicate: (event: Extract<HostEvent, { type: T }>) => boolean = () => true,
     ): Promise<Extract<HostEvent, { type: T }>> {
       return until(() => {
-        const error = events.find((event) => event.type === 'error');
+        const error = events.find(event => event.type === 'error');
         if (error?.type === 'error') throw new Error(error.message);
         const index = events.findIndex(
-          (event) => event.type === type && predicate(event as Extract<HostEvent, { type: T }>),
+          event => event.type === type && predicate(event as Extract<HostEvent, { type: T }>),
         );
         if (index >= 0) return events.splice(index, 1)[0] as Extract<HostEvent, { type: T }>;
-        const disconnected = events.find((event) => event.type === 'disconnected');
+        const disconnected = events.find(event => event.type === 'disconnected');
         if (disconnected?.type === 'disconnected') throw new Error(disconnected.reason);
         return undefined;
       }, `mobile client event ${type}`);
@@ -157,14 +162,14 @@ test(
       client.createGroup('Shared subproject', parent.groupId, parent.revision);
       const child = await next('groupCreated');
       const requestId = client.createSession('Cross-client shell', child.groupId);
-      const created = await next('created', (event) => event.requestId === requestId);
+      const created = await next('created', event => event.requestId === requestId);
       const expected = await snapshot();
       assert.equal(
-        expected.groups.find((group) => group.id === child.groupId)?.parentId,
+        expected.groups.find(group => group.id === child.groupId)?.parentId,
         parent.groupId,
       );
       assert.equal(
-        expected.sessions.find((session) => session.id === created.sessionId)?.groupId,
+        expected.sessions.find(session => session.id === created.sessionId)?.groupId,
         child.groupId,
       );
       assert.equal(expected.sessions[0]?.running, true);
@@ -186,7 +191,7 @@ test(
         'TUI exit preserves the running shell and does not acquire control',
         async () => {
           const afterExit = await snapshot();
-          const session = afterExit.sessions.find((item) => item.id === created.sessionId);
+          const session = afterExit.sessions.find(item => item.id === created.sessionId);
           assert.ok(session, 'The same host-issued session ID must remain after TUI exit');
           assert.equal(session.running, true);
           assert.equal(session.controllerId, null);
@@ -222,7 +227,7 @@ test(
           const remaining = await snapshot();
           for (const session of remaining.sessions) client.closeSession(session.id);
           if (remaining.sessions.length)
-            await next('sessions', (event) => event.sessions.length === 0);
+            await next('sessions', event => event.sessions.length === 0);
         }
       } finally {
         unsubscribe();

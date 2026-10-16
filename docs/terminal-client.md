@@ -1,12 +1,12 @@
 # Terminal client and synchronization
 
-**Status: initial groups and synchronization implementation; the TUI client lives in `tui/`.** Shared groups, subgroups, session processes and control belong to the host. Pane layout is local to each client. Full screen snapshots and persistent window layouts remain future work.
+**Status: initial groups and synchronization implementation; the TUI client lives in `apps/tui/`.** Shared groups, subgroups, session processes and control belong to the host. Pane layout is local to each client. Full screen snapshots and persistent window layouts remain future work.
 
 The Rust terminal client provides a group tree, split panes and fast session switching alongside the Expo app. Windows and macOS receive separate native binaries from one Rust codebase. Builds and tests run on native CI runners; interactive terminal behavior needs separate verification on each platform.
 
 ## One host, two interfaces
 
-Only the host starts processes. The terminal client and phone open views of the same session IDs. Closing a client leaves the host and processes running. At this stage, the host starts separately; the TUI does not own local PTYs. Commands and shortcuts are described in the [TUI guide](../tui/README.md).
+Only the host starts processes. The terminal client and phone open views of the same session IDs. Closing a client leaves the host and processes running. At this stage, the host starts separately; the TUI does not own local PTYs. Commands and shortcuts are described in the [TUI guide](../apps/tui/README.md).
 
 ```mermaid
 flowchart LR
@@ -56,7 +56,7 @@ The host currently stores a bounded output stream, which clients interpret in th
 - **Ratatui + Crossterm:** TUI layout, drawing, keyboard, mouse and resize. Crossterm supports Windows and Unix systems; this client uses its 0.29 backend with Ratatui 0.30. Both host and TUI manifests declare Rust 1.88 as the minimum version. [Ratatui](https://docs.rs/ratatui/latest/ratatui/), [manifest](https://docs.rs/crate/ratatui/latest/source/Cargo.toml), [Crossterm](https://docs.rs/crossterm/latest/crossterm/).
 - **portable-pty:** remains on the host, using Windows ConPTY and Unix PTYs. The TUI does not run its own process controller. [Documentation](https://docs.rs/portable-pty/0.9.0/portable_pty/).
 - **TUI screen engine:** `vt100` 0.16 is implemented in the client, providing the cell grid, input modes and alternate-screen state. Compatibility with Claude Code, Codex, Unicode and reconnection still needs broader testing. This choice does not implement authoritative host screen snapshots. `alacritty_terminal` remains an option if fuller emulation becomes necessary. [vt100](https://docs.rs/vt100/latest/vt100/), [screen state](https://docs.rs/vt100/latest/vt100/struct.Screen.html), [Alacritty](https://docs.rs/alacritty_terminal/latest/alacritty_terminal/).
-- **Pane renderer:** the TUI uses its own small Ratatui cell renderer over `vt100`. It does not use `tui-term` or that library's experimental PTY controller. Keeping process ownership on the host avoids creating separate local sessions. [Current renderer](../tui/src/terminal.rs).
+- **Pane renderer:** the TUI uses its own small Ratatui cell renderer over `vt100`. It does not use `tui-term` or that library's experimental PTY controller. Keeping process ownership on the host avoids creating separate local sessions. [Current renderer](../apps/tui/src/terminal.rs).
 - **SQLite on the host:** currently stores groups and revisions. Project catalogs, layouts and session configuration are planned. Persisting metadata does not make processes survive a host or computer restart. After restart, groups remain and the process list is empty.
 
 The Rust code separates the wire codec, host and TUI, with terminal interpretation in the TUI's terminal module. A shared screen-model library can be introduced if the host snapshot implementation needs it. The Expo app remains a separate client of the same contract.

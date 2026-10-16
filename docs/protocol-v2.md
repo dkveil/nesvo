@@ -5,8 +5,8 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 ## Connection and snapshots
 
 - `auth { clientNonce }` → `connected { clientNonce, clientId, protocolVersion: 2 }`; `clientId` is a JSON number, scoped to this connection.
-- Then `sessions { sessions, groups, revision }`. `list` requests the same snapshot. Snapshots are broadcast when session metadata or groups change.
-- Session: existing `id,name,cwd,createdAt,cols,rows,running`, plus `groupId: string|null`, `controllerId: number|null`. Lease secrets are never in snapshots.
+- Then `sessions { sessions, groups, revision }`. `list` requests the same snapshot. Snapshots are broadcast when session metadata, groups or observed status changes.
+- Session: existing `id,name,cwd,createdAt,cols,rows,running`, plus `program: "shell" | "claude" | "gemini" | "codex"`, `groupId: string|null`, `controllerId: number|null`. Lease secrets are never in snapshots. Current hosts always supply `program`; clients can treat a missing value in an older snapshot as `shell`.
 - Group: `{ id, parentId: string|null, name, order: number }`. Root is `null`, not a synthetic group.
 - `revision` is the durable metadata revision. Group CRUD and session moves increment it; terminal output/control and session create/close do not.
 - Optional `requestId` on any well-formed command is echoed on its application errors. It must be nonempty, have at most 128 UTF-8 bytes and contain no control characters. Malformed wire/protocol messages close the connection. Do not automatically retry input or destructive requests after reconnect.
@@ -14,17 +14,38 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Sessions and groups
 
-| Command                                                 | Result                                                                                                         |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `create { name, cwd?, groupId?:string                   | null, requestId? }`                                                                                            | Targeted `created { sessionId, requestId? }`, then broadcast snapshot. No automatic subscription/control. |
-| `renameSession { sessionId, name, requestId? }`         | Targeted `updated { revision, requestId? }`, then snapshot; runtime name does not increment metadata revision. |
-| `close { sessionId, requestId? }`                       | Terminates the session and broadcasts a snapshot.                                                              |
-| `createGroup { name, parentId:string                    | null, order?:number, expectedRevision, requestId? }`                                                           | Targeted `groupCreated { groupId, revision, requestId? }`, then snapshot.                                 |
-| `updateGroup { groupId, name, parentId:string           | null, order:number, expectedRevision, requestId? }`                                                            | Targeted `updated { revision, requestId? }`, then snapshot. Full replacement of editable fields.          |
-| `deleteGroup { groupId, expectedRevision, requestId? }` | Targeted `updated`, then snapshot. Only an empty group with no child groups can be deleted.                    |
-| `moveSession { sessionId, groupId:string                | null, expectedRevision, requestId? }`                                                                          | Targeted `updated`, then snapshot.                                                                        |
+| Command                                                                        | Result                                                                                                         |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `getCapabilities { requestId? }`                                               | Targeted `capabilities { workspace, programs:[{id,label,available}], requestId? }`.                            |
+| `create { name, program?, cwd?, groupId?, requestId? }`                        | Targeted `created { sessionId, requestId? }`, then broadcast snapshot. No automatic subscription/control.      |
+| `renameSession { sessionId, name, requestId? }`                                | Targeted `updated { revision, requestId? }`, then snapshot; runtime name does not increment metadata revision. |
+| `close { sessionId, requestId? }`                                              | Terminates the session and broadcasts a snapshot.                                                              |
+| `createGroup { name, parentId, order?, expectedRevision, requestId? }`         | Targeted `groupCreated { groupId, revision, requestId? }`, then snapshot.                                      |
+| `updateGroup { groupId, name, parentId, order, expectedRevision, requestId? }` | Targeted `updated { revision, requestId? }`, then snapshot. Full replacement of editable fields.               |
+| `deleteGroup { groupId, expectedRevision, requestId? }`                        | Targeted `updated`, then snapshot. Only an empty group with no child groups can be deleted.                    |
+| `moveSession { sessionId, groupId, expectedRevision, requestId? }`             | Targeted `updated`, then snapshot.                                                                             |
 
-Names: trimmed, 1–80 Unicode characters, no control characters. Order: integer 0–1,000,000. Parents must exist; self-parenting and descendant cycles are rejected. Maximum 64 groups and 8 live/exited sessions in this iteration. SQLite stores groups/revision alongside the pairing files. Sessions and their group assignments live as long as the host process; database persistence does not preserve processes after restart.
+Group and parent IDs are strings or `null` for the root. `create` may omit `groupId`; `createGroup` may omit `order` to use zero. Names: trimmed, 1–80 Unicode characters, no control characters. Order: integer 0–1,000,000. Parents must exist; self-parenting and descendant cycles are rejected. Maximum 64 groups and 8 live/exited sessions in this iteration. SQLite stores groups/revision alongside the pairing files. Sessions and their group assignments live as long as the host process; database persistence does not preserve processes after restart.
+
+`program` is one of `shell`, `claude`, `gemini`, or `codex`; omission selects `shell`. A missing or blank `cwd` uses the host's workspace. Relative paths resolve against that workspace; absolute paths can select any existing directory accessible to the host user. Paths are canonicalized before process creation. The workspace is a default, not a sandbox. An unavailable program or invalid directory returns an application error with the supplied `requestId`, without creating a session.
+
+Capabilities contain all four program IDs. Discovery inspects PATH once at startup; requests only read the cache, and installation/PATH changes require a host restart. `available` means a supported launcher was found, not that subscription login is complete. The host starts the original CLI without injecting model API credentials or automating authentication. Native executables launch directly. Windows npm wrappers resolve through the known package's JavaScript bin entry and `node.exe`; unsupported custom wrappers are unavailable. No user-supplied command string or directory is interpolated into shell source.
+
+## Observed session status
+
+Session snapshots also include `status: { state, source, updatedAt }`. Older hosts may omit it; a client must not manufacture semantic agent state from `running` alone. `updatedAt` is the host's epoch-millisecond timestamp of the last state/source transition, not the last output byte. Status never increments the durable metadata revision.
+
+| Source     | States                                   | Meaning                                                                                                                                 |
+| ---------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `activity` | `working`, `idle`, `unknown`             | Recent input/output, quiet shell, or unrecognized CLI state. This is I/O observation, not proof that an agent is thinking or waiting.   |
+| `screen`   | `working`, `idle`, `blocked`, `question` | Conservative inference from a recognized program's current visible terminal screen. It can be wrong and must never authorize an action. |
+| `process`  | `done`, `failed`, `unknown`              | The child exited with code zero/nonzero, or its exit status could not be read. Late output cannot revive its state.                     |
+
+The host samples status every 250 ms and broadcasts one snapshot only when a state/source changes. A shell becomes `idle` after 1.5 seconds without input/output; an unrecognized CLI becomes `unknown`. Quiet output never implies completion or a permission request. Explicit `close` removes a session, while a naturally exited process remains visible until closed. Detection uses the program selected at creation: launching an AI CLI later from a generic shell does not enable provider-specific screen rules.
+
+For known CLI programs, a host-side VT parser tracks the canonical dimensions with zero scrollback. Detection examines at most the last 12 nonempty visible lines. Current rules recognize selected English Codex approval/question/footer layouts, Gemini execution permission choices and Claude permission/prompt layouts. All required markers must coexist on the current screen; ordinary question prose, cleared screens and historical scrollback are not sufficient. Other versions, languages, layouts and terminal programs may remain `unknown`. This parser is used only for status hints; bounded transcript replay is still not an exact screen snapshot.
+
+Screen rules are deliberately narrow and version-sensitive. Codex's [question overlay](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/request_user_input/mod.rs) and Gemini's [confirmation renderer](https://github.com/google-gemini/gemini-cli/blob/main/packages/cli/src/ui/components/messages/ToolConfirmationMessage.tsx) define the corresponding UI markers. Tests use synthetic screens and local fixture processes; they do not start or authenticate real AI tools. The host does not install CLI hooks, alter provider configuration or make model API requests.
 
 ## Watching and control
 
@@ -41,10 +62,12 @@ Names: trimmed, 1–80 Unicode characters, no control characters. Order: integer
 
 ## Legacy compatibility and replay limits
 
+Capabilities are sent only in response to `getCapabilities`, so older clients do not receive an unsolicited event they may reject. Existing `create` requests without `program` continue to create a shell. These are additive commands within application protocol v2: an older v2 host can still reject `getCapabilities` and close the connection. Upgrade host and clients together for the launcher picker; `protocolVersion:2` alone does not establish support for this extension.
+
 `attach {sessionId,cols,rows}` remains supported for the original client: it releases that connection's other control leases/subscriptions, acquires the requested session if free, and emits `attached`, `control`, then replay. Its lease accepts legacy input/resize without `leaseId`; supplying an incorrect lease is always rejected. A lease obtained through v2 `acquireControl` never accepts missing `leaseId`.
 
 Output remains bounded transcript replay, not a full VT screen snapshot. Historical terminal queries are filtered after the first controller attachment. Multi-device observers share canonical dimensions but a late attachment to a full-screen program may need redraw. A canonical screen engine is a subsequent compatibility-tested change. Transport backpressure limits and slow-client disconnection remain in force.
 
 ## Rust client codec
 
-The host library exports `nesvo_host::wire::{encode_client,decode_host}` with the same arguments as the existing `encode`/`decode`; existing wrappers retain host direction. Use a fresh random client nonce for every connection and verify the echoed nonce before trusting events. `encode_client` starts at sequence 1 for auth; `decode_host` starts at sequence 1 for connected.
+The shared `nesvo-wire` crate exports `nesvo_wire::{encode_client,decode_host}` with the same arguments as `encode`/`decode`; those existing wrappers retain host direction. The host keeps `nesvo_host::wire` as a compatibility re-export, while the TUI depends directly on the shared crate. Use a fresh random client nonce for every connection and verify the echoed nonce before trusting events. `encode_client` starts at sequence 1 for auth; `decode_host` starts at sequence 1 for connected.

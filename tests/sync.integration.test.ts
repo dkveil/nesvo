@@ -1,14 +1,29 @@
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
-import type { Pairing, SessionGroup, TerminalSession } from '../src/connection/types';
-import { decodeFrame, encodeFrame, keyBytes, parsePairing } from '../src/connection/wire';
+
+import type {
+  Pairing,
+  SessionGroup,
+  TerminalSession,
+} from '../apps/mobile/src/shared/api/host/types';
+import {
+  decodeFrame,
+  encodeFrame,
+  keyBytes,
+  parsePairing,
+} from '../apps/mobile/src/shared/api/host/wire';
+
+const { Terminal } = createRequire(new URL('../apps/mobile/package.json', import.meta.url))(
+  '@xterm/xterm',
+) as typeof import('@xterm/xterm');
 
 type Event = {
   type: string;
@@ -27,6 +42,7 @@ type Event = {
   rows?: number;
   data?: string;
   replay?: boolean;
+  allowResponses?: boolean;
   code?: string;
   message?: string;
 };
@@ -54,19 +70,29 @@ class Peer {
   private incoming = 0;
   private outgoing = 0;
   private error?: Error;
+  private terminals = new Map<
+    string,
+    {
+      terminal: import('@xterm/xterm').Terminal;
+      writes: Promise<void>;
+      allowResponses: boolean;
+    }
+  >();
   clientId?: number;
   closed = false;
 
   constructor(private pairing: Pairing) {
     this.socket = new WebSocket(pairing.url);
-    this.socket.on('error', (error) => {
+    this.socket.on('error', error => {
       this.error = error;
     });
     this.socket.on('close', () => {
       this.closed = true;
       this.leases.clear();
+      for (const screen of this.terminals.values()) screen.terminal.dispose();
+      this.terminals.clear();
     });
-    this.socket.on('message', (data) => {
+    this.socket.on('message', data => {
       try {
         if (!this.challenge) {
           this.challenge = JSON.parse(data.toString()).challenge;
@@ -85,16 +111,49 @@ class Peer {
             this.leases.set(event.sessionId, event.leaseId);
           else this.leases.delete(event.sessionId);
         }
-        // A viewer must never answer terminal queries. The controller answers ConPTY's startup DSR.
-        if (event.type === 'output' && event.sessionId && event.data?.includes('\x1b[6n')) {
-          const leaseId = this.leases.get(event.sessionId);
-          if (leaseId)
-            this.send({ type: 'input', sessionId: event.sessionId, leaseId, data: '\x1b[1;1R' });
-        }
+        this.render(event);
       } catch (error) {
         this.error = error as Error;
       }
     });
+  }
+
+  private render(event: Event) {
+    const sessionId = event.sessionId;
+    if (!sessionId) return;
+    let screen = this.terminals.get(sessionId);
+    if (!screen && event.type === 'subscribed') {
+      const terminal = new Terminal({ cols: event.cols, rows: event.rows });
+      screen = { terminal, writes: Promise.resolve(), allowResponses: false };
+      this.terminals.set(sessionId, screen);
+      const active = screen;
+      terminal.onData(data => {
+        // This parser has no focused DOM terminal. Its synthetic focus report
+        // is not a response from the controller and must not reach PowerShell.
+        if (data === '\x1b[O' || data === '\x1b[I') return;
+        const leaseId = this.leases.get(sessionId);
+        if (active.allowResponses && leaseId && !this.closed)
+          this.send({ type: 'input', sessionId, leaseId, data });
+      });
+    }
+    if (!screen) return;
+    const active = screen;
+    active.writes = active.writes
+      .then(async () => {
+        if (this.closed) return;
+        if (event.type === 'subscribed') active.terminal.reset();
+        if ((event.type === 'subscribed' || event.type === 'control') && event.cols && event.rows)
+          active.terminal.resize(event.cols, event.rows);
+        if (event.type !== 'output' || !event.data) return;
+        const allowResponses = !event.replay || event.allowResponses === true;
+        // Cancel a partial historic query before live parsing may answer it.
+        const prefix = allowResponses !== active.allowResponses ? '\x18' : '';
+        active.allowResponses = allowResponses;
+        await new Promise<void>(done => active.terminal.write(prefix + event.data!, done));
+      })
+      .catch(error => {
+        this.error = error as Error;
+      });
   }
 
   async connect() {
@@ -124,7 +183,7 @@ class Peer {
   next(type: string, matches: (event: Event) => boolean = () => true): Promise<Event> {
     return until(() => {
       if (this.error) throw this.error;
-      const index = this.events.findIndex((event) => event.type === type && matches(event));
+      const index = this.events.findIndex(event => event.type === type && matches(event));
       if (index >= 0) return this.events.splice(index, 1)[0];
       return undefined;
     }, type);
@@ -134,16 +193,16 @@ class Peer {
     this.events.splice(
       0,
       this.events.length,
-      ...this.events.filter((event) => event.type !== 'sessions'),
+      ...this.events.filter(event => event.type !== 'sessions'),
     );
     this.send({ type: 'list' });
-    return this.next('sessions', (event) => revision === undefined || event.revision === revision);
+    return this.next('sessions', event => revision === undefined || event.revision === revision);
   }
 
   async request(command: Record<string, unknown>, response: string) {
     const requestId = randomBytes(8).toString('hex');
     this.send({ ...command, requestId });
-    return this.next(response, (event) => event.requestId === requestId);
+    return this.next(response, event => event.requestId === requestId);
   }
 
   async acquire(sessionId: string, cols = 90, rows = 28, takeOver = false) {
@@ -151,7 +210,7 @@ class Peer {
     this.send({ type: 'acquireControl', sessionId, cols, rows, takeOver });
     const event = await this.next(
       'control',
-      (item) =>
+      item =>
         item.sessionId === sessionId &&
         item.controllerId === this.clientId &&
         Boolean(item.leaseId),
@@ -164,8 +223,23 @@ class Peer {
     this.events.splice(
       0,
       this.events.length,
-      ...this.events.filter((event) => event.type !== 'control' || event.sessionId !== sessionId),
+      ...this.events.filter(event => event.type !== 'control' || event.sessionId !== sessionId),
     );
+  }
+
+  async shellReady(sessionId: string) {
+    if (process.platform !== 'win32') return;
+    // A control lease precedes PowerShell's startup cursor query. Wait for the
+    // VT parser to answer it and paint the prompt before submitting commands.
+    await until(async () => {
+      if (this.error) throw this.error;
+      const screen = this.terminals.get(sessionId);
+      if (!screen) return undefined;
+      await screen.writes;
+      const buffer = screen.terminal.buffer.active;
+      const line = buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true);
+      return line && /^PS .*>\s*$/.test(line) ? true : undefined;
+    }, 'PowerShell prompt after terminal initialization');
   }
 
   async output(sessionId: string, marker: string) {
@@ -173,8 +247,8 @@ class Peer {
       () => {
         if (this.error) throw this.error;
         const output = this.events
-          .filter((event) => event.type === 'output' && event.sessionId === sessionId)
-          .map((event) => event.data ?? '')
+          .filter(event => event.type === 'output' && event.sessionId === sessionId)
+          .map(event => event.data ?? '')
           .join('');
         return output.includes(marker) ? output : undefined;
       },
@@ -192,12 +266,11 @@ class Peer {
 test(
   'v2 synchronizes hierarchy, observers, leases and durable metadata across clients',
   { timeout: 150000 },
-  async (suite) => {
+  async suite => {
     const fixture = await mkdtemp(join(tmpdir(), 'pocket-sync-'));
-    const binary = resolve(
-      'host/target/debug',
-      `nesvo-host${process.platform === 'win32' ? '.exe' : ''}`,
-    );
+    const binary =
+      process.env.NESVO_HOST_BINARY ||
+      resolve('target/debug', `nesvo-host${process.platform === 'win32' ? '.exe' : ''}`);
     const peers: Peer[] = [];
     let host: ChildProcess | undefined;
     let pairing: Pairing;
@@ -210,13 +283,13 @@ test(
         ['--port', '0', '--pairing-dir', fixture, '--workspace', process.cwd()],
         { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
       );
-      host.stdout?.on('data', (chunk) => {
+      host.stdout?.on('data', chunk => {
         stdout += chunk.toString();
       });
-      host.stderr?.on('data', (chunk) => {
+      host.stderr?.on('data', chunk => {
         stderr += chunk.toString();
       });
-      host.on('error', (error) => {
+      host.on('error', error => {
         failure = error;
       });
       await until(() => {
@@ -229,7 +302,7 @@ test(
     async function stop() {
       if (!host || host.exitCode !== null) return;
       const process = host;
-      await new Promise<void>((resolveExit) => {
+      await new Promise<void>(resolveExit => {
         process.once('exit', () => resolveExit());
         process.kill();
       });
@@ -259,20 +332,17 @@ test(
           assert.ok(parent.groupId);
           parentId = parent.groupId;
           revision = parent.revision!;
-          const synced = await desktop.next('sessions', (event) => event.revision === revision);
-          assert.equal(synced.groups?.find((group) => group.id === parentId)?.name, 'Workspace');
+          const synced = await desktop.next('sessions', event => event.revision === revision);
+          assert.equal(synced.groups?.find(group => group.id === parentId)?.name, 'Workspace');
           const child = await desktop.request(
             { type: 'createGroup', name: 'Mobile', parentId, expectedRevision: revision },
             'groupCreated',
           );
           childId = child.groupId!;
           revision = child.revision!;
-          const childSnapshot = await mobile.next(
-            'sessions',
-            (event) => event.revision === revision,
-          );
+          const childSnapshot = await mobile.next('sessions', event => event.revision === revision);
           assert.equal(
-            childSnapshot.groups?.find((group) => group.id === childId)?.parentId,
+            childSnapshot.groups?.find(group => group.id === childId)?.parentId,
             parentId,
           );
           const stale = await mobile.request(
@@ -311,7 +381,7 @@ test(
         assert.notEqual(second.sessionId, sessionId);
         const snapshot = await desktop.snapshot();
         assert.equal(
-          snapshot.sessions?.find((session) => session.id === sessionId)?.groupId,
+          snapshot.sessions?.find(session => session.id === sessionId)?.groupId,
           childId,
         );
         const moved = await desktop.request(
@@ -324,9 +394,9 @@ test(
           'updated',
         );
         revision = moved.revision!;
-        const sync = await mobile.next('sessions', (event) => event.revision === revision);
+        const sync = await mobile.next('sessions', event => event.revision === revision);
         assert.equal(
-          sync.sessions?.find((session) => session.id === second.sessionId)?.groupId,
+          sync.sessions?.find(session => session.id === second.sessionId)?.groupId,
           parentId,
         );
         const busy = await mobile.request(
@@ -335,7 +405,7 @@ test(
         );
         assert.ok(busy.message);
         desktop.send({ type: 'close', sessionId: second.sessionId });
-        await mobile.next('sessions', (event) => event.sessions?.length === 1);
+        await mobile.next('sessions', event => event.sessions?.length === 1);
       });
 
       await suite.test(
@@ -346,9 +416,10 @@ test(
           await mobile.next('subscribed');
           const passive = await desktop.next('subscribed');
           const firstLease = await mobile.acquire(sessionId, 92, 29);
+          await mobile.shellReady(sessionId);
           const controller = await desktop.next(
             'control',
-            (event) => event.controllerId === mobile.clientId,
+            event => event.controllerId === mobile.clientId,
           );
           assert.equal(controller.leaseId, undefined, 'lease must not leak to other clients');
           assert.equal(controller.cols, 92);
@@ -373,14 +444,14 @@ test(
               .message,
           );
           assert.equal(
-            (await desktop.snapshot()).sessions?.find((session) => session.id === sessionId)?.cols,
+            (await desktop.snapshot()).sessions?.find(session => session.id === sessionId)?.cols,
             92,
           );
           const secondLease = await desktop.acquire(sessionId, 100, 32, true);
           assert.notEqual(secondLease, firstLease);
           await mobile.next(
             'control',
-            (event) => event.sessionId === sessionId && event.controllerId === desktop.clientId,
+            event => event.sessionId === sessionId && event.controllerId === desktop.clientId,
           );
           assert.ok(
             (
@@ -404,12 +475,12 @@ test(
             desktop.output(sessionId, 'SHARED_VARIABLE'),
           ]);
           desktop.send({ type: 'resize', sessionId, leaseId: secondLease, cols: 110, rows: 35 });
-          await mobile.next('control', (event) => event.cols === 110 && event.rows === 35);
+          await mobile.next('control', event => event.cols === 110 && event.rows === 35);
           mobile.discardControl(sessionId);
           desktop.send({ type: 'releaseControl', sessionId, leaseId: secondLease });
           await mobile.next(
             'control',
-            (event) => event.sessionId === sessionId && event.controllerId === null,
+            event => event.sessionId === sessionId && event.controllerId === null,
           );
           const fresh = await desktop.acquire(sessionId);
           assert.notEqual(fresh, secondLease);
@@ -425,7 +496,7 @@ test(
           await desktop.disconnect();
           await mobile.next(
             'control',
-            (event) => event.sessionId === sessionId && event.controllerId === null,
+            event => event.sessionId === sessionId && event.controllerId === null,
           );
           const resumed = await mobile.acquire(sessionId);
           mobile.send({
@@ -449,9 +520,10 @@ test(
           const viewer = await connect();
           viewer.send({ type: 'subscribe', sessionId });
           viewer.send({ type: 'subscribe', sessionId: secondId });
-          await viewer.next('subscribed', (event) => event.sessionId === sessionId);
-          await viewer.next('subscribed', (event) => event.sessionId === secondId);
+          await viewer.next('subscribed', event => event.sessionId === sessionId);
+          await viewer.next('subscribed', event => event.sessionId === secondId);
           const secondLease = await mobile.acquire(secondId);
+          await mobile.shellReady(secondId);
           for (const [id, leaseId, marker] of [
             [sessionId, mobile.leases.get(sessionId), 'ONE'],
             [secondId, secondLease, 'TWO'],
@@ -481,12 +553,12 @@ test(
           });
           await mobile.output(secondId, 'PRIVATE_PANE');
           assert.equal(
-            viewer.events.some((event) => event.type === 'output' && event.sessionId === secondId),
+            viewer.events.some(event => event.type === 'output' && event.sessionId === secondId),
             false,
           );
           mobile.send({ type: 'close', sessionId: secondId });
           mobile.send({ type: 'close', sessionId });
-          await mobile.next('sessions', (event) => event.sessions?.length === 0);
+          await mobile.next('sessions', event => event.sessions?.length === 0);
           await viewer.disconnect();
         },
       );
@@ -499,7 +571,7 @@ test(
           await start();
           const reloaded = await connect();
           const snapshot = await reloaded.snapshot(revision);
-          assert.equal(snapshot.groups?.find((group) => group.id === childId)?.parentId, parentId);
+          assert.equal(snapshot.groups?.find(group => group.id === childId)?.parentId, parentId);
           assert.deepEqual(snapshot.sessions, []);
           const renamed = await reloaded.request(
             {
@@ -520,7 +592,7 @@ test(
           revision = removed.revision!;
           const remaining = await reloaded.snapshot(revision);
           assert.deepEqual(
-            remaining.groups?.map((group) => group.id),
+            remaining.groups?.map(group => group.id),
             [parentId],
           );
         },
