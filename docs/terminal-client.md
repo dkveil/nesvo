@@ -2,9 +2,7 @@
 
 **Status: initial groups and synchronization implementation; the TUI client lives in `tui/`.** Shared groups, subgroups, session processes and control belong to the host. Pane layout is local to each client. Full screen snapshots and persistent window layouts remain future work.
 
-We are building a Rust terminal client for Windows and macOS alongside the Expo app. The interface direction follows the user's preference for Herdr: a group tree, clear tabs, a split workspace and fast session switching. This is an interaction and layout reference, not a claim of compatibility with Herdr's protocol.
-
-As of October 16, 2026, [Herdr](https://herdr.dev/) advertises native Windows and macOS support; its [official repository](https://github.com/herdrdev/herdr) is written in Rust. [Agent Deck](https://github.com/asheshgoplani/agent-deck) uses Go and tmux, and directs Windows users to WSL. Our two platforms receive separate native binaries from one Rust codebase. Builds and tests must run on Windows and macOS runners; compiling on Windows alone does not establish macOS support.
+The Rust terminal client provides a group tree, split panes and fast session switching alongside the Expo app. Windows and macOS receive separate native binaries from one Rust codebase. Builds and tests run on native CI runners; interactive terminal behavior needs separate verification on each platform.
 
 ## One host, two interfaces
 

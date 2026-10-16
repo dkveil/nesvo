@@ -48,15 +48,11 @@ CI checks the mobile code and native Rust builds on Windows, macOS and Linux. Re
 
 Keep demo fixtures explicit. Persisted metadata does not imply that processes survive a host restart. Bounded terminal transcript replay does not imply an exact full-screen snapshot.
 
-## Reference projects and primary guidance
-
-The user-provided `accounting-app-js-master` was inspected locally on 2026-10-16. Its ESLint layer policies/public feature exports, strict indexed access and small tested payload mappers inform our boundaries. Its Next.js server stack and proprietary packages are not dependencies of this project.
-
-Herdr was inspected at commit [`143bf5fd4781d164260c63fe28e7dc08054ad32f`](https://github.com/herdrdev/herdr/tree/143bf5fd4781d164260c63fe28e7dc08054ad32f). Useful design references are independent terminal identity (`src/terminal/id.rs`), client-specific views (`src/server/headless/client_views.rs`), dedicated persistence (`src/persist/writer.rs`) and checks against expensive queries during rendering (`scripts/test_ui_hot_path_architecture.py`). These are architectural references; no Herdr source is incorporated. Herdr has its own Apache-2.0 license.
+## Language documentation
 
 - [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/): idiomatic APIs and type safety.
 - [Clippy usage](https://doc.rust-lang.org/clippy/usage.html): lint groups and targeted configuration.
 - [TypeScript strict](https://www.typescriptlang.org/tsconfig/strict.html) and [indexed access](https://www.typescriptlang.org/tsconfig/noUncheckedIndexedAccess.html): compiler-enforced assumptions.
 - [Thinking in React](https://react.dev/learn/thinking-in-react): component responsibilities and minimal state.
 
-These sources guide choices; project-specific tradeoffs and tests decide the implementation.
+Project-specific tradeoffs and tests decide the implementation.

@@ -2,8 +2,6 @@
 
 Updated October 16, 2026 after the first preview. The product name is **nesvo**, chosen by the project owner. App display names, the repository and native binaries use this name. Internal storage and Expo identifiers are preserved where migration would affect existing installations or pairing; see [branding](branding.md).
 
-The visual references are ChatGPT's dark mobile interface and the mobile previews of [Orca](https://www.onorca.dev/#mobile). This is an independent Expo / React Native implementation, without copying their code, logos or assets.
-
 - Background `#0B0B0B`, surfaces `#191919`, bubbles and selections `#242424`. White for primary actions and grays for supporting text. Reserve color for items needing attention, errors and terminal syntax.
 - System typography on the phone. Conversation text at 16/26, row titles at 16, descriptions at 14. No decorative uppercase labels or colorful agent cards.
 - The main list uses flat rows: topic, latest activity, agent and project. Include search and a filter for items needing attention.

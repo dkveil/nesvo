@@ -58,6 +58,7 @@ npm.cmd run terminal:build
 npx.cmd expo install --check
 npm.cmd run typecheck
 npm.cmd run lint
+npm.cmd run format:check
 npm.cmd run test:client
 cargo fmt --manifest-path host/Cargo.toml --check
 cargo clippy --manifest-path host/Cargo.toml --locked --all-targets -- -D warnings
@@ -69,6 +70,7 @@ cargo fmt --manifest-path tui/Cargo.toml --check
 cargo clippy --manifest-path tui/Cargo.toml --locked --all-targets -- -D warnings
 cargo test --manifest-path tui/Cargo.toml --locked
 cargo build --manifest-path tui/Cargo.toml --locked
+npm.cmd run test:tui
 ```
 
 For browser tests, start the Expo web preview first. Set `APP_URL` if it is not on port 8081. Use an installed Playwright Chromium or specify its executable:
@@ -82,6 +84,8 @@ npm.cmd run test:terminal
 ```
 
 Browser test screenshots and temporary pairing files belong in ignored `artifacts/`, never in Git. Do not share a pairing QR, key or private terminal content in reports.
+
+The README images are an exception: `docs/assets/` contains deliberately captured public demo screens. With the web preview running and the browser environment above configured, run `node scripts/capture-readme.mjs` to reproduce them. The script uses an isolated context with fictional data and never connects to a host.
 
 ## Phone setup
 

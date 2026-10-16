@@ -1,6 +1,6 @@
 This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 
-The product is **nesvo**. Write repository documentation and code comments in English. Keep important architectural decisions, protocol contracts, launch instructions and verification guidance versioned with their implementation. Preserve legacy pairing/storage and EAS identifiers unless a migration is explicitly implemented and tested.
+The product is **nesvo**. Write repository documentation and code comments in English. Keep important architectural decisions, protocol contracts, launch instructions and verification guidance versioned with their implementation. Keep inspiration collections, competitor comparisons and research notes out of the repository. Preserve legacy pairing/storage and EAS identifiers unless a migration is explicitly implemented and tested.
 
 The host is Rust (`host/`); Node.js is only used by Expo tooling and tests. Do not replace the Rust host with a Node server. AI tools run as original CLI programs on the user's host, with their own subscription login; do not add AI API keys or direct model API calls.
 

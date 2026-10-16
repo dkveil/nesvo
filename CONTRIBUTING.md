@@ -2,7 +2,7 @@
 
 The project is a prototype. The most useful contributions improve real terminal work: the phone keyboard, session continuity, correct host communication and clear connection states.
 
-Follow the [architecture, Rust and TypeScript conventions](docs/engineering.md). They draw on reviewed patterns from accounting-app and Herdr, along with language documentation. TypeScript, ESLint, Clippy and CI tests on Windows/macOS/Linux enforce some of these rules.
+Follow the [architecture, Rust and TypeScript conventions](docs/engineering.md). TypeScript, ESLint, Clippy and CI tests on Windows/macOS/Linux enforce some of these rules.
 
 ## Environment
 
