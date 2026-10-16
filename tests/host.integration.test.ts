@@ -351,7 +351,7 @@ while IFS= read -r input; do
     status-blocked*) printf '\033[2J\033[HAllow execution of [Shell]?\r\n1. Allow once\r\n2. No, suggest changes (esc)' ;;
     status-clear*) printf '\033[2J\033[HUnrecognized ordinary output\r\n' ;;
     status-exit*) exit 7 ;;
-    *) printf 'CLI_CWD=%s\nCLI_ARGC=0\n' "$PWD" ;;
+    *) printf 'CLI_CWD=%s\nCLI_ARGC=0\nCLI_NO_COLOR=%s\n' "$PWD" "${'$'}{NO_COLOR-<unset>}" ;;
   esac
 done
 `;
@@ -374,7 +374,7 @@ done
         if (command.includes('status-blocked')) process.stdout.write('\x1b[2J\x1b[HAllow execution of [Shell]?\r\n1. Allow once\r\n2. No, suggest changes (esc)');
         else if (command.includes('status-clear')) process.stdout.write('\x1b[2J\x1b[HUnrecognized ordinary output\r\n');
         else if (command.includes('status-exit')) process.exit(7);
-        else process.stdout.write('CLI_CWD='+process.cwd()+'\nCLI_ARGC='+process.argv.length+'\n');
+        else process.stdout.write('CLI_CWD='+process.cwd()+'\nCLI_ARGC='+process.argv.length+'\nCLI_NO_COLOR='+(process.env.NO_COLOR ?? '<unset>')+'\n');
       }); process.stdin.resume();`,
     );
     await writeFile(join(bin, 'gemini.cmd'), '@echo off\r\necho WRAPPER_MUST_NOT_EXECUTE\r\n');
@@ -402,7 +402,7 @@ done
     {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...env, PATH: bin },
+      env: { ...env, PATH: bin, NO_COLOR: '1' },
     },
   );
   let failure = '';
@@ -483,6 +483,7 @@ done
     const output = await peer.output(created.sessionId!, 'CLI_ARGC=');
     assert.ok(output.includes(`CLI_CWD=${outside}`), output);
     assert.ok(output.includes(`CLI_ARGC=${process.platform === 'win32' ? 2 : 0}`), output);
+    assert.ok(output.includes('CLI_NO_COLOR=<unset>'), output);
     assert.ok(!output.includes('WRAPPER_MUST_NOT_EXECUTE'));
     peer.send({ type: 'input', sessionId: created.sessionId, data: 'status-blocked\r' });
     const blocked = await peer.next(

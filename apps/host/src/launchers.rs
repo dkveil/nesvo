@@ -75,6 +75,10 @@ impl Launcher {
         command.cwd(crate::process::display_path(cwd));
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        // Codex and CI commonly run the host with NO_COLOR=1. That setting
+        // belongs to the host's own output, not to the interactive PTY viewed
+        // on another terminal or phone. Let each CLI emit its native colors.
+        command.env_remove("NO_COLOR");
         command
     }
 }
@@ -255,6 +259,21 @@ pub fn working_directory(workspace: &Path, cwd: Option<&str>) -> Result<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interactive_session_does_not_inherit_host_no_color() {
+        let launcher = Launcher::direct(PathBuf::from("shell"));
+        let command = launcher.command(Path::new("."));
+        assert!(command.get_env("NO_COLOR").is_none());
+        assert_eq!(
+            command.get_env("TERM"),
+            Some(std::ffi::OsStr::new("xterm-256color"))
+        );
+        assert_eq!(
+            command.get_env("COLORTERM"),
+            Some(std::ffi::OsStr::new("truecolor"))
+        );
+    }
 
     struct Fixture(PathBuf);
     impl Fixture {
