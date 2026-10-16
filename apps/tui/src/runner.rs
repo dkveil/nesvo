@@ -315,7 +315,7 @@ mod tests {
         app.dialog = Some(Dialog::Menu);
         assert_ne!(logo_frame_for(&app, area, true, blink), 0);
         assert_eq!(logo_frame_for(&app, area, false, blink), 0);
-        app.dialog = Some(Dialog::Theme { selected: 0 });
+        app.dialog = Some(Dialog::Settings { selected: 0 });
         assert_eq!(logo_frame_for(&app, area, true, blink), 0);
     }
 

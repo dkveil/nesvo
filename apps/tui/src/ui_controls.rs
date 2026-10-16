@@ -2,7 +2,7 @@
 use crate::{
     brand,
     launch::{Field, Program},
-    model::{App, Dialog, Mode, RowKind},
+    model::{App, Dialog},
     theme::{BACKGROUND, FAINT, MUTED, SURFACE, TEXT},
     ui,
 };
@@ -23,9 +23,10 @@ pub fn home_action_rows(content: Rect) -> [u16; 3] {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     MenuChoice(usize),
-    ThemeChoice(usize),
+    SettingChoice(usize),
+    GroupName,
+    GroupParent(usize),
     Navigation(char),
-    ReturnToNavigation,
     ToggleFullscreen,
     PaneNavigation { pane: usize, key: char },
     Submit,
@@ -115,18 +116,9 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let mut output = Vec::new();
     if let Some(dialog) = &app.dialog {
         if matches!(dialog, Dialog::Menu) {
-            for (index, label) in [
-                "Enter workspace",
-                "Theme",
-                "Pair mobile",
-                if app.fullscreen_default {
-                    "Full screen by default: on"
-                } else {
-                    "Full screen by default: off"
-                },
-            ]
-            .into_iter()
-            .enumerate()
+            for (index, label) in ["Enter workspace", "Pair mobile", "Settings"]
+                .into_iter()
+                .enumerate()
             {
                 buttons(
                     menu_action_area(area, index),
@@ -143,20 +135,47 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         let body = dialog_body(inner);
         match dialog {
             Dialog::Menu => unreachable!("Menu has its own full-screen geometry"),
-            Dialog::Theme { .. } => {
+            Dialog::Settings { .. } => {
                 for index in 0..2 {
                     output.push(Control {
                         area: row(body, 1 + index as u16 * 2),
                         label: None,
-                        action: Action::ThemeChoice(index),
+                        action: Action::SettingChoice(index),
+                        enabled: true,
+                    });
+                }
+                buttons(
+                    row(inner, inner.height.saturating_sub(1)),
+                    [("Close", Action::Cancel, true)],
+                    &mut output,
+                );
+            }
+            Dialog::NewGroup { parent_index, .. } => {
+                output.push(Control {
+                    area: row(body, 1),
+                    label: None,
+                    action: Action::GroupName,
+                    enabled: true,
+                });
+                let choices = app.group_choices(None);
+                let offset = move_offset(*parent_index, body.height.saturating_sub(4));
+                for index in offset
+                    ..choices
+                        .len()
+                        .min(offset + usize::from(body.height.saturating_sub(4)))
+                {
+                    output.push(Control {
+                        area: row(body, 4 + (index - offset) as u16),
+                        label: None,
+                        action: Action::GroupParent(index),
                         enabled: true,
                     });
                 }
                 buttons(
                     row(inner, inner.height.saturating_sub(1)),
                     [
-                        ("Apply", Action::Submit, true),
-                        ("Back", Action::Cancel, true),
+                        ("Create", Action::Submit, app.connected),
+                        ("Cancel", Action::Cancel, true),
                     ],
                     &mut output,
                 );
@@ -268,76 +287,6 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             action: Action::Navigation('n'),
             enabled: app.connected,
         });
-    }
-    if app.mode == Mode::Input {
-        buttons(
-            row(geometry.header, 1),
-            [
-                ("Ctrl+Q Navigation", Action::ReturnToNavigation, true),
-                ("F1 Menu", Action::Navigation('M'), true),
-            ],
-            &mut output,
-        );
-    } else {
-        let can_control =
-            app.connected && app.active_session().is_some_and(|session| session.running);
-        let owns = app.active_id().is_some_and(|id| app.owns(id));
-        let other_controls = app
-            .active_session()
-            .is_some_and(|session| session.controller_id.is_some() && !owns);
-        let selected = app.selected_row();
-        let selected_item = selected
-            .as_ref()
-            .is_some_and(|row| row.kind != RowKind::Root);
-        let selected_group = selected
-            .as_ref()
-            .is_some_and(|row| matches!(row.kind, RowKind::Group(_)));
-        buttons(
-            row(geometry.header, 1),
-            [
-                ("F1 Menu", Action::Navigation('M'), true),
-                (
-                    if other_controls {
-                        "t Take over"
-                    } else {
-                        "i Type"
-                    },
-                    Action::Navigation(if other_controls { 't' } else { 'i' }),
-                    can_control,
-                ),
-                ("n New", Action::Navigation('n'), app.connected),
-                ("g Group", Action::Navigation('g'), app.connected),
-                ("p Pair", Action::Navigation('p'), true),
-                (
-                    if app.split { "v Single" } else { "v Split" },
-                    Action::Navigation('v'),
-                    true,
-                ),
-                ("? Help", Action::Navigation('?'), true),
-                (
-                    "d Delete",
-                    Action::Navigation('d'),
-                    app.connected && selected_item,
-                ),
-                ("x Release", Action::Navigation('x'), owns),
-                (
-                    "r Rename",
-                    Action::Navigation('r'),
-                    app.connected && selected_item,
-                ),
-                (
-                    "m Move",
-                    Action::Navigation('m'),
-                    app.connected && selected_item,
-                ),
-                (
-                    "G Subgroup",
-                    Action::Navigation('G'),
-                    app.connected && selected_group,
-                ),
-            ],
-            &mut output,
-        );
     }
     for index in 0..if app.split { 2 } else { 1 } {
         if app.panes[index].is_some() {
@@ -485,19 +434,22 @@ mod tests {
     }
 
     #[test]
-    fn compact_workspace_actions_stay_outside_the_terminal_and_match_clicks() {
+    fn compact_controls_stay_outside_the_terminal_and_match_clicks() {
         let mut app = App::new(1);
         app.panes[0] = Some("session".into());
         for area in [Rect::new(0, 0, 120, 36), Rect::new(3, 2, 80, 24)] {
             let terminal = ui::pane_content(ui::geometry(area, &app).panes[0], app.fullscreen);
             let controls = controls(&app, area);
-            for key in ['M', 'n', 'g', 'p', 'v', '?'] {
-                assert!(
-                    controls
-                        .iter()
-                        .any(|control| control.action == Action::Navigation(key))
-                );
-            }
+            assert!(
+                controls
+                    .iter()
+                    .any(|control| control.action == Action::Navigation('n'))
+            );
+            assert!(
+                controls
+                    .iter()
+                    .any(|control| control.action == Action::ToggleFullscreen)
+            );
             for control in controls {
                 assert!(area.contains((control.area.x, control.area.y).into()));
                 assert!(!terminal.intersects(control.area));
@@ -528,7 +480,7 @@ mod tests {
         let narrow = Rect::new(0, 0, 38, 20);
         let narrow_footer = ui::geometry(narrow, &app).footer;
         let narrow_handle = ui::fullscreen_handle_area(&app, narrow_footer);
-        assert_eq!(narrow_handle.width, 5);
+        assert_eq!(narrow_handle.width, 3);
         assert_eq!(
             hit_test(&app, narrow, narrow_handle.x, narrow_handle.y),
             Some(Action::ToggleFullscreen)

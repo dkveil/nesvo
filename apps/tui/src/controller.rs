@@ -35,8 +35,6 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         Event::Key(key) if key.kind != KeyEventKind::Release => {
             if key.code == KeyCode::F(1) {
                 app.dialog = Some(Dialog::Menu);
-            } else if key.code == KeyCode::F(11) && app.dialog.is_none() {
-                app.fullscreen = !app.fullscreen;
             } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
             } else if app.mode == Mode::Input {
@@ -137,7 +135,28 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
 fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome) {
     match action {
         Action::ToggleFullscreen => app.fullscreen = !app.fullscreen,
-        Action::ReturnToNavigation => app.mode = Mode::Navigate,
+        Action::SettingChoice(index) => {
+            if let Some(Dialog::Settings { selected }) = &mut app.dialog {
+                *selected = index;
+            }
+            change_setting(app, index, false);
+        }
+        Action::GroupName => {
+            if let Some(Dialog::NewGroup { editing_parent, .. }) = &mut app.dialog {
+                *editing_parent = false;
+            }
+        }
+        Action::GroupParent(index) => {
+            if let Some(Dialog::NewGroup {
+                parent_index,
+                editing_parent,
+                ..
+            }) = &mut app.dialog
+            {
+                *parent_index = index;
+                *editing_parent = true;
+            }
+        }
         Action::Navigation(key) | Action::PaneNavigation { key, .. } => {
             if let Action::PaneNavigation { pane, .. } = action {
                 app.focused = pane;
@@ -155,7 +174,13 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
                 outcome.commands.push(command);
             }
         }
-        Action::Cancel => app.dialog = None,
+        Action::Cancel => {
+            app.dialog = if matches!(app.dialog, Some(Dialog::Settings { .. })) {
+                Some(Dialog::Menu)
+            } else {
+                None
+            };
+        }
         Action::Field(field) => {
             if let Some(Dialog::NewSession(form)) = &mut app.dialog {
                 form.field = field;
@@ -177,12 +202,8 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             if let Some(row) = app.selected_row() {
                 match row.kind {
                     RowKind::Session(id) => outcome.commands.extend(app.open_session(&id)),
-                    RowKind::Group(id) => {
-                        if !app.collapsed.remove(&id) {
-                            app.collapsed.insert(id);
-                        }
-                    }
-                    RowKind::Root => {}
+                    RowKind::Group(id) => app.select_space(Some(id)),
+                    RowKind::Root => app.select_space(None),
                 }
             }
             app.mode = Mode::Navigate;
@@ -201,9 +222,6 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             app.mode = Mode::Navigate;
         }
         Action::MenuChoice(index) => menu_choice(app, index, outcome),
-        Action::ThemeChoice(index) => {
-            apply_theme(app, index);
-        }
     }
 }
 
@@ -211,17 +229,17 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     if key.code == KeyCode::Esc {
         match app.dialog {
             Some(Dialog::Menu) => outcome.quit = true,
-            Some(Dialog::Theme { .. }) => app.dialog = Some(Dialog::Menu),
+            Some(Dialog::Settings { .. }) => app.dialog = Some(Dialog::Menu),
             _ => app.dialog = None,
         }
         return;
     }
     if matches!(app.dialog, Some(Dialog::Menu)) {
         match key.code {
-            KeyCode::Up | KeyCode::BackTab => app.menu_selected = (app.menu_selected + 3) % 4,
-            KeyCode::Down | KeyCode::Tab => app.menu_selected = (app.menu_selected + 1) % 4,
+            KeyCode::Up | KeyCode::BackTab => app.menu_selected = (app.menu_selected + 2) % 3,
+            KeyCode::Down | KeyCode::Tab => app.menu_selected = (app.menu_selected + 1) % 3,
             KeyCode::Enter => menu_choice(app, app.menu_selected, outcome),
-            KeyCode::Char('1'..='4') => {
+            KeyCode::Char('1'..='3') => {
                 if let KeyCode::Char(value) = key.code {
                     menu_choice(app, value as usize - '1' as usize, outcome);
                 }
@@ -230,18 +248,32 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         }
         return;
     }
-    if let Some(Dialog::Theme { selected }) = &mut app.dialog {
+    if let Some(Dialog::Settings { selected }) = &mut app.dialog {
         match key.code {
             KeyCode::Up | KeyCode::BackTab => {
-                *selected = (*selected + Theme::ALL.len() - 1) % Theme::ALL.len();
+                *selected = (*selected + 1) % 2;
             }
-            KeyCode::Down | KeyCode::Tab => *selected = (*selected + 1) % Theme::ALL.len(),
-            KeyCode::Enter => {
+            KeyCode::Down | KeyCode::Tab => *selected = (*selected + 1) % 2,
+            KeyCode::Left | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
                 let index = *selected;
-                apply_theme(app, index);
+                change_setting(app, index, key.code == KeyCode::Left);
             }
             _ => {}
         }
+        return;
+    }
+    if let Some(Dialog::NewSession(form)) = &mut app.dialog
+        && key.code == KeyCode::Enter
+        && form.field != Field::Program
+    {
+        form.cycle_field(false);
+        return;
+    }
+    if let Some(Dialog::NewGroup { editing_parent, .. }) = &mut app.dialog
+        && key.code == KeyCode::Enter
+        && !*editing_parent
+    {
+        *editing_parent = true;
         return;
     }
     let confirm = key.code == KeyCode::Enter
@@ -256,17 +288,53 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         Some(Dialog::NewSession(form)) => match key.code {
             KeyCode::Tab => form.cycle_field(false),
             KeyCode::BackTab => form.cycle_field(true),
+            KeyCode::Up if form.field != Field::Program => form.cycle_field(true),
+            KeyCode::Down if form.field != Field::Program => form.cycle_field(false),
             KeyCode::Left | KeyCode::Up if form.field == Field::Program => form.cycle_program(true),
             KeyCode::Right | KeyCode::Down if form.field == Field::Program => {
                 form.cycle_program(false)
             }
             KeyCode::Backspace => form.backspace(),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if form.field == Field::Directory {
+                    form.cwd.clear();
+                } else if form.field == Field::Name {
+                    form.name.clear();
+                }
+            }
             KeyCode::Char(c)
                 if !key
                     .modifiers
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 form.append(&c.to_string())
+            }
+            _ => {}
+        },
+        Some(Dialog::NewGroup {
+            name,
+            parent_index,
+            editing_parent,
+        }) => match key.code {
+            KeyCode::Tab | KeyCode::BackTab => *editing_parent = !*editing_parent,
+            KeyCode::Up | KeyCode::Left if *editing_parent => {
+                *parent_index = parent_index.saturating_sub(1)
+            }
+            KeyCode::Down | KeyCode::Right if *editing_parent => {
+                *parent_index = (*parent_index + 1).min(app.groups.len());
+            }
+            KeyCode::Backspace if !*editing_parent => {
+                name.pop();
+            }
+            KeyCode::Char(c)
+                if !*editing_parent
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    && !c.is_control()
+                    && name.chars().count() < 80 =>
+            {
+                name.push(c)
             }
             _ => {}
         },
@@ -308,24 +376,8 @@ fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
                 outcome.commands.extend(app.activate_session(&id));
             }
         }
-        1 => {
-            app.dialog = Some(Dialog::Theme {
-                selected: Theme::ALL
-                    .iter()
-                    .position(|theme| *theme == app.theme)
-                    .unwrap_or(0),
-            })
-        }
-        2 => app.dialog = Some(Dialog::PairPhone),
-        3 => {
-            app.fullscreen_default = !app.fullscreen_default;
-            app.fullscreen = app.fullscreen_default;
-            app.notice = if app.fullscreen_default {
-                "Full screen will open by default.".into()
-            } else {
-                "Workspace will open by default.".into()
-            };
-        }
+        1 => app.dialog = Some(Dialog::PairPhone),
+        2 => app.dialog = Some(Dialog::Settings { selected: 0 }),
         _ => {}
     }
 }
@@ -333,8 +385,25 @@ fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
 fn apply_theme(app: &mut App, index: usize) {
     if let Some(theme) = Theme::ALL.get(index) {
         app.theme = *theme;
-        app.notice = format!("Theme: {}", theme.label());
-        app.dialog = Some(Dialog::Menu);
+    }
+}
+
+fn change_setting(app: &mut App, index: usize, reverse: bool) {
+    match index {
+        0 => {
+            let current = Theme::ALL
+                .iter()
+                .position(|theme| *theme == app.theme)
+                .unwrap_or(0);
+            let next =
+                (current + if reverse { Theme::ALL.len() - 1 } else { 1 }) % Theme::ALL.len();
+            apply_theme(app, next);
+        }
+        1 => {
+            app.fullscreen_default = !app.fullscreen_default;
+            app.fullscreen = app.fullscreen_default;
+        }
+        _ => {}
     }
 }
 
@@ -347,6 +416,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
     }
     match key.code {
         KeyCode::Char('q') => outcome.quit = true,
+        KeyCode::Char('z') => app.fullscreen = !app.fullscreen,
         KeyCode::Char('?') => app.dialog = Some(Dialog::Help),
         KeyCode::Char('M') => app.dialog = Some(Dialog::Menu),
         KeyCode::Char('p') => app.dialog = Some(Dialog::PairPhone),
@@ -406,24 +476,25 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Char('n') => {
             app.dialog = Some(Dialog::NewSession(SessionForm {
                 group_id: app.selected_group(),
+                program: app
+                    .active_session()
+                    .map_or(crate::launch::Program::Shell, |session| {
+                        app.effective_program(session)
+                    }),
                 ..Default::default()
             }))
         }
         KeyCode::Char('g') | KeyCode::Char('G') => {
-            let parent_id = if key.code == KeyCode::Char('G') {
-                app.selected_group()
-            } else {
-                None
-            };
-            app.dialog = Some(Dialog::Text {
-                title: if parent_id.is_some() {
-                    "New subgroup"
-                } else {
-                    "New group"
-                }
-                .into(),
-                value: String::new(),
-                action: TextAction::NewGroup { parent_id },
+            let parent = app.selected_group();
+            let parent_index = app
+                .group_choices(None)
+                .iter()
+                .position(|(id, _)| id == &parent)
+                .unwrap_or(0);
+            app.dialog = Some(Dialog::NewGroup {
+                name: String::new(),
+                parent_index,
+                editing_parent: false,
             });
         }
         KeyCode::Char('r') => rename_selected(app),
@@ -444,12 +515,8 @@ fn open_selected(app: &mut App, outcome: &mut Outcome) {
     if let Some(row) = app.selected_row() {
         match row.kind {
             RowKind::Session(id) => outcome.commands.extend(app.activate_session(&id)),
-            RowKind::Group(id) => {
-                if !app.collapsed.remove(&id) {
-                    app.collapsed.insert(id);
-                }
-            }
-            RowKind::Root => {}
+            RowKind::Group(id) => app.select_space(Some(id)),
+            RowKind::Root => app.select_space(None),
         }
     }
 }
@@ -636,7 +703,11 @@ mod tests {
         app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[{"id":"s","name":"shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}]})).unwrap();
         app.selected = 1;
         let area = Rect::new(0, 0, 100, 32);
-        let stop = click(&mut app, area, Action::Navigation('d'));
+        let stop = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)),
+            area,
+        );
         assert!(stop.commands.is_empty());
         assert!(matches!(app.dialog, Some(Dialog::Confirm { .. })));
         let ignored = event(
@@ -653,7 +724,11 @@ mod tests {
         assert!(matches!(app.dialog, Some(Dialog::Confirm { .. })));
         assert!(click(&mut app, area, Action::Cancel).commands.is_empty());
         assert!(app.dialog.is_none());
-        click(&mut app, area, Action::Navigation('d'));
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)),
+            area,
+        );
         let confirmed = click(&mut app, area, Action::Submit);
         assert_eq!(confirmed.commands[0]["type"], "close");
         assert_eq!(confirmed.commands[0]["sessionId"], "s");
@@ -711,27 +786,26 @@ mod tests {
     }
 
     #[test]
-    fn f11_toggles_fullscreen_in_both_modes_and_sidebar_click_returns_to_navigation() {
+    fn z_toggles_fullscreen_from_navigation_and_sidebar_click_keeps_navigation() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
             {"id":"first","name":"First","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
             {"id":"second","name":"Second","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
         ]})).unwrap();
         let area = Rect::new(0, 0, 100, 30);
-        app.mode = Mode::Input;
-        let f11 = Event::Key(KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE));
-        let fullscreen = event(&mut app, f11.clone(), area);
+        app.mode = Mode::Navigate;
+        let z = Event::Key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+        let fullscreen = event(&mut app, z.clone(), area);
         assert!(app.fullscreen);
-        assert!(app.mode == Mode::Input);
+        assert!(app.mode == Mode::Navigate);
         assert!(fullscreen.commands.is_empty());
-        let nav = event(
+        event(
             &mut app,
-            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE)),
             area,
         );
-        assert!(app.mode == Mode::Navigate);
-        assert!(nav.commands.is_empty());
-        event(&mut app, f11, area);
+        assert!(app.fullscreen);
+        event(&mut app, z, area);
         assert!(!app.fullscreen);
         let tree = ui::tree_content(ui::geometry(area, &app).tree);
         let second = app
@@ -771,15 +845,68 @@ mod tests {
     }
 
     #[test]
-    fn menu_can_persist_fullscreen_default_without_hiding_theme() {
+    fn settings_change_fullscreen_default_live() {
         let mut app = App::new(1);
         let area = Rect::new(0, 0, 100, 30);
         app.dialog = Some(Dialog::Menu);
-        click(&mut app, area, Action::MenuChoice(3));
+        click(&mut app, area, Action::MenuChoice(2));
+        assert!(matches!(app.dialog, Some(Dialog::Settings { .. })));
+        click(&mut app, area, Action::SettingChoice(1));
         assert!(app.fullscreen_default && app.fullscreen);
-        assert!(matches!(app.dialog, Some(Dialog::Menu)));
-        click(&mut app, area, Action::MenuChoice(1));
-        assert!(matches!(app.dialog, Some(Dialog::Theme { .. })));
+        assert!(matches!(app.dialog, Some(Dialog::Settings { .. })));
+    }
+
+    #[test]
+    fn new_session_and_group_forms_are_keyboard_navigable() {
+        let mut app = App::new(1);
+        let area = Rect::new(0, 0, 100, 30);
+        let key = |app: &mut App, code| {
+            event(
+                app,
+                Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+                area,
+            )
+        };
+        key(&mut app, KeyCode::Char('n'));
+        key(&mut app, KeyCode::Char('S'));
+        key(&mut app, KeyCode::Enter);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.field == Field::Directory)
+        );
+        key(&mut app, KeyCode::Char('p'));
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.cwd == "p"));
+        key(&mut app, KeyCode::Down);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.field == Field::Program)
+        );
+        key(&mut app, KeyCode::Down);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.program == crate::launch::Program::Claude)
+        );
+        key(&mut app, KeyCode::Esc);
+        app.event(json!({"type":"sessions","revision":1,"groups":[{"id":"g","parentId":null,"name":"Work","order":0}],"sessions":[]})).unwrap();
+        key(&mut app, KeyCode::Char('g'));
+        key(&mut app, KeyCode::Char('N'));
+        key(&mut app, KeyCode::Enter);
+        assert!(matches!(
+            &app.dialog,
+            Some(Dialog::NewGroup {
+                editing_parent: true,
+                ..
+            })
+        ));
+        key(&mut app, KeyCode::Down);
+        assert!(matches!(
+            &app.dialog,
+            Some(Dialog::NewGroup {
+                parent_index: 1,
+                ..
+            })
+        ));
+        let created = key(&mut app, KeyCode::Enter);
+        assert_eq!(created.commands[0]["type"], "createGroup");
+        assert_eq!(created.commands[0]["name"], "N");
+        assert_eq!(created.commands[0]["parentId"], "g");
     }
 
     #[test]
@@ -868,20 +995,22 @@ mod tests {
         assert!(menu.commands.is_empty());
         assert!(matches!(app.dialog, Some(Dialog::Menu)));
         assert!(
-            click(&mut app, area, Action::MenuChoice(1))
+            click(&mut app, area, Action::MenuChoice(2))
                 .commands
                 .is_empty()
         );
-        assert!(matches!(app.dialog, Some(Dialog::Theme { .. })));
+        assert!(matches!(app.dialog, Some(Dialog::Settings { .. })));
         assert!(
-            click(&mut app, area, Action::ThemeChoice(1))
+            click(&mut app, area, Action::SettingChoice(0))
                 .commands
                 .is_empty()
         );
         assert_eq!(app.theme, Theme::Graphite);
-        assert!(matches!(app.dialog, Some(Dialog::Menu)));
+        assert!(matches!(app.dialog, Some(Dialog::Settings { .. })));
+        click(&mut app, area, Action::Cancel);
+        app.dialog = Some(Dialog::Menu);
         assert!(
-            click(&mut app, area, Action::MenuChoice(2))
+            click(&mut app, area, Action::MenuChoice(1))
                 .commands
                 .is_empty()
         );
@@ -910,7 +1039,7 @@ mod tests {
     #[test]
     fn escape_from_theme_returns_to_menu_and_menu_escape_detaches() {
         let mut app = App::new(1);
-        app.dialog = Some(Dialog::Theme { selected: 1 });
+        app.dialog = Some(Dialog::Settings { selected: 1 });
         let area = Rect::new(0, 0, 100, 30);
         let escape = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         let back = event(&mut app, escape.clone(), area);

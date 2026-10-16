@@ -56,7 +56,6 @@ pub enum Mode {
 }
 
 pub enum TextAction {
-    NewGroup { parent_id: Option<String> },
     RenameSession { id: String },
     RenameGroup { id: String },
 }
@@ -68,8 +67,13 @@ pub enum MoveTarget {
 
 pub enum Dialog {
     Menu,
-    Theme {
+    Settings {
         selected: usize,
+    },
+    NewGroup {
+        name: String,
+        parent_index: usize,
+        editing_parent: bool,
     },
     NewSession(SessionForm),
     PairPhone,
@@ -99,6 +103,7 @@ pub struct App {
     pub leases: HashMap<String, String>,
     pub subscribed: HashSet<String>,
     pub collapsed: HashSet<String>,
+    pub space_filter: Option<String>,
     pub selected: usize,
     pub panes: [Option<String>; 2],
     pub split: bool,
@@ -132,6 +137,7 @@ impl App {
             leases: HashMap::new(),
             subscribed: HashSet::new(),
             collapsed: HashSet::new(),
+            space_filter: None,
             selected: 0,
             panes: [None, None],
             split: false,
@@ -167,6 +173,36 @@ impl App {
     pub fn active_terminal(&self) -> Option<&TerminalState> {
         self.active_id().and_then(|id| self.terminals.get(id))
     }
+    pub fn effective_program(&self, session: &Session) -> Program {
+        if session.program != Program::Shell || !session.running {
+            return session.program;
+        }
+        let Some(terminal) = self.terminals.get(&session.id) else {
+            return Program::Shell;
+        };
+        let screen = terminal.screen().contents();
+        if screen
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .is_some_and(|line| {
+                line.trim_start().starts_with("PS ") && line.trim_end().ends_with('>')
+            })
+        {
+            return Program::Shell;
+        }
+        // An agent started inside a shell has no launcher identity. Its current
+        // banner is a display hint only; the host still owns the real program.
+        if screen.contains("Claude Code v") {
+            Program::Claude
+        } else if screen.contains("Gemini CLI") {
+            Program::Gemini
+        } else if screen.contains("OpenAI Codex") {
+            Program::Codex
+        } else {
+            Program::Shell
+        }
+    }
     pub fn owns(&self, id: &str) -> bool {
         self.connected
             && self.leases.contains_key(id)
@@ -179,7 +215,7 @@ impl App {
     }
     pub fn selected_group(&self) -> Option<String> {
         match self.selected_row()?.kind {
-            RowKind::Root => None,
+            RowKind::Root => self.space_filter.clone(),
             RowKind::Group(id) => Some(id),
             RowKind::Session(id) => self.session(&id).and_then(|s| s.group_id.clone()),
         }
@@ -222,12 +258,54 @@ impl App {
         self.append_children(None, 0, &mut rows, &mut HashSet::new());
         // The agent list is global: collapsing a space only hides its child spaces,
         // never a running session that still needs attention.
-        rows.extend(self.sessions.iter().map(|session| TreeRow {
-            kind: RowKind::Session(session.id.clone()),
-            depth: 1,
-            label: session.name.clone(),
-        }));
+        rows.extend(
+            self.sessions
+                .iter()
+                .filter(|session| self.session_in_space(session))
+                .map(|session| TreeRow {
+                    kind: RowKind::Session(session.id.clone()),
+                    depth: 1,
+                    label: session.name.clone(),
+                }),
+        );
         rows
+    }
+
+    fn session_in_space(&self, session: &Session) -> bool {
+        let Some(space) = self.space_filter.as_deref() else {
+            return true;
+        };
+        let mut parent = session.group_id.as_deref();
+        let mut visited = HashSet::new();
+        while let Some(id) = parent {
+            if id == space {
+                return true;
+            }
+            if !visited.insert(id) {
+                break;
+            }
+            parent = self
+                .groups
+                .iter()
+                .find(|group| group.id == id)
+                .and_then(|group| group.parent_id.as_deref());
+        }
+        false
+    }
+
+    pub fn select_space(&mut self, id: Option<String>) {
+        self.space_filter = id.clone();
+        self.selected = self
+            .tree()
+            .iter()
+            .position(|row| {
+                row.kind
+                    == match &id {
+                        Some(id) => RowKind::Group(id.clone()),
+                        None => RowKind::Root,
+                    }
+            })
+            .unwrap_or(0);
     }
 
     fn append_children(
@@ -338,6 +416,13 @@ impl App {
                     .or_else(|| self.selected_row().map(|row| row.kind));
                 self.sessions = serde_json::from_value(event["sessions"].clone())?;
                 self.groups = serde_json::from_value(event["groups"].clone())?;
+                if self
+                    .space_filter
+                    .as_ref()
+                    .is_some_and(|id| !self.groups.iter().any(|group| &group.id == id))
+                {
+                    self.space_filter = None;
+                }
                 self.revision = event["revision"].as_u64().unwrap_or(0);
                 self.leases.retain(|id, _| {
                     self.sessions
@@ -521,6 +606,22 @@ impl App {
                 self.pending_create_form = Some(form);
                 Some(self.request(command))
             }
+            Dialog::NewGroup {
+                name, parent_index, ..
+            } => {
+                let name = name.trim();
+                if name.is_empty() || name.chars().count() > 80 {
+                    self.notice = "Use a group name of 1–80 characters.".into();
+                    self.dialog = Some(Dialog::NewGroup {
+                        name: name.into(),
+                        parent_index,
+                        editing_parent: false,
+                    });
+                    return None;
+                }
+                let parent_id = self.group_choices(None).get(parent_index)?.0.clone();
+                Some(self.request(json!({"type":"createGroup", "name":name, "parentId":parent_id, "expectedRevision":self.revision})))
+            }
             Dialog::Text {
                 title,
                 value,
@@ -540,9 +641,6 @@ impl App {
                     return None;
                 }
                 let command = match action {
-                    TextAction::NewGroup { parent_id } => {
-                        json!({"type":"createGroup","name":name,"parentId":parent_id,"expectedRevision":self.revision})
-                    }
                     TextAction::RenameSession { id } => {
                         json!({"type":"renameSession","sessionId":id,"name":name})
                     }
@@ -571,7 +669,7 @@ impl App {
                 Some(self.request(command))
             }
             Dialog::Confirm { command, .. } => Some(self.request(command)),
-            Dialog::Help | Dialog::PairPhone | Dialog::Menu | Dialog::Theme { .. } => None,
+            Dialog::Help | Dialog::PairPhone | Dialog::Menu | Dialog::Settings { .. } => None,
         }
     }
 
@@ -635,6 +733,65 @@ mod tests {
         assert_eq!(app.tree().len(), 3);
         assert!(matches!(app.tree()[2].kind, RowKind::Session(_)));
         assert_eq!(app.sessions[0].program, Program::Shell);
+    }
+
+    #[test]
+    fn selected_space_filters_nested_sessions_without_hiding_spaces() {
+        let mut app = App::new(1);
+        let mut data = snapshot();
+        data["sessions"].as_array_mut().unwrap().push(json!({"id":"outside","name":"other","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}));
+        app.event(data).unwrap();
+        app.select_space(Some("a".into()));
+        assert!(
+            app.tree()
+                .iter()
+                .any(|row| row.kind == RowKind::Session("s".into()))
+        );
+        assert!(
+            !app.tree()
+                .iter()
+                .any(|row| row.kind == RowKind::Session("outside".into()))
+        );
+        assert!(
+            app.tree()
+                .iter()
+                .any(|row| row.kind == RowKind::Group("b".into()))
+        );
+        app.select_space(None);
+        assert!(
+            app.tree()
+                .iter()
+                .any(|row| row.kind == RowKind::Session("outside".into()))
+        );
+    }
+
+    #[test]
+    fn shell_banner_identifies_agent_for_chrome_only() {
+        let mut app = App::new(1);
+        app.event(snapshot()).unwrap();
+        app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
+            .unwrap();
+        assert_eq!(
+            app.effective_program(app.session("s").unwrap()),
+            Program::Shell
+        );
+        app.terminals
+            .get_mut("s")
+            .unwrap()
+            .process("Claude Code v2.1.302\r\n", false);
+        assert_eq!(
+            app.effective_program(app.session("s").unwrap()),
+            Program::Claude
+        );
+        assert_eq!(app.session("s").unwrap().program, Program::Shell);
+        app.terminals
+            .get_mut("s")
+            .unwrap()
+            .process("PS C:\\work>\r\n", false);
+        assert_eq!(
+            app.effective_program(app.session("s").unwrap()),
+            Program::Shell
+        );
     }
 
     #[test]

@@ -13,15 +13,7 @@ use ratatui::{
 };
 
 pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect) {
-    let directory = if form.cwd.is_empty() {
-        app.capabilities
-            .as_ref()
-            .map_or("Waiting for host workspace…", |caps| {
-                caps.workspace.as_str()
-            })
-    } else {
-        &form.cwd
-    };
+    let directory = if form.cwd.is_empty() { "" } else { &form.cwd };
     let group = app
         .group_choices(None)
         .into_iter()
@@ -42,7 +34,12 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
             app.theme,
         ),
         Line::from(Span::styled(
-            "Leave folder empty to use the host workspace.",
+            format!(
+                "Empty = host workspace: {}",
+                app.capabilities
+                    .as_ref()
+                    .map_or("waiting for host", |caps| caps.workspace.as_str())
+            ),
             Style::default().fg(MUTED),
         )),
         Line::from(""),
@@ -71,7 +68,7 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
     }
     lines.extend([
         Line::from(""),
-        Line::from("Tab: next field   Enter: create   Esc: cancel"),
+        Line::from("↑/↓ or Tab: field   Enter: next / create   Ctrl+U: clear   Esc: cancel"),
         Line::from(Span::styled(
             app.notice.as_str(),
             Style::default().fg(MUTED),

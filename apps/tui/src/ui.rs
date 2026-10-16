@@ -34,8 +34,11 @@ pub fn tab_areas(app: &App, layout: &Geometry) -> ([Rect; 2], Rect) {
         let name = app.panes[index]
             .as_deref()
             .and_then(|id| app.session(id))
-            .map_or("new session", |session| session.name.as_str());
-        let width = (Line::from(name).width() as u16 + 2)
+            .map_or_else(
+                || "new session".to_owned(),
+                |session| tab_label(app, session),
+            );
+        let width = (Line::from(name.as_str()).width() as u16 + 2)
             .min(20)
             .min(layout.header.right().saturating_sub(x));
         *tab = Rect::new(x, layout.header.y, width, layout.header.height.min(1));
@@ -52,7 +55,7 @@ pub fn tab_areas(app: &App, layout: &Geometry) -> ([Rect; 2], Rect) {
 
 pub fn geometry(area: Rect, app: &App) -> Geometry {
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(if app.fullscreen { 0 } else { 2 }),
+        Constraint::Length(if app.fullscreen { 0 } else { 1 }),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
@@ -164,19 +167,19 @@ pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
     match app.mode {
-        Mode::Input => (
-            " INPUT → SESSION ",
-            " Ctrl+Q Navigate · Esc Session · F1 Menu",
+        Mode::Input => (" SESSION ", " Ctrl+Q navigation · Esc session · F1 menu"),
+        Mode::Navigate => (
+            " NAVIGATION ",
+            " Enter open · i type · n new · g group · ? help",
         ),
-        Mode::Navigate => (" NAVIGATION → NESVO ", " Enter Attach · Esc Exit · F1 Menu"),
     }
 }
 
 pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
-    if footer.width < 5 {
+    if footer.width < 3 {
         return Rect::default();
     }
-    Rect::new(footer.right() - 5, footer.y, 5, 1)
+    Rect::new(footer.right() - 3, footer.y, 3, 1)
 }
 
 pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
@@ -187,6 +190,14 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     );
     if matches!(app.dialog, Some(Dialog::Menu)) {
         render_menu(frame, app, logo_frame);
+        ui_controls::render(frame, app);
+        return;
+    }
+    if matches!(app.dialog, Some(Dialog::Settings { .. })) {
+        render_menu(frame, app, logo_frame);
+        if let Some(dialog) = &app.dialog {
+            render_dialog(frame, app, dialog);
+        }
         ui_controls::render(frame, app);
         return;
     }
@@ -227,12 +238,15 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
             let name = app.panes[index]
                 .as_deref()
                 .and_then(|id| app.session(id))
-                .map_or("new session", |session| session.name.as_str());
+                .map_or_else(
+                    || "new session".to_owned(),
+                    |session| tab_label(app, session),
+                );
             let label = format!(
                 " {} ",
-                truncate_cells(name, usize::from(tab.width.saturating_sub(2)))
+                truncate_cells(&name, usize::from(tab.width.saturating_sub(2)))
             );
-            let active = index == app.focused;
+            let active = index == app.focused && app.mode == Mode::Input;
             frame.render_widget(
                 Paragraph::new(label).style(if active {
                     Style::default()
@@ -293,7 +307,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     );
     if !handle.is_empty() {
         frame.render_widget(
-            Paragraph::new(" F11 ").style(Style::default().fg(BACKGROUND).bg(app.theme.accent())),
+            Paragraph::new(" z ").style(Style::default().fg(BACKGROUND).bg(app.theme.accent())),
             handle,
         );
     }
@@ -317,16 +331,29 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
     let (spaces, agents) = sidebar_sections(content, app);
     let rows = app.tree();
     if spaces.height > 0 {
+        let location = app
+            .space_filter
+            .as_deref()
+            .and_then(|id| app.groups.iter().find(|group| group.id == id))
+            .map_or("all", |group| group.name.as_str());
         frame.render_widget(
-            Paragraph::new(format!(" spaces  {:>2}", app.groups.len()))
-                .style(Style::default().fg(MUTED).bg(SURFACE)),
+            Paragraph::new(format!(
+                " spaces / {}",
+                truncate_cells(location, usize::from(spaces.width.saturating_sub(10)))
+            ))
+            .style(Style::default().fg(MUTED).bg(SURFACE)),
             Rect::new(spaces.x, spaces.y, spaces.width, 1),
         );
     }
     if agents.height > 0 {
         frame.render_widget(
-            Paragraph::new(format!(" agents  {:>2}", app.sessions.len()))
-                .style(Style::default().fg(MUTED).bg(SURFACE)),
+            Paragraph::new(format!(
+                " agents  {:>2}",
+                rows.iter()
+                    .filter(|row| matches!(row.kind, RowKind::Session(_)))
+                    .count()
+            ))
+            .style(Style::default().fg(MUTED).bg(SURFACE)),
             Rect::new(agents.x, agents.y, agents.width, 1),
         );
     }
@@ -335,7 +362,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
             let row = &rows[index];
             let selected = index == app.selected;
             let active = matches!(&row.kind, RowKind::Session(id) if app.active_id() == Some(id));
-            let background = if selected || active {
+            let background = if active {
                 app.theme.selection()
             } else {
                 BACKGROUND
@@ -395,7 +422,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                         }
                     });
                     let program = session
-                        .map(|session| session.program.label())
+                        .map(|session| app.effective_program(session).label())
                         .unwrap_or("Terminal");
                     let marker = match status.map(|status| status.state) {
                         Some(State::Working) => "● ",
@@ -410,14 +437,17 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                         status_color(status, app.theme),
                         format!("{state} · {program}"),
                         session
-                            .map(|session| program_color(session.program))
+                            .map(|session| program_color(app.effective_program(session)))
                             .unwrap_or(MUTED),
                     )
                 }
             };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::raw(" "),
+                    Span::styled(
+                        if selected { "›" } else { " " },
+                        Style::default().fg(app.theme.accent()),
+                    ),
                     Span::raw(indent.clone()),
                     Span::styled(marker, Style::default().fg(marker_color)),
                     Span::styled(
@@ -453,6 +483,7 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
         return;
     }
     let focused = app.focused == index;
+    let controlling = focused && app.mode == Mode::Input && app.dialog.is_none();
     let session = app.panes[index].as_deref().and_then(|id| app.session(id));
     let title = match session {
         Some(session) => {
@@ -462,8 +493,9 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
             );
             let width = usize::from(pane_content(area, app.fullscreen).width);
             let status_width = Line::from(status).width();
-            let program = if width > status_width + session.program.label().len() + 14 {
-                format!("  {}", session.program.label())
+            let effective_program = app.effective_program(session);
+            let program = if width > status_width + effective_program.label().len() + 14 {
+                format!("  {}", effective_program.label())
             } else {
                 String::new()
             };
@@ -473,11 +505,14 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
             );
             Line::from(vec![
                 Span::styled(
-                    if focused { "▎ " } else { "  " },
+                    if controlling { "▎ " } else { "  " },
                     Style::default().fg(app.theme.accent()),
                 ),
                 Span::styled(name, Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
-                Span::styled(program, Style::default().fg(program_color(session.program))),
+                Span::styled(
+                    program,
+                    Style::default().fg(program_color(effective_program)),
+                ),
                 Span::styled(" · ", Style::default().fg(MUTED)),
                 Span::styled(
                     status,
@@ -509,7 +544,7 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(if focused {
+                .border_style(Style::default().fg(if controlling {
                     app.theme.accent()
                 } else {
                     BORDER
@@ -573,22 +608,6 @@ fn render_home(frame: &mut Frame, content: Rect, logo_frame: usize, theme: Theme
             content.height.min(1),
         ),
     );
-    for (offset, description) in ui_controls::home_action_rows(content).into_iter().zip([
-        "Choose a folder and a shell or agent.",
-        "Keep related sessions together.",
-        "Pick up the same session on mobile.",
-    ]) {
-        let row = offset + 1;
-        if row >= content.height {
-            continue;
-        }
-        frame.render_widget(
-            Paragraph::new(description)
-                .style(Style::default().fg(MUTED))
-                .wrap(Wrap { trim: false }),
-            Rect::new(content.x, content.y + row, content.width, 1),
-        );
-    }
 }
 
 fn truncate_cells(text: &str, max_width: usize) -> String {
@@ -620,6 +639,15 @@ fn program_color(program: Program) -> Color {
     }
 }
 
+fn tab_label(app: &App, session: &crate::model::Session) -> String {
+    let program = app.effective_program(session);
+    if program == Program::Shell || session.name.eq_ignore_ascii_case(program.label()) {
+        session.name.clone()
+    } else {
+        format!("{} · {}", program.label(), session.name)
+    }
+}
+
 fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
     let area = frame.area();
     let menu = ui_controls::menu_area(area);
@@ -636,8 +664,21 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
             Rect::new(menu.x, menu.y + title_y, menu.width, 1),
         );
     }
-    for index in 0..4 {
+    for index in 0..3 {
         let target = ui_controls::menu_action_area(area, index);
+        frame.render_widget(
+            Paragraph::new(match index {
+                0 => " Enter workspace ",
+                1 => " Pair mobile ",
+                _ => " Settings ",
+            })
+            .style(Style::default().fg(if index == app.menu_selected {
+                app.theme.accent()
+            } else {
+                MUTED
+            })),
+            target,
+        );
         if target.width > 0 && target.height > 0 && target.x > menu.x {
             frame.render_widget(
                 Paragraph::new(if index == app.menu_selected {
@@ -667,7 +708,8 @@ pub fn dialog_area(size: Rect, dialog: &Dialog) -> Option<Rect> {
     let width = 76.min(size.width.saturating_sub(4)).max(1);
     let height = match dialog {
         Dialog::Menu => 20,
-        Dialog::Theme { .. } => 10,
+        Dialog::Settings { .. } => 10,
+        Dialog::NewGroup { .. } => 16,
         Dialog::Help => 22,
         Dialog::NewSession(_) => 19,
         Dialog::PairPhone => 18,
@@ -691,11 +733,12 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
     frame.render_widget(Clear, area);
     let title = match dialog {
         Dialog::Menu => "Menu",
-        Dialog::Theme { .. } => "Theme",
+        Dialog::Settings { .. } => "Settings",
+        Dialog::NewGroup { .. } => "New group",
         Dialog::Text { title, .. } | Dialog::Confirm { title, .. } => title.as_str(),
         Dialog::Move { .. } => "Move to group",
         Dialog::Help => "Keyboard",
-        Dialog::NewSession(_) => "New session on host",
+        Dialog::NewSession(_) => "New session",
         Dialog::PairPhone => "Pair your phone",
     };
     let block = Block::bordered()
@@ -706,13 +749,17 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
     frame.render_widget(block, area);
     match dialog {
         Dialog::Menu => {}
-        Dialog::Theme { selected } => {
-            for (index, theme) in Theme::ALL.into_iter().enumerate() {
-                let description = if theme == Theme::Ultraviolet {
-                    "Violet accents, dark canvas"
-                } else {
-                    "Neutral accents, dark canvas"
-                };
+        Dialog::Settings { selected } => {
+            for (index, label) in [
+                format!("Theme                       {}   ← →", app.theme.label()),
+                format!(
+                    "Full screen session by default   {}",
+                    if app.fullscreen_default { "on" } else { "off" }
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let row = 1 + index as u16 * 2;
                 if row < inner.height {
                     frame.render_widget(
@@ -721,8 +768,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                                 if index == *selected { "› " } else { "  " },
                                 Style::default().fg(app.theme.accent()),
                             ),
-                            Span::styled(format!("{}  ", theme.label()), Style::default().fg(TEXT)),
-                            Span::styled(description, Style::default().fg(MUTED)),
+                            Span::styled(label, Style::default().fg(TEXT)),
                         ]))
                         .style(if index == *selected {
                             Style::default().bg(app.theme.selection())
@@ -732,6 +778,69 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                         Rect::new(inner.x, inner.y + row, inner.width, 1),
                     );
                 }
+            }
+            if inner.height > 6 {
+                frame.render_widget(
+                    Paragraph::new("Changes are shown and saved immediately.")
+                        .style(Style::default().fg(MUTED)),
+                    Rect::new(inner.x, inner.y + 6, inner.width, 1),
+                );
+            }
+        }
+        Dialog::NewGroup {
+            name,
+            parent_index,
+            editing_parent,
+        } => {
+            if inner.height > 1 {
+                frame.render_widget(
+                    Paragraph::new(format!("Name: {name}")).style(if !editing_parent {
+                        Style::default().bg(app.theme.selection())
+                    } else {
+                        Style::default()
+                    }),
+                    Rect::new(inner.x, inner.y + 1, inner.width, 1),
+                );
+            }
+            if inner.height > 3 {
+                frame.render_widget(
+                    Paragraph::new("Inside:").style(Style::default().fg(MUTED)),
+                    Rect::new(inner.x, inner.y + 3, inner.width, 1),
+                );
+            }
+            let choices = app.group_choices(None);
+            let offset = ui_controls::move_offset(*parent_index, inner.height.saturating_sub(4));
+            for (index, (_, label)) in choices
+                .iter()
+                .enumerate()
+                .skip(offset)
+                .take(usize::from(inner.height.saturating_sub(4)))
+            {
+                let row = 4 + (index - offset) as u16;
+                if row < inner.height {
+                    frame.render_widget(
+                        Paragraph::new(format!(
+                            "{} {label}",
+                            if *editing_parent && index == *parent_index {
+                                "›"
+                            } else {
+                                " "
+                            }
+                        ))
+                        .style(if index == *parent_index {
+                            Style::default().fg(TEXT).bg(app.theme.selection())
+                        } else {
+                            Style::default().fg(MUTED)
+                        }),
+                        Rect::new(inner.x, inner.y + row, inner.width, 1),
+                    );
+                }
+            }
+            if !editing_parent && inner.height > 1 {
+                frame.set_cursor_position((
+                    inner.x + (6 + name.len()).min(inner.width.saturating_sub(1) as usize) as u16,
+                    inner.y + 1,
+                ));
             }
         }
         Dialog::NewSession(form) => ui_launch::render_form(frame, app, form, inner),
@@ -787,12 +896,12 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     "~ status: screen inference; activity/quiet: I/O.\n\n",
                     "↑/↓ or j/k   Select · Enter opens / expands\n",
                     "i / t / x    Type / take over (confirm) / release\n",
-                    "n / g / G    New session / group / subgroup\n",
+                    "n / g        New session / group (choose parent)\n",
                     "r / m / d    Rename / move / delete (confirmation)\n",
                     "v / Tab      Split / focus next pane\n",
                     "PgUp/PgDn    Local scrollback\n",
                     "F1 / p / ?   Menu / pair mobile / keyboard help\n",
-                    "F11          Full screen / workspace\n",
+                    "z            Full screen / workspace\n",
                     "Esc          Session key / cancel dialog / exit from navigation\n",
                     "q            Detach from navigation\n\n",
                     "INPUT sends keys to the session.\n",
@@ -953,9 +1062,9 @@ mod tests {
         let footer: String = (0..area.width)
             .map(|x| buffer[(x, layout.footer.y)].symbol())
             .collect();
-        assert!(footer.contains("INPUT → SESSION"), "{footer}");
-        assert!(footer.contains("Ctrl+Q Navigate"), "{footer}");
-        assert!(footer.contains(" F11 "), "{footer}");
+        assert!(footer.contains("SESSION"), "{footer}");
+        assert!(footer.contains("Ctrl+Q navigation"), "{footer}");
+        assert!(footer.contains(" z "), "{footer}");
         let handle = fullscreen_handle_area(&app, layout.footer);
         assert_eq!(buffer[(handle.x, handle.y)].bg, app.theme.accent());
     }
@@ -991,7 +1100,12 @@ mod tests {
         let mut app = App::new(1);
         for dialog in [
             Dialog::Menu,
-            Dialog::Theme { selected: 0 },
+            Dialog::Settings { selected: 0 },
+            Dialog::NewGroup {
+                name: String::new(),
+                parent_index: 0,
+                editing_parent: false,
+            },
             Dialog::Help,
             Dialog::PairPhone,
             Dialog::NewSession(Default::default()),
