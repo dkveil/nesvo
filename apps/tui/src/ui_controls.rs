@@ -36,6 +36,7 @@ pub enum Action {
     DirectoryChoice(usize),
     MoveChoice(usize),
     QuickChoice(usize),
+    FocusSearch,
     OpenRow(usize),
     FocusTab(usize),
     FocusPane(usize),
@@ -132,6 +133,38 @@ fn buttons(
 
 pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let mut output = Vec::new();
+    let tree = ui::geometry(area, app).tree;
+    if tree.width > 0
+        && tree.height > 0
+        && (app.dialog.is_none() || matches!(app.dialog, Some(Dialog::QuickSwitch { .. })))
+    {
+        let content = ui::tree_content(tree);
+        output.push(Control {
+            area: Rect::new(content.x, content.y, content.width, 1),
+            label: None,
+            action: Action::FocusSearch,
+            enabled: true,
+        });
+        if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
+            let count = app.quick_switch_results(query).len();
+            let visible = usize::from(content.height.saturating_sub(1) / 2);
+            let offset = selected.saturating_sub(visible.saturating_sub(1));
+            for index in offset..count.min(offset + visible) {
+                output.push(Control {
+                    area: Rect::new(
+                        content.x,
+                        content.y + 1 + ((index - offset) as u16) * 2,
+                        content.width,
+                        2,
+                    ),
+                    label: None,
+                    action: Action::QuickChoice(index),
+                    enabled: true,
+                });
+            }
+            return output;
+        }
+    }
     if let Some(dialog) = &app.dialog {
         if matches!(dialog, Dialog::Menu) {
             for index in 0..3 {
@@ -537,8 +570,35 @@ mod tests {
         let app = App::new(1);
         let area = Rect::new(0, 0, 100, 32);
         let tree = ui::tree_content(ui::geometry(area, &app).tree);
-        assert_eq!(hit_test(&app, area, tree.x, tree.y), None);
+        assert_eq!(
+            hit_test(&app, area, tree.x, tree.y),
+            Some(Action::FocusSearch)
+        );
         assert_eq!(hit_test(&app, area, tree.x, tree.y + 3), None);
+    }
+
+    #[test]
+    fn sidebar_search_replaces_the_root_heading_and_results_are_clickable() {
+        let mut app = App::new(1);
+        app.event(serde_json::json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"one","name":"Docs","cwd":"C:/dev/docs","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"two","name":"Web UI","cwd":"C:/dev/web","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        let area = Rect::new(0, 0, 100, 32);
+        let tree = ui::tree_content(ui::geometry(area, &app).tree);
+        assert_eq!(
+            hit_test(&app, area, tree.x + 2, tree.y),
+            Some(Action::FocusSearch)
+        );
+        app.dialog = Some(Dialog::QuickSwitch {
+            query: "web".into(),
+            selected: 0,
+        });
+        assert_eq!(
+            hit_test(&app, area, tree.x + 2, tree.y + 1),
+            Some(Action::QuickChoice(0))
+        );
+        assert_eq!(hit_test(&app, area, tree.x + 2, tree.y + 3), None);
     }
 
     #[test]

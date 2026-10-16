@@ -189,6 +189,10 @@ impl Connection {
             .try_send(command)
             .map_err(|_| anyhow!("Connection is unavailable or busy; input was not sent"))
     }
+
+    pub fn is_closed(&self) -> bool {
+        self.commands.is_closed()
+    }
 }
 
 impl Drop for Connection {

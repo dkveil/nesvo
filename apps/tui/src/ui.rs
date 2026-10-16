@@ -199,6 +199,36 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         Block::default().style(Style::default().bg(BACKGROUND).fg(TEXT)),
         area,
     );
+    if !app.connected {
+        let width = area.width.min(54);
+        let height = area.height.min(7);
+        let panel = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(
+            Block::bordered()
+                .title(" nesvo · reconnecting ")
+                .border_style(Style::default().fg(app.theme.accent()))
+                .style(Style::default().bg(SURFACE).fg(TEXT)),
+            panel,
+        );
+        let inner = Block::bordered().inner(panel);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from("Connecting to your host…"),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Sessions stay on the host. Ctrl+C to quit.",
+                    Style::default().fg(MUTED),
+                )),
+            ]),
+            inner,
+        );
+        return;
+    }
     if matches!(app.dialog, Some(Dialog::Menu)) {
         render_menu(frame, app, logo_frame);
         ui_controls::render(frame, app);
@@ -330,6 +360,10 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         );
     }
     if let Some(dialog) = &app.dialog {
+        if matches!(dialog, Dialog::QuickSwitch { .. }) && layout.tree.width > 0 {
+            ui_controls::render(frame, app);
+            return;
+        }
         render_dialog(frame, app, dialog);
     }
     ui_controls::render(frame, app);
@@ -346,6 +380,10 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
     let content = tree_content(area);
+    if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
+        render_sidebar_search(frame, app, content, query, *selected);
+        return;
+    }
     let rows = app.tree();
     for (entry, index) in sidebar_entries(app, content) {
         let row = &rows[index];
@@ -364,6 +402,18 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
         let indent = "  ".repeat(row.depth.min(4));
         match &row.kind {
             RowKind::Root | RowKind::Group(_) => {
+                if matches!(row.kind, RowKind::Root) {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(vec![
+                            Span::styled(" ⌕ ", Style::default().fg(app.theme.accent())),
+                            Span::styled("Search sessions", Style::default().fg(MUTED)),
+                            Span::styled("  /", Style::default().fg(MUTED)),
+                        ]))
+                        .style(Style::default().bg(SURFACE)),
+                        entry,
+                    );
+                    continue;
+                }
                 let (marker, count, attention) = match &row.kind {
                     RowKind::Root => (" ", app.sessions.len(), None),
                     RowKind::Group(id) => (
@@ -462,6 +512,77 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                 }
             }
         }
+    }
+}
+
+fn render_sidebar_search(frame: &mut Frame, app: &App, area: Rect, query: &str, selected: usize) {
+    if area.height == 0 {
+        return;
+    }
+    let prompt = if query.is_empty() {
+        "Search sessions…"
+    } else {
+        query
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ⌕ ", Style::default().fg(app.theme.accent())),
+            Span::styled(
+                truncate_cells(prompt, usize::from(area.width.saturating_sub(5))),
+                Style::default().fg(if query.is_empty() { MUTED } else { TEXT }),
+            ),
+        ]))
+        .style(Style::default().bg(app.theme.selection())),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+    let results = app.quick_switch_results(query);
+    let visible = usize::from(area.height.saturating_sub(1) / 2);
+    let offset = selected.saturating_sub(visible.saturating_sub(1));
+    for (slot, session) in results.iter().enumerate().skip(offset).take(visible) {
+        let y = area.y + 1 + ((slot - offset) as u16) * 2;
+        let bg = if slot == selected {
+            app.theme.selection()
+        } else {
+            BACKGROUND
+        };
+        let marker = if slot == selected { "▎" } else { " " };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(marker, Style::default().fg(app.theme.accent())),
+                Span::styled(
+                    "● ",
+                    Style::default().fg(status_color(session.status.as_ref(), app.theme)),
+                ),
+                Span::styled(
+                    truncate_cells(&session.name, usize::from(area.width.saturating_sub(4))),
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                ),
+            ]))
+            .style(Style::default().bg(bg)),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("   "),
+                Span::styled(
+                    app.effective_program(session).label(),
+                    Style::default().fg(program_color(app.effective_program(session))),
+                ),
+                Span::styled(" · ", Style::default().fg(MUTED)),
+                Span::styled(
+                    truncate_cells(&session.cwd, usize::from(area.width.saturating_sub(13))),
+                    Style::default().fg(MUTED),
+                ),
+            ]))
+            .style(Style::default().bg(bg)),
+            Rect::new(area.x, y + 1, area.width, 1),
+        );
+    }
+    if results.is_empty() && area.height > 1 {
+        frame.render_widget(
+            Paragraph::new("  No matching sessions").style(Style::default().fg(MUTED)),
+            Rect::new(area.x, area.y + 1, area.width, 1),
+        );
     }
 }
 
@@ -1125,6 +1246,42 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::json;
+
+    #[test]
+    fn search_renders_inside_sidebar_and_disconnect_hides_stale_sessions() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"one","name":"Docs","cwd":"C:/dev/docs","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        let area = Rect::new(0, 0, 100, 30);
+        let tree = tree_content(geometry(area, &app).tree);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let heading = (tree.x..tree.right())
+            .map(|x| terminal.backend().buffer()[(x, tree.y)].symbol())
+            .collect::<String>();
+        assert!(heading.contains("Search sessions"));
+        app.dialog = Some(Dialog::QuickSwitch {
+            query: "docs".into(),
+            selected: 0,
+        });
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let result = (tree.x..tree.right())
+            .map(|x| terminal.backend().buffer()[(x, tree.y + 1)].symbol())
+            .collect::<String>();
+        assert!(result.contains("Docs"));
+        app.disconnect("connection lost".into());
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Connecting to your host"));
+        assert!(!screen.contains("Docs"));
+    }
 
     #[test]
     fn confirmation_uses_a_clear_header_and_destructive_action() {

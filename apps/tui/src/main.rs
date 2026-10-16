@@ -34,6 +34,9 @@ struct Arguments {
     /// Print one authenticated session/group snapshot as JSON, then disconnect.
     #[arg(long)]
     list: bool,
+    /// Check that the paired host supports this client, then exit.
+    #[arg(long)]
+    check_host: bool,
     /// Keep the empty-workspace logo still; active terminal views never animate.
     #[arg(long)]
     no_animation: bool,
@@ -42,13 +45,13 @@ struct Arguments {
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = Arguments::parse();
-    if !arguments.list {
+    if !arguments.list && !arguments.check_host {
         ensure!(
             std::env::var_os("NESVO_SESSION").is_none(),
             "nesvo is already running inside this terminal session. Open a separate terminal to start another client."
         );
     }
-    if !arguments.list {
+    if !arguments.list && !arguments.check_host {
         ensure!(
             std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
             "Interactive mode needs a terminal. Use --list for a JSON snapshot."
@@ -61,6 +64,24 @@ async fn main() -> Result<()> {
         )
     })?;
     let mut connection = Connection::open(pairing).await?;
+    if arguments.check_host {
+        connection.send(serde_json::json!({"type":"getCapabilities"}))?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = connection.events.recv().await {
+                match event {
+                    NetworkEvent::Message(value) if value["type"] == "capabilities" => {
+                        return Ok(());
+                    }
+                    NetworkEvent::Disconnected(message) => anyhow::bail!(message),
+                    _ => {}
+                }
+            }
+            anyhow::bail!("Host disconnected before reporting capabilities")
+        })
+        .await
+        .context("Host capabilities check timed out")??;
+        return Ok(());
+    }
     if arguments.list {
         let snapshot = tokio::time::timeout(Duration::from_secs(10), async {
             while let Some(event) = connection.events.recv().await {
@@ -81,5 +102,10 @@ async fn main() -> Result<()> {
     }
     let pairing_path =
         std::path::absolute(&arguments.pairing).context("Cannot resolve pairing file path")?;
-    runner::run(&mut connection, &pairing_path, !arguments.no_animation)
+    runner::run(
+        &mut connection,
+        &pairing_path,
+        arguments.url.as_deref(),
+        !arguments.no_animation,
+    )
 }

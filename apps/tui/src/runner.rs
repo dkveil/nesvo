@@ -2,7 +2,7 @@
 use crate::{
     brand, controller,
     model::{App, Dialog},
-    network::{Connection, NetworkEvent},
+    network::{Connection, NetworkEvent, Pairing},
     output::FrameWriter,
     preferences::{self, Preferences},
     ui, ui_controls,
@@ -27,6 +27,7 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
+use tokio::sync::oneshot;
 
 struct TerminalGuard;
 
@@ -62,7 +63,12 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> Result<()> {
+pub fn run(
+    connection: &mut Connection,
+    pairing_path: &Path,
+    override_url: Option<&str>,
+    animate: bool,
+) -> Result<()> {
     // Panic diagnostics must appear after restoring the user's terminal as well.
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -110,32 +116,52 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
         .with_file_name("pairing.svg")
         .display()
         .to_string();
-    connection.send(json!({"type":"getCapabilities"}))?;
+    send_or_disconnect(
+        &mut app,
+        connection,
+        vec![json!({"type":"getCapabilities"})],
+    );
     let mut requested_sizes = HashMap::new();
     let mut last_draw = Instant::now() - Duration::from_secs(1);
     let mut dirty = true;
     let animation_started = Instant::now();
     let mut logo_frame = 0;
+    let mut reconnect_started: Option<Instant> = None;
+    let mut next_attempt = Instant::now();
+    let mut reconnecting: Option<oneshot::Receiver<Result<Connection>>> = None;
+    let mut resume_session: Option<String> = None;
     loop {
         let phase = Instant::now();
         // Bound each drain so high-output sessions cannot starve the keyboard.
         for _ in 0..128 {
             match connection.events.try_recv() {
                 Ok(NetworkEvent::Message(message)) => {
+                    if !app.connected {
+                        break;
+                    }
+                    let is_snapshot = message["type"] == "sessions";
                     let commands = app.event(message).context("Invalid host event")?;
-                    dispatch(connection, commands)?;
+                    send_or_disconnect(&mut app, connection, commands);
+                    if is_snapshot
+                        && app.connected
+                        && let Some(id) =
+                            resume_session.take().filter(|id| app.session(id).is_some())
+                    {
+                        let commands = app.open_session(&id);
+                        send_or_disconnect(&mut app, connection, commands);
+                    }
                     dirty = true;
                 }
                 Ok(NetworkEvent::Disconnected(message)) => {
+                    resume_session = app.active_id().map(str::to_owned);
                     app.disconnect(message);
                     dirty = true;
+                    break;
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
                     if app.connected {
-                        app.disconnect(
-                            "Disconnected. Quit and reconnect; host sessions remain running."
-                                .into(),
-                        );
+                        resume_session = app.active_id().map(str::to_owned);
+                        app.disconnect("Host connection lost. Reconnecting…".into());
                         dirty = true;
                     }
                     break;
@@ -146,10 +172,64 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
                 break;
             }
         }
-        dispatch(
-            connection,
-            resize_commands(&app, area, &mut requested_sizes),
-        )?;
+        if !app.connected {
+            let started = *reconnect_started.get_or_insert_with(Instant::now);
+            if started.elapsed() >= Duration::from_secs(20) {
+                anyhow::bail!(
+                    "Could not reconnect to the host within 20 seconds. Start nesvo-dev again after checking the host."
+                );
+            }
+            if let Some(receiver) = &mut reconnecting {
+                match receiver.try_recv() {
+                    Ok(Ok(new_connection)) => {
+                        *connection = new_connection;
+                        let mut next_app = App::new(connection.client_id);
+                        next_app.theme = app.theme;
+                        next_app.onboarded = app.onboarded;
+                        next_app.fullscreen_default = app.fullscreen_default;
+                        next_app.fullscreen = app.fullscreen;
+                        next_app.pairing_path = app.pairing_path.clone();
+                        next_app.pairing_qr_path = app.pairing_qr_path.clone();
+                        next_app.notice = "Reconnected to host.".into();
+                        app = next_app;
+                        requested_sizes.clear();
+                        reconnect_started = None;
+                        reconnecting = None;
+                        send_or_disconnect(
+                            &mut app,
+                            connection,
+                            vec![json!({"type":"getCapabilities"})],
+                        );
+                        dirty = true;
+                    }
+                    Ok(Err(_)) | Err(oneshot::error::TryRecvError::Closed) => {
+                        reconnecting = None;
+                        next_attempt = Instant::now() + Duration::from_millis(1200);
+                        dirty = true;
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {}
+                }
+            } else if Instant::now() >= next_attempt {
+                let (sender, receiver) = oneshot::channel();
+                let path = pairing_path.to_path_buf();
+                let url = override_url.map(str::to_owned);
+                tokio::spawn(async move {
+                    let result = match Pairing::load(&path, url.as_deref()) {
+                        Ok(pairing) => Connection::open(pairing).await,
+                        Err(error) => Err(error),
+                    };
+                    let _ = sender.send(result);
+                });
+                reconnecting = Some(receiver);
+                dirty = true;
+            }
+        } else {
+            if resume_session.is_none() {
+                resume_session = app.active_id().map(str::to_owned);
+            }
+            let commands = resize_commands(&app, area, &mut requested_sizes);
+            send_or_disconnect(&mut app, connection, commands);
+        }
         let next_logo_frame = logo_frame_for(&app, area, animate, animation_started.elapsed());
         if next_logo_frame != logo_frame {
             logo_frame = next_logo_frame;
@@ -170,6 +250,13 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
             if !affects_view(&ev) {
                 continue;
             }
+            if !app.connected {
+                if matches!(ev, Event::Key(key) if key.code == crossterm::event::KeyCode::Char('c') && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL))
+                {
+                    break;
+                }
+                continue;
+            }
             if let Event::Resize(cols, rows) = ev {
                 let next = Rect::new(0, 0, cols, rows);
                 if cols > 0 && rows > 0 && area != next {
@@ -181,7 +268,7 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
             if outcome.quit {
                 break;
             }
-            dispatch(connection, outcome.commands)?;
+            send_or_disconnect(&mut app, connection, outcome.commands);
             dirty |= outcome.redraw;
             let current_preferences = Preferences {
                 theme: app.theme,
@@ -247,6 +334,18 @@ fn dispatch(connection: &Connection, commands: Vec<Value>) -> Result<()> {
         connection.send(command)?;
     }
     Ok(())
+}
+
+fn send_or_disconnect(app: &mut App, connection: &Connection, commands: Vec<Value>) {
+    if app.connected
+        && let Err(error) = dispatch(connection, commands)
+    {
+        if connection.is_closed() {
+            app.disconnect("Host connection lost. Reconnecting…".into());
+        } else {
+            app.notice = error.to_string();
+        }
+    }
 }
 
 type RequestedSizes = HashMap<String, (String, u16, u16)>;

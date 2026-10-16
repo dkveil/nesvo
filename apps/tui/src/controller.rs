@@ -255,6 +255,15 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             }
             open_quick_choice(app, outcome);
         }
+        Action::FocusSearch => {
+            if !matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
+                app.mode = Mode::Navigate;
+                app.dialog = Some(Dialog::QuickSwitch {
+                    query: String::new(),
+                    selected: 0,
+                });
+            }
+        }
         Action::OpenRow(index) => {
             app.selected = index;
             if let Some(row) = app.selected_row() {
@@ -358,8 +367,7 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             {
                 next_selected = next_selected.saturating_sub(1)
             }
-            KeyCode::Tab => app.dialog_button = Some(0),
-            KeyCode::Down if next_selected + 1 >= count => app.dialog_button = Some(0),
+            KeyCode::Tab => next_selected = (next_selected + 1).min(count.saturating_sub(1)),
             KeyCode::Down | KeyCode::Char('n')
                 if key.code == KeyCode::Down || key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
@@ -389,6 +397,15 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             query: next_query,
             selected: next_selected,
         });
+        if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
+            let id = app
+                .quick_switch_results(query)
+                .get(*selected)
+                .map(|session| session.id.clone());
+            if let Some(id) = id {
+                outcome.commands.extend(app.open_session(&id));
+            }
+        }
         return;
     }
     if matches!(app.dialog, Some(Dialog::Confirm { .. })) && app.dialog_button.is_none() {
@@ -1095,13 +1112,13 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
             area,
         );
-        assert_eq!(app.dialog_button, Some(0));
+        assert_eq!(app.active_id(), Some("two"));
         event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
             area,
         );
-        assert_eq!(app.dialog_button, None);
+        assert_eq!(app.active_id(), Some("one"));
         for character in "codex".chars() {
             event(
                 &mut app,
@@ -1121,7 +1138,7 @@ mod tests {
             outcome
                 .commands
                 .iter()
-                .any(|command| command["type"] == "subscribe")
+                .any(|command| command["type"] == "acquireControl")
         );
     }
 
