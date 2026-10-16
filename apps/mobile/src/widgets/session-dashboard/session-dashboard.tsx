@@ -17,7 +17,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { groupDescendants, groupPath } from '@entities/group';
-import { SessionStatusBadge, statusNeedsAttention } from '@entities/session';
+import { SessionStatusBadge, SessionStatusDot, statusNeedsAttention } from '@entities/session';
 import { useWorkspace } from '@entities/workspace';
 
 import { NesvoLogo } from '@shared/brand';
@@ -88,7 +88,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
   }
   const groupIds =
     selectedGroup && selectedGroup !== 'all' ? groupDescendants(groups, selectedGroup) : null;
-  const showStartMenu = tab === 'sessions' && (mode === 'demo' || sessions.length === 0);
+  const showStartMenu = tab === 'sessions' && sessions.length === 0;
   const connectionLabel =
     mode === 'demo'
       ? 'Tryb demo'
@@ -124,7 +124,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
       <View style={s.header}>
         <IconButton name="menu-outline" label="Otwórz menu" onPress={() => setMenuOpen(true)} />
         <View style={s.headerTitle}>
-          <NesvoLogo width={118} />
+          <NesvoLogo width={106} />
           <Text style={s.headerRoute} numberOfLines={1}>
             / {navigation.find(item => item.id === tab)?.label.toLocaleLowerCase()}
           </Text>
@@ -132,6 +132,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         <IconButton name="add" label="Nowa sesja" onPress={newSession} />
       </View>
       <ScrollView
+        keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={s.content}
         scrollEventThrottle={100}
@@ -266,7 +267,6 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               {sections.map(section => (
                 <View key={section.id ?? 'ungrouped'} style={s.sessionSection}>
                   <View style={s.sectionHeading}>
-                    <Icon name={section.id ? 'folder-open-outline' : 'albums-outline'} size={14} />
                     <Text style={s.sectionPath} numberOfLines={1}>
                       {section.name}
                     </Text>
@@ -282,12 +282,16 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                       onPress={() => openSession(session.id)}
                       style={({ pressed }) => [s.sessionRow, pressed && s.pressed]}
                     >
+                      <View style={s.statusSlot}>
+                        <SessionStatusDot status={session.status} />
+                      </View>
                       <View style={s.grow}>
                         <View style={s.sessionTitleRow}>
                           <Text style={s.sessionTitle} numberOfLines={1}>
                             {session.name}
                           </Text>
                           <SessionStatusBadge
+                            variant="plain"
                             status={session.status}
                             source={session.statusSource}
                             demo={!session.live}
@@ -298,7 +302,6 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                           <Text style={s.sessionCwd} numberOfLines={1} ellipsizeMode="middle">
                             {session.cwd}
                           </Text>
-                          {!session.live && <Text style={s.demoTag}>demo</Text>}
                         </View>
                       </View>
                     </Pressable>
@@ -379,7 +382,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
             </View>
             <View style={s.settingsGroup}>
               <Text style={s.sectionTitle}>Podgląd aplikacji</Text>
-              <Text style={common.body}>Wypróbuj rozmowy i terminal na przykładowych danych.</Text>
+              <Text style={common.body}>Wypróbuj sesje i terminal na przykładowych danych.</Text>
               <Button
                 label={mode === 'demo' ? 'Odtwórz sesje demo' : 'Włącz tryb demo'}
                 secondary
@@ -407,8 +410,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               />
             </View>
             <Text style={s.footnote}>
-              Wczesna wersja · 0.1{'\n'}Rozmowy są demonstracyjne. Prawdziwy terminal działa po
-              połączeniu z komputerem.
+              Wczesna wersja · 0.1{'\n'}Prawdziwy terminal działa po połączeniu z komputerem.
             </Text>
           </>
         )}
@@ -423,27 +425,6 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
           <Text style={s.noticeText}>{notice}</Text>
           <Icon name="close" size={18} />
         </Pressable>
-      )}
-      {tab === 'sessions' && !showStartMenu && (
-        <View style={s.bottom}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Rozpocznij nową sesję"
-            onPress={newSession}
-            style={({ pressed }) => [s.newSession, pressed && s.pressed]}
-          >
-            <Icon name="add" size={23} color={c.text} />
-            <Text style={s.newSessionText}>Rozpocznij nową sesję</Text>
-            <View style={s.newSessionArrow}>
-              <Icon name="arrow-up" size={21} color={c.accentInk} />
-            </View>
-          </Pressable>
-          <Text style={s.bottomHint}>
-            {mode === 'demo'
-              ? 'Podgląd aplikacji · bez połączenia z AI'
-              : 'Sesje działają na Twoim komputerze'}
-          </Text>
-        </View>
       )}
       <Modal
         visible={menuOpen}
@@ -546,7 +527,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: c.background },
   header: {
-    minHeight: 54,
+    minHeight: 48,
     paddingHorizontal: 6,
     flexDirection: 'row',
     alignItems: 'center',
@@ -637,39 +618,43 @@ const s = StyleSheet.create({
   activeFilter: { borderBottomColor: c.accent },
   filterText: { color: c.muted, fontFamily: mono, fontSize: 11, fontWeight: '500' },
   activeFilterText: { color: c.accent },
-  sessionList: { gap: 12, paddingTop: 2 },
-  sessionSection: { borderWidth: 1, borderColor: c.border, borderRadius: 6, overflow: 'hidden' },
+  sessionList: { gap: 14, paddingTop: 2 },
+  sessionSection: { gap: 2 },
   sectionHeading: {
     flexDirection: 'row',
-    gap: 7,
     alignItems: 'center',
-    minHeight: 32,
-    paddingHorizontal: 10,
-    backgroundColor: c.surface,
+    minHeight: 28,
+    paddingHorizontal: 6,
   },
   sectionPath: { flex: 1, fontFamily: mono, color: c.muted, fontSize: 11 },
   sectionCount: { fontFamily: mono, color: c.faint, fontSize: 10 },
   sessionRow: {
     flexDirection: 'row',
-    paddingHorizontal: 12,
-    paddingVertical: 13,
-    minHeight: 76,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: c.border,
+    paddingHorizontal: 6,
+    paddingVertical: 9,
+    minHeight: 58,
+    gap: 12,
   },
+  statusSlot: { paddingTop: 7 },
   sessionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sessionTitle: {
     color: c.text,
     fontFamily: mono,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '500',
     lineHeight: 21,
     flex: 1,
   },
-  sessionMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  sessionAgent: { color: c.accent, fontFamily: mono, fontSize: 10 },
-  sessionCwd: { flex: 1, minWidth: 0, color: c.faint, fontFamily: mono, fontSize: 10 },
-  demoTag: { color: c.faint, fontFamily: mono, fontSize: 9 },
+  sessionMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  sessionAgent: { color: c.accent, fontFamily: mono, fontSize: 11, lineHeight: 18 },
+  sessionCwd: {
+    flex: 1,
+    minWidth: 0,
+    color: c.faint,
+    fontFamily: mono,
+    fontSize: 11,
+    lineHeight: 18,
+  },
   empty: { alignItems: 'center', gap: 14, paddingVertical: 30, paddingHorizontal: 16 },
   center: { textAlign: 'center' },
   sectionTitle: {
@@ -703,35 +688,6 @@ const s = StyleSheet.create({
     gap: 10,
   },
   noticeText: { flex: 1, color: c.text, fontSize: 13, lineHeight: 20 },
-  bottom: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 10,
-    gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: c.border,
-  },
-  newSession: {
-    backgroundColor: c.surface,
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: 6,
-    minHeight: 48,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'center',
-  },
-  newSessionText: { flex: 1, color: c.accent, fontFamily: mono, fontSize: 13 },
-  newSessionArrow: {
-    width: 28,
-    height: 28,
-    borderRadius: 4,
-    backgroundColor: c.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bottomHint: { color: c.faint, fontFamily: mono, fontSize: 10, textAlign: 'center' },
   pressed: { backgroundColor: c.elevated },
   menuOverlay: { flex: 1, backgroundColor: '#00000099' },
   menu: {

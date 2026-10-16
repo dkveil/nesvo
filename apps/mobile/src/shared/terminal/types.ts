@@ -2,6 +2,7 @@ export interface TerminalHandle {
   write(data: string, options?: { allowResponses?: boolean }): void;
   reset(): void;
   focus(): void;
+  blur(): void;
   configure(options: TerminalViewport): void;
 }
 
@@ -29,7 +30,7 @@ export type TerminalCommand =
     }
   | ({ channel: typeof TERMINAL_CHANNEL; id: number; type: 'configure' } & TerminalViewport)
   | { channel: typeof TERMINAL_CHANNEL; id: number; type: 'interaction'; enabled: boolean }
-  | { channel: typeof TERMINAL_CHANNEL; id: number; type: 'reset' | 'focus' };
+  | { channel: typeof TERMINAL_CHANNEL; id: number; type: 'reset' | 'focus' | 'blur' };
 
 export type TerminalEvent =
   | { channel: typeof TERMINAL_CHANNEL; type: 'ready' }

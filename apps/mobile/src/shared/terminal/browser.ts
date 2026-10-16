@@ -116,6 +116,9 @@ function receive(event: MessageEvent) {
   } else if (message.type === 'focus') {
     lastCommandId = message.id;
     if (!readOnly && interactive) terminal.focus();
+  } else if (message.type === 'blur') {
+    lastCommandId = message.id;
+    terminal.blur();
   } else if (message.type === 'interaction' && typeof message.enabled === 'boolean') {
     lastCommandId = message.id;
     interactive = message.enabled;

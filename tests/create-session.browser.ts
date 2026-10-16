@@ -116,10 +116,8 @@ async function main() {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
-    await page
-      .getByRole('button', { name: 'Nowa sesja z menu startowego', exact: true })
-      .waitFor({ timeout: 60000 });
-    await page.getByRole('button', { name: 'Nowa sesja z menu startowego', exact: true }).click();
+    await page.getByRole('button', { name: 'Nowa sesja', exact: true }).waitFor({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Nowa sesja', exact: true }).click();
     assert.equal(
       await page.getByRole('radio', { name: 'Terminal', exact: true }).getAttribute('aria-checked'),
       'true',
@@ -193,6 +191,8 @@ async function main() {
     await page.getByLabel('Nazwa sesji', { exact: true }).fill('');
     await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
     await page.frameLocator('iframe[title="Terminal sesji"]').locator('.xterm-screen').waitFor();
+    assert.equal(await page.getByRole('tab', { name: /^(Terminal|Rozmowa)$/ }).count(), 0);
+    await page.getByRole('button', { name: 'Ukryj klawiaturę', exact: true }).waitFor();
     assert.equal(requests.length, 2);
     assert.equal(requests[1]?.cwd, '/workspace/mobile');
     assert.equal(requests[1]?.program, 'claude');

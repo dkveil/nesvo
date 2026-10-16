@@ -42,6 +42,21 @@ try {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
   });
+  await page.getByText('Tryb demo · sesje poniżej są przykładowe', { exact: true }).waitFor();
+  assert.equal(await mark.count(), 0, 'A populated workspace starts with its session list');
+  const sessions = page.getByRole('button', { name: /^Otwórz sesję/ });
+  assert.equal(await sessions.count(), 7);
+  // Remove only the fictional sessions in this fresh browser context through
+  // the normal UI. The empty-workspace logo must not require a test-only route.
+  for (let remaining = 7; remaining > 0; remaining--) {
+    await sessions.first().click();
+    await page.frameLocator('iframe[title="Terminal sesji"]').locator('.xterm-screen').waitFor();
+    await page.getByRole('button', { name: 'Zakończ sesję', exact: true }).click();
+    await page.getByRole('button', { name: 'Zostaw otwartą', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Zakończ sesję', exact: true }).last().click();
+    await page.waitForURL(url => url.pathname === '/');
+    assert.equal(await sessions.count(), remaining - 1);
+  }
   await mark.waitFor({ timeout: 60000 });
   assert.equal(await mark.getAttribute('viewBox'), logo.viewBox.join(' '));
   assert.equal(await mark.locator('path').nth(0).getAttribute('d'), logo.paths.robot);
@@ -92,10 +107,23 @@ try {
   await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
   await assertStill('A covered dashboard stops logo frames');
   await page.getByRole('button', { name: 'Zamknij nawigację', exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 250 });
   await page
-    .getByRole('button', { name: 'Otwórz sesję Stan niedostępny', exact: true })
+    .getByText('Otwórz nową sesję, żeby zacząć pracę na komputerze.', { exact: true })
     .scrollIntoViewIfNeeded();
+  const logoIntersects = await mark.evaluate(
+    node =>
+      new Promise(resolve => {
+        const observer = new IntersectionObserver(entries => {
+          observer.disconnect();
+          resolve(entries[0]?.isIntersecting);
+        });
+        observer.observe(node);
+      }),
+  );
+  assert.equal(logoIntersects, false, 'The compact empty state scrolls the logo out of view');
   await assertStill('A logo scrolled offscreen stops logo frames');
+  await page.setViewportSize({ width: 320, height: 740 });
   await mark.scrollIntoViewIfNeeded();
   await page.waitForFunction(
     () =>

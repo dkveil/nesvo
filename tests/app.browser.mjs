@@ -15,6 +15,12 @@ async function expectInViewport(locator, message) {
   const viewport = page.viewportSize();
   assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewport.height + 1, message);
 }
+async function expectNoHorizontalOverflow() {
+  const fits = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+  );
+  assert.ok(fits, 'The mobile layout must not overflow horizontally');
+}
 await mkdir('artifacts', { recursive: true });
 try {
   await page.goto(process.env.APP_URL || 'http://localhost:8081', {
@@ -23,28 +29,45 @@ try {
   });
   await page.getByText('Tryb demo · sesje poniżej są przykładowe').waitFor();
   assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 7);
+  await expectNoHorizontalOverflow();
   await page.screenshot({ path: 'artifacts/sessions.png' });
+  await page.screenshot({ path: 'artifacts/minimal-home.png' });
   await page
     .getByRole('button', { name: 'Otwórz sesję Widok sesji mobilnych', exact: true })
     .click();
   await page.frameLocator('iframe[title="Terminal sesji"]').locator('.xterm-screen').waitFor();
-  await page.getByRole('tab', { name: 'Rozmowa', exact: true }).click();
-  await page
-    .getByText('Przygotuj czytelną listę sesji do obsługi jedną ręką.', { exact: true })
-    .waitFor();
-  await page.screenshot({ path: 'artifacts/conversation.png' });
+  assert.equal(
+    await page.getByRole('tab', { name: /^(Terminal|Rozmowa)$/ }).count(),
+    0,
+    'Session screens open directly into the terminal without redundant tabs',
+  );
+  assert.equal(await page.getByText('Przykładowa rozmowa', { exact: true }).count(), 0);
   // Reduced space checks flex layout only; it does not emulate the native iOS keyboard.
   await page.setViewportSize({ width: 390, height: 440 });
-  await page.getByLabel('Przykładowy prompt', { exact: true }).fill('Test klawiatury');
-  await expectInViewport(
-    page.getByLabel('Przykładowy prompt', { exact: true }),
-    'Prompt stays visible',
-  );
+  const commandField = page.getByLabel('Polecenie terminala', { exact: true });
+  const hideKeyboard = page.getByRole('button', { name: 'Ukryj klawiaturę', exact: true });
+  await commandField.fill('Nie wysyłaj tego szkicu');
+  await expectInViewport(commandField, 'Command stays visible above a compact keyboard viewport');
   await expectInViewport(
     page.getByRole('button', { name: 'Wyślij', exact: true }),
     'Send stays visible',
   );
-  await page.screenshot({ path: 'artifacts/conversation-compact.png' });
+  await expectInViewport(hideKeyboard, 'Explicit keyboard dismissal stays reachable');
+  await hideKeyboard.click();
+  assert.equal(await commandField.evaluate(node => node === document.activeElement), false);
+  assert.equal(await commandField.inputValue(), 'Nie wysyłaj tego szkicu');
+  const agentTerminal = page.frameLocator('iframe[title="Terminal sesji"]');
+  await agentTerminal.locator('textarea').focus();
+  await hideKeyboard.click();
+  await page.waitForFunction(() => document.activeElement?.tagName !== 'IFRAME');
+  await agentTerminal.locator('textarea:not(:focus)').waitFor({ state: 'attached' });
+  await page.waitForFunction(() => document.querySelector('iframe')?.clientHeight >= 220);
+  await expectInViewport(
+    page.locator('iframe[title="Terminal sesji"]'),
+    'Terminal remains visible',
+  );
+  await expectNoHorizontalOverflow();
+  await page.screenshot({ path: 'artifacts/terminal-agent-compact.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
   await page.getByRole('tab', { name: 'Wymagają uwagi' }).click();
@@ -83,6 +106,7 @@ try {
   assert.ok(output.includes('POCKET_BROWSER_OK'), 'Demo terminal must receive submitted input');
   await page.screenshot({ path: 'artifacts/terminal-demo.png' });
   await page.setViewportSize({ width: 320, height: 300 });
+  await page.waitForFunction(() => document.querySelector('iframe')?.clientHeight >= 100);
   await expectInViewport(
     page.getByLabel('Polecenie terminala', { exact: true }),
     'Command stays visible',
@@ -95,10 +119,13 @@ try {
     page.getByRole('button', { name: 'Klawisz esc', exact: true }),
     'Terminal keys stay visible',
   );
+  await expectInViewport(hideKeyboard, 'Keyboard dismissal stays visible at 320px width');
+  await expectNoHorizontalOverflow();
   await page.screenshot({ path: 'artifacts/terminal-compact.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 8);
+  await expectNoHorizontalOverflow();
   await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
   await page.getByRole('tab', { name: 'Komputery', exact: true }).waitFor();
   await page.waitForTimeout(250);
@@ -145,7 +172,7 @@ try {
   await page.getByRole('button', { name: 'Otwórz sesję Mały ekran', exact: true }).waitFor();
   assert.deepEqual(errors, [], 'No browser runtime exceptions');
   console.log(
-    'PASS: demo, filters, search, create, terminal input, pairing validation, navigation.',
+    'PASS: compact terminal-only sessions, keyboard dismissal, demo, filters, search, create, terminal input, pairing validation and navigation.',
   );
 } finally {
   await browser.close();

@@ -49,7 +49,7 @@ export function useTerminalBridge(
     (
       command:
         | ({ type: 'write' } & OutputSegment)
-        | { type: 'reset' | 'focus' }
+        | { type: 'reset' | 'focus' | 'blur' }
         | { type: 'interaction'; enabled: boolean }
         | ({ type: 'configure' } & TerminalViewport),
     ) => {
@@ -143,6 +143,11 @@ export function useTerminalBridge(
       if (readOnly.current || !interactive.current) return;
       if (ready.current) dispatch({ type: 'focus' });
       else pendingFocus.current = true;
+    },
+    blur() {
+      pendingFocus.current = false;
+      // Dismiss focus immediately, even when a large output write awaits its ACK.
+      if (mounted.current && ready.current) dispatch({ type: 'blur' });
     },
     configure(options) {
       readOnly.current = options.readOnly;

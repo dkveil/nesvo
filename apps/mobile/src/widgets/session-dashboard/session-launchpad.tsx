@@ -62,20 +62,14 @@ export function SessionLaunchpad({
           returnKeyType="next"
           keyboardAppearance="dark"
         />
-        <View style={s.footer}>
-          <Text style={s.mode}>Terminal</Text>
-          <Text style={s.slash}>/</Text>
-          <Text style={s.modeDetail}>{demo ? 'demo' : 'CLI'}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Nowa sesja z menu startowego"
-            onPress={create}
-            style={({ pressed }) => [s.create, pressed && s.pressed]}
-          >
-            <Text style={s.createText}>Nowa sesja</Text>
-            <Icon name="arrow-forward" size={18} color={c.text} />
-          </Pressable>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Nowa sesja z menu startowego"
+          onPress={create}
+          style={({ pressed }) => [s.create, pressed && s.pressed]}
+        >
+          <Icon name="arrow-forward" size={18} color={c.accent} />
+        </Pressable>
       </View>
       <Text style={s.hint}>
         {demo
@@ -98,9 +92,9 @@ const s = StyleSheet.create({
     borderColor: c.border,
     borderLeftWidth: 3,
     borderLeftColor: c.accent,
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 5,
+    paddingLeft: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   composerFocused: { borderColor: c.faint, borderLeftColor: c.accent },
   composerRail: {
@@ -112,20 +106,21 @@ const s = StyleSheet.create({
     backgroundColor: c.faint,
     opacity: 0.45,
   },
-  input: { color: c.text, fontFamily: mono, fontSize: 16, minHeight: 52, paddingVertical: 10 },
-  footer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  mode: { color: c.accent, fontFamily: mono, fontSize: 11, fontWeight: '600' },
-  slash: { color: c.border, fontFamily: mono, fontSize: 12 },
-  modeDetail: { color: c.faint, fontFamily: mono, fontSize: 11 },
+  input: {
+    color: c.text,
+    fontFamily: mono,
+    fontSize: 14,
+    minHeight: 44,
+    paddingVertical: 6,
+    minWidth: 0,
+    flex: 1,
+  },
   create: {
     minHeight: 44,
-    marginLeft: 'auto',
-    flexDirection: 'row',
-    gap: 8,
+    width: 44,
     alignItems: 'center',
-    paddingLeft: 8,
+    justifyContent: 'center',
   },
-  createText: { color: c.text, fontFamily: mono, fontSize: 11 },
   pressed: { opacity: 0.65 },
   hint: { color: c.faint, fontFamily: mono, fontSize: 10, lineHeight: 16, marginTop: 10 },
 });

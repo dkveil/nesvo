@@ -16,13 +16,7 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { groupPath, GroupPicker } from '@entities/group';
-import {
-  createDemoShell,
-  demoConversations,
-  type Session,
-  SessionStatusBadge,
-  sessionStatusDetail,
-} from '@entities/session';
+import { createDemoShell, type Session, SessionStatusBadge } from '@entities/session';
 import { useWorkspace } from '@entities/workspace';
 
 import type { HostClient, SessionControl } from '@shared/api/host';
@@ -44,7 +38,6 @@ export function SessionScreen({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<'conversation' | 'terminal'>('terminal');
   const [draft, setDraft] = useState('');
   const [composerFocused, setComposerFocused] = useState(false);
   const [notice, setNotice] = useState('');
@@ -58,7 +51,9 @@ export function SessionScreen({
   const controlling =
     !!session.live && connected && control?.controllerId === client.clientId && !!control?.leaseId;
   const canType = !session.live || (controlling && session.running !== false);
+  const showControl = !!session.live && connected && session.running !== false;
   const terminal = useRef<TerminalHandle>(null);
+  const composerInput = useRef<TextInput>(null);
   const size = useRef({ cols: 80, rows: 24 });
   const ready = useRef(false);
   const subscribed = useRef(false);
@@ -115,12 +110,13 @@ export function SessionScreen({
   }
   function submit() {
     if (!draft.trim() || !canType) return;
-    if (tab === 'conversation')
-      setNotice(
-        'To podgląd. Wiadomość nie została wysłana. Połącz host i otwórz agenta w terminalu.',
-      );
-    else input(`${draft}\r`);
+    input(`${draft}\r`);
     setDraft('');
+  }
+  function dismissKeyboard() {
+    composerInput.current?.blur();
+    terminal.current?.blur();
+    Keyboard.dismiss();
   }
   return (
     <KeyboardAvoidingView
@@ -135,23 +131,23 @@ export function SessionScreen({
           name="chevron-back"
           label="Wróć do sesji"
           onPress={() => {
-            Keyboard.dismiss();
+            dismissKeyboard();
             onBack();
           }}
         />
-        <View style={s.headerTitle}>
+        <Pressable style={s.headerTitle} accessible={false} onPress={dismissKeyboard}>
           <Text numberOfLines={1} style={s.name}>
             {session.name}
           </Text>
           <Text numberOfLines={1} style={s.meta}>
             {session.live ? session.host : `${session.agent} · Demo`}
           </Text>
-        </View>
+        </Pressable>
         <IconButton
           name="folder-outline"
           label="Przenieś sesję do grupy"
           onPress={() => {
-            Keyboard.dismiss();
+            dismissKeyboard();
             setGroupOpen(true);
           }}
         />
@@ -159,62 +155,39 @@ export function SessionScreen({
           name="close"
           label="Zakończ sesję"
           onPress={() => {
-            Keyboard.dismiss();
+            dismissKeyboard();
             setConfirmClose(true);
           }}
         />
       </View>
-      {!session.live && session.agent !== 'Terminal' && (
-        <View style={s.tabs}>
-          {(['terminal', 'conversation'] as const).map(value => (
-            <Pressable
-              key={value}
-              accessibilityRole="tab"
-              aria-selected={tab === value}
-              accessibilityState={{ selected: tab === value }}
-              onPress={() => {
-                ready.current = false;
-                setTab(value);
-              }}
-              style={[s.tab, tab === value && s.selectedTab]}
-            >
-              <Text style={[s.tabText, tab === value && s.activeTabText]}>
-                {value === 'terminal' ? 'Terminal' : 'Rozmowa'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
-      {tab === 'terminal' && (
-        <View style={s.path}>
-          <Text numberOfLines={1} style={s.pathText}>
-            {session.cwd}
-          </Text>
-          {session.live && !connected ? (
-            <Text style={s.status}>Offline</Text>
-          ) : (
-            <SessionStatusBadge
-              status={session.status}
-              source={session.statusSource}
-              demo={!session.live}
-            />
+      <View style={s.path}>
+        <View style={s.pathSummary}>
+          <View style={s.pathLine}>
+            <Text numberOfLines={1} style={s.pathText}>
+              {session.cwd}
+            </Text>
+            {session.live && !connected ? (
+              <Text style={s.status}>Offline</Text>
+            ) : (
+              <SessionStatusBadge
+                status={session.status}
+                source={session.statusSource}
+                demo={!session.live}
+                variant="plain"
+              />
+            )}
+          </View>
+          {!!showControl && (
+            <Text style={s.controlLabel} numberOfLines={1}>
+              {controlling
+                ? 'Sterowanie lokalne'
+                : control?.controllerId != null
+                  ? 'Podgląd · steruje inne urządzenie'
+                  : 'Podgląd'}
+            </Text>
           )}
         </View>
-      )}
-      {!!session.live && !!connected && (
-        <Text style={s.stateDetail}>
-          {sessionStatusDetail(session.status, session.statusSource)}
-        </Text>
-      )}
-      {!!session.live && !!connected && session.running !== false && (
-        <View style={s.controlBar}>
-          <Text style={s.controlLabel}>
-            {controlling
-              ? 'Sterujesz z tego urządzenia'
-              : control?.controllerId != null
-                ? 'Podgląd · steruje inne urządzenie'
-                : 'Podgląd · terminal bez sterowania'}
-          </Text>
+        {!!showControl && (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={controlling ? 'Oddaj sterowanie' : 'Przejmij sterowanie'}
@@ -231,63 +204,38 @@ export function SessionScreen({
             }}
             style={s.controlButton}
           >
-            <Text style={s.controlAction}>{controlling ? 'Oddaj' : 'Przejmij sterowanie'}</Text>
+            <Text style={s.controlAction}>{controlling ? 'Oddaj' : 'Przejmij'}</Text>
           </Pressable>
-        </View>
-      )}
-      {tab === 'terminal' ? (
-        <View style={s.terminal}>
-          <TerminalView
-            ref={terminal}
-            readOnly={!!session.live}
-            interactive={!confirmClose && !groupOpen}
-            onData={input}
-            onResize={(cols, rows) => {
-              size.current = { cols, rows };
-              if (session.live && ready.current && client.hasControl(session.id))
-                client.resizeSession(session.id, cols, rows);
-            }}
-            onReady={() => {
-              ready.current = true;
-              if (session.live) {
-                if (connected && !subscribed.current) {
-                  subscribed.current = true;
-                  client.subscribeSession(session.id);
-                }
-              } else {
-                demo.current = createDemoShell(
-                  text => terminal.current?.write(text),
-                  () => terminal.current?.reset(),
-                );
-                demo.current.start();
+        )}
+      </View>
+      <View style={s.terminal}>
+        <TerminalView
+          ref={terminal}
+          readOnly={!!session.live}
+          interactive={!confirmClose && !groupOpen}
+          onData={input}
+          onResize={(cols, rows) => {
+            size.current = { cols, rows };
+            if (session.live && ready.current && client.hasControl(session.id))
+              client.resizeSession(session.id, cols, rows);
+          }}
+          onReady={() => {
+            ready.current = true;
+            if (session.live) {
+              if (connected && !subscribed.current) {
+                subscribed.current = true;
+                client.subscribeSession(session.id);
               }
-            }}
-          />
-        </View>
-      ) : (
-        <ScrollView
-          style={s.conversation}
-          contentContainerStyle={s.messages}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          showsVerticalScrollIndicator={false}
-        >
-          <Text style={s.example}>Przykładowa rozmowa</Text>
-          {(demoConversations[session.id] ?? [])
-            .filter(message => message.role !== 'system')
-            .map((message, i) => (
-              <View
-                key={i}
-                accessibilityLabel={message.role === 'user' ? 'Twoja wiadomość' : session.agent}
-                style={[s.message, message.role === 'user' && s.userMessage]}
-              >
-                <Text selectable style={s.messageText}>
-                  {message.content}
-                </Text>
-              </View>
-            ))}
-        </ScrollView>
-      )}
+            } else {
+              demo.current = createDemoShell(
+                text => terminal.current?.write(text),
+                () => terminal.current?.reset(),
+              );
+              demo.current.start();
+            }
+          }}
+        />
+      </View>
       {!!notice && (
         <Pressable
           accessibilityRole="button"
@@ -298,8 +246,14 @@ export function SessionScreen({
           <Text style={s.noticeText}>{notice}</Text>
         </Pressable>
       )}
-      {tab === 'terminal' && (
-        <View style={s.keys}>
+      <View style={s.toolbar}>
+        <ScrollView
+          horizontal
+          style={s.keyScroll}
+          contentContainerStyle={s.keys}
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="always"
+        >
           {[
             { label: 'esc', value: '\u001b' },
             { label: 'ctrl C', value: '\u0003' },
@@ -322,23 +276,27 @@ export function SessionScreen({
               </Text>
             </Pressable>
           ))}
-        </View>
-      )}
+        </ScrollView>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Ukryj klawiaturę"
+          onPress={dismissKeyboard}
+          style={({ pressed }) => [s.hideKeyboard, pressed && s.keyPressed]}
+        >
+          <Icon name="chevron-down" size={16} color={c.muted} />
+          <Text style={s.keyText}>Ukryj</Text>
+        </Pressable>
+      </View>
       <View style={s.composerArea}>
         <View style={[s.composer, composerFocused && s.composerFocused]}>
           <View style={s.composerRail} aria-hidden pointerEvents="none" />
           <Text aria-hidden style={s.promptSign}>
-            {tab === 'terminal' ? '>' : '+'}
+            {'>'}
           </Text>
           <TextInput
-            accessibilityLabel={tab === 'terminal' ? 'Polecenie terminala' : 'Przykładowy prompt'}
-            placeholder={
-              !canType
-                ? 'Przejmij sterowanie, aby pisać'
-                : tab === 'terminal'
-                  ? 'Wpisz polecenie'
-                  : 'Wiadomość'
-            }
+            ref={composerInput}
+            accessibilityLabel="Polecenie terminala"
+            placeholder={!canType ? 'Przejmij sterowanie, aby pisać' : 'Wpisz polecenie'}
             placeholderTextColor={c.muted}
             selectionColor={c.accent}
             value={draft}
@@ -367,12 +325,9 @@ export function SessionScreen({
               pressed && s.sendPressed,
             ]}
           >
-            <Icon name="arrow-up" size={22} color={c.accentInk} />
+            <Icon name="arrow-up" size={20} color={c.accent} />
           </Pressable>
         </View>
-        {tab === 'conversation' && (
-          <Text style={s.composerHint}>Demo · wiadomości nie są wysyłane do AI</Text>
-        )}
       </View>
       <Modal
         visible={groupOpen}
@@ -435,47 +390,28 @@ const s = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingTop: 6,
-    paddingBottom: 10,
-    gap: 8,
+    paddingHorizontal: 4,
+    gap: 2,
   },
-  headerTitle: { flex: 1, alignItems: 'flex-start', gap: 3 },
+  headerTitle: { flex: 1, minWidth: 0, minHeight: 44, justifyContent: 'center', gap: 1 },
   name: { color: c.text, fontFamily: mono, fontSize: 13, fontWeight: '600', letterSpacing: -0.2 },
   meta: { color: c.faint, fontFamily: mono, fontSize: 10 },
   path: {
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   pathText: { fontFamily: mono, color: c.faint, fontSize: 11, flex: 1 },
+  pathSummary: { flex: 1, minWidth: 0 },
+  pathLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   status: { color: c.orange, fontFamily: mono, fontSize: 11 },
-  stateDetail: {
-    color: c.faint,
-    fontFamily: mono,
-    fontSize: 9,
-    paddingHorizontal: 14,
-    paddingBottom: 6,
-  },
-  controlBar: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    marginBottom: 6,
-  },
-  controlLabel: { color: c.faint, fontSize: 11, lineHeight: 17, flex: 1 },
+  controlLabel: { color: c.faint, fontSize: 10, lineHeight: 15 },
   controlButton: {
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 10,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: c.border,
-    backgroundColor: c.surface,
   },
   controlAction: { color: c.accent, fontFamily: mono, fontSize: 11, fontWeight: '500' },
   inactive: { opacity: 0.4 },
@@ -491,55 +427,39 @@ const s = StyleSheet.create({
     gap: 14,
   },
   groupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  tabs: {
-    flexDirection: 'row',
-    alignSelf: 'flex-start',
-    backgroundColor: c.surface,
-    borderRadius: 4,
-    padding: 3,
-    marginBottom: 4,
-    marginLeft: 14,
-  },
-  tab: { minHeight: 44, paddingHorizontal: 16, justifyContent: 'center', borderRadius: 3 },
-  selectedTab: { backgroundColor: c.elevated },
-  tabText: { color: c.muted, fontFamily: mono, fontSize: 11, fontWeight: '500' },
-  activeTabText: { color: c.accent },
   terminal: {
     flex: 1,
     minHeight: 0,
-    marginHorizontal: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: c.border,
-    borderRadius: 4,
+    marginHorizontal: 4,
     overflow: 'hidden',
   },
-  conversation: { flex: 1, minHeight: 0 },
-  messages: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 32, gap: 30 },
-  example: { color: c.faint, fontSize: 11, alignSelf: 'center', marginBottom: -4 },
-  message: { alignSelf: 'flex-start', width: '100%' },
-  userMessage: {
-    alignSelf: 'flex-end',
-    width: 'auto',
-    maxWidth: '88%',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 6,
-    backgroundColor: c.elevated,
-  },
-  messageText: { color: c.text, fontSize: 16, lineHeight: 26 },
-  keys: { flexDirection: 'row', paddingHorizontal: 10, paddingTop: 6, gap: 3 },
-  key: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: 4,
-    borderWidth: StyleSheet.hairlineWidth,
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: c.border,
+  },
+  keyScroll: { flex: 1, minWidth: 0 },
+  keys: { flexDirection: 'row', flexGrow: 1 },
+  key: {
+    flexGrow: 1,
+    minWidth: 44,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
   keyPressed: { backgroundColor: c.elevated },
   keyText: { color: c.muted, fontFamily: mono, fontSize: 12 },
-  composerArea: { flexShrink: 0, paddingHorizontal: 10, paddingTop: 6, paddingBottom: 10, gap: 7 },
+  hideKeyboard: {
+    width: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderColor: c.border,
+  },
+  composerArea: { flexShrink: 0, paddingHorizontal: 10, paddingBottom: 4 },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -548,8 +468,7 @@ const s = StyleSheet.create({
     borderColor: c.border,
     borderLeftWidth: 3,
     borderLeftColor: c.accent,
-    padding: 3,
-    gap: 4,
+    gap: 2,
   },
   composerFocused: { borderColor: c.faint, borderLeftColor: c.accent },
   composerRail: {
@@ -563,30 +482,28 @@ const s = StyleSheet.create({
   },
   draft: {
     flex: 1,
-    minHeight: 46,
+    minWidth: 0,
+    minHeight: 44,
     color: c.text,
     paddingHorizontal: 6,
-    paddingVertical: 10,
+    paddingVertical: 6,
     fontSize: 16,
     fontFamily: mono,
   },
   send: {
     width: 44,
     height: 44,
-    backgroundColor: c.accent,
-    borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendDisabled: { opacity: 0.35 },
-  promptSign: { color: c.accent, fontFamily: mono, fontSize: 18, paddingLeft: 9 },
+  promptSign: { color: c.accent, fontFamily: mono, fontSize: 14, paddingLeft: 6 },
   sendPressed: { opacity: 0.75 },
-  composerHint: { color: c.faint, fontSize: 10, textAlign: 'center' },
   notice: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginHorizontal: 16,
-    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minHeight: 44,
+    justifyContent: 'center',
     backgroundColor: c.surface,
   },
   noticeText: { color: c.muted, fontSize: 13, lineHeight: 20 },
