@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Pocket Sessions",
+    "slug": "pocket-sessions",
+    "version": "0.1.0",
+    "scheme": "pocketsessions",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.dkveil.pocketsessions",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Pocket Sessions connects to your computer to control your terminal sessions.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "dev.dkveil.pocketsessions",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Pocket Sessions to scan the pairing code on your computer.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      "expo-font",
+      "expo-router",
+      ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]
+    ]
+  }
+}

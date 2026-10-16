@@ -1,0 +1,8 @@
+node_modules
+dist
+.expo
+.local
+artifacts
+host/target
+src/terminal/generated.ts
+package-lock.json
