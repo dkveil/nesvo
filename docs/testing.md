@@ -13,7 +13,7 @@ Sprawdzono osobno silnik demonstracyjny: polecenia, Ctrl+C, backspace, CRLF prze
 | Renderer w Chromium               | Ograniczony smoke test wykonany                                                                                       |
 | Silnik fikcyjnej powłoki          | Smoke test wykonany                                                                                                   |
 | Cała aplikacja webowa + host Rust | PASS na Windows / Chromium, 16.10.2026: polecenie w PowerShell, reconnect, odtworzenie, kolejne polecenie, zamknięcie |
-| Fizyczny iPhone + Expo Go         | SDK 58 odrzucone przez sklepową wersję Expo Go; ponowna próba po dopasowaniu do SDK 57 do potwierdzenia                  |
+| Fizyczny iPhone + Expo Go         | SDK 57 przechodzi kontrolę wersji; uruchomienie zatrzymane na wymaganiu logowania do tego samego konta Expo w telefonie i CLI |
 | Fizyczny Android + Expo Go        | Do wykonania                                                                                                          |
 | iOS development build             | Do wykonania po zbudowaniu                                                                                            |
 | TestFlight                        | Brak potwierdzonego wydania                                                                                           |
@@ -51,6 +51,7 @@ npm run test:host
 2. Zainstaluj zależności klienta: `npm install`.
 3. Uruchom `npx tsc --noEmit` oraz `cargo test --manifest-path host/Cargo.toml`. Zapisz rzeczywiste wyniki; obecność tej instrukcji nie oznacza ich zaliczenia.
 4. W jednym terminalu uruchom `npm start`. Na iPhonie otwórz aplikację z kodu Expo.
+   Przed otwarciem na fizycznym iPhonie zaloguj CLI przez `npx expo login --browser` oraz Expo Go do tego samego konta. Sprawdź `npx expo whoami`; samo działanie serwera bez błędów nie potwierdza logowania.
 5. W drugim terminalu uruchom `cargo run --manifest-path host/Cargo.toml -- --lan --workspace "C:\Users\Damian\dev"`, używając istniejącego katalogu własnego komputera.
 6. Zapewnij dostęp telefonu do adresu hosta. Na pierwszą próbę użyj tego samego Wi-Fi i aktywnego komputera.
 7. W aplikacji zeskanuj kod **hosta Pocket Sessions**. To inny kod niż QR Expo.

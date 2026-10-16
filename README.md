@@ -33,6 +33,18 @@ npm start
 
 Na iPhonie zainstaluj Expo Go i zeskanuj kod wyświetlany przez Expo. Komputer oraz telefon powinny mieć łączność w sieci lokalnej. Projekt używa **Expo SDK 57**, zgodnego z Expo Go 57 dostępnym w App Store w chwili przygotowania podglądu (16.10.2026).
 
+Na fizycznym iPhonie Expo Go wymaga też **tego samego konta Expo na telefonie i w CLI**. Zaloguj komputer poleceniem `npx expo login --browser` (obsługuje GitHub), a następnie zaloguj się do tego samego konta w Expo Go przez ikonę profilu. Sprawdź konto CLI przez `npx expo whoami`. Potem wybierz „Try again” na telefonie; po zmianie konta uruchom serwer podglądu ponownie. [Wymaganie logowania Expo](https://docs.expo.dev/troubleshooting/expo-go-sign-in-required/).
+
+Jeżeli na Windowsie automatyczne otwarcie przeglądarki kończy się błędem `cmd /c start`, uruchom logowanie bez automatycznego otwierania i otwórz wypisany adres ręcznie **na tym samym komputerze**. Pozostaw terminal działający do zakończenia logowania:
+
+```powershell
+$env:BROWSER = 'none'
+npx expo login --browser
+Remove-Item Env:BROWSER
+```
+
+Logowanie i ewentualne 2FA odbywają się na stronie dostawcy. Nie wpisuj haseł, kodów 2FA ani tokenów do plików projektu.
+
 Najnowsze SDK i najnowsza aplikacja Expo Go w sklepie mogą mieć różne wersje. [Informacja o wydaniu SDK 58](https://expo.dev/changelog/sdk-58#expo-go) zapowiada aktualizację sklepowej aplikacji dopiero w kolejnych tygodniach. Przed zmianą głównej wersji SDK sprawdź zgodność z wersją Expo Go na telefonie. Samo wpisanie starszego `sdkVersion` w konfiguracji nie zapewnia zgodności — cały zestaw natywnych zależności musi odpowiadać SDK.
 
 Podgląd w przeglądarce na komputerze:
