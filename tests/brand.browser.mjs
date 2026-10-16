@@ -66,8 +66,16 @@ try {
   await mkdir('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/ultraviolet-home.png' });
   await page.setViewportSize({ width: 320, height: 740 });
+  // React Native's responsive layout commits after the browser resize event.
+  // Wait for the actual geometry instead of sampling the previous viewport.
+  await page.waitForFunction(() => {
+    const bounds = document
+      .querySelector('[data-testid="workspace-logo"]')
+      ?.getBoundingClientRect();
+    return bounds && bounds.width > 0 && bounds.left >= 0 && bounds.right <= 320;
+  });
   const bounds = await mark.boundingBox();
-  assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 320);
+  assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 320, JSON.stringify(bounds));
   await page.getByLabel('Nazwa nowej sesji', { exact: true }).fill('Ultraviolet task');
   await page.getByRole('button', { name: 'Nowa sesja z menu startowego', exact: true }).click();
   assert.equal(
