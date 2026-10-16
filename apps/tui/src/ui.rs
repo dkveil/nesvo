@@ -204,7 +204,13 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         ui_controls::render(frame, app);
         return;
     }
-    if matches!(app.dialog, Some(Dialog::ExitConfirm { from_menu: true })) {
+    if matches!(
+        app.dialog,
+        Some(Dialog::ExitConfirm {
+            from_menu: true,
+            ..
+        })
+    ) {
         render_menu(frame, app, logo_frame);
         if let Some(dialog) = &app.dialog {
             render_dialog(frame, app, dialog);
@@ -798,6 +804,10 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                         "Your sessions will keep running.",
                         Style::default().fg(MUTED),
                     )),
+                    Line::from(Span::styled(
+                        "← → or Tab: choose    Enter: select",
+                        Style::default().fg(MUTED),
+                    )),
                 ])
                 .style(Style::default().fg(TEXT)),
                 inner,
@@ -1003,6 +1013,47 @@ mod tests {
         assert_eq!(
             ui_controls::hit_test(&app, area, delete.area.x, delete.area.y),
             Some(ui_controls::Action::Submit)
+        );
+    }
+
+    #[test]
+    fn exit_confirmation_highlights_the_keyboard_choice() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::ExitConfirm {
+            from_menu: false,
+            leave_selected: false,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let controls = ui_controls::controls(&app, area);
+        let leave = controls
+            .iter()
+            .find(|control| control.action == ui_controls::Action::Submit)
+            .unwrap();
+        let stay = controls
+            .iter()
+            .find(|control| control.action == ui_controls::Action::Cancel)
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(stay.area.x, stay.area.y)].bg,
+            app.theme.accent()
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(leave.area.x, leave.area.y)].bg,
+            BACKGROUND
+        );
+        if let Some(Dialog::ExitConfirm { leave_selected, .. }) = &mut app.dialog {
+            *leave_selected = true;
+        }
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(leave.area.x, leave.area.y)].bg,
+            app.theme.accent()
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(stay.area.x, stay.area.y)].bg,
+            BACKGROUND
         );
     }
 

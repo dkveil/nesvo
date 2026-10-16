@@ -58,7 +58,10 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     outcome.redraw = was_scrolled;
                 }
             } else if key.code == KeyCode::Esc {
-                app.dialog = Some(Dialog::ExitConfirm { from_menu: false });
+                app.dialog = Some(Dialog::ExitConfirm {
+                    from_menu: false,
+                    leave_selected: false,
+                });
             } else {
                 navigation_key(app, key, area, &mut outcome);
             }
@@ -239,15 +242,25 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
 fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     if key.code == KeyCode::Esc {
         if matches!(app.dialog, Some(Dialog::Menu)) {
-            app.dialog = Some(Dialog::ExitConfirm { from_menu: true });
+            app.dialog = Some(Dialog::ExitConfirm {
+                from_menu: true,
+                leave_selected: false,
+            });
         } else {
             cancel_dialog(app);
         }
         return;
     }
-    if matches!(app.dialog, Some(Dialog::ExitConfirm { .. })) {
+    if let Some(Dialog::ExitConfirm { leave_selected, .. }) = &mut app.dialog {
         match key.code {
-            KeyCode::Enter | KeyCode::Char('y' | 'Y') => outcome.quit = true,
+            KeyCode::Left => *leave_selected = true,
+            KeyCode::Right => *leave_selected = false,
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                *leave_selected = !*leave_selected;
+            }
+            KeyCode::Enter if *leave_selected => outcome.quit = true,
+            KeyCode::Enter => cancel_dialog(app),
+            KeyCode::Char('y' | 'Y') => outcome.quit = true,
             KeyCode::Char('n' | 'N') => cancel_dialog(app),
             _ => {}
         }
@@ -387,9 +400,12 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
 
 fn cancel_dialog(app: &mut App) {
     app.dialog = match app.dialog.take() {
-        Some(Dialog::Settings { .. } | Dialog::ExitConfirm { from_menu: true }) => {
-            Some(Dialog::Menu)
-        }
+        Some(
+            Dialog::Settings { .. }
+            | Dialog::ExitConfirm {
+                from_menu: true, ..
+            },
+        ) => Some(Dialog::Menu),
         _ => None,
     };
 }
@@ -1129,7 +1145,10 @@ mod tests {
         assert!(!leave.quit);
         assert!(matches!(
             app.dialog,
-            Some(Dialog::ExitConfirm { from_menu: false })
+            Some(Dialog::ExitConfirm {
+                from_menu: false,
+                leave_selected: false,
+            })
         ));
         let stay = event(
             &mut app,
@@ -1222,8 +1241,16 @@ mod tests {
         assert!(!detach.quit);
         assert!(matches!(
             app.dialog,
-            Some(Dialog::ExitConfirm { from_menu: false })
+            Some(Dialog::ExitConfirm {
+                from_menu: false,
+                leave_selected: false,
+            })
         ));
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            area,
+        );
         let confirmed = event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
@@ -1248,7 +1275,10 @@ mod tests {
         assert!(!detach.quit);
         assert!(matches!(
             app.dialog,
-            Some(Dialog::ExitConfirm { from_menu: true })
+            Some(Dialog::ExitConfirm {
+                from_menu: true,
+                leave_selected: false,
+            })
         ));
         let stay = event(
             &mut app,
@@ -1258,6 +1288,48 @@ mod tests {
         assert!(!stay.quit);
         assert!(matches!(app.dialog, Some(Dialog::Menu)));
         assert!(detach.commands.is_empty());
+    }
+
+    #[test]
+    fn exit_modal_arrows_and_tab_choose_the_enter_action() {
+        let mut app = App::new(1);
+        let area = Rect::new(0, 0, 100, 30);
+        let key = |app: &mut App, code| {
+            event(
+                app,
+                Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+                area,
+            )
+        };
+        assert!(!key(&mut app, KeyCode::Esc).quit);
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ExitConfirm {
+                leave_selected: false,
+                ..
+            })
+        ));
+        assert!(!key(&mut app, KeyCode::Enter).quit);
+        assert!(app.dialog.is_none());
+        key(&mut app, KeyCode::Esc);
+        key(&mut app, KeyCode::Left);
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ExitConfirm {
+                leave_selected: true,
+                ..
+            })
+        ));
+        key(&mut app, KeyCode::Right);
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ExitConfirm {
+                leave_selected: false,
+                ..
+            })
+        ));
+        key(&mut app, KeyCode::Tab);
+        assert!(key(&mut app, KeyCode::Enter).quit);
     }
 
     #[test]

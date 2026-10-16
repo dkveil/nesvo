@@ -69,6 +69,7 @@ pub enum Dialog {
     Menu,
     ExitConfirm {
         from_menu: bool,
+        leave_selected: bool,
     },
     Settings {
         selected: usize,
@@ -538,7 +539,11 @@ impl App {
         self.leases.clear();
         self.mode = Mode::Navigate;
         self.dialog = None;
-        self.notice = message;
+        self.notice = if self.capabilities.is_none() {
+            "Host disconnected during setup; update nesvo-host and reconnect.".into()
+        } else {
+            message
+        };
     }
 
     pub fn input(&mut self, data: String) -> Option<Value> {
@@ -707,6 +712,16 @@ fn dimensions(event: &Value) -> (u16, u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disconnect_before_capabilities_points_to_host_update() {
+        let mut app = App::new(1);
+        app.disconnect("Host connection interrupted".into());
+        assert!(app.notice.contains("update nesvo-host"));
+        app.capabilities = Some(Capabilities::default());
+        app.disconnect("Network connection lost".into());
+        assert_eq!(app.notice, "Network connection lost");
+    }
 
     #[test]
     fn opening_another_session_keeps_both_tabs_and_prunes_closed_ones() {

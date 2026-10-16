@@ -8,7 +8,10 @@ use std::{path::Path, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle, time::timeout};
 use tokio_tungstenite::{
     connect_async_with_config,
-    tungstenite::{Message, protocol::WebSocketConfig},
+    tungstenite::{
+        Message,
+        protocol::{WebSocketConfig, frame::coding::CloseCode},
+    },
 };
 
 #[derive(Deserialize)]
@@ -154,6 +157,9 @@ impl Connection {
                                 }
                                 Some(Ok(Message::Ping(data))) => { timeout(Duration::from_secs(3), sink.send(Message::Pong(data))).await??; }
                                 Some(Ok(Message::Pong(_))) => {}
+                                Some(Ok(Message::Close(Some(frame)))) if frame.code == CloseCode::Library(4003) => {
+                                    return Err(anyhow!("Host rejected command; update nesvo-host and reconnect."));
+                                }
                                 Some(Ok(Message::Close(_))) | None => return Err(anyhow!("Host disconnected; sessions remain on the host")),
                                 Some(Err(_)) => return Err(anyhow!("Host connection interrupted; reconnect to continue")),
                                 _ => return Err(anyhow!("Unexpected host message")),

@@ -382,6 +382,15 @@ pub fn render(frame: &mut Frame, app: &App) {
         if let Some(label) = control.label {
             let in_dialog = app.dialog.is_some() && !matches!(app.dialog, Some(Dialog::Menu));
             let primary = in_dialog && matches!(control.action, Action::Submit);
+            let exit_choice = match (&app.dialog, control.action) {
+                (Some(Dialog::ExitConfirm { leave_selected, .. }), Action::Submit) => {
+                    Some(*leave_selected)
+                }
+                (Some(Dialog::ExitConfirm { leave_selected, .. }), Action::Cancel) => {
+                    Some(!*leave_selected)
+                }
+                _ => None,
+            };
             let destructive = matches!(
                 &app.dialog,
                 Some(Dialog::Confirm { command, .. })
@@ -391,14 +400,24 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Paragraph::new(label).style(
                     Style::default()
                         .bg(if primary && control.enabled {
-                            if destructive { DANGER } else { app.theme.accent() }
+                            if exit_choice == Some(false) {
+                                BACKGROUND
+                            } else if destructive {
+                                DANGER
+                            } else {
+                                app.theme.accent()
+                            }
+                        } else if exit_choice == Some(true) {
+                            app.theme.accent()
                         } else {
                             BACKGROUND
                         })
                         .fg(if !control.enabled {
                             FAINT
-                        } else if primary {
+                        } else if exit_choice == Some(true) || (primary && exit_choice.is_none()) {
                             BACKGROUND
+                        } else if exit_choice == Some(false) {
+                            MUTED
                         } else if in_dialog {
                             TEXT
                         } else if matches!(control.action, Action::MenuChoice(index) if index == app.menu_selected)
