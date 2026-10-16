@@ -1,0 +1,11 @@
+{
+  "default": "ultraviolet",
+  "themes": [
+    { "id": "ultraviolet", "name": "Ultraviolet", "colors": {} },
+    {
+      "id": "graphite",
+      "name": "Graphite",
+      "colors": { "accent": "#ADACB5", "selection": "#303036" }
+    }
+  ]
+}

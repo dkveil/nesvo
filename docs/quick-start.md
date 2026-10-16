@@ -36,7 +36,7 @@ cargo run --package nesvo -- --pairing host/.local/pairing.json
 
 If necessary, override only the host address with `--url ws://127.0.0.1:8787`, using its actual port. The pairing key remains in the private file.
 
-Press `n` to choose a name, directory and program, then `i` to acquire control. Leave the directory blank to use the host workspace, enter a relative path within it or an absolute path to another existing directory. The host detects Terminal, Claude Code, Gemini and Codex at startup; restart it after installing a new CLI. Ctrl+G returns to navigation and `q` detaches. See the [TUI guide](../apps/tui/README.md) for groups, two-pane layouts, takeover and other shortcuts.
+Choose **Enter workspace** from the start menu, then press `n` to choose a name, directory and program. A new session acquires available control automatically. Leave the directory blank to use the host workspace, enter a relative path within it or an absolute path to another existing directory. The host detects Terminal, Claude Code, Gemini and Codex at startup; restart it after installing a new CLI. Ctrl+G returns to navigation, F1 opens the menu and Esc detaches without stopping sessions. See the [TUI guide](../apps/tui/README.md) for themes, groups, two-pane layouts, takeover and other shortcuts.
 
 ## 4. Open the mobile preview
 

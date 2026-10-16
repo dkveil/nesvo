@@ -58,7 +58,7 @@ In another terminal, open the desktop client:
 cargo run --package nesvo -- --pairing host/.local/pairing.json
 ```
 
-`n` opens the session form · `p` shows pairing instructions · `g` / `G` create groups / subgroups · `i` takes available control · `v` splits the view. **Ctrl+G returns to navigation; `q` detaches.** [All shortcuts →](apps/tui/README.md#keyboard)
+The start menu offers workspace, theme and phone pairing. **F1 returns to the menu; Esc detaches without stopping sessions.** In navigation, `n` creates a session, `d` deletes with confirmation, `g` / `G` create groups / subgroups and `v` splits the view. New sessions are ready for input automatically; **Ctrl+G returns to navigation**. [All shortcuts →](apps/tui/README.md#keyboard)
 
 For the mobile preview, install Node.js and run:
 

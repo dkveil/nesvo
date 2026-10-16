@@ -3,17 +3,18 @@ use crate::{
     brand,
     launch::{Field, Program},
     model::{App, Dialog, RowKind},
-    theme::{ELEVATED, FAINT, TEXT},
+    theme::{BACKGROUND, FAINT, MUTED, SURFACE, TEXT},
     ui,
 };
 use ratatui::{
     Frame,
     layout::Rect,
     style::Style,
+    text::Line,
     widgets::{Block, Paragraph},
 };
 
-pub const HOME_ACTION_ROWS: [u16; 3] = [2, 5, 8];
+pub const HOME_ACTION_ROWS: [u16; 3] = [2, 4, 6];
 
 pub fn home_action_rows(content: Rect) -> [u16; 3] {
     HOME_ACTION_ROWS.map(|row| row + brand::home_offset(content))
@@ -21,6 +22,8 @@ pub fn home_action_rows(content: Rect) -> [u16; 3] {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    MenuChoice(usize),
+    ThemeChoice(usize),
     Navigation(char),
     PaneNavigation { pane: usize, key: char },
     Submit,
@@ -50,6 +53,30 @@ pub fn move_offset(selected: usize, height: u16) -> usize {
     selected.saturating_sub(usize::from(height.saturating_sub(1)))
 }
 
+pub fn menu_area(area: Rect) -> Rect {
+    let width = area.width.saturating_sub(4).min(60);
+    let height = area.height.saturating_sub(2).min(20);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
+}
+
+pub fn menu_action_area(area: Rect, index: usize) -> Rect {
+    let menu = menu_area(area);
+    let offset = if brand::area(menu).is_some() { 10 } else { 2 };
+    let line = row(menu, offset + index as u16 * 2);
+    let inset = line.width.saturating_sub(32) / 2;
+    Rect::new(
+        line.x + inset,
+        line.y,
+        line.width.saturating_sub(inset * 2),
+        line.height,
+    )
+}
+
 fn row(area: Rect, offset: u16) -> Rect {
     if offset >= area.height {
         return Rect::default();
@@ -67,8 +94,8 @@ fn buttons(
     }
     let mut x = area.x;
     for (label, action, enabled) in entries {
-        let label = format!("[ {label} ]");
-        let width = label.len() as u16;
+        let label = format!(" {label} ");
+        let width = Line::from(label.as_str()).width() as u16;
         if x.saturating_add(width) > area.right() {
             break;
         }
@@ -85,12 +112,44 @@ fn buttons(
 pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let mut output = Vec::new();
     if let Some(dialog) = &app.dialog {
+        if matches!(dialog, Dialog::Menu) {
+            for (index, label) in ["Enter workspace", "Theme", "Pair mobile"]
+                .into_iter()
+                .enumerate()
+            {
+                buttons(
+                    menu_action_area(area, index),
+                    [(label, Action::MenuChoice(index), true)],
+                    &mut output,
+                );
+            }
+            return output;
+        }
         let Some(dialog_area) = ui::dialog_area(area, dialog) else {
             return output;
         };
         let inner = Block::bordered().inner(dialog_area);
         let body = dialog_body(inner);
         match dialog {
+            Dialog::Menu => unreachable!("Menu has its own full-screen geometry"),
+            Dialog::Theme { .. } => {
+                for index in 0..2 {
+                    output.push(Control {
+                        area: row(body, 1 + index as u16 * 2),
+                        label: None,
+                        action: Action::ThemeChoice(index),
+                        enabled: true,
+                    });
+                }
+                buttons(
+                    row(inner, inner.height.saturating_sub(1)),
+                    [
+                        ("Apply", Action::Submit, true),
+                        ("Back", Action::Cancel, true),
+                    ],
+                    &mut output,
+                );
+            }
             Dialog::NewSession(form) => {
                 for (offset, field) in [(2, Field::Name), (4, Field::Directory)] {
                     output.push(Control {
@@ -179,13 +238,18 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
 
     let geometry = ui::geometry(area, app.split);
     buttons(
-        row(geometry.header, 2),
+        row(geometry.header, 1),
         [
-            ("+ Session", Action::Navigation('n'), app.connected),
-            ("+ Group", Action::Navigation('g'), app.connected),
-            ("Pair phone", Action::Navigation('p'), true),
-            ("Split", Action::Navigation('v'), true),
-            ("Help", Action::Navigation('?'), true),
+            ("F1 Menu", Action::Navigation('M'), true),
+            ("n New session", Action::Navigation('n'), app.connected),
+            ("g Group", Action::Navigation('g'), app.connected),
+            ("p Pair phone", Action::Navigation('p'), true),
+            (
+                if app.split { "v Single" } else { "v Split" },
+                Action::Navigation('v'),
+                true,
+            ),
+            ("? Help", Action::Navigation('?'), true),
         ],
         &mut output,
     );
@@ -202,35 +266,39 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         .as_ref()
         .is_some_and(|row| matches!(row.kind, RowKind::Group(_)));
     buttons(
-        row(geometry.footer, 1),
+        row(geometry.footer, 0),
         [
             (
-                if other_controls { "Take over" } else { "Type" },
+                if other_controls {
+                    "t Take over"
+                } else {
+                    "i Type"
+                },
                 Action::Navigation(if other_controls { 't' } else { 'i' }),
                 can_control,
             ),
-            ("Release", Action::Navigation('x'), owns),
+            ("x Release", Action::Navigation('x'), owns),
             (
-                "Rename",
+                "r Rename",
                 Action::Navigation('r'),
                 app.connected && selected_item,
             ),
             (
-                "Move",
+                "m Move",
                 Action::Navigation('m'),
                 app.connected && selected_item,
             ),
             (
                 if selected_group {
-                    "Delete group"
+                    "d Delete group"
                 } else {
-                    "Stop"
+                    "d Delete"
                 },
                 Action::Navigation('d'),
                 app.connected && selected_item,
             ),
             (
-                "+ Subgroup",
+                "G Subgroup",
                 Action::Navigation('G'),
                 app.connected && selected_group,
             ),
@@ -244,9 +312,9 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         let content = ui::pane_content(geometry.panes[index]);
         let rows = home_action_rows(content);
         for (offset, label, action, enabled) in [
-            (rows[0], "+ New session", 'n', app.connected),
-            (rows[1], "+ New group", 'g', app.connected),
-            (rows[2], "Pair your phone", 'p', true),
+            (rows[0], "n  New session", 'n', app.connected),
+            (rows[1], "g  New group", 'g', app.connected),
+            (rows[2], "p  Pair your phone", 'p', true),
         ] {
             buttons(
                 row(content, offset),
@@ -295,11 +363,20 @@ pub fn render(frame: &mut Frame, app: &App) {
     for control in controls(app, frame.area()) {
         if let Some(label) = control.label {
             frame.render_widget(
-                Paragraph::new(label).style(Style::default().bg(ELEVATED).fg(if control.enabled {
-                    TEXT
-                } else {
-                    FAINT
-                })),
+                Paragraph::new(label).style(
+                    Style::default()
+                        .bg(if matches!(app.dialog, Some(Dialog::Menu)) || app.dialog.is_none() { BACKGROUND } else { SURFACE })
+                        .fg(if !control.enabled {
+                            FAINT
+                        } else if matches!(control.action, Action::MenuChoice(index) if index == app.menu_selected)
+                            || matches!(control.action, Action::Submit | Action::Navigation('n') | Action::PaneNavigation { key: 'n', .. }) {
+                            app.theme.accent()
+                        } else if matches!(control.action, Action::PaneNavigation { .. }) {
+                            TEXT
+                        } else {
+                            MUTED
+                        }),
+                ),
                 control.area,
             );
         }
@@ -340,6 +417,46 @@ mod tests {
             hit_test(&app, area, body.x, body.y),
             Some(Action::MoveChoice(offset))
         );
+        assert_eq!(hit_test(&app, area, 0, 0), None);
+    }
+
+    #[test]
+    fn compact_workspace_actions_stay_outside_the_terminal_and_match_clicks() {
+        let mut app = App::new(1);
+        app.panes[0] = Some("session".into());
+        for area in [Rect::new(0, 0, 120, 36), Rect::new(3, 2, 80, 24)] {
+            let terminal = ui::pane_content(ui::geometry(area, false).panes[0]);
+            let controls = controls(&app, area);
+            for key in ['M', 'n', 'g', 'p', 'v', '?'] {
+                assert!(
+                    controls
+                        .iter()
+                        .any(|control| control.action == Action::Navigation(key))
+                );
+            }
+            for control in controls {
+                assert!(area.contains((control.area.x, control.area.y).into()));
+                assert!(!terminal.intersects(control.area));
+                assert_eq!(
+                    hit_test(&app, area, control.area.x, control.area.y),
+                    control.enabled.then_some(control.action),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn menu_choices_use_the_visible_rows_and_shield_the_workspace() {
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::Menu);
+        let area = Rect::new(0, 0, 120, 36);
+        for (index, control) in controls(&app, area).into_iter().enumerate() {
+            assert_eq!(control.action, Action::MenuChoice(index));
+            assert_eq!(
+                hit_test(&app, area, control.area.x, control.area.y),
+                Some(control.action)
+            );
+        }
         assert_eq!(hit_test(&app, area, 0, 0), None);
     }
 }

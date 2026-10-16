@@ -5,6 +5,7 @@
   "license": "MIT",
   "exports": {
     "./tokens.json": "./tokens.json",
-    "./logo.json": "./logo.json"
+    "./logo.json": "./logo.json",
+    "./themes.json": "./themes.json"
   }
 }

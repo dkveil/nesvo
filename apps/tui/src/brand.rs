@@ -1,5 +1,5 @@
 //! Exact shared block geometry, rendered as two pixels per terminal cell.
-use crate::theme::{ACCENT, BACKGROUND, TEXT};
+use crate::theme::{BACKGROUND, TEXT, Theme};
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, widgets::Widget};
 use std::time::Duration;
 
@@ -80,14 +80,14 @@ fn paint(pixels: &mut [[u8; WIDTH]; PIXEL_HEIGHT], rect: &PixelRect, dx: i16, dy
     }
 }
 
-pub struct Logo(pub usize);
+pub struct Logo(pub usize, pub Theme);
 
 impl Widget for Logo {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         if area.width < WIDTH as u16 || area.height < ROWS {
             return;
         }
-        let colors = [BACKGROUND, ACCENT, TEXT];
+        let colors = [BACKGROUND, self.1.accent(), TEXT];
         let pixels = pixels(self.0);
         for y in 0..usize::from(ROWS) {
             for x in 0..WIDTH {
@@ -130,13 +130,16 @@ mod tests {
     #[test]
     fn half_block_cells_use_canonical_colors_and_stay_inside_reserved_area() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 60, 10));
-        Logo(0).render(Rect::new(2, 1, WIDTH as u16, ROWS), &mut buffer);
+        Logo(0, Theme::Ultraviolet).render(Rect::new(2, 1, WIDTH as u16, ROWS), &mut buffer);
         assert_eq!(buffer[(10, 2)].symbol(), "▀");
-        assert_eq!(buffer[(10, 2)].fg, ACCENT);
+        assert_eq!(buffer[(10, 2)].fg, Theme::Ultraviolet.accent());
         assert_eq!(buffer[(10, 2)].bg, BACKGROUND);
         assert_eq!(buffer[(7, 4)].fg, TEXT);
         assert_eq!(buffer[(1, 1)].symbol(), " ");
         assert!(area(Rect::new(0, 0, 48, 30)).is_none());
         assert!(area(Rect::new(0, 0, 60, 17)).is_none());
+        Logo(0, Theme::Graphite).render(Rect::new(2, 1, WIDTH as u16, ROWS), &mut buffer);
+        assert_eq!(buffer[(10, 2)].fg, Theme::Graphite.accent());
+        assert_eq!(buffer[(10, 2)].bg, BACKGROUND);
     }
 }

@@ -2,7 +2,7 @@
 use crate::{
     launch::{Field, Program, SessionForm},
     model::App,
-    theme::{MUTED, SELECTION, TEXT},
+    theme::{MUTED, TEXT, Theme},
 };
 use ratatui::{
     Frame,
@@ -33,9 +33,14 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
             Style::default().fg(MUTED),
         )),
         Line::from(""),
-        field_line("Name", &form.name, form.field == Field::Name),
+        field_line("Name", &form.name, form.field == Field::Name, app.theme),
         Line::from(""),
-        field_line("Folder", directory, form.field == Field::Directory),
+        field_line(
+            "Folder",
+            directory,
+            form.field == Field::Directory,
+            app.theme,
+        ),
         Line::from(Span::styled(
             "Leave folder empty to use the host workspace.",
             Style::default().fg(MUTED),
@@ -58,7 +63,7 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         lines.push(Line::from(Span::styled(
             label,
             if selected && form.field == Field::Program {
-                Style::default().bg(SELECTION)
+                Style::default().bg(app.theme.selection())
             } else {
                 Style::default().fg(if selected { TEXT } else { MUTED })
             },
@@ -93,7 +98,7 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
                 "Folder"
             };
             frame.render_widget(
-                Paragraph::new(field_line(label, value, true))
+                Paragraph::new(field_line(label, value, true, app.theme))
                     .scroll((0, scroll.min(usize::from(u16::MAX)) as u16)),
                 Rect::new(area.x, area.y + row, area.width, 1),
             );
@@ -104,11 +109,11 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
     }
 }
 
-fn field_line<'a>(label: &str, value: &str, focused: bool) -> Line<'a> {
+fn field_line<'a>(label: &str, value: &str, focused: bool, theme: Theme) -> Line<'a> {
     Line::from(Span::styled(
         format!("{label}: {value}"),
         if focused {
-            Style::default().bg(SELECTION)
+            Style::default().bg(theme.selection())
         } else {
             Style::default()
         },

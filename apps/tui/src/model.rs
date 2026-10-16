@@ -2,6 +2,7 @@ use crate::{
     launch::{Capabilities, Program, SessionForm},
     status::Status,
     terminal::TerminalState,
+    theme::Theme,
 };
 use anyhow::Result;
 use serde::Deserialize;
@@ -66,6 +67,10 @@ pub enum MoveTarget {
 }
 
 pub enum Dialog {
+    Menu,
+    Theme {
+        selected: usize,
+    },
     NewSession(SessionForm),
     PairPhone,
     Text {
@@ -100,6 +105,9 @@ pub struct App {
     pub focused: usize,
     pub mode: Mode,
     pub dialog: Option<Dialog>,
+    pub menu_selected: usize,
+    pub theme: Theme,
+    pub onboarded: bool,
     pub notice: String,
     pub connected: bool,
     pub capabilities: Option<Capabilities>,
@@ -128,7 +136,10 @@ impl App {
             focused: 0,
             mode: Mode::Navigate,
             dialog: None,
-            notice: "Enter: open a session · n: new session · ?: help".into(),
+            menu_selected: 0,
+            theme: Theme::default(),
+            onboarded: false,
+            notice: String::new(),
             connected: true,
             capabilities: None,
             pairing_path: String::new(),
@@ -284,6 +295,35 @@ impl App {
         commands
     }
 
+    /// Explicitly entering a pane starts an unowned shell, but never takes a lease away.
+    pub fn activate_session(&mut self, id: &str) -> Vec<Value> {
+        let mut commands = self.open_session(id);
+        if let Some(index) = self
+            .tree()
+            .iter()
+            .position(|row| row.kind == RowKind::Session(id.into()))
+        {
+            self.selected = index;
+        }
+        let Some(session) = self.session(id) else {
+            return commands;
+        };
+        if !self.connected || !session.running {
+            return commands;
+        }
+        if self.owns(id) {
+            self.mode = Mode::Input;
+            self.notice = "Input mode · Ctrl+G navigation · Esc detach".into();
+        } else if session.controller_id.is_none() {
+            commands.push(json!({"type":"acquireControl","sessionId":id,
+                "takeOver":false,"cols":session.cols,"rows":session.rows}));
+            self.notice = "Starting terminal…".into();
+        } else {
+            self.notice = "Read-only view · another device has control · t takes over".into();
+        }
+        commands
+    }
+
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
         match event["type"].as_str().unwrap_or_default() {
@@ -291,7 +331,11 @@ impl App {
                 self.capabilities = Some(serde_json::from_value(event)?);
             }
             "sessions" => {
-                let selected = self.selected_row().map(|row| row.kind);
+                let selected = self
+                    .pending_selection
+                    .as_ref()
+                    .map(|id| RowKind::Session(id.clone()))
+                    .or_else(|| self.selected_row().map(|row| row.kind));
                 self.sessions = serde_json::from_value(event["sessions"].clone())?;
                 self.groups = serde_json::from_value(event["groups"].clone())?;
                 self.revision = event["revision"].as_u64().unwrap_or(0);
@@ -313,7 +357,7 @@ impl App {
                     }
                 }
                 if let Some(id) = self.pending_selection.take() {
-                    commands.extend(self.open_session(&id));
+                    commands.extend(self.activate_session(&id));
                 }
                 if self.panes[0].is_none()
                     && self.focused == 0
@@ -333,7 +377,7 @@ impl App {
                     self.pending_selection = event["sessionId"].as_str().map(str::to_owned);
                     self.pending_create = None;
                     self.pending_create_form = None;
-                    self.notice = "Session created. Press i to control it.".into();
+                    self.notice = "Session created. Starting terminal…".into();
                 }
             }
             "subscribed" => {
@@ -527,7 +571,7 @@ impl App {
                 Some(self.request(command))
             }
             Dialog::Confirm { command, .. } => Some(self.request(command)),
-            Dialog::Help | Dialog::PairPhone => None,
+            Dialog::Help | Dialog::PairPhone | Dialog::Menu | Dialog::Theme { .. } => None,
         }
     }
 
@@ -687,6 +731,60 @@ mod tests {
         app.event(json!({"type":"created","sessionId":"new","requestId":request["requestId"]}))
             .unwrap();
         assert_eq!(app.pending_selection.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn explicit_open_acquires_only_unowned_running_sessions() {
+        let mut app = App::new(1);
+        let initial = app.event(snapshot()).unwrap();
+        assert!(
+            !initial
+                .iter()
+                .any(|command| command["type"] == "acquireControl")
+        );
+        let opened = app.activate_session("s");
+        assert_eq!(opened.len(), 1);
+        assert_eq!(opened[0]["type"], "acquireControl");
+        assert_eq!(opened[0]["takeOver"], false);
+        // Opening is only a request; input waits for the host's actual lease.
+        assert!(app.input("x".into()).is_none());
+        app.event(json!({"type":"control","sessionId":"s","controllerId":2,"cols":80,"rows":24}))
+            .unwrap();
+        assert!(app.activate_session("s").is_empty());
+        assert!(app.mode == Mode::Navigate);
+        assert!(app.notice.contains("another device"));
+        app.sessions[0].controller_id = None;
+        app.sessions[0].running = false;
+        assert!(app.activate_session("s").is_empty());
+    }
+
+    #[test]
+    fn created_shell_enters_input_and_answers_startup_query_after_lease() {
+        let mut app = App::new(1);
+        let request = app.request(json!({"type":"create","name":"same"}));
+        app.event(json!({"type":"created","sessionId":"s","requestId":request["requestId"]}))
+            .unwrap();
+        let commands = app.event(snapshot()).unwrap();
+        assert_eq!(commands[0]["type"], "subscribe");
+        assert_eq!(commands[1]["type"], "acquireControl");
+        assert_eq!(commands[1]["takeOver"], false);
+        assert_eq!(
+            app.selected_row().unwrap().kind,
+            RowKind::Session("s".into())
+        );
+        app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
+            .unwrap();
+        assert!(
+            app.event(json!({"type":"output","sessionId":"s","data":"\u{001b}[6n","replay":true}))
+                .unwrap()
+                .is_empty()
+        );
+        app.event(json!({"type":"control","sessionId":"s","controllerId":1,"cols":80,"rows":24,"leaseId":"first"})).unwrap();
+        assert!(app.mode == Mode::Input);
+        let reply = app.event(json!({"type":"output","sessionId":"s","data":"\u{001b}[6n","replay":true,"allowResponses":true})).unwrap();
+        assert_eq!(reply.len(), 1);
+        assert_eq!(reply[0]["data"], "\u{001b}[1;1R");
+        assert_eq!(reply[0]["leaseId"], "first");
     }
 
     #[test]

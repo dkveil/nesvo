@@ -3,6 +3,7 @@
 The shared visual contract for the existing mobile, web and Rust terminal clients.
 
 - `tokens.json` defines semantic colors. Platform adapters consume these values.
+- `themes.json` defines presentation variants over those tokens. Ultraviolet remains the default; Graphite uses a neutral accent and selection while preserving text, backgrounds and status colors. The terminal menu currently exposes this choice; mobile uses Ultraviolet.
 - `logo.json` contains the approved SVG paths, matching terminal pixel glyphs and step-based motion frames.
 - `assets/nesvo-logo.svg` is the original static vector mark.
 - `assets/nesvo-logo-animated.svg` is the original six-second animated vector mark, including its reduced-motion fallback.

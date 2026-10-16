@@ -5,6 +5,7 @@ mod launch;
 mod model;
 mod network;
 mod output;
+mod preferences;
 mod runner;
 mod status;
 mod terminal;

@@ -1,10 +1,11 @@
 //! Platform terminal lifecycle and application effects. Rendering stays pure.
 use crate::{
     brand, controller,
-    model::App,
+    model::{App, Dialog},
     network::{Connection, NetworkEvent},
     output::FrameWriter,
-    ui,
+    preferences::{self, Preferences},
+    ui, ui_controls,
 };
 use anyhow::{Context, Result};
 use crossterm::{
@@ -82,6 +83,26 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
     )?;
     terminal.clear()?;
     let mut app = App::new(connection.client_id);
+    app.dialog = Some(Dialog::Menu);
+    let preferences_path = match preferences::default_path() {
+        Ok(path) => Some(path),
+        Err(_) => {
+            app.notice = "Preferences unavailable; changes apply only to this run.".into();
+            None
+        }
+    };
+    let mut saved_preferences = preferences_path
+        .as_deref()
+        .and_then(|path| match Preferences::load(path) {
+            Ok(preferences) => Some(preferences),
+            Err(_) => {
+                app.notice = "Saved preferences could not be loaded; using defaults.".into();
+                None
+            }
+        })
+        .unwrap_or_default();
+    app.theme = saved_preferences.theme;
+    app.onboarded = saved_preferences.onboarded;
     app.pairing_path = pairing_path.display().to_string();
     app.pairing_qr_path = pairing_path
         .with_file_name("pairing.svg")
@@ -160,13 +181,37 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
             }
             dispatch(connection, outcome.commands)?;
             dirty |= outcome.redraw;
+            let current_preferences = Preferences {
+                theme: app.theme,
+                onboarded: app.onboarded,
+            };
+            if current_preferences != saved_preferences {
+                if let Some(path) = &preferences_path
+                    && current_preferences.save(path).is_err()
+                {
+                    app.notice = "Could not save preferences; changes apply to this run.".into();
+                }
+                // A failed write must not turn into I/O on every render frame.
+                saved_preferences = current_preferences;
+                dirty = true;
+            }
         }
     }
     Ok(())
 }
 
 fn logo_frame_for(app: &App, area: Rect, animate: bool, elapsed: Duration) -> usize {
-    if !animate || app.dialog.is_some() || app.panes.iter().any(Option::is_some) {
+    if !animate {
+        return 0;
+    }
+    if matches!(app.dialog, Some(Dialog::Menu)) {
+        return if brand::area(ui_controls::menu_area(area)).is_some() {
+            brand::frame_index(elapsed)
+        } else {
+            0
+        };
+    }
+    if app.dialog.is_some() || app.panes.iter().any(Option::is_some) {
         return 0;
     }
     let geometry = ui::geometry(area, app.split);
@@ -259,6 +304,11 @@ mod tests {
         // gain any periodic redraws from the decorative logo.
         app.split = true;
         app.panes[0] = Some("active-session".into());
+        assert_eq!(logo_frame_for(&app, area, true, blink), 0);
+        app.dialog = Some(Dialog::Menu);
+        assert_ne!(logo_frame_for(&app, area, true, blink), 0);
+        assert_eq!(logo_frame_for(&app, area, false, blink), 0);
+        app.dialog = Some(Dialog::Theme { selected: 0 });
         assert_eq!(logo_frame_for(&app, area, true, blink), 0);
     }
 

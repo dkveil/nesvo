@@ -54,6 +54,10 @@ The renderer tests also verify that historical CSI/DCS queries cannot inject res
 
 ### Interactive TUI check performed
 
+An isolated Windows ConPTY regression also verified the startup negotiation fix: the start menu opens, a newly created plain shell acquires available control, and its PowerShell prompt appears without pressing `i` or sending a command. Passive startup observation still sends no input and opening a session controlled by another device does not take over its lease.
+
+The compact mobile browser regression verifies terminal-only sessions, reachable keyboard dismissal, retained command drafts, blur in both the command field and embedded terminal, and no horizontal overflow. It checks at least 220px of terminal height in a 390×440 viewport and 100px in a 320×300 viewport. These are layout checks, not native keyboard simulations.
+
 A real Windows ConPTY hosted the TUI. The check created a group, subgroup and shell through keyboard forms, acquired control with `i`, assigned a PowerShell variable, and printed a marker. A mobile-size Chromium client attached to that same session, observed the marker, took control and read the variable. Renaming the subgroup in the mobile UI updated the live TUI tree.
 
 The TUI then reacquired control, read the same variable, opened a second pane and executed another command. Ctrl+G followed by `q` restored the outer terminal. A new `--list` invocation confirmed both shells still running with no controller. This is an interactive Windows test, not a physical iPhone or interactive macOS test.

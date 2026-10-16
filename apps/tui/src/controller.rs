@@ -3,6 +3,7 @@ use crate::{
     input,
     launch::{Field, SessionForm},
     model::{App, Dialog, Mode, MoveTarget, RowKind, TextAction},
+    theme::Theme,
     ui,
     ui_controls::{self, Action},
 };
@@ -32,8 +33,12 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     let mut outcome = Outcome::default();
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => {
-            if app.dialog.is_some() {
+            if key.code == KeyCode::F(1) {
+                app.dialog = Some(Dialog::Menu);
+            } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
+            } else if key.code == KeyCode::Esc {
+                outcome.quit = true;
             } else if app.mode == Mode::Input {
                 let was_scrolled = app
                     .active_terminal()
@@ -168,21 +173,58 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
         Action::FocusPane(index) => {
             app.focused = index;
             app.mode = Mode::Navigate;
-            if let Some(id) = &app.panes[index]
+            if let Some(id) = app.panes[index].clone()
                 && let Some(selected) = app
                     .tree()
                     .iter()
                     .position(|row| row.kind == RowKind::Session(id.clone()))
             {
                 app.selected = selected;
+                outcome.commands.extend(app.activate_session(&id));
             }
+        }
+        Action::MenuChoice(index) => menu_choice(app, index, outcome),
+        Action::ThemeChoice(index) => {
+            apply_theme(app, index);
         }
     }
 }
 
 fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     if key.code == KeyCode::Esc {
-        app.dialog = None;
+        match app.dialog {
+            Some(Dialog::Menu) => outcome.quit = true,
+            Some(Dialog::Theme { .. }) => app.dialog = Some(Dialog::Menu),
+            _ => app.dialog = None,
+        }
+        return;
+    }
+    if matches!(app.dialog, Some(Dialog::Menu)) {
+        match key.code {
+            KeyCode::Up | KeyCode::BackTab => app.menu_selected = (app.menu_selected + 2) % 3,
+            KeyCode::Down | KeyCode::Tab => app.menu_selected = (app.menu_selected + 1) % 3,
+            KeyCode::Enter => menu_choice(app, app.menu_selected, outcome),
+            KeyCode::Char('1'..='3') => {
+                if let KeyCode::Char(value) = key.code {
+                    menu_choice(app, value as usize - '1' as usize, outcome);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    if let Some(Dialog::Theme { selected }) = &mut app.dialog {
+        match key.code {
+            KeyCode::Up | KeyCode::BackTab => {
+                *selected = (*selected + Theme::ALL.len() - 1) % Theme::ALL.len();
+            }
+            KeyCode::Down | KeyCode::Tab => *selected = (*selected + 1) % Theme::ALL.len(),
+            KeyCode::Enter => {
+                let index = *selected;
+                apply_theme(app, index);
+            }
+            _ => {}
+        }
         return;
     }
     let confirm = key.code == KeyCode::Enter
@@ -239,6 +281,37 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     }
 }
 
+fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
+    match index {
+        0 => {
+            app.dialog = None;
+            app.menu_selected = 0;
+            app.onboarded = true;
+            if let Some(id) = app.active_id().map(str::to_owned) {
+                outcome.commands.extend(app.activate_session(&id));
+            }
+        }
+        1 => {
+            app.dialog = Some(Dialog::Theme {
+                selected: Theme::ALL
+                    .iter()
+                    .position(|theme| *theme == app.theme)
+                    .unwrap_or(0),
+            })
+        }
+        2 => app.dialog = Some(Dialog::PairPhone),
+        _ => {}
+    }
+}
+
+fn apply_theme(app: &mut App, index: usize) {
+    if let Some(theme) = Theme::ALL.get(index) {
+        app.theme = *theme;
+        app.notice = format!("Theme: {}", theme.label());
+        app.dialog = Some(Dialog::Menu);
+    }
+}
+
 fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         if key.code == KeyCode::Char('c') {
@@ -248,7 +321,8 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
     }
     match key.code {
         KeyCode::Char('q') => outcome.quit = true,
-        KeyCode::Char('?') | KeyCode::F(1) => app.dialog = Some(Dialog::Help),
+        KeyCode::Char('?') => app.dialog = Some(Dialog::Help),
+        KeyCode::Char('M') => app.dialog = Some(Dialog::Menu),
         KeyCode::Char('p') => app.dialog = Some(Dialog::PairPhone),
         KeyCode::Up | KeyCode::Char('k') => app.selected = app.selected.saturating_sub(1),
         KeyCode::Down | KeyCode::Char('j') => {
@@ -270,6 +344,12 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             }
         }
         KeyCode::Char('i') => acquire(app, false, area, outcome),
+        KeyCode::Char('e') => {
+            if let Some(command) = app.input("\x1b".into()) {
+                outcome.commands.push(command);
+                app.mode = Mode::Input;
+            }
+        }
         KeyCode::Char('t') => acquire(app, true, area, outcome),
         KeyCode::Char('x') => {
             if let Some(id) = app.active_id()
@@ -293,13 +373,13 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
                     .find(|s| app.panes[0].as_deref() != Some(&s.id))
                     .map(|s| s.id.clone())
                 {
-                    outcome.commands.extend(app.open_session(&id));
+                    outcome.commands.extend(app.activate_session(&id));
                 }
             } else {
                 app.focused = 0;
                 app.panes[1] = None;
                 if let Some(id) = app.active_id().map(str::to_owned) {
-                    outcome.commands.extend(app.open_session(&id));
+                    outcome.commands.extend(app.activate_session(&id));
                 }
             }
         }
@@ -343,7 +423,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
 fn open_selected(app: &mut App, outcome: &mut Outcome) {
     if let Some(row) = app.selected_row() {
         match row.kind {
-            RowKind::Session(id) => outcome.commands.extend(app.open_session(&id)),
+            RowKind::Session(id) => outcome.commands.extend(app.activate_session(&id)),
             RowKind::Group(id) => {
                 if !app.collapsed.remove(&id) {
                     app.collapsed.insert(id);
@@ -421,7 +501,7 @@ fn close_selected(app: &mut App) {
     };
     let (title, command) = match row.kind {
         RowKind::Session(id) => (
-            format!("Stop {} on the host?", row.label),
+            format!("Delete {}? Its running process will stop.", row.label),
             json!({"type":"close","sessionId":id}),
         ),
         RowKind::Group(id) => (
@@ -615,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_receives_escape_and_interrupt_but_dialog_keeps_text_local() {
+    fn escape_detaches_and_explicit_escape_and_interrupt_reach_the_shell() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
             {"id":"s","name":"shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
@@ -629,11 +709,17 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             area,
         );
-        assert_eq!(escape.commands[0]["data"], "\u{001b}");
-        assert!(
-            !escape.redraw,
-            "The host echo, not forwarded input, changes the terminal screen"
+        assert!(escape.commands.is_empty());
+        assert!(escape.quit);
+        app.mode = Mode::Navigate;
+        let literal_escape = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)),
+            area,
         );
+        assert_eq!(literal_escape.commands[0]["data"], "\u{001b}");
+        assert!(!literal_escape.quit);
+        assert!(app.mode == Mode::Input);
         let interrupt = event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
@@ -660,7 +746,99 @@ mod tests {
             area,
         );
         assert!(cancel.commands.is_empty());
+        assert!(!cancel.quit);
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn menu_theme_and_pairing_are_local_and_f1_works_from_input() {
+        let mut app = App::new(1);
+        app.mode = Mode::Input;
+        let area = Rect::new(0, 0, 100, 30);
+        let menu = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)),
+            area,
+        );
+        assert!(menu.commands.is_empty());
+        assert!(matches!(app.dialog, Some(Dialog::Menu)));
+        assert!(
+            click(&mut app, area, Action::MenuChoice(1))
+                .commands
+                .is_empty()
+        );
+        assert!(matches!(app.dialog, Some(Dialog::Theme { .. })));
+        assert!(
+            click(&mut app, area, Action::ThemeChoice(1))
+                .commands
+                .is_empty()
+        );
+        assert_eq!(app.theme, Theme::Graphite);
+        assert!(matches!(app.dialog, Some(Dialog::Menu)));
+        assert!(
+            click(&mut app, area, Action::MenuChoice(2))
+                .commands
+                .is_empty()
+        );
+        assert!(matches!(app.dialog, Some(Dialog::PairPhone)));
+        let close = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(!close.quit);
+        assert!(app.dialog.is_none());
+        let detach = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(detach.quit);
+        assert!(detach.commands.is_empty());
+    }
+
+    #[test]
+    fn escape_from_theme_returns_to_menu_and_menu_escape_detaches() {
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::Theme { selected: 1 });
+        let area = Rect::new(0, 0, 100, 30);
+        let escape = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let back = event(&mut app, escape.clone(), area);
+        assert!(!back.quit);
+        assert!(back.commands.is_empty());
+        assert_eq!(app.theme, Theme::Ultraviolet);
+        assert!(matches!(app.dialog, Some(Dialog::Menu)));
+        let detach = event(&mut app, escape, area);
+        assert!(detach.quit);
+        assert!(detach.commands.is_empty());
+    }
+
+    #[test]
+    fn delete_key_is_literal_in_input_and_requires_confirmation_in_navigation() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"s","name":"shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        app.activate_session("s");
+        app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
+            .unwrap();
+        app.event(json!({"type":"control","sessionId":"s","controllerId":1,"cols":80,"rows":24,"leaseId":"one"})).unwrap();
+        let area = Rect::new(0, 0, 100, 30);
+        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
+        let typed = event(&mut app, Event::Key(key), area);
+        assert_eq!(typed.commands[0]["data"], "d");
+        assert!(app.dialog.is_none());
+        app.mode = Mode::Navigate;
+        let delete = event(&mut app, Event::Key(key), area);
+        assert!(delete.commands.is_empty());
+        assert!(matches!(app.dialog, Some(Dialog::Confirm { .. })));
+        let confirmed = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(confirmed.commands[0]["type"], "close");
+        assert_eq!(confirmed.commands[0]["sessionId"], "s");
     }
 
     #[test]

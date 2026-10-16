@@ -18,7 +18,9 @@ cargo run --manifest-path apps/tui/Cargo.toml -- --pairing host/.local/pairing.j
 
 Use the host's configured port. The pairing file grants access to its shells; treat it as a password and do not publish it. The client never prints the key. It does not create local PTYs, act as an SSH client, or use model API keys.
 
-The Ultraviolet palette and block logo come from `packages/brand`. The logo animates only on the empty home screen when it fits; terminal sessions and dialogs never acquire animation-driven redraws. Add `--no-animation` for a static logo. Narrow terminals keep the text header and home actions. The binary embeds the palette, glyphs, and keyframes at build time and does not require Python or runtime asset files.
+The palette and block logo come from `packages/brand`. Ultraviolet is the default; Graphite uses a neutral accent with the same readable text, backgrounds and status colors. The logo animates on the start menu and empty workspace when it fits. Terminal sessions and other dialogs do not acquire animation-driven redraws. Add `--no-animation` for a static logo. Narrow terminals keep the text header and actions. The binary embeds the palette, glyphs and keyframes at build time and does not require Python or runtime asset files.
+
+The start menu offers **Enter workspace**, **Theme** and **Pair mobile**. Use the arrows and Enter, click an action, or press 1–3. Press **F1** or click **Menu** to return at any time. First-run guidance includes the theme choice; the selected theme is saved locally in `%LOCALAPPDATA%/nesvo/preferences.json` on Windows and `$XDG_CONFIG_HOME/nesvo/preferences.json` (default `~/.config/nesvo/preferences.json`) on macOS/Linux. This file contains presentation preferences, never pairing credentials. Mobile currently uses Ultraviolet.
 
 Noninteractive mode prints one authenticated JSON snapshot with the shape `{ "type": "sessions", "sessions": [...], "groups": [...], "revision": ... }`:
 
@@ -36,7 +38,7 @@ The executable is `target/release/nesvo.exe` on Windows or `target/release/nesvo
 
 ## Keyboard
 
-The client initially observes the first session. Press `i` to acquire an available control lease. If another client controls the session, `t` opens a takeover confirmation. After takeover, the phone or other TUI remains an observer.
+The start menu initially observes the first session without taking control. Entering the workspace, explicitly opening an available session, or creating one acquires its free control lease automatically and makes it ready for typing. This also completes Windows terminal startup negotiation. If another client controls the session, the view remains read-only; `t` opens a takeover confirmation. No navigation action silently takes control from another device.
 
 | Navigation mode       | Action                                                 |
 | --------------------- | ------------------------------------------------------ |
@@ -50,15 +52,20 @@ The client initially observes the first session. Press `i` to acquire an availab
 | p                     | Show private phone pairing instructions and file paths |
 | g / G                 | Create a root group / subgroup                         |
 | r / m                 | Rename / move the selected item                        |
-| d                     | Confirm stopping a session / deleting an empty group   |
+| d                     | Confirm deleting a session / deleting an empty group   |
 | v / Tab               | Toggle two panes / change the focused pane             |
 | Page Up / Page Down   | Scroll local terminal history                          |
-| ? / F1                | Open help                                              |
-| q / Ctrl+C            | Disconnect this client                                 |
+| ?                     | Open help                                              |
+| F1                    | Return to the start menu                               |
+| Esc                   | Detach this client; cancel an open form first          |
+| e                     | Send a literal Escape to the controlled terminal       |
+| q / Ctrl+C            | Legacy detach shortcuts in navigation mode             |
 
 The empty workspace offers new session, group, and phone pairing actions. In the new-session form, Tab moves between name, folder, and program. Use arrow keys on the program field to choose Terminal, Claude, Gemini, or Codex. The host reports which programs are installed; unavailable programs cannot be launched. Leave the folder empty for the host workspace, enter a relative folder under that workspace, or supply an accessible absolute path. The host validates it before starting the process. Agent programs use their own CLI subscription login.
 
-In input mode, keys including Escape and Ctrl+C go to the focused shell. **Ctrl+G returns to navigation.** Enter submits a form; Escape closes it. Pasting honors the program's bracketed-paste mode, subject to the host limit of 8192 characters / 32 KiB per message. Clicking selects a session or pane; the mouse wheel scrolls local history. The TUI does not forward mouse events to programs inside the shell.
+In input mode, ordinary keys (including `d`) and Ctrl+C go to the focused shell. **Ctrl+G returns to navigation.** F1 opens the start menu; Escape detaches the client while leaving host processes running. To send Escape to an inner program such as an editor, press Ctrl+G, then `e`. Enter submits a form; Escape cancels it. Escape exits directly from the start menu and returns from the theme picker to that menu. Pasting honors the program's bracketed-paste mode, subject to the host limit of 8192 characters / 32 KiB per message. Clicking selects a session or pane; the mouse wheel scrolls local history. The TUI does not forward mouse events to programs inside the shell.
+
+Deleting a session is different from detaching: confirmation stops its process if running and removes it from every connected client's list. An empty group can be deleted; a group containing sessions or subgroups cannot.
 
 Press `p` in navigation mode to see the exact private QR and pairing file paths used by this connection. Open the QR image on the computer and scan it in the mobile app. The phone must be able to reach the host's advertised LAN or private VPN address; a loopback address works only on the host computer.
 
