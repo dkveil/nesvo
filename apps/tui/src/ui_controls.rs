@@ -2,7 +2,7 @@
 use crate::{
     brand,
     launch::{Field, Program},
-    model::{App, Dialog},
+    model::{App, Dialog, folder_choices},
     theme::{BACKGROUND, DANGER, FAINT, MUTED, TEXT},
     ui,
 };
@@ -261,15 +261,16 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             Dialog::FolderPicker {
                 parent,
                 entries,
+                query,
                 selected,
                 ..
             } => {
-                let visible = body.height.saturating_sub(4);
-                let count = entries.len() + usize::from(parent.is_some());
+                let visible = body.height.saturating_sub(5);
+                let count = folder_choices(parent, entries, query).len();
                 let offset = move_offset(*selected, visible);
                 for index in offset..count.min(offset + usize::from(visible)) {
                     output.push(Control {
-                        area: row(body, 3 + (index - offset) as u16),
+                        area: row(body, 4 + (index - offset) as u16),
                         label: None,
                         action: Action::DirectoryChoice(index),
                         enabled: true,
@@ -367,6 +368,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             continue;
         }
         let content = ui::pane_content(geometry.panes[index], ui::immersive(app));
+        let panel = ui::home_panel(content);
         let rows = home_action_rows(content);
         for (offset, label, action, enabled) in [
             (rows[0], "n  New session", 'n', app.connected),
@@ -374,7 +376,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             (rows[2], "p  Pair your phone", 'p', true),
         ] {
             buttons(
-                row(content, offset),
+                row(panel, offset),
                 [(
                     label,
                     Action::PaneNavigation {

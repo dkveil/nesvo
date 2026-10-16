@@ -1,7 +1,7 @@
 //! Launch and pairing views, rendered solely from validated client state.
 use crate::{
     launch::{Field, Program, SessionForm},
-    model::App,
+    model::{App, folder_choices},
     theme::{BORDER, MUTED, TEXT},
     ui_controls,
 };
@@ -177,6 +177,7 @@ pub fn render_folder_picker(frame: &mut Frame, app: &App, area: Rect) {
         path,
         parent,
         entries,
+        query,
         selected,
         loading,
         ..
@@ -192,20 +193,41 @@ pub fn render_folder_picker(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(if *loading {
             "Loading folders…"
         } else {
-            "Enter opens a folder · use the button below to choose this path"
+            "↑↓ highlight  ·  Enter choose  ·  → open  ·  ← parent  ·  F2 current"
         })
         .style(Style::default().fg(MUTED)),
         row(area, 1),
     );
-    let visible = area.height.saturating_sub(4);
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Search  {}",
+            if query.is_empty() {
+                "Type to filter…"
+            } else {
+                query
+            }
+        ))
+        .style(
+            Style::default()
+                .fg(if query.is_empty() { MUTED } else { TEXT })
+                .bg(app.theme.selection()),
+        ),
+        row(area, 2),
+    );
+    let visible = area.height.saturating_sub(5);
     let offset = ui_controls::move_offset(*selected, visible);
-    let count = entries.len() + usize::from(parent.is_some());
-    for index in offset..count.min(offset + usize::from(visible)) {
-        let label = if parent.is_some() && index == 0 {
-            "..  Parent folder".to_owned()
+    let choices = folder_choices(parent, entries, query);
+    let count = choices.len();
+    for (index, choice) in choices
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(usize::from(visible))
+    {
+        let label = if query.is_empty() && parent.is_some() && index == 0 {
+            choice.0.to_owned()
         } else {
-            let entry = &entries[index - usize::from(parent.is_some())];
-            format!("▸  {}", entry.name)
+            format!("▸  {}", choice.0)
         };
         let focused = app.dialog_button.is_none() && *selected == index;
         frame.render_widget(
@@ -218,13 +240,18 @@ pub fn render_folder_picker(frame: &mut Frame, app: &App, area: Rect) {
                         ratatui::style::Color::Reset
                     }),
             ),
-            row(area, 3 + (index - offset) as u16),
+            row(area, 4 + (index - offset) as u16),
         );
     }
     if count == 0 && !*loading {
         frame.render_widget(
-            Paragraph::new("No subfolders here.").style(Style::default().fg(MUTED)),
-            row(area, 3),
+            Paragraph::new(if query.is_empty() {
+                "No subfolders here. F2 chooses this folder."
+            } else {
+                "No matching folders. Backspace edits the search."
+            })
+            .style(Style::default().fg(MUTED)),
+            row(area, 4),
         );
     }
 }

@@ -2,7 +2,7 @@
 use crate::{
     input,
     launch::{Field, SessionForm},
-    model::{App, Dialog, Mode, MoveTarget, RowKind, TextAction},
+    model::{App, Dialog, Mode, MoveTarget, RowKind, TextAction, folder_choices},
     theme::Theme,
     ui,
     ui_controls::{self, Action},
@@ -75,6 +75,17 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                         .take(120usize.saturating_sub(query.chars().count())),
                 );
                 *selected = 0;
+            } else if let Some(Dialog::FolderPicker {
+                query, selected, ..
+            }) = &mut app.dialog
+            {
+                query.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control())
+                        .take(120usize.saturating_sub(query.chars().count())),
+                );
+                *selected = 0;
+                app.dialog_button = None;
             } else if let Some(Dialog::NewSession(form)) = &mut app.dialog {
                 form.append(&text);
             } else if let Some(Dialog::Text { value, .. }) = &mut app.dialog {
@@ -383,6 +394,10 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     if matches!(app.dialog, Some(Dialog::Confirm { .. })) && app.dialog_button.is_none() {
         app.dialog_button = Some(1);
     }
+    if key.code == KeyCode::F(2) && matches!(app.dialog, Some(Dialog::FolderPicker { .. })) {
+        submit_focused_dialog(app, outcome);
+        return;
+    }
     if let Some(button) = app.dialog_button {
         let last = usize::from(matches!(
             app.dialog,
@@ -437,7 +452,8 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     }
     let mut submit = false;
     let mut browse = false;
-    let mut directory_choice = None;
+    let mut directory_path = None;
+    let mut selected_folder = None;
     let mut close = false;
     match &mut app.dialog {
         Some(Dialog::NewSession(form)) => match key.code {
@@ -551,21 +567,53 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             _ => {}
         },
         Some(Dialog::FolderPicker {
+            path,
             parent,
             entries,
+            query,
             selected,
+            loading,
             ..
-        }) => match key.code {
-            KeyCode::Tab => app.dialog_button = Some(0),
-            KeyCode::Up => *selected = selected.saturating_sub(1),
-            KeyCode::Down if *selected + 1 >= entries.len() + usize::from(parent.is_some()) => {
-                app.dialog_button = Some(0)
+        }) => {
+            let choices = folder_choices(parent, entries, query);
+            match key.code {
+                KeyCode::Tab => app.dialog_button = Some(0),
+                KeyCode::Up => *selected = selected.saturating_sub(1),
+                KeyCode::Down if *selected + 1 >= choices.len() => app.dialog_button = Some(0),
+                KeyCode::Down => *selected += 1,
+                KeyCode::Enter if !*loading => {
+                    selected_folder = choices.get(*selected).map(|(_, path)| (*path).to_owned());
+                    if choices.is_empty() && query.is_empty() {
+                        selected_folder = Some(path.clone());
+                    }
+                }
+                KeyCode::Right if !*loading => {
+                    if !(query.is_empty() && parent.is_some() && *selected == 0) {
+                        directory_path = choices.get(*selected).map(|(_, path)| (*path).to_owned());
+                    }
+                }
+                KeyCode::Left if !*loading => directory_path = parent.clone(),
+                KeyCode::Backspace => {
+                    query.pop();
+                    *selected = 0;
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    query.clear();
+                    *selected = 0;
+                }
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && !c.is_control()
+                        && query.chars().count() < 120 =>
+                {
+                    query.push(c);
+                    *selected = 0;
+                }
+                _ => {}
             }
-            KeyCode::Down => *selected += 1,
-            KeyCode::Enter | KeyCode::Right => directory_choice = Some(*selected),
-            KeyCode::Backspace | KeyCode::Left if parent.is_some() => directory_choice = Some(0),
-            _ => {}
-        },
+        }
         Some(Dialog::Confirm { .. }) => match key.code {
             KeyCode::Tab | KeyCode::Down => app.dialog_button = Some(0),
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => submit = true,
@@ -584,8 +632,11 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     if browse {
         open_folder_picker(app, outcome);
     }
-    if let Some(index) = directory_choice {
-        open_directory_choice(app, index, outcome);
+    if let Some(path) = directory_path {
+        browse_directory(app, path, outcome);
+    }
+    if let Some(path) = selected_folder {
+        select_folder(app, path);
     }
     if close {
         cancel_dialog(app);
@@ -611,15 +662,14 @@ fn cancel_dialog(app: &mut App) {
 
 fn submit_focused_dialog(app: &mut App, outcome: &mut Outcome) {
     if matches!(app.dialog, Some(Dialog::FolderPicker { .. })) {
-        let Some(Dialog::FolderPicker { form, path, .. }) = app.dialog.take() else {
-            unreachable!()
-        };
-        let mut form = form;
-        form.cwd = path;
-        form.field = Field::Directory;
-        app.pending_directory_cancel();
-        app.dialog = Some(Dialog::NewSession(form));
-        app.dialog_button = None;
+        if let Some(Dialog::FolderPicker {
+            path,
+            loading: false,
+            ..
+        }) = &app.dialog
+        {
+            select_folder(app, path.clone());
+        }
     } else if matches!(
         app.dialog,
         Some(Dialog::Settings { .. } | Dialog::Help | Dialog::PairPhone)
@@ -654,6 +704,7 @@ fn open_folder_picker(app: &mut App, outcome: &mut Outcome) {
         path: path.clone(),
         parent: None,
         entries: Vec::new(),
+        query: String::new(),
         selected: 0,
         loading: true,
     });
@@ -665,6 +716,7 @@ fn open_directory_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
     let Some(Dialog::FolderPicker {
         parent,
         entries,
+        query,
         loading,
         ..
     }) = &app.dialog
@@ -674,17 +726,28 @@ fn open_directory_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
     if *loading {
         return;
     }
-    let target = if parent.is_some() && index == 0 {
-        parent.clone()
-    } else {
-        entries
-            .get(index.saturating_sub(usize::from(parent.is_some())))
-            .map(|entry| entry.path.clone())
-    };
+    let target = folder_choices(parent, entries, query)
+        .get(index)
+        .map(|(_, path)| (*path).to_owned());
     if let Some(path) = target {
-        app.dialog_button = None;
-        outcome.commands.push(app.browse_directory(path));
+        browse_directory(app, path, outcome);
     }
+}
+
+fn browse_directory(app: &mut App, path: String, outcome: &mut Outcome) {
+    app.dialog_button = None;
+    outcome.commands.push(app.browse_directory(path));
+}
+
+fn select_folder(app: &mut App, path: String) {
+    let Some(Dialog::FolderPicker { mut form, .. }) = app.dialog.take() else {
+        return;
+    };
+    form.cwd = path;
+    form.field = Field::Directory;
+    app.pending_directory_cancel();
+    app.dialog = Some(Dialog::NewSession(form));
+    app.dialog_button = None;
 }
 
 fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
@@ -1104,6 +1167,80 @@ mod tests {
     }
 
     #[test]
+    fn folder_picker_searches_and_enter_chooses_highlighted_result() {
+        let mut app = App::new(1);
+        let area = Rect::new(0, 0, 100, 32);
+        app.dialog = Some(Dialog::FolderPicker {
+            form: SessionForm::default(),
+            path: "C:/dev".into(),
+            parent: Some("C:/".into()),
+            entries: vec![
+                crate::launch::DirectoryEntry {
+                    name: "alpha".into(),
+                    path: "C:/dev/alpha".into(),
+                },
+                crate::launch::DirectoryEntry {
+                    name: "Project Beta".into(),
+                    path: "C:/dev/Project Beta".into(),
+                },
+            ],
+            query: String::new(),
+            selected: 0,
+            loading: false,
+        });
+        event(&mut app, Event::Paste("BETA".into()), area);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::FolderPicker { query, selected: 0, .. }) if query == "BETA")
+        );
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.cwd == "C:/dev/Project Beta")
+        );
+    }
+
+    #[test]
+    fn folder_picker_arrows_browse_and_f2_chooses_current_path() {
+        let mut app = App::new(1);
+        let area = Rect::new(0, 0, 100, 32);
+        app.dialog = Some(Dialog::FolderPicker {
+            form: SessionForm::default(),
+            path: "C:/dev".into(),
+            parent: Some("C:/".into()),
+            entries: vec![crate::launch::DirectoryEntry {
+                name: "project".into(),
+                path: "C:/dev/project".into(),
+            }],
+            query: String::new(),
+            selected: 1,
+            loading: false,
+        });
+        let enter_child = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(enter_child.commands[0]["path"], "C:/dev/project");
+        app.event(json!({"type":"directories","requestId":enter_child.commands[0]["requestId"],"path":"C:/dev/project","parent":"C:/dev","entries":[]})).unwrap();
+        let parent = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(parent.commands[0]["path"], "C:/dev");
+        app.event(json!({"type":"directories","requestId":parent.commands[0]["requestId"],"path":"C:/dev","parent":"C:/","entries":[]})).unwrap();
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)),
+            area,
+        );
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.cwd == "C:/dev"));
+    }
+
+    #[test]
     fn old_host_without_directory_browser_keeps_the_launch_form_open() {
         let mut app = App::new(1);
         app.event(json!({"type":"capabilities","workspace":"/work","programs":[{"id":"shell","available":true}]})).unwrap();
@@ -1445,6 +1582,7 @@ mod tests {
                 path: "/work".into(),
                 parent: None,
                 entries: vec![],
+                query: String::new(),
                 selected: 0,
                 loading: false,
             },

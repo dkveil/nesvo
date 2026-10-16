@@ -96,6 +96,7 @@ pub enum Dialog {
         path: String,
         parent: Option<String>,
         entries: Vec<DirectoryEntry>,
+        query: String,
         selected: usize,
         loading: bool,
     },
@@ -116,6 +117,27 @@ pub enum Dialog {
         command: Value,
     },
     Help,
+}
+
+pub(crate) fn folder_choices<'a>(
+    parent: &'a Option<String>,
+    entries: &'a [DirectoryEntry],
+    query: &str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut choices = Vec::new();
+    if query.is_empty()
+        && let Some(path) = parent
+    {
+        choices.push(("..  Parent folder", path.as_str()));
+    }
+    let needle = query.to_lowercase();
+    choices.extend(
+        entries
+            .iter()
+            .filter(|entry| entry.name.to_lowercase().contains(&needle))
+            .map(|entry| (entry.name.as_str(), entry.path.as_str())),
+    );
+    choices
 }
 
 pub struct App {
@@ -492,6 +514,7 @@ impl App {
                         path,
                         parent,
                         entries,
+                        query,
                         selected,
                         loading,
                         ..
@@ -500,6 +523,7 @@ impl App {
                         *path = event["path"].as_str().unwrap_or_default().to_owned();
                         *parent = event["parent"].as_str().map(str::to_owned);
                         *entries = serde_json::from_value(event["entries"].clone())?;
+                        query.clear();
                         *selected = 0;
                         *loading = false;
                     }

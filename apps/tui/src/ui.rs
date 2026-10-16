@@ -540,18 +540,34 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
     }
 }
 
+pub fn home_panel(content: Rect) -> Rect {
+    let logo = brand::area(content);
+    let width = logo.map_or(29, |area| area.width).min(content.width);
+    let height = if logo.is_some() { brand::ROWS + 8 } else { 7 }.min(content.height);
+    Rect::new(
+        content.x + content.width.saturating_sub(width) / 2,
+        content.y + content.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
+}
+
 fn render_home(frame: &mut Frame, content: Rect, logo_frame: usize, theme: Theme) {
-    if let Some(area) = brand::area(content) {
-        frame.render_widget(brand::Logo(logo_frame, theme), area);
+    let panel = home_panel(content);
+    if let Some(logo) = brand::area(content) {
+        frame.render_widget(
+            brand::Logo(logo_frame, theme),
+            Rect::new(panel.x, panel.y, logo.width, brand::ROWS),
+        );
     }
     let offset = brand::home_offset(content);
     frame.render_widget(
         Paragraph::new("A place for your next session.").style(Style::default().fg(MUTED)),
         Rect::new(
-            content.x,
-            content.y + offset,
-            content.width,
-            content.height.min(1),
+            panel.x,
+            panel.y + offset,
+            panel.width,
+            panel.height.saturating_sub(offset).min(1),
         ),
     );
 }
@@ -1489,8 +1505,16 @@ mod tests {
     fn home_animation_changes_only_logo_cells_not_layout_or_controls() {
         let app = App::new(1);
         let area = Rect::new(0, 0, 120, 36);
-        let logo =
-            brand::area(pane_content(geometry(area, &app).panes[0], app.fullscreen)).unwrap();
+        let content = pane_content(geometry(area, &app).panes[0], app.fullscreen);
+        let panel = home_panel(content);
+        let logo = Rect::new(
+            panel.x,
+            panel.y,
+            brand::area(content).unwrap().width,
+            brand::ROWS,
+        );
+        assert_eq!(panel.x, content.x + (content.width - panel.width) / 2);
+        assert_eq!(panel.y, content.y + (content.height - panel.height) / 2);
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let initial = terminal.backend().buffer().clone();
@@ -1534,6 +1558,7 @@ mod tests {
                 path: "C:\\work".into(),
                 parent: None,
                 entries: vec![],
+                query: String::new(),
                 selected: 0,
                 loading: false,
             },
