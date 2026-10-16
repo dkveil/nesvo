@@ -1,6 +1,7 @@
 //! Rendering is a pure projection of App. No filesystem, network, or process calls.
 use crate::{
     brand,
+    launch::Program,
     model::{App, Dialog, Mode, RowKind},
     status::{Source, State, Status},
     terminal::TerminalWidget,
@@ -22,6 +23,33 @@ pub struct Geometry {
     pub footer: Rect,
 }
 
+pub fn tab_areas(app: &App, layout: &Geometry) -> ([Rect; 2], Rect) {
+    let mut tabs = [Rect::default(), Rect::default()];
+    let mut x = layout.tree.right();
+    for (index, tab) in tabs
+        .iter_mut()
+        .enumerate()
+        .take(if app.split { 2 } else { 1 })
+    {
+        let name = app.panes[index]
+            .as_deref()
+            .and_then(|id| app.session(id))
+            .map_or("new session", |session| session.name.as_str());
+        let width = (Line::from(name).width() as u16 + 2)
+            .min(20)
+            .min(layout.header.right().saturating_sub(x));
+        *tab = Rect::new(x, layout.header.y, width, layout.header.height.min(1));
+        x = x.saturating_add(width);
+    }
+    let add = Rect::new(
+        x,
+        layout.header.y,
+        3.min(layout.header.right().saturating_sub(x)),
+        layout.header.height.min(1),
+    );
+    (tabs, add)
+}
+
 pub fn geometry(area: Rect, app: &App) -> Geometry {
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(if app.fullscreen { 0 } else { 2 }),
@@ -32,7 +60,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     let sidebar = if app.fullscreen || area.width < 65 {
         0
     } else {
-        21.min(area.width / 3)
+        27.min(area.width / 3)
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
@@ -65,21 +93,82 @@ pub fn pane_content(area: Rect, fullscreen: bool) -> Rect {
 }
 
 pub fn tree_content(area: Rect) -> Rect {
-    Block::default()
-        .title(" Sessions ")
-        .borders(Borders::RIGHT)
-        .inner(area)
+    Block::default().borders(Borders::RIGHT).inner(area)
 }
 
-pub fn tree_offset(app: &App, height: u16) -> usize {
-    app.selected
-        .saturating_sub(usize::from(height.saturating_sub(3)))
+fn sidebar_sections(area: Rect, app: &App) -> (Rect, Rect) {
+    let desired =
+        5u16.saturating_add(u16::try_from(app.groups.len().saturating_mul(2)).unwrap_or(u16::MAX));
+    let spaces_height = desired
+        .min((area.height / 2).max(1))
+        .min(area.height.saturating_sub(1).max(1));
+    (
+        Rect::new(area.x, area.y, area.width, spaces_height.min(area.height)),
+        Rect::new(
+            area.x,
+            area.y.saturating_add(spaces_height.min(area.height)),
+            area.width,
+            area.height.saturating_sub(spaces_height),
+        ),
+    )
+}
+
+fn sidebar_entries(app: &App, section: Rect, spaces: bool) -> Vec<(Rect, usize)> {
+    let rows = app.tree();
+    let indices: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            let is_space = !matches!(row.kind, RowKind::Session(_));
+            (is_space == spaces).then_some(index)
+        })
+        .collect();
+    let capacity = usize::from(section.height.saturating_sub(1) / 2);
+    if capacity == 0 {
+        return Vec::new();
+    }
+    let selected_position = indices.iter().position(|index| *index == app.selected);
+    let offset = selected_position
+        .map(|position| position.saturating_sub(capacity.saturating_sub(1)))
+        .unwrap_or(0);
+    indices
+        .into_iter()
+        .skip(offset)
+        .take(capacity)
+        .enumerate()
+        .map(|(position, index)| {
+            (
+                Rect::new(
+                    section.x,
+                    section.y + 1 + position as u16 * 2,
+                    section.width,
+                    2,
+                ),
+                index,
+            )
+        })
+        .collect()
+}
+
+pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize> {
+    let content = tree_content(area);
+    if !content.contains((column, row).into()) {
+        return None;
+    }
+    let (spaces, agents) = sidebar_sections(content, app);
+    sidebar_entries(app, spaces, true)
+        .into_iter()
+        .chain(sidebar_entries(app, agents, false))
+        .find_map(|(area, index)| area.contains((column, row).into()).then_some(index))
 }
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
     match app.mode {
-        Mode::Input => (" INPUT → SESSION ", " Ctrl+G Navigate · F1 Menu · Esc Exit"),
-        Mode::Navigate => (" NAVIGATION → NESVO ", " i Type · F1 Menu · Esc Exit"),
+        Mode::Input => (
+            " INPUT → SESSION ",
+            " Ctrl+Q Navigate · Esc Session · F1 Menu",
+        ),
+        Mode::Navigate => (" NAVIGATION → NESVO ", " Enter Attach · Esc Exit · F1 Menu"),
     }
 }
 
@@ -107,17 +196,61 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     } else {
         "offline"
     };
-    let header = Line::from(vec![
-        Span::styled(
-            " nesvo ",
-            Style::default()
-                .fg(app.theme.accent())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!(" · {connected}"), Style::default().fg(MUTED)),
-    ]);
     if !app.fullscreen {
-        frame.render_widget(Paragraph::new(header), layout.header);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " nesvo ",
+                    Style::default()
+                        .fg(app.theme.accent())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("· {connected}"), Style::default().fg(MUTED)),
+            ])),
+            Rect::new(layout.header.x, layout.header.y, layout.tree.width, 1),
+        );
+        let tab_strip = Rect::new(
+            layout.tree.right(),
+            layout.header.y,
+            layout.header.right().saturating_sub(layout.tree.right()),
+            1,
+        );
+        frame.render_widget(
+            Block::default().style(Style::default().bg(SURFACE)),
+            tab_strip,
+        );
+        let (tabs, add) = tab_areas(app, &layout);
+        for (index, tab) in tabs.into_iter().enumerate() {
+            if tab.width == 0 {
+                continue;
+            }
+            let name = app.panes[index]
+                .as_deref()
+                .and_then(|id| app.session(id))
+                .map_or("new session", |session| session.name.as_str());
+            let label = format!(
+                " {} ",
+                truncate_cells(name, usize::from(tab.width.saturating_sub(2)))
+            );
+            let active = index == app.focused;
+            frame.render_widget(
+                Paragraph::new(label).style(if active {
+                    Style::default()
+                        .fg(BACKGROUND)
+                        .bg(app.theme.accent())
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(MUTED).bg(SURFACE)
+                }),
+                tab,
+            );
+        }
+        if add.width > 0 {
+            frame.render_widget(
+                Paragraph::new(" + ").style(Style::default().fg(MUTED).bg(SURFACE)),
+                add,
+            );
+        }
         render_tree(frame, app, layout.tree);
     }
     for index in 0..if app.split { 2 } else { 1 } {
@@ -128,7 +261,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     let text_width = usize::from(handle.x.saturating_sub(layout.footer.x));
     let (mode, hint) = if text_width < Line::from(full_mode).width() + 12 {
         match app.mode {
-            Mode::Input => (" INPUT ", " Ctrl+G NAV"),
+            Mode::Input => (" INPUT ", " Ctrl+Q NAV"),
             Mode::Navigate => (" NAV ", " i TYPE"),
         }
     } else {
@@ -171,89 +304,148 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
 }
 
 fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
-    if area.width == 0 {
+    if area.width == 0 || area.height == 0 {
         return;
     }
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(Style::default().fg(BORDER)),
+        area,
+    );
+    let content = tree_content(area);
+    let (spaces, agents) = sidebar_sections(content, app);
     let rows = app.tree();
-    let items: Vec<_> = rows
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
-            let status = match &row.kind {
-                RowKind::Session(id) => app.session(id).and_then(|session| session.status.as_ref()),
-                RowKind::Group(id) => app.group_attention(id),
-                RowKind::Root => None,
+    if spaces.height > 0 {
+        frame.render_widget(
+            Paragraph::new(format!(" spaces  {:>2}", app.groups.len()))
+                .style(Style::default().fg(MUTED).bg(SURFACE)),
+            Rect::new(spaces.x, spaces.y, spaces.width, 1),
+        );
+    }
+    if agents.height > 0 {
+        frame.render_widget(
+            Paragraph::new(format!(" agents  {:>2}", app.sessions.len()))
+                .style(Style::default().fg(MUTED).bg(SURFACE)),
+            Rect::new(agents.x, agents.y, agents.width, 1),
+        );
+    }
+    for (section, is_space) in [(spaces, true), (agents, false)] {
+        for (entry, index) in sidebar_entries(app, section, is_space) {
+            let row = &rows[index];
+            let selected = index == app.selected;
+            let active = matches!(&row.kind, RowKind::Session(id) if app.active_id() == Some(id));
+            let background = if selected || active {
+                app.theme.selection()
+            } else {
+                BACKGROUND
             };
-            let icon = match &row.kind {
-                RowKind::Root => "",
+            frame.render_widget(
+                Block::default().style(Style::default().bg(background)),
+                entry,
+            );
+            let indent = " ".repeat(row.depth.saturating_sub(1).min(5));
+            let available = usize::from(entry.width).saturating_sub(4 + indent.len());
+            let (marker, marker_color, detail, detail_color) = match &row.kind {
+                RowKind::Root => (
+                    "◇ ",
+                    app.theme.accent(),
+                    format!("{} sessions", app.sessions.len()),
+                    MUTED,
+                ),
                 RowKind::Group(id) => {
-                    if app.collapsed.contains(id) {
-                        "▸ "
-                    } else {
-                        "▾ "
-                    }
+                    let count = app
+                        .sessions
+                        .iter()
+                        .filter(|s| s.group_id.as_deref() == Some(id))
+                        .count();
+                    let status = app.group_attention(id);
+                    let location = app
+                        .sessions
+                        .iter()
+                        .find(|session| session.group_id.as_deref() == Some(id))
+                        .map(|session| session.cwd.as_str());
+                    (
+                        if app.collapsed.contains(id) {
+                            "▸ "
+                        } else {
+                            "▾ "
+                        },
+                        status_color(status, app.theme),
+                        status.map_or_else(
+                            || {
+                                location.map_or_else(
+                                    || format!("{count} direct sessions"),
+                                    str::to_owned,
+                                )
+                            },
+                            |status| format!("{} · {count} sessions", status.label()),
+                        ),
+                        status.map_or(MUTED, |_| status_color(status, app.theme)),
+                    )
                 }
                 RowKind::Session(id) => {
-                    if let Some(status) = status {
-                        status_marker(status)
-                    } else if app.session(id).is_some_and(|s| s.running) {
-                        "● "
-                    } else {
-                        "○ "
-                    }
+                    let session = app.session(id);
+                    let status = session.and_then(|session| session.status.as_ref());
+                    let state = status.map(Status::label).unwrap_or_else(|| {
+                        if session.is_some_and(|session| session.running) {
+                            "unknown"
+                        } else {
+                            "ended"
+                        }
+                    });
+                    let program = session
+                        .map(|session| session.program.label())
+                        .unwrap_or("Terminal");
+                    let marker = match status.map(|status| status.state) {
+                        Some(State::Working) => "● ",
+                        Some(State::Question) => "? ",
+                        Some(State::Blocked) => "! ",
+                        Some(State::Done) => "✓ ",
+                        Some(State::Failed) => "× ",
+                        _ => "○ ",
+                    };
+                    (
+                        marker,
+                        status_color(status, app.theme),
+                        format!("{state} · {program}"),
+                        session
+                            .map(|session| program_color(session.program))
+                            .unwrap_or(MUTED),
+                    )
                 }
             };
-            let attention = if matches!(row.kind, RowKind::Group(_)) {
-                status.map_or(String::new(), |status| {
-                    format!(" {}", status_marker(status).trim())
-                })
-            } else {
-                String::new()
-            };
-            let active = matches!(&row.kind, RowKind::Session(id) if app.active_id() == Some(id));
-            let selected = index == app.selected;
-            let style = if selected {
-                Style::default().bg(app.theme.selection()).fg(TEXT)
-            } else {
-                Style::default().fg(if active { TEXT } else { MUTED })
-            };
-            let indent = "  ".repeat(row.depth.saturating_sub(1).min(12));
-            let available = usize::from(tree_content(area).width).saturating_sub(
-                2 + indent.len()
-                    + Line::from(icon).width()
-                    + Line::from(attention.as_str()).width(),
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::raw(" "),
+                    Span::raw(indent.clone()),
+                    Span::styled(marker, Style::default().fg(marker_color)),
+                    Span::styled(
+                        truncate_cells(&row.label, available),
+                        Style::default()
+                            .fg(if selected || active { TEXT } else { MUTED })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]))
+                .style(Style::default().bg(background)),
+                Rect::new(entry.x, entry.y, entry.width, 1),
             );
-            let label = truncate_cells(&row.label, available);
-            let line = Line::from(vec![
-                Span::styled(
-                    if selected { "› " } else { "  " },
-                    Style::default().fg(app.theme.accent()),
-                ),
-                Span::raw(indent),
-                Span::styled(icon, Style::default().fg(status_color(status, app.theme))),
-                Span::raw(label),
-                Span::styled(
-                    attention,
-                    Style::default().fg(status_color(status, app.theme)),
-                ),
-            ]);
-            ListItem::new(line).style(style)
-        })
-        .collect();
-    let mut state = ListState::default()
-        .with_selected(Some(app.selected))
-        .with_offset(tree_offset(app, area.height));
-    frame.render_stateful_widget(
-        List::new(items).block(
-            Block::default()
-                .title(" Sessions ")
-                .title_style(Style::default().fg(MUTED))
-                .borders(Borders::RIGHT)
-                .border_style(Style::default().fg(BORDER)),
-        ),
-        area,
-        &mut state,
-    );
+            if entry.height > 1 {
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::raw("   "),
+                        Span::raw(indent),
+                        Span::styled(
+                            truncate_cells(&detail, usize::from(entry.width).saturating_sub(4)),
+                            Style::default().fg(detail_color),
+                        ),
+                    ]))
+                    .style(Style::default().bg(background)),
+                    Rect::new(entry.x, entry.y + 1, entry.width, 1),
+                );
+            }
+        }
+    }
 }
 
 fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_frame: usize) {
@@ -285,7 +477,8 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
                     Style::default().fg(app.theme.accent()),
                 ),
                 Span::styled(name, Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{program} · "), Style::default().fg(MUTED)),
+                Span::styled(program, Style::default().fg(program_color(session.program))),
+                Span::styled(" · ", Style::default().fg(MUTED)),
                 Span::styled(
                     status,
                     Style::default().fg(status_color(session.status.as_ref(), app.theme)),
@@ -312,20 +505,17 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
         })
         .unwrap_or_default();
     let content = pane_content(area, app.fullscreen);
-    if !app.fullscreen && index > 0 {
-        let first = geometry(frame.area(), app).panes[0];
+    if !app.fullscreen {
         frame.render_widget(
             Block::default()
-                .borders(if first.y == area.y {
-                    Borders::LEFT
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(if focused {
+                    app.theme.accent()
                 } else {
-                    Borders::TOP
-                })
-                .border_style(Style::default().fg(BORDER)),
+                    BORDER
+                })),
             area,
         );
-    }
-    if !app.fullscreen {
         frame.render_widget(
             Paragraph::new(title),
             Rect::new(content.x, area.y, content.width, area.height.min(1)),
@@ -421,19 +611,12 @@ fn status_color(status: Option<&Status>, theme: Theme) -> Color {
     }
 }
 
-fn status_marker(status: &Status) -> &'static str {
-    match (status.source, status.state) {
-        (Source::Screen, State::Working) => "~● ",
-        (Source::Screen, State::Idle) => "~○ ",
-        (Source::Screen, State::Question) => "~? ",
-        (Source::Screen, State::Blocked) => "~! ",
-        (Source::Screen, State::Done) => "~✓ ",
-        (Source::Screen, State::Failed) => "~× ",
-        (Source::Activity, State::Working) => "● ",
-        (Source::Activity, State::Idle) => "○ ",
-        (Source::Process, State::Done) => "✓ ",
-        (Source::Process, State::Failed) => "× ",
-        _ => "· ",
+fn program_color(program: Program) -> Color {
+    match program {
+        Program::Shell => MUTED,
+        Program::Claude => Color::Rgb(230, 145, 113),
+        Program::Gemini => Color::Rgb(139, 175, 226),
+        Program::Codex => Color::Rgb(139, 201, 203),
     }
 }
 
@@ -610,11 +793,11 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     "PgUp/PgDn    Local scrollback\n",
                     "F1 / p / ?   Menu / pair mobile / keyboard help\n",
                     "F11          Full screen / workspace\n",
-                    "Esc          Detach; open dialogs close first\n",
+                    "Esc          Session key / cancel dialog / exit from navigation\n",
                     "q            Detach from navigation\n\n",
                     "INPUT sends keys to the session.\n",
-                    "Ctrl+G switches to NAVIGATION for nesvo.\n",
-                    "Then e sends Escape to the controlled session.\n",
+                    "Ctrl+Q switches to NAVIGATION for nesvo.\n",
+                    "Esc goes to the controlled session.\n",
                     "Ctrl+C goes to the shell while typing.\n\n",
                     "Click controls or use shortcuts. Splits are local."
                 ))
@@ -630,6 +813,70 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::json;
+
+    #[test]
+    fn workspace_has_separate_spaces_and_agents_with_clickable_rows() {
+        let mut app = App::new(1);
+        app.event(json!({
+            "type":"sessions", "revision":1,
+            "groups":[{"id":"project", "parentId":null, "name":"Workspace", "order":0}],
+            "sessions":[
+                {"id":"agent", "name":"Build feature", "cwd":"C:/projects/nesvo", "program":"claude",
+                    "cols":80, "rows":24, "running":true, "groupId":"project", "controllerId":null,
+                    "status":{"state":"question", "source":"screen", "updatedAt":1}},
+                {"id":"shell", "name":"Tests", "cwd":"C:/projects/nesvo", "program":"shell",
+                    "cols":80, "rows":24, "running":true, "groupId":null, "controllerId":null}
+            ]
+        })).unwrap();
+        let area = Rect::new(0, 0, 120, 30);
+        let layout = geometry(area, &app);
+        let tree = tree_content(layout.tree);
+        let (spaces, agents) = sidebar_sections(tree, &app);
+        let rows = app.tree();
+        let group_index = rows
+            .iter()
+            .position(|row| row.kind == RowKind::Group("project".into()))
+            .unwrap();
+        let agent_index = rows
+            .iter()
+            .position(|row| row.kind == RowKind::Session("agent".into()))
+            .unwrap();
+        let group = sidebar_entries(&app, spaces, true)
+            .into_iter()
+            .find(|(_, index)| *index == group_index)
+            .unwrap()
+            .0;
+        let agent = sidebar_entries(&app, agents, false)
+            .into_iter()
+            .find(|(_, index)| *index == agent_index)
+            .unwrap()
+            .0;
+        assert_eq!(
+            sidebar_hit(&app, layout.tree, group.x, group.y),
+            Some(group_index)
+        );
+        assert_eq!(
+            sidebar_hit(&app, layout.tree, agent.x, agent.y),
+            Some(agent_index)
+        );
+        assert!(agent.y > group.y);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let line = |y| {
+            (tree.x..tree.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        assert!(line(spaces.y).contains("spaces"));
+        assert!(line(agents.y).contains("agents"));
+        assert!(line(group.y + 1).contains("~question"));
+        assert!(line(agent.y + 1).contains("Claude"));
+        assert_eq!(
+            buffer[(agent.x + 3, agent.y + 1)].fg,
+            program_color(Program::Claude)
+        );
+    }
 
     #[test]
     fn long_names_do_not_hide_session_status_or_group_attention() {
@@ -662,11 +909,16 @@ mod tests {
             .position(|row| row.kind == RowKind::Group("g".into()))
             .unwrap();
         let tree = tree_content(layout.tree);
+        let (spaces, _) = sidebar_sections(tree, &app);
+        let group_y = sidebar_entries(&app, spaces, true)
+            .into_iter()
+            .find_map(|(area, index)| (index == group_index).then_some(area.y))
+            .unwrap();
         let group: String = (tree.x..tree.right())
-            .map(|x| buffer[(x, tree.y + group_index as u16)].symbol())
+            .map(|x| buffer[(x, group_y + 1)].symbol())
             .collect();
         assert!(
-            group.contains("~?"),
+            group.contains("~question"),
             "Attention must remain visible: {group}"
         );
     }
@@ -702,7 +954,7 @@ mod tests {
             .map(|x| buffer[(x, layout.footer.y)].symbol())
             .collect();
         assert!(footer.contains("INPUT → SESSION"), "{footer}");
-        assert!(footer.contains("Ctrl+G Navigate"), "{footer}");
+        assert!(footer.contains("Ctrl+Q Navigate"), "{footer}");
         assert!(footer.contains(" F11 "), "{footer}");
         let handle = fullscreen_handle_area(&app, layout.footer);
         assert_eq!(buffer[(handle.x, handle.y)].bg, app.theme.accent());

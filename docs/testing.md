@@ -36,6 +36,8 @@ The start menu was also verified in an isolated Windows ConPTY: workspace entry,
 
 A subsequent native ConPTY check verified the compact workspace, F11 full-screen input, Ctrl+G navigation in full screen, and F11 restoration. The terminal keeps a one-line mode footer and a clickable accent-backed return handle. Esc restored the cursor and alternate screen while the shell survived. Unit tests cover the saved full-screen default, older preference files, hidden-pane geometry and preservation of default/ANSI colors; interactive macOS remains unverified.
 
+On October 17, the updated Windows ConPTY check created a live PowerShell session in a private host and exercised the spaces/agents sidebar, tab strip, full-screen toggle, Ctrl+Q return to navigation, and Esc detach from navigation. The shell remained running, while the alternate screen and cursor were restored. TUI unit tests cover direct Escape forwarding to the shell and mouse hit testing for sidebar rows and tabs. The same interactive flow remains unverified on macOS; some terminal emulators may reserve Ctrl+Q before nesvo receives it.
+
 The latest mobile bundles include the SVG renderer and new icons. Expo Go can preview the app UI; installed application icons and splash behavior require a development or production build. The new theme and keyboard behavior still require a physical iPhone retest.
 
 ### What the synchronization tests prove

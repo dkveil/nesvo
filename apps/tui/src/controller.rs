@@ -39,14 +39,12 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 app.fullscreen = !app.fullscreen;
             } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
-            } else if key.code == KeyCode::Esc {
-                outcome.quit = true;
             } else if app.mode == Mode::Input {
                 let was_scrolled = app
                     .active_terminal()
                     .is_some_and(|terminal| terminal.screen().scrollback() > 0);
-                if key.code == KeyCode::Char('\u{7}')
-                    || (matches!(key.code, KeyCode::Char('g' | 'G'))
+                if key.code == KeyCode::Char('\u{11}')
+                    || (matches!(key.code, KeyCode::Char('q' | 'Q'))
                         && key.modifiers.contains(KeyModifiers::CONTROL))
                 {
                     app.mode = Mode::Navigate;
@@ -61,6 +59,8 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     // console write for a key that has not changed the local view.
                     outcome.redraw = was_scrolled;
                 }
+            } else if key.code == KeyCode::Esc {
+                outcome.quit = true;
             } else {
                 navigation_key(app, key, area, &mut outcome);
             }
@@ -370,12 +370,6 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             }
         }
         KeyCode::Char('i') => acquire(app, false, area, outcome),
-        KeyCode::Char('e') => {
-            if let Some(command) = app.input("\x1b".into()) {
-                outcome.commands.push(command);
-                app.mode = Mode::Input;
-            }
-        }
         KeyCode::Char('t') => acquire(app, true, area, outcome),
         KeyCode::Char('x') => {
             if let Some(id) = app.active_id()
@@ -696,16 +690,24 @@ mod tests {
     }
 
     #[test]
-    fn control_g_never_reaches_the_host() {
+    fn control_q_never_reaches_the_host() {
         let mut app = App::new(1);
         app.mode = Mode::Input;
         let outcome = event(
             &mut app,
-            Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
             Rect::new(0, 0, 100, 30),
         );
         assert!(app.mode == Mode::Navigate);
         assert!(outcome.commands.is_empty());
+        app.mode = Mode::Input;
+        let control_character = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('\u{11}'), KeyModifiers::NONE)),
+            Rect::new(0, 0, 100, 30),
+        );
+        assert!(app.mode == Mode::Navigate);
+        assert!(control_character.commands.is_empty());
     }
 
     #[test]
@@ -724,7 +726,7 @@ mod tests {
         assert!(fullscreen.commands.is_empty());
         let nav = event(
             &mut app,
-            Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)),
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
             area,
         );
         assert!(app.mode == Mode::Navigate);
@@ -732,12 +734,22 @@ mod tests {
         event(&mut app, f11, area);
         assert!(!app.fullscreen);
         let tree = ui::tree_content(ui::geometry(area, &app).tree);
+        let second = app
+            .tree()
+            .iter()
+            .position(|row| row.kind == RowKind::Session("second".into()))
+            .unwrap();
+        let clicked_y = (tree.y..tree.bottom())
+            .find(|y| {
+                ui::sidebar_hit(&app, ui::geometry(area, &app).tree, tree.x, *y) == Some(second)
+            })
+            .unwrap();
         let row_click = event(
             &mut app,
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: tree.x,
-                row: tree.y + 2,
+                row: clicked_y,
                 modifiers: KeyModifiers::NONE,
             }),
             area,
@@ -783,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_detaches_and_explicit_escape_and_interrupt_reach_the_shell() {
+    fn escape_reaches_the_shell_then_control_q_returns_to_navigation() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
             {"id":"s","name":"shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
@@ -797,17 +809,22 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             area,
         );
-        assert!(escape.commands.is_empty());
-        assert!(escape.quit);
-        app.mode = Mode::Navigate;
-        let literal_escape = event(
+        assert_eq!(escape.commands[0]["data"], "\u{001b}");
+        assert!(!escape.quit);
+        let navigation = event(
             &mut app,
-            Event::Key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)),
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
             area,
         );
-        assert_eq!(literal_escape.commands[0]["data"], "\u{001b}");
-        assert!(!literal_escape.quit);
-        assert!(app.mode == Mode::Input);
+        assert!(navigation.commands.is_empty());
+        assert!(app.mode == Mode::Navigate);
+        let quit = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(quit.quit);
+        app.mode = Mode::Input;
         let interrupt = event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
@@ -876,6 +893,11 @@ mod tests {
         );
         assert!(!close.quit);
         assert!(app.dialog.is_none());
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            area,
+        );
         let detach = event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),

@@ -220,6 +220,13 @@ impl App {
             label: "All sessions".into(),
         }];
         self.append_children(None, 0, &mut rows, &mut HashSet::new());
+        // The agent list is global: collapsing a space only hides its child spaces,
+        // never a running session that still needs attention.
+        rows.extend(self.sessions.iter().map(|session| TreeRow {
+            kind: RowKind::Session(session.id.clone()),
+            depth: 1,
+            label: session.name.clone(),
+        }));
         rows
     }
 
@@ -232,17 +239,6 @@ impl App {
     ) {
         if depth > 64 {
             return;
-        }
-        for session in self
-            .sessions
-            .iter()
-            .filter(|s| s.group_id.as_deref() == parent)
-        {
-            rows.push(TreeRow {
-                kind: RowKind::Session(session.id.clone()),
-                depth: depth + 1,
-                label: session.name.clone(),
-            });
         }
         let mut groups: Vec<_> = self
             .groups
@@ -632,11 +628,12 @@ mod tests {
         let rows = app.tree();
         assert_eq!(
             rows.iter().map(|row| row.depth).collect::<Vec<_>>(),
-            vec![0, 1, 2, 3]
+            vec![0, 1, 2, 1]
         );
         assert_eq!(app.group_choices(Some("a")).len(), 1);
         app.collapsed.insert("a".into());
-        assert_eq!(app.tree().len(), 2);
+        assert_eq!(app.tree().len(), 3);
+        assert!(matches!(app.tree()[2].kind, RowKind::Session(_)));
         assert_eq!(app.sessions[0].program, Program::Shell);
     }
 

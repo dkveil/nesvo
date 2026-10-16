@@ -260,11 +260,20 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     if app.fullscreen {
         return output;
     }
+    let (_, add) = ui::tab_areas(app, &geometry);
+    if !add.is_empty() {
+        output.push(Control {
+            area: add,
+            label: None,
+            action: Action::Navigation('n'),
+            enabled: app.connected,
+        });
+    }
     if app.mode == Mode::Input {
         buttons(
             row(geometry.header, 1),
             [
-                ("Ctrl+G Navigation", Action::ReturnToNavigation, true),
+                ("Ctrl+Q Navigation", Action::ReturnToNavigation, true),
                 ("F1 Menu", Action::Navigation('M'), true),
             ],
             &mut output,
@@ -377,10 +386,15 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
     if app.fullscreen {
         return None;
     }
-    let tree = ui::tree_content(geometry.tree);
-    if tree.contains(point) {
-        let index = ui::tree_offset(app, geometry.tree.height) + usize::from(row - tree.y);
-        return (index < app.tree().len()).then_some(Action::OpenRow(index));
+    if let Some(index) = ui::sidebar_hit(app, geometry.tree, column, row) {
+        return Some(Action::OpenRow(index));
+    }
+    if row == geometry.header.y {
+        let (tabs, _) = ui::tab_areas(app, &geometry);
+        return tabs
+            .iter()
+            .position(|tab| tab.contains(point))
+            .map(Action::FocusPane);
     }
     (0..if app.split { 2 } else { 1 })
         .find(|index| geometry.panes[*index].contains(point))
@@ -416,12 +430,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tabs_and_new_session_control_are_clickable() {
+        let mut app = App::new(1);
+        app.connected = true;
+        app.split = true;
+        let area = Rect::new(0, 0, 120, 30);
+        let layout = ui::geometry(area, &app);
+        let (tabs, add) = ui::tab_areas(&app, &layout);
+        assert_eq!(
+            hit_test(&app, area, tabs[0].x, tabs[0].y),
+            Some(Action::FocusPane(0))
+        );
+        assert_eq!(
+            hit_test(&app, area, tabs[1].x, tabs[1].y),
+            Some(Action::FocusPane(1))
+        );
+        assert_eq!(
+            hit_test(&app, area, add.x, add.y),
+            Some(Action::Navigation('n'))
+        );
+    }
+
+    #[test]
     fn blank_tree_space_does_not_open_the_last_session() {
         let app = App::new(1);
         let area = Rect::new(0, 0, 100, 32);
         let tree = ui::tree_content(ui::geometry(area, &app).tree);
         assert_eq!(
-            hit_test(&app, area, tree.x, tree.y),
+            hit_test(&app, area, tree.x, tree.y + 1),
             Some(Action::OpenRow(0))
         );
         assert_eq!(hit_test(&app, area, tree.x, tree.y + 3), None);
