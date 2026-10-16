@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,7 +12,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { parsePairing, type Pairing } from './connection/client';
 import { Button, IconButton } from './components';
 import { colors as c, mono } from './theme';
@@ -28,9 +29,14 @@ export default function ConnectSheet({
   const [scanning, setScanning] = useState(false);
   const scanConsumed = useRef(false);
   const [permission, requestPermission] = useCameraPermissions();
+  function close() {
+    Keyboard.dismiss();
+    onClose();
+  }
   function connect(text = value) {
     try {
       const pairing = parsePairing(text);
+      Keyboard.dismiss();
       setScanning(false);
       onConnect(pairing);
     } catch {
@@ -39,6 +45,7 @@ export default function ConnectSheet({
     }
   }
   async function scan() {
+    Keyboard.dismiss();
     if (Platform.OS === 'web') {
       setError(
         'W podglądzie przeglądarkowym wklej kod. Skaner QR jest dostępny w aplikacji na telefonie.',
@@ -56,117 +63,144 @@ export default function ConnectSheet({
       );
   }
   return (
-    <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet">
-      <SafeAreaView style={s.page}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
+    <Modal
+      animationType="slide"
+      onRequestClose={close}
+      onShow={Keyboard.dismiss}
+      presentationStyle="pageSheet"
+    >
+      <SafeAreaProvider>
+        <SafeAreaView
+          style={s.page}
+          edges={Platform.OS === 'ios' ? ['top', 'left', 'right'] : undefined}
         >
-          <View style={s.header}>
-            <Text accessibilityRole="header" style={s.heading}>
-              Połącz komputer
-            </Text>
-            <IconButton name="close" label="Zamknij parowanie" onPress={onClose} />
-          </View>
-          <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-            <Text style={s.body}>
-              Zeskanuj kod QR z komputera, aby otworzyć jego terminale na telefonie.
-            </Text>
-            <View style={s.steps}>
-              <View style={s.step}>
-                <Text style={s.stepNumber}>1</Text>
-                <View style={s.stepContent}>
-                  <Text style={s.title}>Uruchom host na komputerze</Text>
-                  <Text selectable style={s.code}>
-                    cargo run --manifest-path host/Cargo.toml -- --lan
-                  </Text>
-                </View>
-              </View>
-              <View style={s.step}>
-                <Text style={s.stepNumber}>2</Text>
-                <View style={s.stepContent}>
-                  <Text style={s.title}>Otwórz kod QR</Text>
-                  <Text style={s.body}>
-                    Otwórz plik pairing.svg wskazany w terminalu. Na początek użyj tej samej sieci
-                    Wi-Fi.
-                  </Text>
-                </View>
-              </View>
-            </View>
-            {scanning ? (
-              <View style={s.scanner}>
-                <View style={s.camera}>
-                  <CameraView
-                    style={{ flex: 1 }}
-                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                    onBarcodeScanned={({ data }) => {
-                      if (scanConsumed.current) return;
-                      scanConsumed.current = true;
-                      connect(data);
-                    }}
-                  />
-                </View>
-                <Button label="Anuluj skanowanie" secondary onPress={() => setScanning(false)} />
-              </View>
-            ) : (
-              <Button label="Zeskanuj kod QR" icon="scan-outline" onPress={scan} />
-            )}
-            <View style={s.divider}>
-              <View style={s.line} />
-              <Text style={s.dividerLabel}>lub wklej kod</Text>
-              <View style={s.line} />
-            </View>
-            <View style={s.manual}>
-              <TextInput
-                accessibilityLabel="Kod parowania JSON"
-                value={value}
-                onChangeText={setValue}
-                placeholder="Kod parowania z komputera"
-                placeholderTextColor={c.faint}
-                autoCorrect={false}
-                autoCapitalize="none"
-                multiline
-                textAlignVertical="top"
-                style={s.input}
-              />
-              <Button
-                label="Wklej ze schowka"
-                secondary
-                icon="clipboard-outline"
-                onPress={async () => {
-                  try {
-                    setValue(await Clipboard.getStringAsync());
-                  } catch {
-                    setError('Nie udało się odczytać schowka. Wklej kod ręcznie.');
-                  }
-                }}
-              />
-              {!!error && (
-                <Text accessibilityRole="alert" style={s.error}>
-                  {error}
-                </Text>
-              )}
-              <Button
-                label="Połącz z hostem"
-                disabled={!value.trim()}
-                icon="arrow-forward"
-                onPress={() => connect()}
-              />
-              <Text style={s.helper}>
-                Kod daje dostęp do Twojego terminala. Zachowaj go dla siebie.
+          <KeyboardAvoidingView
+            enabled={Platform.OS === 'android'}
+            behavior="height"
+            style={s.flex}
+          >
+            <View style={s.header}>
+              <Text accessibilityRole="header" style={s.heading}>
+                Połącz komputer
               </Text>
+              <IconButton name="close" label="Zamknij parowanie" onPress={close} />
             </View>
-            <Text style={s.footnote}>
-              Wszystko działa na Twoim komputerze. Claude Code i Codex używają Twojego logowania w
-              terminalu.
-            </Text>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+            {/* iOS measures keyboard overlap inside the sheet in native screen coordinates. */}
+            <ScrollView
+              style={s.flex}
+              contentContainerStyle={s.content}
+              contentInsetAdjustmentBehavior="automatic"
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              keyboardShouldPersistTaps="handled"
+              indicatorStyle="white"
+            >
+              <Text style={s.body}>
+                Zeskanuj kod QR z komputera, aby otworzyć jego terminale na telefonie.
+              </Text>
+              <View style={s.steps}>
+                <View style={s.step}>
+                  <Text style={s.stepNumber}>1</Text>
+                  <View style={s.stepContent}>
+                    <Text style={s.title}>Uruchom host na komputerze</Text>
+                    <Text selectable style={s.code}>
+                      cargo run --manifest-path host/Cargo.toml -- --lan
+                    </Text>
+                  </View>
+                </View>
+                <View style={s.step}>
+                  <Text style={s.stepNumber}>2</Text>
+                  <View style={s.stepContent}>
+                    <Text style={s.title}>Otwórz kod QR</Text>
+                    <Text style={s.body}>
+                      Otwórz plik pairing.svg wskazany w terminalu. Na początek użyj tej samej sieci
+                      Wi-Fi.
+                    </Text>
+                  </View>
+                </View>
+              </View>
+              {scanning ? (
+                <View style={s.scanner}>
+                  <View style={s.camera}>
+                    <CameraView
+                      style={{ flex: 1 }}
+                      barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                      onBarcodeScanned={({ data }) => {
+                        if (scanConsumed.current) return;
+                        scanConsumed.current = true;
+                        connect(data);
+                      }}
+                    />
+                  </View>
+                  <Button label="Anuluj skanowanie" secondary onPress={() => setScanning(false)} />
+                </View>
+              ) : (
+                <Button label="Zeskanuj kod QR" icon="scan-outline" onPress={scan} />
+              )}
+              <View style={s.divider}>
+                <View style={s.line} />
+                <Text style={s.dividerLabel}>lub wklej kod</Text>
+                <View style={s.line} />
+              </View>
+              <View style={s.manual}>
+                <TextInput
+                  accessibilityLabel="Kod parowania JSON"
+                  value={value}
+                  onChangeText={setValue}
+                  placeholder="Kod parowania z komputera"
+                  placeholderTextColor={c.faint}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  textContentType="none"
+                  spellCheck={false}
+                  returnKeyType="done"
+                  submitBehavior="blurAndSubmit"
+                  onSubmitEditing={Keyboard.dismiss}
+                  multiline
+                  textAlignVertical="top"
+                  style={s.input}
+                />
+                <Button
+                  label="Wklej ze schowka"
+                  secondary
+                  icon="clipboard-outline"
+                  onPress={async () => {
+                    try {
+                      setValue(await Clipboard.getStringAsync());
+                    } catch {
+                      setError('Nie udało się odczytać schowka. Wklej kod ręcznie.');
+                    }
+                  }}
+                />
+                {!!error && (
+                  <Text accessibilityRole="alert" style={s.error}>
+                    {error}
+                  </Text>
+                )}
+                <Button
+                  label="Połącz z hostem"
+                  disabled={!value.trim()}
+                  icon="arrow-forward"
+                  onPress={() => connect()}
+                />
+                <Text style={s.helper}>
+                  Kod daje dostęp do Twojego terminala. Zachowaj go dla siebie.
+                </Text>
+              </View>
+              <Text style={s.footnote}>
+                Wszystko działa na Twoim komputerze. Claude Code i Codex używają Twojego logowania w
+                terminalu.
+              </Text>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
 const s = StyleSheet.create({
+  flex: { flex: 1 },
   page: { flex: 1, backgroundColor: c.background },
   header: {
     flexDirection: 'row',
@@ -217,6 +251,7 @@ const s = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
     minHeight: 112,
+    maxHeight: 180,
   },
   helper: { color: c.muted, fontSize: 14, lineHeight: 21, marginTop: 2 },
   error: { color: c.danger, fontSize: 15, lineHeight: 22 },

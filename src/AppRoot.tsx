@@ -1,5 +1,6 @@
 import React, { type PropsWithChildren } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -29,6 +30,10 @@ function AppModals() {
     create,
     connected,
   } = useAppState();
+  function createSession() {
+    Keyboard.dismiss();
+    create();
+  }
   return (
     <>
       {connectOpen && (
@@ -41,54 +46,65 @@ function AppModals() {
         visible={createOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => setCreateOpen(false)}
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setCreateOpen(false);
+        }}
       >
-        <KeyboardAvoidingView
-          style={s.overlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          <View style={s.sheet}>
-            <View style={s.headingRow}>
-              <Text style={common.heading}>Nowa sesja</Text>
-              <IconButton
-                name="close"
-                label="Anuluj nową sesję"
-                onPress={() => setCreateOpen(false)}
-              />
-            </View>
-            <ScrollView
-              style={s.sheetScroll}
-              contentContainerStyle={s.sheetBody}
-              keyboardShouldPersistTaps="handled"
-            >
-              <Text style={common.label}>
-                {mode === 'demo' ? 'Tryb demo' : 'Terminal na komputerze'}
-              </Text>
-              <Text style={common.body}>
-                {mode === 'demo'
-                  ? 'Utwórz przykładowy terminal i przetestuj interfejs.'
-                  : 'Otwórz powłokę w katalogu skonfigurowanym na hoście. Możesz uruchomić w niej swoje CLI.'}
-              </Text>
-              <TextInput
-                accessibilityLabel="Nazwa sesji"
-                autoFocus
-                placeholder="np. Poprawki w aplikacji"
-                placeholderTextColor={c.faint}
-                value={sessionName}
-                onChangeText={setSessionName}
-                maxLength={80}
-                onSubmitEditing={create}
-                style={common.input}
-              />
-              <Button
-                label="Utwórz sesję"
-                icon="add"
-                onPress={create}
-                disabled={!sessionName.trim() || (mode === 'live' && !connected)}
-              />
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
+        <SafeAreaProvider>
+          <KeyboardAvoidingView
+            style={s.overlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <SafeAreaView style={s.modalSafe} edges={['top', 'left', 'right']}>
+              <SafeAreaView style={s.sheet} edges={['bottom']}>
+                <View style={s.headingRow}>
+                  <Text style={common.heading}>Nowa sesja</Text>
+                  <IconButton
+                    name="close"
+                    label="Anuluj nową sesję"
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setCreateOpen(false);
+                    }}
+                  />
+                </View>
+                <ScrollView
+                  style={s.sheetScroll}
+                  contentContainerStyle={s.sheetBody}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                >
+                  <Text style={common.label}>
+                    {mode === 'demo' ? 'Tryb demo' : 'Terminal na komputerze'}
+                  </Text>
+                  <Text style={common.body}>
+                    {mode === 'demo'
+                      ? 'Utwórz przykładowy terminal i przetestuj interfejs.'
+                      : 'Otwórz powłokę w katalogu skonfigurowanym na hoście. Możesz uruchomić w niej swoje CLI.'}
+                  </Text>
+                  <TextInput
+                    accessibilityLabel="Nazwa sesji"
+                    autoFocus
+                    placeholder="np. Poprawki w aplikacji"
+                    placeholderTextColor={c.faint}
+                    value={sessionName}
+                    onChangeText={setSessionName}
+                    maxLength={80}
+                    onSubmitEditing={createSession}
+                    style={common.input}
+                  />
+                  <Button
+                    label="Utwórz sesję"
+                    icon="add"
+                    onPress={createSession}
+                    disabled={!sessionName.trim() || (mode === 'live' && !connected)}
+                  />
+                </ScrollView>
+              </SafeAreaView>
+            </SafeAreaView>
+          </KeyboardAvoidingView>
+        </SafeAreaProvider>
       </Modal>
     </>
   );
@@ -99,7 +115,7 @@ export default function AppRoot({ children }: PropsWithChildren) {
     <AppStateProvider>
       <SafeAreaProvider style={s.outer}>
         <View style={s.frame}>
-          <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+          <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
             <StatusBar style="light" />
             {children}
             <AppModals />
@@ -127,6 +143,7 @@ const s = StyleSheet.create({
     gap: 12,
   },
   overlay: { flex: 1, backgroundColor: '#00000099', justifyContent: 'flex-end' },
+  modalSafe: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
     width: '100%',
     maxWidth: 600,

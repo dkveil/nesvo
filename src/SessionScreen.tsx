@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -10,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HostClient } from './connection/client';
 import TerminalView, { type TerminalHandle } from './terminal/TerminalView';
 import { createDemoShell, demoConversations, type DemoSession } from './demo';
@@ -30,6 +32,7 @@ export default function SessionScreen({
   onBack: () => void;
   onClose: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<'conversation' | 'terminal'>(
     session.live || session.agent === 'Terminal' ? 'terminal' : 'conversation',
   );
@@ -77,10 +80,19 @@ export default function SessionScreen({
     <KeyboardAvoidingView
       style={s.page}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={0}
+      // AppRoot places this headerless Stack below the top safe-area inset.
+      // The keyboard frame uses window coordinates; this view's layout starts at zero.
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
       <View style={s.header}>
-        <IconButton name="chevron-back" label="Wróć do sesji" onPress={onBack} />
+        <IconButton
+          name="chevron-back"
+          label="Wróć do sesji"
+          onPress={() => {
+            Keyboard.dismiss();
+            onBack();
+          }}
+        />
         <View style={s.headerTitle}>
           <Text numberOfLines={1} style={s.name}>
             {session.name}
@@ -89,7 +101,14 @@ export default function SessionScreen({
             {session.live ? session.host : `${session.agent} · Demo`}
           </Text>
         </View>
-        <IconButton name="close" label="Zakończ sesję" onPress={() => setConfirmClose(true)} />
+        <IconButton
+          name="close"
+          label="Zakończ sesję"
+          onPress={() => {
+            Keyboard.dismiss();
+            setConfirmClose(true);
+          }}
+        />
       </View>
       {!session.live && session.agent !== 'Terminal' && (
         <View style={s.tabs}>
@@ -154,8 +173,10 @@ export default function SessionScreen({
         </View>
       ) : (
         <ScrollView
+          style={s.conversation}
           contentContainerStyle={s.messages}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           showsVerticalScrollIndicator={false}
         >
           <Text style={s.example}>Przykładowa rozmowa</Text>
@@ -217,9 +238,12 @@ export default function SessionScreen({
             onChangeText={setDraft}
             onSubmitEditing={submit}
             returnKeyType="send"
-            blurOnSubmit={false}
+            submitBehavior="submit"
             autoCorrect={false}
             autoCapitalize="none"
+            autoComplete="off"
+            spellCheck={false}
+            keyboardAppearance="dark"
             style={s.draft}
           />
           <Pressable
@@ -264,7 +288,7 @@ export default function SessionScreen({
   );
 }
 const s = StyleSheet.create({
-  page: { flex: 1, backgroundColor: c.background },
+  page: { flex: 1, minHeight: 0, backgroundColor: c.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -298,7 +322,8 @@ const s = StyleSheet.create({
   selectedTab: { backgroundColor: c.elevated },
   tabText: { color: c.muted, fontSize: 13, fontWeight: '500' },
   activeTabText: { color: c.text },
-  terminal: { flex: 1, minHeight: 100, marginHorizontal: 8 },
+  terminal: { flex: 1, minHeight: 0, marginHorizontal: 8 },
+  conversation: { flex: 1, minHeight: 0 },
   messages: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 32, gap: 30 },
   example: { color: c.faint, fontSize: 11, alignSelf: 'center', marginBottom: -4 },
   message: { alignSelf: 'flex-start', width: '100%' },
@@ -316,7 +341,7 @@ const s = StyleSheet.create({
   key: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   keyPressed: { backgroundColor: c.elevated },
   keyText: { color: c.muted, fontFamily: mono, fontSize: 12 },
-  composerArea: { paddingHorizontal: 14, paddingTop: 6, paddingBottom: 12, gap: 9 },
+  composerArea: { flexShrink: 0, paddingHorizontal: 14, paddingTop: 6, paddingBottom: 12, gap: 9 },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',

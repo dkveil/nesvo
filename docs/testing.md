@@ -13,7 +13,7 @@ Sprawdzono osobno silnik demonstracyjny: polecenia, Ctrl+C, backspace, CRLF prze
 | Renderer w Chromium               | Ograniczony smoke test wykonany                                                                                       |
 | Silnik fikcyjnej powłoki          | Smoke test wykonany                                                                                                   |
 | Cała aplikacja webowa + host Rust | PASS na Windows / Chromium, 16.10.2026: polecenie w PowerShell, reconnect, odtworzenie, kolejne polecenie, zamknięcie |
-| Fizyczny iPhone + Expo Go         | SDK 57 przechodzi kontrolę wersji; logowanie CLI potwierdzone, podgląd uruchomiony ponownie. Otwarcie aplikacji na telefonie czeka na test użytkownika |
+| Fizyczny iPhone + Expo Go         | Uruchomienie, rozmowa demo, terminal demo i formularz potwierdzone zrzutami 16.10.2026. Zgłoszone zasłanianie pól przez klawiaturę; poprawka czeka na ponowny test na urządzeniu |
 | Fizyczny Android + Expo Go        | Do wykonania                                                                                                          |
 | iOS development build             | Do wykonania po zbudowaniu                                                                                            |
 | TestFlight                        | Brak potwierdzonego wydania                                                                                           |
@@ -26,6 +26,16 @@ Po zmianie wyglądu ponownie sprawdzono listę, filtrowanie, wyszukiwanie, demo 
 Po zgłoszeniu niezgodności Expo Go dopasowano cały klient do SDK 57, zgodnego z wersją 57.0.9 dostępną w polskim App Store 16.10.2026. Sprawdzono `expo install --check`, Expo Doctor (21/21), TypeScript, ESLint, testy przeglądarkowe i połączenie z prawdziwym hostem Rust. Manifest serwera dla iOS zwraca `sdkVersion: 57.0.0` oraz `runtimeVersion: exposdk:57.0.0`, a wskazany pakiet startowy iOS jest dostępny (HTTP 200). To potwierdza naprawę konfiguracji serwera, ale uruchomienie na telefonie nadal wymaga ponownego testu użytkownika.
 
 Po logowaniu kodem urządzenia potwierdzono konto przez `expo whoami` oraz powiązanie z projektem EAS `bc10f67e-42f9-4878-af56-7eefd9ad89d9` przez `eas project:info`. Zrestartowano Metro; manifest iOS zawiera właściwy identyfikator projektu, właściciela oraz SDK 57, a pakiet startowy zwraca HTTP 200. To sprawdzenie serwera nie potwierdza jeszcze logowania Expo Go ani uruchomienia aplikacji na telefonie.
+
+Po otrzymaniu zrzutów z fizycznego iPhone'a poprawiono kompensację górnego safe area w ekranie sesji, zmniejszanie terminala, lokalne safe area modali oraz natywne przewijanie formularza parowania nad klawiaturą. TypeScript, ESLint, test przeglądarkowy i eksport iOS przeszły. Test przeglądarkowy sprawdza dodatkowo pola i przyciski przy wysokości 300–440 px; **nie symuluje klawiatury iOS ani jej animacji**.
+
+Retest na iPhonie po przeładowaniu:
+
+- [ ] Rozmowa i terminal: pole wpisywania oraz przycisk wysyłania są całkowicie nad klawiaturą, także po jej kilkukrotnym otwarciu.
+- [ ] Terminal: wysokość wyjścia dopasowuje się do klawiatury, a klawisze pomocnicze pozostają osiągalne.
+- [ ] Parowanie: aktywne pole JSON przewija się nad klawiaturę; można przewinąć do przycisków wklejania i łączenia. „Gotowe” chowa klawiaturę.
+- [ ] Nowa sesja: utworzenie sesji i anulowanie zamykają klawiaturę przed przejściem dalej.
+- [ ] Obrót z otwartą klawiaturą oraz duży rozmiar tekstu: brak przyciętych przycisków i konfliktu z wycięciem ekranu.
 
 Powtarzalne testy przeglądarkowe (najpierw uruchom `npm run web` w drugim terminalu):
 
