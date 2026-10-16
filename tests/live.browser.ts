@@ -61,7 +61,7 @@ async function main() {
     await page.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
     await page.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
     await page.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
-    await page.getByText('ONLINE', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByText('Połączono', { exact: true }).filter({ visible: true }).waitFor();
     await page.getByRole('button', { name: 'Nowa sesja', exact: true }).click();
     await page.getByLabel('Nazwa sesji', { exact: true }).fill('Rust live verification');
     await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
@@ -80,11 +80,15 @@ async function main() {
       .waitFor({ timeout: 20000 });
     await page.screenshot({ path: 'artifacts/terminal-live.png' });
     await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
-    await page.getByRole('tab', { name: 'Hosty', exact: true }).click();
+    await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
+    await page.getByRole('tab', { name: 'Komputery', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'Zamknij nawigację', exact: true })
+      .waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: 'Rozłącz', exact: true }).click();
-    await page.getByText('Rozłączono', { exact: true }).waitFor();
+    await page.getByText('Rozłączono', { exact: true }).filter({ visible: true }).waitFor();
     await page.getByRole('button', { name: 'Połącz', exact: true }).click();
-    await page.getByText('ONLINE', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByText('Połączono', { exact: true }).filter({ visible: true }).waitFor();
     await page
       .getByRole('button', { name: 'Otwórz sesję Rust live verification', exact: true })
       .click();

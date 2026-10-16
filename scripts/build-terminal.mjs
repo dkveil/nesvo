@@ -27,14 +27,14 @@ const html = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${scriptHash}'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
 <style>${css}
-html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#101214; color:#d9dedc; }
+html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#0B0B0B; color:#DEDEDE; }
 body { box-sizing:border-box; padding:10px 8px 6px; }
 #terminal { width:100%; height:100%; }
 .xterm { height:100%; }
 .xterm-viewport { overscroll-behavior:contain; }
 .xterm .xterm-helper-textarea { font-size:16px; }
 ::-webkit-scrollbar { width:3px; }
-::-webkit-scrollbar-thumb { background:#414a44; border-radius:3px; }
+::-webkit-scrollbar-thumb { background:#414141; border-radius:3px; }
 </style>
 </head>
 <body><div id="terminal" role="region" aria-label="Terminal sesji"></div><script>${script}</script></body>

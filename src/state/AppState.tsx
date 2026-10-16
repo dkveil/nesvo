@@ -160,9 +160,9 @@ function useAppStateValue() {
         id: `demo-${Date.now()}`,
         name,
         agent: 'Terminal',
-        project: 'pocket-sessions',
+        project: 'workspace',
         host: 'Podgląd',
-        cwd: '~/projects/pocket-sessions',
+        cwd: '~/projects/workspace',
         status: 'ready',
         preview: 'Przykładowy terminal — wpisz help',
       };

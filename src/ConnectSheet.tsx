@@ -13,7 +13,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { parsePairing, type Pairing } from './connection/client';
-import { Button, common, Icon, IconButton } from './components';
+import { Button, IconButton } from './components';
 import { colors as c, mono } from './theme';
 
 export default function ConnectSheet({
@@ -34,9 +34,7 @@ export default function ConnectSheet({
       setScanning(false);
       onConnect(pairing);
     } catch {
-      setError(
-        'Nieprawidłowy kod. Użyj pełnego kodu JSON wygenerowanego przez Pocket Sessions Host.',
-      );
+      setError('Nieprawidłowy kod. Wklej cały kod parowania wygenerowany na komputerze.');
       setScanning(false);
     }
   }
@@ -65,57 +63,71 @@ export default function ConnectSheet({
           style={{ flex: 1 }}
         >
           <View style={s.header}>
-            <Text style={s.brand}>POCKET SESSIONS</Text>
+            <Text accessibilityRole="header" style={s.heading}>
+              Połącz komputer
+            </Text>
             <IconButton name="close" label="Zamknij parowanie" onPress={onClose} />
           </View>
           <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-            <View style={s.symbol}>
-              <Icon name="scan-outline" size={34} color={c.accent} />
-            </View>
-            <Text style={common.heading}>Twój komputer. Twój terminal.</Text>
-            <Text style={common.body}>
-              Połącz telefon z uruchomionym hostem. Sesje i narzędzia pozostają na komputerze.
+            <Text style={s.body}>
+              Zeskanuj kod QR z komputera, aby otworzyć jego terminale na telefonie.
             </Text>
+            <View style={s.steps}>
+              <View style={s.step}>
+                <Text style={s.stepNumber}>1</Text>
+                <View style={s.stepContent}>
+                  <Text style={s.title}>Uruchom host na komputerze</Text>
+                  <Text selectable style={s.code}>
+                    cargo run --manifest-path host/Cargo.toml -- --lan
+                  </Text>
+                </View>
+              </View>
+              <View style={s.step}>
+                <Text style={s.stepNumber}>2</Text>
+                <View style={s.stepContent}>
+                  <Text style={s.title}>Otwórz kod QR</Text>
+                  <Text style={s.body}>
+                    Otwórz plik pairing.svg wskazany w terminalu. Na początek użyj tej samej sieci
+                    Wi-Fi.
+                  </Text>
+                </View>
+              </View>
+            </View>
             {scanning ? (
-              <View style={s.camera}>
-                <CameraView
-                  style={{ flex: 1 }}
-                  barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                  onBarcodeScanned={({ data }) => {
-                    if (scanConsumed.current) return;
-                    scanConsumed.current = true;
-                    connect(data);
-                  }}
-                />
+              <View style={s.scanner}>
+                <View style={s.camera}>
+                  <CameraView
+                    style={{ flex: 1 }}
+                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                    onBarcodeScanned={({ data }) => {
+                      if (scanConsumed.current) return;
+                      scanConsumed.current = true;
+                      connect(data);
+                    }}
+                  />
+                </View>
                 <Button label="Anuluj skanowanie" secondary onPress={() => setScanning(false)} />
               </View>
             ) : (
               <Button label="Zeskanuj kod QR" icon="scan-outline" onPress={scan} />
             )}
-            <View style={common.card}>
-              <Text style={s.title}>1. Uruchom host na komputerze</Text>
-              <Text selectable style={s.code}>
-                cargo run --manifest-path host/Cargo.toml -- --lan
-              </Text>
-              <Text style={common.body}>
-                Na początek użyj tego samego Wi-Fi. Zdalny dostęp przez prywatną sieć VPN działa
-                również poza domem.
-              </Text>
-              <Text style={s.title}>2. Wklej kod parowania</Text>
-              <Text style={common.body}>
-                Kod zawiera klucz dostępu do terminala. Traktuj go jak hasło i nie udostępniaj
-                publicznie.
-              </Text>
+            <View style={s.divider}>
+              <View style={s.line} />
+              <Text style={s.dividerLabel}>lub wklej kod</Text>
+              <View style={s.line} />
+            </View>
+            <View style={s.manual}>
               <TextInput
                 accessibilityLabel="Kod parowania JSON"
                 value={value}
                 onChangeText={setValue}
-                placeholder='{"version":1,"url":"ws://…","key":"…"}'
+                placeholder="Kod parowania z komputera"
                 placeholderTextColor={c.faint}
                 autoCorrect={false}
                 autoCapitalize="none"
                 multiline
-                style={[common.input, { fontFamily: mono, fontSize: 12, minHeight: 110 }]}
+                textAlignVertical="top"
+                style={s.input}
               />
               <Button
                 label="Wklej ze schowka"
@@ -129,21 +141,24 @@ export default function ConnectSheet({
                   }
                 }}
               />
+              {!!error && (
+                <Text accessibilityRole="alert" style={s.error}>
+                  {error}
+                </Text>
+              )}
               <Button
                 label="Połącz z hostem"
                 disabled={!value.trim()}
                 icon="arrow-forward"
                 onPress={() => connect()}
               />
-            </View>
-            {!!error && (
-              <Text accessibilityRole="alert" style={s.error}>
-                {error}
+              <Text style={s.helper}>
+                Kod daje dostęp do Twojego terminala. Zachowaj go dla siebie.
               </Text>
-            )}
+            </View>
             <Text style={s.footnote}>
-              Nie potrzebujesz klucza API do AI. Claude Code i Codex uruchamiasz w terminalu,
-              używając własnego logowania.
+              Wszystko działa na Twoim komputerze. Claude Code i Codex używają Twojego logowania w
+              terminalu.
             </Text>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -157,21 +172,55 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingLeft: 24,
+    paddingRight: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
   },
-  brand: { color: c.faint, fontSize: 11, fontWeight: '700', letterSpacing: 2 },
-  content: { padding: 24, gap: 20, maxWidth: 540, width: '100%', alignSelf: 'center' },
-  symbol: {
+  heading: { color: c.text, fontSize: 21, fontWeight: '600', letterSpacing: -0.4 },
+  content: {
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 36,
+    gap: 24,
+    maxWidth: 540,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  body: { color: c.muted, fontSize: 16, lineHeight: 24 },
+  steps: { gap: 24 },
+  step: { flexDirection: 'row', gap: 16 },
+  stepNumber: { color: c.faint, fontSize: 16, lineHeight: 24, width: 12 },
+  stepContent: { flex: 1, gap: 10 },
+  title: { color: c.text, fontSize: 16, fontWeight: '500', lineHeight: 24 },
+  code: {
+    color: c.muted,
+    fontFamily: mono,
+    fontSize: 12,
+    lineHeight: 20,
     backgroundColor: c.surface,
-    width: 64,
-    height: 64,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
-  title: { color: c.text, fontSize: 15, fontWeight: '600' },
-  code: { color: c.accent, fontFamily: mono, fontSize: 12, lineHeight: 21 },
-  error: { color: c.danger, fontSize: 13, lineHeight: 20 },
-  footnote: { color: c.faint, fontSize: 12, lineHeight: 19 },
-  camera: { height: 320, overflow: 'hidden', borderRadius: 16, gap: 10 },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 2 },
+  dividerLabel: { color: c.faint, fontSize: 14 },
+  line: { height: StyleSheet.hairlineWidth, backgroundColor: c.border, flex: 1 },
+  manual: { gap: 12 },
+  input: {
+    color: c.text,
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.border,
+    borderRadius: 16,
+    padding: 16,
+    fontSize: 16,
+    lineHeight: 24,
+    minHeight: 112,
+  },
+  helper: { color: c.muted, fontSize: 14, lineHeight: 21, marginTop: 2 },
+  error: { color: c.danger, fontSize: 15, lineHeight: 22 },
+  footnote: { color: c.faint, fontSize: 14, lineHeight: 22, paddingTop: 4 },
+  scanner: { gap: 12 },
+  camera: { height: 280, overflow: 'hidden', borderRadius: 20 },
 });

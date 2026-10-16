@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Pocket Sessions",
+    "name": "Sesje",
     "slug": "pocket-sessions",
     "version": "0.1.0",
     "scheme": "pocketsessions",
@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "dev.dkveil.pocketsessions",
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "Pocket Sessions connects to your computer to control your terminal sessions.",
+        "NSLocalNetworkUsageDescription": "Połącz się z komputerem w sieci lokalnej, aby korzystać z jego terminali.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -35,7 +35,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Pocket Sessions to scan the pairing code on your computer.",
+          "cameraPermission": "Pozwól na skanowanie kodu QR, aby połączyć telefon z komputerem.",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -12,7 +13,7 @@ import {
 import { HostClient } from './connection/client';
 import TerminalView, { type TerminalHandle } from './terminal/TerminalView';
 import { createDemoShell, demoConversations, type DemoSession } from './demo';
-import { Button, common, Icon, IconButton, Pill } from './components';
+import { Button, common, Icon, IconButton } from './components';
 import { colors as c, mono } from './theme';
 
 export type Session = DemoSession & { live?: boolean; running?: boolean };
@@ -67,7 +68,7 @@ export default function SessionScreen({
     if (!draft.trim()) return;
     if (tab === 'conversation')
       setNotice(
-        'To podgląd interfejsu. Prompt nie został wysłany do modelu. Połącz host i uruchom claude lub codex w terminalu.',
+        'To podgląd. Wiadomość nie została wysłana. Połącz host i otwórz agenta w terminalu.',
       );
     else input(`${draft}\r`);
     setDraft('');
@@ -80,37 +81,15 @@ export default function SessionScreen({
     >
       <View style={s.header}>
         <IconButton name="chevron-back" label="Wróć do sesji" onPress={onBack} />
-        <View style={{ flex: 1 }}>
+        <View style={s.headerTitle}>
           <Text numberOfLines={1} style={s.name}>
             {session.name}
           </Text>
           <Text numberOfLines={1} style={s.meta}>
-            {session.live ? session.host : `DEMO · ${session.host}`}
+            {session.live ? session.host : `${session.agent} · Demo`}
           </Text>
         </View>
-        <IconButton
-          name="close-circle-outline"
-          label="Zakończ sesję"
-          onPress={() => setConfirmClose(true)}
-        />
-      </View>
-      <View style={s.path}>
-        <Icon name="folder-outline" size={14} />
-        <Text numberOfLines={1} style={s.pathText}>
-          {session.cwd}
-        </Text>
-        <Pill
-          label={
-            session.live
-              ? connected
-                ? session.running === false
-                  ? 'Zakończona'
-                  : 'Połączono'
-                : 'Offline'
-              : 'Demo'
-          }
-          color={session.live && !connected ? c.orange : c.accent}
-        />
+        <IconButton name="close" label="Zakończ sesję" onPress={() => setConfirmClose(true)} />
       </View>
       {!session.live && session.agent !== 'Terminal' && (
         <View style={s.tabs}>
@@ -125,16 +104,27 @@ export default function SessionScreen({
               }}
               style={[s.tab, tab === value && s.selectedTab]}
             >
-              <Icon
-                name={value === 'terminal' ? 'terminal-outline' : 'chatbubble-outline'}
-                color={tab === value ? c.text : c.faint}
-                size={16}
-              />
-              <Text style={[s.tabText, tab === value && { color: c.text }]}>
+              <Text style={[s.tabText, tab === value && s.activeTabText]}>
                 {value === 'terminal' ? 'Terminal' : 'Rozmowa'}
               </Text>
             </Pressable>
           ))}
+        </View>
+      )}
+      {tab === 'terminal' && (
+        <View style={s.path}>
+          <Text numberOfLines={1} style={s.pathText}>
+            {session.cwd}
+          </Text>
+          <Text style={s.status}>
+            {session.live
+              ? connected
+                ? session.running === false
+                  ? 'Zakończona'
+                  : 'Połączono'
+                : 'Offline'
+              : 'Demo'}
+          </Text>
         </View>
       )}
       {tab === 'terminal' ? (
@@ -163,29 +153,25 @@ export default function SessionScreen({
           />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={s.messages}>
-          <Text style={s.example}>PRZYKŁADOWA ROZMOWA · BEZ POŁĄCZENIA Z AI</Text>
-          {(demoConversations[session.id] ?? []).map((message, i) => (
-            <View key={i} style={[s.message, message.role === 'user' && s.userMessage]}>
-              <Text style={s.messageRole}>
-                {message.role === 'user'
-                  ? 'TY'
-                  : message.role === 'system'
-                    ? 'PODGLĄD'
-                    : session.agent.toUpperCase()}
-              </Text>
-              <Text selectable style={s.messageText}>
-                {message.content}
-              </Text>
-            </View>
-          ))}
-          <View style={s.demoHint}>
-            <Icon name="information-circle-outline" size={18} color={c.orange} />
-            <Text style={s.hintText}>
-              Widok rozmowy pokazuje kierunek produktu. Pierwsza wersja obsługuje prawdziwe sesje w
-              zakładce Terminal.
-            </Text>
-          </View>
+        <ScrollView
+          contentContainerStyle={s.messages}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={s.example}>Przykładowa rozmowa</Text>
+          {(demoConversations[session.id] ?? [])
+            .filter((message) => message.role !== 'system')
+            .map((message, i) => (
+              <View
+                key={i}
+                accessibilityLabel={message.role === 'user' ? 'Twoja wiadomość' : session.agent}
+                style={[s.message, message.role === 'user' && s.userMessage]}
+              >
+                <Text selectable style={s.messageText}>
+                  {message.content}
+                </Text>
+              </View>
+            ))}
         </ScrollView>
       )}
       {!!notice && (
@@ -214,142 +200,168 @@ export default function SessionScreen({
               accessibilityRole="button"
               accessibilityLabel={`Klawisz ${key.label}`}
               onPress={() => input(key.value)}
-              style={({ pressed }) => [s.key, pressed && { backgroundColor: c.border }]}
+              style={({ pressed }) => [s.key, pressed && s.keyPressed]}
             >
               <Text style={s.keyText}>{key.label}</Text>
             </Pressable>
           ))}
         </View>
       )}
-      <View style={s.composer}>
-        <TextInput
-          accessibilityLabel={tab === 'terminal' ? 'Polecenie terminala' : 'Przykładowy prompt'}
-          placeholder={tab === 'terminal' ? 'Wpisz polecenie…' : 'Napisz prompt…'}
-          placeholderTextColor={c.faint}
-          value={draft}
-          onChangeText={setDraft}
-          onSubmitEditing={submit}
-          returnKeyType="send"
-          blurOnSubmit={false}
-          autoCorrect={false}
-          autoCapitalize="none"
-          style={s.draft}
-        />
-        <Pressable
-          disabled={!draft.trim()}
-          accessibilityRole="button"
-          accessibilityLabel="Wyślij"
-          onPress={submit}
-          style={[s.send, !draft.trim() && { opacity: 0.35 }]}
-        >
-          <Icon name="arrow-up" size={20} color={c.accentInk} />
-        </Pressable>
-      </View>
-      {confirmClose && (
-        <View style={s.confirm}>
-          <Text style={s.name}>Zakończyć sesję?</Text>
-          <Text style={common.body}>
-            {session.live
-              ? 'Proces terminala zostanie zatrzymany. Użyj strzałki wstecz, aby pozostawić go działającego.'
-              : 'Usuniesz tę przykładową sesję z listy.'}
-          </Text>
-          <Button label="Zakończ sesję" onPress={onClose} />
-          <Button label="Zostaw otwartą" secondary onPress={() => setConfirmClose(false)} />
+      <View style={s.composerArea}>
+        <View style={s.composer}>
+          <TextInput
+            accessibilityLabel={tab === 'terminal' ? 'Polecenie terminala' : 'Przykładowy prompt'}
+            placeholder={tab === 'terminal' ? 'Wpisz polecenie' : 'Wiadomość'}
+            placeholderTextColor={c.muted}
+            value={draft}
+            onChangeText={setDraft}
+            onSubmitEditing={submit}
+            returnKeyType="send"
+            blurOnSubmit={false}
+            autoCorrect={false}
+            autoCapitalize="none"
+            style={s.draft}
+          />
+          <Pressable
+            disabled={!draft.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Wyślij"
+            onPress={submit}
+            style={({ pressed }) => [
+              s.send,
+              !draft.trim() && s.sendDisabled,
+              pressed && s.sendPressed,
+            ]}
+          >
+            <Icon name="arrow-up" size={22} color={c.accentInk} />
+          </Pressable>
         </View>
-      )}
+        {tab === 'conversation' && (
+          <Text style={s.composerHint}>Demo · wiadomości nie są wysyłane do AI</Text>
+        )}
+      </View>
+      <Modal
+        visible={confirmClose}
+        transparent
+        animationType="none"
+        onRequestClose={() => setConfirmClose(false)}
+        accessibilityLabel="Potwierdzenie zakończenia sesji"
+      >
+        <ScrollView contentContainerStyle={s.confirm} keyboardShouldPersistTaps="handled">
+          <View style={s.confirmContent} accessibilityViewIsModal>
+            <Text style={s.name}>Zakończyć sesję?</Text>
+            <Text style={common.body}>
+              {session.live
+                ? 'Proces terminala zostanie zatrzymany. Użyj strzałki wstecz, aby pozostawić go działającego.'
+                : 'Usuniesz tę przykładową sesję z listy.'}
+            </Text>
+            <Button label="Zakończ sesję" onPress={onClose} />
+            <Button label="Zostaw otwartą" secondary onPress={() => setConfirmClose(false)} />
+          </View>
+        </ScrollView>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
 const s = StyleSheet.create({
-  page: { flex: 1 },
+  page: { flex: 1, backgroundColor: c.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    gap: 4,
-    paddingVertical: 8,
+    paddingTop: 6,
+    paddingBottom: 10,
+    gap: 8,
   },
-  name: { color: c.text, fontSize: 17, fontWeight: '600' },
-  meta: { color: c.faint, fontSize: 11, marginTop: 4 },
+  headerTitle: { flex: 1, alignItems: 'center', gap: 3 },
+  name: { color: c.text, fontSize: 16, fontWeight: '600', letterSpacing: -0.2 },
+  meta: { color: c.faint, fontSize: 12 },
   path: {
     paddingHorizontal: 20,
-    paddingBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  pathText: { fontFamily: mono, color: c.muted, fontSize: 11, flex: 1 },
-  tabs: { flexDirection: 'row', marginHorizontal: 20, borderBottomWidth: 1, borderColor: c.border },
-  tab: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    borderBottomWidth: 2,
-    borderColor: 'transparent',
-  },
-  selectedTab: { borderColor: c.accent },
-  tabText: { color: c.faint, fontSize: 13, fontWeight: '600' },
-  terminal: { flex: 1, minHeight: 100, marginHorizontal: 4 },
-  messages: { padding: 20, gap: 22 },
-  example: { fontSize: 9, color: c.faint, letterSpacing: 0.9 },
-  message: { gap: 10 },
-  userMessage: { padding: 16, borderRadius: 14, backgroundColor: c.surface },
-  messageRole: { color: c.accent, fontSize: 10, letterSpacing: 1, fontWeight: '700' },
-  messageText: { color: c.text, fontSize: 15, lineHeight: 24 },
-  demoHint: {
-    flexDirection: 'row',
-    gap: 10,
-    padding: 14,
-    backgroundColor: '#ECA57D0D',
-    borderRadius: 12,
-  },
-  hintText: { flex: 1, color: c.orange, fontSize: 12, lineHeight: 19 },
-  keys: {
-    flexDirection: 'row',
-    paddingHorizontal: 12,
     paddingTop: 8,
-    gap: 5,
-    borderTopWidth: 1,
-    borderColor: c.border,
-  },
-  key: {
-    flex: 1,
-    backgroundColor: c.surface,
-    minHeight: 44,
-    borderRadius: 8,
+    paddingBottom: 14,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 12,
   },
+  pathText: { fontFamily: mono, color: c.faint, fontSize: 11, flex: 1 },
+  status: { color: c.muted, fontSize: 11 },
+  tabs: {
+    flexDirection: 'row',
+    alignSelf: 'center',
+    backgroundColor: c.surface,
+    borderRadius: 24,
+    padding: 3,
+    marginBottom: 4,
+  },
+  tab: { minHeight: 40, paddingHorizontal: 22, justifyContent: 'center', borderRadius: 21 },
+  selectedTab: { backgroundColor: c.elevated },
+  tabText: { color: c.muted, fontSize: 13, fontWeight: '500' },
+  activeTabText: { color: c.text },
+  terminal: { flex: 1, minHeight: 100, marginHorizontal: 8 },
+  messages: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 32, gap: 30 },
+  example: { color: c.faint, fontSize: 11, alignSelf: 'center', marginBottom: -4 },
+  message: { alignSelf: 'flex-start', width: '100%' },
+  userMessage: {
+    alignSelf: 'flex-end',
+    width: 'auto',
+    maxWidth: '88%',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 22,
+    backgroundColor: c.elevated,
+  },
+  messageText: { color: c.text, fontSize: 16, lineHeight: 26 },
+  keys: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 4, gap: 3 },
+  key: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  keyPressed: { backgroundColor: c.elevated },
   keyText: { color: c.muted, fontFamily: mono, fontSize: 12 },
-  composer: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
+  composerArea: { paddingHorizontal: 14, paddingTop: 6, paddingBottom: 12, gap: 9 },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: c.surface,
+    borderRadius: 30,
+    padding: 7,
+    gap: 4,
+  },
   draft: {
     flex: 1,
-    backgroundColor: c.surface,
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: 12,
-    minHeight: 48,
+    minHeight: 46,
     color: c.text,
-    padding: 12,
-    fontSize: 14,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    fontSize: 16,
   },
   send: {
     width: 44,
     height: 44,
     backgroundColor: c.accent,
-    borderRadius: 12,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  notice: { padding: 12, marginHorizontal: 12, borderRadius: 10, backgroundColor: '#ECA57D15' },
-  noticeText: { color: c.orange, fontSize: 12, lineHeight: 19 },
+  sendDisabled: { opacity: 0.35 },
+  sendPressed: { opacity: 0.75 },
+  composerHint: { color: c.faint, fontSize: 10, textAlign: 'center' },
+  notice: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: c.surface,
+  },
+  noticeText: { color: c.muted, fontSize: 13, lineHeight: 20 },
   confirm: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: '#101214F5',
+    flexGrow: 1,
+    backgroundColor: '#0B0B0BF5',
     justifyContent: 'center',
     padding: 28,
+  },
+  confirmContent: {
+    width: '100%',
+    maxWidth: 440,
+    alignSelf: 'center',
     gap: 20,
   },
 });

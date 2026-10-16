@@ -21,6 +21,8 @@ Sprawdzono osobno silnik demonstracyjny: polecenia, Ctrl+C, backspace, CRLF prze
 
 W pierwszej wersji wykonano także TypeScript, ESLint, Expo Doctor (20/20) i eksport kodu klienta dla iOS, Androida oraz web. Eksport nie jest kompilacją podpisanej aplikacji natywnej. Test autoryzacji klienta odrzuca nagrane uzgadnianie połączenia. Test przeciążenia renderera wysyła 8 MiB przy zatrzymanym potwierdzeniu przetworzenia: najwyżej jeden fragment pozostaje w locie, a ograniczony bufor sygnalizuje pominięcie starych danych.
 
+Po zmianie wyglądu ponownie sprawdzono listę, filtrowanie, wyszukiwanie, demo rozmowy, tworzenie sesji, wejście terminala, menu boczne i walidację parowania w Chromium przy szerokości 390 px. Ponowny test prawdziwego hosta Rust na Windowsie przeszedł wykonanie polecenia, rozłączenie i ponowne połączenie, odtworzenie wyjścia oraz zamknięcie. Eksport klienta iOS i Android również przeszedł. Wyniki nie potwierdzają jeszcze zachowania na fizycznym telefonie.
+
 Powtarzalne testy przeglądarkowe (najpierw uruchom `npm run web` w drugim terminalu):
 
 ```powershell

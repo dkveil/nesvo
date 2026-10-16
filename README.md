@@ -1,5 +1,7 @@
 # Pocket Sessions
 
+Nazwa robocza repozytorium. W aplikacji używamy tymczasowo „Sesje”; docelowa nazwa zostanie wybrana później. [Kierunek nowego interfejsu](docs/design.md).
+
 Terminal z Twojego komputera, dostępny z telefonu. Jeden klient Expo / React Native dla iOS, Androida i podglądu webowego oraz mały host w Rust, który uruchamia powłoki na komputerze.
 
 To wczesny prototyp. Ekrany demonstracyjne są oznaczone jako **DEMO**; przykładowe rozmowy nie są odpowiedziami modeli. Pierwszym działającym przepływem jest połączenie z hostem i praca w prawdziwym terminalu.

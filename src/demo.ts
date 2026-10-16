@@ -15,31 +15,31 @@ export const demoSessions: DemoSession[] = [
     id: 'demo-codex',
     name: 'Widok sesji mobilnych',
     agent: 'Codex',
-    project: 'pocket-sessions',
+    project: 'workspace',
     host: 'Komputer demo',
     status: 'attention',
     preview: 'Przykładowe pytanie o układ listy sesji.',
-    cwd: '~/projects/pocket-sessions',
+    cwd: '~/projects/workspace',
   },
   {
     id: 'demo-claude',
     name: 'Przegląd zmian',
     agent: 'Claude',
-    project: 'pocket-sessions',
+    project: 'workspace',
     host: 'Komputer demo',
     status: 'done',
     preview: 'Przykładowe podsumowanie jest gotowe.',
-    cwd: '~/projects/pocket-sessions',
+    cwd: '~/projects/workspace',
   },
   {
     id: 'demo-terminal',
     name: 'Terminal projektu',
     agent: 'Terminal',
-    project: 'pocket-sessions',
+    project: 'workspace',
     host: 'Komputer demo',
     status: 'ready',
     preview: 'Wypróbuj ls, pwd lub help w fikcyjnej powłoce.',
-    cwd: '~/projects/pocket-sessions',
+    cwd: '~/projects/workspace',
   },
 ];
 
@@ -50,22 +50,37 @@ export type DemoMessage = {
 
 export const demoConversations: Record<string, DemoMessage[]> = {
   'demo-codex': [
-    { role: 'system', content: 'Fikcyjna rozmowa pokazująca interfejs. Żaden agent nie pracuje w tle.' },
+    {
+      role: 'system',
+      content: 'Fikcyjna rozmowa pokazująca interfejs. Żaden agent nie pracuje w tle.',
+    },
     { role: 'user', content: 'Przygotuj czytelną listę sesji do obsługi jedną ręką.' },
-    { role: 'assistant', content: 'Na tym przykładowym ekranie pytania wymagające Twojej uwagi trafiają na początek. Czy zakończone zadania mają pozostać na liście?' },
+    {
+      role: 'assistant',
+      content:
+        'Na tym przykładowym ekranie pytania wymagające Twojej uwagi trafiają na początek. Czy zakończone zadania mają pozostać na liście?',
+    },
   ],
   'demo-claude': [
     { role: 'system', content: 'Przykładowa rozmowa. Nie wykonano poleceń ani zmian w plikach.' },
     { role: 'user', content: 'Podsumuj zmiany w ekranie terminala.' },
-    { role: 'assistant', content: 'Przykładowe podsumowanie: terminal ma pasek klawiszy specjalnych, a polecenia można wygodnie wpisać w większym polu. Następny krok to test klawiatury na telefonie.' },
+    {
+      role: 'assistant',
+      content:
+        'Przykładowe podsumowanie: terminal ma pasek klawiszy specjalnych, a polecenia można wygodnie wpisać w większym polu. Następny krok to test klawiatury na telefonie.',
+    },
   ],
   'demo-terminal': [
-    { role: 'system', content: 'Fikcyjny terminal działa tylko w pamięci aplikacji. Wpisz help, aby zobaczyć dostępne polecenia.' },
+    {
+      role: 'system',
+      content:
+        'Fikcyjny terminal działa tylko w pamięci aplikacji. Wpisz help, aby zobaczyć dostępne polecenia.',
+    },
   ],
 };
 
-const DEMO_PATH = '/home/demo/projects/pocket-sessions';
-const PROMPT = '\x1b[38;2;177;229;139mdemo\x1b[0m \x1b[90mpocket-sessions\x1b[0m $ ';
+const DEMO_PATH = '/home/demo/projects/workspace';
+const PROMPT = '\x1b[38;2;214;214;214mdemo\x1b[0m \x1b[90mworkspace\x1b[0m $ ';
 const HELP = [
   'Dostępne polecenia demonstracyjne:',
   '  ls          przykładowe pliki',
@@ -99,7 +114,9 @@ export function createDemoShell(write: (text: string) => void, onClear?: () => v
     if (command === 'help') {
       write(`${HELP}\r\n`);
     } else if (command === 'ls' || command === 'ls -la' || command === 'ls -l') {
-      write('\x1b[38;2;177;229;139msrc/     assets/     docs/\x1b[0m\r\nREADME.md     package.json\r\n');
+      write(
+        '\x1b[38;2;214;214;214msrc/     assets/     docs/\x1b[0m\r\nREADME.md     package.json\r\n',
+      );
     } else if (command === 'pwd') {
       write(`${DEMO_PATH}\r\n`);
     } else if (command === 'echo' || command.startsWith('echo ')) {
@@ -108,7 +125,9 @@ export function createDemoShell(write: (text: string) => void, onClear?: () => v
       if (onClear) onClear();
       else write('\x1b[2J\x1b[3J\x1b[H');
     } else if (command === 'git status') {
-      write('Przykładowy stan repozytorium (DEMO):\r\nNa gałęzi main\r\nBrak zmian w katalogu roboczym.\r\n');
+      write(
+        'Przykładowy stan repozytorium (DEMO):\r\nNa gałęzi main\r\nBrak zmian w katalogu roboczym.\r\n',
+      );
     } else {
       write('To polecenie nie jest dostępne w demo. Wpisz help.\r\n');
     }
@@ -118,7 +137,7 @@ export function createDemoShell(write: (text: string) => void, onClear?: () => v
   function start() {
     if (started) return;
     started = true;
-    write('\x1b[38;2;177;229;139mDEMO · fikcyjny terminal\x1b[0m\r\n');
+    write('\x1b[38;2;214;214;214mDEMO · fikcyjny terminal\x1b[0m\r\n');
     write('Brak połączenia z komputerem lub AI.\r\nWpisz help, aby wypróbować polecenia.\r\n\r\n');
     prompt();
   }

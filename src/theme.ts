@@ -1,17 +1,17 @@
 import { Platform } from 'react-native';
 
 export const colors = {
-  background: '#101214',
-  surface: '#1A1D20',
-  elevated: '#23272B',
-  border: '#2B3034',
-  text: '#F3F4EF',
-  muted: '#9DA5A9',
-  faint: '#697378',
-  accent: '#B9E69A',
-  accentInk: '#17240E',
-  orange: '#ECA57D',
-  blue: '#9DBBDB',
-  danger: '#F09C96',
+  background: '#0B0B0B',
+  surface: '#191919',
+  elevated: '#242424',
+  border: '#303030',
+  text: '#F4F4F4',
+  muted: '#A1A1A1',
+  faint: '#8A8A8A',
+  accent: '#F4F4F4',
+  accentInk: '#111111',
+  orange: '#C6AE8B',
+  blue: '#A6B4C4',
+  danger: '#E0A4A4',
 };
 export const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
