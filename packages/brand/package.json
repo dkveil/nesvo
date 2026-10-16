@@ -1,0 +1,10 @@
+{
+  "name": "@nesvo/brand",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "exports": {
+    "./tokens.json": "./tokens.json",
+    "./logo.json": "./logo.json"
+  }
+}

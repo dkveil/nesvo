@@ -38,6 +38,11 @@ test('EAS includes workspace dependency locks, mobile configuration and terminal
     'apps/mobile/tsconfig.json',
     'apps/mobile/metro.config.js',
     'scripts/build-terminal.mjs',
+    'packages/brand/package.json',
+    'packages/brand/tokens.json',
+    'packages/brand/logo.json',
+    'packages/brand/assets/nesvo-logo.svg',
+    'packages/brand/assets/nesvo-logo-animated.svg',
   ])
     assertIncluded(path);
 });

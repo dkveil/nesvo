@@ -1,3 +1,4 @@
+import { colors } from '@nesvo/brand/tokens.json';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 
@@ -28,12 +29,12 @@ const terminal = new Terminal({
   screenReaderMode: true,
   overviewRuler: { width: 0 },
   theme: {
-    background: '#0D100E',
-    foreground: '#E7EEE9',
-    cursor: '#E7EEE9',
-    cursorAccent: '#0D100E',
-    selectionBackground: '#3B4C40',
-    selectionInactiveBackground: '#29372E',
+    background: colors.background,
+    foreground: colors.text,
+    cursor: colors.accent,
+    cursorAccent: colors.background,
+    selectionBackground: colors.selection,
+    selectionInactiveBackground: colors.elevated,
     black: '#242424',
     red: '#f18181',
     green: '#88B089',
@@ -41,7 +42,7 @@ const terminal = new Terminal({
     blue: '#8aafe2',
     magenta: '#c5a1dc',
     cyan: '#8bc9cb',
-    white: '#E7EEE9',
+    white: colors.text,
     brightBlack: '#737373',
     brightRed: '#ff9c96',
     brightGreen: '#A4C6A5',
@@ -49,7 +50,7 @@ const terminal = new Terminal({
     brightBlue: '#a8c7ee',
     brightMagenta: '#dac0ed',
     brightCyan: '#abe0dd',
-    brightWhite: '#E7EEE9',
+    brightWhite: colors.text,
   },
   // Programs can emit OSC 8 links. Links stay text; a terminal must never navigate.
   linkHandler: { activate() {} },

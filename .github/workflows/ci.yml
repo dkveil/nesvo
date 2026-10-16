@@ -20,6 +20,7 @@ jobs:
       - run: npm run test:client
       - run: npm run test:architecture
       - run: npm run test:packaging
+      - run: npm run test:brand
       - run: npm run export
   host:
     strategy:

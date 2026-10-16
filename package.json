@@ -5,7 +5,8 @@
   "license": "MIT",
   "description": "Shared terminal sessions across desktop and mobile",
   "workspaces": [
-    "apps/mobile"
+    "apps/mobile",
+    "packages/brand"
   ],
   "scripts": {
     "start": "npm run start --workspace @nesvo/mobile",
@@ -31,6 +32,7 @@
     "tui:test": "cargo test --manifest-path apps/tui/Cargo.toml --locked",
     "test:architecture": "node --test tests/architecture.test.mjs",
     "test:packaging": "node --test tests/packaging.test.mjs",
+    "test:brand": "node --test tests/brand.test.mjs",
     "dependencies:check": "npm run dependencies:check --workspace @nesvo/mobile",
     "export": "npm run export --workspace @nesvo/mobile"
   },

@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const { colors } = JSON.parse(await readFile(resolve(root, 'packages/brand/tokens.json'), 'utf8'));
 const require = createRequire(resolve(root, 'apps/mobile/package.json'));
 const result = await build({
   entryPoints: [resolve(root, 'apps/mobile/src/shared/terminal/browser.ts')],
@@ -27,14 +28,14 @@ const html = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${scriptHash}'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
 <style>${css}
-html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#0D100E; color:#E7EEE9; }
+html, body { width:100%; height:100%; margin:0; overflow:hidden; background:${colors.background}; color:${colors.text}; }
 body { box-sizing:border-box; padding:10px 8px 6px; }
 #terminal { width:100%; height:100%; }
 .xterm { height:100%; }
-.xterm-viewport { overscroll-behavior:contain; background-color:#0D100E !important; }
+.xterm-viewport { overscroll-behavior:contain; background-color:${colors.background} !important; }
 .xterm .xterm-helper-textarea { font-size:16px; }
 ::-webkit-scrollbar { width:3px; }
-::-webkit-scrollbar-thumb { background:#3B4C40; border-radius:3px; }
+::-webkit-scrollbar-thumb { background:${colors.border}; border-radius:3px; }
 </style>
 </head>
 <body><div id="terminal" role="region" aria-label="Terminal sesji"></div><script>${script}</script></body>
