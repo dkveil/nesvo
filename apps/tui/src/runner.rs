@@ -219,7 +219,7 @@ fn logo_frame_for(app: &App, area: Rect, animate: bool, elapsed: Duration) -> us
     }
     let geometry = ui::geometry(area, app);
     let visible = (0..if app.split { 2 } else { 1 }).any(|index| {
-        brand::area(ui::pane_content(geometry.panes[index], app.fullscreen)).is_some()
+        brand::area(ui::pane_content(geometry.panes[index], ui::immersive(app))).is_some()
     });
     if visible {
         brand::frame_index(elapsed)
@@ -268,7 +268,7 @@ fn resize_commands(app: &App, area: Rect, requested: &mut RequestedSizes) -> Vec
         let Some(lease) = app.leases.get(id) else {
             continue;
         };
-        let inner = ui::pane_content(geometry.panes[index], app.fullscreen);
+        let inner = ui::pane_content(geometry.panes[index], ui::immersive(app));
         let cols = inner.width.clamp(10, 300);
         let rows = inner.height.clamp(2, 150);
         let wanted = (lease.clone(), cols, rows);

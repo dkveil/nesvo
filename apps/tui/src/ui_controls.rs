@@ -3,7 +3,7 @@ use crate::{
     brand,
     launch::{Field, Program},
     model::{App, Dialog},
-    theme::{BACKGROUND, FAINT, MUTED, SURFACE, TEXT},
+    theme::{BACKGROUND, DANGER, FAINT, MUTED, TEXT},
     ui,
 };
 use ratatui::{
@@ -35,6 +35,7 @@ pub enum Action {
     Program(Program),
     MoveChoice(usize),
     OpenRow(usize),
+    FocusTab(usize),
     FocusPane(usize),
 }
 
@@ -46,10 +47,22 @@ pub struct Control {
 }
 
 pub fn dialog_body(inner: Rect) -> Rect {
-    Rect {
-        height: inner.height.saturating_sub(2),
-        ..inner
-    }
+    Rect::new(
+        inner.x.saturating_add(2.min(inner.width)),
+        inner.y.saturating_add(2.min(inner.height)),
+        inner.width.saturating_sub(4),
+        inner.height.saturating_sub(4),
+    )
+}
+
+pub fn dialog_actions(inner: Rect) -> Rect {
+    let width = inner.width.saturating_sub(4).min(26);
+    Rect::new(
+        inner.right().saturating_sub(width + 2),
+        inner.bottom().saturating_sub(1),
+        width,
+        u16::from(inner.height > 0),
+    )
 }
 
 pub fn move_offset(selected: usize, height: u16) -> usize {
@@ -69,14 +82,17 @@ pub fn menu_area(area: Rect) -> Rect {
 
 pub fn menu_action_area(area: Rect, index: usize) -> Rect {
     let menu = menu_area(area);
-    let offset = if brand::area(menu).is_some() { 10 } else { 2 };
-    let line = row(menu, offset + index as u16 * 2);
-    let inset = line.width.saturating_sub(32) / 2;
+    let offset = if brand::area(menu).is_some() { 9 } else { 1 };
+    let y = menu.y.saturating_add(offset + index as u16 * 3);
+    if y >= menu.bottom() {
+        return Rect::default();
+    }
+    let width = menu.width.min(34);
     Rect::new(
-        line.x + inset,
-        line.y,
-        line.width.saturating_sub(inset * 2),
-        line.height,
+        menu.x + menu.width.saturating_sub(width) / 2,
+        y,
+        width,
+        3.min(menu.bottom() - y),
     )
 }
 
@@ -116,15 +132,13 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let mut output = Vec::new();
     if let Some(dialog) = &app.dialog {
         if matches!(dialog, Dialog::Menu) {
-            for (index, label) in ["Enter workspace", "Pair mobile", "Settings"]
-                .into_iter()
-                .enumerate()
-            {
-                buttons(
-                    menu_action_area(area, index),
-                    [(label, Action::MenuChoice(index), true)],
-                    &mut output,
-                );
+            for index in 0..3 {
+                output.push(Control {
+                    area: menu_action_area(area, index),
+                    label: None,
+                    action: Action::MenuChoice(index),
+                    enabled: true,
+                });
             }
             return output;
         }
@@ -135,6 +149,16 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         let body = dialog_body(inner);
         match dialog {
             Dialog::Menu => unreachable!("Menu has its own full-screen geometry"),
+            Dialog::ExitConfirm { .. } => {
+                buttons(
+                    dialog_actions(inner),
+                    [
+                        ("Leave nesvo", Action::Submit, true),
+                        ("Stay", Action::Cancel, true),
+                    ],
+                    &mut output,
+                );
+            }
             Dialog::Settings { .. } => {
                 for index in 0..2 {
                     output.push(Control {
@@ -145,7 +169,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                     });
                 }
                 buttons(
-                    row(inner, inner.height.saturating_sub(1)),
+                    dialog_actions(inner),
                     [("Close", Action::Cancel, true)],
                     &mut output,
                 );
@@ -172,7 +196,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                     });
                 }
                 buttons(
-                    row(inner, inner.height.saturating_sub(1)),
+                    dialog_actions(inner),
                     [
                         ("Create", Action::Submit, app.connected),
                         ("Cancel", Action::Cancel, true),
@@ -198,7 +222,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                     });
                 }
                 buttons(
-                    row(inner, inner.height.saturating_sub(1)),
+                    dialog_actions(inner),
                     [
                         (
                             "Create",
@@ -232,7 +256,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                     });
                 }
                 buttons(
-                    row(inner, inner.height.saturating_sub(1)),
+                    dialog_actions(inner),
                     [
                         ("Move", Action::Submit, app.connected),
                         ("Cancel", Action::Cancel, true),
@@ -241,13 +265,17 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                 );
             }
             Dialog::Text { .. } | Dialog::Confirm { .. } => {
-                let label = if matches!(dialog, Dialog::Confirm { .. }) {
-                    "Confirm"
-                } else {
-                    "Save"
+                let label = match dialog {
+                    Dialog::Confirm { command, .. }
+                        if matches!(command["type"].as_str(), Some("close" | "deleteGroup")) =>
+                    {
+                        "Delete"
+                    }
+                    Dialog::Confirm { .. } => "Take control",
+                    _ => "Save",
                 };
                 buttons(
-                    row(inner, inner.height.saturating_sub(1)),
+                    dialog_actions(inner),
                     [
                         (label, Action::Submit, app.connected),
                         ("Cancel", Action::Cancel, true),
@@ -257,7 +285,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             }
             Dialog::Help | Dialog::PairPhone => {
                 buttons(
-                    row(inner, inner.height.saturating_sub(1)),
+                    dialog_actions(inner),
                     [("Close", Action::Cancel, true)],
                     &mut output,
                 );
@@ -276,7 +304,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             enabled: true,
         });
     }
-    if app.fullscreen {
+    if ui::immersive(app) {
         return output;
     }
     let (_, add) = ui::tab_areas(app, &geometry);
@@ -292,7 +320,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         if app.panes[index].is_some() {
             continue;
         }
-        let content = ui::pane_content(geometry.panes[index], app.fullscreen);
+        let content = ui::pane_content(geometry.panes[index], ui::immersive(app));
         let rows = home_action_rows(content);
         for (offset, label, action, enabled) in [
             (rows[0], "n  New session", 'n', app.connected),
@@ -332,7 +360,7 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
         return None;
     }
     let geometry = ui::geometry(area, app);
-    if app.fullscreen {
+    if ui::immersive(app) {
         return None;
     }
     if let Some(index) = ui::sidebar_hit(app, geometry.tree, column, row) {
@@ -342,8 +370,7 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
         let (tabs, _) = ui::tab_areas(app, &geometry);
         return tabs
             .iter()
-            .position(|tab| tab.contains(point))
-            .map(Action::FocusPane);
+            .find_map(|(index, tab)| tab.contains(point).then_some(Action::FocusTab(*index)));
     }
     (0..if app.split { 2 } else { 1 })
         .find(|index| geometry.panes[*index].contains(point))
@@ -353,12 +380,27 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
 pub fn render(frame: &mut Frame, app: &App) {
     for control in controls(app, frame.area()) {
         if let Some(label) = control.label {
+            let in_dialog = app.dialog.is_some() && !matches!(app.dialog, Some(Dialog::Menu));
+            let primary = in_dialog && matches!(control.action, Action::Submit);
+            let destructive = matches!(
+                &app.dialog,
+                Some(Dialog::Confirm { command, .. })
+                    if matches!(command["type"].as_str(), Some("close" | "deleteGroup"))
+            );
             frame.render_widget(
                 Paragraph::new(label).style(
                     Style::default()
-                        .bg(if matches!(app.dialog, Some(Dialog::Menu)) || app.dialog.is_none() { BACKGROUND } else { SURFACE })
+                        .bg(if primary && control.enabled {
+                            if destructive { DANGER } else { app.theme.accent() }
+                        } else {
+                            BACKGROUND
+                        })
                         .fg(if !control.enabled {
                             FAINT
+                        } else if primary {
+                            BACKGROUND
+                        } else if in_dialog {
+                            TEXT
                         } else if matches!(control.action, Action::MenuChoice(index) if index == app.menu_selected)
                             || matches!(control.action, Action::Submit | Action::Navigation('n') | Action::PaneNavigation { key: 'n', .. }) {
                             app.theme.accent()
@@ -382,17 +424,22 @@ mod tests {
     fn tabs_and_new_session_control_are_clickable() {
         let mut app = App::new(1);
         app.connected = true;
-        app.split = true;
+        app.event(serde_json::json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"first","name":"First","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"second","name":"Second","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        app.open_session("second");
         let area = Rect::new(0, 0, 120, 30);
         let layout = ui::geometry(area, &app);
         let (tabs, add) = ui::tab_areas(&app, &layout);
+        assert_eq!(tabs.len(), 2);
         assert_eq!(
-            hit_test(&app, area, tabs[0].x, tabs[0].y),
-            Some(Action::FocusPane(0))
+            hit_test(&app, area, tabs[0].1.x, tabs[0].1.y),
+            Some(Action::FocusTab(0))
         );
         assert_eq!(
-            hit_test(&app, area, tabs[1].x, tabs[1].y),
-            Some(Action::FocusPane(1))
+            hit_test(&app, area, tabs[1].1.x, tabs[1].1.y),
+            Some(Action::FocusTab(1))
         );
         assert_eq!(
             hit_test(&app, area, add.x, add.y),
@@ -405,10 +452,7 @@ mod tests {
         let app = App::new(1);
         let area = Rect::new(0, 0, 100, 32);
         let tree = ui::tree_content(ui::geometry(area, &app).tree);
-        assert_eq!(
-            hit_test(&app, area, tree.x, tree.y + 1),
-            Some(Action::OpenRow(0))
-        );
+        assert_eq!(hit_test(&app, area, tree.x, tree.y), None);
         assert_eq!(hit_test(&app, area, tree.x, tree.y + 3), None);
     }
 

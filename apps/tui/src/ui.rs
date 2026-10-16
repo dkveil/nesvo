@@ -23,26 +23,47 @@ pub struct Geometry {
     pub footer: Rect,
 }
 
-pub fn tab_areas(app: &App, layout: &Geometry) -> ([Rect; 2], Rect) {
-    let mut tabs = [Rect::default(), Rect::default()];
+pub fn immersive(app: &App) -> bool {
+    app.fullscreen && app.mode == Mode::Input && app.dialog.is_none()
+}
+
+pub fn tab_areas(app: &App, layout: &Geometry) -> (Vec<(usize, Rect)>, Rect) {
+    let mut tabs = Vec::new();
     let mut x = layout.tree.right();
-    for (index, tab) in tabs
-        .iter_mut()
-        .enumerate()
-        .take(if app.split { 2 } else { 1 })
-    {
-        let name = app.panes[index]
-            .as_deref()
-            .and_then(|id| app.session(id))
-            .map_or_else(
-                || "new session".to_owned(),
-                |session| tab_label(app, session),
-            );
-        let width = (Line::from(name.as_str()).width() as u16 + 2)
-            .min(20)
-            .min(layout.header.right().saturating_sub(x));
-        *tab = Rect::new(x, layout.header.y, width, layout.header.height.min(1));
-        x = x.saturating_add(width);
+    let available = layout.header.right().saturating_sub(x).saturating_sub(3);
+    let widths: Vec<u16> = app
+        .tabs
+        .iter()
+        .map(|id| {
+            app.session(id).map_or(3, |session| {
+                (Line::from(tab_label(app, session).as_str()).width() as u16 + 2).min(20)
+            })
+        })
+        .collect();
+    let active = app
+        .active_id()
+        .and_then(|id| app.tabs.iter().position(|tab| tab == id));
+    let mut start = 0;
+    let mut used = 0u16;
+    if let Some(active) = active {
+        for index in 0..=active {
+            used = used.saturating_add(widths[index]);
+            while used > available && start < index {
+                used = used.saturating_sub(widths[start]);
+                start += 1;
+            }
+        }
+    }
+    for (index, width) in widths.into_iter().enumerate().skip(start) {
+        let visible = width.min(available.saturating_sub(x.saturating_sub(layout.tree.right())));
+        if visible == 0 {
+            break;
+        }
+        tabs.push((
+            index,
+            Rect::new(x, layout.header.y, visible, layout.header.height.min(1)),
+        ));
+        x = x.saturating_add(visible);
     }
     let add = Rect::new(
         x,
@@ -54,20 +75,21 @@ pub fn tab_areas(app: &App, layout: &Geometry) -> ([Rect; 2], Rect) {
 }
 
 pub fn geometry(area: Rect, app: &App) -> Geometry {
+    let immersive = immersive(app);
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(if app.fullscreen { 0 } else { 1 }),
+        Constraint::Length(if immersive { 0 } else { 1 }),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
     .areas(area);
-    let sidebar = if app.fullscreen || area.width < 65 {
+    let sidebar = if immersive || area.width < 65 {
         0
     } else {
         27.min(area.width / 3)
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
-    let panes = if app.fullscreen {
+    let panes = if immersive {
         let mut panes = [Rect::default(), Rect::default()];
         panes[app.focused] = content;
         panes
@@ -90,67 +112,54 @@ pub fn pane_content(area: Rect, fullscreen: bool) -> Rect {
     if fullscreen {
         return area;
     }
-    // Reserve a quiet title and ownership row, with one cell of horizontal
-    // breathing room. Controller resize and mouse geometry use this same area.
-    Block::bordered().inner(area)
+    // The tab is the title. Keep only side borders and the ownership row;
+    // controller resize and mouse geometry use this same content rectangle.
+    Block::default()
+        .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+        .inner(area)
 }
 
 pub fn tree_content(area: Rect) -> Rect {
     Block::default().borders(Borders::RIGHT).inner(area)
 }
 
-fn sidebar_sections(area: Rect, app: &App) -> (Rect, Rect) {
-    let desired =
-        5u16.saturating_add(u16::try_from(app.groups.len().saturating_mul(2)).unwrap_or(u16::MAX));
-    let spaces_height = desired
-        .min((area.height / 2).max(1))
-        .min(area.height.saturating_sub(1).max(1));
-    (
-        Rect::new(area.x, area.y, area.width, spaces_height.min(area.height)),
-        Rect::new(
-            area.x,
-            area.y.saturating_add(spaces_height.min(area.height)),
-            area.width,
-            area.height.saturating_sub(spaces_height),
-        ),
-    )
+fn row_height(row: &crate::model::TreeRow) -> u16 {
+    if matches!(row.kind, RowKind::Session(_)) {
+        2
+    } else {
+        1
+    }
 }
 
-fn sidebar_entries(app: &App, section: Rect, spaces: bool) -> Vec<(Rect, usize)> {
+fn sidebar_entries(app: &App, area: Rect) -> Vec<(Rect, usize)> {
     let rows = app.tree();
-    let indices: Vec<_> = rows
-        .iter()
-        .enumerate()
-        .filter_map(|(index, row)| {
-            let is_space = !matches!(row.kind, RowKind::Session(_));
-            (is_space == spaces).then_some(index)
-        })
-        .collect();
-    let capacity = usize::from(section.height.saturating_sub(1) / 2);
-    if capacity == 0 {
+    if area.height == 0 || rows.is_empty() {
         return Vec::new();
     }
-    let selected_position = indices.iter().position(|index| *index == app.selected);
-    let offset = selected_position
-        .map(|position| position.saturating_sub(capacity.saturating_sub(1)))
-        .unwrap_or(0);
-    indices
-        .into_iter()
-        .skip(offset)
-        .take(capacity)
+    let mut start = 0;
+    let mut used = 0u16;
+    for (index, row) in rows
+        .iter()
         .enumerate()
-        .map(|(position, index)| {
-            (
-                Rect::new(
-                    section.x,
-                    section.y + 1 + position as u16 * 2,
-                    section.width,
-                    2,
-                ),
-                index,
-            )
-        })
-        .collect()
+        .take(app.selected.min(rows.len() - 1) + 1)
+    {
+        used = used.saturating_add(row_height(row));
+        while used > area.height && start < index {
+            used = used.saturating_sub(row_height(&rows[start]));
+            start += 1;
+        }
+    }
+    let mut y = area.y;
+    let mut entries = Vec::new();
+    for (index, row) in rows.iter().enumerate().skip(start) {
+        if y >= area.bottom() {
+            break;
+        }
+        let height = row_height(row).min(area.bottom() - y);
+        entries.push((Rect::new(area.x, y, area.width, height), index));
+        y += height;
+    }
+    entries
 }
 
 pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize> {
@@ -158,11 +167,13 @@ pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize
     if !content.contains((column, row).into()) {
         return None;
     }
-    let (spaces, agents) = sidebar_sections(content, app);
-    sidebar_entries(app, spaces, true)
+    let rows = app.tree();
+    sidebar_entries(app, content)
         .into_iter()
-        .chain(sidebar_entries(app, agents, false))
-        .find_map(|(area, index)| area.contains((column, row).into()).then_some(index))
+        .find_map(|(area, index)| {
+            (area.contains((column, row).into()) && !matches!(rows[index].kind, RowKind::Root))
+                .then_some(index)
+        })
 }
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
@@ -193,7 +204,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         ui_controls::render(frame, app);
         return;
     }
-    if matches!(app.dialog, Some(Dialog::Settings { .. })) {
+    if matches!(app.dialog, Some(Dialog::ExitConfirm { from_menu: true })) {
         render_menu(frame, app, logo_frame);
         if let Some(dialog) = &app.dialog {
             render_dialog(frame, app, dialog);
@@ -207,7 +218,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     } else {
         "offline"
     };
-    if !app.fullscreen {
+    if !immersive(app) {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
@@ -231,27 +242,28 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
             tab_strip,
         );
         let (tabs, add) = tab_areas(app, &layout);
-        for (index, tab) in tabs.into_iter().enumerate() {
+        for (index, tab) in tabs {
             if tab.width == 0 {
                 continue;
             }
-            let name = app.panes[index]
-                .as_deref()
-                .and_then(|id| app.session(id))
-                .map_or_else(
-                    || "new session".to_owned(),
-                    |session| tab_label(app, session),
-                );
+            let name = app
+                .session(&app.tabs[index])
+                .map_or_else(|| "session".to_owned(), |session| tab_label(app, session));
             let label = format!(
                 " {} ",
                 truncate_cells(&name, usize::from(tab.width.saturating_sub(2)))
             );
-            let active = index == app.focused && app.mode == Mode::Input;
+            let active = app.active_id() == Some(app.tabs[index].as_str());
             frame.render_widget(
-                Paragraph::new(label).style(if active {
+                Paragraph::new(label).style(if active && app.mode == Mode::Input {
                     Style::default()
                         .fg(BACKGROUND)
                         .bg(app.theme.accent())
+                        .add_modifier(Modifier::BOLD)
+                } else if active {
+                    Style::default()
+                        .fg(app.theme.accent())
+                        .bg(app.theme.selection())
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(MUTED).bg(SURFACE)
@@ -328,151 +340,120 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
     let content = tree_content(area);
-    let (spaces, agents) = sidebar_sections(content, app);
     let rows = app.tree();
-    if spaces.height > 0 {
-        let location = app
-            .space_filter
-            .as_deref()
-            .and_then(|id| app.groups.iter().find(|group| group.id == id))
-            .map_or("all", |group| group.name.as_str());
+    for (entry, index) in sidebar_entries(app, content) {
+        let row = &rows[index];
+        let selected = index == app.selected;
+        let background = if selected && matches!(row.kind, RowKind::Session(_)) {
+            app.theme.selection()
+        } else if matches!(row.kind, RowKind::Root | RowKind::Group(_)) {
+            SURFACE
+        } else {
+            BACKGROUND
+        };
         frame.render_widget(
-            Paragraph::new(format!(
-                " spaces / {}",
-                truncate_cells(location, usize::from(spaces.width.saturating_sub(10)))
-            ))
-            .style(Style::default().fg(MUTED).bg(SURFACE)),
-            Rect::new(spaces.x, spaces.y, spaces.width, 1),
+            Block::default().style(Style::default().bg(background)),
+            entry,
         );
-    }
-    if agents.height > 0 {
-        frame.render_widget(
-            Paragraph::new(format!(
-                " agents  {:>2}",
-                rows.iter()
-                    .filter(|row| matches!(row.kind, RowKind::Session(_)))
-                    .count()
-            ))
-            .style(Style::default().fg(MUTED).bg(SURFACE)),
-            Rect::new(agents.x, agents.y, agents.width, 1),
-        );
-    }
-    for (section, is_space) in [(spaces, true), (agents, false)] {
-        for (entry, index) in sidebar_entries(app, section, is_space) {
-            let row = &rows[index];
-            let selected = index == app.selected;
-            let active = matches!(&row.kind, RowKind::Session(id) if app.active_id() == Some(id));
-            let background = if active {
-                app.theme.selection()
-            } else {
-                BACKGROUND
-            };
-            frame.render_widget(
-                Block::default().style(Style::default().bg(background)),
-                entry,
-            );
-            let indent = " ".repeat(row.depth.saturating_sub(1).min(5));
-            let available = usize::from(entry.width).saturating_sub(4 + indent.len());
-            let (marker, marker_color, detail, detail_color) = match &row.kind {
-                RowKind::Root => (
-                    "◇ ",
-                    app.theme.accent(),
-                    format!("{} sessions", app.sessions.len()),
-                    MUTED,
-                ),
-                RowKind::Group(id) => {
-                    let count = app
-                        .sessions
-                        .iter()
-                        .filter(|s| s.group_id.as_deref() == Some(id))
-                        .count();
-                    let status = app.group_attention(id);
-                    let location = app
-                        .sessions
-                        .iter()
-                        .find(|session| session.group_id.as_deref() == Some(id))
-                        .map(|session| session.cwd.as_str());
-                    (
+        let indent = "  ".repeat(row.depth.min(4));
+        match &row.kind {
+            RowKind::Root | RowKind::Group(_) => {
+                let (marker, count, attention) = match &row.kind {
+                    RowKind::Root => (" ", app.sessions.len(), None),
+                    RowKind::Group(id) => (
                         if app.collapsed.contains(id) {
-                            "▸ "
+                            "›"
                         } else {
-                            "▾ "
+                            "⌄"
                         },
-                        status_color(status, app.theme),
-                        status.map_or_else(
-                            || {
-                                location.map_or_else(
-                                    || format!("{count} direct sessions"),
-                                    str::to_owned,
-                                )
-                            },
-                            |status| format!("{} · {count} sessions", status.label()),
-                        ),
-                        status.map_or(MUTED, |_| status_color(status, app.theme)),
-                    )
-                }
-                RowKind::Session(id) => {
-                    let session = app.session(id);
-                    let status = session.and_then(|session| session.status.as_ref());
-                    let state = status.map(Status::label).unwrap_or_else(|| {
-                        if session.is_some_and(|session| session.running) {
-                            "unknown"
-                        } else {
-                            "ended"
-                        }
-                    });
-                    let program = session
-                        .map(|session| app.effective_program(session).label())
-                        .unwrap_or("Terminal");
-                    let marker = match status.map(|status| status.state) {
-                        Some(State::Working) => "● ",
-                        Some(State::Question) => "? ",
-                        Some(State::Blocked) => "! ",
-                        Some(State::Done) => "✓ ",
-                        Some(State::Failed) => "× ",
-                        _ => "○ ",
-                    };
-                    (
-                        marker,
-                        status_color(status, app.theme),
-                        format!("{state} · {program}"),
-                        session
-                            .map(|session| program_color(app.effective_program(session)))
-                            .unwrap_or(MUTED),
-                    )
-                }
-            };
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        if selected { "›" } else { " " },
-                        Style::default().fg(app.theme.accent()),
+                        group_session_count(app, id),
+                        app.group_attention(id),
                     ),
-                    Span::raw(indent.clone()),
-                    Span::styled(marker, Style::default().fg(marker_color)),
-                    Span::styled(
-                        truncate_cells(&row.label, available),
-                        Style::default()
-                            .fg(if selected || active { TEXT } else { MUTED })
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]))
-                .style(Style::default().bg(background)),
-                Rect::new(entry.x, entry.y, entry.width, 1),
-            );
-            if entry.height > 1 {
+                    RowKind::Session(_) => unreachable!(),
+                };
+                let available = usize::from(entry.width).saturating_sub(6 + indent.len());
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::raw("   "),
+                        Span::styled(
+                            if selected { "▎" } else { " " },
+                            Style::default().fg(app.theme.accent()),
+                        ),
                         Span::raw(indent),
                         Span::styled(
-                            truncate_cells(&detail, usize::from(entry.width).saturating_sub(4)),
-                            Style::default().fg(detail_color),
+                            format!("{marker} "),
+                            Style::default().fg(status_color(attention, app.theme)),
+                        ),
+                        Span::styled(
+                            truncate_cells(&row.label, available),
+                            Style::default()
+                                .fg(if selected { app.theme.accent() } else { MUTED })
+                                .add_modifier(if selected {
+                                    Modifier::BOLD
+                                } else {
+                                    Modifier::empty()
+                                }),
                         ),
                     ]))
                     .style(Style::default().bg(background)),
-                    Rect::new(entry.x, entry.y + 1, entry.width, 1),
+                    Rect::new(entry.x, entry.y, entry.width, 1),
                 );
+                if entry.width >= 4 {
+                    frame.render_widget(
+                        Paragraph::new(format!("{count:>2}"))
+                            .style(Style::default().fg(MUTED).bg(background)),
+                        Rect::new(entry.right() - 3, entry.y, 2, 1),
+                    );
+                }
+            }
+            RowKind::Session(id) => {
+                let Some(session) = app.session(id) else {
+                    continue;
+                };
+                let status = session.status.as_ref();
+                let marker = match status.map(|status| status.state) {
+                    Some(State::Working) => "●",
+                    Some(State::Question) => "?",
+                    Some(State::Blocked) => "!",
+                    Some(State::Done) => "✓",
+                    Some(State::Failed) => "×",
+                    _ => "○",
+                };
+                let available = usize::from(entry.width).saturating_sub(4 + indent.len());
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            if selected { "▎" } else { " " },
+                            Style::default().fg(app.theme.accent()),
+                        ),
+                        Span::raw(indent.clone()),
+                        Span::styled(marker, Style::default().fg(status_color(status, app.theme))),
+                        Span::raw(" "),
+                        Span::styled(
+                            truncate_cells(&row.label, available),
+                            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                        ),
+                    ]))
+                    .style(Style::default().bg(background)),
+                    Rect::new(entry.x, entry.y, entry.width, 1),
+                );
+                if entry.height > 1 {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(vec![
+                            Span::raw(format!("  {indent}  ")),
+                            Span::styled(
+                                display_status(session),
+                                Style::default().fg(status_color(status, app.theme)),
+                            ),
+                            Span::styled(" · ", Style::default().fg(MUTED)),
+                            Span::styled(
+                                app.effective_program(session).label(),
+                                Style::default().fg(program_color(app.effective_program(session))),
+                            ),
+                        ]))
+                        .style(Style::default().bg(background)),
+                        Rect::new(entry.x, entry.y + 1, entry.width, 1),
+                    );
+                }
             }
         }
     }
@@ -485,43 +466,6 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
     let focused = app.focused == index;
     let controlling = focused && app.mode == Mode::Input && app.dialog.is_none();
     let session = app.panes[index].as_deref().and_then(|id| app.session(id));
-    let title = match session {
-        Some(session) => {
-            let status = session.status.as_ref().map_or(
-                if session.running { "running" } else { "ended" },
-                Status::label,
-            );
-            let width = usize::from(pane_content(area, app.fullscreen).width);
-            let status_width = Line::from(status).width();
-            let effective_program = app.effective_program(session);
-            let program = if width > status_width + effective_program.label().len() + 14 {
-                format!("  {}", effective_program.label())
-            } else {
-                String::new()
-            };
-            let name = truncate_cells(
-                &session.name,
-                width.saturating_sub(5 + status_width + program.len()),
-            );
-            Line::from(vec![
-                Span::styled(
-                    if controlling { "▎ " } else { "  " },
-                    Style::default().fg(app.theme.accent()),
-                ),
-                Span::styled(name, Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    program,
-                    Style::default().fg(program_color(effective_program)),
-                ),
-                Span::styled(" · ", Style::default().fg(MUTED)),
-                Span::styled(
-                    status,
-                    Style::default().fg(status_color(session.status.as_ref(), app.theme)),
-                ),
-            ])
-        }
-        None => Line::default(),
-    };
     let footer = session
         .map(|session| {
             let control = if !session.running {
@@ -539,21 +483,17 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
             )
         })
         .unwrap_or_default();
-    let content = pane_content(area, app.fullscreen);
-    if !app.fullscreen {
+    let content = pane_content(area, immersive(app));
+    if !immersive(app) {
         frame.render_widget(
             Block::default()
-                .borders(Borders::ALL)
+                .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
                 .border_style(Style::default().fg(if controlling {
                     app.theme.accent()
                 } else {
                     BORDER
                 })),
             area,
-        );
-        frame.render_widget(
-            Paragraph::new(title),
-            Rect::new(content.x, area.y, content.width, area.height.min(1)),
         );
         frame.render_widget(
             Paragraph::new(footer).style(Style::default().fg(MUTED)),
@@ -620,6 +560,43 @@ fn truncate_cells(text: &str, max_width: usize) -> String {
         .collect()
 }
 
+fn display_status(session: &crate::model::Session) -> &'static str {
+    match session.status.as_ref().map(Status::label) {
+        Some("unknown") | None => {
+            if session.running {
+                "open"
+            } else {
+                "ended"
+            }
+        }
+        Some(label) => label,
+    }
+}
+
+fn group_session_count(app: &App, id: &str) -> usize {
+    app.sessions
+        .iter()
+        .filter(|session| {
+            let mut parent = session.group_id.as_deref();
+            let mut seen = std::collections::HashSet::new();
+            while let Some(group_id) = parent {
+                if group_id == id {
+                    return true;
+                }
+                if !seen.insert(group_id) {
+                    break;
+                }
+                parent = app
+                    .groups
+                    .iter()
+                    .find(|group| group.id == group_id)
+                    .and_then(|group| group.parent_id.as_deref());
+            }
+            false
+        })
+        .count()
+}
+
 fn status_color(status: Option<&Status>, theme: Theme) -> Color {
     match status.map(|status| (status.source, status.state)) {
         Some((Source::Screen, State::Question | State::Blocked)) => WARNING,
@@ -666,34 +643,43 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
     }
     for index in 0..3 {
         let target = ui_controls::menu_action_area(area, index);
+        if target.is_empty() {
+            continue;
+        }
+        let selected = index == app.menu_selected;
         frame.render_widget(
-            Paragraph::new(match index {
-                0 => " Enter workspace ",
-                1 => " Pair mobile ",
-                _ => " Settings ",
-            })
-            .style(Style::default().fg(if index == app.menu_selected {
-                app.theme.accent()
-            } else {
-                MUTED
-            })),
+            Block::bordered()
+                .border_style(Style::default().fg(if selected {
+                    app.theme.accent()
+                } else {
+                    BORDER
+                }))
+                .style(Style::default().bg(if selected {
+                    app.theme.selection()
+                } else {
+                    SURFACE
+                })),
             target,
         );
-        if target.width > 0 && target.height > 0 && target.x > menu.x {
-            frame.render_widget(
-                Paragraph::new(if index == app.menu_selected {
-                    "›"
-                } else {
-                    " "
-                })
-                .style(Style::default().fg(app.theme.accent())),
-                Rect::new(target.x - 1, target.y, 1, 1),
-            );
-        }
+        let inside = Block::bordered().inner(target);
+        frame.render_widget(
+            Paragraph::new(match index {
+                0 => "Enter workspace",
+                1 => "Pair mobile",
+                _ => "Settings",
+            })
+            .centered()
+            .style(Style::default().fg(if selected {
+                app.theme.accent()
+            } else {
+                TEXT
+            })),
+            inside,
+        );
     }
     if area.height > 0 {
         frame.render_widget(
-            Paragraph::new("↑ ↓ choose  ·  Enter open  ·  Esc detach")
+            Paragraph::new("↑ ↓ choose  ·  Enter open  ·  Esc leave")
                 .centered()
                 .style(Style::default().fg(MUTED)),
             Rect::new(area.x, area.bottom() - 1, area.width, 1),
@@ -705,16 +691,35 @@ pub fn dialog_area(size: Rect, dialog: &Dialog) -> Option<Rect> {
     if size.is_empty() {
         return None;
     }
-    let width = 76.min(size.width.saturating_sub(4)).max(1);
+    if matches!(dialog, Dialog::Settings { .. }) {
+        let width = 52.min(size.width.saturating_sub(2)).max(1);
+        let height = 13.min(size.height.saturating_sub(2)).max(1);
+        return Some(Rect::new(
+            size.right().saturating_sub(width + 1),
+            size.y + 2.min(size.height.saturating_sub(height)),
+            width,
+            height,
+        ));
+    }
+    let width = if matches!(dialog, Dialog::ExitConfirm { .. }) {
+        52
+    } else if matches!(dialog, Dialog::Confirm { .. } | Dialog::Text { .. }) {
+        62
+    } else {
+        76
+    }
+    .min(size.width.saturating_sub(4))
+    .max(1);
     let height = match dialog {
         Dialog::Menu => 20,
-        Dialog::Settings { .. } => 10,
-        Dialog::NewGroup { .. } => 16,
-        Dialog::Help => 22,
-        Dialog::NewSession(_) => 19,
-        Dialog::PairPhone => 18,
-        Dialog::Move { choices, .. } => (choices.len() + 4).min(18) as u16,
-        _ => 8,
+        Dialog::Settings { .. } => 13,
+        Dialog::ExitConfirm { .. } => 10,
+        Dialog::NewGroup { .. } => 18,
+        Dialog::Help => 27,
+        Dialog::NewSession(_) => 24,
+        Dialog::PairPhone => 20,
+        Dialog::Move { choices, .. } => (choices.len() + 8).min(22) as u16,
+        _ => 10,
     }
     .min(size.height.saturating_sub(2))
     .max(1);
@@ -733,6 +738,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
     frame.render_widget(Clear, area);
     let title = match dialog {
         Dialog::Menu => "Menu",
+        Dialog::ExitConfirm { .. } => "Leave nesvo?",
         Dialog::Settings { .. } => "Settings",
         Dialog::NewGroup { .. } => "New group",
         Dialog::Text { title, .. } | Dialog::Confirm { title, .. } => title.as_str(),
@@ -742,18 +748,66 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         Dialog::PairPhone => "Pair your phone",
     };
     let block = Block::bordered()
-        .title(format!(" {title} "))
         .style(Style::default().bg(SURFACE).fg(TEXT))
-        .border_style(Style::default().fg(MUTED));
-    let inner = ui_controls::dialog_body(block.inner(area));
+        .border_style(Style::default().fg(BORDER));
+    let content = block.inner(area);
+    let inner = ui_controls::dialog_body(content);
     frame.render_widget(block, area);
+    if content.height > 0 && content.width > 4 {
+        let inset = content.x + 2;
+        let width = content.width - 4;
+        let title_color = if matches!(dialog, Dialog::Confirm { .. }) {
+            WARNING
+        } else {
+            app.theme.accent()
+        };
+        frame.render_widget(
+            Paragraph::new(truncate_cells(title, usize::from(width.saturating_sub(8)))).style(
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Rect::new(inset, content.y, width.saturating_sub(8), 1),
+        );
+        if width >= 8 {
+            frame.render_widget(
+                Paragraph::new("nesvo").style(Style::default().fg(MUTED)),
+                Rect::new(inset + width - 5, content.y, 5, 1),
+            );
+        }
+        if content.height > 1 {
+            frame.render_widget(
+                Paragraph::new("─".repeat(usize::from(width))).style(Style::default().fg(BORDER)),
+                Rect::new(inset, content.y + 1, width, 1),
+            );
+        }
+        if content.height > 3 {
+            frame.render_widget(
+                Paragraph::new("─".repeat(usize::from(width))).style(Style::default().fg(BORDER)),
+                Rect::new(inset, content.bottom() - 2, width, 1),
+            );
+        }
+    }
     match dialog {
         Dialog::Menu => {}
+        Dialog::ExitConfirm { .. } => {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Disconnect this client from the host?"),
+                    Line::from(Span::styled(
+                        "Your sessions will keep running.",
+                        Style::default().fg(MUTED),
+                    )),
+                ])
+                .style(Style::default().fg(TEXT)),
+                inner,
+            );
+        }
         Dialog::Settings { selected } => {
             for (index, label) in [
-                format!("Theme                       {}   ← →", app.theme.label()),
+                format!("Theme: {}   ← →", app.theme.label()),
                 format!(
-                    "Full screen session by default   {}",
+                    "Full screen session by default: {}",
                     if app.fullscreen_default { "on" } else { "off" }
                 ),
             ]
@@ -848,13 +902,8 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         Dialog::Text { value, .. } => {
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::from(""),
+                    Line::from(Span::styled("NEW NAME", Style::default().fg(MUTED))),
                     Line::from(value.as_str()),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "Enter: save   Esc: cancel",
-                        Style::default().fg(MUTED),
-                    )),
                 ]),
                 inner,
             );
@@ -881,12 +930,11 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                 .with_offset(ui_controls::move_offset(*selected, inner.height));
             frame.render_stateful_widget(list, inner, &mut state);
         }
-        Dialog::Confirm { .. } => {
+        Dialog::Confirm { detail, .. } => {
             frame.render_widget(
-                Paragraph::new(
-                    "This changes the live host session.\n\ny / Enter: confirm\nEsc: cancel",
-                )
-                .wrap(Wrap { trim: false }),
+                Paragraph::new(detail.as_str())
+                    .style(Style::default().fg(TEXT))
+                    .wrap(Wrap { trim: false }),
                 inner,
             );
         }
@@ -894,7 +942,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
             frame.render_widget(
                 Paragraph::new(concat!(
                     "~ status: screen inference; activity/quiet: I/O.\n\n",
-                    "↑/↓ or j/k   Select · Enter opens / expands\n",
+                    "↑/↓ or j/k   Select and preview · Enter opens / expands\n",
                     "i / t / x    Type / take over (confirm) / release\n",
                     "n / g        New session / group (choose parent)\n",
                     "r / m / d    Rename / move / delete (confirmation)\n",
@@ -902,7 +950,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     "PgUp/PgDn    Local scrollback\n",
                     "F1 / p / ?   Menu / pair mobile / keyboard help\n",
                     "z            Full screen / workspace\n",
-                    "Esc          Session key / cancel dialog / exit from navigation\n",
+                    "Esc          Session key / cancel dialog / confirm exit\n",
                     "q            Detach from navigation\n\n",
                     "INPUT sends keys to the session.\n",
                     "Ctrl+Q switches to NAVIGATION for nesvo.\n",
@@ -924,7 +972,114 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn workspace_has_separate_spaces_and_agents_with_clickable_rows() {
+    fn confirmation_uses_a_clear_header_and_destructive_action() {
+        let mut app = App::new(1);
+        app.connected = true;
+        app.dialog = Some(Dialog::Confirm {
+            title: "Delete session?".into(),
+            detail: "Example will be removed. Its running process will stop.".into(),
+            command: json!({"type":"close","sessionId":"example"}),
+        });
+        let area = Rect::new(0, 0, 100, 30);
+        let popup = dialog_area(area, app.dialog.as_ref().unwrap()).unwrap();
+        let content = Block::bordered().inner(popup);
+        let body = ui_controls::dialog_body(content);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = |y| {
+            (popup.x..popup.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        assert!(row(content.y).contains("Delete session?"));
+        assert!(row(body.y).contains("Example will be removed"));
+        assert!(!row(popup.y).contains("Its running process"));
+        let delete = ui_controls::controls(&app, area)
+            .into_iter()
+            .find(|control| control.action == ui_controls::Action::Submit)
+            .unwrap();
+        assert_eq!(buffer[(delete.area.x, delete.area.y)].bg, DANGER);
+        assert_eq!(
+            ui_controls::hit_test(&app, area, delete.area.x, delete.area.y),
+            Some(ui_controls::Action::Submit)
+        );
+    }
+
+    #[test]
+    fn start_menu_actions_render_as_full_clickable_buttons() {
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::Menu);
+        let area = Rect::new(0, 0, 100, 30);
+        let selected = ui_controls::menu_action_area(area, 0);
+        let other = ui_controls::menu_action_area(area, 1);
+        assert_eq!(selected.height, 3);
+        assert_eq!(other.height, 3);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(selected.x, selected.y)].fg, app.theme.accent());
+        assert_eq!(
+            buffer[(selected.x + 1, selected.y + 1)].bg,
+            app.theme.selection()
+        );
+        assert_eq!(buffer[(other.x, other.y)].fg, BORDER);
+    }
+
+    #[test]
+    fn unknown_agent_state_is_shown_as_an_open_process() {
+        let mut app = App::new(1);
+        app.event(
+            json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+                {"id":"agent","name":"Claude task","cwd":".","cols":80,"rows":24,
+                 "running":true,"groupId":null,"controllerId":null,
+                 "status":{"state":"unknown","source":"activity","updatedAt":1}}
+            ]}),
+        )
+        .unwrap();
+        let session = app.session("agent").unwrap();
+        assert_eq!(session.status.as_ref().unwrap().label(), "unknown");
+        assert_eq!(display_status(session), "open");
+        let area = Rect::new(0, 0, 100, 24);
+        let layout = geometry(area, &app);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let line: String = (layout.tree.x..layout.tree.right())
+            .map(|x| buffer[(x, layout.tree.y + 2)].symbol())
+            .collect();
+        assert!(line.contains("open"), "{line}");
+        assert!(!line.contains("unknown"), "{line}");
+    }
+
+    #[test]
+    fn settings_preview_keeps_the_workspace_visible() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,
+            "groups":[{"id":"work","parentId":null,"name":"Work","order":0}],
+            "sessions":[]}))
+            .unwrap();
+        app.theme = Theme::Graphite;
+        app.dialog = Some(Dialog::Settings { selected: 0 });
+        let area = Rect::new(0, 0, 120, 30);
+        let layout = geometry(area, &app);
+        let popup = dialog_area(area, app.dialog.as_ref().unwrap()).unwrap();
+        assert!(popup.x > layout.tree.right());
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let sidebar: String = (layout.tree.x..layout.tree.right())
+            .map(|x| buffer[(x, layout.tree.y)].symbol())
+            .collect();
+        assert!(sidebar.contains("sessions"), "{sidebar}");
+        assert_eq!(
+            buffer[(layout.tree.x, layout.tree.y + 1)].fg,
+            app.theme.accent()
+        );
+    }
+
+    #[test]
+    fn workspace_shows_groups_and_their_sessions_in_one_clickable_list() {
         let mut app = App::new(1);
         app.event(json!({
             "type":"sessions", "revision":1,
@@ -940,7 +1095,6 @@ mod tests {
         let area = Rect::new(0, 0, 120, 30);
         let layout = geometry(area, &app);
         let tree = tree_content(layout.tree);
-        let (spaces, agents) = sidebar_sections(tree, &app);
         let rows = app.tree();
         let group_index = rows
             .iter()
@@ -950,12 +1104,12 @@ mod tests {
             .iter()
             .position(|row| row.kind == RowKind::Session("agent".into()))
             .unwrap();
-        let group = sidebar_entries(&app, spaces, true)
+        let group = sidebar_entries(&app, tree)
             .into_iter()
             .find(|(_, index)| *index == group_index)
             .unwrap()
             .0;
-        let agent = sidebar_entries(&app, agents, false)
+        let agent = sidebar_entries(&app, tree)
             .into_iter()
             .find(|(_, index)| *index == agent_index)
             .unwrap()
@@ -969,6 +1123,8 @@ mod tests {
             Some(agent_index)
         );
         assert!(agent.y > group.y);
+        assert_eq!(group.height, 1);
+        assert_eq!(agent.height, 2);
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let buffer = terminal.backend().buffer();
@@ -977,13 +1133,14 @@ mod tests {
                 .map(|x| buffer[(x, y)].symbol())
                 .collect::<String>()
         };
-        assert!(line(spaces.y).contains("spaces"));
-        assert!(line(agents.y).contains("agents"));
-        assert!(line(group.y + 1).contains("~question"));
+        assert!(line(tree.y).contains("sessions"));
+        assert!(line(group.y).contains("Workspace"));
+        assert!(!line(group.y).contains('▣'));
+        assert!(line(agent.y + 1).contains("~question"));
         assert!(line(agent.y + 1).contains("Claude"));
-        assert_eq!(
-            buffer[(agent.x + 3, agent.y + 1)].fg,
-            program_color(Program::Claude)
+        assert!(
+            (agent.x..agent.right())
+                .any(|x| { buffer[(x, agent.y + 1)].fg == program_color(Program::Claude) })
         );
     }
 
@@ -1005,31 +1162,26 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let buffer = terminal.backend().buffer();
-        let title: String = (layout.panes[0].x..layout.panes[0].right())
+        let pane_top: String = (layout.panes[0].x..layout.panes[0].right())
             .map(|x| buffer[(x, layout.panes[0].y)].symbol())
             .collect();
-        assert!(
-            title.contains("~question"),
-            "Status must remain visible: {title}"
-        );
+        assert!(!pane_top.contains("~question"));
+        assert!(!pane_top.contains("A very long session"));
         let group_index = app
             .tree()
             .iter()
             .position(|row| row.kind == RowKind::Group("g".into()))
             .unwrap();
         let tree = tree_content(layout.tree);
-        let (spaces, _) = sidebar_sections(tree, &app);
-        let group_y = sidebar_entries(&app, spaces, true)
+        let group_y = sidebar_entries(&app, tree)
             .into_iter()
             .find_map(|(area, index)| (index == group_index).then_some(area.y))
             .unwrap();
         let group: String = (tree.x..tree.right())
-            .map(|x| buffer[(x, group_y + 1)].symbol())
+            .map(|x| buffer[(x, group_y)].symbol())
             .collect();
-        assert!(
-            group.contains("~question"),
-            "Attention must remain visible: {group}"
-        );
+        assert!(group.contains("A very long"), "{group}");
+        assert_eq!(buffer[(tree.x + 1, group_y)].fg, WARNING);
     }
 
     #[test]

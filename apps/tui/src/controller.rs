@@ -58,7 +58,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     outcome.redraw = was_scrolled;
                 }
             } else if key.code == KeyCode::Esc {
-                outcome.quit = true;
+                app.dialog = Some(Dialog::ExitConfirm { from_menu: false });
             } else {
                 navigation_key(app, key, area, &mut outcome);
             }
@@ -113,10 +113,13 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 } else if app.dialog.is_none() {
                     if ui::tree_content(geometry.tree).contains((mouse.column, mouse.row).into()) {
                         app.selected = if up {
-                            app.selected.saturating_sub(1)
+                            app.selected
+                                .saturating_sub(1)
+                                .max(usize::from(app.tree().len() > 1))
                         } else {
                             (app.selected + 1).min(app.tree().len().saturating_sub(1))
                         };
+                        preview_selected_session(app, &mut outcome);
                     } else if let Some(index) = (0..if app.split { 2 } else { 1 }).find(|index| {
                         geometry.panes[*index].contains((mouse.column, mouse.row).into())
                     }) && let Some(id) = app.panes[index].as_ref()
@@ -170,17 +173,13 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             );
         }
         Action::Submit => {
-            if let Some(command) = app.submit_dialog() {
+            if matches!(app.dialog, Some(Dialog::ExitConfirm { .. })) {
+                outcome.quit = true;
+            } else if let Some(command) = app.submit_dialog() {
                 outcome.commands.push(command);
             }
         }
-        Action::Cancel => {
-            app.dialog = if matches!(app.dialog, Some(Dialog::Settings { .. })) {
-                Some(Dialog::Menu)
-            } else {
-                None
-            };
-        }
+        Action::Cancel => cancel_dialog(app),
         Action::Field(field) => {
             if let Some(Dialog::NewSession(form)) = &mut app.dialog {
                 form.field = field;
@@ -202,8 +201,8 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             if let Some(row) = app.selected_row() {
                 match row.kind {
                     RowKind::Session(id) => outcome.commands.extend(app.open_session(&id)),
-                    RowKind::Group(id) => app.select_space(Some(id)),
-                    RowKind::Root => app.select_space(None),
+                    RowKind::Group(id) => toggle_group(app, id),
+                    RowKind::Root => {}
                 }
             }
             app.mode = Mode::Navigate;
@@ -221,16 +220,36 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             }
             app.mode = Mode::Navigate;
         }
+        Action::FocusTab(index) => {
+            if let Some(id) = app.tabs.get(index).cloned() {
+                if let Some(selected) = app
+                    .tree()
+                    .iter()
+                    .position(|row| row.kind == RowKind::Session(id.clone()))
+                {
+                    app.selected = selected;
+                }
+                outcome.commands.extend(app.open_session(&id));
+            }
+        }
         Action::MenuChoice(index) => menu_choice(app, index, outcome),
     }
 }
 
 fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     if key.code == KeyCode::Esc {
-        match app.dialog {
-            Some(Dialog::Menu) => outcome.quit = true,
-            Some(Dialog::Settings { .. }) => app.dialog = Some(Dialog::Menu),
-            _ => app.dialog = None,
+        if matches!(app.dialog, Some(Dialog::Menu)) {
+            app.dialog = Some(Dialog::ExitConfirm { from_menu: true });
+        } else {
+            cancel_dialog(app);
+        }
+        return;
+    }
+    if matches!(app.dialog, Some(Dialog::ExitConfirm { .. })) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y' | 'Y') => outcome.quit = true,
+            KeyCode::Char('n' | 'N') => cancel_dialog(app),
+            _ => {}
         }
         return;
     }
@@ -366,6 +385,15 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     }
 }
 
+fn cancel_dialog(app: &mut App) {
+    app.dialog = match app.dialog.take() {
+        Some(Dialog::Settings { .. } | Dialog::ExitConfirm { from_menu: true }) => {
+            Some(Dialog::Menu)
+        }
+        _ => None,
+    };
+}
+
 fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
     match index {
         0 => {
@@ -420,9 +448,16 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Char('?') => app.dialog = Some(Dialog::Help),
         KeyCode::Char('M') => app.dialog = Some(Dialog::Menu),
         KeyCode::Char('p') => app.dialog = Some(Dialog::PairPhone),
-        KeyCode::Up | KeyCode::Char('k') => app.selected = app.selected.saturating_sub(1),
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.selected = app
+                .selected
+                .saturating_sub(1)
+                .max(usize::from(app.tree().len() > 1));
+            preview_selected_session(app, outcome);
+        }
         KeyCode::Down | KeyCode::Char('j') => {
-            app.selected = (app.selected + 1).min(app.tree().len().saturating_sub(1))
+            app.selected = (app.selected + 1).min(app.tree().len().saturating_sub(1));
+            preview_selected_session(app, outcome);
         }
         KeyCode::Enter => open_selected(app, outcome),
         KeyCode::Left | KeyCode::Char('h') => {
@@ -515,9 +550,21 @@ fn open_selected(app: &mut App, outcome: &mut Outcome) {
     if let Some(row) = app.selected_row() {
         match row.kind {
             RowKind::Session(id) => outcome.commands.extend(app.activate_session(&id)),
-            RowKind::Group(id) => app.select_space(Some(id)),
-            RowKind::Root => app.select_space(None),
+            RowKind::Group(id) => toggle_group(app, id),
+            RowKind::Root => {}
         }
+    }
+}
+
+fn preview_selected_session(app: &mut App, outcome: &mut Outcome) {
+    if let Some(RowKind::Session(id)) = app.selected_row().map(|row| row.kind) {
+        outcome.commands.extend(app.open_session(&id));
+    }
+}
+
+fn toggle_group(app: &mut App, id: String) {
+    if !app.collapsed.insert(id.clone()) {
+        app.collapsed.remove(&id);
     }
 }
 
@@ -533,12 +580,17 @@ fn acquire(app: &mut App, take_over: bool, area: Rect, outcome: &mut Outcome) {
         app.mode = Mode::Input;
         return;
     }
-    let inner = ui::pane_content(ui::geometry(area, app).panes[app.focused], app.fullscreen);
+    let inner = if app.fullscreen {
+        Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1))
+    } else {
+        ui::pane_content(ui::geometry(area, app).panes[app.focused], false)
+    };
     let command = json!({"type":"acquireControl","sessionId":session.id,"takeOver":take_over,
         "cols":inner.width.clamp(10,300),"rows":inner.height.clamp(2,150)});
     if take_over && session.controller_id.is_some() {
         app.dialog = Some(Dialog::Confirm {
-            title: "Take control from the other client?".into(),
+            title: "Take control?".into(),
+            detail: "The other client will lose keyboard control of this session.".into(),
             command,
         });
     } else {
@@ -586,18 +638,27 @@ fn close_selected(app: &mut App) {
     let Some(row) = app.selected_row() else {
         return;
     };
-    let (title, command) = match row.kind {
+    let (title, detail, command) = match row.kind {
         RowKind::Session(id) => (
-            format!("Delete {}? Its running process will stop.", row.label),
+            "Delete session?".to_owned(),
+            format!(
+                "{} will be removed. Its running process will stop.",
+                row.label
+            ),
             json!({"type":"close","sessionId":id}),
         ),
         RowKind::Group(id) => (
-            format!("Delete empty group {}?", row.label),
+            "Delete group?".to_owned(),
+            format!("The empty group {} will be removed.", row.label),
             json!({"type":"deleteGroup","groupId":id,"expectedRevision":app.revision}),
         ),
         RowKind::Root => return,
     };
-    app.dialog = Some(Dialog::Confirm { title, command });
+    app.dialog = Some(Dialog::Confirm {
+        title,
+        detail,
+        command,
+    });
 }
 
 #[cfg(test)]
@@ -786,6 +847,120 @@ mod tests {
     }
 
     #[test]
+    fn control_q_reveals_the_session_list_in_fullscreen() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,
+            "groups":[{"id":"project","parentId":null,"name":"Project","order":0}],
+            "sessions":[{"id":"agent","name":"Agent","cwd":".","cols":80,"rows":24,
+                "running":true,"groupId":"project","controllerId":null}]}))
+            .unwrap();
+        let area = Rect::new(0, 0, 100, 30);
+        app.fullscreen = true;
+        app.mode = Mode::Input;
+        assert_eq!(ui::geometry(area, &app).tree.width, 0);
+        let outcome = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            area,
+        );
+        assert!(outcome.commands.is_empty());
+        assert!(app.fullscreen);
+        assert!(app.mode == Mode::Navigate);
+        let tree = ui::geometry(area, &app).tree;
+        assert!(tree.width > 0);
+        let content = ui::tree_content(tree);
+        assert!((content.y..content.bottom()).any(|y| {
+            ui::sidebar_hit(&app, tree, content.x, y)
+                == app
+                    .tree()
+                    .iter()
+                    .position(|row| row.kind == RowKind::Session("agent".into()))
+        }));
+    }
+
+    #[test]
+    fn navigation_arrows_preview_the_selected_session_without_control() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"first","name":"First","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"second","name":"Second","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        let area = Rect::new(0, 0, 100, 30);
+        assert_eq!(app.selected, 1);
+        assert_eq!(app.active_id(), Some("first"));
+        let down = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(app.selected, 2);
+        assert_eq!(app.active_id(), Some("second"));
+        assert!(app.mode == Mode::Navigate);
+        assert!(
+            !down
+                .commands
+                .iter()
+                .any(|command| command["type"] == "acquireControl")
+        );
+        let up = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(app.active_id(), Some("first"));
+        assert!(
+            !up.commands
+                .iter()
+                .any(|command| command["type"] == "acquireControl")
+        );
+    }
+
+    #[test]
+    fn session_tabs_switch_without_replacing_other_tabs() {
+        let mut app = App::new(1);
+        app.connected = true;
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"first","name":"First","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"second","name":"Second","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        app.open_session("second");
+        let area = Rect::new(0, 0, 100, 30);
+        let tabs = ui::tab_areas(&app, &ui::geometry(area, &app)).0;
+        let first = tabs[0].1;
+        let switch = event(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: first.x,
+                row: first.y,
+                modifiers: KeyModifiers::NONE,
+            }),
+            area,
+        );
+        assert_eq!(app.active_id(), Some("first"));
+        assert_eq!(app.tabs, ["first", "second"]);
+        assert!(
+            !switch
+                .commands
+                .iter()
+                .any(|c| c["type"] == "acquireControl")
+        );
+        let plus = ui::tab_areas(&app, &ui::geometry(area, &app)).1;
+        event(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: plus.x,
+                row: plus.y,
+                modifiers: KeyModifiers::NONE,
+            }),
+            area,
+        );
+        assert!(matches!(app.dialog, Some(Dialog::NewSession(_))));
+        assert_eq!(app.tabs, ["first", "second"]);
+    }
+
+    #[test]
     fn z_toggles_fullscreen_from_navigation_and_sidebar_click_keeps_navigation() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
@@ -798,6 +973,7 @@ mod tests {
         let fullscreen = event(&mut app, z.clone(), area);
         assert!(app.fullscreen);
         assert!(app.mode == Mode::Navigate);
+        assert!(ui::geometry(area, &app).tree.width > 0);
         assert!(fullscreen.commands.is_empty());
         event(
             &mut app,
@@ -945,12 +1121,23 @@ mod tests {
         );
         assert!(navigation.commands.is_empty());
         assert!(app.mode == Mode::Navigate);
-        let quit = event(
+        let leave = event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             area,
         );
-        assert!(quit.quit);
+        assert!(!leave.quit);
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ExitConfirm { from_menu: false })
+        ));
+        let stay = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(!stay.quit);
+        assert!(app.dialog.is_none());
         app.mode = Mode::Input;
         let interrupt = event(
             &mut app,
@@ -1032,12 +1219,22 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             area,
         );
-        assert!(detach.quit);
+        assert!(!detach.quit);
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ExitConfirm { from_menu: false })
+        ));
+        let confirmed = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(confirmed.quit);
         assert!(detach.commands.is_empty());
     }
 
     #[test]
-    fn escape_from_theme_returns_to_menu_and_menu_escape_detaches() {
+    fn escape_from_theme_returns_to_menu_and_menu_escape_confirms_exit() {
         let mut app = App::new(1);
         app.dialog = Some(Dialog::Settings { selected: 1 });
         let area = Rect::new(0, 0, 100, 30);
@@ -1048,7 +1245,18 @@ mod tests {
         assert_eq!(app.theme, Theme::Ultraviolet);
         assert!(matches!(app.dialog, Some(Dialog::Menu)));
         let detach = event(&mut app, escape, area);
-        assert!(detach.quit);
+        assert!(!detach.quit);
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ExitConfirm { from_menu: true })
+        ));
+        let stay = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+            area,
+        );
+        assert!(!stay.quit);
+        assert!(matches!(app.dialog, Some(Dialog::Menu)));
         assert!(detach.commands.is_empty());
     }
 

@@ -67,6 +67,9 @@ pub enum MoveTarget {
 
 pub enum Dialog {
     Menu,
+    ExitConfirm {
+        from_menu: bool,
+    },
     Settings {
         selected: usize,
     },
@@ -89,6 +92,7 @@ pub enum Dialog {
     },
     Confirm {
         title: String,
+        detail: String,
         command: Value,
     },
     Help,
@@ -103,8 +107,8 @@ pub struct App {
     pub leases: HashMap<String, String>,
     pub subscribed: HashSet<String>,
     pub collapsed: HashSet<String>,
-    pub space_filter: Option<String>,
     pub selected: usize,
+    pub tabs: Vec<String>,
     pub panes: [Option<String>; 2],
     pub split: bool,
     pub fullscreen: bool,
@@ -137,8 +141,8 @@ impl App {
             leases: HashMap::new(),
             subscribed: HashSet::new(),
             collapsed: HashSet::new(),
-            space_filter: None,
             selected: 0,
+            tabs: Vec::new(),
             panes: [None, None],
             split: false,
             fullscreen: false,
@@ -215,7 +219,7 @@ impl App {
     }
     pub fn selected_group(&self) -> Option<String> {
         match self.selected_row()?.kind {
-            RowKind::Root => self.space_filter.clone(),
+            RowKind::Root => None,
             RowKind::Group(id) => Some(id),
             RowKind::Session(id) => self.session(&id).and_then(|s| s.group_id.clone()),
         }
@@ -253,59 +257,28 @@ impl App {
         let mut rows = vec![TreeRow {
             kind: RowKind::Root,
             depth: 0,
-            label: "All sessions".into(),
+            label: "sessions".into(),
         }];
+        self.append_sessions(None, 1, &mut rows);
         self.append_children(None, 0, &mut rows, &mut HashSet::new());
-        // The agent list is global: collapsing a space only hides its child spaces,
-        // never a running session that still needs attention.
-        rows.extend(
-            self.sessions
-                .iter()
-                .filter(|session| self.session_in_space(session))
-                .map(|session| TreeRow {
-                    kind: RowKind::Session(session.id.clone()),
-                    depth: 1,
-                    label: session.name.clone(),
-                }),
-        );
         rows
     }
 
-    fn session_in_space(&self, session: &Session) -> bool {
-        let Some(space) = self.space_filter.as_deref() else {
-            return true;
-        };
-        let mut parent = session.group_id.as_deref();
-        let mut visited = HashSet::new();
-        while let Some(id) = parent {
-            if id == space {
-                return true;
-            }
-            if !visited.insert(id) {
-                break;
-            }
-            parent = self
-                .groups
-                .iter()
-                .find(|group| group.id == id)
-                .and_then(|group| group.parent_id.as_deref());
-        }
-        false
-    }
-
-    pub fn select_space(&mut self, id: Option<String>) {
-        self.space_filter = id.clone();
-        self.selected = self
-            .tree()
-            .iter()
-            .position(|row| {
-                row.kind
-                    == match &id {
-                        Some(id) => RowKind::Group(id.clone()),
-                        None => RowKind::Root,
-                    }
+    fn append_sessions(&self, group_id: Option<&str>, depth: usize, rows: &mut Vec<TreeRow>) {
+        rows.extend(self.sessions.iter().filter_map(|session| {
+            let belongs = match (group_id, session.group_id.as_deref()) {
+                (Some(group), Some(id)) => group == id,
+                (None, None) => true,
+                // A stale group reference must not make a live session disappear.
+                (None, Some(id)) => !self.groups.iter().any(|group| group.id == id),
+                _ => false,
+            };
+            belongs.then(|| TreeRow {
+                kind: RowKind::Session(session.id.clone()),
+                depth,
+                label: session.name.clone(),
             })
-            .unwrap_or(0);
+        }));
     }
 
     fn append_children(
@@ -330,10 +303,11 @@ impl App {
             }
             rows.push(TreeRow {
                 kind: RowKind::Group(group.id.clone()),
-                depth: depth + 1,
+                depth,
                 label: group.name.clone(),
             });
             if !self.collapsed.contains(&group.id) {
+                self.append_sessions(Some(&group.id), depth + 1, rows);
                 self.append_children(Some(&group.id), depth + 1, rows, visited);
             }
         }
@@ -342,6 +316,9 @@ impl App {
     pub fn open_session(&mut self, id: &str) -> Vec<Value> {
         if self.session(id).is_none() {
             return vec![];
+        }
+        if !self.tabs.iter().any(|tab| tab == id) {
+            self.tabs.push(id.into());
         }
         if self.split && self.panes[1 - self.focused].as_deref() == Some(id) {
             self.focused = 1 - self.focused;
@@ -376,6 +353,21 @@ impl App {
     /// Explicitly entering a pane starts an unowned shell, but never takes a lease away.
     pub fn activate_session(&mut self, id: &str) -> Vec<Value> {
         let mut commands = self.open_session(id);
+        let mut parent = self
+            .session(id)
+            .and_then(|session| session.group_id.clone());
+        let mut visited = HashSet::new();
+        while let Some(group_id) = parent {
+            if !visited.insert(group_id.clone()) {
+                break;
+            }
+            self.collapsed.remove(&group_id);
+            parent = self
+                .groups
+                .iter()
+                .find(|group| group.id == group_id)
+                .and_then(|group| group.parent_id.clone());
+        }
         if let Some(index) = self
             .tree()
             .iter()
@@ -416,13 +408,8 @@ impl App {
                     .or_else(|| self.selected_row().map(|row| row.kind));
                 self.sessions = serde_json::from_value(event["sessions"].clone())?;
                 self.groups = serde_json::from_value(event["groups"].clone())?;
-                if self
-                    .space_filter
-                    .as_ref()
-                    .is_some_and(|id| !self.groups.iter().any(|group| &group.id == id))
-                {
-                    self.space_filter = None;
-                }
+                self.collapsed
+                    .retain(|id| self.groups.iter().any(|group| &group.id == id));
                 self.revision = event["revision"].as_u64().unwrap_or(0);
                 self.leases.retain(|id, _| {
                     self.sessions
@@ -432,6 +419,8 @@ impl App {
                 self.terminals
                     .retain(|id, _| self.sessions.iter().any(|s| s.id == *id));
                 self.subscribed
+                    .retain(|id| self.sessions.iter().any(|s| s.id == *id));
+                self.tabs
                     .retain(|id| self.sessions.iter().any(|s| s.id == *id));
                 for pane in &mut self.panes {
                     if pane
@@ -454,6 +443,9 @@ impl App {
                 self.selected = selected
                     .and_then(|kind| tree.iter().position(|row| row.kind == kind))
                     .unwrap_or(self.selected.min(tree.len().saturating_sub(1)));
+                if self.selected == 0 && tree.len() > 1 {
+                    self.selected = 1;
+                }
             }
             "created" => {
                 if self.pending_create.is_some()
@@ -669,7 +661,11 @@ impl App {
                 Some(self.request(command))
             }
             Dialog::Confirm { command, .. } => Some(self.request(command)),
-            Dialog::Help | Dialog::PairPhone | Dialog::Menu | Dialog::Settings { .. } => None,
+            Dialog::Help
+            | Dialog::PairPhone
+            | Dialog::Menu
+            | Dialog::ExitConfirm { .. }
+            | Dialog::Settings { .. } => None,
         }
     }
 
@@ -712,6 +708,22 @@ fn dimensions(event: &Value) -> (u16, u16) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn opening_another_session_keeps_both_tabs_and_prunes_closed_ones() {
+        let mut app = App::new(1);
+        app.event(serde_json::json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"first","name":"First","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"second","name":"Second","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        app.open_session("second");
+        assert_eq!(app.tabs, ["first", "second"]);
+        assert_eq!(app.active_id(), Some("second"));
+        app.event(serde_json::json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"second","name":"Second","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        assert_eq!(app.tabs, ["second"]);
+    }
+
     fn snapshot() -> Value {
         json!({"type":"sessions","revision":7,"groups":[
         {"id":"a","parentId":null,"name":"Work","order":0},
@@ -726,43 +738,38 @@ mod tests {
         let rows = app.tree();
         assert_eq!(
             rows.iter().map(|row| row.depth).collect::<Vec<_>>(),
-            vec![0, 1, 2, 1]
+            vec![0, 0, 1, 2]
         );
         assert_eq!(app.group_choices(Some("a")).len(), 1);
         app.collapsed.insert("a".into());
-        assert_eq!(app.tree().len(), 3);
-        assert!(matches!(app.tree()[2].kind, RowKind::Session(_)));
+        assert_eq!(app.tree().len(), 2);
+        app.activate_session("s");
+        assert_eq!(app.tree().len(), 4);
+        assert_eq!(app.selected, 3);
         assert_eq!(app.sessions[0].program, Program::Shell);
     }
 
     #[test]
-    fn selected_space_filters_nested_sessions_without_hiding_spaces() {
+    fn sessions_follow_their_group_and_collapse_with_it() {
         let mut app = App::new(1);
         let mut data = snapshot();
         data["sessions"].as_array_mut().unwrap().push(json!({"id":"outside","name":"other","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}));
         app.event(data).unwrap();
-        app.select_space(Some("a".into()));
-        assert!(
+        assert_eq!(
             app.tree()
                 .iter()
-                .any(|row| row.kind == RowKind::Session("s".into()))
+                .map(|row| row.kind.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                RowKind::Root,
+                RowKind::Session("outside".into()),
+                RowKind::Group("a".into()),
+                RowKind::Group("b".into()),
+                RowKind::Session("s".into()),
+            ]
         );
-        assert!(
-            !app.tree()
-                .iter()
-                .any(|row| row.kind == RowKind::Session("outside".into()))
-        );
-        assert!(
-            app.tree()
-                .iter()
-                .any(|row| row.kind == RowKind::Group("b".into()))
-        );
-        app.select_space(None);
-        assert!(
-            app.tree()
-                .iter()
-                .any(|row| row.kind == RowKind::Session("outside".into()))
-        );
+        app.collapsed.insert("a".into());
+        assert_eq!(app.tree().len(), 3);
     }
 
     #[test]
