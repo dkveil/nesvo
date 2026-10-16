@@ -39,7 +39,9 @@ export function SessionStatusBadge({
       style={[styles.badge, { borderColor: `${tone}55` }]}
     >
       <Text style={[styles.symbol, { color: tone }]}>{symbols[status]}</Text>
-      <Text style={[styles.label, { color: tone }]}>{label}</Text>
+      <Text style={[styles.label, { color: tone }]}>
+        {source === 'screen' ? `~ ${label}` : label}
+      </Text>
     </View>
   );
 }

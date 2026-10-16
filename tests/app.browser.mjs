@@ -138,6 +138,11 @@ try {
   await page.getByLabel('Nazwa sesji', { exact: true }).fill('Mały ekran');
   await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
   await frame.locator('.xterm-screen').waitFor();
+  // A session created from Settings must still return to the session list.
+  await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
+  await page.waitForURL(url => url.pathname === '/');
+  await page.getByText('Tryb demo · sesje poniżej są przykładowe', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Otwórz sesję Mały ekran', exact: true }).waitFor();
   assert.deepEqual(errors, [], 'No browser runtime exceptions');
   console.log(
     'PASS: demo, filters, search, create, terminal input, pairing validation, navigation.',

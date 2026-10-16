@@ -22,7 +22,7 @@ export function sessionStatusLabel(status: SessionStatus, source?: SessionStatus
 export function sessionStatusDetail(status: SessionStatus, source?: SessionStatusSource): string {
   if (source === 'activity')
     return status === 'working' ? 'Nowe wyjście terminala' : 'Brak nowego wyjścia terminala';
-  if (source === 'screen') return 'Stan wykryty w widocznym terminalu';
+  if (source === 'screen') return 'Stan przybliżony, wywnioskowany z treści terminala';
   if (source === 'process') return 'Stan procesu na komputerze';
   return 'Brak informacji o stanie agenta';
 }
