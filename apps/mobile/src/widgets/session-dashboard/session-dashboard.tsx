@@ -29,7 +29,7 @@ import { NesvoLogo, useMotionPreference } from '@shared/brand';
 import { colors as c, mono } from '@shared/theme';
 import { Button, common, Icon, IconButton } from '@shared/ui';
 
-import { DASHBOARD_ITEMS, DashboardNavigation, type DashboardTab } from './dashboard-navigation';
+import { DashboardNavigation, type DashboardTab } from './dashboard-navigation';
 import { SessionLaunchpad } from './session-launchpad';
 
 export type { DashboardTab } from './dashboard-navigation';
@@ -126,10 +126,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
       <View style={s.header}>
         <IconButton name="menu-outline" label="Otwórz menu" onPress={() => setMenuOpen(true)} />
         <View style={s.headerTitle}>
-          <NesvoLogo width={106} />
-          <Text style={s.headerRoute} numberOfLines={1}>
-            / {DASHBOARD_ITEMS.find(item => item.id === tab)?.label.toLocaleLowerCase()}
-          </Text>
+          <NesvoLogo width={96} />
         </View>
         <IconButton
           name="add"
@@ -153,13 +150,14 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
       >
         {tab === 'sessions' && (
           <>
-            <View style={s.workspaceBar}>
-              <Text style={s.workspaceLabel}>SESJE</Text>
-              <Text style={s.workspaceCount}>
-                {sessions.length.toString().padStart(2, '0')} sesji
+            <View style={s.homeIntro}>
+              <Text style={s.homeTitle}>Twoja przestrzeń</Text>
+              <Text style={s.homeSummary}>
+                {sessions.length} {sessions.length === 1 ? 'sesja' : 'sesji'}
                 {attentionCount ? ` · ${attentionCount} wymagają uwagi` : ''}
               </Text>
             </View>
+            <Text style={s.eyebrow}>KOMPUTER</Text>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={
@@ -201,7 +199,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                   </Text>
                 </View>
               </View>
-              <Icon name="chevron-forward" size={16} />
+              <Icon name="chevron-forward" size={18} color={c.faint} />
             </Pressable>
             {!!showStartMenu && (
               <View
@@ -242,6 +240,18 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                 />
               </View>
             )}
+            <View style={s.sessionListHeading}>
+              <Text style={s.eyebrow}>SESJE</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Zarządzaj grupami"
+                onPress={() => navigateTo('groups')}
+                style={s.groupsLink}
+              >
+                <Text style={s.groupsLinkText}>Grupy</Text>
+                <Icon name="chevron-forward" size={14} color={c.muted} />
+              </Pressable>
+            </View>
             {(sessions.length >= 5 || !!query) && (
               <View style={s.search}>
                 <Icon name="search-outline" size={18} />
@@ -278,18 +288,6 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                   </Text>
                 </Pressable>
               ))}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Zarządzaj grupami"
-                onPress={() => navigateTo('groups')}
-                style={s.groupFilter}
-              >
-                <Icon
-                  name="folder-outline"
-                  size={18}
-                  color={selectedGroup === 'all' ? c.muted : c.accent}
-                />
-              </Pressable>
             </View>
             <View style={s.sessionList}>
               {sections.map(section => (
@@ -313,6 +311,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                       <View style={s.statusSlot}>
                         <SessionStatusDot
                           status={session.status}
+                          source={session.statusSource}
                           active={
                             !!active && !!session.live && !menuOpen && !createOpen && !connectOpen
                           }
@@ -537,6 +536,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                     <View style={s.statusSlot}>
                       <SessionStatusDot
                         status={session.status}
+                        source={session.statusSource}
                         active={!!menuOpen && !!session.live && !createOpen && !connectOpen}
                       />
                     </View>
@@ -594,28 +594,25 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: c.background },
   header: {
-    minHeight: 48,
-    paddingHorizontal: 6,
+    minHeight: 66,
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: c.border,
+    gap: 12,
   },
   headerTitle: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
-  headerRoute: { color: c.faint, fontFamily: mono, fontSize: 11, flexShrink: 1 },
-  content: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 20, gap: 10 },
-  workspaceBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 22,
-    gap: 8,
+  content: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 28, gap: 10 },
+  homeIntro: { gap: 2, marginBottom: 8 },
+  homeTitle: {
+    color: c.text,
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -0.7,
+    lineHeight: 36,
   },
-  workspaceLabel: { fontFamily: mono, color: c.muted, fontSize: 12 },
-  workspaceCount: { fontFamily: mono, color: c.faint, fontSize: 10 },
+  homeSummary: { color: c.muted, fontSize: 13, lineHeight: 20 },
   intro: { paddingTop: 12, paddingBottom: 8, gap: 8 },
-  eyebrow: { color: c.faint, fontFamily: mono, fontSize: 10, letterSpacing: 1.2, marginTop: 12 },
+  eyebrow: { color: c.muted, fontSize: 12, fontWeight: '600', letterSpacing: 1.2, marginTop: 10 },
   hostCard: {
     backgroundColor: c.surface,
     borderWidth: 1,
@@ -627,12 +624,12 @@ const s = StyleSheet.create({
   hostCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   hostActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   hostIcon: {
-    width: 38,
-    height: 38,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: c.elevated,
-    borderRadius: 7,
+    borderRadius: 11,
   },
   connectionState: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   connectionDot: { width: 7, height: 7, borderRadius: 4 },
@@ -648,31 +645,30 @@ const s = StyleSheet.create({
   connection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    minHeight: 68,
-    paddingHorizontal: 12,
+    gap: 12,
+    minHeight: 78,
+    paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: c.surface,
     borderWidth: 1,
     borderColor: c.border,
-    borderRadius: 10,
+    borderRadius: 14,
   },
   connectionTitle: {
     color: c.text,
-    fontFamily: mono,
-    fontSize: 12,
-    fontWeight: '500',
-    marginBottom: 4,
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 3,
   },
   grow: { flex: 1, minWidth: 0 },
-  meta: { color: c.faint, fontSize: 11, lineHeight: 16 },
+  meta: { color: c.muted, fontSize: 13, lineHeight: 18 },
   reconnect: { gap: 12, paddingVertical: 8 },
   startMenu: { gap: 10 },
   search: {
-    backgroundColor: c.background,
+    backgroundColor: c.surface,
     borderWidth: 1,
     borderColor: c.border,
-    borderRadius: 6,
+    borderRadius: 13,
     paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -680,69 +676,63 @@ const s = StyleSheet.create({
   },
   searchInput: {
     color: c.text,
-    fontFamily: mono,
     flex: 1,
     minWidth: 0,
     fontSize: 14,
     minHeight: 44,
     paddingVertical: 10,
   },
-  filters: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  groupFilter: {
+  sessionListHeading: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-    width: 44,
-    marginLeft: 'auto',
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: 6,
+    justifyContent: 'space-between',
   },
+  groupsLink: { flexDirection: 'row', alignItems: 'center', minHeight: 36, gap: 2 },
+  groupsLinkText: { color: c.muted, fontSize: 12, fontWeight: '500' },
+  filters: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   filter: {
     minHeight: 44,
-    paddingHorizontal: 10,
+    paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },
   activeFilter: { borderBottomColor: c.accent },
-  filterText: { color: c.muted, fontFamily: mono, fontSize: 11, fontWeight: '500' },
+  filterText: { color: c.muted, fontSize: 12, fontWeight: '600' },
   activeFilterText: { color: c.accent },
-  sessionList: { gap: 14, paddingTop: 2 },
-  sessionSection: { gap: 2 },
+  sessionList: { gap: 20, paddingTop: 6 },
+  sessionSection: { gap: 4 },
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 28,
-    paddingHorizontal: 6,
+    minHeight: 32,
+    paddingHorizontal: 2,
   },
-  sectionPath: { flex: 1, fontFamily: mono, color: c.muted, fontSize: 11 },
-  sectionCount: { fontFamily: mono, color: c.faint, fontSize: 10 },
+  sectionPath: { flex: 1, color: c.muted, fontSize: 12, fontWeight: '600' },
+  sectionCount: { color: c.faint, fontSize: 11 },
   sessionRow: {
     flexDirection: 'row',
-    paddingHorizontal: 6,
-    paddingVertical: 9,
-    minHeight: 58,
+    paddingHorizontal: 2,
+    paddingVertical: 12,
+    minHeight: 70,
     gap: 12,
   },
   statusSlot: { paddingTop: 7 },
   sessionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sessionTitle: {
     color: c.text,
-    fontFamily: mono,
-    fontSize: 14,
-    fontWeight: '500',
-    lineHeight: 21,
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 22,
     flex: 1,
   },
   sessionMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
-  sessionAgent: { fontFamily: mono, fontSize: 11, lineHeight: 18 },
+  sessionAgent: { fontSize: 12, lineHeight: 18, fontWeight: '500' },
   sessionCwd: {
     flex: 1,
     minWidth: 0,
     color: c.faint,
-    fontFamily: mono,
     fontSize: 11,
     lineHeight: 18,
   },

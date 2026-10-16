@@ -18,7 +18,8 @@ const symbols: Record<SessionStatus, string> = {
   unknown: '–',
 };
 
-function statusColor(status: SessionStatus) {
+function statusColor(status: SessionStatus, source?: SessionStatusSource) {
+  if (source === 'activity' && status === 'working') return colors.muted;
   if (status === 'failed' || status === 'blocked') return colors.danger;
   if (status === 'question') return colors.warning;
   if (status === 'working' || status === 'done') return colors.success;
@@ -28,14 +29,16 @@ function statusColor(status: SessionStatus) {
 /** Decorative when paired with the row's explicit status label. */
 export function SessionStatusDot({
   status,
+  source,
   active = false,
 }: {
   status: SessionStatus;
+  source?: SessionStatusSource;
   active?: boolean;
 }) {
   const [opacity] = useState(() => new Animated.Value(1));
   const motionAllowed = useMotionPreference();
-  const pulse = active && status === 'working' && motionAllowed;
+  const pulse = active && status === 'working' && source !== 'activity' && motionAllowed;
 
   useEffect(() => {
     opacity.stopAnimation();
@@ -66,7 +69,10 @@ export function SessionStatusDot({
     <Animated.View
       aria-hidden
       testID="session-status-dot"
-      style={[styles.dot, { backgroundColor: statusColor(status), opacity: pulse ? opacity : 1 }]}
+      style={[
+        styles.dot,
+        { backgroundColor: statusColor(status, source), opacity: pulse ? opacity : 1 },
+      ]}
     />
   );
 }
@@ -83,14 +89,16 @@ export function SessionStatusBadge({
   variant?: 'badge' | 'plain';
 }) {
   const label = sessionStatusLabel(status, source);
-  const tone = statusColor(status);
+  const tone = statusColor(status, source);
   return (
     <View
       accessibilityLabel={`${label}. ${demo ? 'Stan przykładowy' : sessionStatusDetail(status, source)}`}
       style={variant === 'plain' ? styles.plain : [styles.badge, { borderColor: `${tone}55` }]}
     >
       {variant === 'badge' && (
-        <Text style={[styles.symbol, { color: tone }]}>{symbols[status]}</Text>
+        <Text style={[styles.symbol, { color: tone }]}>
+          {source === 'activity' && status === 'working' ? '○' : symbols[status]}
+        </Text>
       )}
       <Text style={[styles.label, { color: tone }]}>
         {source === 'screen' ? `~ ${label}` : label}

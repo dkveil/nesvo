@@ -206,7 +206,7 @@ async function main() {
     await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
     assert.ok(session);
     for (const [state, source, label] of [
-      ['working', 'activity', 'Aktywność'],
+      ['working', 'activity', 'Otwarta'],
       ['idle', 'activity', 'Cisza'],
       ['question', 'screen', 'Pytanie'],
       ['blocked', 'screen', 'Blokada'],
