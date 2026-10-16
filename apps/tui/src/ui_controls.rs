@@ -16,6 +16,7 @@ pub const HOME_ACTION_ROWS: [u16; 3] = [2, 5, 8];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Navigation(char),
+    PaneNavigation { pane: usize, key: char },
     Submit,
     Cancel,
     Field(Field),
@@ -242,7 +243,14 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         ] {
             buttons(
                 row(content, offset),
-                [(label, Action::Navigation(action), enabled)],
+                [(
+                    label,
+                    Action::PaneNavigation {
+                        pane: index,
+                        key: action,
+                    },
+                    enabled,
+                )],
                 &mut output,
             );
         }

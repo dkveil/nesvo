@@ -126,7 +126,10 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
 
 fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome) {
     match action {
-        Action::Navigation(key) => {
+        Action::Navigation(key) | Action::PaneNavigation { key, .. } => {
+            if let Action::PaneNavigation { pane, .. } = action {
+                app.focused = pane;
+            }
             app.mode = Mode::Navigate;
             navigation_key(
                 app,
@@ -484,6 +487,47 @@ mod tests {
         assert_eq!(outcome.commands[0]["name"], "Review");
         assert_eq!(outcome.commands[0]["cwd"], "/work/project");
         assert_eq!(outcome.commands[0]["program"], "claude");
+    }
+
+    #[test]
+    fn clicking_empty_pane_creates_there_without_replacing_the_other_session() {
+        let mut app = App::new(1);
+        let existing = json!({"id":"existing","name":"Shell","cwd":"/work","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null});
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[existing]}))
+            .unwrap();
+        app.event(json!({"type":"capabilities","workspace":"/work","programs":[{"id":"shell","available":true}]}))
+            .unwrap();
+        app.split = true;
+        app.focused = 0;
+        assert_eq!(app.panes, [Some("existing".into()), None]);
+
+        let area = Rect::new(0, 0, 120, 36);
+        let opened = click(&mut app, area, Action::PaneNavigation { pane: 1, key: 'n' });
+        assert!(opened.commands.is_empty());
+        assert_eq!(app.focused, 1);
+        assert!(matches!(app.dialog, Some(Dialog::NewSession(_))));
+        event(&mut app, Event::Paste("Second shell".into()), area);
+        let created = click(&mut app, area, Action::Submit);
+        assert_eq!(created.commands.len(), 1);
+        assert_eq!(created.commands[0]["type"], "create");
+        app.event(json!({"type":"created","sessionId":"new","requestId":created.commands[0]["requestId"]}))
+            .unwrap();
+        let subscribed = app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            existing,
+            {"id":"new","name":"Second shell","cwd":"/work","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        assert_eq!(app.panes, [Some("existing".into()), Some("new".into())]);
+        assert!(
+            subscribed
+                .iter()
+                .any(|command| command["type"] == "subscribe" && command["sessionId"] == "new")
+        );
+        assert!(
+            !subscribed
+                .iter()
+                .any(|command| command["type"] == "unsubscribe"
+                    && command["sessionId"] == "existing")
+        );
     }
 
     #[test]
