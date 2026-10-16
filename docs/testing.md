@@ -13,7 +13,7 @@ Sprawdzono osobno silnik demonstracyjny: polecenia, Ctrl+C, backspace, CRLF prze
 | Renderer w Chromium               | Ograniczony smoke test wykonany                                                                                       |
 | Silnik fikcyjnej powłoki          | Smoke test wykonany                                                                                                   |
 | Cała aplikacja webowa + host Rust | PASS na Windows / Chromium, 16.10.2026: polecenie w PowerShell, reconnect, odtworzenie, kolejne polecenie, zamknięcie |
-| Fizyczny iPhone + Expo Go         | SDK 57 przechodzi kontrolę wersji; uruchomienie zatrzymane na wymaganiu logowania do tego samego konta Expo w telefonie i CLI |
+| Fizyczny iPhone + Expo Go         | SDK 57 przechodzi kontrolę wersji; logowanie CLI potwierdzone, podgląd uruchomiony ponownie. Otwarcie aplikacji na telefonie czeka na test użytkownika |
 | Fizyczny Android + Expo Go        | Do wykonania                                                                                                          |
 | iOS development build             | Do wykonania po zbudowaniu                                                                                            |
 | TestFlight                        | Brak potwierdzonego wydania                                                                                           |
@@ -24,6 +24,8 @@ W pierwszej wersji wykonano także TypeScript, ESLint, Expo Doctor (20/20) i eks
 Po zmianie wyglądu ponownie sprawdzono listę, filtrowanie, wyszukiwanie, demo rozmowy, tworzenie sesji, wejście terminala, menu boczne i walidację parowania w Chromium przy szerokości 390 px. Ponowny test prawdziwego hosta Rust na Windowsie przeszedł wykonanie polecenia, rozłączenie i ponowne połączenie, odtworzenie wyjścia oraz zamknięcie. Eksport klienta iOS i Android również przeszedł. Wyniki nie potwierdzają jeszcze zachowania na fizycznym telefonie.
 
 Po zgłoszeniu niezgodności Expo Go dopasowano cały klient do SDK 57, zgodnego z wersją 57.0.9 dostępną w polskim App Store 16.10.2026. Sprawdzono `expo install --check`, Expo Doctor (21/21), TypeScript, ESLint, testy przeglądarkowe i połączenie z prawdziwym hostem Rust. Manifest serwera dla iOS zwraca `sdkVersion: 57.0.0` oraz `runtimeVersion: exposdk:57.0.0`, a wskazany pakiet startowy iOS jest dostępny (HTTP 200). To potwierdza naprawę konfiguracji serwera, ale uruchomienie na telefonie nadal wymaga ponownego testu użytkownika.
+
+Po logowaniu kodem urządzenia potwierdzono konto przez `expo whoami` oraz powiązanie z projektem EAS `bc10f67e-42f9-4878-af56-7eefd9ad89d9` przez `eas project:info`. Zrestartowano Metro; manifest iOS zawiera właściwy identyfikator projektu, właściciela oraz SDK 57, a pakiet startowy zwraca HTTP 200. To sprawdzenie serwera nie potwierdza jeszcze logowania Expo Go ani uruchomienia aplikacji na telefonie.
 
 Powtarzalne testy przeglądarkowe (najpierw uruchom `npm run web` w drugim terminalu):
 
@@ -51,7 +53,7 @@ npm run test:host
 2. Zainstaluj zależności klienta: `npm install`.
 3. Uruchom `npx tsc --noEmit` oraz `cargo test --manifest-path host/Cargo.toml`. Zapisz rzeczywiste wyniki; obecność tej instrukcji nie oznacza ich zaliczenia.
 4. W jednym terminalu uruchom `npm start`. Na iPhonie otwórz aplikację z kodu Expo.
-   Przed otwarciem na fizycznym iPhonie zaloguj CLI przez `npx expo login --browser` oraz Expo Go do tego samego konta. Sprawdź `npx expo whoami`; samo działanie serwera bez błędów nie potwierdza logowania.
+   Przed otwarciem na fizycznym iPhonie zaloguj CLI przez `npx.cmd eas-cli@latest login --device` oraz Expo Go do tego samego konta. Sprawdź `npx.cmd expo whoami`; samo działanie serwera bez błędów nie potwierdza logowania. Na Windowsie można używać `npm.cmd` i `npx.cmd`, gdy PowerShell blokuje skrypty `.ps1`.
 5. W drugim terminalu uruchom `cargo run --manifest-path host/Cargo.toml -- --lan --workspace "C:\Users\Damian\dev"`, używając istniejącego katalogu własnego komputera.
 6. Zapewnij dostęp telefonu do adresu hosta. Na pierwszą próbę użyj tego samego Wi-Fi i aktywnego komputera.
 7. W aplikacji zeskanuj kod **hosta Pocket Sessions**. To inny kod niż QR Expo.

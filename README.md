@@ -27,21 +27,22 @@ Potrzebujesz Node.js z npm oraz stabilnego Rusta z Cargo. Kompilacja hosta na Wi
 Z katalogu repozytorium:
 
 ```powershell
-npm install
-npm start
+npm.cmd install
+npm.cmd start
 ```
 
 Na iPhonie zainstaluj Expo Go i zeskanuj kod wyświetlany przez Expo. Komputer oraz telefon powinny mieć łączność w sieci lokalnej. Projekt używa **Expo SDK 57**, zgodnego z Expo Go 57 dostępnym w App Store w chwili przygotowania podglądu (16.10.2026).
 
-Na fizycznym iPhonie Expo Go wymaga też **tego samego konta Expo na telefonie i w CLI**. Zaloguj komputer poleceniem `npx expo login --browser` (obsługuje GitHub), a następnie zaloguj się do tego samego konta w Expo Go przez ikonę profilu. Sprawdź konto CLI przez `npx expo whoami`. Potem wybierz „Try again” na telefonie; po zmianie konta uruchom serwer podglądu ponownie. [Wymaganie logowania Expo](https://docs.expo.dev/troubleshooting/expo-go-sign-in-required/).
-
-Jeżeli na Windowsie automatyczne otwarcie przeglądarki kończy się błędem `cmd /c start`, uruchom logowanie bez automatycznego otwierania i otwórz wypisany adres ręcznie **na tym samym komputerze**. Pozostaw terminal działający do zakończenia logowania:
+Na fizycznym iPhonie Expo Go wymaga też **tego samego konta Expo na telefonie i w CLI**. Zaloguj komputer poniższym poleceniem, otwórz wypisany link, zaloguj się przez GitHub i zatwierdź dostęp CLI. Jeśli strona pokaże numer do porównania, wpisz go w terminalu. Logowanie EAS jest współdzielone z Expo CLI:
 
 ```powershell
-$env:BROWSER = 'none'
-npx expo login --browser
-Remove-Item Env:BROWSER
+npx.cmd eas-cli@latest login --device
+npx.cmd expo whoami
 ```
+
+Następnie zaloguj się do tego samego konta w Expo Go przez ikonę profilu i wybierz „Try again” lub ponownie zeskanuj QR. Po zmianie konta uruchom serwer podglądu ponownie. [Wymaganie logowania Expo](https://docs.expo.dev/troubleshooting/expo-go-sign-in-required/).
+
+Na Windowsie końcówka `.cmd` pozwala używać npm i npx także wtedy, gdy PowerShell blokuje skrypty `.ps1`. Nie wymaga to zmiany Execution Policy. Logowanie kodem urządzenia nie wymaga przekierowania przeglądarki na lokalny port komputera; samo otwarcie dashboardu Expo nie potwierdza zalogowania CLI.
 
 Logowanie i ewentualne 2FA odbywają się na stronie dostawcy. Nie wpisuj haseł, kodów 2FA ani tokenów do plików projektu.
 
@@ -50,7 +51,7 @@ Najnowsze SDK i najnowsza aplikacja Expo Go w sklepie mogą mieć różne wersje
 Podgląd w przeglądarce na komputerze:
 
 ```powershell
-npm run web
+npm.cmd run web
 ```
 
 Podgląd webowy przydaje się do pracy nad ekranami i komunikacją. Nie potwierdza poprawnego działania klawiatury, schowka, aparatu ani WebView na iPhonie.
@@ -124,7 +125,7 @@ node scripts/build-terminal.mjs
 Sprawdzenie typów klienta i testy hosta:
 
 ```powershell
-npx tsc --noEmit
+npx.cmd tsc --noEmit
 cargo test --manifest-path host/Cargo.toml
 ```
 

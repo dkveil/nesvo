@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Sesje",
-    "slug": "pocket-sessions",
+    "slug": "reveil-development",
     "version": "0.1.0",
     "scheme": "pocketsessions",
     "orientation": "default",
@@ -25,7 +25,10 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -51,6 +54,13 @@
         }
       ],
       "expo-status-bar"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "bc10f67e-42f9-4878-af56-7eefd9ad89d9"
+      }
+    },
+    "owner": "reveil-development"
   }
 }
