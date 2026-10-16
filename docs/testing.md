@@ -32,6 +32,8 @@ CI builds and tests the Rust programs natively on Windows, macOS and Linux. Chec
 
 The branded TUI was captured from a real Windows ConPTY at 120×30 cells. The logo and controls fit; detach restored the cursor and terminal mode. Use `--no-animation` for a static logo. Unicode block appearance depends on the terminal font and cell proportions.
 
+The start menu was also verified in an isolated Windows ConPTY: workspace entry, the Theme dialog, Pair mobile, F1 navigation, shell creation and Esc detach. A subsequent authenticated session listing confirmed that the shell remained on its host. The README image replays the captured ANSI output through a terminal renderer with custom block glyphs; it contains no private pairing data.
+
 The latest mobile bundles include the SVG renderer and new icons. Expo Go can preview the app UI; installed application icons and splash behavior require a development or production build. The new theme and keyboard behavior still require a physical iPhone retest.
 
 ### What the synchronization tests prove

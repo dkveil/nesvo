@@ -23,10 +23,10 @@
 nesvo brings a native terminal workspace and a mobile companion to the same Rust host. Group your sessions, watch their output on multiple devices, and hand over control when you switch screens.
 
 <p align="center">
-  <img src="docs/assets/terminal-workspace.png" alt="nesvo terminal workspace with grouped sessions and terminal panes" width="1100" />
+  <img src="docs/assets/terminal-workspace.png" alt="nesvo Ultraviolet terminal start menu" width="1100" />
 </p>
 
-<p align="center"><sub>The native terminal client. Mobile connects to the same host and sessions.</sub></p>
+<p align="center"><sub>The native terminal client's start menu. Mobile connects to the same host and sessions.</sub></p>
 
 ## what you can do
 
