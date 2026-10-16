@@ -398,6 +398,7 @@ done
     ready ||= data.toString().includes('Rust host listening');
   });
   let peer: Peer | undefined;
+  let bodyFailure: unknown;
   try {
     await until(() => {
       if (host.exitCode !== null || failure) throw new Error(`Host startup failed: ${failure}`);
@@ -450,9 +451,13 @@ done
     });
     const created = await peer.next('created');
     assert.equal(created.requestId, 'external-cli');
-    const snapshot = await peer.next('sessions', event => event.sessions?.length === 1);
-    assert.equal(snapshot.sessions![0].cwd, outside);
-    assert.equal(snapshot.sessions![0].program, 'gemini');
+    const snapshot = await peer.next(
+      'sessions',
+      event => event.sessions?.some(session => session.id === created.sessionId) ?? false,
+    );
+    const externalSession = snapshot.sessions!.find(session => session.id === created.sessionId)!;
+    assert.equal(externalSession.cwd, outside);
+    assert.equal(externalSession.program, 'gemini');
     peer.send({ type: 'attach', sessionId: created.sessionId, cols: 100, rows: 30 });
     await peer.next('attached');
     peer.send({ type: 'input', sessionId: created.sessionId, data: 'report\r' });
@@ -513,17 +518,33 @@ done
     for (const [index, cwd] of ['nested', '   '].entries()) {
       peer.send({ type: 'create', name: 'Shell', cwd, requestId: `shell-${index}` });
       const shell = await peer.next('created');
-      const snapshot = await peer.next('sessions', event => event.sessions?.length === 1);
-      assert.equal(snapshot.sessions![0].program, 'shell');
-      assert.equal(snapshot.sessions![0].cwd, index === 0 ? join(workspace, 'nested') : workspace);
+      const snapshot = await peer.next(
+        'sessions',
+        event => event.sessions?.some(session => session.id === shell.sessionId) ?? false,
+      );
+      const shellSession = snapshot.sessions!.find(session => session.id === shell.sessionId)!;
+      assert.equal(shellSession.program, 'shell');
+      assert.equal(shellSession.cwd, index === 0 ? join(workspace, 'nested') : workspace);
       peer.send({ type: 'close', sessionId: shell.sessionId });
       await peer.next('sessions', event => event.sessions?.length === 0);
     }
     await peer.disconnect();
+  } catch (error) {
+    bodyFailure = error;
+    throw error;
   } finally {
     peer?.socket.terminate();
     host.kill();
     await delay(300);
-    await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(
+      cleanupError => {
+        if (bodyFailure)
+          throw new AggregateError(
+            [bodyFailure, cleanupError],
+            'Host fixture failed and cleanup did not complete',
+          );
+        throw cleanupError;
+      },
+    );
   }
 });
