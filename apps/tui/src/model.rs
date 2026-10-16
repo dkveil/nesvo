@@ -102,6 +102,8 @@ pub struct App {
     pub selected: usize,
     pub panes: [Option<String>; 2],
     pub split: bool,
+    pub fullscreen: bool,
+    pub fullscreen_default: bool,
     pub focused: usize,
     pub mode: Mode,
     pub dialog: Option<Dialog>,
@@ -133,6 +135,8 @@ impl App {
             selected: 0,
             panes: [None, None],
             split: false,
+            fullscreen: false,
+            fullscreen_default: false,
             focused: 0,
             mode: Mode::Navigate,
             dialog: None,
@@ -313,7 +317,7 @@ impl App {
         }
         if self.owns(id) {
             self.mode = Mode::Input;
-            self.notice = "Input mode · Ctrl+G navigation · Esc detach".into();
+            self.notice.clear();
         } else if session.controller_id.is_none() {
             commands.push(json!({"type":"acquireControl","sessionId":id,
                 "takeOver":false,"cols":session.cols,"rows":session.rows}));
@@ -406,7 +410,7 @@ impl App {
                             self.leases.insert(id.into(), lease.into());
                             if fresh && self.active_id() == Some(id) {
                                 self.mode = Mode::Input;
-                                self.notice = "Input mode · Ctrl+G returns to navigation".into();
+                                self.notice.clear();
                             }
                         }
                     } else {

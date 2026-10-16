@@ -35,6 +35,8 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         Event::Key(key) if key.kind != KeyEventKind::Release => {
             if key.code == KeyCode::F(1) {
                 app.dialog = Some(Dialog::Menu);
+            } else if key.code == KeyCode::F(11) && app.dialog.is_none() {
+                app.fullscreen = !app.fullscreen;
             } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
             } else if key.code == KeyCode::Esc {
@@ -43,9 +45,12 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 let was_scrolled = app
                     .active_terminal()
                     .is_some_and(|terminal| terminal.screen().scrollback() > 0);
-                if key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.code == KeyCode::Char('\u{7}')
+                    || (matches!(key.code, KeyCode::Char('g' | 'G'))
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                {
                     app.mode = Mode::Navigate;
-                    app.notice = "Navigation mode · i returns to the terminal".into();
+                    app.notice.clear();
                 } else if let Some(data) = app
                     .active_terminal()
                     .and_then(|terminal| input::encode_key(key, terminal.screen()))
@@ -88,7 +93,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
             }
         }
         Event::Mouse(mouse) => {
-            let geometry = ui::geometry(area, app.split);
+            let geometry = ui::geometry(area, app);
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 if let Some(action) = ui_controls::hit_test(app, area, mouse.column, mouse.row) {
                     mouse_action(app, action, area, &mut outcome);
@@ -131,6 +136,8 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
 
 fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome) {
     match action {
+        Action::ToggleFullscreen => app.fullscreen = !app.fullscreen,
+        Action::ReturnToNavigation => app.mode = Mode::Navigate,
         Action::Navigation(key) | Action::PaneNavigation { key, .. } => {
             if let Action::PaneNavigation { pane, .. } = action {
                 app.focused = pane;
@@ -167,12 +174,21 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
         }
         Action::OpenRow(index) => {
             app.selected = index;
+            if let Some(row) = app.selected_row() {
+                match row.kind {
+                    RowKind::Session(id) => outcome.commands.extend(app.open_session(&id)),
+                    RowKind::Group(id) => {
+                        if !app.collapsed.remove(&id) {
+                            app.collapsed.insert(id);
+                        }
+                    }
+                    RowKind::Root => {}
+                }
+            }
             app.mode = Mode::Navigate;
-            open_selected(app, outcome);
         }
         Action::FocusPane(index) => {
             app.focused = index;
-            app.mode = Mode::Navigate;
             if let Some(id) = app.panes[index].clone()
                 && let Some(selected) = app
                     .tree()
@@ -180,8 +196,9 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
                     .position(|row| row.kind == RowKind::Session(id.clone()))
             {
                 app.selected = selected;
-                outcome.commands.extend(app.activate_session(&id));
+                outcome.commands.extend(app.open_session(&id));
             }
+            app.mode = Mode::Navigate;
         }
         Action::MenuChoice(index) => menu_choice(app, index, outcome),
         Action::ThemeChoice(index) => {
@@ -201,10 +218,10 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     }
     if matches!(app.dialog, Some(Dialog::Menu)) {
         match key.code {
-            KeyCode::Up | KeyCode::BackTab => app.menu_selected = (app.menu_selected + 2) % 3,
-            KeyCode::Down | KeyCode::Tab => app.menu_selected = (app.menu_selected + 1) % 3,
+            KeyCode::Up | KeyCode::BackTab => app.menu_selected = (app.menu_selected + 3) % 4,
+            KeyCode::Down | KeyCode::Tab => app.menu_selected = (app.menu_selected + 1) % 4,
             KeyCode::Enter => menu_choice(app, app.menu_selected, outcome),
-            KeyCode::Char('1'..='3') => {
+            KeyCode::Char('1'..='4') => {
                 if let KeyCode::Char(value) = key.code {
                     menu_choice(app, value as usize - '1' as usize, outcome);
                 }
@@ -300,6 +317,15 @@ fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
             })
         }
         2 => app.dialog = Some(Dialog::PairPhone),
+        3 => {
+            app.fullscreen_default = !app.fullscreen_default;
+            app.fullscreen = app.fullscreen_default;
+            app.notice = if app.fullscreen_default {
+                "Full screen will open by default.".into()
+            } else {
+                "Workspace will open by default.".into()
+            };
+        }
         _ => {}
     }
 }
@@ -446,7 +472,7 @@ fn acquire(app: &mut App, take_over: bool, area: Rect, outcome: &mut Outcome) {
         app.mode = Mode::Input;
         return;
     }
-    let inner = ui::pane_content(ui::geometry(area, app.split).panes[app.focused]);
+    let inner = ui::pane_content(ui::geometry(area, app).panes[app.focused], app.fullscreen);
     let command = json!({"type":"acquireControl","sessionId":session.id,"takeOver":take_over,
         "cols":inner.width.clamp(10,300),"rows":inner.height.clamp(2,150)});
     if take_over && session.controller_id.is_some() {
@@ -653,7 +679,7 @@ mod tests {
         assert!(matches!(app.dialog, Some(Dialog::NewSession(_))));
         click(&mut app, area, Action::Cancel);
         app.split = true;
-        let pane = ui::geometry(area, true).panes[1];
+        let pane = ui::geometry(area, &app).panes[1];
         let result = event(
             &mut app,
             Event::Mouse(MouseEvent {
@@ -680,6 +706,68 @@ mod tests {
         );
         assert!(app.mode == Mode::Navigate);
         assert!(outcome.commands.is_empty());
+    }
+
+    #[test]
+    fn f11_toggles_fullscreen_in_both_modes_and_sidebar_click_returns_to_navigation() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"first","name":"First","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"second","name":"Second","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        let area = Rect::new(0, 0, 100, 30);
+        app.mode = Mode::Input;
+        let f11 = Event::Key(KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE));
+        let fullscreen = event(&mut app, f11.clone(), area);
+        assert!(app.fullscreen);
+        assert!(app.mode == Mode::Input);
+        assert!(fullscreen.commands.is_empty());
+        let nav = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)),
+            area,
+        );
+        assert!(app.mode == Mode::Navigate);
+        assert!(nav.commands.is_empty());
+        event(&mut app, f11, area);
+        assert!(!app.fullscreen);
+        let tree = ui::tree_content(ui::geometry(area, &app).tree);
+        let row_click = event(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: tree.x,
+                row: tree.y + 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            area,
+        );
+        assert!(app.mode == Mode::Navigate);
+        assert_eq!(app.active_id(), Some("second"));
+        assert!(
+            !row_click
+                .commands
+                .iter()
+                .any(|command| command["type"] == "input" || command["type"] == "acquireControl")
+        );
+        assert!(
+            click(&mut app, area, Action::ToggleFullscreen)
+                .commands
+                .is_empty()
+        );
+        assert!(app.fullscreen);
+    }
+
+    #[test]
+    fn menu_can_persist_fullscreen_default_without_hiding_theme() {
+        let mut app = App::new(1);
+        let area = Rect::new(0, 0, 100, 30);
+        app.dialog = Some(Dialog::Menu);
+        click(&mut app, area, Action::MenuChoice(3));
+        assert!(app.fullscreen_default && app.fullscreen);
+        assert!(matches!(app.dialog, Some(Dialog::Menu)));
+        click(&mut app, area, Action::MenuChoice(1));
+        assert!(matches!(app.dialog, Some(Dialog::Theme { .. })));
     }
 
     #[test]

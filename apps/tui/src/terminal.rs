@@ -1,5 +1,4 @@
 //! VT state is interpreted locally; escape sequences never reach the outer terminal.
-use crate::theme::{BACKGROUND, TEXT, terminal_color_reply};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -43,20 +42,6 @@ impl vt100::Callbacks for Replies {
             (None, 'c', 0) => self.push("\x1b[?1;2c".into()),
             (Some(b'>'), 'c', 0) => self.push("\x1b[>0;1;0c".into()),
             _ => {}
-        }
-    }
-
-    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
-        if params.get(1) != Some(&b"?".as_slice()) {
-            return;
-        }
-        let reply = match params.first().copied() {
-            Some(b"10") => terminal_color_reply(10, TEXT),
-            Some(b"11") => terminal_color_reply(11, BACKGROUND),
-            _ => None,
-        };
-        if let Some(reply) = reply {
-            self.push(reply);
         }
     }
 }
@@ -110,8 +95,8 @@ impl Widget for TerminalWidget<'_> {
                 };
                 let target = &mut buffer[(area.x + col, area.y + row)];
                 let mut style = Style::default()
-                    .fg(color(cell.fgcolor(), TEXT))
-                    .bg(color(cell.bgcolor(), BACKGROUND));
+                    .fg(color(cell.fgcolor()))
+                    .bg(color(cell.bgcolor()));
                 for (enabled, modifier) in [
                     (cell.bold(), Modifier::BOLD),
                     (cell.dim(), Modifier::DIM),
@@ -143,9 +128,9 @@ impl Widget for TerminalWidget<'_> {
     }
 }
 
-fn color(value: vt100::Color, fallback: Color) -> Color {
+fn color(value: vt100::Color) -> Color {
     match value {
-        vt100::Color::Default => fallback,
+        vt100::Color::Default => Color::Reset,
         vt100::Color::Idx(index) => Color::Indexed(index),
         vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
@@ -169,6 +154,8 @@ mod tests {
         assert_eq!(buffer[(0, 0)].fg, Color::Indexed(1));
         assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
         assert_eq!(buffer[(3, 1)].symbol(), "界");
+        assert_eq!(buffer[(3, 1)].fg, Color::Reset);
+        assert_eq!(buffer[(3, 1)].bg, Color::Reset);
         assert_eq!(buffer[(5, 1)].symbol(), "!");
         assert_eq!(buffer[(0, 2)].symbol(), " ");
     }
@@ -193,5 +180,6 @@ mod tests {
         );
         let replies = state.process("\x1b[2;3H\x1b[6n", true);
         assert_eq!(replies, vec!["\x1b[2;3R"]);
+        assert!(state.process("\x1b]10;?\x07\x1b]11;?\x07", true).is_empty());
     }
 }

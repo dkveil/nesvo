@@ -2,7 +2,7 @@
 use crate::{
     brand,
     launch::{Field, Program},
-    model::{App, Dialog, RowKind},
+    model::{App, Dialog, Mode, RowKind},
     theme::{BACKGROUND, FAINT, MUTED, SURFACE, TEXT},
     ui,
 };
@@ -25,6 +25,8 @@ pub enum Action {
     MenuChoice(usize),
     ThemeChoice(usize),
     Navigation(char),
+    ReturnToNavigation,
+    ToggleFullscreen,
     PaneNavigation { pane: usize, key: char },
     Submit,
     Cancel,
@@ -113,9 +115,18 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let mut output = Vec::new();
     if let Some(dialog) = &app.dialog {
         if matches!(dialog, Dialog::Menu) {
-            for (index, label) in ["Enter workspace", "Theme", "Pair mobile"]
-                .into_iter()
-                .enumerate()
+            for (index, label) in [
+                "Enter workspace",
+                "Theme",
+                "Pair mobile",
+                if app.fullscreen_default {
+                    "Full screen by default: on"
+                } else {
+                    "Full screen by default: off"
+                },
+            ]
+            .into_iter()
+            .enumerate()
             {
                 buttons(
                     menu_action_area(area, index),
@@ -236,80 +247,94 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         return output;
     }
 
-    let geometry = ui::geometry(area, app.split);
-    buttons(
-        row(geometry.header, 1),
-        [
-            ("F1 Menu", Action::Navigation('M'), true),
-            ("n New session", Action::Navigation('n'), app.connected),
-            ("g Group", Action::Navigation('g'), app.connected),
-            ("p Pair phone", Action::Navigation('p'), true),
-            (
-                if app.split { "v Single" } else { "v Split" },
-                Action::Navigation('v'),
-                true,
-            ),
-            ("? Help", Action::Navigation('?'), true),
-        ],
-        &mut output,
-    );
-    let can_control = app.connected && app.active_session().is_some_and(|session| session.running);
-    let owns = app.active_id().is_some_and(|id| app.owns(id));
-    let other_controls = app
-        .active_session()
-        .is_some_and(|session| session.controller_id.is_some() && !owns);
-    let selected = app.selected_row();
-    let selected_item = selected
-        .as_ref()
-        .is_some_and(|row| row.kind != RowKind::Root);
-    let selected_group = selected
-        .as_ref()
-        .is_some_and(|row| matches!(row.kind, RowKind::Group(_)));
-    buttons(
-        row(geometry.footer, 0),
-        [
-            (
-                if other_controls {
-                    "t Take over"
-                } else {
-                    "i Type"
-                },
-                Action::Navigation(if other_controls { 't' } else { 'i' }),
-                can_control,
-            ),
-            ("x Release", Action::Navigation('x'), owns),
-            (
-                "r Rename",
-                Action::Navigation('r'),
-                app.connected && selected_item,
-            ),
-            (
-                "m Move",
-                Action::Navigation('m'),
-                app.connected && selected_item,
-            ),
-            (
-                if selected_group {
-                    "d Delete group"
-                } else {
-                    "d Delete"
-                },
-                Action::Navigation('d'),
-                app.connected && selected_item,
-            ),
-            (
-                "G Subgroup",
-                Action::Navigation('G'),
-                app.connected && selected_group,
-            ),
-        ],
-        &mut output,
-    );
+    let geometry = ui::geometry(area, app);
+    let toggle = ui::fullscreen_handle_area(app, geometry.footer);
+    if !toggle.is_empty() {
+        output.push(Control {
+            area: toggle,
+            label: None,
+            action: Action::ToggleFullscreen,
+            enabled: true,
+        });
+    }
+    if app.fullscreen {
+        return output;
+    }
+    if app.mode == Mode::Input {
+        buttons(
+            row(geometry.header, 1),
+            [
+                ("Ctrl+G Navigation", Action::ReturnToNavigation, true),
+                ("F1 Menu", Action::Navigation('M'), true),
+            ],
+            &mut output,
+        );
+    } else {
+        let can_control =
+            app.connected && app.active_session().is_some_and(|session| session.running);
+        let owns = app.active_id().is_some_and(|id| app.owns(id));
+        let other_controls = app
+            .active_session()
+            .is_some_and(|session| session.controller_id.is_some() && !owns);
+        let selected = app.selected_row();
+        let selected_item = selected
+            .as_ref()
+            .is_some_and(|row| row.kind != RowKind::Root);
+        let selected_group = selected
+            .as_ref()
+            .is_some_and(|row| matches!(row.kind, RowKind::Group(_)));
+        buttons(
+            row(geometry.header, 1),
+            [
+                ("F1 Menu", Action::Navigation('M'), true),
+                (
+                    if other_controls {
+                        "t Take over"
+                    } else {
+                        "i Type"
+                    },
+                    Action::Navigation(if other_controls { 't' } else { 'i' }),
+                    can_control,
+                ),
+                ("n New", Action::Navigation('n'), app.connected),
+                ("g Group", Action::Navigation('g'), app.connected),
+                ("p Pair", Action::Navigation('p'), true),
+                (
+                    if app.split { "v Single" } else { "v Split" },
+                    Action::Navigation('v'),
+                    true,
+                ),
+                ("? Help", Action::Navigation('?'), true),
+                (
+                    "d Delete",
+                    Action::Navigation('d'),
+                    app.connected && selected_item,
+                ),
+                ("x Release", Action::Navigation('x'), owns),
+                (
+                    "r Rename",
+                    Action::Navigation('r'),
+                    app.connected && selected_item,
+                ),
+                (
+                    "m Move",
+                    Action::Navigation('m'),
+                    app.connected && selected_item,
+                ),
+                (
+                    "G Subgroup",
+                    Action::Navigation('G'),
+                    app.connected && selected_group,
+                ),
+            ],
+            &mut output,
+        );
+    }
     for index in 0..if app.split { 2 } else { 1 } {
         if app.panes[index].is_some() {
             continue;
         }
-        let content = ui::pane_content(geometry.panes[index]);
+        let content = ui::pane_content(geometry.panes[index], app.fullscreen);
         let rows = home_action_rows(content);
         for (offset, label, action, enabled) in [
             (rows[0], "n  New session", 'n', app.connected),
@@ -348,7 +373,10 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
     if app.dialog.is_some() {
         return None;
     }
-    let geometry = ui::geometry(area, app.split);
+    let geometry = ui::geometry(area, app);
+    if app.fullscreen {
+        return None;
+    }
     let tree = ui::tree_content(geometry.tree);
     if tree.contains(point) {
         let index = ui::tree_offset(app, geometry.tree.height) + usize::from(row - tree.y);
@@ -391,7 +419,7 @@ mod tests {
     fn blank_tree_space_does_not_open_the_last_session() {
         let app = App::new(1);
         let area = Rect::new(0, 0, 100, 32);
-        let tree = ui::tree_content(ui::geometry(area, false).tree);
+        let tree = ui::tree_content(ui::geometry(area, &app).tree);
         assert_eq!(
             hit_test(&app, area, tree.x, tree.y),
             Some(Action::OpenRow(0))
@@ -425,7 +453,7 @@ mod tests {
         let mut app = App::new(1);
         app.panes[0] = Some("session".into());
         for area in [Rect::new(0, 0, 120, 36), Rect::new(3, 2, 80, 24)] {
-            let terminal = ui::pane_content(ui::geometry(area, false).panes[0]);
+            let terminal = ui::pane_content(ui::geometry(area, &app).panes[0], app.fullscreen);
             let controls = controls(&app, area);
             for key in ['M', 'n', 'g', 'p', 'v', '?'] {
                 assert!(
@@ -443,6 +471,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fullscreen_footer_handle_is_clickable_without_covering_session_output() {
+        let mut app = App::new(1);
+        app.fullscreen = true;
+        app.mode = crate::model::Mode::Input;
+        let area = Rect::new(0, 0, 100, 30);
+        let geometry = ui::geometry(area, &app);
+        assert_eq!(geometry.panes[0].height, 29);
+        assert_eq!(geometry.tree.width, 0);
+        let handle = ui::fullscreen_handle_area(&app, geometry.footer);
+        assert!(!handle.is_empty());
+        assert_eq!(
+            hit_test(&app, area, handle.x, handle.y),
+            Some(Action::ToggleFullscreen)
+        );
+        assert_eq!(hit_test(&app, area, handle.x, handle.y - 1), None);
+        let narrow = Rect::new(0, 0, 38, 20);
+        let narrow_footer = ui::geometry(narrow, &app).footer;
+        let narrow_handle = ui::fullscreen_handle_area(&app, narrow_footer);
+        assert_eq!(narrow_handle.width, 5);
+        assert_eq!(
+            hit_test(&app, narrow, narrow_handle.x, narrow_handle.y),
+            Some(Action::ToggleFullscreen)
+        );
     }
 
     #[test]

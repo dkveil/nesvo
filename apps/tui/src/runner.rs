@@ -103,6 +103,8 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
         .unwrap_or_default();
     app.theme = saved_preferences.theme;
     app.onboarded = saved_preferences.onboarded;
+    app.fullscreen_default = saved_preferences.fullscreen_default;
+    app.fullscreen = saved_preferences.fullscreen_default;
     app.pairing_path = pairing_path.display().to_string();
     app.pairing_qr_path = pairing_path
         .with_file_name("pairing.svg")
@@ -184,6 +186,7 @@ pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> R
             let current_preferences = Preferences {
                 theme: app.theme,
                 onboarded: app.onboarded,
+                fullscreen_default: app.fullscreen_default,
             };
             if current_preferences != saved_preferences {
                 if let Some(path) = &preferences_path
@@ -214,9 +217,10 @@ fn logo_frame_for(app: &App, area: Rect, animate: bool, elapsed: Duration) -> us
     if app.dialog.is_some() || app.panes.iter().any(Option::is_some) {
         return 0;
     }
-    let geometry = ui::geometry(area, app.split);
-    let visible = (0..if app.split { 2 } else { 1 })
-        .any(|index| brand::area(ui::pane_content(geometry.panes[index])).is_some());
+    let geometry = ui::geometry(area, app);
+    let visible = (0..if app.split { 2 } else { 1 }).any(|index| {
+        brand::area(ui::pane_content(geometry.panes[index], app.fullscreen)).is_some()
+    });
     if visible {
         brand::frame_index(elapsed)
     } else {
@@ -250,8 +254,11 @@ type RequestedSizes = HashMap<String, (String, u16, u16)>;
 fn resize_commands(app: &App, area: Rect, requested: &mut RequestedSizes) -> Vec<Value> {
     let mut commands = Vec::new();
     requested.retain(|id, _| app.owns(id));
-    let geometry = ui::geometry(area, app.split);
+    let geometry = ui::geometry(area, app);
     for index in 0..if app.split { 2 } else { 1 } {
+        if geometry.panes[index].is_empty() {
+            continue;
+        }
         let Some(id) = app.panes[index].as_deref() else {
             continue;
         };
@@ -261,7 +268,7 @@ fn resize_commands(app: &App, area: Rect, requested: &mut RequestedSizes) -> Vec
         let Some(lease) = app.leases.get(id) else {
             continue;
         };
-        let inner = ui::pane_content(geometry.panes[index]);
+        let inner = ui::pane_content(geometry.panes[index], app.fullscreen);
         let cols = inner.width.clamp(10, 300);
         let rows = inner.height.clamp(2, 150);
         let wanted = (lease.clone(), cols, rows);

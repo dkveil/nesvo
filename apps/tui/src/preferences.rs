@@ -13,6 +13,7 @@ use std::{
 pub struct Preferences {
     pub theme: Theme,
     pub onboarded: bool,
+    pub fullscreen_default: bool,
 }
 
 impl Preferences {
@@ -85,6 +86,7 @@ mod tests {
         let chosen = Preferences {
             theme: Theme::Graphite,
             onboarded: true,
+            fullscreen_default: true,
         };
         chosen.save(&path).unwrap();
         assert_eq!(Preferences::load(&path).unwrap(), chosen);
@@ -97,5 +99,9 @@ mod tests {
         assert!(serde_json::from_str::<Preferences>(r#"{"theme":"missing-theme"}"#).is_err());
         let defaults: Preferences = serde_json::from_str("{}").unwrap();
         assert_eq!(defaults.theme, Theme::Ultraviolet);
+        assert!(!defaults.fullscreen_default);
+        let old: Preferences =
+            serde_json::from_str(r#"{"theme":"graphite","onboarded":true}"#).unwrap();
+        assert!(!old.fullscreen_default);
     }
 }

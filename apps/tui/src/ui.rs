@@ -22,23 +22,27 @@ pub struct Geometry {
     pub footer: Rect,
 }
 
-pub fn geometry(area: Rect, split: bool) -> Geometry {
+pub fn geometry(area: Rect, app: &App) -> Geometry {
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(if app.fullscreen { 0 } else { 2 }),
         Constraint::Min(0),
-        Constraint::Length(2),
+        Constraint::Length(1),
     ])
     .areas(area);
-    let sidebar = if area.width >= 65 {
-        24.min(area.width / 3)
-    } else {
+    let sidebar = if app.fullscreen || area.width < 65 {
         0
+    } else {
+        21.min(area.width / 3)
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
-    let panes = if split && content.width >= 40 {
+    let panes = if app.fullscreen {
+        let mut panes = [Rect::default(), Rect::default()];
+        panes[app.focused] = content;
+        panes
+    } else if app.split && content.width >= 40 {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(content)
-    } else if split {
+    } else if app.split {
         Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(content)
     } else {
         [content, Rect::default()]
@@ -51,7 +55,10 @@ pub fn geometry(area: Rect, split: bool) -> Geometry {
     }
 }
 
-pub fn pane_content(area: Rect) -> Rect {
+pub fn pane_content(area: Rect, fullscreen: bool) -> Rect {
+    if fullscreen {
+        return area;
+    }
     // Reserve a quiet title and ownership row, with one cell of horizontal
     // breathing room. Controller resize and mouse geometry use this same area.
     Block::bordered().inner(area)
@@ -69,6 +76,20 @@ pub fn tree_offset(app: &App, height: u16) -> usize {
         .saturating_sub(usize::from(height.saturating_sub(3)))
 }
 
+fn footer_copy(app: &App) -> (&'static str, &'static str) {
+    match app.mode {
+        Mode::Input => (" INPUT → SESSION ", " Ctrl+G Navigate · F1 Menu · Esc Exit"),
+        Mode::Navigate => (" NAVIGATION → NESVO ", " i Type · F1 Menu · Esc Exit"),
+    }
+}
+
+pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
+    if footer.width < 5 {
+        return Rect::default();
+    }
+    Rect::new(footer.right() - 5, footer.y, 5, 1)
+}
+
 pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     let area = frame.area();
     frame.render_widget(
@@ -80,7 +101,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         ui_controls::render(frame, app);
         return;
     }
-    let layout = geometry(area, app.split);
+    let layout = geometry(area, app);
     let connected = if app.connected {
         "connected"
     } else {
@@ -95,33 +116,54 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         ),
         Span::styled(format!(" · {connected}"), Style::default().fg(MUTED)),
     ]);
-    frame.render_widget(Paragraph::new(header), layout.header);
-    render_tree(frame, app, layout.tree);
+    if !app.fullscreen {
+        frame.render_widget(Paragraph::new(header), layout.header);
+        render_tree(frame, app, layout.tree);
+    }
     for index in 0..if app.split { 2 } else { 1 } {
         render_pane(frame, app, index, layout.panes[index], logo_frame);
     }
-    let mode = if app.mode == Mode::Input {
-        "input · Ctrl+G navigate"
+    let (full_mode, full_hint) = footer_copy(app);
+    let handle = fullscreen_handle_area(app, layout.footer);
+    let text_width = usize::from(handle.x.saturating_sub(layout.footer.x));
+    let (mode, hint) = if text_width < Line::from(full_mode).width() + 12 {
+        match app.mode {
+            Mode::Input => (" INPUT ", " Ctrl+G NAV"),
+            Mode::Navigate => (" NAV ", " i TYPE"),
+        }
     } else {
-        "navigate · Enter open · Esc detach"
+        (full_mode, full_hint)
+    };
+    let base_width = Line::from(format!("{mode}{hint}")).width();
+    let notice = if !app.notice.is_empty() && text_width > base_width + 4 {
+        truncate_cells(&format!("  · {}", app.notice), text_width - base_width)
+    } else {
+        String::new()
     };
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(format!(" {mode}"), Style::default().fg(MUTED)),
-                Span::styled(
-                    if app.notice.is_empty() {
-                        String::new()
-                    } else {
-                        format!("   · {}", app.notice)
-                    },
-                    Style::default().fg(MUTED),
-                ),
-            ]),
-        ]),
-        layout.footer,
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                mode,
+                Style::default()
+                    .fg(app.theme.accent())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(hint, Style::default().fg(MUTED)),
+            Span::styled(notice, Style::default().fg(WARNING)),
+        ])),
+        Rect::new(
+            layout.footer.x,
+            layout.footer.y,
+            text_width as u16,
+            layout.footer.height,
+        ),
     );
+    if !handle.is_empty() {
+        frame.render_widget(
+            Paragraph::new(" F11 ").style(Style::default().fg(BACKGROUND).bg(app.theme.accent())),
+            handle,
+        );
+    }
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, app, dialog);
     }
@@ -226,7 +268,7 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
                 if session.running { "running" } else { "ended" },
                 Status::label,
             );
-            let width = usize::from(pane_content(area).width);
+            let width = usize::from(pane_content(area, app.fullscreen).width);
             let status_width = Line::from(status).width();
             let program = if width > status_width + session.program.label().len() + 14 {
                 format!("  {}", session.program.label())
@@ -269,9 +311,9 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
             )
         })
         .unwrap_or_default();
-    let content = pane_content(area);
-    if index > 0 {
-        let first = geometry(frame.area(), app.split).panes[0];
+    let content = pane_content(area, app.fullscreen);
+    if !app.fullscreen && index > 0 {
+        let first = geometry(frame.area(), app).panes[0];
         frame.render_widget(
             Block::default()
                 .borders(if first.y == area.y {
@@ -283,23 +325,29 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
             area,
         );
     }
-    frame.render_widget(
-        Paragraph::new(title),
-        Rect::new(content.x, area.y, content.width, area.height.min(1)),
-    );
-    frame.render_widget(
-        Paragraph::new(footer).style(Style::default().fg(MUTED)),
-        Rect::new(
-            content.x,
-            area.bottom().saturating_sub(1),
-            content.width,
-            area.height.min(1),
-        ),
-    );
+    if !app.fullscreen {
+        frame.render_widget(
+            Paragraph::new(title),
+            Rect::new(content.x, area.y, content.width, area.height.min(1)),
+        );
+        frame.render_widget(
+            Paragraph::new(footer).style(Style::default().fg(MUTED)),
+            Rect::new(
+                content.x,
+                area.bottom().saturating_sub(1),
+                content.width,
+                area.height.min(1),
+            ),
+        );
+    }
     let Some(session) = session else {
         render_home(frame, content, logo_frame, app.theme);
         return;
     };
+    frame.render_widget(
+        Block::default().style(Style::default().fg(Color::Reset).bg(Color::Reset)),
+        content,
+    );
     if let Some(terminal) = app.terminals.get(&session.id) {
         frame.render_widget(TerminalWidget(terminal.screen()), content);
         if focused
@@ -405,7 +453,7 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
             Rect::new(menu.x, menu.y + title_y, menu.width, 1),
         );
     }
-    for index in 0..3 {
+    for index in 0..4 {
         let target = ui_controls::menu_action_area(area, index);
         if target.width > 0 && target.height > 0 && target.x > menu.x {
             frame.render_widget(
@@ -561,9 +609,11 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     "v / Tab      Split / focus next pane\n",
                     "PgUp/PgDn    Local scrollback\n",
                     "F1 / p / ?   Menu / pair mobile / keyboard help\n",
+                    "F11          Full screen / workspace\n",
                     "Esc          Detach; open dialogs close first\n",
                     "q            Detach from navigation\n\n",
-                    "Typing: Ctrl+G switches to navigation.\n",
+                    "INPUT sends keys to the session.\n",
+                    "Ctrl+G switches to NAVIGATION for nesvo.\n",
                     "Then e sends Escape to the controlled session.\n",
                     "Ctrl+C goes to the shell while typing.\n\n",
                     "Click controls or use shortcuts. Splits are local."
@@ -595,7 +645,7 @@ mod tests {
         app.panes[0] = Some("s".into());
         app.split = true;
         let area = Rect::new(0, 0, 80, 24);
-        let layout = geometry(area, true);
+        let layout = geometry(area, &app);
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let buffer = terminal.backend().buffer();
@@ -622,10 +672,48 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_gives_terminal_all_but_one_row_and_keeps_mode_visible() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"s","name":"Shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
+            .unwrap();
+        app.terminals
+            .get_mut("s")
+            .unwrap()
+            .process("A\x1b[31mR", false);
+        app.mode = Mode::Input;
+        app.fullscreen = true;
+        let area = Rect::new(0, 0, 80, 24);
+        let layout = geometry(area, &app);
+        assert_eq!(layout.header.height, 0);
+        assert_eq!(layout.tree.width, 0);
+        assert_eq!(layout.footer.height, 1);
+        assert_eq!(pane_content(layout.panes[0], true), Rect::new(0, 0, 80, 23));
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].symbol(), "A");
+        assert_eq!(buffer[(0, 0)].fg, Color::Reset);
+        assert_eq!(buffer[(0, 0)].bg, Color::Reset);
+        assert_eq!(buffer[(1, 0)].fg, Color::Indexed(1));
+        let footer: String = (0..area.width)
+            .map(|x| buffer[(x, layout.footer.y)].symbol())
+            .collect();
+        assert!(footer.contains("INPUT → SESSION"), "{footer}");
+        assert!(footer.contains("Ctrl+G Navigate"), "{footer}");
+        assert!(footer.contains(" F11 "), "{footer}");
+        let handle = fullscreen_handle_area(&app, layout.footer);
+        assert_eq!(buffer[(handle.x, handle.y)].bg, app.theme.accent());
+    }
+
+    #[test]
     fn home_animation_changes_only_logo_cells_not_layout_or_controls() {
         let app = App::new(1);
         let area = Rect::new(0, 0, 120, 36);
-        let logo = brand::area(pane_content(geometry(area, false).panes[0])).unwrap();
+        let logo =
+            brand::area(pane_content(geometry(area, &app).panes[0], app.fullscreen)).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let initial = terminal.backend().buffer().clone();
