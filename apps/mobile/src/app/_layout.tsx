@@ -2,11 +2,13 @@ import { Stack } from 'expo-router';
 
 import { AppShell } from '@widgets/app-shell';
 
+import { useMotionPreference } from '@shared/brand';
 import { colors } from '@shared/theme';
 
 export const unstable_settings = { initialRouteName: 'index' };
 
 export default function RootLayout() {
+  const motionAllowed = useMotionPreference();
   return (
     <AppShell>
       <Stack
@@ -15,7 +17,10 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="hosts" options={{ animation: 'none' }} />
         <Stack.Screen name="settings" options={{ animation: 'none' }} />
-        <Stack.Screen name="session/[id]" />
+        <Stack.Screen
+          name="session/[id]"
+          options={{ animation: motionAllowed ? 'default' : 'fade' }}
+        />
       </Stack>
     </AppShell>
   );

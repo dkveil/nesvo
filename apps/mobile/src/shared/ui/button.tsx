@@ -1,8 +1,16 @@
-import { Pressable, type StyleProp, StyleSheet, Text, type ViewStyle } from 'react-native';
+import {
+  Animated,
+  Pressable,
+  type StyleProp,
+  StyleSheet,
+  Text,
+  type ViewStyle,
+} from 'react-native';
 
 import { colors, mono } from '@shared/theme';
 
 import { Icon, type IconName } from './icon';
+import { usePressMotion } from './use-press-motion';
 
 export function Button({
   label,
@@ -19,22 +27,28 @@ export function Button({
   icon?: IconName;
   style?: StyleProp<ViewStyle>;
 }) {
+  const { scale, onPressIn, onPressOut } = usePressMotion();
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.button,
-        secondary && styles.secondary,
-        { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 },
-        style,
-      ]}
-    >
-      {!!icon && <Icon name={icon} color={secondary ? colors.text : colors.accentInk} size={18} />}
-      <Text style={[styles.text, secondary && { color: colors.text }]}>{label}</Text>
-    </Pressable>
+    <Animated.View style={[style, { transform: [{ scale }] }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        disabled={disabled}
+        onPress={onPress}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        style={({ pressed }) => [
+          styles.button,
+          secondary && styles.secondary,
+          { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 },
+        ]}
+      >
+        {!!icon && (
+          <Icon name={icon} color={secondary ? colors.text : colors.accentInk} size={18} />
+        )}
+        <Text style={[styles.text, secondary && { color: colors.text }]}>{label}</Text>
+      </Pressable>
+    </Animated.View>
   );
 }
 

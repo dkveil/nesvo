@@ -16,10 +16,11 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { groupPath, GroupPicker } from '@entities/group';
-import { programLabels } from '@entities/session';
+import { programAgents, programLabels, sessionAgentColor } from '@entities/session';
 import { useWorkspace } from '@entities/workspace';
 
 import type { SessionProgram } from '@shared/api/host';
+import { useMotionPreference } from '@shared/brand';
 import { colors as c, mono } from '@shared/theme';
 import { Button, common, Icon, IconButton } from '@shared/ui';
 
@@ -27,6 +28,7 @@ const PROGRAMS: SessionProgram[] = ['shell', 'claude', 'gemini', 'codex'];
 const DEMO_CWD = '~/projects/workspace';
 
 export function NewSessionSheet() {
+  const motionAllowed = useMotionPreference();
   const {
     mode,
     connected,
@@ -71,7 +73,12 @@ export function NewSessionSheet() {
   }
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={close}>
+    <Modal
+      visible
+      transparent
+      animationType={motionAllowed ? 'fade' : 'none'}
+      onRequestClose={close}
+    >
       <SafeAreaProvider>
         <KeyboardAvoidingView
           style={s.overlay}
@@ -96,6 +103,7 @@ export function NewSessionSheet() {
                 </Text>
                 <View style={s.programs} accessibilityLabel="Narzędzie sesji">
                   {PROGRAMS.map(id => {
+                    const agentColor = sessionAgentColor(programAgents[id]);
                     const capability = hostCapabilities?.programs.find(item => item.id === id);
                     const available = demo
                       ? id === 'shell'
@@ -125,7 +133,7 @@ export function NewSessionSheet() {
                         onPress={() => setProgram(id)}
                         style={({ pressed }) => [
                           s.program,
-                          program === id && s.selectedProgram,
+                          program === id && [s.selectedProgram, { borderColor: agentColor }],
                           !available && s.unavailable,
                           pressed && s.pressed,
                         ]}
@@ -134,10 +142,12 @@ export function NewSessionSheet() {
                           <Icon
                             name={id === 'shell' ? 'terminal-outline' : 'code-slash-outline'}
                             size={18}
-                            color={c.text}
+                            color={available ? agentColor : c.muted}
                           />
-                          <Text style={s.programName}>{programLabels[id]}</Text>
-                          {program === id && <Icon name="checkmark" size={16} color={c.text} />}
+                          <Text style={[s.programName, available && { color: agentColor }]}>
+                            {programLabels[id]}
+                          </Text>
+                          {program === id && <Icon name="checkmark" size={16} color={agentColor} />}
                         </View>
                         <Text style={s.programStatus}>{status}</Text>
                       </Pressable>

@@ -17,6 +17,7 @@ import * as Clipboard from 'expo-clipboard';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { type Pairing, parsePairing } from '@shared/api/host';
+import { useMotionPreference } from '@shared/brand';
 import { colors as c, mono } from '@shared/theme';
 import { Button, IconButton } from '@shared/ui';
 
@@ -27,6 +28,7 @@ export function ConnectSheet({
   onClose: () => void;
   onConnect: (pairing: Pairing) => void;
 }) {
+  const motionAllowed = useMotionPreference();
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -67,7 +69,7 @@ export function ConnectSheet({
   }
   return (
     <Modal
-      animationType="slide"
+      animationType={motionAllowed ? 'slide' : 'fade'}
       onRequestClose={close}
       onShow={Keyboard.dismiss}
       presentationStyle="pageSheet"

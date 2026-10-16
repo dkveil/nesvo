@@ -1,8 +1,9 @@
-import { Pressable, StyleSheet } from 'react-native';
+import { Animated, Pressable, StyleSheet } from 'react-native';
 
 import { colors } from '@shared/theme';
 
 import { Icon, type IconName } from './icon';
+import { usePressMotion } from './use-press-motion';
 
 export function IconButton({
   name,
@@ -13,15 +14,20 @@ export function IconButton({
   label: string;
   onPress: () => void;
 }) {
+  const { scale, onPressIn, onPressOut } = usePressMotion();
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
-      style={({ pressed }) => [styles.button, { opacity: pressed ? 0.5 : 1 }]}
-    >
-      <Icon name={name} color={colors.text} size={22} />
-    </Pressable>
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        onPress={onPress}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        style={({ pressed }) => [styles.button, { opacity: pressed ? 0.65 : 1 }]}
+      >
+        <Icon name={name} color={colors.text} size={22} />
+      </Pressable>
+    </Animated.View>
   );
 }
 

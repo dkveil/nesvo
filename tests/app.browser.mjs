@@ -29,6 +29,33 @@ try {
   });
   await page.getByText('Tryb demo · sesje poniżej są przykładowe').waitFor();
   assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 7);
+  const demoWorkingDot = page
+    .getByRole('button', { name: 'Otwórz sesję Podgląd interfejsu', exact: true })
+    .getByTestId('session-status-dot');
+  assert.equal(await demoWorkingDot.evaluate(node => getComputedStyle(node).opacity), '1');
+  await page.waitForTimeout(950);
+  assert.equal(
+    await demoWorkingDot.evaluate(node => getComputedStyle(node).opacity),
+    '1',
+    'Demo working status stays still because no agent is running',
+  );
+  const newSessionButton = page.getByRole('button', { name: 'Nowa sesja', exact: true });
+  const pressBounds = await newSessionButton.boundingBox();
+  assert.ok(pressBounds, 'New-session button is visible');
+  await page.mouse.move(
+    pressBounds.x + pressBounds.width / 2,
+    pressBounds.y + pressBounds.height / 2,
+  );
+  await page.mouse.down();
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[aria-label="Nowa sesja"]');
+    return (
+      button?.parentElement &&
+      new DOMMatrix(getComputedStyle(button.parentElement).transform).a < 0.999
+    );
+  });
+  await page.mouse.up();
+  await page.getByRole('button', { name: 'Anuluj nową sesję', exact: true }).click();
   await expectNoHorizontalOverflow();
   await page.screenshot({ path: 'artifacts/sessions.png' });
   await page.screenshot({ path: 'artifacts/minimal-home.png' });
@@ -128,8 +155,23 @@ try {
   await expectNoHorizontalOverflow();
   await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
   await page.getByRole('tab', { name: 'Komputery', exact: true }).waitFor();
+  const recentSessions = page.getByRole('button', { name: /^Przejdź do sesji/ });
+  assert.equal(await recentSessions.count(), 8, 'Sidebar lists recent sessions with their status');
+  const codexTone = await page
+    .getByRole('button', { name: 'Przejdź do sesji Widok sesji mobilnych', exact: true })
+    .getByText('Codex', { exact: true })
+    .evaluate(node => getComputedStyle(node).color);
+  const geminiTone = await page
+    .getByRole('button', { name: 'Przejdź do sesji Podgląd interfejsu', exact: true })
+    .getByText('Gemini', { exact: true })
+    .evaluate(node => getComputedStyle(node).color);
+  assert.notEqual(codexTone, geminiTone, 'Agent colors remain distinct in recent sessions');
   await page.waitForTimeout(250);
   await page.screenshot({ path: 'artifacts/menu.png' });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expectNoHorizontalOverflow();
+  await page.screenshot({ path: 'artifacts/menu-320.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('tab', { name: 'Komputery', exact: true }).click();
   await page.getByRole('button', { name: 'Sparuj komputer', exact: true }).click();
   await page.setViewportSize({ width: 320, height: 400 });
@@ -170,6 +212,38 @@ try {
   await page.waitForURL(url => url.pathname === '/');
   await page.getByText('Tryb demo · sesje poniżej są przykładowe', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Otwórz sesję Mały ekran', exact: true }).waitFor();
+  const reduced = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    reducedMotion: 'reduce',
+  });
+  try {
+    const reducedPage = await reduced.newPage();
+    reducedPage.on('pageerror', error => errors.push(error.message));
+    await reducedPage.goto(process.env.APP_URL || 'http://localhost:8081', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
+    });
+    const reducedButton = reducedPage.getByRole('button', { name: 'Nowa sesja', exact: true });
+    await reducedButton.waitFor();
+    const reducedBounds = await reducedButton.boundingBox();
+    assert.ok(reducedBounds, 'Reduced-motion new-session button is visible');
+    await reducedPage.mouse.move(
+      reducedBounds.x + reducedBounds.width / 2,
+      reducedBounds.y + reducedBounds.height / 2,
+    );
+    await reducedPage.mouse.down();
+    await reducedPage.waitForTimeout(180);
+    assert.equal(
+      await reducedButton.evaluate(
+        node => new DOMMatrix(getComputedStyle(node.parentElement).transform).a,
+      ),
+      1,
+      'Reduced motion removes the press scale',
+    );
+    await reducedPage.mouse.up();
+  } finally {
+    await reduced.close();
+  }
   assert.deepEqual(errors, [], 'No browser runtime exceptions');
   console.log(
     'PASS: compact terminal-only sessions, keyboard dismissal, demo, filters, search, create, terminal input, pairing validation and navigation.',

@@ -16,10 +16,16 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { groupPath, GroupPicker } from '@entities/group';
-import { createDemoShell, type Session, SessionStatusBadge } from '@entities/session';
+import {
+  createDemoShell,
+  type Session,
+  sessionAgentColor,
+  SessionStatusBadge,
+} from '@entities/session';
 import { useWorkspace } from '@entities/workspace';
 
 import type { HostClient, SessionControl } from '@shared/api/host';
+import { useMotionPreference } from '@shared/brand';
 import { type TerminalHandle, TerminalView } from '@shared/terminal';
 import { colors as c, mono } from '@shared/theme';
 import { Button, common, Icon, IconButton } from '@shared/ui';
@@ -37,6 +43,7 @@ export function SessionScreen({
   onBack: () => void;
   onClose: () => void;
 }) {
+  const motionAllowed = useMotionPreference();
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState('');
   const [composerFocused, setComposerFocused] = useState(false);
@@ -140,7 +147,8 @@ export function SessionScreen({
             {session.name}
           </Text>
           <Text numberOfLines={1} style={s.meta}>
-            {session.live ? session.host : `${session.agent} · Demo`}
+            <Text style={{ color: sessionAgentColor(session.agent) }}>{session.agent}</Text>
+            {session.live ? ` · ${session.host}` : ' · Demo'}
           </Text>
         </Pressable>
         <IconButton
@@ -332,7 +340,7 @@ export function SessionScreen({
       <Modal
         visible={groupOpen}
         transparent
-        animationType="none"
+        animationType={Platform.OS !== 'web' && motionAllowed ? 'fade' : 'none'}
         onRequestClose={() => setGroupOpen(false)}
       >
         <SafeAreaProvider>
@@ -365,7 +373,7 @@ export function SessionScreen({
       <Modal
         visible={confirmClose}
         transparent
-        animationType="none"
+        animationType={Platform.OS !== 'web' && motionAllowed ? 'fade' : 'none'}
         onRequestClose={() => setConfirmClose(false)}
         accessibilityLabel="Potwierdzenie zakończenia sesji"
       >

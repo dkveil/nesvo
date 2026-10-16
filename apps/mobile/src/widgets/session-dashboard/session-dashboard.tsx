@@ -17,10 +17,15 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { groupDescendants, groupPath } from '@entities/group';
-import { SessionStatusBadge, SessionStatusDot, statusNeedsAttention } from '@entities/session';
+import {
+  sessionAgentColor,
+  SessionStatusBadge,
+  SessionStatusDot,
+  statusNeedsAttention,
+} from '@entities/session';
 import { useWorkspace } from '@entities/workspace';
 
-import { NesvoLogo } from '@shared/brand';
+import { NesvoLogo, useMotionPreference } from '@shared/brand';
 import { colors as c, mono } from '@shared/theme';
 import { Button, common, Icon, IconButton } from '@shared/ui';
 
@@ -35,6 +40,7 @@ export type DashboardTab = (typeof navigation)[number]['id'];
 
 export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; active?: boolean }) {
   const insets = useSafeAreaInsets();
+  const motionAllowed = useMotionPreference();
   const {
     client,
     mode,
@@ -283,7 +289,12 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                       style={({ pressed }) => [s.sessionRow, pressed && s.pressed]}
                     >
                       <View style={s.statusSlot}>
-                        <SessionStatusDot status={session.status} />
+                        <SessionStatusDot
+                          status={session.status}
+                          active={
+                            !!active && !!session.live && !menuOpen && !createOpen && !connectOpen
+                          }
+                        />
                       </View>
                       <View style={s.grow}>
                         <View style={s.sessionTitleRow}>
@@ -298,7 +309,11 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                           />
                         </View>
                         <View style={s.sessionMeta}>
-                          <Text style={s.sessionAgent}>{session.agent}</Text>
+                          <Text
+                            style={[s.sessionAgent, { color: sessionAgentColor(session.agent) }]}
+                          >
+                            {session.agent}
+                          </Text>
                           <Text style={s.sessionCwd} numberOfLines={1} ellipsizeMode="middle">
                             {session.cwd}
                           </Text>
@@ -429,7 +444,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
       <Modal
         visible={menuOpen}
         transparent
-        animationType="fade"
+        animationType={motionAllowed ? 'fade' : 'none'}
         onRequestClose={() => setMenuOpen(false)}
       >
         <View style={s.menuOverlay}>
@@ -493,11 +508,38 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                     setMenuOpen(false);
                     openSession(session.id);
                   }}
-                  style={({ pressed }) => [s.menuItem, pressed && s.pressed]}
+                  style={({ pressed }) => [s.menuSessionRow, pressed && s.pressed]}
                 >
-                  <Text style={s.menuSession} numberOfLines={1}>
-                    {session.name}
-                  </Text>
+                  <View style={s.statusSlot}>
+                    <SessionStatusDot
+                      status={session.status}
+                      active={!!menuOpen && !!session.live && !createOpen && !connectOpen}
+                    />
+                  </View>
+                  <View style={s.grow}>
+                    <View style={s.sessionTitleRow}>
+                      <Text style={s.menuSession} numberOfLines={1}>
+                        {session.name}
+                      </Text>
+                      <SessionStatusBadge
+                        variant="plain"
+                        status={session.status}
+                        source={session.statusSource}
+                        demo={!session.live}
+                      />
+                    </View>
+                    <View style={s.menuSessionMeta}>
+                      <Text style={[s.sessionAgent, { color: sessionAgentColor(session.agent) }]}>
+                        {session.agent}
+                      </Text>
+                      <Text style={s.menuSessionGroup} numberOfLines={1}>
+                        {groupPath(groups, session.groupId)}
+                      </Text>
+                    </View>
+                    <Text style={s.menuSessionCwd} numberOfLines={1} ellipsizeMode="middle">
+                      {session.cwd}
+                    </Text>
+                  </View>
                 </Pressable>
               ))}
             </ScrollView>
@@ -646,7 +688,7 @@ const s = StyleSheet.create({
     flex: 1,
   },
   sessionMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
-  sessionAgent: { color: c.accent, fontFamily: mono, fontSize: 11, lineHeight: 18 },
+  sessionAgent: { fontFamily: mono, fontSize: 11, lineHeight: 18 },
   sessionCwd: {
     flex: 1,
     minWidth: 0,
@@ -721,7 +763,32 @@ const s = StyleSheet.create({
   },
   menuSelected: { backgroundColor: c.elevated, borderLeftColor: c.accent },
   menuLabel: { color: c.text, fontFamily: mono, fontSize: 13, lineHeight: 21 },
-  menuSession: { color: c.text, fontFamily: mono, fontSize: 12, lineHeight: 20 },
+  menuSessionRow: {
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 68,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 4,
+  },
+  menuSession: {
+    flex: 1,
+    color: c.text,
+    fontFamily: mono,
+    fontSize: 12,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  menuSessionMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  menuSessionGroup: {
+    flex: 1,
+    minWidth: 0,
+    color: c.muted,
+    fontFamily: mono,
+    fontSize: 10,
+    lineHeight: 17,
+  },
+  menuSessionCwd: { color: c.faint, fontFamily: mono, fontSize: 10, lineHeight: 16 },
   menuSection: {
     color: c.faint,
     fontFamily: mono,

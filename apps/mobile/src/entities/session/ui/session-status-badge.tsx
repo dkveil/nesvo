@@ -1,5 +1,8 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
 
+import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
+
+import { useMotionPreference } from '@shared/brand';
 import { colors, mono } from '@shared/theme';
 
 import type { SessionStatus, SessionStatusSource } from '../model/session';
@@ -23,8 +26,49 @@ function statusColor(status: SessionStatus) {
 }
 
 /** Decorative when paired with the row's explicit status label. */
-export function SessionStatusDot({ status }: { status: SessionStatus }) {
-  return <View aria-hidden style={[styles.dot, { backgroundColor: statusColor(status) }]} />;
+export function SessionStatusDot({
+  status,
+  active = false,
+}: {
+  status: SessionStatus;
+  active?: boolean;
+}) {
+  const [opacity] = useState(() => new Animated.Value(1));
+  const motionAllowed = useMotionPreference();
+  const pulse = active && status === 'working' && motionAllowed;
+
+  useEffect(() => {
+    opacity.stopAnimation();
+    opacity.setValue(1);
+    if (!pulse) return;
+
+    const timing = {
+      duration: 900,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: Platform.OS !== 'web',
+      isInteraction: false,
+    };
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { ...timing, toValue: 0.45 }),
+        Animated.timing(opacity, { ...timing, toValue: 1 }),
+      ]),
+    );
+    animation.start();
+    return () => {
+      animation.stop();
+      opacity.stopAnimation();
+      opacity.setValue(1);
+    };
+  }, [opacity, pulse]);
+
+  return (
+    <Animated.View
+      aria-hidden
+      testID="session-status-dot"
+      style={[styles.dot, { backgroundColor: statusColor(status), opacity: pulse ? opacity : 1 }]}
+    />
+  );
 }
 
 export function SessionStatusBadge({
