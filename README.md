@@ -115,6 +115,7 @@ SSH connection management, automatic relay/VPN setup and native agent conversati
 | [TUI usage and shortcuts](apps/tui/README.md)      | [Synchronization protocol](docs/protocol-v2.md) |
 | [Host configuration](apps/host/README.md)          | [Engineering conventions](docs/engineering.md)  |
 | [Testing and verification](docs/testing.md)        | [Design direction](docs/design.md)              |
+| [Mobile priorities](docs/mobile-roadmap.md)        | Proposed scope and delivery order               |
 | [Security](SECURITY.md)                            | [Contributing](CONTRIBUTING.md)                 |
 
 ## development
