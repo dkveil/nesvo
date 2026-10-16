@@ -34,6 +34,8 @@ The branded TUI was captured from a real Windows ConPTY at 120×30 cells. The lo
 
 The start menu was also verified in an isolated Windows ConPTY: workspace entry, the Theme dialog, Pair mobile, F1 navigation, shell creation and Esc detach. Graphite persisted across a restart using private test preferences. Esc restored the alternate screen and cursor; a subsequent authenticated session listing confirmed that the shell remained on its host. The README image replays the captured ANSI output through a terminal renderer with custom block glyphs; it contains no private pairing data.
 
+A subsequent native ConPTY check verified the compact workspace, F11 full-screen input, Ctrl+G navigation in full screen, and F11 restoration. The terminal keeps a one-line mode footer and a clickable accent-backed return handle. Esc restored the cursor and alternate screen while the shell survived. Unit tests cover the saved full-screen default, older preference files, hidden-pane geometry and preservation of default/ANSI colors; interactive macOS remains unverified.
+
 The latest mobile bundles include the SVG renderer and new icons. Expo Go can preview the app UI; installed application icons and splash behavior require a development or production build. The new theme and keyboard behavior still require a physical iPhone retest.
 
 ### What the synchronization tests prove
@@ -54,11 +56,15 @@ The latest mobile bundles include the SVG renderer and new icons. Expo Go can pr
 
 The renderer tests also verify that historical CSI/DCS queries cannot inject responses into the shell, while authorized live queries can. These tests cover the bundled xterm implementation; they do not prove complete compatibility with every CLI.
 
+Switching focus between xterm and the app's command field no longer forwards terminal focus reports into the shell. The renderer regression covers that boundary, and the Windows two-browser live test verified complete PowerShell commands, takeover and reconnect after the change.
+
 ### Interactive TUI check performed
 
 An isolated Windows ConPTY regression also verified the startup negotiation fix: the start menu opens, a newly created plain shell acquires available control, and its PowerShell prompt appears without pressing `i` or sending a command. Passive startup observation still sends no input and opening a session controlled by another device does not take over its lease.
 
 The compact mobile browser regression verifies terminal-only sessions, reachable keyboard dismissal, retained command drafts, blur in both the command field and embedded terminal, and no horizontal overflow. It checks at least 220px of terminal height in a 390×440 viewport and 100px in a 320×300 viewport. These are layout checks, not native keyboard simulations.
+
+The dashboard regression also checks bottom navigation between Sessions and Computers, an inset session switcher with bounded height, and the absence of dashboard tabs inside an open terminal. The modal now owns its safe-area context; notch and home-indicator spacing still require a physical iPhone retest.
 
 A real Windows ConPTY hosted the TUI. The check created a group, subgroup and shell through keyboard forms, acquired control with `i`, assigned a PowerShell variable, and printed a marker. A mobile-size Chromium client attached to that same session, observed the marker, took control and read the variable. Renaming the subgroup in the mobile UI updated the live TUI tree.
 
@@ -77,6 +83,8 @@ Temporary timing instrumentation measured the same debug-build workload in Windo
 | Pure UI rendering in the updated draw | Not separately recorded                            | Median 0.79 ms, p95 2.21 ms                      |
 
 These are diagnostic samples from one Windows environment, not an FPS guarantee or a cross-platform benchmark. The final implementation also avoids redraws for key releases, mouse motion and successfully forwarded input before host echo, and limits each network drain to a time budget. Those additional changes have regression coverage but are not included in the table's comparison. Profiling instrumentation was removed after measurement. The user still needs to retest perceived responsiveness in their terminal.
+
+A later investigation found orphan Windows console backends after force-stopped fixtures and closure of sessions whose initial ConPTY cursor query had never been answered. Host shutdown now waits for tracked cleanup workers outside the state lock, and closing an unattached Windows session releases that startup handshake before termination. The updated host and synchronization integration runs completed without adding a console backend process; this is a lifecycle check, not a new rendering benchmark.
 
 ## Local checks
 
@@ -118,6 +126,8 @@ npm.cmd run test:terminal
 Browser test screenshots and temporary pairing files belong in ignored `artifacts/`, never in Git. Do not share a pairing QR, key or private terminal content in reports.
 
 The Rust workspace produces `target/debug/nesvo-host` and `target/debug/nesvo` (`.exe` on Windows). Integration tests use those workspace binaries, not the former per-application target directories. The Expo application is `apps/mobile`; use root forwarding scripts for normal checks and preview startup. Run direct Expo/EAS commands from that application directory.
+
+Host fixtures opt into `--exit-on-stdin-close` and close their piped stdin during cleanup. This lets the host terminate its PTYs before exiting; forcefully terminating a Windows host can leave its console backend running. Cleanup has a deadline and reports failure instead of silently continuing after a forced stop. Normal interactive hosts retain their existing Ctrl+C shutdown behavior.
 
 The README image in `docs/assets/` shows the native TUI in an isolated demonstration workspace. It contains no real project output or pairing credentials. For private mobile review captures, run `node scripts/capture-mobile-demo.mjs` with the web preview running. That script uses fictional data without connecting to a host and writes only to ignored `artifacts/`.
 

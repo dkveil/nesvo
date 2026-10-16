@@ -20,6 +20,7 @@ import {
   keyBytes,
   parsePairing,
 } from '../apps/mobile/src/shared/api/host/wire';
+import { stopFixtureHost } from './host-fixture-shutdown';
 
 const { Terminal } = createRequire(new URL('../apps/mobile/package.json', import.meta.url))(
   '@xterm/xterm',
@@ -280,8 +281,16 @@ test(
       let failure: Error | undefined;
       host = spawn(
         binary,
-        ['--port', '0', '--pairing-dir', fixture, '--workspace', process.cwd()],
-        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+        [
+          '--port',
+          '0',
+          '--pairing-dir',
+          fixture,
+          '--workspace',
+          process.cwd(),
+          '--exit-on-stdin-close',
+        ],
+        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
       );
       host.stdout?.on('data', chunk => {
         stdout += chunk.toString();
@@ -300,12 +309,7 @@ test(
       pairing = parsePairing(await readFile(join(fixture, 'pairing.json'), 'utf8'));
     }
     async function stop() {
-      if (!host || host.exitCode !== null) return;
-      const process = host;
-      await new Promise<void>(resolveExit => {
-        process.once('exit', () => resolveExit());
-        process.kill();
-      });
+      if (host) await stopFixtureHost(host);
     }
     async function connect() {
       const peer = new Peer(pairing);
@@ -599,8 +603,11 @@ test(
       );
     } finally {
       for (const peer of peers) peer.socket.terminate();
-      await stop();
-      await rm(fixture, { recursive: true, force: true });
+      try {
+        await stop();
+      } finally {
+        await rm(fixture, { recursive: true, force: true });
+      }
     }
   },
 );

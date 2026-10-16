@@ -12,6 +12,7 @@ import {
   parsePairing,
 } from '../apps/mobile/src/shared/api/host/client';
 import { decodeServerMessage } from '../apps/mobile/src/shared/api/host/messages';
+import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Snapshot = Extract<HostEvent, { type: 'sessions' }>;
 type CommandResult = { code: number | null; stdout: string; stderr: string };
@@ -111,8 +112,8 @@ test(
     const pairingPath = join(fixture, 'pairing.json');
     const host = spawn(
       hostBinary,
-      ['--port', '0', '--pairing-dir', fixture, '--workspace', fixture],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+      ['--port', '0', '--pairing-dir', fixture, '--workspace', fixture, '--exit-on-stdin-close'],
+      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
     );
     let hostOutput = '';
     let hostError: Error | undefined;
@@ -242,12 +243,18 @@ test(
       } finally {
         unsubscribe();
         client.disconnect();
-        for (const tui of runningTuis) await stopProcess(tui);
-        await stopProcess(host);
-        // Check the resolved deletion target before recursive cleanup on Windows.
-        assert.equal(dirname(resolve(fixture)), temporaryRoot);
-        assert.ok(basename(fixture).startsWith('nesvo-tui-'));
-        await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        try {
+          for (const tui of runningTuis) await stopProcess(tui);
+        } finally {
+          try {
+            await stopFixtureHost(host);
+          } finally {
+            // Check the resolved deletion target before recursive cleanup on Windows.
+            assert.equal(dirname(resolve(fixture)), temporaryRoot);
+            assert.ok(basename(fixture).startsWith('nesvo-tui-'));
+            await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          }
+        }
       }
     }
   },

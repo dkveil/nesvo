@@ -73,6 +73,8 @@ struct Session {
 pub struct State {
     workspace: PathBuf,
     sessions: HashMap<String, Session>,
+    cleanup_workers: Vec<thread::JoinHandle<()>>,
+    shutting_down: bool,
     pub clients: HashMap<u64, Client>,
     metadata: MetadataStore,
     launchers: Launchers,
@@ -96,6 +98,8 @@ impl State {
         Self {
             workspace,
             sessions: HashMap::new(),
+            cleanup_workers: Vec::new(),
+            shutting_down: false,
             clients: HashMap::new(),
             metadata,
             launchers,
@@ -319,6 +323,7 @@ impl State {
         request_id: Option<&str>,
         pty_events: &mpsc::Sender<PtyEvent>,
     ) -> Result<()> {
+        ensure!(!self.shutting_down, "Host is shutting down.");
         match command {
             Command::Auth { .. } => return Err(anyhow!("Already authenticated.")),
             Command::List => self.send(client_id, self.list()),
@@ -462,10 +467,16 @@ impl State {
                     .get_mut(&session_id)
                     .ok_or_else(|| anyhow!("Session no longer exists."))?;
                 if session.info.running {
+                    #[cfg(windows)]
+                    if !session.has_been_attached {
+                        session.pty.answer_unattached_cursor_query()?;
+                    }
                     session.pty.kill()?;
                 }
                 let removed = self.sessions.remove(&session_id);
-                thread::spawn(move || drop(removed));
+                self.cleanup_workers.retain(|worker| !worker.is_finished());
+                self.cleanup_workers
+                    .push(thread::spawn(move || drop(removed)));
                 self.broadcast_list();
             }
             Command::CreateGroup {
@@ -540,16 +551,25 @@ impl State {
         Ok(())
     }
 
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(&mut self) -> Vec<thread::JoinHandle<()>> {
+        self.shutting_down = true;
         for client in self.clients.values() {
             let _ = client.cancelled.send(true);
         }
         for session in self.sessions.values_mut() {
             if session.info.running {
+                #[cfg(windows)]
+                if !session.has_been_attached {
+                    let _ = session.pty.answer_unattached_cursor_query();
+                }
                 let _ = session.pty.kill();
             }
         }
-        self.sessions.clear();
+        for (_, session) in self.sessions.drain() {
+            self.cleanup_workers
+                .push(thread::spawn(move || drop(session)));
+        }
+        std::mem::take(&mut self.cleanup_workers)
     }
 }
 
@@ -649,6 +669,16 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
 mod tests {
     use super::*;
     use crate::replay::BACKLOG_BYTES;
+    #[test]
+    fn shutdown_rejects_new_commands() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        assert!(state.shutdown().is_empty());
+        let (events, _) = mpsc::channel(1);
+        let error = state.command(1, Command::List, None, &events).unwrap_err();
+        assert_eq!(error.to_string(), "Host is shutting down.");
+    }
+
     #[test]
     fn eight_full_replays_fit_before_writer_runs_but_output_queue_stays_bounded() {
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();

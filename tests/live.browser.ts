@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
 import { HostClient, type Pairing, parsePairing } from '../apps/mobile/src/shared/api/host/client';
+import { stopFixtureHost } from './host-fixture-shutdown';
 
 // Run after `cargo build --manifest-path apps/host/Cargo.toml`, with the web app serving.
 async function main() {
   const appUrl = process.env.APP_URL || 'http://localhost:8081';
-  const pairingDir = path.resolve('artifacts', `.live-${randomUUID()}`);
+  const artifactsDir = path.resolve('artifacts');
+  const pairingDir = path.join(artifactsDir, `.live-${randomUUID()}`);
   await mkdir(pairingDir, { recursive: true });
   const binary =
     process.env.NESVO_HOST_BINARY ||
@@ -27,8 +29,9 @@ async function main() {
       process.cwd(),
       '--allowed-origins',
       new URL(appUrl).origin,
+      '--exit-on-stdin-close',
     ],
-    { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
   );
   let startupError: Error | undefined;
   host.on('error', error => {
@@ -57,7 +60,7 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(appUrl, { waitUntil: 'networkidle' });
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
     await page.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
     await page.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
@@ -75,7 +78,7 @@ async function main() {
     await page.getByRole('button', { name: 'Pokaż grupę Phone', exact: true }).click();
     const observer = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     observer.on('pageerror', error => errors.push(error.message));
-    await observer.goto(appUrl, { waitUntil: 'networkidle' });
+    await observer.goto(appUrl, { waitUntil: 'domcontentloaded' });
     await observer.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
     await observer.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
     await observer.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
@@ -106,6 +109,11 @@ async function main() {
         ? "Write-Output ('RUST_BROWSER_' + 'EXECUTED')"
         : "printf '%s%s\\n' RUST_BROWSER_ EXECUTED";
     await page.getByLabel('Polecenie terminala', { exact: true }).fill(command);
+    assert.equal(
+      await page.getByLabel('Polecenie terminala', { exact: true }).inputValue(),
+      command,
+      'composer must contain the complete command before sending',
+    );
     await page.getByRole('button', { name: 'Wyślij', exact: true }).click();
     await terminal
       .locator('.xterm-rows')
@@ -188,7 +196,13 @@ async function main() {
       });
     }
     cleanup.disconnect();
-    host.kill();
+    try {
+      await stopFixtureHost(host);
+    } finally {
+      if (path.dirname(pairingDir) !== artifactsDir)
+        throw new Error('Fixture pairing directory escaped artifacts');
+      await rm(pairingDir, { recursive: true, force: true });
+    }
   }
 }
 main().catch(error => {

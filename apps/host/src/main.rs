@@ -16,14 +16,16 @@ use qrcode::{QrCode, render::svg};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::ErrorKind,
+    io::{ErrorKind, Read},
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
 };
 use tokio::{
     net::TcpListener,
-    sync::{Semaphore, mpsc},
+    sync::{Semaphore, mpsc, oneshot},
 };
 
 #[derive(Parser)]
@@ -48,6 +50,9 @@ struct Args {
     pairing_dir: Option<PathBuf>,
     #[arg(long, env = "POCKET_ALLOWED_ORIGINS", value_delimiter = ',')]
     allowed_origins: Vec<String>,
+    /// Let a local parent process request graceful shutdown by closing stdin.
+    #[arg(long, hide = true)]
+    exit_on_stdin_close: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,6 +88,21 @@ fn repository_pairing_directory(root: &Path) -> Option<PathBuf> {
         .any(|manifest| root.join(manifest).is_file())
         // Source layout changes must not move existing pairing credentials.
         .then(|| root.join("host/.local"))
+}
+
+fn stdin_close_signal() -> oneshot::Receiver<()> {
+    let (sender, receiver) = oneshot::channel();
+    thread::spawn(move || {
+        let mut stdin = std::io::stdin();
+        let mut buffer = [0; 256];
+        while let Ok(length) = stdin.read(&mut buffer) {
+            if length == 0 {
+                break;
+            }
+        }
+        let _ = sender.send(());
+    });
+    receiver
 }
 
 #[tokio::main]
@@ -200,9 +220,15 @@ async fn main() -> Result<()> {
     println!("Private pairing file: {}", pairing_path.display());
     println!("Private pairing QR: {}", qr_path.display());
     println!("Pairing grants shell access. Keep both files private. Ctrl+C closes all sessions.");
+    let mut stdin_closed = args.exit_on_stdin_close.then(stdin_close_signal);
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => break,
+            _ = async {
+                if let Some(receiver) = &mut stdin_closed {
+                    let _ = receiver.await;
+                }
+            }, if args.exit_on_stdin_close => break,
             accepted = listener.accept() => {
                 let (socket, _) = accepted?;
                 let Ok(permit) = permits.clone().try_acquire_owned() else { drop(socket); continue; };
@@ -216,7 +242,41 @@ async fn main() -> Result<()> {
             }
         }
     }
-    state.lock().unwrap().shutdown();
+    // Closed sessions may still be releasing ConPTY resources in background
+    // workers. Keep the output dispatcher alive while they finish, without
+    // holding the state lock that it needs to drain PTY output.
+    let mut cleanup_workers = {
+        let mut state = state.lock().unwrap();
+        state.shutdown()
+    };
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut panicked = 0;
+    loop {
+        let mut pending = Vec::new();
+        for worker in cleanup_workers {
+            if worker.is_finished() {
+                if worker.join().is_err() {
+                    panicked += 1;
+                }
+            } else {
+                pending.push(worker);
+            }
+        }
+        cleanup_workers = pending;
+        if cleanup_workers.is_empty() || Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    ensure!(
+        cleanup_workers.is_empty(),
+        "Timed out waiting for {} terminal cleanup workers",
+        cleanup_workers.len()
+    );
+    ensure!(
+        panicked == 0,
+        "{panicked} terminal cleanup workers panicked"
+    );
     Ok(())
 }
 

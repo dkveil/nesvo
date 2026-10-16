@@ -25,6 +25,7 @@ import {
   keyBytes,
   parsePairing,
 } from '../apps/mobile/src/shared/api/host/wire';
+import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Event = {
   type: string;
@@ -176,8 +177,16 @@ test(
     const binary = hostBinary();
     const host: ChildProcess = spawn(
       binary,
-      ['--port', '0', '--pairing-dir', fixture, '--workspace', process.cwd()],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+      [
+        '--port',
+        '0',
+        '--pairing-dir',
+        fixture,
+        '--workspace',
+        process.cwd(),
+        '--exit-on-stdin-close',
+      ],
+      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
     );
     let stderr = '';
     host.stderr?.on('data', chunk => {
@@ -316,10 +325,12 @@ test(
       );
     } finally {
       for (const client of peers) client.socket.terminate();
-      host.kill();
-      await delay(200);
-      // Only this mkdtemp fixture is removed; it contains ephemeral pairing credentials.
-      await rm(fixture, { recursive: true, force: true });
+      try {
+        await stopFixtureHost(host);
+      } finally {
+        // Only this mkdtemp fixture is removed; it contains ephemeral pairing credentials.
+        await rm(fixture, { recursive: true, force: true });
+      }
     }
   },
 );
@@ -379,10 +390,18 @@ done
   );
   const host = spawn(
     hostBinary(),
-    ['--port', '0', '--pairing-dir', join(fixture, 'pairing'), '--workspace', workspace],
+    [
+      '--port',
+      '0',
+      '--pairing-dir',
+      join(fixture, 'pairing'),
+      '--workspace',
+      workspace,
+      '--exit-on-stdin-close',
+    ],
     {
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...env, PATH: bin },
     },
   );
@@ -534,17 +553,19 @@ done
     throw error;
   } finally {
     peer?.socket.terminate();
-    host.kill();
-    await delay(300);
-    await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(
-      cleanupError => {
-        if (bodyFailure)
-          throw new AggregateError(
-            [bodyFailure, cleanupError],
-            'Host fixture failed and cleanup did not complete',
-          );
-        throw cleanupError;
-      },
-    );
+    try {
+      await stopFixtureHost(host);
+    } finally {
+      await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(
+        cleanupError => {
+          if (bodyFailure)
+            throw new AggregateError(
+              [bodyFailure, cleanupError],
+              'Host fixture failed and cleanup did not complete',
+            );
+          throw cleanupError;
+        },
+      );
+    }
   }
 });

@@ -1,6 +1,8 @@
 //! Native PTY ownership and blocking process I/O adapters.
 use anyhow::{Result, anyhow};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+#[cfg(windows)]
+use std::time::Duration;
 use std::{
     io::{Read, Write},
     sync::mpsc as sync_mpsc,
@@ -16,9 +18,14 @@ pub enum PtyEvent {
 
 pub struct Pty {
     // Close the input channel before ConPTY's potentially blocking destructor.
-    input: sync_mpsc::SyncSender<String>,
+    input: sync_mpsc::SyncSender<Input>,
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+}
+
+struct Input {
+    data: String,
+    flushed: Option<sync_mpsc::Sender<bool>>,
 }
 
 impl Pty {
@@ -34,16 +41,19 @@ impl Pty {
         let killer = crate::process::killer(child.as_ref())?;
         let mut reader = pair.master.try_clone_reader()?;
         let mut writer = pair.master.take_writer()?;
-        let (input_tx, input_rx) = sync_mpsc::sync_channel::<String>(16);
+        let (input_tx, input_rx) = sync_mpsc::sync_channel::<Input>(16);
         let input_id = id.to_owned();
         let input_events = events.clone();
         thread::spawn(move || {
-            while let Ok(data) = input_rx.recv() {
-                if writer
-                    .write_all(data.as_bytes())
+            while let Ok(input) = input_rx.recv() {
+                let written = writer
+                    .write_all(input.data.as_bytes())
                     .and_then(|_| writer.flush())
-                    .is_err()
-                {
+                    .is_ok();
+                if let Some(flushed) = input.flushed {
+                    let _ = flushed.send(written);
+                }
+                if !written {
                     let _ = input_events.blocking_send(PtyEvent::InputError(input_id));
                     break;
                 }
@@ -92,8 +102,31 @@ impl Pty {
 
     pub fn send_input(&self, data: String) -> Result<()> {
         self.input
-            .try_send(data)
+            .try_send(Input {
+                data,
+                flushed: None,
+            })
             .map_err(|_| anyhow!("Terminal input queue is full or closed. Input was not sent."))
+    }
+
+    /// Release ConPTY's initial cursor-position handshake when a session is
+    /// closed before any terminal has been attached to answer it.
+    #[cfg(windows)]
+    pub fn answer_unattached_cursor_query(&self) -> Result<()> {
+        let (flushed_tx, flushed_rx) = sync_mpsc::channel();
+        self.input
+            .try_send(Input {
+                data: "\x1b[1;1R".into(),
+                flushed: Some(flushed_tx),
+            })
+            .map_err(|_| anyhow!("Terminal input queue is full or closed."))?;
+        let written = flushed_rx
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|_| anyhow!("Timed out answering ConPTY's startup cursor query."))?;
+        if !written {
+            return Err(anyhow!("Could not answer ConPTY's startup cursor query."));
+        }
+        Ok(())
     }
 
     pub fn resize(&self, size: PtySize) -> Result<()> {
