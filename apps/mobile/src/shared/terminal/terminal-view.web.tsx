@@ -2,6 +2,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { colors } from '@shared/theme';
+
 import { TERMINAL_HTML } from './generated';
 import type { TerminalHandle, TerminalViewProps } from './types';
 import { useTerminalBridge } from './use-terminal-bridge';
@@ -44,12 +46,12 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
             minHeight: 0,
             flex: 1,
             border: 0,
-            background: '#0D100E',
+            background: colors.background,
           }}
         />
         {!bridge.isReady && (
           <View style={styles.loading} pointerEvents="none">
-            <ActivityIndicator color="#E7EEE9" accessibilityLabel="Ładowanie terminala" />
+            <ActivityIndicator color={colors.accent} accessibilityLabel="Ładowanie terminala" />
           </View>
         )}
       </View>
@@ -58,10 +60,10 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
 );
 
 const styles = StyleSheet.create({
-  container: { flex: 1, minHeight: 0, backgroundColor: '#0D100E' },
+  container: { flex: 1, minHeight: 0, backgroundColor: colors.background },
   loading: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#0D100E',
+    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
   },

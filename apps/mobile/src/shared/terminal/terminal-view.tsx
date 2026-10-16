@@ -4,6 +4,8 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { WebView } from 'react-native-webview';
 
+import { colors } from '@shared/theme';
+
 import { TERMINAL_HTML } from './generated';
 import type { TerminalHandle, TerminalViewProps } from './types';
 import { useTerminalBridge } from './use-terminal-bridge';
@@ -62,7 +64,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
         />
         {!bridge.isReady && (
           <View style={styles.loading} pointerEvents="none">
-            <ActivityIndicator color="#E7EEE9" accessibilityLabel="Ładowanie terminala" />
+            <ActivityIndicator color={colors.accent} accessibilityLabel="Ładowanie terminala" />
           </View>
         )}
       </View>
@@ -71,14 +73,14 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
 );
 
 const styles = StyleSheet.create({
-  container: { flex: 1, minHeight: 0, backgroundColor: '#0D100E' },
-  webView: { flex: 1, backgroundColor: '#0D100E' },
+  container: { flex: 1, minHeight: 0, backgroundColor: colors.background },
+  webView: { flex: 1, backgroundColor: colors.background },
   loading: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#0D100E',
+    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
-  error: { color: '#A5B1A9', textAlign: 'center', fontSize: 14 },
+  error: { color: colors.muted, textAlign: 'center', fontSize: 14 },
 });

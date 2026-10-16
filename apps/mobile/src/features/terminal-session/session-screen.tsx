@@ -46,6 +46,7 @@ export function SessionScreen({
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<'conversation' | 'terminal'>('terminal');
   const [draft, setDraft] = useState('');
+  const [composerFocused, setComposerFocused] = useState(false);
   const [notice, setNotice] = useState('');
   const [confirmClose, setConfirmClose] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -324,7 +325,8 @@ export function SessionScreen({
         </View>
       )}
       <View style={s.composerArea}>
-        <View style={s.composer}>
+        <View style={[s.composer, composerFocused && s.composerFocused]}>
+          <View style={s.composerRail} aria-hidden pointerEvents="none" />
           <Text aria-hidden style={s.promptSign}>
             {tab === 'terminal' ? '>' : '+'}
           </Text>
@@ -338,9 +340,12 @@ export function SessionScreen({
                   : 'Wiadomość'
             }
             placeholderTextColor={c.muted}
+            selectionColor={c.accent}
             value={draft}
             editable={canType}
             onChangeText={setDraft}
+            onFocus={() => setComposerFocused(true)}
+            onBlur={() => setComposerFocused(false)}
             onSubmitEditing={submit}
             returnKeyType="send"
             submitBehavior="submit"
@@ -539,11 +544,22 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: c.surface,
-    borderRadius: 6,
     borderWidth: 1,
     borderColor: c.border,
+    borderLeftWidth: 3,
+    borderLeftColor: c.accent,
     padding: 3,
     gap: 4,
+  },
+  composerFocused: { borderColor: c.faint, borderLeftColor: c.accent },
+  composerRail: {
+    position: 'absolute',
+    left: -7,
+    top: -1,
+    bottom: -1,
+    width: 1,
+    backgroundColor: c.faint,
+    opacity: 0.45,
   },
   draft: {
     flex: 1,

@@ -108,6 +108,7 @@ export function GroupsScreen() {
               accessibilityLabel="Nazwa grupy"
               placeholder="np. Projekty"
               placeholderTextColor={c.faint}
+              selectionColor={c.accent}
               autoFocus
               value={editor.name}
               onChangeText={name => setEditor({ ...editor, name })}

@@ -31,7 +31,7 @@ export function SessionStatusBadge({
       : status === 'question'
         ? colors.orange
         : status === 'working' || status === 'done'
-          ? colors.accent
+          ? colors.success
           : colors.muted;
   return (
     <View

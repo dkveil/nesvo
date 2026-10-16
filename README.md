@@ -93,6 +93,7 @@ apps/mobile/       Expo app, domain slices and mobile adapters
 apps/host/         Rust host, process lifecycle and persistence
 apps/tui/          Rust terminal interface
 crates/nesvo-wire/ Shared Rust encrypted-frame codec
+packages/brand/    Shared Ultraviolet tokens, vector mark and animation frames
 tests/             Cross-client integration and architecture checks
 ```
 

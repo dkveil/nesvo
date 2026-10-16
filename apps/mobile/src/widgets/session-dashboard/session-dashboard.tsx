@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 
 import {
+  Keyboard,
+  KeyboardAvoidingView,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,14 +14,17 @@ import {
   View,
 } from 'react-native';
 
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { groupDescendants, groupPath } from '@entities/group';
 import { SessionStatusBadge, statusNeedsAttention } from '@entities/session';
 import { useWorkspace } from '@entities/workspace';
 
+import { NesvoLogo } from '@shared/brand';
 import { colors as c, mono } from '@shared/theme';
 import { Button, common, Icon, IconButton } from '@shared/ui';
+
+import { SessionLaunchpad } from './session-launchpad';
 
 const navigation = [
   { id: 'sessions', icon: 'terminal-outline', label: 'Sesje' },
@@ -27,7 +33,8 @@ const navigation = [
 ] as const;
 export type DashboardTab = (typeof navigation)[number]['id'];
 
-export function DashboardScreen({ tab }: { tab: DashboardTab }) {
+export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; active?: boolean }) {
+  const insets = useSafeAreaInsets();
   const {
     client,
     mode,
@@ -37,6 +44,10 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
     pairing,
     setConnectOpen,
     setCreateOpen,
+    createOpen,
+    connectOpen,
+    setSessionName,
+    hostCapabilities,
     query,
     setQuery,
     filter,
@@ -54,10 +65,26 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
     navigateTo,
   } = useWorkspace();
   const [menuOpen, setMenuOpen] = useState(false);
-  function newSession() {
+  const [logoVisible, setLogoVisible] = useState(true);
+  const visibility = useRef({ visible: true, top: 0, height: 0, logoTop: 0, logoBottom: 0 });
+  function updateLogoVisibility() {
+    const area = visibility.current;
+    const next =
+      !area.height || (area.logoBottom > area.top && area.logoTop < area.top + area.height);
+    if (next !== area.visible) {
+      area.visible = next;
+      setLogoVisible(next);
+    }
+  }
+  function openCreate(name: string) {
+    Keyboard.dismiss();
     setCreateError('');
+    setSessionName(name);
     setSessionGroup(selectedGroup === 'all' ? null : selectedGroup);
     setCreateOpen(true);
+  }
+  function newSession() {
+    openCreate('');
   }
   const groupIds =
     selectedGroup && selectedGroup !== 'all' ? groupDescendants(groups, selectedGroup) : null;
@@ -89,18 +116,34 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
   const attentionCount = sessions.filter(session => statusNeedsAttention(session.status)).length;
 
   return (
-    <View style={s.page}>
+    <KeyboardAvoidingView
+      style={s.page}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+    >
       <View style={s.header}>
         <IconButton name="menu-outline" label="Otwórz menu" onPress={() => setMenuOpen(true)} />
-        <Text style={s.headerTitle}>
-          nesvo{' '}
-          <Text style={s.headerRoute}>
+        <View style={s.headerTitle}>
+          <NesvoLogo width={118} />
+          <Text style={s.headerRoute} numberOfLines={1}>
             / {navigation.find(item => item.id === tab)?.label.toLocaleLowerCase()}
           </Text>
-        </Text>
+        </View>
         <IconButton name="add" label="Nowa sesja" onPress={newSession} />
       </View>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={s.content}
+        scrollEventThrottle={100}
+        onLayout={event => {
+          visibility.current.height = event.nativeEvent.layout.height;
+          updateLogoVisibility();
+        }}
+        onScroll={event => {
+          visibility.current.top = event.nativeEvent.contentOffset.y;
+          updateLogoVisibility();
+        }}
+      >
         {tab === 'sessions' && (
           <>
             <View style={s.workspaceBar}>
@@ -134,17 +177,25 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
               <Icon name="chevron-forward" size={16} />
             </Pressable>
             {!!showStartMenu && (
-              <View style={s.startMenu} accessibilityLabel="Menu startowe">
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Nowa sesja z menu startowego"
-                  onPress={newSession}
-                  style={({ pressed }) => [s.startAction, pressed && s.pressed]}
-                >
-                  <Icon name="add" size={20} color={c.accent} />
-                  <Text style={s.startTitle}>Nowa sesja</Text>
-                  <Text style={s.startMeta}>{mode === 'demo' ? 'demo' : 'terminal / agent'}</Text>
-                </Pressable>
+              <View
+                style={s.startMenu}
+                onLayout={event => {
+                  const delta = event.nativeEvent.layout.y - visibility.current.logoTop;
+                  visibility.current.logoTop += delta;
+                  visibility.current.logoBottom += delta;
+                  updateLogoVisibility();
+                }}
+              >
+                <SessionLaunchpad
+                  active={!!active && !!logoVisible && !menuOpen && !createOpen && !connectOpen}
+                  demo={mode === 'demo'}
+                  workspace={hostCapabilities?.workspace}
+                  onCreate={openCreate}
+                  onLogoLayout={bottom => {
+                    visibility.current.logoBottom = visibility.current.logoTop + bottom;
+                    updateLogoVisibility();
+                  }}
+                />
                 {mode === 'demo' && !!pairing && (
                   <Button
                     label="Wróć do swojego komputera"
@@ -172,6 +223,7 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
                 onChangeText={setQuery}
                 placeholder="Szukaj sesji"
                 placeholderTextColor={c.faint}
+                selectionColor={c.accent}
                 style={s.searchInput}
               />
               {!!query && (
@@ -408,7 +460,9 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
           />
           <SafeAreaView style={s.menu}>
             <View style={s.menuHeader}>
-              <Text style={s.headerTitle}>nesvo</Text>
+              <View style={s.headerTitle}>
+                <NesvoLogo width={118} />
+              </View>
               <IconButton
                 name="close"
                 label="Zamknij nawigację"
@@ -485,7 +539,7 @@ export function DashboardScreen({ tab }: { tab: DashboardTab }) {
           </SafeAreaView>
         </View>
       </Modal>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -500,8 +554,8 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: c.border,
   },
-  headerTitle: { flex: 1, color: c.text, fontFamily: mono, fontSize: 17, fontWeight: '600' },
-  headerRoute: { color: c.faint, fontSize: 12, fontWeight: '400' },
+  headerTitle: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
+  headerRoute: { color: c.faint, fontFamily: mono, fontSize: 11, flexShrink: 1 },
   content: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 20, gap: 10 },
   workspaceBar: {
     flexDirection: 'row',
@@ -542,19 +596,6 @@ const s = StyleSheet.create({
   meta: { color: c.faint, fontSize: 11, lineHeight: 16 },
   reconnect: { gap: 12, paddingVertical: 8 },
   startMenu: { gap: 10 },
-  startAction: {
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'center',
-    minHeight: 46,
-    backgroundColor: c.surface,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: 6,
-  },
-  startTitle: { flex: 1, color: c.accent, fontFamily: mono, fontSize: 13, fontWeight: '500' },
-  startMeta: { color: c.faint, fontFamily: mono, fontSize: 10 },
   search: {
     backgroundColor: c.background,
     borderWidth: 1,

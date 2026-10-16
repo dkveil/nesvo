@@ -33,6 +33,8 @@ test('Ultraviolet palette and six-second step frames retain the approved contrac
   assert.equal(colors.text, '#EAE8EE');
   assert.equal(colors.muted, '#ADACB5');
   assert.equal(colors.border, '#35353D');
+  const app = JSON.parse(readFileSync(new URL('../apps/mobile/app.json', import.meta.url), 'utf8'));
+  assert.equal(app.expo.android.adaptiveIcon.backgroundColor, colors.background);
   assert.equal(new Set([colors.accent, colors.success, colors.warning, colors.danger]).size, 4);
   assert.equal(logo.motion.durationMs, 6000);
   assert.deepEqual(

@@ -75,5 +75,6 @@ jobs:
           curl --silent --fail http://localhost:8081/status
           npm run test:web
           npm run test:create-session
+          npm run test:brand:web
           npm run test:live
           npm run test:terminal

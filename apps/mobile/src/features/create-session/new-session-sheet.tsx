@@ -32,6 +32,7 @@ export function NewSessionSheet() {
     connected,
     hostCapabilities,
     sessionGroup,
+    sessionName,
     groups,
     create,
     creating,
@@ -40,7 +41,7 @@ export function NewSessionSheet() {
     setCreateOpen,
   } = useWorkspace();
   // Draft fields stay in the sheet; typing must not rerender every route and terminal.
-  const [name, setName] = useState('');
+  const [name, setName] = useState(sessionName);
   const [cwdDraft, setCwdDraft] = useState<string | null>(null);
   const [program, setProgram] = useState<SessionProgram>('shell');
   const [groupId, setGroupId] = useState(sessionGroup);
@@ -154,6 +155,7 @@ export function NewSessionSheet() {
                       connected ? 'Ścieżka do folderu na komputerze' : 'Najpierw połącz komputer'
                     }
                     placeholderTextColor={c.faint}
+                    selectionColor={c.accent}
                     autoCapitalize="none"
                     autoCorrect={false}
                     autoComplete="off"
@@ -178,6 +180,7 @@ export function NewSessionSheet() {
                     editable={!creating}
                     placeholder={defaultName}
                     placeholderTextColor={c.faint}
+                    selectionColor={c.accent}
                     maxLength={80}
                     onSubmitEditing={submit}
                     returnKeyType="done"

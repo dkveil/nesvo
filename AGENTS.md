@@ -4,6 +4,8 @@ The product is **nesvo**. Write repository documentation and code comments in En
 
 Applications live in `apps/mobile`, `apps/host` and `apps/tui`; shared Rust transport encoding lives in `crates/nesvo-wire`. The host is Rust; Node.js is only used by Expo tooling and tests. Do not replace the Rust host with a Node server. AI tools run as original CLI programs on the user's host, with their own subscription login; do not add AI API keys or direct model API calls.
 
+The approved Ultraviolet identity lives in `packages/brand`. Use its semantic tokens and exact logo geometry across clients; do not recreate the wordmark with a font or duplicate animation timelines. Preserve reduced-motion and visibility behavior. Repository docs use English; imported original SVG metadata may retain the author's language.
+
 Run npm commands from the repository root unless a command explicitly needs the `apps/mobile` application directory. Root scripts forward to the `@nesvo/mobile` workspace. Rust uses the root Cargo workspace, one `Cargo.lock` and root `target/`. Preserve private `host/.local/` pairing data despite the source migration.
 
 Follow `docs/engineering.md` for architecture and language conventions. Keep domain rules, application commands, adapters and rendering separate. Host state is authoritative; clients derive their views and never identify sessions by display name. Use strict TypeScript, validate protocol boundaries, keep render paths free of I/O, and test lifecycle/concurrency invariants. New Rust changes require fmt, Clippy and relevant tests on the supported CI platforms.

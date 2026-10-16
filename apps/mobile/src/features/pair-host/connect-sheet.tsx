@@ -152,6 +152,7 @@ export function ConnectSheet({
                   onChangeText={setValue}
                   placeholder="Kod parowania z komputera"
                   placeholderTextColor={c.faint}
+                  selectionColor={c.accent}
                   autoCorrect={false}
                   autoCapitalize="none"
                   autoComplete="off"

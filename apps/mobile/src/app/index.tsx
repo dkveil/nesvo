@@ -1,5 +1,8 @@
+import { useIsFocused } from 'expo-router';
+
 import { DashboardScreen } from '@widgets/session-dashboard';
 
 export default function SessionsRoute() {
-  return <DashboardScreen tab="sessions" />;
+  const active = useIsFocused();
+  return <DashboardScreen tab="sessions" active={active} />;
 }

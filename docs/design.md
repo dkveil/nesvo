@@ -3,7 +3,8 @@
 Updated October 16, 2026 after the first preview. The product name is **nesvo**, chosen by the project owner. App display names, the repository and native binaries use this name. Internal storage and Expo identifiers are preserved where migration would affect existing installations or pairing; see [branding](branding.md).
 
 - Both clients present a terminal workspace. Use compact panels, flat grouped rows and small corner radii, with a large usable terminal surface.
-- Background `#0D100E`, surfaces `#161B18`, raised selections `#232A25`, text `#E7EEE9`. Muted mint `#A0C9AE` marks the main action; amber and red carry attention and failure states. Text and symbols accompany color.
+- Use the shared Ultraviolet tokens: background `#17171A`, panels `#1E1E22`, text `#EAE8EE` and accent `#A34DFF`. Violet marks focus, the cursor and active controls; independent green, amber and red carry success, attention and failure states. Text and symbols accompany color.
+- The launch area uses the approved vector logo and a panel with a strong violet left edge plus a separate thin neutral line. Apply this restrained treatment to prompt fields and active panels; no gradients, glow or decorative shadows. The new-session field names a session and opens the existing launcher, rather than pretending to submit an AI task.
 - Use platform monospace for workspace headings, paths, terminal controls and metadata. Keep mobile touch targets at least 44 points and forms scrollable above the keyboard; visual density must not reduce hit targets.
 - Grouped session rows show the session name, program, directory and explicit state. Keep search and an attention filter available without a large introductory hero occupying the session list.
 - The terminal is the default session view. The fictional conversation view remains a secondary demo, never a representation of a connected CLI's structured conversation.

@@ -1,6 +1,6 @@
 # Testing
 
-This document separates automated checks from physical-device testing. Unchecked scenarios remain unverified. A Chromium viewport test is not a native iOS keyboard or safe-area test. Recorded checks below include work before the monorepo migration; they are not a claim that the current workspace commit has passed CI. Recheck the relevant workflow and commit before reporting current results.
+This document separates automated checks from physical-device testing. Unchecked scenarios remain unverified. A Chromium viewport test is not a native iOS keyboard or safe-area test. Recorded checks describe the tested behavior; recheck the relevant workflow and commit before reporting current CI results.
 
 ## Verified behavior — October 16, 2026
 
@@ -8,13 +8,14 @@ This document separates automated checks from physical-device testing. Unchecked
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TypeScript / ESLint                | Passed with strict indexed access and import-layer rules                                                                                                |
 | Expo dependencies                  | SDK 57 dependency alignment passed                                                                                                                      |
-| Expo export                        | iOS bundle export passed; this is not a signed native build                                                                                             |
+| Expo export                        | iOS, Android and web bundle exports passed; these are not signed native builds                                                                          |
 | Client protocol tests              | Authentication replay, malformed messages, group navigation and control-lease lifecycle passed                                                          |
 | Rust host unit tests               | Groups, SQLite revisions/reload, replay filtering and bounded queue behavior passed                                                                     |
 | Real host integration, Windows     | Legacy authentication/PTY lifecycle and v2 multi-client synchronization passed                                                                          |
 | Mobile web + real host             | Two Chromium clients: nested groups, session creation, shared output, takeover, move, reconnect and close passed                                        |
 | Terminal renderer                  | ANSI/input smoke, bounded backpressure, canonical observer grid and query-response suppression passed                                                   |
 | Rust TUI                           | Build, formatting, Clippy and unit tests passed locally on Windows                                                                                      |
+| Ultraviolet brand                  | Shared geometry and frame tests passed; browser checks cover full-visor blink, 320px layout, session-name prefill and motion lifecycle                  |
 | TUI launch form, Windows           | 22 unit tests, Clippy and build passed before workspace relocation; real PowerShell confirmed the selected folder and survived client detach            |
 | Interactive TUI, Windows ConPTY    | Group/subgroup creation, real PowerShell input, two panes and detach passed                                                                             |
 | TUI ↔ mobile web handoff           | A variable set in the TUI shell was read after mobile takeover and again after returning to TUI; mobile group rename appeared in TUI                    |
@@ -24,6 +25,14 @@ This document separates automated checks from physical-device testing. Unchecked
 | LTE/5G over private VPN            | Not tested                                                                                                                                              |
 
 CI builds and tests the Rust programs natively on Windows, macOS and Linux. Check the relevant commit's workflow result before claiming a particular platform passed. A native CI build does not verify every interactive terminal emulator or a physical phone.
+
+### Ultraviolet checks
+
+`npm run test:brand` checks the shared palette, exact SVG-to-terminal glyph geometry and six-second motion timeline. `npm run test:brand:web` checks the rendered logo, full violet visor during blinking, session creation from the launchpad, narrow layout, reduced motion and animation suspension when hidden or offscreen. These checks run in CI alongside the existing application and terminal tests.
+
+The branded TUI was captured from a real Windows ConPTY at 120×30 cells. The logo and controls fit; detach restored the cursor and terminal mode. Use `--no-animation` for a static logo. Unicode block appearance depends on the terminal font and cell proportions.
+
+The latest mobile bundles include the SVG renderer and new icons. Expo Go can preview the app UI; installed application icons and splash behavior require a development or production build. The new theme and keyboard behavior still require a physical iPhone retest.
 
 ### What the synchronization tests prove
 
@@ -76,6 +85,7 @@ npm.cmd run lint
 npm.cmd run format:check
 npm.cmd run test:architecture
 npm.cmd run test:packaging
+npm.cmd run test:brand
 npm.cmd run test:client
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -94,6 +104,7 @@ $env:APP_URL = 'http://localhost:8082'
 $env:PLAYWRIGHT_CHROMIUM_EXECUTABLE = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 npm.cmd run test:web
 npm.cmd run test:create-session
+npm.cmd run test:brand:web
 npm.cmd run test:live
 npm.cmd run test:terminal
 ```

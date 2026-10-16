@@ -4,6 +4,7 @@ import { useState } from 'react';
 export function useWorkspaceViewState() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [sessionName, setSessionName] = useState('');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'attention'>('all');
   // 'all' differs from null: null selects sessions outside every group.
@@ -13,6 +14,7 @@ export function useWorkspaceViewState() {
   function resetView() {
     setSelectedGroup('all');
     setSessionGroup(null);
+    setSessionName('');
     setQuery('');
     setFilter('all');
   }
@@ -22,6 +24,8 @@ export function useWorkspaceViewState() {
     setConnectOpen,
     createOpen,
     setCreateOpen,
+    sessionName,
+    setSessionName,
     query,
     setQuery,
     filter,
