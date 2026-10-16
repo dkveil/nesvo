@@ -176,6 +176,19 @@ try {
     /\x1b\[\d+;\d+R/,
     'Controller may answer terminal queries',
   );
+  await page.evaluate(() => {
+    window.harness.stats.inputs.length = 0;
+    window.harness.write('\x1b[?1004h');
+  });
+  await page.waitForFunction(() => window.harness.stats.outstanding === 0);
+  await terminal.locator('textarea').focus();
+  await terminal.locator('textarea').evaluate(element => element.blur());
+  await page.waitForTimeout(50);
+  assert.deepEqual(
+    await page.evaluate(() => window.harness.stats.inputs),
+    [],
+    'Switching focus between the terminal and app controls must not inject shell input',
+  );
   await terminal.locator('textarea').focus();
   await page.evaluate(() => {
     window.harness.stats.inputs.length = 0;

@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { groupDescendants, groupPath } from '@entities/group';
 import {
@@ -29,14 +29,10 @@ import { NesvoLogo, useMotionPreference } from '@shared/brand';
 import { colors as c, mono } from '@shared/theme';
 import { Button, common, Icon, IconButton } from '@shared/ui';
 
+import { DASHBOARD_ITEMS, DashboardNavigation, type DashboardTab } from './dashboard-navigation';
 import { SessionLaunchpad } from './session-launchpad';
 
-const navigation = [
-  { id: 'sessions', icon: 'terminal-outline', label: 'Sesje' },
-  { id: 'hosts', icon: 'desktop-outline', label: 'Komputery' },
-  { id: 'settings', icon: 'settings-outline', label: 'Ustawienia' },
-] as const;
-export type DashboardTab = (typeof navigation)[number]['id'];
+export type { DashboardTab } from './dashboard-navigation';
 
 export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; active?: boolean }) {
   const insets = useSafeAreaInsets();
@@ -132,10 +128,14 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         <View style={s.headerTitle}>
           <NesvoLogo width={106} />
           <Text style={s.headerRoute} numberOfLines={1}>
-            / {navigation.find(item => item.id === tab)?.label.toLocaleLowerCase()}
+            / {DASHBOARD_ITEMS.find(item => item.id === tab)?.label.toLocaleLowerCase()}
           </Text>
         </View>
-        <IconButton name="add" label="Nowa sesja" onPress={newSession} />
+        <IconButton
+          name="add"
+          label={tab === 'hosts' ? 'Dodaj komputer' : 'Nowa sesja'}
+          onPress={tab === 'hosts' ? () => setConnectOpen(true) : newSession}
+        />
       </View>
       <ScrollView
         keyboardDismissMode="on-drag"
@@ -441,126 +441,121 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
           <Icon name="close" size={18} />
         </Pressable>
       )}
+      <DashboardNavigation selected={tab} onSelect={navigateTo} />
       <Modal
         visible={menuOpen}
         transparent
         animationType={motionAllowed ? 'fade' : 'none'}
         onRequestClose={() => setMenuOpen(false)}
       >
-        <View style={s.menuOverlay}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Zamknij menu"
-            onPress={() => setMenuOpen(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <SafeAreaView style={s.menu}>
-            <View style={s.menuHeader}>
-              <View style={s.headerTitle}>
-                <NesvoLogo width={118} />
-              </View>
-              <IconButton
-                name="close"
-                label="Zamknij nawigację"
-                onPress={() => setMenuOpen(false)}
-              />
-            </View>
-            <ScrollView contentContainerStyle={s.menuContent}>
-              {navigation.map(item => (
-                <Pressable
-                  key={item.id}
-                  accessibilityRole="tab"
-                  accessibilityLabel={item.label}
-                  accessibilityState={{ selected: tab === item.id }}
-                  onPress={() => {
-                    setMenuOpen(false);
-                    navigateTo(item.id);
-                  }}
-                  style={({ pressed }) => [
-                    s.menuItem,
-                    tab === item.id && s.menuSelected,
-                    pressed && s.pressed,
-                  ]}
-                >
-                  <Icon name={item.icon} size={21} color={c.text} />
-                  <Text style={s.menuLabel}>{item.label}</Text>
-                </Pressable>
-              ))}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Grupy i podgrupy"
-                onPress={() => {
-                  setMenuOpen(false);
-                  navigateTo('groups');
-                }}
-                style={s.menuItem}
-              >
-                <Icon name="folder-outline" color={c.text} size={21} />
-                <Text style={s.menuLabel}>Grupy i podgrupy</Text>
-              </Pressable>
-              {!!sessions.length && <Text style={s.menuSection}>Ostatnie sesje</Text>}
-              {sessions.slice(0, 8).map(session => (
-                <Pressable
-                  key={session.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Przejdź do sesji ${session.name}`}
-                  onPress={() => {
-                    setMenuOpen(false);
-                    openSession(session.id);
-                  }}
-                  style={({ pressed }) => [s.menuSessionRow, pressed && s.pressed]}
-                >
-                  <View style={s.statusSlot}>
-                    <SessionStatusDot
-                      status={session.status}
-                      active={!!menuOpen && !!session.live && !createOpen && !connectOpen}
-                    />
-                  </View>
-                  <View style={s.grow}>
-                    <View style={s.sessionTitleRow}>
-                      <Text style={s.menuSession} numberOfLines={1}>
-                        {session.name}
-                      </Text>
-                      <SessionStatusBadge
-                        variant="plain"
-                        status={session.status}
-                        source={session.statusSource}
-                        demo={!session.live}
-                      />
-                    </View>
-                    <View style={s.menuSessionMeta}>
-                      <Text style={[s.sessionAgent, { color: sessionAgentColor(session.agent) }]}>
-                        {session.agent}
-                      </Text>
-                      <Text style={s.menuSessionGroup} numberOfLines={1}>
-                        {groupPath(groups, session.groupId)}
-                      </Text>
-                    </View>
-                    <Text style={s.menuSessionCwd} numberOfLines={1} ellipsizeMode="middle">
-                      {session.cwd}
-                    </Text>
-                  </View>
-                </Pressable>
-              ))}
-            </ScrollView>
+        <SafeAreaProvider>
+          <SafeAreaView style={s.menuOverlay} edges={['top', 'bottom', 'left', 'right']}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Połącz komputer z menu"
-              onPress={() => {
-                setMenuOpen(false);
-                setConnectOpen(true);
-              }}
-              style={s.menuFooter}
-            >
-              <Icon name="laptop-outline" size={21} />
-              <View style={s.grow}>
-                <Text style={s.menuLabel}>Połącz komputer</Text>
-                <Text style={s.meta}>{connectionLabel}</Text>
+              accessibilityLabel="Zamknij menu"
+              onPress={() => setMenuOpen(false)}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={s.menu} testID="session-switcher">
+              <View style={s.menuHeader}>
+                <View style={s.headerTitle}>
+                  <NesvoLogo width={118} />
+                </View>
+                <IconButton
+                  name="close"
+                  label="Zamknij nawigację"
+                  onPress={() => setMenuOpen(false)}
+                />
               </View>
-              <Icon name="chevron-forward" size={16} />
-            </Pressable>
+              <ScrollView style={s.menuScroll} contentContainerStyle={s.menuContent}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Grupy i podgrupy"
+                  onPress={() => {
+                    setMenuOpen(false);
+                    navigateTo('groups');
+                  }}
+                  style={s.menuItem}
+                >
+                  <Icon name="folder-outline" color={c.text} size={21} />
+                  <Text style={s.menuLabel}>Grupy i podgrupy</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Ustawienia"
+                  onPress={() => {
+                    setMenuOpen(false);
+                    navigateTo('settings');
+                  }}
+                  style={({ pressed }) => [s.menuItem, pressed && s.pressed]}
+                >
+                  <Icon name="settings-outline" color={c.text} size={21} />
+                  <Text style={s.menuLabel}>Ustawienia</Text>
+                </Pressable>
+                {!!sessions.length && <Text style={s.menuSection}>Ostatnie sesje</Text>}
+                {sessions.slice(0, 8).map(session => (
+                  <Pressable
+                    key={session.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Przejdź do sesji ${session.name}`}
+                    onPress={() => {
+                      setMenuOpen(false);
+                      openSession(session.id);
+                    }}
+                    style={({ pressed }) => [s.menuSessionRow, pressed && s.pressed]}
+                  >
+                    <View style={s.statusSlot}>
+                      <SessionStatusDot
+                        status={session.status}
+                        active={!!menuOpen && !!session.live && !createOpen && !connectOpen}
+                      />
+                    </View>
+                    <View style={s.grow}>
+                      <View style={s.sessionTitleRow}>
+                        <Text style={s.menuSession} numberOfLines={1}>
+                          {session.name}
+                        </Text>
+                        <SessionStatusBadge
+                          variant="plain"
+                          status={session.status}
+                          source={session.statusSource}
+                          demo={!session.live}
+                        />
+                      </View>
+                      <View style={s.menuSessionMeta}>
+                        <Text style={[s.sessionAgent, { color: sessionAgentColor(session.agent) }]}>
+                          {session.agent}
+                        </Text>
+                        <Text style={s.menuSessionGroup} numberOfLines={1}>
+                          {groupPath(groups, session.groupId)}
+                        </Text>
+                      </View>
+                      <Text style={s.menuSessionCwd} numberOfLines={1} ellipsizeMode="middle">
+                        {session.cwd}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Połącz komputer z menu"
+                onPress={() => {
+                  setMenuOpen(false);
+                  setConnectOpen(true);
+                }}
+                style={s.menuFooter}
+              >
+                <Icon name="laptop-outline" size={21} />
+                <View style={s.grow}>
+                  <Text style={s.menuLabel}>Połącz komputer</Text>
+                  <Text style={s.meta}>{connectionLabel}</Text>
+                </View>
+                <Icon name="chevron-forward" size={16} />
+              </Pressable>
+            </View>
           </SafeAreaView>
-        </View>
+        </SafeAreaProvider>
       </Modal>
     </KeyboardAvoidingView>
   );
@@ -731,14 +726,17 @@ const s = StyleSheet.create({
   },
   noticeText: { flex: 1, color: c.text, fontSize: 13, lineHeight: 20 },
   pressed: { backgroundColor: c.elevated },
-  menuOverlay: { flex: 1, backgroundColor: '#00000099' },
+  menuOverlay: { flex: 1, padding: 8, backgroundColor: '#00000099' },
   menu: {
-    width: '86%',
-    maxWidth: 340,
-    height: '100%',
+    width: '90%',
+    maxWidth: 360,
+    maxHeight: '92%',
+    flexShrink: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
     backgroundColor: c.surface,
-    borderRightWidth: 1,
-    borderRightColor: c.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: c.border,
   },
   menuHeader: {
     flexDirection: 'row',
@@ -749,7 +747,8 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: c.border,
   },
-  menuContent: { paddingHorizontal: 10, paddingTop: 12, paddingBottom: 24, gap: 4 },
+  menuScroll: { flexShrink: 1 },
+  menuContent: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 12, gap: 4 },
   menuItem: {
     flexDirection: 'row',
     gap: 12,
@@ -761,7 +760,6 @@ const s = StyleSheet.create({
     borderLeftWidth: 2,
     borderLeftColor: 'transparent',
   },
-  menuSelected: { backgroundColor: c.elevated, borderLeftColor: c.accent },
   menuLabel: { color: c.text, fontFamily: mono, fontSize: 13, lineHeight: 21 },
   menuSessionRow: {
     flexDirection: 'row',

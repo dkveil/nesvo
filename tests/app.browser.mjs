@@ -28,6 +28,11 @@ try {
     timeout: 60000,
   });
   await page.getByText('Tryb demo · sesje poniżej są przykładowe').waitFor();
+  await page.getByRole('tablist', { name: 'Nawigacja główna' }).waitFor();
+  assert.equal(
+    await page.getByRole('tab', { name: 'Sesje', exact: true }).getAttribute('aria-selected'),
+    'true',
+  );
   assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 7);
   const demoWorkingDot = page
     .getByRole('button', { name: 'Otwórz sesję Podgląd interfejsu', exact: true })
@@ -63,6 +68,11 @@ try {
     .getByRole('button', { name: 'Otwórz sesję Widok sesji mobilnych', exact: true })
     .click();
   await page.frameLocator('iframe[title="Terminal sesji"]').locator('.xterm-screen').waitFor();
+  assert.equal(
+    await page.getByRole('tablist', { name: 'Nawigacja główna' }).count(),
+    0,
+    'A session keeps the full screen height for its terminal',
+  );
   assert.equal(
     await page.getByRole('tab', { name: /^(Terminal|Rozmowa)$/ }).count(),
     0,
@@ -154,7 +164,12 @@ try {
   assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 8);
   await expectNoHorizontalOverflow();
   await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
-  await page.getByRole('tab', { name: 'Komputery', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Zamknij nawigację', exact: true }).waitFor();
+  const switcherBounds = await page.getByTestId('session-switcher').boundingBox();
+  assert.ok(
+    switcherBounds && switcherBounds.y >= 8 && switcherBounds.height < 844 * 0.95,
+    'The session switcher is inset instead of occupying the entire viewport',
+  );
   const recentSessions = page.getByRole('button', { name: /^Przejdź do sesji/ });
   assert.equal(await recentSessions.count(), 8, 'Sidebar lists recent sessions with their status');
   const codexTone = await page
@@ -172,7 +187,12 @@ try {
   await expectNoHorizontalOverflow();
   await page.screenshot({ path: 'artifacts/menu-320.png' });
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Zamknij nawigację', exact: true }).click();
   await page.getByRole('tab', { name: 'Komputery', exact: true }).click();
+  assert.equal(
+    await page.getByRole('tab', { name: 'Komputery', exact: true }).getAttribute('aria-selected'),
+    'true',
+  );
   await page.getByRole('button', { name: 'Sparuj komputer', exact: true }).click();
   await page.setViewportSize({ width: 320, height: 400 });
   await page.getByLabel('Kod parowania JSON').click();
@@ -189,7 +209,7 @@ try {
   await page.getByRole('button', { name: 'Zamknij parowanie', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
-  await page.getByRole('tab', { name: 'Ustawienia', exact: true }).click();
+  await page.getByRole('button', { name: 'Ustawienia', exact: true }).click();
   await page.getByText('Twoje narzędzia i subskrypcje', { exact: true }).waitFor();
   await page
     .getByRole('button', { name: 'Zamknij nawigację', exact: true })

@@ -138,11 +138,7 @@ async function main() {
     await observer.close();
     await page.screenshot({ path: 'artifacts/terminal-live.png' });
     await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
-    await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
     await page.getByRole('tab', { name: 'Komputery', exact: true }).click();
-    await page
-      .getByRole('button', { name: 'Zamknij nawigację', exact: true })
-      .waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: 'Rozłącz', exact: true }).click();
     await page.getByText('Rozłączono', { exact: true }).filter({ visible: true }).waitFor();
     await page.getByRole('button', { name: 'Połącz', exact: true }).click();

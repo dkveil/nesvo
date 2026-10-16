@@ -71,6 +71,9 @@ let previousWriteAllowedResponses = true;
 let fixedSize: { cols: number; rows: number } | null = null;
 
 terminal.onData(data => {
+  // Focus changes between the embedded terminal and the app's composer are UI
+  // navigation, not shell input. Keep query replies and typed escape keys intact.
+  if (data === '\x1b[I' || data === '\x1b[O') return;
   if (!readOnly && !suppressWriteResponses) emit({ channel: TERMINAL_CHANNEL, type: 'data', data });
 });
 
