@@ -1,4 +1,5 @@
 //! VT state is interpreted locally; escape sequences never reach the outer terminal.
+use crate::theme::{BACKGROUND, TEXT, terminal_color_reply};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -49,10 +50,13 @@ impl vt100::Callbacks for Replies {
         if params.get(1) != Some(&b"?".as_slice()) {
             return;
         }
-        match params.first().copied() {
-            Some(b"10") => self.push("\x1b]10;rgb:dede/dede/dede\x1b\\".into()),
-            Some(b"11") => self.push("\x1b]11;rgb:0b0b/0b0b/0b0b\x1b\\".into()),
-            _ => {}
+        let reply = match params.first().copied() {
+            Some(b"10") => terminal_color_reply(10, TEXT),
+            Some(b"11") => terminal_color_reply(11, BACKGROUND),
+            _ => None,
+        };
+        if let Some(reply) = reply {
+            self.push(reply);
         }
     }
 }
@@ -106,8 +110,8 @@ impl Widget for TerminalWidget<'_> {
                 };
                 let target = &mut buffer[(area.x + col, area.y + row)];
                 let mut style = Style::default()
-                    .fg(color(cell.fgcolor(), Color::Rgb(222, 222, 222)))
-                    .bg(color(cell.bgcolor(), Color::Rgb(11, 11, 11)));
+                    .fg(color(cell.fgcolor(), TEXT))
+                    .bg(color(cell.bgcolor(), BACKGROUND));
                 for (enabled, modifier) in [
                     (cell.bold(), Modifier::BOLD),
                     (cell.dim(), Modifier::DIM),

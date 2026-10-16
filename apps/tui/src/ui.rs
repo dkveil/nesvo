@@ -1,8 +1,12 @@
 //! Rendering is a pure projection of App. No filesystem, network, or process calls.
 use crate::{
+    brand,
     model::{App, Dialog, Mode, RowKind},
     status::{Source, State, Status},
     terminal::TerminalWidget,
+    theme::{
+        ACCENT, BACKGROUND, BORDER, DANGER, MUTED, SELECTION, SUCCESS, SURFACE, TEXT, WARNING,
+    },
     ui_controls, ui_launch,
 };
 use ratatui::{
@@ -12,12 +16,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
-
-const BACKGROUND: Color = Color::Rgb(13, 16, 14);
-const SURFACE: Color = Color::Rgb(22, 27, 24);
-const TEXT: Color = Color::Rgb(231, 238, 233);
-const MUTED: Color = Color::Rgb(165, 177, 169);
-const BORDER: Color = Color::Rgb(52, 61, 55);
 
 pub struct Geometry {
     pub header: Rect,
@@ -71,7 +69,7 @@ pub fn tree_offset(app: &App, height: u16) -> usize {
         .saturating_sub(usize::from(height.saturating_sub(3)))
 }
 
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     let area = frame.area();
     frame.render_widget(
         Block::default().style(Style::default().bg(BACKGROUND).fg(TEXT)),
@@ -84,7 +82,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         "offline"
     };
     let header = Line::from(vec![
-        Span::styled(" nesvo ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " nesvo ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             format!(
                 "  {connected}  ·  {} sessions  ·  {} groups",
@@ -114,7 +115,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
     render_tree(frame, app, layout.tree);
     for index in 0..if app.split { 2 } else { 1 } {
-        render_pane(frame, app, index, layout.panes[index]);
+        render_pane(frame, app, index, layout.panes[index], logo_frame);
     }
     let mode = if app.mode == Mode::Input {
         "INPUT  Ctrl+G: navigation"
@@ -223,7 +224,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect) {
+fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_frame: usize) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -264,11 +265,12 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect) {
     let block = Block::bordered()
         .title(title)
         .title_bottom(footer)
+        .title_style(Style::default().fg(MUTED))
         .border_style(Style::default().fg(if focused { MUTED } else { BORDER }));
     let content = block.inner(area);
     frame.render_widget(block, area);
     let Some(session) = session else {
-        render_home(frame, content);
+        render_home(frame, content, logo_frame);
         return;
     };
     if let Some(terminal) = app.terminals.get(&session.id) {
@@ -292,12 +294,21 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect) {
     }
 }
 
-fn render_home(frame: &mut Frame, content: Rect) {
+fn render_home(frame: &mut Frame, content: Rect, logo_frame: usize) {
+    if let Some(area) = brand::area(content) {
+        frame.render_widget(brand::Logo(logo_frame), area);
+    }
+    let offset = brand::home_offset(content);
     frame.render_widget(
         Paragraph::new("Your workspace").style(Style::default().fg(TEXT)),
-        Rect::new(content.x, content.y, content.width, content.height.min(1)),
+        Rect::new(
+            content.x,
+            content.y + offset,
+            content.width,
+            content.height.min(1),
+        ),
     );
-    for (offset, description) in ui_controls::HOME_ACTION_ROWS.into_iter().zip([
+    for (offset, description) in ui_controls::home_action_rows(content).into_iter().zip([
         "Choose a folder and a terminal or agent.",
         "Organize sessions into groups.",
         "Continue these sessions from your phone.",
@@ -332,10 +343,10 @@ fn truncate_cells(text: &str, max_width: usize) -> String {
 
 fn status_color(status: Option<&Status>) -> Color {
     match status.map(|status| (status.source, status.state)) {
-        Some((Source::Screen, State::Question | State::Blocked)) => Color::Rgb(213, 177, 122),
-        Some((Source::Process | Source::Screen, State::Failed)) => Color::Rgb(216, 153, 146),
-        Some((Source::Process | Source::Screen, State::Done)) => Color::Rgb(160, 201, 174),
-        Some((_, State::Working)) => Color::Rgb(160, 201, 174),
+        Some((Source::Screen, State::Question | State::Blocked)) => WARNING,
+        Some((Source::Process | Source::Screen, State::Failed)) => DANGER,
+        Some((Source::Process | Source::Screen, State::Done)) => SUCCESS,
+        Some((_, State::Working)) => ACCENT,
         _ => MUTED,
     }
 }
@@ -412,7 +423,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     .map(|(_, label)| ListItem::new(label.as_str()))
                     .collect::<Vec<_>>(),
             )
-            .highlight_style(Style::default().bg(Color::Rgb(55, 55, 55)))
+            .highlight_style(Style::default().bg(SELECTION))
             .highlight_symbol("› ");
             let mut state = ListState::default()
                 .with_selected(Some(*selected))
@@ -461,6 +472,31 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
+    fn home_animation_changes_only_logo_cells_not_layout_or_controls() {
+        let app = App::new(1);
+        let area = Rect::new(0, 0, 120, 36);
+        let logo = brand::area(pane_content(geometry(area, false).panes[0])).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let initial = terminal.backend().buffer().clone();
+        terminal.draw(|frame| render(frame, &app, 1)).unwrap();
+        let animated = terminal.backend().buffer();
+        let mut changed = 0;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                if initial[(x, y)] != animated[(x, y)] {
+                    assert!(
+                        logo.contains((x, y).into()),
+                        "Animation changed a cell outside the logo"
+                    );
+                    changed += 1;
+                }
+            }
+        }
+        assert!(changed > 0);
+    }
+
+    #[test]
     fn empty_layout_and_dialog_render_at_small_terminal_sizes() {
         let mut app = App::new(1);
         for dialog in [
@@ -471,7 +507,7 @@ mod tests {
             app.dialog = Some(dialog);
             for (width, height) in [(120, 40), (60, 20), (20, 4), (1, 1), (0, 0)] {
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal.draw(|frame| render(frame, &app)).unwrap();
+                terminal.draw(|frame| render(frame, &app, 0)).unwrap();
             }
         }
     }

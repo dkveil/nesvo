@@ -20,3 +20,6 @@ tokio.workspace = true
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
 url.workspace = true
 vt100 = "0.16"
+
+[build-dependencies]
+serde_json.workspace = true

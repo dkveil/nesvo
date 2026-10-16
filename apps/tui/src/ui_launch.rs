@@ -2,17 +2,15 @@
 use crate::{
     launch::{Field, Program, SessionForm},
     model::App,
+    theme::{MUTED, SELECTION, TEXT},
 };
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
 };
-
-const MUTED: Color = Color::Rgb(165, 177, 169);
-const SELECTED: Color = Color::Rgb(35, 42, 37);
 
 pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect) {
     let directory = if form.cwd.is_empty() {
@@ -60,9 +58,9 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         lines.push(Line::from(Span::styled(
             label,
             if selected && form.field == Field::Program {
-                Style::default().bg(SELECTED)
+                Style::default().bg(SELECTION)
             } else {
-                Style::default().fg(if selected { Color::White } else { MUTED })
+                Style::default().fg(if selected { TEXT } else { MUTED })
             },
         )));
     }
@@ -110,7 +108,7 @@ fn field_line<'a>(label: &str, value: &str, focused: bool) -> Line<'a> {
     Line::from(Span::styled(
         format!("{label}: {value}"),
         if focused {
-            Style::default().bg(SELECTED)
+            Style::default().bg(SELECTION)
         } else {
             Style::default()
         },

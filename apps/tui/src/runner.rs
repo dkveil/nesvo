@@ -1,6 +1,6 @@
 //! Platform terminal lifecycle and application effects. Rendering stays pure.
 use crate::{
-    controller,
+    brand, controller,
     model::App,
     network::{Connection, NetworkEvent},
     output::FrameWriter,
@@ -61,7 +61,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run(connection: &mut Connection, pairing_path: &Path) -> Result<()> {
+pub fn run(connection: &mut Connection, pairing_path: &Path, animate: bool) -> Result<()> {
     // Panic diagnostics must appear after restoring the user's terminal as well.
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -91,6 +91,8 @@ pub fn run(connection: &mut Connection, pairing_path: &Path) -> Result<()> {
     let mut requested_sizes = HashMap::new();
     let mut last_draw = Instant::now() - Duration::from_secs(1);
     let mut dirty = true;
+    let animation_started = Instant::now();
+    let mut logo_frame = 0;
     loop {
         let phase = Instant::now();
         // Bound each drain so high-output sessions cannot starve the keyboard.
@@ -125,9 +127,14 @@ pub fn run(connection: &mut Connection, pairing_path: &Path) -> Result<()> {
             connection,
             resize_commands(&app, area, &mut requested_sizes),
         )?;
+        let next_logo_frame = logo_frame_for(&app, area, animate, animation_started.elapsed());
+        if next_logo_frame != logo_frame {
+            logo_frame = next_logo_frame;
+            dirty = true;
+        }
         if dirty && last_draw.elapsed() >= Duration::from_millis(16) {
             batching.set(true);
-            terminal.draw(|frame| ui::render(frame, &app))?;
+            terminal.draw(|frame| ui::render(frame, &app, logo_frame))?;
             // Crossterm flushes after cursor commands too. Assemble the complete
             // diff and cursor update first, then make one console write per frame.
             batching.set(false);
@@ -156,6 +163,20 @@ pub fn run(connection: &mut Connection, pairing_path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn logo_frame_for(app: &App, area: Rect, animate: bool, elapsed: Duration) -> usize {
+    if !animate || app.dialog.is_some() || app.panes.iter().any(Option::is_some) {
+        return 0;
+    }
+    let geometry = ui::geometry(area, app.split);
+    let visible = (0..if app.split { 2 } else { 1 })
+        .any(|index| brand::area(ui::pane_content(geometry.panes[index])).is_some());
+    if visible {
+        brand::frame_index(elapsed)
+    } else {
+        0
+    }
 }
 
 fn affects_view(event: &Event) -> bool {
@@ -219,6 +240,27 @@ fn resize_commands(app: &App, area: Rect, requested: &mut RequestedSizes) -> Vec
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+
+    #[test]
+    fn animation_only_advances_on_visible_empty_home_and_respects_static_mode() {
+        let mut app = App::new(1);
+        let area = Rect::new(0, 0, 120, 36);
+        let blink = Duration::from_millis(840);
+        assert_ne!(logo_frame_for(&app, area, true, blink), 0);
+        assert_eq!(logo_frame_for(&app, area, false, blink), 0);
+        assert_eq!(
+            logo_frame_for(&app, Rect::new(0, 0, 45, 12), true, blink),
+            0
+        );
+        app.dialog = Some(crate::model::Dialog::Help);
+        assert_eq!(logo_frame_for(&app, area, true, blink), 0);
+        app.dialog = None;
+        // Even when the other split pane is empty, terminal activity must not
+        // gain any periodic redraws from the decorative logo.
+        app.split = true;
+        app.panes[0] = Some("active-session".into());
+        assert_eq!(logo_frame_for(&app, area, true, blink), 0);
+    }
 
     #[test]
     fn key_release_and_mouse_motion_do_not_schedule_console_writes() {

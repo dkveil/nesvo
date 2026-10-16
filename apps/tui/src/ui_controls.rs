@@ -1,17 +1,23 @@
 //! Shared, pure geometry for visible controls and mouse hit testing.
 use crate::{
+    brand,
     launch::{Field, Program},
     model::{App, Dialog, RowKind},
+    theme::{ELEVATED, FAINT, TEXT},
     ui,
 };
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Paragraph},
 };
 
 pub const HOME_ACTION_ROWS: [u16; 3] = [2, 5, 8];
+
+pub fn home_action_rows(content: Rect) -> [u16; 3] {
+    HOME_ACTION_ROWS.map(|row| row + brand::home_offset(content))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -236,10 +242,11 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             continue;
         }
         let content = ui::pane_content(geometry.panes[index]);
+        let rows = home_action_rows(content);
         for (offset, label, action, enabled) in [
-            (HOME_ACTION_ROWS[0], "+ New session", 'n', app.connected),
-            (HOME_ACTION_ROWS[1], "+ New group", 'g', app.connected),
-            (HOME_ACTION_ROWS[2], "Pair your phone", 'p', true),
+            (rows[0], "+ New session", 'n', app.connected),
+            (rows[1], "+ New group", 'g', app.connected),
+            (rows[2], "Pair your phone", 'p', true),
         ] {
             buttons(
                 row(content, offset),
@@ -288,13 +295,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     for control in controls(app, frame.area()) {
         if let Some(label) = control.label {
             frame.render_widget(
-                Paragraph::new(label).style(Style::default().bg(Color::Rgb(35, 42, 37)).fg(
-                    if control.enabled {
-                        Color::Rgb(231, 238, 233)
-                    } else {
-                        Color::Rgb(138, 153, 143)
-                    },
-                )),
+                Paragraph::new(label).style(Style::default().bg(ELEVATED).fg(if control.enabled {
+                    TEXT
+                } else {
+                    FAINT
+                })),
                 control.area,
             );
         }

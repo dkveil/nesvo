@@ -1,3 +1,4 @@
+mod brand;
 mod controller;
 mod input;
 mod launch;
@@ -7,6 +8,7 @@ mod output;
 mod runner;
 mod status;
 mod terminal;
+mod theme;
 mod ui;
 mod ui_controls;
 mod ui_launch;
@@ -31,6 +33,9 @@ struct Arguments {
     /// Print one authenticated session/group snapshot as JSON, then disconnect.
     #[arg(long)]
     list: bool,
+    /// Keep the empty-workspace logo still; active terminal views never animate.
+    #[arg(long)]
+    no_animation: bool,
 }
 
 #[tokio::main]
@@ -69,5 +74,5 @@ async fn main() -> Result<()> {
     }
     let pairing_path =
         std::path::absolute(&arguments.pairing).context("Cannot resolve pairing file path")?;
-    runner::run(&mut connection, &pairing_path)
+    runner::run(&mut connection, &pairing_path, !arguments.no_animation)
 }
