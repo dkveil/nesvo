@@ -8,7 +8,7 @@ For an isolated test, build with `cargo build --workspace --target-dir target/ve
 
 ## Keyboard and focus
 
-F4 opens Git review directly from terminal input as well as navigation; F4 or Escape closes it and restores input when opened from a terminal. The session sidebar is hidden during review. Other shortcuts apply in navigation mode. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K` and Escape, belongs to the program while typing.
+F4 opens Git review directly from terminal input as well as navigation; F4 or Escape closes it and restores input when opened from a terminal. The session sidebar is hidden during review. F6–F9 are also global. Other shortcuts apply in navigation mode. Global bindings can be changed in Settings → `k`; dialogs retain exclusive focus. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K` and Escape, belongs to the program while typing.
 
 | Key                       | Action                                                 |
 | ------------------------- | ------------------------------------------------------ |
@@ -18,6 +18,11 @@ F4 opens Git review directly from terminal input as well as navigation; F4 or Es
 | `Tab` in expanded palette | All, sessions, groups, commands                        |
 | Arrows / Enter / Escape   | Highlight / confirm / dismiss                          |
 | `F4`                      | Open or close Git changes                              |
+| `F6`                      | Toggle to the previously entered session               |
+| `F7`                      | Enter the oldest unread, unmuted attention event       |
+| `F8`                      | Saved launch templates                                 |
+| `F9`                      | Explicitly restore sessions from previous host runs    |
+| `u`                       | Mute/unmute alerts for the current session             |
 | `f`                       | Select status filters; empty selection means all       |
 | `n`, then `F2`            | New session and advanced launch options                |
 | `S`                       | Scheduled sessions; refresh or cancel a pending launch |
@@ -64,4 +69,34 @@ Verification targets Windows: Rust unit/render tests at 80×24, 100×32 and 150�
 
 `docs/previews/*.png` captures the real Ratatui application running against an isolated real host through ConPTY. The terminal cells are rasterized with Cascadia Mono. The repository changes and session names are deliberate test fixtures, not screenshots of actual agent work. No mock UI or invented production output is used. The test host and processes are cleaned up after capture; user hosts are left running.
 
-No new Rust crate was added. Tokio's existing `fs` feature was enabled for bounded asynchronous untracked-file reads. Python capture dependencies are development-only and are not required to run Nesvo. macOS and Linux were not interactively verified in this change.
+The host adds `reqwest` 0.12 with Rustls and JSON for bounded asynchronous Expo push requests. Mobile adds SDK-matched `expo-notifications` 57.0.23 for native permission, registration and notification responses. Tokio's existing `fs` feature was enabled for bounded asynchronous untracked-file reads. Python capture dependencies are development-only and are not required to run Nesvo. macOS and Linux were not interactively verified in this change.
+
+## Attention, titles and navigation history
+
+The sidebar never reorders when attention arrives. `*` marks an unread event, `-` a muted session. Screen-derived events retain `~`; process exit is a separate evidence source. Repeated redraws and silence cannot create completed-work events. Entering a session acknowledges only the observed sequence, so a later question is not accidentally hidden. Muting is shared by clients and survives explicit process restoration.
+
+Empty palette searches prioritize recently entered sessions. Merely highlighting a result does not alter history. Blank agent names opt into titles derived from the initial prompt or bounded OSC 0/2 title messages. A manual rename disables automatic titles. Native shell sessions still require a name.
+
+Healthy host snapshots never reopen the active pane or change input mode. A late control grant after another keyboard/mouse action cannot steal focus from menus. After disconnect, input ownership must be explicitly reacquired. Local tabs, visible panes, fullscreen choice, collapsed groups and recent IDs persist per paired host. Deleted process IDs are discarded; restoring a process after a host restart creates a new ID rather than pretending the old process survived.
+
+## Templates and recovery
+
+`F3` in New session saves a named template on the host: program, working folder, group, prompt and worktree choice. A template opens an editable form via F8; it never launches on selection. At most 32 templates and 48 KiB of serialized template content are allowed. Template prompts are stored locally in the host metadata database.
+
+The host saves launch descriptions independently of running processes. After restart it starts no old process automatically. F9 lists saved descriptions; Enter asks to start a new process in the recorded working directory. Previous prompts and worktree creation are not replayed. `c` instead opens Claude's `--resume` or Codex's `resume` conversation picker. The user chooses the conversation inside the provider CLI. Gemini conversation restoration is not implemented. A launch interrupted during restoration is labelled interrupted and cannot be automatically retried. `x` forgets a saved description or deletes a template without deleting project files. Large recovery lists are paginated (`]` next, `r` first page).
+
+The launcher compares host source build identities. An older but compatible running host remains available to its sessions; the launcher reports the mismatch instead of terminating it. Stop that host deliberately when ready to use newly built host features.
+
+## Mobile notifications
+
+Native builds expose Settings → session notifications. Consent registers an Expo token through the authenticated host connection; disabling removes it on the host before clearing the phone preference. Up to eight tokens are stored in private host metadata. The app retains one host registration; disable the previous host before registering another. Disable notifications before forgetting or changing that host. Expo Go and web show an availability explanation.
+
+The host sends only an opaque host ID, process ID, event sequence and generic event description to Expo. Terminal output, prompts, names, paths and pairing keys are excluded. A bounded queue sends each attention episode once, suppressing acknowledged, replaced or muted events before dispatch. A tap reconnects the saved host and opens the matching existing session; mismatched hosts and deleted sessions show a message. Mobile session controls offer mute/unmute and acknowledge the visible event.
+
+Delivery uses a fixed HTTPS endpoint, ten-second timeouts, no redirects and bounded response bodies. The host checks Expo receipts after fifteen minutes and removes DeviceNotRegistered tokens. Transport failures are not blindly retried, to avoid repeating an ambiguously accepted notification. Queue and receipt tracking are in memory: a host shutdown or overflow can drop a notification. Attention remains visible in session state while the host is running. Neither an Expo ticket nor a receipt proves that a person saw the notification.
+
+Push delivery requires a native build with valid APNs/FCM provisioning for the existing EAS project. SDK-matched package checks, iOS/Android/web bundle export and browser checks passed; delivery to a locked physical phone was not verified. Reference: [Expo notifications for SDK 57](https://docs.expo.dev/versions/v57.0.0/sdk/notifications/) and [Expo push delivery](https://docs.expo.dev/push-notifications/sending-notifications/).
+
+## Latest verification
+
+Windows verification includes 96 TUI tests, 38 host tests, 3 wire tests, 16 mobile transport/domain tests, 17 real host/TUI/synchronization integration tests, architecture checks, formatting, Clippy, TypeScript and ESLint. A real ConPTY run verifies input ownership, Git review, palette, filters, templates/recovery dialogs, launch options, resize at 150×44, 100×32 and 80×24, and terminal restoration on exit. Host restart integration verifies persistent template identity, explicit restoration, muted-state recovery, and rejection of duplicate restoration. Browser testing covers the mobile web preview; it does not substitute for device push testing.
