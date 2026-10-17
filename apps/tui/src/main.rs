@@ -9,6 +9,7 @@ mod palette;
 mod preferences;
 mod review;
 mod runner;
+mod selection;
 mod shortcuts;
 mod status;
 mod terminal;

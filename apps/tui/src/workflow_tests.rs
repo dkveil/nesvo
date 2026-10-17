@@ -417,3 +417,73 @@ fn review_copy_uses_full_patch_without_sending_session_input() {
     );
     assert!(result.commands.is_empty());
 }
+
+#[test]
+fn control_q_reveals_sidebar_even_after_fullscreen_review() {
+    let mut app = app();
+    app.dialog = None;
+    app.fullscreen = true;
+    app.mode = Mode::Input;
+    key(&mut app, KeyCode::F(4));
+    assert!(ui::immersive(&app));
+    let outcome = controller::event(
+        &mut app,
+        Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+        Rect::new(0, 0, 150, 44),
+    );
+    assert!(!ui::immersive(&app));
+    assert!(!app.review.focused);
+    assert!(ui::geometry(Rect::new(0, 0, 150, 44), &app).tree.width > 0);
+    assert!(outcome.commands.iter().all(|c| c["type"] != "input"));
+}
+
+#[test]
+fn dragging_visible_terminal_text_copies_only_on_release() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut app = app();
+    app.dialog = None;
+    app.mode = Mode::Input;
+    app.fullscreen = true;
+    let mut terminal = crate::terminal::TerminalState::new(43, 150);
+    terminal.process("hello world", false);
+    app.terminals.insert("a".into(), terminal);
+    let send = |app: &mut App, kind, column| {
+        controller::event(
+            app,
+            Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Rect::new(0, 0, 150, 44),
+        )
+    };
+    assert!(
+        send(&mut app, MouseEventKind::Down(MouseButton::Left), 0)
+            .clipboard
+            .is_none()
+    );
+    assert!(
+        send(&mut app, MouseEventKind::Drag(MouseButton::Left), 4)
+            .clipboard
+            .is_none()
+    );
+    let result = send(&mut app, MouseEventKind::Up(MouseButton::Left), 4);
+    assert_eq!(result.clipboard.as_deref(), Some("hello"));
+    assert!(result.commands.is_empty());
+    assert!(app.selection.is_none());
+}
+
+#[test]
+fn left_bracket_moves_review_boundary_left_from_actual_width() {
+    let mut app = app();
+    app.dialog = None;
+    app.review.visible = true;
+    app.review.focused = true;
+    let before = ui::geometry(Rect::new(0, 0, 150, 44), &app).review.width;
+    key(&mut app, KeyCode::Char('['));
+    assert_eq!(app.review.width, before + 8);
+    key(&mut app, KeyCode::Char(']'));
+    assert_eq!(app.review.width, before);
+}

@@ -149,7 +149,15 @@ pub fn run(
     loop {
         if let Ok(message) = clipboard_rx.try_recv() {
             clipboard_pending = false;
-            app.notice = message;
+            app.toast = Some((message, Instant::now() + Duration::from_secs(3)));
+            dirty = true;
+        }
+        if app
+            .toast
+            .as_ref()
+            .is_some_and(|(_, until)| Instant::now() >= *until)
+        {
+            app.toast = None;
             dirty = true;
         }
         let phase = Instant::now();
@@ -316,7 +324,7 @@ pub fn run(
                 let tx = clipboard_tx.clone();
                 std::thread::spawn(move || {
                     let message = match copy_text(&text) {
-                        Ok(()) => "Diff copied to clipboard.",
+                        Ok(()) => "Copied to clipboard.",
                         Err(_) => "Clipboard unavailable; copying failed.",
                     };
                     let _ = tx.send(message.to_owned());
@@ -397,6 +405,8 @@ fn affects_view(event: &Event) -> bool {
         Event::Mouse(mouse) => matches!(
             mouse.kind,
             MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left)
+                | MouseEventKind::Up(MouseButton::Left)
                 | MouseEventKind::ScrollUp
                 | MouseEventKind::ScrollDown
         ),

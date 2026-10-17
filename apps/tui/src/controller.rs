@@ -42,6 +42,40 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         return crate::toolbox::event(app, event, area);
     }
     let mut outcome = Outcome::default();
+    match &event {
+        Event::Key(_) | Event::Resize(..) => app.selection = None,
+        Event::Mouse(mouse) if mouse.kind == MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(selection) = &mut app.selection {
+                crate::selection::drag(selection, *mouse);
+            }
+            return outcome;
+        }
+        Event::Mouse(mouse) if mouse.kind == MouseEventKind::Up(MouseButton::Left) => {
+            if let Some(mut selection) = app.selection.take()
+                && selection.dragged
+            {
+                crate::selection::drag(&mut selection, *mouse);
+                let text = selection.text();
+                if !text.is_empty() {
+                    outcome.clipboard = Some(text);
+                }
+            }
+            return outcome;
+        }
+        Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+            app.selection = None;
+            app.selection = crate::selection::press(app, *mouse, area);
+        }
+        Event::Mouse(mouse)
+            if matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            ) =>
+        {
+            app.selection = None
+        }
+        _ => {}
+    }
     let dialog_before = app.dialog.as_ref().map(std::mem::discriminant);
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => {

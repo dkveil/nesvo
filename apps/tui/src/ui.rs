@@ -361,6 +361,16 @@ pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
 pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     render_workspace(frame, app, logo_frame);
     crate::toolbox::render(frame, app);
+    if let Some(selection) = &app.selection {
+        selection.render(frame.buffer_mut(), app.theme.selection());
+    }
+    if let Some((message, _)) = &app.toast {
+        let area = geometry(frame.area(), app).footer;
+        frame.render_widget(
+            Paragraph::new(format!(" {message} ")).style(Style::default().fg(TEXT).bg(SURFACE)),
+            area,
+        );
+    }
 }
 
 fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {

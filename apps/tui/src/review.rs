@@ -100,6 +100,42 @@ pub fn aligned(lines: &[&str]) -> Vec<(String, String)> {
     rows
 }
 
+fn layout(app: &App, inner: Rect) -> ([Rect; 4], Vec<Line<'static>>) {
+    let state = &app.review;
+    let shortcuts = crate::ui::shortcut_lines(
+        &[
+            "↑↓ file",
+            "←→ hunk",
+            "Space fold",
+            "PgUp/PgDn scroll",
+            "r refresh",
+            "y copy",
+            "o folder",
+            "c scope",
+            "[] width",
+            "s split",
+            "e expand",
+            "Esc close",
+        ],
+        inner.width,
+    );
+    let areas = Layout::vertical([
+        Constraint::Length((state.data.files.len() as u16).clamp(1, 5)),
+        Constraint::Length(3),
+        Constraint::Min(0),
+        Constraint::Length(shortcuts.len() as u16),
+    ])
+    .areas(inner);
+    (areas, shortcuts)
+}
+
+pub fn content_area(app: &App, area: Rect) -> Rect {
+    if area.is_empty() {
+        return Rect::default();
+    }
+    layout(app, Block::bordered().inner(area)).0[2]
+}
+
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     if area.is_empty() {
         return;
@@ -124,30 +160,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let shortcuts = crate::ui::shortcut_lines(
-        &[
-            "↑↓ file",
-            "←→ hunk",
-            "Space fold",
-            "PgUp/PgDn scroll",
-            "r refresh",
-            "y copy",
-            "o folder",
-            "c scope",
-            "[] width",
-            "s split",
-            "e expand",
-            "Esc close",
-        ],
-        inner.width,
-    );
-    let [files, heading, content, footer] = Layout::vertical([
-        Constraint::Length((state.data.files.len() as u16).clamp(1, 5)),
-        Constraint::Length(3),
-        Constraint::Min(0),
-        Constraint::Length(shortcuts.len() as u16),
-    ])
-    .areas(inner);
+    let ([files, heading, content, footer], shortcuts) = layout(app, inner);
     let first = state
         .file
         .saturating_sub(files.height.saturating_sub(1) as usize);
