@@ -30,6 +30,12 @@ impl Default for Outcome {
 }
 
 pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
+    // A later deliberate interaction supersedes an outstanding request to type.
+    if matches!(&event, Event::Key(k) if k.kind != KeyEventKind::Release)
+        || matches!(&event, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
+    {
+        app.pending_input = None;
+    }
     if app.overlay.is_some() {
         return crate::toolbox::event(app, event, area);
     }
@@ -293,6 +299,11 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         && let Some(command) = app.request_diff()
     {
         outcome.commands.push(command);
+    }
+    for command in &outcome.commands {
+        if command["type"] == "acquireControl" {
+            app.pending_input = command["sessionId"].as_str().map(str::to_owned);
+        }
     }
     outcome
 }
@@ -2133,6 +2144,7 @@ mod tests {
         ]})).unwrap();
         app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
             .unwrap();
+        app.activate_session("s");
         app.event(json!({"type":"control","sessionId":"s","controllerId":1,"cols":80,"rows":24,"leaseId":"one"})).unwrap();
         let area = Rect::new(0, 0, 100, 30);
         let escape = event(
@@ -2353,6 +2365,7 @@ mod tests {
         app.activate_session("s");
         app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
             .unwrap();
+        app.activate_session("s");
         app.event(json!({"type":"control","sessionId":"s","controllerId":1,"cols":80,"rows":24,"leaseId":"one"})).unwrap();
         let area = Rect::new(0, 0, 100, 30);
         let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
@@ -2424,5 +2437,23 @@ mod tests {
         );
         assert!(outcome.commands.is_empty());
         assert!(matches!(app.dialog, Some(Dialog::PairPhone)));
+    }
+    #[test]
+    fn delayed_control_cannot_steal_focus_after_menu_or_review_opens() {
+        for key in [KeyCode::F(1), KeyCode::F(4), KeyCode::Esc] {
+            let mut app = App::new(1);
+            app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[{"id":"s","name":"shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}]})).unwrap();
+            app.activate_session("s");
+            assert_eq!(app.pending_input.as_deref(), Some("s"));
+            event(
+                &mut app,
+                Event::Key(KeyEvent::new(key, KeyModifiers::NONE)),
+                Rect::new(0, 0, 100, 32),
+            );
+            app.event(json!({"type":"control","sessionId":"s","controllerId":1,"cols":80,"rows":24,"leaseId":"delayed"})).unwrap();
+            assert!(app.mode == Mode::Navigate);
+            assert!(app.pending_input.is_none());
+            assert!(app.owns("s"));
+        }
     }
 }

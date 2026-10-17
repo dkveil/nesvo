@@ -202,6 +202,7 @@ pub struct App {
     pub revision: u64,
     pub terminals: HashMap<String, TerminalState>,
     pub leases: HashMap<String, String>,
+    pub pending_input: Option<String>,
     pub subscribed: HashSet<String>,
     pub collapsed: HashSet<String>,
     pub selected: usize,
@@ -248,6 +249,7 @@ impl App {
             revision: 0,
             terminals: HashMap::new(),
             leases: HashMap::new(),
+            pending_input: None,
             subscribed: HashSet::new(),
             collapsed: HashSet::new(),
             selected: 0,
@@ -642,8 +644,10 @@ impl App {
             self.mode = Mode::Input;
             self.notice.clear();
         } else if session.controller_id.is_none() {
+            let (cols, rows) = (session.cols, session.rows);
+            self.pending_input = Some(id.into());
             commands.push(json!({"type":"acquireControl","sessionId":id,
-                "takeOver":false,"cols":session.cols,"rows":session.rows}));
+                "takeOver":false,"cols":cols,"rows":rows}));
             self.notice = "Starting terminal…".into();
         } else {
             self.notice = "Read-only view · another device has control · t takes over".into();
@@ -857,10 +861,19 @@ impl App {
                             let fresh =
                                 self.leases.get(id).is_none_or(|previous| previous != lease);
                             self.leases.insert(id.into(), lease.into());
-                            if fresh && self.active_id() == Some(id) {
+                            if fresh
+                                && self.pending_input.as_deref() == Some(id)
+                                && self.active_id() == Some(id)
+                                && self.dialog.is_none()
+                                && self.overlay.is_none()
+                                && !self.review.focused
+                            {
                                 self.mode = Mode::Input;
                                 self.notice.clear();
                             }
+                        }
+                        if self.pending_input.as_deref() == Some(id) {
+                            self.pending_input = None;
                         }
                     } else {
                         let lost = self.leases.remove(id).is_some();
@@ -918,6 +931,7 @@ impl App {
     pub fn disconnect(&mut self, message: String) {
         self.connected = false;
         self.leases.clear();
+        self.pending_input = None;
         self.mode = Mode::Navigate;
         self.dialog = None;
         self.dialog_button = None;
@@ -1470,6 +1484,7 @@ mod tests {
     fn resize_control_event_does_not_leave_navigation_mode() {
         let mut app = App::new(9);
         app.event(snapshot()).unwrap();
+        app.activate_session("s");
         app.event(json!({"type":"control","sessionId":"s","controllerId":9,"cols":80,"rows":24,"leaseId":"same"})).unwrap();
         assert!(app.mode == Mode::Input);
         app.mode = Mode::Navigate;

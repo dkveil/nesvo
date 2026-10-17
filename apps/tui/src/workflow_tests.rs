@@ -208,6 +208,7 @@ fn session_click_and_passive_mouse_events_preserve_input() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let mut app = app();
     app.fullscreen = false;
+    app.activate_session("a");
     app.event(json!({"type":"control","sessionId":"a","controllerId":1,"cols":80,"rows":24,"leaseId":"owned"})).unwrap();
     assert!(app.mode == Mode::Input);
     let area = Rect::new(0, 0, 150, 44);
