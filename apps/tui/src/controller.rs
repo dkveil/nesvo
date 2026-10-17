@@ -1389,6 +1389,17 @@ fn toggle_review(app: &mut App, outcome: &mut Outcome) {
 }
 
 fn review_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
+    if key.code == KeyCode::Char('o') {
+        app.dialog = Some(Dialog::Text {
+            title: "Review folder on host".into(),
+            value: app.review.directory.clone().unwrap_or_else(|| {
+                app.active_session()
+                    .map_or(String::new(), |s| s.cwd.clone())
+            }),
+            action: TextAction::ReviewDirectory,
+        });
+        return;
+    }
     let review = &mut app.review;
     match key.code {
         KeyCode::Esc => {
@@ -1419,6 +1430,16 @@ fn review_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         KeyCode::Char(' ') => review.toggle_hunk(),
         KeyCode::PageDown => review.scroll = review.scroll.saturating_add(10),
         KeyCode::PageUp => review.scroll = review.scroll.saturating_sub(10),
+        KeyCode::Char('[') => {
+            review.width = (if review.width == 0 { 40 } else { review.width })
+                .saturating_sub(8)
+                .max(28)
+        }
+        KeyCode::Char(']') => {
+            review.width = (if review.width == 0 { 40 } else { review.width })
+                .saturating_add(8)
+                .min(160)
+        }
         KeyCode::Char('e') => review.expanded = !review.expanded,
         KeyCode::Char('s') => review.side_by_side = !review.side_by_side,
         KeyCode::Char('r' | 'c') => {

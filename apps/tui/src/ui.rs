@@ -105,12 +105,18 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         .min(tree.height);
     let tree = Rect::new(tree.x, tree.y + inset, tree.width, tree.height - inset);
     let (content, review) = if app.review.visible {
-        if app.review.expanded || content.width < 110 {
+        if app.review.expanded || content.width < 88 {
             (Rect::default(), content)
         } else {
-            let [terminal, review] =
-                Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)])
-                    .areas(content);
+            let [terminal, review] = Layout::horizontal([
+                Constraint::Min(48),
+                Constraint::Length(if app.review.width == 0 {
+                    (content.width / 4).clamp(40, 60)
+                } else {
+                    app.review.width.clamp(28, content.width.saturating_sub(48))
+                }),
+            ])
+            .areas(content);
             (terminal, review)
         }
     } else {

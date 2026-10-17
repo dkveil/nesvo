@@ -30,6 +30,8 @@ pub struct FileDiff {
 #[derive(Default)]
 pub struct ReviewState {
     pub return_to_input: bool,
+    pub width: u16,
+    pub directory: Option<String>,
     pub last_requested: Option<std::time::Instant>,
     pub visible: bool,
     pub focused: bool,
@@ -116,7 +118,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
     let [files, heading, content, footer] = Layout::vertical([
         Constraint::Length((state.data.files.len() as u16).clamp(1, 5)),
-        Constraint::Length(2),
+        Constraint::Length(3),
         Constraint::Min(0),
         Constraint::Length(3),
     ])
@@ -152,6 +154,21 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Rect::new(files.x, files.y + offset as u16, files.width, 1),
         );
     }
+    let folder = state
+        .directory
+        .as_deref()
+        .or_else(|| app.active_session().map(|s| s.cwd.as_str()))
+        .unwrap_or("No session");
+    frame.render_widget(
+        Paragraph::new(format!(" {folder}  [o] folder")).style(Style::default().fg(MUTED)),
+        Rect::new(heading.x, heading.y, heading.width, heading.height.min(1)),
+    );
+    let heading = Rect::new(
+        heading.x,
+        heading.y + heading.height.min(1),
+        heading.width,
+        heading.height.saturating_sub(1),
+    );
     if let Some(file) = state.data.files.get(state.file) {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -182,7 +199,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     } else if let Some(error) = &state.error {
         Some(error.as_str())
     } else if state.data.files.is_empty() {
-        Some("No changes in this scope.")
+        Some(
+            "No changes in this folder / scope.
+ o change folder · c change scope",
+        )
     } else {
         None
     };
@@ -249,7 +269,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Line::from(if state.data.truncated {
                 "Partial · c scope · e expand · Esc close"
             } else {
-                "c scope · s split · e expand · Esc close"
+                "c scope · [] width · e expand · Esc close"
             }),
         ])
         .style(Style::default().fg(MUTED)),

@@ -233,8 +233,17 @@ pub async fn handle(
                             });
                             continue;
                         }
-                        if let Command::GetDiff { session_id, scope } = command {
-                            let directory = state.lock().unwrap().session_directory(&session_id);
+                        if let Command::GetDiff { session_id, scope, directory } = command {
+                            let directory = state.lock().unwrap().session_directory(&session_id).and_then(|session_dir| {
+                                match directory {
+                                    Some(path) if !path.is_empty() => {
+                                        anyhow::ensure!(path.len() <= 4096 && !path.chars().any(char::is_control), "Invalid review folder");
+                                        let path = std::path::PathBuf::from(path);
+                                        Ok(if path.is_absolute() { path } else { session_dir.join(path) })
+                                    },
+                                    _ => Ok(session_dir),
+                                }
+                            });
                             let permit = git_gate.clone().try_acquire_owned();
                             let state = state.clone();
                             tokio::spawn(async move {

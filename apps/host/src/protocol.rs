@@ -29,6 +29,8 @@ pub enum Command {
     GetDiff {
         session_id: String,
         scope: String,
+        #[serde(default)]
+        directory: Option<String>,
     },
     GetCapabilities,
     RegisterPush {

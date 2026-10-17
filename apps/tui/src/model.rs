@@ -114,6 +114,7 @@ pub enum Mode {
 }
 
 pub enum TextAction {
+    ReviewDirectory,
     RenameSession { id: String },
     RenameGroup { id: String },
 }
@@ -969,9 +970,17 @@ impl App {
     }
 
     pub fn auto_refresh_diff(&mut self) -> Option<Value> {
+        if self.review.request_id.is_some()
+            && self
+                .review
+                .last_requested
+                .is_some_and(|at| at.elapsed() > std::time::Duration::from_secs(15))
+        {
+            self.review.request_id = None;
+        }
+
         if self.connected
             && self.review.visible
-            && !crate::ui::immersive(self)
             && self.dialog.is_none()
             && self.overlay.is_none()
             && self.review.request_id.is_none()
@@ -998,6 +1007,7 @@ impl App {
             return None;
         }
         if self.review.session_id != id {
+            self.review.directory = None;
             self.review.data = Default::default();
             self.review.file = 0;
             self.review.hunk = 0;
@@ -1005,7 +1015,7 @@ impl App {
             self.review.folded.clear();
         }
         self.review.session_id = id.clone();
-        let command = self.request(json!({"type":"getDiff", "sessionId":id, "scope":crate::review::SCOPES[self.review.scope]}));
+        let command = self.request(json!({"type":"getDiff", "sessionId":id, "scope":crate::review::SCOPES[self.review.scope], "directory":self.review.directory}));
         self.review.request_id = command["requestId"].as_str().map(str::to_owned);
         Some(command)
     }
@@ -1113,6 +1123,17 @@ impl App {
                 value,
                 action,
             } => {
+                if matches!(action, TextAction::ReviewDirectory) {
+                    let path = value.trim();
+                    if path.len() > 4096 || path.chars().any(char::is_control) {
+                        self.notice = "Invalid folder path.".into();
+                        return None;
+                    }
+                    self.review.directory = (!path.is_empty()).then(|| path.to_owned());
+                    self.review.data = Default::default();
+                    self.review.scroll = 0;
+                    return self.request_diff();
+                }
                 let name = value.trim();
                 if name.is_empty()
                     || name.chars().count() > 80
@@ -1127,6 +1148,7 @@ impl App {
                     return None;
                 }
                 let command = match action {
+                    TextAction::ReviewDirectory => unreachable!(),
                     TextAction::RenameSession { id } => {
                         json!({"type":"renameSession","sessionId":id,"name":name})
                     }
@@ -1203,6 +1225,25 @@ fn dimensions(event: &Value) -> (u16, u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fullscreen_review_refreshes_and_recovers_expired_requests() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[{"id":"s","name":"Shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}]})).unwrap();
+        app.event(json!({"type":"capabilities","workspace":".","programs":[],"gitDiff":true}))
+            .unwrap();
+        app.connected = true;
+        app.dialog = None;
+        app.fullscreen = true;
+        app.mode = Mode::Input;
+        app.request_diff().unwrap();
+        app.review.directory = Some("other-repo".into());
+        app.review.last_requested =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(16));
+        let command = app.auto_refresh_diff().unwrap();
+        assert_eq!(command["directory"], "other-repo");
+        assert!(app.auto_refresh_diff().is_none());
+    }
 
     #[test]
     fn disconnect_before_capabilities_points_to_host_update() {
