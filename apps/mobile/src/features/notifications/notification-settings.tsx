@@ -46,6 +46,10 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState('');
   const pending = useRef<{ id: string; registration: Registration; enabled: boolean } | null>(null);
   const hostId = hostCapabilities?.hostId;
+  const operation = useRef(0);
+  useEffect(() => {
+    operation.current += 1;
+  }, [connected, hostId]);
   const enabled = registration !== null && registration.hostId === hostId;
   const reconnectAttempted = useRef(false);
   const handledTarget = useRef<PushTarget | null>(null);
@@ -147,6 +151,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!busy) return;
     const timer = setTimeout(() => {
+      operation.current += 1;
       pending.current = null;
       setBusy(false);
       setStatus('Upłynął czas oczekiwania. Sprawdź połączenie i spróbuj ponownie.');
@@ -156,10 +161,15 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   const toggle = async () => {
     if (busy || !connected || !hostId) return;
     setBusy(true);
+    const generation = ++operation.current;
     try {
+      if (registration && registration.hostId !== hostId)
+        throw new Error('Najpierw połącz poprzedni host i wyłącz jego powiadomienia.');
       const value =
         enabled && registration ? registration : { hostId, token: await requestPushToken() };
       const id = `push-${Date.now()}`;
+      if (generation !== operation.current || !client.isConnected)
+        throw new Error('Połączenie zmieniło się podczas konfiguracji. Spróbuj ponownie.');
       pending.current = { id, registration: value, enabled: !enabled };
       client.registerPush(value.token, !enabled, id);
       setStatus('Zapisywanie na hoście…');
