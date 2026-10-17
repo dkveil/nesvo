@@ -1,3 +1,4 @@
+mod agent_context;
 mod attention;
 mod git;
 mod groups;
@@ -41,6 +42,8 @@ use tokio::{
     about = "nesvo private terminal companion. Shells run only when requested in a paired client."
 )]
 struct Args {
+    #[arg(long, hide = true)]
+    agent_context_hook: Option<PathBuf>,
     /// Print the source build identity without starting a host.
     #[arg(long)]
     build_id: bool,
@@ -118,6 +121,11 @@ fn stdin_close_signal() -> oneshot::Receiver<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(report) = args.agent_context_hook {
+        // Tracking must never prevent an agent tool from completing.
+        let _ = agent_context::receive(&report);
+        return Ok(());
+    }
     if args.build_id {
         println!("{}", env!("NESVO_BUILD_ID"));
         return Ok(());

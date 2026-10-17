@@ -9,6 +9,9 @@ const OUTPUT_LIMIT: usize = 24 * 1024;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Review {
+    pub directory: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub scope: String,
     pub files: Vec<FileDiff>,
     pub truncated: bool,
@@ -107,6 +110,8 @@ pub async fn review(cwd: &Path, scope: &str) -> Result<Review> {
         .map_err(|_| anyhow!("Non UTF-8 Git paths are not supported"))?;
     let mut fields = names.split('\0').filter(|s| !s.is_empty());
     let mut review = Review {
+        directory: crate::process::display_path(&root),
+        source: None,
         scope: scope.into(),
         files: Vec::new(),
         truncated: false,

@@ -234,6 +234,8 @@ pub async fn handle(
                             continue;
                         }
                         if let Command::GetDiff { session_id, scope, directory } = command {
+                            let pinned = directory.as_ref().is_some_and(|path| !path.is_empty());
+                            let report = state.lock().unwrap().context_report(&session_id);
                             let directory = state.lock().unwrap().session_directory(&session_id).and_then(|session_dir| {
                                 match directory {
                                     Some(path) if !path.is_empty() => {
@@ -248,7 +250,15 @@ pub async fn handle(
                             let state = state.clone();
                             tokio::spawn(async move {
                                 let result = match (directory, permit) {
-                                    (Ok(directory), Ok(_permit)) => crate::git::review(&directory, &scope).await,
+                                    (Ok(directory), Ok(_permit)) => {
+                                        let context = if pinned {
+                                            crate::agent_context::Context { directory, source: "Pinned".into() }
+                                        } else { crate::agent_context::resolve(directory, report).await };
+                                        crate::git::review(&context.directory, &scope).await.map_err(|error| anyhow!("{} · {}: {error}", context.source, context.directory.display())).map(|mut review| {
+                                            review.source = Some(context.source);
+                                            review
+                                        })
+                                    },
                                     (Err(error), _) => Err(error),
                                     (_, Err(_)) => Err(anyhow!("A Git inspection is already running.")),
                                 };

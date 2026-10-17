@@ -62,6 +62,7 @@ impl ControlLease {
 }
 
 struct Session {
+    agent_context: Option<crate::agent_context::Tracker>,
     info: SessionInfo,
     status: StatusTracker,
     pty: Pty,
@@ -645,6 +646,14 @@ impl State {
         }
     }
 
+    pub fn context_report(&self, id: &str) -> Option<PathBuf> {
+        self.sessions
+            .get(id)?
+            .agent_context
+            .as_ref()
+            .map(|tracker| tracker.report())
+    }
+
     pub fn session_directory(&self, id: &str) -> Result<PathBuf> {
         self.sessions
             .get(id)
@@ -1144,12 +1153,18 @@ fn spawn_session(
     name: &str,
     cwd: &Path,
     program: Program,
-    command: CommandBuilder,
+    mut command: CommandBuilder,
     events: mpsc::Sender<PtyEvent>,
 ) -> Result<Session> {
     let id = hex::encode(crate::wire::random::<16>());
+    let agent_context = if program == Program::Claude {
+        Some(crate::agent_context::Tracker::install(&mut command)?)
+    } else {
+        None
+    };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        agent_context,
         status: StatusTracker::new(program, 24, 80, now_millis()),
         info: SessionInfo {
             id,
