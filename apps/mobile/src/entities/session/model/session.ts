@@ -1,4 +1,5 @@
 import type {
+  AttentionEvent,
   SessionStatusSource as HostSessionStatusSource,
   SessionProgram,
   SessionStatusState,
@@ -23,6 +24,8 @@ export const programAgents = {
 
 /** Presentation metadata derived from a host snapshot, or explicit demo data. */
 export type Session = {
+  attention?: AttentionEvent | null;
+  muted?: boolean;
   id: string;
   name: string;
   agent: 'Terminal' | 'Claude' | 'Gemini' | 'Codex';

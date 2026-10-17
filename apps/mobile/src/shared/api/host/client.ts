@@ -261,6 +261,15 @@ export class HostClient {
     }
   }
 
+  registerPush(token: string, enabled: boolean, requestId: string) {
+    this.send({ type: 'registerPush', token, enabled, requestId });
+  }
+  acknowledgeAttention(sessionId: string, sequence: number) {
+    this.send({ type: 'acknowledgeAttention', sessionId, sequence });
+  }
+  muteSession(sessionId: string, muted: boolean) {
+    this.send({ type: 'muteSession', sessionId, muted });
+  }
   listSessions(): void {
     this.send({ type: 'list' });
   }

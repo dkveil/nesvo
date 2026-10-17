@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { NewSessionSheet } from '@features/create-session';
+import { NotificationProvider } from '@features/notifications';
 import { ConnectSheet } from '@features/pair-host';
 
 import { useWorkspace, WorkspaceProvider } from '@entities/workspace';
@@ -32,15 +33,17 @@ function WorkspaceModals() {
 export function AppShell({ children }: PropsWithChildren) {
   return (
     <WorkspaceProvider navigation={workspaceNavigation}>
-      <SafeAreaProvider style={styles.outer}>
-        <View style={styles.frame}>
-          <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
-            <StatusBar style="light" />
-            {children}
-            <WorkspaceModals />
-          </SafeAreaView>
-        </View>
-      </SafeAreaProvider>
+      <NotificationProvider>
+        <SafeAreaProvider style={styles.outer}>
+          <View style={styles.frame}>
+            <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
+              <StatusBar style="light" />
+              {children}
+              <WorkspaceModals />
+            </SafeAreaView>
+          </View>
+        </SafeAreaProvider>
+      </NotificationProvider>
     </WorkspaceProvider>
   );
 }

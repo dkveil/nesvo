@@ -66,6 +66,7 @@ export function useWorkspaceState(navigation: WorkspaceNavigation) {
 
   return {
     client: host.client,
+    snapshotReady: host.snapshotReady,
     connected: host.connected,
     connecting: host.connecting,
     pairing: host.pairing,

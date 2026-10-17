@@ -17,6 +17,7 @@ export function useHostConnection(mode: WorkspaceMode) {
   const [client] = useState(() => new HostClient());
   const [snapshot, setSnapshot] = useState<LiveSnapshot>(EMPTY_SNAPSHOT);
   const [connected, setConnected] = useState(false);
+  const [snapshotReady, setSnapshotReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [hostCapabilities, setHostCapabilities] = useState<HostCapabilities | null>(null);
@@ -31,11 +32,15 @@ export function useHostConnection(mode: WorkspaceMode) {
         setNotice('');
         client.listSessions();
       } else if (event.type === 'disconnected') {
+        setSnapshotReady(false);
         setConnected(false);
         setConnecting(false);
         setHostCapabilities(null);
       } else if (event.type === 'capabilities') {
         setHostCapabilities({
+          hostId: event.hostId,
+          pushNotifications: event.pushNotifications,
+          attention: event.attention,
           workspace: event.workspace,
           programs: event.programs,
           providerLimits: event.providerLimits ?? [],
@@ -49,6 +54,7 @@ export function useHostConnection(mode: WorkspaceMode) {
         if (event.code === 'revision_conflict') client.listSessions();
         setConnecting(false);
       } else if (event.type === 'sessions') {
+        setSnapshotReady(true);
         const sessions: Session[] = event.sessions.map(session => ({
           ...session,
           agent: programAgents[session.program ?? 'shell'],
@@ -122,6 +128,7 @@ export function useHostConnection(mode: WorkspaceMode) {
   async function connect(value: Pairing) {
     pairingRef.current = value;
     setPairing(value);
+    setSnapshotReady(false);
     setSnapshot(EMPTY_SNAPSHOT);
     setHostCapabilities(null);
     setConnecting(true);
@@ -142,6 +149,7 @@ export function useHostConnection(mode: WorkspaceMode) {
     client.disconnect();
     pairingRef.current = null;
     setPairing(null);
+    setSnapshotReady(false);
     setSnapshot(EMPTY_SNAPSHOT);
     setHostCapabilities(null);
     if (Platform.OS !== 'web') {
@@ -156,6 +164,7 @@ export function useHostConnection(mode: WorkspaceMode) {
   return {
     client,
     snapshot,
+    snapshotReady,
     connected,
     connecting,
     pairing,

@@ -54,7 +54,11 @@ export function SessionScreen({
     client.getControl(session.id),
   );
   const [watching, setWatching] = useState(false);
-  const { groups, moveSession } = useWorkspace();
+  const { groups, moveSession, hostCapabilities } = useWorkspace();
+  useEffect(() => {
+    if (connected && session.live && session.attention?.unread)
+      client.acknowledgeAttention(session.id, session.attention.sequence);
+  }, [client, connected, session.id, session.live, session.attention]);
   const controlling =
     !!session.live && connected && control?.controllerId === client.clientId && !!control?.leaseId;
   const canType = !session.live || (controlling && session.running !== false);
@@ -134,6 +138,13 @@ export function SessionScreen({
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
       <View style={s.header}>
+        {!!session.live && !!hostCapabilities?.attention && (
+          <IconButton
+            name={session.muted ? 'notifications-off-outline' : 'notifications-outline'}
+            label={session.muted ? 'Włącz alerty sesji' : 'Wycisz alerty sesji'}
+            onPress={() => client.muteSession(session.id, !session.muted)}
+          />
+        )}
         <IconButton
           name="chevron-back"
           label="Wróć do sesji"

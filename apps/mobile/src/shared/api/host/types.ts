@@ -9,7 +9,16 @@ export type SessionStatus = {
   source: SessionStatusSource;
   updatedAt: number;
 };
+export type AttentionEvent = {
+  sequence: number;
+  kind: 'question' | 'permission' | 'done' | 'failed' | 'limit';
+  at: number;
+  unread: boolean;
+};
 export type HostCapabilities = {
+  hostId?: string;
+  pushNotifications?: boolean;
+  attention?: boolean;
   workspace: string;
   programs: { id: SessionProgram; label: string; available: boolean }[];
   providerLimits?: ProviderLimit[];
@@ -31,6 +40,8 @@ export type SessionControl = {
 };
 
 export type TerminalSession = {
+  attention?: AttentionEvent | null;
+  muted?: boolean;
   id: string;
   name: string;
   cwd: string;
@@ -45,6 +56,7 @@ export type TerminalSession = {
 };
 
 export type HostEvent =
+  | { type: 'pushRegistered'; enabled: boolean; requestId?: string }
   | { type: 'connected'; clientId: number; protocolVersion: 2 }
   | { type: 'disconnected'; reason: string }
   | ({ type: 'capabilities'; requestId?: string } & HostCapabilities)
@@ -60,6 +72,9 @@ export type HostEvent =
   | { type: 'error'; message: string; requestId?: string; code?: string; revision?: number };
 
 export type ClientCommand =
+  | { type: 'registerPush'; token: string; enabled: boolean; requestId: string }
+  | { type: 'acknowledgeAttention'; sessionId: string; sequence: number }
+  | { type: 'muteSession'; sessionId: string; muted: boolean }
   | { type: 'auth'; clientNonce: string }
   | { type: 'list' }
   | { type: 'getCapabilities'; requestId?: string }

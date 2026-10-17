@@ -9,6 +9,7 @@ import {
 } from '../apps/mobile/src/entities/group/model/groups';
 import { decodeServerMessage } from '../apps/mobile/src/shared/api/host/messages';
 import type { SessionGroup } from '../apps/mobile/src/shared/api/host/types';
+import { parseTarget } from '../apps/mobile/src/shared/notifications/target';
 
 const groups: SessionGroup[] = [
   { id: 'child', name: 'Mobile', parentId: 'root', order: 1 },
@@ -190,4 +191,34 @@ test('session status preserves its evidence source and rejects invented or malfo
       () => decodeServerMessage({ ...snapshot, sessions: [{ ...session, status }] }),
       /Invalid host message/,
     );
+});
+
+test('attention and push boundaries reject malformed and cross-navigation payloads', () => {
+  const attention = { sequence: 1, kind: 'question', at: 100, unread: true };
+  const snapshot = {
+    type: 'sessions',
+    groups,
+    sessions: [{ ...session, attention, muted: false }],
+    revision: 1,
+  };
+  assert.equal(decodeServerMessage(snapshot).type, 'sessions');
+  for (const invalid of [
+    { ...attention, sequence: -1 },
+    { ...attention, kind: 'random' },
+    { ...attention, unread: 'yes' },
+  ]) {
+    assert.throws(() =>
+      decodeServerMessage({ ...snapshot, sessions: [{ ...session, attention: invalid }] }),
+    );
+  }
+  assert.equal(
+    decodeServerMessage({ type: 'pushRegistered', enabled: true, requestId: 'x' }).type,
+    'pushRegistered',
+  );
+  assert.throws(() => decodeServerMessage({ type: 'pushRegistered', enabled: 'true' }));
+  const target = { hostId: 'a'.repeat(32), sessionId: 'b'.repeat(32), sequence: 1 };
+  assert.deepEqual(parseTarget(target), target);
+  assert.equal(parseTarget({ ...target, sessionId: '../../settings' }), null);
+  assert.equal(parseTarget({ ...target, hostId: 'https://malicious.example' }), null);
+  assert.equal(parseTarget({ ...target, sequence: Infinity }), null);
 });

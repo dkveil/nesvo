@@ -35,6 +35,10 @@ function capabilities(value: RecordValue): boolean {
   const programs = value.programs;
   const providerLimits = value.providerLimits;
   return (
+    (value.hostId === undefined ||
+      (typeof value.hostId === 'string' && /^[a-f0-9]{32}$/.test(value.hostId))) &&
+    (value.pushNotifications === undefined || typeof value.pushNotifications === 'boolean') &&
+    (value.attention === undefined || typeof value.attention === 'boolean') &&
     text(value.workspace, 32768) &&
     Array.isArray(programs) &&
     programs.length === 4 &&
@@ -87,6 +91,14 @@ function session(value: unknown): value is RecordValue {
     dimensions(value) &&
     (value.program === undefined || program(value.program)) &&
     (value.status === undefined || sessionStatus(value.status)) &&
+    (value.muted === undefined || typeof value.muted === 'boolean') &&
+    (value.attention == null ||
+      (record(value.attention) &&
+        integer(value.attention.sequence, 1) &&
+        integer(value.attention.at) &&
+        typeof value.attention.unread === 'boolean' &&
+        typeof value.attention.kind === 'string' &&
+        ['question', 'permission', 'done', 'failed', 'limit'].includes(value.attention.kind))) &&
     nullableId(value.groupId) &&
     (value.controllerId === null || integer(value.controllerId))
   );
@@ -145,6 +157,9 @@ export function decodeServerMessage(value: unknown): ServerMessage {
   }
   let valid = false;
   switch (value.type) {
+    case 'pushRegistered':
+      valid = typeof value.enabled === 'boolean';
+      break;
     case 'capabilities':
       valid = capabilities(value);
       break;

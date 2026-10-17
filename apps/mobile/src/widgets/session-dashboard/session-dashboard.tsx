@@ -16,6 +16,8 @@ import {
 
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { NotificationSettings } from '@features/notifications';
+
 import { groupDescendants, groupPath } from '@entities/group';
 import {
   sessionAgentColor,
@@ -484,6 +486,9 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
           <>
             <View style={s.intro}>
               <Text style={s.title}>Konfiguracja</Text>
+            </View>
+            <View style={s.settingsGroup}>
+              <NotificationSettings />
             </View>
             <View style={s.settingsGroup}>
               <Text style={s.sectionTitle}>Podgląd aplikacji</Text>
