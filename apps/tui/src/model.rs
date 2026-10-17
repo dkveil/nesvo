@@ -27,6 +27,10 @@ pub struct Session {
     pub cols: u16,
     pub rows: u16,
     pub running: bool,
+    #[serde(default)]
+    pub rate_limited: bool,
+    #[serde(default)]
+    pub wake_at: Option<i64>,
     pub group_id: Option<String>,
     pub controller_id: Option<u64>,
     #[serde(default)]
@@ -174,6 +178,12 @@ pub(crate) fn folder_choices<'a>(
 }
 
 pub struct App {
+    pub palette_expanded: bool,
+    pub palette_category: usize,
+    pub overlay: Option<crate::toolbox::Overlay>,
+    pub status_filters: HashSet<usize>,
+    pub schedules: Vec<Value>,
+    pub review: crate::review::ReviewState,
     pub client_id: u64,
     pub sessions: Vec<Session>,
     pub groups: Vec<Group>,
@@ -210,6 +220,12 @@ pub struct App {
 impl App {
     pub fn new(client_id: u64) -> Self {
         Self {
+            review: Default::default(),
+            overlay: None,
+            palette_expanded: false,
+            palette_category: 0,
+            status_filters: HashSet::new(),
+            schedules: Vec::new(),
             client_id,
             sessions: vec![],
             groups: vec![],
@@ -249,6 +265,22 @@ impl App {
     }
     pub fn active_id(&self) -> Option<&str> {
         self.panes[self.focused].as_deref()
+    }
+    pub fn wake_available(&self) -> bool {
+        self.active_session()
+            .is_some_and(|s| s.program == Program::Codex && s.running)
+            && self.capabilities.as_ref().is_some_and(|caps| {
+                caps.quota_wake
+                    && caps.provider_limits.iter().any(|p| {
+                        p.id == Program::Codex
+                            && p.status == "ready"
+                            && p.windows.iter().any(|w| {
+                                w.duration_mins == 300
+                                    && w.used_percent >= 90
+                                    && w.resets_at.is_some()
+                            })
+                    })
+            })
     }
     pub fn active_session(&self) -> Option<&Session> {
         self.active_id().and_then(|id| self.session(id))
@@ -304,6 +336,17 @@ impl App {
         }
     }
 
+    pub fn palette_results(&self, query: &str) -> Vec<crate::palette::ResultRow> {
+        crate::palette::results(self, query)
+    }
+
+    pub fn matches_status(&self, session: &Session) -> bool {
+        self.status_filters.is_empty()
+            || self
+                .status_filters
+                .contains(&crate::toolbox::status_index(session))
+    }
+
     pub fn quick_switch_results(&self, query: &str) -> Vec<&Session> {
         let (scope, query) = search_scope(query);
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
@@ -311,6 +354,9 @@ impl App {
             .sessions
             .iter()
             .filter_map(|session| {
+                if !self.matches_status(session) {
+                    return None;
+                }
                 let program = self.effective_program(session);
                 if (scope == SearchScope::Agents && program == Program::Shell)
                     || (scope == SearchScope::Terminals && program != Program::Shell)
@@ -425,7 +471,7 @@ impl App {
                 (None, Some(id)) => !self.groups.iter().any(|group| group.id == id),
                 _ => false,
             };
-            belongs.then(|| TreeRow {
+            (belongs && self.matches_status(session)).then(|| TreeRow {
                 kind: RowKind::Session(session.id.clone()),
                 depth,
                 label: session.name.clone(),
@@ -503,6 +549,31 @@ impl App {
     }
 
     /// Explicitly entering a pane starts an unowned shell, but never takes a lease away.
+    pub fn preview_session(&mut self, id: &str) -> Vec<Value> {
+        let mut commands = Vec::new();
+        let stale: Vec<_> = self
+            .subscribed
+            .iter()
+            .filter(|candidate| {
+                candidate.as_str() != id
+                    && !self.panes.iter().flatten().any(|pane| pane == *candidate)
+            })
+            .cloned()
+            .collect();
+        for stale in stale {
+            if self.leases.contains_key(&stale) {
+                continue;
+            }
+            self.subscribed.remove(&stale);
+            self.terminals.remove(&stale);
+            commands.push(json!({"type":"unsubscribe", "sessionId":stale}));
+        }
+        if self.subscribed.insert(id.to_owned()) {
+            commands.push(json!({"type":"subscribe", "sessionId":id}));
+        }
+        commands
+    }
+
     pub fn activate_session(&mut self, id: &str) -> Vec<Value> {
         let mut commands = self.open_session(id);
         let mut parent = self
@@ -549,6 +620,18 @@ impl App {
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
         match event["type"].as_str().unwrap_or_default() {
+            "diff" => {
+                if event["requestId"].as_str() == self.review.request_id.as_deref()
+                    && event["sessionId"].as_str() == Some(self.review.session_id.as_str())
+                {
+                    self.review.request_id = None;
+                    self.review.error = event["error"].as_str().map(str::to_owned);
+                    if self.review.error.is_none() {
+                        self.review
+                            .accept(serde_json::from_value(event["review"].clone())?);
+                    }
+                }
+            }
             "capabilities" => {
                 self.capabilities = Some(serde_json::from_value(event)?);
             }
@@ -575,6 +658,14 @@ impl App {
                 }
             }
             "sessions" => {
+                let palette_target =
+                    if let Some(Dialog::QuickSwitch { query, selected }) = &self.dialog {
+                        self.palette_results(query)
+                            .get(*selected)
+                            .map(|row| row.target.clone())
+                    } else {
+                        None
+                    };
                 let selected = self
                     .pending_selection
                     .as_ref()
@@ -620,6 +711,45 @@ impl App {
                 if self.selected == 0 && tree.len() > 1 {
                     self.selected = 1;
                 }
+                if let Some(target) = palette_target
+                    && let Some(Dialog::QuickSwitch { query, .. }) = &self.dialog
+                {
+                    let index = self
+                        .palette_results(query)
+                        .iter()
+                        .position(|row| row.target == target)
+                        .unwrap_or(0);
+                    if let Some(Dialog::QuickSwitch { selected, .. }) = &mut self.dialog {
+                        *selected = index;
+                    }
+                }
+            }
+            "schedules" => {
+                let id = if let Some(crate::toolbox::Overlay::Schedules(selected)) = self.overlay {
+                    crate::toolbox::schedule_identity(&self.schedules, selected).map(str::to_owned)
+                } else {
+                    None
+                };
+                self.schedules = serde_json::from_value(event["schedules"].clone())?;
+                if matches!(self.overlay, Some(crate::toolbox::Overlay::Schedules(_))) {
+                    let selected = id
+                        .and_then(|id| self.schedules.iter().position(|job| job["id"] == id))
+                        .unwrap_or(0);
+                    self.overlay = Some(crate::toolbox::Overlay::Schedules(selected));
+                }
+            }
+            "wakeConfigured" => {
+                self.notice = if event["wakeAt"].is_null() {
+                    "Automatic wake disabled."
+                } else {
+                    "One retry armed after verified reset. Typing into this session cancels it."
+                }
+                .into();
+            }
+            "scheduled" => {
+                self.pending_create = None;
+                self.pending_create_form = None;
+                self.notice = "Session scheduled on the host. S opens schedules.".into();
             }
             "created" => {
                 if self.pending_create.is_some()
@@ -743,10 +873,35 @@ impl App {
         Some(json!({"type":"input","sessionId":id,"leaseId":self.leases.get(&id),"data":data}))
     }
 
+    pub fn request_diff(&mut self) -> Option<Value> {
+        let id = self.active_id()?.to_owned();
+        self.review.visible = true;
+        self.review.error = None;
+        if !self.capabilities.as_ref().is_some_and(|caps| caps.git_diff) {
+            self.review.error =
+                Some("This host does not support Git review. Update nesvo-host.".into());
+            return None;
+        }
+        if self.review.session_id != id {
+            self.review.data = Default::default();
+            self.review.file = 0;
+            self.review.hunk = 0;
+            self.review.scroll = 0;
+            self.review.folded.clear();
+        }
+        self.review.session_id = id.clone();
+        let command = self.request(json!({"type":"getDiff", "sessionId":id, "scope":crate::review::SCOPES[self.review.scope]}));
+        self.review.request_id = command["requestId"].as_str().map(str::to_owned);
+        Some(command)
+    }
+
     pub fn request(&mut self, mut command: Value) -> Value {
         self.request_counter += 1;
         let id = format!("tui-{}-{}", self.client_id, self.request_counter);
-        if command["type"] == "create" {
+        if matches!(
+            command["type"].as_str(),
+            Some("create" | "launch" | "scheduleSession")
+        ) {
             self.pending_create = Some(id.clone());
         }
         command["requestId"] = id.into();
@@ -794,8 +949,25 @@ impl App {
                     self.dialog = Some(Dialog::NewSession(form));
                     return None;
                 }
-                let command = json!({"type":"create","name":name,"cwd":form.cwd.trim(),
-                    "program":form.program,"groupId":form.group_id});
+                let advanced = form.worktree || !form.prompt.is_empty() || !form.when.is_empty();
+                if advanced
+                    && !self
+                        .capabilities
+                        .as_ref()
+                        .is_some_and(|caps| caps.advanced_launch)
+                {
+                    self.notice = "Update the host to use launch options.".into();
+                    self.dialog = Some(Dialog::NewSession(form));
+                    return None;
+                }
+                let spec = json!({"name":name,"cwd":form.cwd.trim(), "program":form.program,"groupId":form.group_id,"prompt":form.prompt,"worktree":form.worktree});
+                let command = if !form.when.is_empty() {
+                    json!({"type":"scheduleSession","spec":spec,"at":form.when.trim()})
+                } else if advanced {
+                    json!({"type":"launch","spec":spec})
+                } else {
+                    json!({"type":"create","name":name,"cwd":form.cwd.trim(),"program":form.program,"groupId":form.group_id})
+                };
                 self.pending_create_form = Some(form);
                 Some(self.request(command))
             }

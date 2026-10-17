@@ -21,6 +21,7 @@ pub struct Geometry {
     pub tree: Rect,
     pub panes: [Rect; 2],
     pub footer: Rect,
+    pub review: Rect,
 }
 
 pub fn immersive(app: &App) -> bool {
@@ -89,6 +90,18 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
+    let (content, review) = if app.review.visible && !immersive {
+        if app.review.expanded || content.width < 110 {
+            (Rect::default(), content)
+        } else {
+            let [terminal, review] =
+                Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)])
+                    .areas(content);
+            (terminal, review)
+        }
+    } else {
+        (content, Rect::default())
+    };
     let panes = if immersive {
         let mut panes = [Rect::default(), Rect::default()];
         panes[app.focused] = content;
@@ -105,6 +118,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         tree,
         panes,
         footer,
+        review,
     }
 }
 
@@ -207,11 +221,19 @@ pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize
 }
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
+    if app.mode == Mode::Navigate
+        && (app.wake_available() || app.active_session().is_some_and(|s| s.wake_at.is_some()))
+    {
+        return (
+            " QUOTA ",
+            " w configure wake after reset · D diff · f filters · S schedules",
+        );
+    }
     match app.mode {
         Mode::Input => (" SESSION ", " Ctrl+Q navigation · Esc session · F1 menu"),
         Mode::Navigate => (
             " NAVIGATION ",
-            " Enter open · i type · n new · g group · ? help",
+            " Enter open · n new · / search · D diff · f filters · S schedule · ? help",
         ),
     }
 }
@@ -224,6 +246,11 @@ pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
 }
 
 pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
+    render_workspace(frame, app, logo_frame);
+    crate::toolbox::render(frame, app);
+}
+
+fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     let area = frame.area();
     frame.render_widget(
         Block::default().style(Style::default().bg(BACKGROUND).fg(TEXT)),
@@ -272,6 +299,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         })
     ) {
         render_menu(frame, app, logo_frame);
+        crate::review::render(frame, app, geometry(area, app).review);
         if let Some(dialog) = &app.dialog {
             render_dialog(frame, app, dialog);
         }
@@ -389,6 +417,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
             handle,
         );
     }
+    crate::review::render(frame, app, geometry(area, app).review);
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, app, dialog);
     }
@@ -693,15 +722,24 @@ fn render_home(frame: &mut Frame, content: Rect, logo_frame: usize, theme: Theme
 
 pub(crate) fn truncate_cells(text: &str, max_width: usize) -> String {
     let mut width = 0;
-    text.chars()
-        .take_while(|character| {
-            width += Span::raw(character.to_string()).width();
+    Span::raw(text)
+        .styled_graphemes(Style::default())
+        .take_while(|grapheme| {
+            width += Span::raw(grapheme.symbol).width();
             width <= max_width
         })
+        .map(|grapheme| grapheme.symbol)
         .collect()
 }
 
 pub(crate) fn display_status(session: &crate::model::Session) -> &'static str {
+    if session.rate_limited {
+        return if session.wake_at.is_some() {
+            "limit · wake armed"
+        } else {
+            "~rate limited"
+        };
+    }
     match session.status.as_ref().map(Status::label) {
         Some("unknown") | None => {
             if session.running {
@@ -1149,7 +1187,9 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                 Paragraph::new(concat!(
                     "~ status: screen inference; open/quiet: I/O.\n\n",
                     "↑/↓ or j/k   Select and preview · Enter opens / expands\n",
-                    "/ or Ctrl+K   Search sessions by name, agent, folder or group\n",
+                    "/ search · F2 expand · Ctrl+K palette (navigation)\n",
+                    "D diff · f status filters · S schedules · H onboarding\n",
+                    "New session F2: worktree, prompt, start time\n",
                     "i / t / x    Type / take over (confirm) / release\n",
                     "n / g        New session / group (choose parent)\n",
                     "r / m / d    Rename / move / delete (confirmation)\n",
@@ -1223,7 +1263,7 @@ mod tests {
             selected: 0,
         });
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
-        let palette = crate::ui_palette::geometry(area, app.sessions.len());
+        let palette = crate::ui_palette::for_app(area, &app);
         let result = (palette.results.x..palette.results.right())
             .map(|x| terminal.backend().buffer()[(x, palette.results.y)].symbol())
             .collect::<String>();

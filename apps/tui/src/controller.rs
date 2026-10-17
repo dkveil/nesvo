@@ -30,6 +30,9 @@ impl Default for Outcome {
 }
 
 pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
+    if app.overlay.is_some() {
+        return crate::toolbox::event(app, event, area);
+    }
     let mut outcome = Outcome::default();
     let dialog_before = app.dialog.as_ref().map(std::mem::discriminant);
     match event {
@@ -37,11 +40,13 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
             if key.code == KeyCode::F(1) {
                 app.dialog = Some(Dialog::Menu);
             } else if app.dialog.is_none()
+                && app.mode == Mode::Navigate
                 && (key.code == KeyCode::Char('\u{0b}')
                     || (key.modifiers.contains(KeyModifiers::CONTROL)
                         && matches!(key.code, KeyCode::Char('k' | 'K'))))
             {
                 app.mode = Mode::Navigate;
+                app.palette_expanded = true;
                 app.dialog = Some(Dialog::QuickSwitch {
                     query: String::new(),
                     selected: 0,
@@ -68,6 +73,8 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     // console write for a key that has not changed the local view.
                     outcome.redraw = was_scrolled;
                 }
+            } else if app.review.visible && app.review.focused {
+                review_key(app, key, &mut outcome);
             } else if key.code == KeyCode::Esc {
                 app.dialog = Some(Dialog::ExitConfirm {
                     from_menu: false,
@@ -124,8 +131,40 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         }
         Event::Mouse(mouse) => {
             let geometry = ui::geometry(area, app);
+            if app.dialog.is_none() && geometry.review.contains((mouse.column, mouse.row).into()) {
+                app.review.focused = true;
+                app.mode = Mode::Navigate;
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                ) {
+                    app.review.scroll = if mouse.kind == MouseEventKind::ScrollUp {
+                        app.review.scroll.saturating_sub(3)
+                    } else {
+                        app.review.scroll.saturating_add(3)
+                    };
+                } else if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                    let inner = ratatui::widgets::Block::bordered().inner(geometry.review);
+                    let count = (app.review.data.files.len() as u16)
+                        .clamp(1, 5)
+                        .min(inner.height);
+                    if mouse.row >= inner.y && mouse.row < inner.y + count {
+                        let first = app
+                            .review
+                            .file
+                            .saturating_sub(count.saturating_sub(1) as usize);
+                        app.review.file = (first + (mouse.row - inner.y) as usize)
+                            .min(app.review.data.files.len().saturating_sub(1));
+                        app.review.scroll = 0;
+                    }
+                }
+                return outcome;
+            }
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 if let Some(action) = ui_controls::hit_test(app, area, mouse.column, mouse.row) {
+                    if app.dialog.is_none() {
+                        app.review.focused = false;
+                    }
                     mouse_action(app, action, area, &mut outcome);
                 }
             } else if matches!(
@@ -144,7 +183,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     };
                 } else if matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
                     let count = app
-                        .quick_switch_results(match &app.dialog {
+                        .palette_results(match &app.dialog {
                             Some(Dialog::QuickSwitch { query, .. }) => query,
                             _ => unreachable!(),
                         })
@@ -187,14 +226,22 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     }
     if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
         let id = app
-            .quick_switch_results(query)
+            .palette_results(query)
             .get(*selected)
-            .map(|session| session.id.clone());
+            .and_then(|row| row.target.session_id().map(str::to_owned));
         if let Some(id) = id
             && (app.active_id() != Some(id.as_str()) || !app.subscribed.contains(&id))
         {
-            outcome.commands.extend(app.open_session(&id));
+            outcome.commands.extend(app.preview_session(&id));
         }
+    }
+    if app.review.visible
+        && app
+            .active_id()
+            .is_some_and(|id| id != app.review.session_id)
+        && let Some(command) = app.request_diff()
+    {
+        outcome.commands.push(command);
     }
     outcome
 }
@@ -274,11 +321,12 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             if let Some(Dialog::QuickSwitch { selected, .. }) = &mut app.dialog {
                 *selected = index;
             }
-            open_quick_choice(app, outcome);
         }
         Action::FocusSearch => {
             if !matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
                 app.mode = Mode::Navigate;
+                app.palette_expanded = false;
+                app.palette_category = 0;
                 app.dialog = Some(Dialog::QuickSwitch {
                     query: String::new(),
                     selected: 0,
@@ -375,7 +423,7 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         return;
     }
     if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
-        let count = app.quick_switch_results(query).len();
+        let count = app.palette_results(query).len();
         let mut next_query = query.clone();
         let mut next_selected = *selected;
         match key.code {
@@ -388,7 +436,16 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             {
                 next_selected = next_selected.saturating_sub(1)
             }
-            KeyCode::Tab => next_selected = (next_selected + 1).min(count.saturating_sub(1)),
+            KeyCode::F(2) => app.palette_expanded = true,
+            KeyCode::Tab if app.palette_expanded => {
+                app.palette_category = (app.palette_category + 1) % 4;
+                next_selected = 0;
+            }
+            KeyCode::BackTab if app.palette_expanded => {
+                app.palette_category = (app.palette_category + 3) % 4;
+                next_selected = 0;
+            }
+            KeyCode::Tab => app.palette_expanded = true,
             KeyCode::Down | KeyCode::Char('n')
                 if key.code == KeyCode::Down || key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
@@ -420,11 +477,11 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         });
         if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
             let id = app
-                .quick_switch_results(query)
+                .palette_results(query)
                 .get(*selected)
-                .map(|session| session.id.clone());
+                .and_then(|row| row.target.session_id().map(str::to_owned));
             if let Some(id) = id {
-                outcome.commands.extend(app.open_session(&id));
+                outcome.commands.extend(app.preview_session(&id));
             }
         }
         return;
@@ -456,7 +513,11 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             KeyCode::Up | KeyCode::BackTab if button == 0 => {
                 app.dialog_button = None;
                 if let Some(Dialog::NewSession(form)) = &mut app.dialog {
-                    form.field = Field::Program;
+                    form.field = if form.advanced {
+                        Field::When
+                    } else {
+                        Field::Program
+                    };
                 }
                 if let Some(Dialog::NewGroup { editing_parent, .. }) = &mut app.dialog {
                     *editing_parent = true;
@@ -487,6 +548,55 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             _ => {}
         }
         return;
+    }
+    if let Some(Dialog::NewSession(form)) = &mut app.dialog {
+        if key.code == KeyCode::F(2) {
+            form.advanced = !form.advanced;
+            form.field = if form.advanced {
+                Field::Worktree
+            } else {
+                Field::Name
+            };
+            app.dialog_button = None;
+            return;
+        }
+        if form.advanced {
+            match key.code {
+                KeyCode::Tab | KeyCode::Down => match form.field {
+                    Field::Worktree => form.field = Field::Prompt,
+                    Field::Prompt => form.field = Field::When,
+                    _ => app.dialog_button = Some(0),
+                },
+                KeyCode::BackTab | KeyCode::Up => {
+                    form.field = if form.field == Field::When {
+                        Field::Prompt
+                    } else {
+                        Field::Worktree
+                    }
+                }
+                KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') | KeyCode::Enter
+                    if form.field == Field::Worktree =>
+                {
+                    form.worktree = !form.worktree
+                }
+                KeyCode::Enter if form.field == Field::Prompt => form.field = Field::When,
+                KeyCode::Enter => {
+                    if let Some(command) = app.submit_dialog() {
+                        outcome.commands.push(command);
+                    }
+                }
+                KeyCode::Backspace => form.backspace(),
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    form.append(&c.to_string())
+                }
+                _ => {}
+            }
+            return;
+        }
     }
     let mut submit = false;
     let mut browse = false;
@@ -808,20 +918,42 @@ fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
     let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog else {
         return;
     };
-    let id = app
-        .quick_switch_results(query)
+    let target = app
+        .palette_results(query)
         .get(*selected)
-        .map(|session| session.id.clone());
-    if let Some(id) = id {
-        app.dialog = None;
-        if let Some(index) = app
-            .tree()
-            .iter()
-            .position(|row| row.kind == RowKind::Session(id.clone()))
-        {
-            app.selected = index;
+        .map(|row| row.target.clone());
+    let Some(target) = target else {
+        return;
+    };
+    app.dialog = None;
+    match target {
+        crate::palette::Target::Session(id) => outcome.commands.extend(app.activate_session(&id)),
+        crate::palette::Target::Group(id) => {
+            let mut parent = Some(id.clone());
+            let mut seen = std::collections::HashSet::new();
+            while let Some(next) = parent {
+                if !seen.insert(next.clone()) {
+                    break;
+                }
+                app.collapsed.remove(&next);
+                parent = app
+                    .groups
+                    .iter()
+                    .find(|g| g.id == next)
+                    .and_then(|g| g.parent_id.clone());
+            }
+            app.selected = app
+                .tree()
+                .iter()
+                .position(|row| row.kind == RowKind::Group(id.clone()))
+                .unwrap_or(0);
         }
-        outcome.commands.extend(app.activate_session(&id));
+        crate::palette::Target::Command(key) => navigation_key(
+            app,
+            KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
+            Rect::new(0, 0, 80, 24),
+            outcome,
+        ),
     }
 }
 
@@ -855,6 +987,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         if key.code == KeyCode::Char('c') {
             outcome.quit = true;
         } else if matches!(key.code, KeyCode::Char('k' | 'K' | '\u{0b}')) {
+            app.palette_expanded = true;
             app.dialog = Some(Dialog::QuickSwitch {
                 query: String::new(),
                 selected: 0,
@@ -864,11 +997,47 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
     }
     match key.code {
         KeyCode::Char('/' | '\u{0b}') => {
+            app.palette_expanded = key.code != KeyCode::Char('/');
+            app.palette_category = 0;
             app.dialog = Some(Dialog::QuickSwitch {
                 query: String::new(),
                 selected: 0,
             })
         }
+        KeyCode::Char('w') => {
+            if let Some(session) = app.active_session()
+                && (app.wake_available() || session.wake_at.is_some())
+            {
+                let enabled = session.wake_at.is_none();
+                app.dialog = Some(Dialog::Confirm {
+                    title: if enabled { "Wake after quota reset?" } else { "Disable automatic wake?" }.into(),
+                    detail: "Send one Continue prompt only after a verified quota reset while this Codex session still shows a usage-limit message. Any manual input cancels the plan.".into(),
+                    command: json!({"type":"setWake", "sessionId":session.id, "enabled":enabled}),
+                });
+            }
+        }
+        KeyCode::Char('H') => app.overlay = Some(crate::toolbox::Overlay::Onboarding(0)),
+        KeyCode::Char('f') => app.overlay = Some(crate::toolbox::Overlay::Filters(0)),
+        KeyCode::Char('S') => {
+            if !app.capabilities.as_ref().is_some_and(|caps| caps.schedules) {
+                app.notice = "Update the host to manage scheduled sessions.".into();
+                return;
+            }
+            app.overlay = Some(crate::toolbox::Overlay::Schedules(0));
+            outcome.commands.push(json!({"type":"listSchedules"}));
+        }
+        KeyCode::Char('D') => {
+            if app.review.visible {
+                app.review.visible = false;
+                app.review.focused = false;
+            } else {
+                app.review.focused = true;
+                if let Some(command) = app.request_diff() {
+                    outcome.commands.push(command);
+                }
+            }
+        }
+        KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,
         KeyCode::Char('z') => app.fullscreen = !app.fullscreen,
         KeyCode::Char('?') => app.dialog = Some(Dialog::Help),
@@ -1087,6 +1256,51 @@ fn close_selected(app: &mut App) {
     });
 }
 
+fn review_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
+    let review = &mut app.review;
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('D') => {
+            review.visible = false;
+            review.focused = false;
+        }
+        KeyCode::Tab => review.focused = false,
+        KeyCode::Up => {
+            review.file = review.file.saturating_sub(1);
+            review.scroll = 0;
+            review.hunk = 0;
+        }
+        KeyCode::Down => {
+            review.file = (review.file + 1).min(review.data.files.len().saturating_sub(1));
+            review.scroll = 0;
+            review.hunk = 0;
+        }
+        KeyCode::Left => review.hunk = review.hunk.saturating_sub(1),
+        KeyCode::Right => {
+            let count = review.data.files.get(review.file).map_or(0, |f| {
+                f.patch.lines().filter(|l| l.starts_with("@@")).count()
+            });
+            review.hunk = (review.hunk + 1).min(count.saturating_sub(1));
+        }
+        KeyCode::Char(' ') => review.toggle_hunk(),
+        KeyCode::PageDown => review.scroll = review.scroll.saturating_add(10),
+        KeyCode::PageUp => review.scroll = review.scroll.saturating_sub(10),
+        KeyCode::Char('e') => review.expanded = !review.expanded,
+        KeyCode::Char('s') => review.side_by_side = !review.side_by_side,
+        KeyCode::Char('r' | 'c') => {
+            if key.code == KeyCode::Char('c') {
+                review.scope = (review.scope + 1) % 3;
+                review.file = 0;
+                review.scroll = 0;
+                review.folded.clear();
+            }
+            if let Some(command) = app.request_diff() {
+                outcome.commands.push(command);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1133,7 +1347,7 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
             area,
         );
-        assert_eq!(app.active_id(), Some("two"));
+        assert_eq!(app.active_id(), Some("one"));
         event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
@@ -1164,27 +1378,30 @@ mod tests {
     }
 
     #[test]
-    fn control_k_opens_palette_from_input_without_sending_it_to_shell() {
+    fn control_k_belongs_to_pty_in_input_and_opens_palette_in_navigation() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
-            {"id":"one","name":"Docs","cwd":"/docs","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+            {"id":"one","name":"Docs","cwd":"/docs","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":1}
         ]})).unwrap();
+        app.leases.insert("one".into(), "lease".into());
+        app.terminals
+            .insert("one".into(), crate::terminal::TerminalState::new(24, 80));
         app.mode = Mode::Input;
-        app.fullscreen = true;
-        let result = event(
-            &mut app,
-            Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
-            Rect::new(0, 0, 120, 30),
-        );
-        assert!(matches!(app.dialog, Some(Dialog::QuickSwitch { .. })));
-        assert!(app.mode == Mode::Navigate);
-        assert!(app.subscribed.contains("one"));
+        let area = Rect::new(0, 0, 120, 30);
+        let key = Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        let result = event(&mut app, key.clone(), area);
+        assert!(app.dialog.is_none());
+        assert!(app.mode == Mode::Input);
         assert!(
-            !result
+            result
                 .commands
                 .iter()
-                .any(|command| command["type"] == "input" || command["type"] == "acquireControl")
+                .any(|command| command["type"] == "input" && command["data"] == "\u{0b}")
         );
+        app.mode = Mode::Navigate;
+        event(&mut app, key, area);
+        assert!(matches!(app.dialog, Some(Dialog::QuickSwitch { .. })));
+        assert!(app.palette_expanded);
     }
 
     #[test]

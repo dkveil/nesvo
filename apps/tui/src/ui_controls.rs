@@ -135,16 +135,17 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let mut output = Vec::new();
     let tree = ui::geometry(area, app).tree;
     if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
-        let layout = ui_palette::geometry(area, app.sessions.len());
-        let count = app.quick_switch_results(query).len();
-        let offset = ui_palette::offset(*selected, layout.results.height);
-        for index in offset..count.min(offset + usize::from(layout.results.height)) {
+        let layout = ui_palette::for_app(area, app);
+        let count = app.palette_results(query).len();
+        let row_height = ui_palette::row_height(app, area);
+        let offset = ui_palette::offset(*selected, layout.results.height / row_height);
+        for index in offset..count.min(offset + usize::from(layout.results.height / row_height)) {
             output.push(Control {
                 area: Rect::new(
                     layout.results.x,
-                    layout.results.y + (index - offset) as u16,
+                    layout.results.y + (index - offset) as u16 * row_height,
                     layout.results.width,
-                    1,
+                    row_height,
                 ),
                 label: None,
                 action: Action::QuickChoice(index),
@@ -238,7 +239,11 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                 );
             }
             Dialog::NewSession(form) => {
-                for (offset, field) in [(3, Field::Name), (6, Field::Directory)] {
+                for (offset, field) in if form.advanced {
+                    vec![(3, Field::Worktree), (6, Field::Prompt), (9, Field::When)]
+                } else {
+                    vec![(3, Field::Name), (6, Field::Directory)]
+                } {
                     output.push(Control {
                         area: row(body, offset),
                         label: None,
@@ -246,7 +251,11 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                         enabled: true,
                     });
                 }
-                for (index, program) in Program::ALL.into_iter().enumerate() {
+                for (index, program) in Program::ALL
+                    .into_iter()
+                    .enumerate()
+                    .filter(|_| !form.advanced)
+                {
                     output.push(Control {
                         area: row(body, 10 + index as u16),
                         label: None,
@@ -574,12 +583,12 @@ mod tests {
             query: "web".into(),
             selected: 0,
         });
-        let palette = ui_palette::geometry(area, app.sessions.len());
+        let palette = ui_palette::for_app(area, &app);
         assert_eq!(
             hit_test(&app, area, palette.results.x + 2, palette.results.y),
             Some(Action::QuickChoice(0))
         );
-        assert_eq!(hit_test(&app, area, tree.x + 2, tree.y + 3), None);
+        assert_eq!(hit_test(&app, area, tree.right() + 2, tree.y + 3), None);
     }
 
     #[test]

@@ -5,11 +5,14 @@ mod launch;
 mod model;
 mod network;
 mod output;
+mod palette;
 mod preferences;
+mod review;
 mod runner;
 mod status;
 mod terminal;
 mod theme;
+mod toolbox;
 mod ui;
 mod ui_controls;
 mod ui_launch;
@@ -110,3 +113,6 @@ async fn main() -> Result<()> {
         !arguments.no_animation,
     )
 }
+
+#[cfg(test)]
+mod workflow_tests;

@@ -22,15 +22,18 @@ fn row(area: Rect, index: u16) -> Rect {
     )
 }
 
-fn input_row(frame: &mut Frame, area: Rect, value: &str, focused: bool, app: &App) {
+fn input_row(
+    frame: &mut Frame,
+    area: Rect,
+    value: &str,
+    focused: bool,
+    app: &App,
+    placeholder: &str,
+) {
     if area.is_empty() {
         return;
     }
-    let display = if value.is_empty() {
-        "Type a name…"
-    } else {
-        value
-    };
+    let display = if value.is_empty() { placeholder } else { value };
     let width = usize::from(area.width.saturating_sub(4));
     let visible: String = display
         .chars()
@@ -66,6 +69,55 @@ fn input_row(frame: &mut Frame, area: Rect, value: &str, focused: bool, app: &Ap
 }
 
 pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect) {
+    if form.advanced {
+        for (offset, label) in [
+            (0, "LAUNCH OPTIONS · F2 back to session"),
+            (2, "WORKTREE · new branch from HEAD"),
+            (5, "INITIAL PROMPT"),
+            (8, "START AT · empty = now"),
+            (10, "HH:MM today on host, or RFC3339 with offset"),
+            (12, "Host must stay running. Agent permissions still apply."),
+            (14, "Tab / Shift+Tab fields · Enter submit · Esc cancel"),
+        ] {
+            frame.render_widget(
+                Paragraph::new(label).style(Style::default().fg(MUTED)),
+                row(area, offset),
+            );
+        }
+        input_row(
+            frame,
+            row(area, 3),
+            if form.worktree {
+                "[x] Create isolated worktree"
+            } else {
+                "[ ] Use selected folder"
+            },
+            form.field == Field::Worktree && app.dialog_button.is_none(),
+            app,
+            "",
+        );
+        input_row(
+            frame,
+            row(area, 6),
+            &form.prompt,
+            form.field == Field::Prompt && app.dialog_button.is_none(),
+            app,
+            "Describe the task…",
+        );
+        input_row(
+            frame,
+            row(area, 9),
+            &form.when,
+            form.field == Field::When && app.dialog_button.is_none(),
+            app,
+            "Now · or 16:02",
+        );
+        frame.render_widget(
+            Paragraph::new(app.notice.as_str()).style(Style::default().fg(MUTED)),
+            row(area, 16),
+        );
+        return;
+    }
     let group = app
         .group_choices(None)
         .into_iter()
@@ -85,6 +137,7 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         &form.name,
         form.field == Field::Name && app.dialog_button.is_none(),
         app,
+        "Type a name…",
     );
     frame.render_widget(
         Paragraph::new("FOLDER").style(Style::default().fg(MUTED)),
@@ -162,7 +215,7 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         );
     }
     frame.render_widget(
-        Paragraph::new("↑/↓ fields & choices   Tab next   Shift+Tab previous   Enter select")
+        Paragraph::new("Tab fields · Shift+Tab back · F2 worktree / prompt / schedule")
             .style(Style::default().fg(MUTED)),
         row(area, 15),
     );

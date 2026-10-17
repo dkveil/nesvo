@@ -109,6 +109,9 @@ pub fn run(
         .unwrap_or_default();
     app.theme = saved_preferences.theme;
     app.onboarded = saved_preferences.onboarded;
+    if !app.onboarded {
+        app.overlay = Some(crate::toolbox::Overlay::Onboarding(0));
+    }
     app.fullscreen_default = saved_preferences.fullscreen_default;
     app.fullscreen = saved_preferences.fullscreen_default;
     app.pairing_path = pairing_path.display().to_string();

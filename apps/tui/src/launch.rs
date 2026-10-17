@@ -41,6 +41,8 @@ pub struct ProgramCapability {
 pub struct LimitWindow {
     pub used_percent: u8,
     pub duration_mins: u32,
+    #[serde(default)]
+    pub resets_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +58,14 @@ pub struct Capabilities {
     pub programs: Vec<ProgramCapability>,
     #[serde(default, rename = "directoryBrowser")]
     pub directory_browser: bool,
+    #[serde(default, rename = "gitDiff")]
+    pub git_diff: bool,
+    #[serde(default, rename = "advancedLaunch")]
+    pub advanced_launch: bool,
+    #[serde(default)]
+    pub schedules: bool,
+    #[serde(default, rename = "quotaWake")]
+    pub quota_wake: bool,
     #[serde(default, rename = "providerLimits")]
     pub provider_limits: Vec<ProviderLimit>,
 }
@@ -74,10 +84,17 @@ pub enum Field {
     Name,
     Directory,
     Program,
+    Worktree,
+    Prompt,
+    When,
 }
 
 #[derive(Clone, Default)]
 pub struct SessionForm {
+    pub advanced: bool,
+    pub worktree: bool,
+    pub prompt: String,
+    pub when: String,
     pub name: String,
     pub cwd: String,
     pub program: Program,
@@ -98,7 +115,9 @@ impl SessionForm {
     pub fn append(&mut self, text: &str) {
         let (value, limit) = match self.field {
             Field::Name => (&mut self.name, 80usize),
-            Field::Directory | Field::Program => return,
+            Field::Prompt => (&mut self.prompt, 2048),
+            Field::When => (&mut self.when, 40),
+            _ => return,
         };
         let remaining = limit.saturating_sub(value.chars().count());
         value.extend(text.chars().filter(|c| !c.is_control()).take(remaining));
@@ -109,7 +128,13 @@ impl SessionForm {
             Field::Name => {
                 self.name.pop();
             }
-            Field::Directory | Field::Program => {}
+            Field::Prompt => {
+                self.prompt.pop();
+            }
+            Field::When => {
+                self.when.pop();
+            }
+            _ => {}
         }
     }
 }
