@@ -103,34 +103,25 @@ impl Widget for Logo {
     }
 }
 
-/// Pack the canonical pixels into 2×4 dot cells without dropping thin strokes.
+/// Compact solid pixels retain the wordmark's top, counters and crossbars.
 pub struct CompactLogo(pub Theme);
 impl Widget for CompactLogo {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let source = pixels(0);
+        let rows = [2, 4, 6, 7, 9, 11];
+        let colors = [BACKGROUND, self.0.accent(), TEXT];
         let width = WIDTH.div_ceil(2).min(usize::from(area.width));
         let left = area.x + area.width.saturating_sub(width as u16) / 2;
-        let bits = [[0, 3], [1, 4], [2, 5], [6, 7]];
         for y in 0..3usize.min(usize::from(area.height)) {
             for x in 0..width {
-                let mut mask = 0u32;
-                let mut accent = false;
-                for (dy, row) in bits.iter().enumerate() {
-                    for (dx, bit) in row.iter().enumerate() {
-                        let pixel = source[y * 4 + dy].get(x * 2 + dx).copied().unwrap_or(0);
-                        if pixel != 0 {
-                            mask |= 1 << bit;
-                        }
-                        accent |= pixel == 1;
-                    }
-                }
-                let symbol = char::from_u32(0x2800 + mask).unwrap().to_string();
+                let top = source[rows[y * 2]][x * 2];
+                let bottom = source[rows[y * 2 + 1]][x * 2];
                 buffer[(left + x as u16, area.y + y as u16)]
-                    .set_symbol(&symbol)
+                    .set_symbol("▀")
                     .set_style(
                         Style::default()
-                            .fg(if accent { self.0.accent() } else { TEXT })
-                            .bg(BACKGROUND),
+                            .fg(colors[top as usize])
+                            .bg(colors[bottom as usize]),
                     );
             }
         }

@@ -194,6 +194,7 @@ pub(crate) fn folder_choices<'a>(
 
 pub struct App {
     pub selection: Option<crate::selection::Selection>,
+    pub menu_phase: u8,
     pub toast: Option<(String, std::time::Instant)>,
     pub palette_expanded: bool,
     pub palette_category: usize,
@@ -245,6 +246,7 @@ impl App {
     pub fn new(client_id: u64) -> Self {
         Self {
             selection: None,
+            menu_phase: 0,
             toast: None,
             review: Default::default(),
             overlay: None,

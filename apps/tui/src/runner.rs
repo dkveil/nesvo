@@ -160,6 +160,16 @@ pub fn run(
             app.toast = None;
             dirty = true;
         }
+        let menu_phase =
+            if animate && matches!(app.dialog, Some(Dialog::Menu)) && app.overlay.is_none() {
+                ((animation_started.elapsed().as_millis() / 100) % 40) as u8
+            } else {
+                0
+            };
+        if app.menu_phase != menu_phase {
+            app.menu_phase = menu_phase;
+            dirty = true;
+        }
         let phase = Instant::now();
         if layout_loaded && app.connected && layout_saved_at.elapsed() >= Duration::from_secs(1) {
             let current = crate::workspace_layout::WorkspaceLayout::capture(&app);

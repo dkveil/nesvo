@@ -990,7 +990,15 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
         frame.render_widget(
             Block::bordered()
                 .border_style(Style::default().fg(if selected {
-                    app.theme.accent()
+                    let strength = 60 + app.menu_phase.abs_diff(20) * 2;
+                    match app.theme.accent() {
+                        Color::Rgb(r, g, b) => Color::Rgb(
+                            (u16::from(r) * u16::from(strength) / 100) as u8,
+                            (u16::from(g) * u16::from(strength) / 100) as u8,
+                            (u16::from(b) * u16::from(strength) / 100) as u8,
+                        ),
+                        color => color,
+                    }
                 } else {
                     BORDER
                 }))
@@ -1004,34 +1012,10 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
         let inside = Block::bordered().inner(target);
         frame.render_widget(
             Paragraph::new(match index {
-                0 => {
-                    if selected {
-                        "›  Enter workspace"
-                    } else {
-                        "Enter workspace"
-                    }
-                }
-                1 => {
-                    if selected {
-                        "›  Pair mobile"
-                    } else {
-                        "Pair mobile"
-                    }
-                }
-                2 => {
-                    if selected {
-                        "›  Settings"
-                    } else {
-                        "Settings"
-                    }
-                }
-                _ => {
-                    if selected {
-                        "›  Keyboard shortcuts"
-                    } else {
-                        "Keyboard shortcuts"
-                    }
-                }
+                0 => "Enter workspace",
+                1 => "Pair mobile",
+                2 => "Settings",
+                _ => "Keyboard shortcuts",
             })
             .centered()
             .style(Style::default().fg(if selected {
@@ -1479,13 +1463,13 @@ mod tests {
     fn diff_preserves_workspace_sidebar_and_fullscreen_visibility() {
         let mut app = App::new(1);
         app.dialog = None;
-        app.review.focused = true;
         app.mode = Mode::Input;
         app.fullscreen = false;
         let area = Rect::new(0, 0, 150, 44);
         let before = geometry(area, &app).tree;
         app.review.visible = true;
         app.review.return_to_input = true;
+        app.review.focused = true;
         app.mode = Mode::Navigate;
         assert_eq!(geometry(area, &app).tree, before);
         assert!(geometry(area, &app).review.width > 0);

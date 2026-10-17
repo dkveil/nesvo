@@ -200,7 +200,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from({
             let mut spans = crate::ui::shortcut_spans("o folder");
-            spans.push(Span::styled(format!("  {folder}"), Style::default().fg(MUTED)));
+            spans.push(Span::styled(
+                format!("  {folder}"),
+                Style::default().fg(MUTED),
+            ));
             spans
         })),
         Rect::new(heading.x, heading.y, heading.width, heading.height.min(1)),
