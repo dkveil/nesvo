@@ -74,7 +74,7 @@ pub fn move_offset(selected: usize, height: u16) -> usize {
 
 pub fn menu_area(area: Rect) -> Rect {
     let width = area.width.saturating_sub(4).min(60);
-    let height = area.height.saturating_sub(2).min(20);
+    let height = area.height.saturating_sub(2).min(22);
     Rect::new(
         area.x + area.width.saturating_sub(width) / 2,
         area.y + area.height.saturating_sub(height) / 2,
@@ -165,7 +165,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     }
     if let Some(dialog) = &app.dialog {
         if matches!(dialog, Dialog::Menu) {
-            for index in 0..3 {
+            for index in 0..4 {
                 output.push(Control {
                     area: menu_action_area(area, index),
                     label: None,

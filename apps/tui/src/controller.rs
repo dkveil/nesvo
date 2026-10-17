@@ -459,10 +459,10 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     }
     if matches!(app.dialog, Some(Dialog::Menu)) {
         match key.code {
-            KeyCode::Up | KeyCode::BackTab => app.menu_selected = (app.menu_selected + 2) % 3,
-            KeyCode::Down | KeyCode::Tab => app.menu_selected = (app.menu_selected + 1) % 3,
+            KeyCode::Up | KeyCode::BackTab => app.menu_selected = (app.menu_selected + 3) % 4,
+            KeyCode::Down | KeyCode::Tab => app.menu_selected = (app.menu_selected + 1) % 4,
             KeyCode::Enter => menu_choice(app, app.menu_selected, outcome),
-            KeyCode::Char('1'..='3') => {
+            KeyCode::Char('1'..='4') => {
                 if let KeyCode::Char(value) = key.code {
                     menu_choice(app, value as usize - '1' as usize, outcome);
                 }
@@ -874,6 +874,7 @@ fn cancel_dialog(app: &mut App) {
         }
         Some(
             Dialog::Settings { .. }
+            | Dialog::Help
             | Dialog::ExitConfirm {
                 from_menu: true, ..
             },
@@ -985,6 +986,7 @@ fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
         }
         1 => app.dialog = Some(Dialog::PairPhone),
         2 => app.dialog = Some(Dialog::Settings { selected: 0 }),
+        3 => app.dialog = Some(Dialog::Help),
         _ => {}
     }
 }
@@ -1460,6 +1462,27 @@ mod tests {
         );
         assert!(app.palette_expanded);
         assert!(matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query.is_empty()));
+    }
+
+    #[test]
+    fn fourth_menu_entry_opens_keyboard_reference_and_returns_to_menu() {
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::Menu);
+        let area = Rect::new(0, 0, 80, 24);
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(app.menu_selected, 3);
+        click(&mut app, area, Action::MenuChoice(3));
+        assert!(matches!(app.dialog, Some(Dialog::Help)));
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(matches!(app.dialog, Some(Dialog::Menu)));
     }
 
     #[test]

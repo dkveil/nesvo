@@ -902,7 +902,7 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
             Rect::new(menu.x, menu.y + title_y, menu.width, 1),
         );
     }
-    for index in 0..3 {
+    for index in 0..4 {
         let target = ui_controls::menu_action_area(area, index);
         if target.is_empty() {
             continue;
@@ -927,7 +927,8 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
             Paragraph::new(match index {
                 0 => "Enter workspace",
                 1 => "Pair mobile",
-                _ => "Settings",
+                2 => "Settings",
+                _ => "Keyboard shortcuts",
             })
             .centered()
             .style(Style::default().fg(if selected {
