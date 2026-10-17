@@ -11,6 +11,25 @@ pub enum Command {
         client_nonce: String,
     },
     List,
+    Launch {
+        spec: crate::jobs::LaunchSpec,
+    },
+    ScheduleSession {
+        spec: crate::jobs::LaunchSpec,
+        at: String,
+    },
+    ListSchedules,
+    SetWake {
+        session_id: String,
+        enabled: bool,
+    },
+    CancelSchedule {
+        id: String,
+    },
+    GetDiff {
+        session_id: String,
+        scope: String,
+    },
     GetCapabilities,
     ListDirectories {
         path: Option<String>,

@@ -69,6 +69,7 @@ struct Session {
     controller: Option<ControlLease>,
     subscribers: HashSet<u64>,
     has_been_attached: bool,
+    wake_at: Option<i64>,
 }
 
 pub struct State {
@@ -80,6 +81,8 @@ pub struct State {
     metadata: MetadataStore,
     launchers: Launchers,
     provider_limits: Vec<ProviderLimit>,
+    limits_read_at: i64,
+    schedule_watchers: HashSet<u64>,
 }
 
 fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
@@ -107,10 +110,13 @@ impl State {
             metadata,
             launchers,
             provider_limits,
+            limits_read_at: 0,
+            schedule_watchers: HashSet::new(),
         }
     }
 
     pub fn update_codex_limits(&mut self, windows: Vec<LimitWindow>) {
+        self.limits_read_at = chrono::Utc::now().timestamp();
         let Some(index) = self
             .provider_limits
             .iter()
@@ -138,7 +144,7 @@ impl State {
 
     fn capabilities_event(&self) -> Value {
         json!({"type":"capabilities", "workspace":crate::process::display_path(&self.workspace),
-            "programs":self.launchers.capabilities(), "directoryBrowser":true,
+            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true,
             "providerLimits":self.provider_limits})
     }
 
@@ -168,22 +174,71 @@ impl State {
                 info["controllerId"] =
                     json!(session.controller.as_ref().map(|lease| lease.client_id));
                 info["status"] = json!(session.status.status());
+                info["rateLimited"] = json!(session.status.rate_limited());
+                info["wakeAt"] = json!(session.wake_at);
                 info
             })
             .collect();
         json!({"type":"sessions", "sessions":sessions, "groups":self.metadata.groups(), "revision":self.metadata.revision()})
     }
 
-    fn broadcast_list(&self) {
+    pub fn broadcast_list(&self) {
         let list = self.list();
         for id in self.clients.keys() {
             self.send(*id, list.clone());
         }
     }
 
+    fn wake_after_reset(&mut self) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        if now - self.limits_read_at > 180 {
+            return false;
+        }
+        let Some(provider) = self
+            .provider_limits
+            .iter()
+            .find(|p| p.id == Program::Codex && p.status == "ready")
+        else {
+            return false;
+        };
+        let reset_available = provider.windows.iter().any(|w| {
+            w.duration_mins == 300 && w.used_percent < 90 && w.resets_at.is_some_and(|at| at > now)
+        }) && provider.windows.iter().all(|w| w.used_percent < 100);
+        if !reset_available {
+            return false;
+        }
+        let mut changed = false;
+        for session in self.sessions.values_mut() {
+            if let Some(at) = session.wake_at
+                && now >= at
+                && self.limits_read_at >= at
+            {
+                // A fresh reading after reset is mandatory. Never type into a busy agent.
+                if session.info.running
+                    && session.info.program == Program::Codex
+                    && session.status.rate_limited()
+                {
+                    session.wake_at = None;
+                    if session
+                        .pty
+                        .send_input("Continue the previous task.\r".into())
+                        .is_ok()
+                    {
+                        session.status.input(now_millis());
+                    }
+                    changed = true;
+                } else if now - at > 300 {
+                    session.wake_at = None;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     fn refresh_status(&mut self) {
         let now = now_millis();
-        let mut changed = false;
+        let mut changed = self.wake_after_reset();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
         }
@@ -233,6 +288,7 @@ impl State {
 
     pub fn disconnect(&mut self, client_id: u64) {
         self.clients.remove(&client_id);
+        self.schedule_watchers.remove(&client_id);
         for session in self.sessions.values_mut() {
             session.subscribers.remove(&client_id);
         }
@@ -352,6 +408,103 @@ impl State {
         Ok(())
     }
 
+    pub fn validate_launch(&self, spec: &crate::jobs::LaunchSpec) -> Result<PathBuf> {
+        ensure!(!self.shutting_down, "Host is shutting down.");
+        valid_name(&spec.name)?;
+        self.valid_group(spec.group_id.as_deref())?;
+        ensure!(
+            self.sessions.len() < MAX_SESSIONS,
+            "Maximum 8 sessions. Close a session first."
+        );
+        ensure!(
+            self.launchers.available(spec.program),
+            "Program is not installed on the host."
+        );
+        ensure!(
+            spec.prompt.len() <= 8192 && !spec.prompt.contains('\0'),
+            "Prompt exceeds 8192 bytes or contains NUL."
+        );
+        ensure!(
+            spec.prompt.is_empty() || spec.program != Program::Shell,
+            "Initial prompts require an agent program."
+        );
+        working_directory(&self.workspace, spec.cwd.as_deref())
+    }
+
+    pub fn launch(
+        &mut self,
+        spec: &crate::jobs::LaunchSpec,
+        events: &mpsc::Sender<PtyEvent>,
+    ) -> Result<String> {
+        let cwd = self.validate_launch(spec)?;
+        let mut command = self.launchers.command(spec.program, &cwd)?;
+        if !spec.prompt.is_empty() {
+            if spec.program == Program::Gemini {
+                command.arg("--prompt-interactive");
+            } else {
+                command.arg("--");
+            }
+            command.arg(&spec.prompt);
+        }
+        let mut session = spawn_session(
+            spec.name.trim(),
+            &cwd,
+            spec.program,
+            command,
+            events.clone(),
+        )?;
+        session.info.group_id = spec.group_id.clone();
+        let id = session.info.id.clone();
+        // Scheduled agents must be able to finish startup without an attached client.
+        #[cfg(windows)]
+        if !spec.prompt.is_empty() {
+            session.pty.send_input("\x1b[1;1R".into())?;
+            session.has_been_attached = true;
+        }
+        self.sessions.insert(id.clone(), session);
+        self.broadcast_list();
+        Ok(id)
+    }
+
+    pub fn claim_job(&mut self) -> Option<(String, crate::jobs::LaunchSpec)> {
+        if self.shutting_down {
+            return None;
+        }
+        match self.metadata.claim_schedule() {
+            Ok(job) => job,
+            Err(error) => {
+                eprintln!("Scheduler storage error: {error}");
+                None
+            }
+        }
+    }
+
+    pub fn finish_job(&mut self, id: &str, result: Result<String>) {
+        let (status, detail) = match result {
+            Ok(id) => ("started", id),
+            Err(error) => ("failed", error.to_string()),
+        };
+        if let Err(error) = self.metadata.finish_schedule(id, status, &detail) {
+            eprintln!("Cannot record schedule completion: {error}");
+        }
+        self.broadcast_schedules();
+    }
+
+    pub fn broadcast_schedules(&self) {
+        if let Ok(schedules) = self.metadata.schedules() {
+            for id in &self.schedule_watchers {
+                self.send(*id, json!({"type":"schedules", "schedules":schedules}));
+            }
+        }
+    }
+
+    pub fn session_directory(&self, id: &str) -> Result<PathBuf> {
+        self.sessions
+            .get(id)
+            .map(|s| PathBuf::from(&s.info.cwd))
+            .ok_or_else(|| anyhow!("Session no longer exists."))
+    }
+
     pub fn command(
         &mut self,
         client_id: u64,
@@ -362,6 +515,79 @@ impl State {
         ensure!(!self.shutting_down, "Host is shutting down.");
         match command {
             Command::Auth { .. } => return Err(anyhow!("Already authenticated.")),
+            Command::Launch { .. } => {
+                return Err(anyhow!("Launch requires asynchronous dispatch."));
+            }
+            Command::ScheduleSession { mut spec, at } => {
+                let cwd = self.validate_launch(&spec)?;
+                spec.cwd = Some(crate::process::display_path(&cwd));
+                ensure!(
+                    !spec.prompt.trim().is_empty(),
+                    "A scheduled session needs an initial prompt."
+                );
+                let due = crate::jobs::timestamp(&at)?;
+                let id = self.metadata.add_schedule(&spec, due)?;
+                self.schedule_watchers.insert(client_id);
+                self.respond(
+                    client_id,
+                    json!({"type":"scheduled", "id":id, "due":due}),
+                    request_id,
+                );
+                self.broadcast_schedules();
+            }
+            Command::SetWake {
+                session_id,
+                enabled,
+            } => {
+                let now = chrono::Utc::now().timestamp();
+                let reset = if enabled {
+                    ensure!(
+                        now - self.limits_read_at <= 180,
+                        "Quota reading is stale. Wait for a fresh reading."
+                    );
+                    Some(self.provider_limits.iter().find(|p| p.id == Program::Codex && p.status == "ready")
+                        .and_then(|p| p.windows.iter().find(|w| w.duration_mins == 300 && w.used_percent >= 90))
+                        .and_then(|w| w.resets_at).filter(|at| *at > now)
+                        .ok_or_else(|| anyhow!("Wake is offered at 90% of a known 5-hour limit with a reset time."))?)
+                } else {
+                    None
+                };
+                let session = self
+                    .sessions
+                    .get_mut(&session_id)
+                    .ok_or_else(|| anyhow!("Session no longer exists."))?;
+                ensure!(
+                    session
+                        .controller
+                        .as_ref()
+                        .is_none_or(|lease| lease.client_id == client_id),
+                    "Another client controls this session."
+                );
+                ensure!(
+                    !enabled || (session.info.running && session.info.program == Program::Codex),
+                    "Reliable quota wake is currently supported for native Codex sessions only."
+                );
+                session.wake_at = reset;
+                self.respond(
+                    client_id,
+                    json!({"type":"wakeConfigured", "sessionId":session_id, "wakeAt":reset}),
+                    request_id,
+                );
+                self.broadcast_list();
+            }
+            Command::ListSchedules => {
+                self.schedule_watchers.insert(client_id);
+                self.respond(
+                    client_id,
+                    json!({"type":"schedules", "schedules":self.metadata.schedules()?}),
+                    request_id,
+                );
+            }
+            Command::CancelSchedule { id } => {
+                self.metadata.cancel_schedule(&id)?;
+                self.broadcast_schedules();
+            }
+            Command::GetDiff { .. } => return Err(anyhow!("Diff requires asynchronous dispatch.")),
             Command::List => self.send(client_id, self.list()),
             Command::GetCapabilities => {
                 self.respond(client_id, self.capabilities_event(), request_id)
@@ -534,6 +760,7 @@ impl State {
                 let has_input = !data.is_empty();
                 session.pty.send_input(data)?;
                 if has_input {
+                    session.wake_at = None;
                     session.status.input(now_millis());
                 }
             }
@@ -701,6 +928,7 @@ fn spawn_session(
         controller: None,
         subscribers: HashSet::new(),
         has_been_attached: false,
+        wake_at: None,
     })
 }
 
@@ -769,6 +997,80 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schedule_notifications_are_opt_in_for_older_clients() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        let (events, mut receiver) = mpsc::channel(8);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(1, Client { events, cancelled });
+        state.broadcast_schedules();
+        assert!(receiver.try_recv().is_err());
+        let (pty_events, _) = mpsc::channel(1);
+        state
+            .command(1, Command::ListSchedules, None, &pty_events)
+            .unwrap();
+        assert_eq!(receiver.try_recv().unwrap()["type"], "schedules");
+        state.broadcast_schedules();
+        assert_eq!(receiver.try_recv().unwrap()["type"], "schedules");
+        state.disconnect(1);
+        assert!(!state.schedule_watchers.contains(&1));
+    }
+
+    #[test]
+    fn wake_requires_fresh_ninety_percent_five_hour_reading() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        let now = chrono::Utc::now().timestamp();
+        state.provider_limits = vec![ProviderLimit {
+            id: Program::Codex,
+            status: "ready",
+            windows: vec![LimitWindow {
+                used_percent: 89,
+                duration_mins: 300,
+                resets_at: Some(now + 60),
+            }],
+        }];
+        state.limits_read_at = now;
+        let (events, _) = mpsc::channel(1);
+        let command = || Command::SetWake {
+            session_id: "absent".into(),
+            enabled: true,
+        };
+        assert!(
+            state
+                .command(1, command(), None, &events)
+                .unwrap_err()
+                .to_string()
+                .contains("90%")
+        );
+        state.provider_limits[0].windows[0].used_percent = 90;
+        assert!(
+            state
+                .command(1, command(), None, &events)
+                .unwrap_err()
+                .to_string()
+                .contains("Session no longer exists")
+        );
+        state.limits_read_at = now - 181;
+        assert!(
+            state
+                .command(1, command(), None, &events)
+                .unwrap_err()
+                .to_string()
+                .contains("stale")
+        );
+        state.limits_read_at = now;
+        state.provider_limits[0].windows[0].duration_mins = 10080;
+        assert!(
+            state
+                .command(1, command(), None, &events)
+                .unwrap_err()
+                .to_string()
+                .contains("90%")
+        );
+    }
     use crate::replay::BACKLOG_BYTES;
     #[test]
     fn directory_browser_returns_host_paths_and_echoes_request_id() {

@@ -157,6 +157,7 @@ pub async fn handle(
         id,
     };
     let (mut outgoing, mut incoming) = websocket.split();
+    let git_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
     let mut incoming_seq = 1;
     let mut outgoing_seq = 0;
     let mut rate_start = Instant::now();
@@ -201,6 +202,56 @@ pub async fn handle(
                             }
                         };
                         incoming_seq += 1;
+                        if let Command::Launch { mut spec } = command {
+                            let directory = state.lock().unwrap().validate_launch(&spec);
+                            let permit = git_gate.clone().try_acquire_owned();
+                            let state = state.clone();
+                            let events = pty_events.clone();
+                            tokio::spawn(async move {
+                                let result = match (directory, permit) {
+                                    (Ok(directory), Ok(_permit)) => {
+                                        if spec.worktree { crate::git::create_worktree(&directory).await }
+                                        else { Ok(directory) }
+                                    }
+                                    (Err(error), _) => Err(error),
+                                    (_, Err(_)) => Err(anyhow!("Another Git operation is running.")),
+                                };
+                                if let Ok(mut state) = state.lock() {
+                                    let result = result.and_then(|path| {
+                                        spec.cwd = Some(crate::process::display_path(&path));
+                                        spec.worktree = false;
+                                        state.launch(&spec, &events)
+                                    });
+                                    let mut event = match result {
+                                        Ok(id) => json!({"type":"created", "sessionId":id}),
+                                        Err(error) => json!({"type":"error", "message":error.to_string()}),
+                                    };
+                                    if let Some(request_id) = request_id { event["requestId"] = request_id.into(); }
+                                    state.send(id, event);
+                                    state.broadcast_list();
+                                }
+                            });
+                            continue;
+                        }
+                        if let Command::GetDiff { session_id, scope } = command {
+                            let directory = state.lock().unwrap().session_directory(&session_id);
+                            let permit = git_gate.clone().try_acquire_owned();
+                            let state = state.clone();
+                            tokio::spawn(async move {
+                                let result = match (directory, permit) {
+                                    (Ok(directory), Ok(_permit)) => crate::git::review(&directory, &scope).await,
+                                    (Err(error), _) => Err(error),
+                                    (_, Err(_)) => Err(anyhow!("A Git inspection is already running.")),
+                                };
+                                let mut event = match result {
+                                    Ok(review) => json!({"type":"diff", "sessionId":session_id, "review":review}),
+                                    Err(error) => json!({"type":"diff", "sessionId":session_id, "error":error.to_string()}),
+                                };
+                                if let Some(request_id) = request_id { event["requestId"] = request_id.into(); }
+                                if let Ok(state) = state.lock() { state.send(id, event); }
+                            });
+                            continue;
+                        }
                         let mut state = state.lock().unwrap();
                         if let Err(error) = state.command(id, command, request_id.as_deref(), &pty_events) {
                             let mut event = json!({"type":"error", "message":error.to_string()});

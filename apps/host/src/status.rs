@@ -67,6 +67,14 @@ impl StatusTracker {
         }
     }
 
+    pub fn rate_limited(&self) -> bool {
+        !self.exited
+            && self
+                .parser
+                .as_ref()
+                .is_some_and(|parser| quota_screen(parser.screen()))
+    }
+
     pub fn status(&self) -> SessionStatus {
         self.status
     }
@@ -169,7 +177,27 @@ fn question_progress(line: &str) -> bool {
         })
 }
 
+fn quota_screen(screen: &vt100::Screen) -> bool {
+    screen
+        .contents()
+        .lines()
+        .rev()
+        .take(VISIBLE_TAIL_LINES)
+        .any(|line| {
+            let line = normalized_line(line)
+                .trim_start_matches(['•', '!', ' ', '●'])
+                .to_lowercase();
+            line.starts_with("you've hit your usage limit")
+                || line.starts_with("you’ve hit your usage limit")
+                || line.starts_with("you've hit your limit")
+                || line.starts_with("usage limit reached")
+        })
+}
+
 fn infer_screen(program: Program, screen: &vt100::Screen) -> Option<StatusState> {
+    if program != Program::Shell && quota_screen(screen) {
+        return Some(StatusState::Blocked);
+    }
     let contents = screen.contents();
     let lines: Vec<&str> = contents
         .lines()
@@ -262,6 +290,21 @@ fn cursor_has_prompt(screen: &vt100::Screen, marker: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quota_detection_uses_current_screen_and_never_marks_shell_output() {
+        let mut tracker = StatusTracker::new(Program::Codex, 24, 80, 0);
+        tracker.output("You've hit your usage limit. Try again later.\r\n› ", 1);
+        tracker.refresh(2);
+        assert!(tracker.rate_limited());
+        assert_eq!(tracker.status().state, StatusState::Blocked);
+        tracker.output("\x1b[2J\x1b[H› ", 3);
+        tracker.refresh(4);
+        assert!(!tracker.rate_limited());
+        let mut shell = StatusTracker::new(Program::Shell, 24, 80, 0);
+        shell.output("You've hit your usage limit", 1);
+        assert!(!shell.rate_limited());
+    }
 
     const APPROVAL: &str = "\x1b[2J\x1b[HWould you like to run the following command?\r\n$ pwd\r\n› 1. Yes, proceed (y)\r\n  2. No, and tell Codex what to do differently (esc)\r\nPress enter to confirm or esc to cancel";
     const QUESTION: &str = "\x1b[2J\x1b[HQuestion 1/1 (1 unanswered)\r\nChoose a format.\r\n› 1. Plain text\r\n  2. Markdown\r\nenter to submit answer | esc to interrupt";

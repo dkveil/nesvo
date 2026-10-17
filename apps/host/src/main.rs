@@ -1,4 +1,6 @@
+mod git;
 mod groups;
+mod jobs;
 mod launchers;
 mod process;
 mod protocol;
@@ -216,6 +218,7 @@ async fn main() -> Result<()> {
     )));
     let (event_tx, event_rx) = mpsc::channel(128);
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
+    tokio::spawn(jobs::run(state.clone(), event_tx.clone()));
     if let Some(command) = codex_probe {
         let state = state.clone();
         tokio::spawn(async move {
