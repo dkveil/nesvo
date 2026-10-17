@@ -134,6 +134,14 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         Event::Mouse(mouse) => {
             let geometry = ui::geometry(area, app);
             if app.dialog.is_none() && geometry.review.contains((mouse.column, mouse.row).into()) {
+                if !matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(MouseButton::Left)
+                        | MouseEventKind::ScrollUp
+                        | MouseEventKind::ScrollDown
+                ) {
+                    return outcome;
+                }
                 app.review.focused = true;
                 app.mode = Mode::Navigate;
                 if matches!(
@@ -346,36 +354,24 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             app.selected = index;
             if let Some(row) = app.selected_row() {
                 match row.kind {
-                    RowKind::Session(id) => outcome.commands.extend(app.open_session(&id)),
-                    RowKind::Group(id) => toggle_group(app, id),
+                    RowKind::Session(id) => outcome.commands.extend(app.activate_session(&id)),
+                    RowKind::Group(id) => {
+                        app.mode = Mode::Navigate;
+                        toggle_group(app, id);
+                    }
                     RowKind::Root => {}
                 }
             }
-            app.mode = Mode::Navigate;
         }
         Action::FocusPane(index) => {
             app.focused = index;
-            if let Some(id) = app.panes[index].clone()
-                && let Some(selected) = app
-                    .tree()
-                    .iter()
-                    .position(|row| row.kind == RowKind::Session(id.clone()))
-            {
-                app.selected = selected;
-                outcome.commands.extend(app.open_session(&id));
+            if let Some(id) = app.panes[index].clone() {
+                outcome.commands.extend(app.activate_session(&id));
             }
-            app.mode = Mode::Navigate;
         }
         Action::FocusTab(index) => {
             if let Some(id) = app.tabs.get(index).cloned() {
-                if let Some(selected) = app
-                    .tree()
-                    .iter()
-                    .position(|row| row.kind == RowKind::Session(id.clone()))
-                {
-                    app.selected = selected;
-                }
-                outcome.commands.extend(app.open_session(&id));
+                outcome.commands.extend(app.activate_session(&id));
             }
         }
         Action::MenuChoice(index) => menu_choice(app, index, outcome),
@@ -1782,7 +1778,7 @@ mod tests {
         assert_eq!(app.active_id(), Some("first"));
         assert_eq!(app.tabs, ["first", "second"]);
         assert!(
-            !switch
+            switch
                 .commands
                 .iter()
                 .any(|c| c["type"] == "acquireControl")
@@ -1803,7 +1799,7 @@ mod tests {
     }
 
     #[test]
-    fn z_toggles_fullscreen_from_navigation_and_sidebar_click_keeps_navigation() {
+    fn z_toggles_fullscreen_and_sidebar_click_requests_input_without_takeover() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
             {"id":"first","name":"First","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
@@ -1849,10 +1845,16 @@ mod tests {
         assert!(app.mode == Mode::Navigate);
         assert_eq!(app.active_id(), Some("second"));
         assert!(
+            row_click
+                .commands
+                .iter()
+                .any(|c| c["type"] == "acquireControl" && c["takeOver"] == false)
+        );
+        assert!(
             !row_click
                 .commands
                 .iter()
-                .any(|command| command["type"] == "input" || command["type"] == "acquireControl")
+                .any(|command| command["type"] == "input")
         );
         assert!(
             click(&mut app, area, Action::ToggleFullscreen)

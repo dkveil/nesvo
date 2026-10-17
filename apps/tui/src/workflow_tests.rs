@@ -202,3 +202,62 @@ fn diff_refresh_waits_for_previous_response_and_pauses_when_hidden() {
     app.review.visible = false;
     assert!(app.auto_refresh_diff().is_none());
 }
+
+#[test]
+fn session_click_and_passive_mouse_events_preserve_input() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut app = app();
+    app.fullscreen = false;
+    app.event(json!({"type":"control","sessionId":"a","controllerId":1,"cols":80,"rows":24,"leaseId":"owned"})).unwrap();
+    assert!(app.mode == Mode::Input);
+    let area = Rect::new(0, 0, 150, 44);
+    let pane = ui::geometry(area, &app).panes[0];
+    let click = controller::event(
+        &mut app,
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: pane.x + 2,
+            row: pane.y + 2,
+            modifiers: KeyModifiers::NONE,
+        }),
+        area,
+    );
+    assert!(app.mode == Mode::Input);
+    assert!(!click.commands.iter().any(|c| c["type"] == "input"
+        || c["type"] == "releaseControl"
+        || c["type"] == "acquireControl"));
+    app.request_diff();
+    app.review.focused = false;
+    let panel = ui::geometry(area, &app).review;
+    for kind in [
+        MouseEventKind::Moved,
+        MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::Drag(MouseButton::Left),
+    ] {
+        controller::event(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind,
+                column: panel.x + 1,
+                row: panel.y + 1,
+                modifiers: KeyModifiers::NONE,
+            }),
+            area,
+        );
+        assert!(app.mode == Mode::Input);
+        assert!(!app.review.focused);
+    }
+    let request = app.review.request_id.clone().unwrap();
+    app.event(json!({"type":"diff","sessionId":"a","requestId":request,"review":{"files":[],"truncated":false}})).unwrap();
+    app.event(json!({"type":"control","sessionId":"a","controllerId":1,"cols":90,"rows":30,"leaseId":"owned"})).unwrap();
+    assert!(app.mode == Mode::Input);
+    app.event(json!({"type":"sessions","revision":2,"groups":[],"sessions":[
+        {"id":"a","name":"Renamed while typing","cwd":"/repo","cols":90,"rows":30,"running":true,"groupId":null,"controllerId":1}
+    ]})).unwrap();
+    assert!(app.mode == Mode::Input);
+    assert!(app.owns("a"));
+    // Real ownership loss must still stop terminal input.
+    app.event(json!({"type":"control","sessionId":"a","controllerId":2,"cols":90,"rows":30}))
+        .unwrap();
+    assert!(app.mode == Mode::Navigate);
+}

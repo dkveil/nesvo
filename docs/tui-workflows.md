@@ -24,7 +24,7 @@ F4 opens Git review directly from terminal input as well as navigation; F4 or Es
 | `H`                       | Replay onboarding                                      |
 | `w` when offered          | Confirm arming or disabling quota wake                 |
 
-Search highlights preview sessions without activating another tab. Enter confirms the result. Snapshots preserve selection by identity. The sidebar retains its existing immediate preview navigation. Modals isolate keyboard and mouse focus. Settings previews the workspace and offers Ultraviolet, Graphite, Ocean, Sage, Amber and Rose.
+Search highlights preview sessions without activating another tab. Enter confirms the result. Snapshots preserve selection by identity. Sidebar arrows retain immediate preview navigation. Clicking a session row, tab or terminal explicitly enters that session, acquiring control only if it is free. Clicking an already controlled terminal preserves typing mode. Passive mouse movement over review never changes keyboard focus. Modals isolate keyboard and mouse focus. Settings previews the workspace and offers Ultraviolet, Graphite, Ocean, Sage, Amber and Rose.
 
 ## Git review
 
