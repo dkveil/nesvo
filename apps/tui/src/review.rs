@@ -29,6 +29,8 @@ pub struct FileDiff {
 }
 #[derive(Default)]
 pub struct ReviewState {
+    pub return_to_input: bool,
+    pub last_requested: Option<std::time::Instant>,
     pub visible: bool,
     pub focused: bool,
     pub expanded: bool,
@@ -149,7 +151,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Rect::new(files.x, files.y + offset as u16, files.width, 1),
         );
     }
-    let message = if state.request_id.is_some() {
+    let message = if state.request_id.is_some() && state.data.files.is_empty() {
         Some("Loading changes…")
     } else if let Some(error) = &state.error {
         Some(error.as_str())

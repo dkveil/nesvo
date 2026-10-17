@@ -8,7 +8,7 @@ For an isolated test, build with `cargo build --workspace --target-dir target/ve
 
 ## Keyboard and focus
 
-These shortcuts apply in navigation mode. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K` and Escape, belongs to the program while typing.
+F4 opens Git review directly from terminal input as well as navigation; F4 or Escape closes it and restores input when opened from a terminal. The session sidebar is hidden during review. Other shortcuts apply in navigation mode. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K` and Escape, belongs to the program while typing.
 
 | Key                       | Action                                                 |
 | ------------------------- | ------------------------------------------------------ |
@@ -17,7 +17,7 @@ These shortcuts apply in navigation mode. `Ctrl+Q` returns from terminal input t
 | `Ctrl+K`                  | Open expanded palette                                  |
 | `Tab` in expanded palette | All, sessions, groups, commands                        |
 | Arrows / Enter / Escape   | Highlight / confirm / dismiss                          |
-| `D`                       | Open or close Git changes                              |
+| `F4`                      | Open or close Git changes                              |
 | `f`                       | Select status filters; empty selection means all       |
 | `n`, then `F2`            | New session and advanced launch options                |
 | `S`                       | Scheduled sessions; refresh or cancel a pending launch |
@@ -28,9 +28,11 @@ Search highlights preview sessions without activating another tab. Enter confirm
 
 ## Git review
 
-`D` opens changes from the active session's repository on the host. The dock becomes a full workspace review on narrow screens. `e` expands review; `s` switches side-by-side when at least 100 columns are available. Up/Down selects files, Left/Right selects a hunk, Space folds that hunk, Page Up/Down scrolls, `c` switches scope, `r` refreshes, Tab changes focus and Escape closes.
+`F4` opens changes from the active session's repository on the host. The dock becomes a full workspace review on narrow screens. `e` expands review; `s` switches side-by-side when at least 100 columns are available. Up/Down selects files, Left/Right selects a hunk, Space folds that hunk, Page Up/Down scrolls, `c` switches scope, `r` refreshes, Tab changes focus and Escape closes.
 
 Scopes are explicitly **unstaged**, **staged**, or **untracked**, not an inferred agent turn. Rename, deletion, additions, binary indicators and a clean repository are handled. File statistics describe the included patch and can be partial. Limits are 128 files, 8 KiB per patch, 24 KiB of total raw patches, and a serialized response below the wire limit of 64 KiB. Truncated results are labelled. Git commands time out after 10 seconds; unusually slow repositories can return an error. Non-UTF-8 filenames are not supported by the JSON path representation.
+
+The visible review automatically refreshes every three seconds when no request is in flight. Refresh pauses behind dialogs and overlays. `r` still requests an immediate refresh.
 
 Review is read-only. Git runs asynchronously outside the host state lock, with argument arrays and literal pathspecs. Refresh retains the selected path and review position when possible. There is no stage, discard, commit or agent-turn snapshot operation.
 

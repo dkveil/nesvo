@@ -873,8 +873,28 @@ impl App {
         Some(json!({"type":"input","sessionId":id,"leaseId":self.leases.get(&id),"data":data}))
     }
 
+    pub fn auto_refresh_diff(&mut self) -> Option<Value> {
+        if self.connected
+            && self.review.visible
+            && !crate::ui::immersive(self)
+            && self.dialog.is_none()
+            && self.overlay.is_none()
+            && self.review.request_id.is_none()
+            && self.capabilities.as_ref().is_some_and(|caps| caps.git_diff)
+            && self
+                .review
+                .last_requested
+                .is_some_and(|at| at.elapsed() >= std::time::Duration::from_secs(3))
+        {
+            self.request_diff()
+        } else {
+            None
+        }
+    }
+
     pub fn request_diff(&mut self) -> Option<Value> {
         let id = self.active_id()?.to_owned();
+        self.review.last_requested = Some(std::time::Instant::now());
         self.review.visible = true;
         self.review.error = None;
         if !self.capabilities.as_ref().is_some_and(|caps| caps.git_diff) {

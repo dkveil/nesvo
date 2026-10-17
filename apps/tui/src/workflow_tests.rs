@@ -154,3 +154,51 @@ fn real_renderer_handles_review_and_modals_at_required_sizes() {
     let result = key(&mut app, KeyCode::Char('D'));
     assert!(!result.commands.iter().any(|c| c["type"] == "getDiff"));
 }
+
+#[test]
+fn f4_reviews_without_sidebar_and_restores_terminal_input() {
+    let mut app = app();
+    app.fullscreen = true;
+    app.mode = Mode::Input;
+    let result = key(&mut app, KeyCode::F(4));
+    assert!(result.commands.iter().any(|c| c["type"] == "getDiff"));
+    assert!(app.review.visible && app.review.focused);
+    let layout = ui::geometry(Rect::new(0, 0, 150, 44), &app);
+    assert_eq!(layout.tree.width, 0);
+    assert!(layout.review.width > 0);
+    key(&mut app, KeyCode::Esc);
+    assert!(!app.review.visible);
+    assert!(app.mode == Mode::Input);
+    key(&mut app, KeyCode::F(4));
+    key(&mut app, KeyCode::F(4));
+    assert!(app.mode == Mode::Input && !app.review.visible);
+    app.mode = Mode::Navigate;
+    key(&mut app, KeyCode::Char('D'));
+    assert!(!app.review.visible);
+    app.dialog = Some(Dialog::Help);
+    key(&mut app, KeyCode::F(4));
+    assert!(!app.review.visible);
+}
+
+#[test]
+fn diff_refresh_waits_for_previous_response_and_pauses_when_hidden() {
+    let mut app = app();
+    app.connected = true;
+    app.request_diff();
+    app.review.last_requested = Some(std::time::Instant::now() - std::time::Duration::from_secs(4));
+    assert!(app.auto_refresh_diff().is_none());
+    app.review.accept(data());
+    app.review.scroll = 7;
+    app.review.toggle_hunk();
+    app.dialog = Some(Dialog::Help);
+    assert!(app.auto_refresh_diff().is_none());
+    app.dialog = None;
+    assert!(app.auto_refresh_diff().is_some());
+    app.review.accept(data());
+    assert_eq!(app.review.scroll, 7);
+    assert!(!app.review.folded.is_empty());
+    assert!(app.auto_refresh_diff().is_none());
+    app.review.last_requested = Some(std::time::Instant::now() - std::time::Duration::from_secs(4));
+    app.review.visible = false;
+    assert!(app.auto_refresh_diff().is_none());
+}

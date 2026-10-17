@@ -175,6 +175,9 @@ pub fn run(
                 break;
             }
         }
+        if let Some(command) = app.auto_refresh_diff() {
+            send_or_disconnect(&mut app, connection, vec![command]);
+        }
         if !app.connected {
             let started = *reconnect_started.get_or_insert_with(Instant::now);
             if started.elapsed() >= Duration::from_secs(20) {

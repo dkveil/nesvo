@@ -53,6 +53,8 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 });
             } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
+            } else if key.code == KeyCode::F(4) && key.modifiers.is_empty() {
+                toggle_review(app, &mut outcome);
             } else if app.mode == Mode::Input {
                 let was_scrolled = app
                     .active_terminal()
@@ -281,7 +283,14 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             app.mode = Mode::Navigate;
             navigation_key(
                 app,
-                KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
+                KeyEvent::new(
+                    if key == 'D' {
+                        KeyCode::F(4)
+                    } else {
+                        KeyCode::Char(key)
+                    },
+                    KeyModifiers::NONE,
+                ),
                 area,
                 outcome,
             );
@@ -950,7 +959,14 @@ fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
         }
         crate::palette::Target::Command(key) => navigation_key(
             app,
-            KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
+            KeyEvent::new(
+                if key == 'D' {
+                    KeyCode::F(4)
+                } else {
+                    KeyCode::Char(key)
+                },
+                KeyModifiers::NONE,
+            ),
             Rect::new(0, 0, 80, 24),
             outcome,
         ),
@@ -1026,17 +1042,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             app.overlay = Some(crate::toolbox::Overlay::Schedules(0));
             outcome.commands.push(json!({"type":"listSchedules"}));
         }
-        KeyCode::Char('D') => {
-            if app.review.visible {
-                app.review.visible = false;
-                app.review.focused = false;
-            } else {
-                app.review.focused = true;
-                if let Some(command) = app.request_diff() {
-                    outcome.commands.push(command);
-                }
-            }
-        }
+        KeyCode::F(4) => toggle_review(app, outcome),
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,
         KeyCode::Char('z') => app.fullscreen = !app.fullscreen,
@@ -1256,12 +1262,34 @@ fn close_selected(app: &mut App) {
     });
 }
 
+fn toggle_review(app: &mut App, outcome: &mut Outcome) {
+    if app.review.visible {
+        app.review.visible = false;
+        app.review.focused = false;
+        if app.review.return_to_input {
+            app.mode = Mode::Input;
+        }
+    } else {
+        app.review.return_to_input = app.mode == Mode::Input;
+        app.review.focused = true;
+        if let Some(command) = app.request_diff() {
+            outcome.commands.push(command);
+        }
+        if app.review.visible {
+            app.mode = Mode::Navigate;
+        }
+    }
+}
+
 fn review_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     let review = &mut app.review;
     match key.code {
-        KeyCode::Esc | KeyCode::Char('D') => {
+        KeyCode::Esc => {
             review.visible = false;
             review.focused = false;
+            if review.return_to_input {
+                app.mode = Mode::Input;
+            }
         }
         KeyCode::Tab => review.focused = false,
         KeyCode::Up => {

@@ -84,7 +84,14 @@ pub fn results(app: &App, query: &str) -> Vec<ResultRow> {
                 results.push(ResultRow {
                     target: Target::Command(key),
                     title: title.into(),
-                    context: format!("Command · {key}"),
+                    context: format!(
+                        "Command · {}",
+                        if key == 'D' {
+                            "F4".to_owned()
+                        } else {
+                            key.to_string()
+                        }
+                    ),
                 });
             }
         }

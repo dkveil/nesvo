@@ -83,7 +83,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         Constraint::Length(1),
     ])
     .areas(area);
-    let sidebar = if immersive || area.width < 65 {
+    let sidebar = if immersive || app.review.visible || area.width < 65 {
         0
     } else {
         27.min(area.width / 3)
@@ -226,14 +226,14 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
     {
         return (
             " QUOTA ",
-            " w configure wake after reset · D diff · f filters · S schedules",
+            " w configure wake after reset · F4 diff · f filters · S schedules",
         );
     }
     match app.mode {
         Mode::Input => (" SESSION ", " Ctrl+Q navigation · Esc session · F1 menu"),
         Mode::Navigate => (
             " NAVIGATION ",
-            " Enter open · n new · / search · D diff · f filters · S schedule · ? help",
+            " Enter open · n new · / search · F4 diff · f filters · S schedule · ? help",
         ),
     }
 }
@@ -1188,7 +1188,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     "~ status: screen inference; open/quiet: I/O.\n\n",
                     "↑/↓ or j/k   Select and preview · Enter opens / expands\n",
                     "/ search · F2 expand · Ctrl+K palette (navigation)\n",
-                    "D diff · f status filters · S schedules · H onboarding\n",
+                    "F4 diff · f status filters · S schedules · H onboarding\n",
                     "New session F2: worktree, prompt, start time\n",
                     "i / t / x    Type / take over (confirm) / release\n",
                     "n / g        New session / group (choose parent)\n",
