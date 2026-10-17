@@ -108,6 +108,25 @@ pub fn for_app(size: Rect, app: &App) -> Geometry {
     }
 }
 
+pub fn category_areas(size: Rect, app: &App) -> Vec<(usize, Rect)> {
+    if !app.palette_expanded {
+        return vec![];
+    }
+    let layout = for_app(size, app);
+    let mut x = layout.input.x;
+    crate::palette::CATEGORIES
+        .iter()
+        .enumerate()
+        .filter_map(|(index, label)| {
+            let width = label.len() as u16 + 4;
+            let target = Rect::new(x, layout.input.y + 2, width, 1);
+            x += width + 1;
+            (target.right() <= layout.input.right() && target.bottom() <= layout.panel.bottom())
+                .then_some((index, target))
+        })
+        .collect()
+}
+
 pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     let layout = for_app(frame.area(), app);
     frame.render_widget(Clear, layout.panel);
@@ -164,21 +183,24 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
         .style(Style::default().bg(crate::theme::BACKGROUND).fg(TEXT)),
         layout.input,
     );
-    let category = if app.palette_expanded {
-        crate::palette::CATEGORIES[app.palette_category]
-    } else {
-        "F2 expand"
-    };
-    if layout.panel.height > 4 && !inline {
+    for (index, target) in category_areas(frame.area(), app) {
+        let selected = index == app.palette_category;
         frame.render_widget(
-            Paragraph::new(format!(
-                "{category}   ·   {}   ·   Tab categories",
-                crate::model::search_scope(query).0.label()
-            ))
-            .style(Style::default().fg(MUTED)),
-            Rect::new(layout.input.x, layout.input.y + 2, layout.input.width, 1),
+            Paragraph::new(format!(" {} ", crate::palette::CATEGORIES[index]))
+                .centered()
+                .style(
+                    Style::default()
+                        .fg(if selected { TEXT } else { MUTED })
+                        .bg(if selected {
+                            app.theme.selection()
+                        } else {
+                            crate::theme::BACKGROUND
+                        }),
+                ),
+            target,
         );
     }
+    let scope_label = crate::model::search_scope(query).0.label();
     let matches = app.palette_results(query);
     let row_height = row_height(app, frame.area());
     let start = offset(selected, layout.results.height / row_height);
@@ -189,6 +211,19 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
         .take((layout.results.height / row_height) as usize)
     {
         let active = index == selected;
+        frame.render_widget(
+            Block::default().style(Style::default().bg(if active {
+                app.theme.selection()
+            } else {
+                SURFACE
+            })),
+            Rect::new(
+                layout.results.x,
+                layout.results.y + (index - start) as u16 * row_height,
+                layout.results.width,
+                row_height,
+            ),
+        );
         let metadata_width = 0;
         let name_width = layout.results.width.saturating_sub(metadata_width + 3) as usize;
         let name = elide(&result.title, name_width);
@@ -282,9 +317,9 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     }
     frame.render_widget(
         Paragraph::new(if app.palette_expanded {
-            "↑↓ move · Enter open · Esc close · @ agents $ terminals ! attention"
+            format!("↑↓ move · Enter open · Tab filter · Esc close · {scope_label}")
         } else {
-            "Enter open · F2 expand"
+            "Enter open · F2 expand".to_owned()
         })
         .style(Style::default().fg(MUTED)),
         layout.footer,
@@ -312,6 +347,23 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::json;
+
+    #[test]
+    fn selection_covers_both_rows_including_detail_indent() {
+        let mut app = App::new(1);
+        app.palette_expanded = true;
+        let mut terminal = Terminal::new(TestBackend::new(100, 32)).unwrap();
+        terminal.draw(|f| render(f, &app, "", 0)).unwrap();
+        let layout = for_app(Rect::new(0, 0, 100, 32), &app);
+        for y in layout.results.y..layout.results.y + 2 {
+            for x in layout.results.x..layout.results.right() {
+                assert_eq!(
+                    terminal.backend().buffer()[(x, y)].bg,
+                    app.theme.selection()
+                );
+            }
+        }
+    }
 
     #[test]
     fn palette_previews_selected_terminal_and_fits_small_screens() {

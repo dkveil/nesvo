@@ -386,6 +386,12 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
                 *selected = index;
             }
         }
+        Action::PaletteCategory(index) => {
+            app.palette_category = index;
+            if let Some(Dialog::QuickSwitch { selected, .. }) = &mut app.dialog {
+                *selected = 0;
+            }
+        }
         Action::QuickChoice(index) => {
             if let Some(Dialog::QuickSwitch { selected, .. }) = &mut app.dialog {
                 *selected = index;
@@ -1445,6 +1451,25 @@ mod tests {
             }),
             area,
         )
+    }
+
+    #[test]
+    fn palette_category_buttons_preserve_query_and_reset_selection() {
+        let mut app = App::new(1);
+        app.palette_expanded = true;
+        app.dialog = Some(Dialog::QuickSwitch {
+            query: "test".into(),
+            selected: 9,
+        });
+        click(
+            &mut app,
+            Rect::new(0, 0, 80, 24),
+            Action::PaletteCategory(2),
+        );
+        assert_eq!(app.palette_category, 2);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::QuickSwitch { query, selected: 0 }) if query == "test")
+        );
     }
 
     #[test]

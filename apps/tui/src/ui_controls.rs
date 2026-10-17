@@ -36,6 +36,7 @@ pub enum Action {
     DirectoryChoice(usize),
     MoveChoice(usize),
     QuickChoice(usize),
+    PaletteCategory(usize),
     FocusSearch,
     OpenRow(usize),
     FocusTab(usize),
@@ -136,6 +137,14 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let tree = ui::geometry(area, app).tree;
     if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
         let layout = ui_palette::for_app(area, app);
+        for (index, target) in ui_palette::category_areas(area, app) {
+            output.push(Control {
+                area: target,
+                label: None,
+                action: Action::PaletteCategory(index),
+                enabled: true,
+            });
+        }
         let count = app.palette_results(query).len();
         let row_height = ui_palette::row_height(app, area);
         let offset = ui_palette::offset(*selected, layout.results.height / row_height);
