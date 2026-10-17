@@ -38,6 +38,8 @@ cargo build --manifest-path apps/tui/Cargo.toml --release --locked
 
 The executable is `target/release/nesvo.exe` on Windows or `target/release/nesvo` on macOS/Linux. Building requires Rust 1.88 or newer. Running the executable requires neither Node nor Xcode. CI builds and tests these platforms; it does not replace manual testing in a particular terminal emulator.
 
+See [review, scheduling, worktree and palette workflows](../../docs/tui-workflows.md) for the new shortcuts, host requirements, limits and verified previews.
+
 ## Keyboard
 
 The start menu initially observes the first session without taking control. Entering the workspace, explicitly opening an available session, or creating one acquires its free control lease automatically and makes it ready for typing. This also completes Windows terminal startup negotiation. If another client controls the session, the view remains read-only; `t` opens a takeover confirmation. No navigation action silently takes control from another device.
