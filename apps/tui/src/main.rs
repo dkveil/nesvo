@@ -18,6 +18,7 @@ mod ui;
 mod ui_controls;
 mod ui_launch;
 mod ui_palette;
+mod workspace_layout;
 
 use anyhow::{Context, Result, ensure};
 use clap::Parser;

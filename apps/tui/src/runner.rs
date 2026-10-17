@@ -125,6 +125,16 @@ pub fn run(
         connection,
         vec![json!({"type":"getCapabilities"})],
     );
+    let layout_path = preferences_path.as_ref().and_then(|path| {
+        Pairing::load(pairing_path, override_url)
+            .ok()
+            .map(|pairing| path.with_file_name(format!("workspace-{}.json", pairing.local_id())))
+    });
+    let mut saved_layout = layout_path
+        .as_deref()
+        .and_then(|path| crate::workspace_layout::WorkspaceLayout::load(path).ok());
+    let mut layout_loaded = false;
+    let mut layout_saved_at = Instant::now();
     let mut requested_sizes = HashMap::new();
     let mut last_draw = Instant::now() - Duration::from_secs(1);
     let mut dirty = true;
@@ -136,6 +146,19 @@ pub fn run(
     let mut resume_session: Option<String> = None;
     loop {
         let phase = Instant::now();
+        if layout_loaded && app.connected && layout_saved_at.elapsed() >= Duration::from_secs(1) {
+            let current = crate::workspace_layout::WorkspaceLayout::capture(&app);
+            if saved_layout.as_ref() != Some(&current) {
+                if let Some(path) = &layout_path
+                    && current.save(path).is_err()
+                {
+                    app.notice = "Could not save the workspace layout.".into();
+                    dirty = true;
+                }
+                saved_layout = Some(current);
+            }
+            layout_saved_at = Instant::now();
+        }
         // Bound each drain so high-output sessions cannot starve the keyboard.
         for _ in 0..128 {
             match connection.events.try_recv() {
@@ -146,6 +169,13 @@ pub fn run(
                     let is_snapshot = message["type"] == "sessions";
                     let commands = app.event(message).context("Invalid host event")?;
                     send_or_disconnect(&mut app, connection, commands);
+                    if is_snapshot && !layout_loaded && !app.sessions.is_empty() {
+                        if let Some(layout) = &saved_layout {
+                            let commands = layout.apply(&mut app);
+                            send_or_disconnect(&mut app, connection, commands);
+                        }
+                        layout_loaded = true;
+                    }
                     if is_snapshot
                         && app.connected
                         && let Some(id) =
@@ -273,6 +303,12 @@ pub fn run(
             }
             let outcome = controller::event(&mut app, ev, area);
             if outcome.quit {
+                if layout_loaded
+                    && app.connected
+                    && let Some(path) = &layout_path
+                {
+                    let _ = crate::workspace_layout::WorkspaceLayout::capture(&app).save(path);
+                }
                 break;
             }
             send_or_disconnect(&mut app, connection, outcome.commands);

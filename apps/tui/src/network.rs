@@ -34,6 +34,13 @@ impl Pairing {
         Ok(pairing)
     }
 
+    pub fn local_id(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        self.key.hash(&mut hash);
+        format!("{:016x}", hash.finish())
+    }
+
     fn validate(&self) -> Result<()> {
         ensure!(self.version == 1, "Unsupported pairing format");
         let url = url::Url::parse(&self.url).context("Invalid host URL")?;
