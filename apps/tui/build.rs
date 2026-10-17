@@ -19,6 +19,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("WARNING", "warning"),
         ("DANGER", "danger"),
         ("SELECTION", "selection"),
+        ("PROGRAM_TERMINAL", "programTerminal"),
+        ("PROGRAM_CLAUDE", "programClaude"),
+        ("PROGRAM_GEMINI", "programGemini"),
+        ("PROGRAM_CODEX", "programCodex"),
     ] {
         let color = tokens["colors"][token]
             .as_str()

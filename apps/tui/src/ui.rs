@@ -788,10 +788,10 @@ pub(crate) fn status_color(status: Option<&Status>, theme: Theme) -> Color {
 
 pub(crate) fn program_color(program: Program) -> Color {
     match program {
-        Program::Shell => MUTED,
-        Program::Claude => Color::Rgb(230, 145, 113),
-        Program::Gemini => Color::Rgb(139, 175, 226),
-        Program::Codex => Color::Rgb(139, 201, 203),
+        Program::Shell => crate::theme::PROGRAM_TERMINAL,
+        Program::Claude => crate::theme::PROGRAM_CLAUDE,
+        Program::Gemini => crate::theme::PROGRAM_GEMINI,
+        Program::Codex => crate::theme::PROGRAM_CODEX,
     }
 }
 
