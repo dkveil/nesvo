@@ -221,6 +221,7 @@ async fn main() -> Result<()> {
 
     let metadata = storage::MetadataStore::open(&pairing_dir.join("metadata.sqlite3"))?;
     let launchers = launchers::Launchers::discover();
+    let claude_installed = launchers.available(launchers::Program::Claude);
     let codex_probe = launchers.probe_command(launchers::Program::Codex);
     let state = Arc::new(Mutex::new(sessions::State::new(
         workspace.clone(),
@@ -231,6 +232,19 @@ async fn main() -> Result<()> {
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
     tokio::spawn(jobs::run(state.clone(), event_tx.clone()));
     tokio::spawn(notifications::run(state.clone()));
+    if claude_installed {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                let windows = usage::read_claude_limits().await;
+                state
+                    .lock()
+                    .unwrap()
+                    .update_provider_limits(launchers::Program::Claude, windows);
+                tokio::time::sleep(Duration::from_secs(15)).await;
+            }
+        });
+    }
     if let Some(command) = codex_probe {
         let state = state.clone();
         tokio::spawn(async move {

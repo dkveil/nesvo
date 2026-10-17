@@ -122,10 +122,14 @@ impl State {
 
     pub fn update_codex_limits(&mut self, windows: Vec<LimitWindow>) {
         self.limits_read_at = chrono::Utc::now().timestamp();
+        self.update_provider_limits(Program::Codex, windows);
+    }
+
+    pub fn update_provider_limits(&mut self, program: Program, windows: Vec<LimitWindow>) {
         let Some(index) = self
             .provider_limits
             .iter()
-            .position(|limit| limit.id == Program::Codex)
+            .position(|limit| limit.id == program)
         else {
             return;
         };

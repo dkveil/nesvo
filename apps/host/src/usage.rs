@@ -66,6 +66,59 @@ pub fn parse_codex_limits(response: &Value) -> Option<Vec<LimitWindow>> {
     (!windows.is_empty()).then_some(windows)
 }
 
+/// Local status-line cache contains quota windows only, never credentials.
+pub fn parse_claude_limits(value: &Value, now: i64) -> Vec<LimitWindow> {
+    let Some(at) = value["at"].as_i64() else {
+        return vec![];
+    };
+    if at > now + 60 || now.saturating_sub(at) > 900 {
+        return vec![];
+    }
+    [("five_hour", 300), ("seven_day", 10080)]
+        .into_iter()
+        .filter_map(|(key, duration_mins)| {
+            let window = &value["rate_limits"][key];
+            let used = window["used_percentage"].as_f64()?;
+            let reset = window["resets_at"].as_i64()?;
+            if !used.is_finite() || !(0.0..=100.0).contains(&used) || reset <= now {
+                return None;
+            }
+            Some(LimitWindow {
+                used_percent: used.ceil() as u8,
+                duration_mins,
+                resets_at: Some(reset),
+            })
+        })
+        .collect()
+}
+
+pub async fn read_claude_limits() -> Vec<LimitWindow> {
+    let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(|p| PathBuf::from(p).join(".claude"))
+        });
+    let Some(dir) = dir else {
+        return vec![];
+    };
+    let path = dir.join(".rate-limits.json");
+    let Ok(meta) = tokio::fs::metadata(&path).await else {
+        return vec![];
+    };
+    if meta.len() > 16_384 {
+        return vec![];
+    }
+    let Ok(bytes) = tokio::fs::read(path).await else {
+        return vec![];
+    };
+    let Ok(value) = serde_json::from_slice(&bytes) else {
+        return vec![];
+    };
+    parse_claude_limits(&value, chrono::Utc::now().timestamp())
+}
+
 pub async fn read_codex_limits(command: &(PathBuf, Vec<OsString>)) -> Result<Vec<LimitWindow>> {
     let mut child = Command::new(&command.0)
         .args(&command.1)
@@ -122,6 +175,16 @@ pub async fn read_codex_limits(command: &(PathBuf, Vec<OsString>)) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_cache_rejects_stale_missing_and_invalid_windows() {
+        let mut cache = json!({"at":1000,"rate_limits":{"five_hour":{"used_percentage":88.2,"resets_at":4000}}});
+        assert_eq!(parse_claude_limits(&cache, 1100)[0].used_percent, 89);
+        assert!(parse_claude_limits(&cache, 2000).is_empty());
+        cache["rate_limits"]["five_hour"]["used_percentage"] = json!(1792192800);
+        assert!(parse_claude_limits(&cache, 1100).is_empty());
+        assert!(parse_claude_limits(&json!({}), 1100).is_empty());
+    }
 
     #[test]
     fn accepts_codex_windows_and_ignores_other_accounts() {

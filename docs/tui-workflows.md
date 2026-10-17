@@ -100,3 +100,9 @@ Push delivery requires a native build with valid APNs/FCM provisioning for the e
 ## Latest verification
 
 Windows verification includes 96 TUI tests, 38 host tests, 3 wire tests, 16 mobile transport/domain tests, 17 real host/TUI/synchronization integration tests, architecture checks, formatting, Clippy, TypeScript and ESLint. A real ConPTY run verifies input ownership, Git review, palette, filters, templates/recovery dialogs, launch options, resize at 150×44, 100×32 and 80×24, and terminal restoration on exit. Host restart integration verifies persistent template identity, explicit restoration, muted-state recovery, and rejection of duplicate restoration. Browser testing covers the mobile web preview; it does not substitute for device push testing.
+
+## Claude subscription usage
+
+The host reads `CLAUDE_CONFIG_DIR/.rate-limits.json` (default `~/.claude/.rate-limits.json`) every 15 seconds, only when Claude is installed. This cache contains `{ "at": <Unix seconds>, "rate_limits": { "five_hour": { "used_percentage": 42, "resets_at": <Unix seconds> }, "seven_day": { ... } } }`. It rejects data older than 15 minutes, elapsed reset windows, invalid percentages, and oversized files. Missing data is unavailable, never zero.
+
+To produce the cache, copy `scripts/nesvo_usage_cache.py` beside your Python Claude statusline script and call `from nesvo_usage_cache import cache_usage; cache_usage(data)` after reading its stdin JSON. It preserves the existing statusline output and stores only subscription windows. Claude supplies the fields on statusline updates; an idle session may have no fresh reading. See [Claude statusline data](https://code.claude.com/docs/en/statusline). No credential reading or model requests are involved. Gemini remains unavailable until there is a verified provider source; installed providers appear in the footer with an em dash when no current reading exists.
