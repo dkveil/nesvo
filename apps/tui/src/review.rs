@@ -6,7 +6,7 @@ use crate::{
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::Style,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Clear, Paragraph},
 };
@@ -114,8 +114,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let [files, content, footer] = Layout::vertical([
+    let [files, heading, content, footer] = Layout::vertical([
         Constraint::Length((state.data.files.len() as u16).clamp(1, 5)),
+        Constraint::Length(2),
         Constraint::Min(0),
         Constraint::Length(3),
     ])
@@ -149,6 +150,31 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             ))
             .style(style),
             Rect::new(files.x, files.y + offset as u16, files.width, 1),
+        );
+    }
+    if let Some(file) = state.data.files.get(state.file) {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" {} ", file.path),
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" +{} ", file.additions),
+                    Style::default().fg(SUCCESS),
+                ),
+                Span::styled(format!(" −{}", file.deletions), Style::default().fg(DANGER)),
+                Span::styled(
+                    if file.truncated { " · partial" } else { "" },
+                    Style::default().fg(MUTED),
+                ),
+            ]))
+            .block(
+                Block::default()
+                    .borders(ratatui::widgets::Borders::BOTTOM)
+                    .border_style(Style::default().fg(BORDER)),
+            ),
+            heading,
         );
     }
     let message = if state.request_id.is_some() && state.data.files.is_empty() {
@@ -204,11 +230,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 right,
             );
         } else {
-            frame.render_widget(
-                Paragraph::new(lines.iter().map(|line| styled(line)).collect::<Vec<_>>())
-                    .scroll((state.scroll, 0)),
-                content,
-            );
+            for (offset, line) in unified_lines(file, state, app.theme.selection())
+                .into_iter()
+                .skip(state.scroll as usize)
+                .take(content.height as usize)
+                .enumerate()
+            {
+                let row = Rect::new(content.x, content.y + offset as u16, content.width, 1);
+                frame.render_widget(Block::default().style(line.style), row);
+                frame.render_widget(Paragraph::new(line), row);
+            }
         }
     }
     frame.render_widget(
@@ -226,6 +257,101 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn tint(color: Color) -> Color {
+    match (SURFACE, color) {
+        (Color::Rgb(r, g, b), Color::Rgb(cr, cg, cb)) => Color::Rgb(
+            ((r as u16 * 7 + cr as u16) / 8) as u8,
+            ((g as u16 * 7 + cg as u16) / 8) as u8,
+            ((b as u16 * 7 + cb as u16) / 8) as u8,
+        ),
+        _ => SURFACE,
+    }
+}
+
+fn unified_lines(file: &FileDiff, state: &ReviewState, selection: Color) -> Vec<Line<'static>> {
+    let mut rows = Vec::new();
+    let mut old = 0usize;
+    let mut new = 0usize;
+    let mut hunk = 0usize;
+    let mut seen = false;
+    let mut hidden = false;
+    let has_hunks = file.patch.contains("@@ ");
+    for text in file.patch.lines() {
+        if text.starts_with("@@ ") {
+            if seen {
+                hunk += 1;
+            }
+            seen = true;
+            let mut parts = text.split_whitespace().skip(1);
+            let number = |part: Option<&str>| {
+                part.and_then(|p| p.get(1..))
+                    .and_then(|p| p.split(',').next())
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .unwrap_or(0)
+            };
+            old = number(parts.next());
+            new = number(parts.next());
+            hidden = state.folded.contains(&(file.path.clone(), hunk));
+            rows.push(Line::styled(
+                format!(
+                    " {}  {}{}",
+                    if hidden { "+" } else { "−" },
+                    text,
+                    if hidden { "  folded" } else { "" }
+                ),
+                Style::default()
+                    .fg(TEXT)
+                    .bg(if hunk == state.hunk {
+                        selection
+                    } else {
+                        BORDER
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ));
+            continue;
+        }
+        if !seen {
+            if !has_hunks {
+                rows.push(Line::styled(text.to_owned(), Style::default().fg(MUTED)));
+            }
+            continue;
+        }
+        let (left, right, color, background) = match text.as_bytes().first() {
+            Some(b'-') => {
+                let n = old;
+                old += 1;
+                (n.to_string(), String::new(), DANGER, tint(DANGER))
+            }
+            Some(b'+') => {
+                let n = new;
+                new += 1;
+                (String::new(), n.to_string(), SUCCESS, tint(SUCCESS))
+            }
+            Some(b' ') => {
+                let a = old;
+                let b = new;
+                old += 1;
+                new += 1;
+                (a.to_string(), b.to_string(), TEXT, SURFACE)
+            }
+            _ => (String::new(), String::new(), MUTED, SURFACE),
+        };
+        if !hidden {
+            rows.push(
+                Line::from(vec![
+                    Span::styled(
+                        format!("{left:>5} {right:>5} │ "),
+                        Style::default().fg(MUTED),
+                    ),
+                    Span::styled(text.to_owned(), Style::default().fg(color)),
+                ])
+                .style(Style::default().bg(background)),
+            );
+        }
+    }
+    rows
+}
+
 fn styled(text: &str) -> Line<'_> {
     let color = if text.starts_with('+') {
         SUCCESS
@@ -234,12 +360,42 @@ fn styled(text: &str) -> Line<'_> {
     } else {
         TEXT
     };
-    Line::from(Span::styled(text, Style::default().fg(color)))
+    Line::from(Span::styled(text, Style::default().fg(color))).style(Style::default().bg(
+        if text.starts_with(['+', '-']) {
+            tint(color)
+        } else {
+            SURFACE
+        },
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unified_gutters_follow_edits_and_folded_hunks() {
+        let file = FileDiff { path: "a.rs".into(), status: "M".into(), patch: "diff --git a/a.rs b/a.rs\n@@ -10,2 +20,2 @@\n-old\n+new\n context\n@@ -30 +40 @@\n-next\n+last".into(), additions: 2, deletions: 2, truncated: false };
+        let mut state = ReviewState::default();
+        let text = |rows: Vec<Line<'static>>| {
+            rows.into_iter()
+                .map(|r| {
+                    r.spans
+                        .into_iter()
+                        .map(|s| s.content.into_owned())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+        };
+        let rows = text(unified_lines(&file, &state, BORDER));
+        assert!(rows[1].starts_with("   10       │ -old"));
+        assert!(rows[2].starts_with("         20 │ +new"));
+        assert!(rows[3].starts_with("   11    21 │  context"));
+        state.folded.insert(("a.rs".into(), 0));
+        let rows = text(unified_lines(&file, &state, BORDER));
+        assert!(rows[0].contains("folded"));
+        assert!(rows[2].contains("30       │ -next"));
+    }
+
     #[test]
     fn asymmetric_edits_keep_following_context_aligned() {
         let rows = aligned(&[" context", "-a", "-b", "+c", " tail"]);
