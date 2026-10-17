@@ -29,9 +29,13 @@ import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Event = {
   type: string;
+  id?: string;
+  schedules?: { id: string; name: string; state: string; result?: string }[];
+  error?: string;
   sessionId?: string;
   data?: string;
   replay?: boolean;
+  allowResponses?: boolean;
   message?: string;
   clientNonce?: string;
   requestId?: string;
@@ -77,6 +81,7 @@ class Peer {
   closed = false;
   nonce = randomBytes(32).toString('hex');
   authFrame = '';
+  attached = new Set<string>();
 
   constructor(private pairing: Pairing) {
     this.socket = new WebSocket(pairing.url);
@@ -102,8 +107,15 @@ class Peer {
           ++this.incoming,
         ) as Event;
         this.events.push(event);
+        if (event.type === 'attached' && event.sessionId) this.attached.add(event.sessionId);
         // ConPTY asks the attached terminal for its initial cursor position.
-        if (event.type === 'output' && event.data?.includes('\x1b[6n'))
+        if (
+          event.type === 'output' &&
+          event.sessionId &&
+          this.attached.has(event.sessionId) &&
+          (!event.replay || event.allowResponses) &&
+          event.data?.includes('\x1b[6n')
+        )
           this.send({ type: 'input', sessionId: event.sessionId, data: '\x1b[1;1R' });
       } catch (error) {
         this.error = error as Error;
@@ -360,6 +372,7 @@ test('cached CLI discovery and literal cwd/launcher arguments', { timeout: 12000
     mkdir(bin),
   ]);
   const unixFixture = String.raw`#!/bin/sh
+printf 'CLI_PROMPT=%s\n' "$*"
 while IFS= read -r input; do
   case "$input" in
     status-blocked*) printf '\033[2J\033[HAllow execution of [Shell]?\r\n1. Allow once\r\n2. No, suggest changes (esc)' ;;
@@ -383,7 +396,8 @@ done
     );
     await writeFile(
       join(packageDirectory, 'main.js'),
-      String.raw`process.stdin.on('data', data => {
+      String.raw`process.stdout.write('CLI_PROMPT='+JSON.stringify(process.argv.slice(2))+'\n');
+      process.stdin.on('data', data => {
         const command = data.toString();
         if (command.includes('status-blocked')) process.stdout.write('\x1b[2J\x1b[HAllow execution of [Shell]?\r\n1. Allow once\r\n2. No, suggest changes (esc)');
         else if (command.includes('status-clear')) process.stdout.write('\x1b[2J\x1b[HUnrecognized ordinary output\r\n');
@@ -566,6 +580,60 @@ done
     }
     peer.send({ type: 'close', sessionId: created.sessionId });
     await peer.next('sessions', event => event.sessions?.length === 0);
+    // One-shot schedules launch the fixture CLI without any attached controller.
+    // No model account, authentication flow, or paid provider is used by this test.
+    const scheduledPrompt = 'SCHEDULE_LITERAL & %KEEP% "quoted"';
+    peer.send({
+      type: 'scheduleSession',
+      requestId: 'schedule-run',
+      spec: { name: 'Scheduled fixture', program: 'gemini', cwd: outside, prompt: scheduledPrompt },
+      at: new Date(Date.now() + 3000).toISOString(),
+    });
+    const scheduled = await peer.next('scheduled');
+    assert.equal(scheduled.requestId, 'schedule-run');
+    const launched = await peer.next(
+      'sessions',
+      event => event.sessions?.some(session => session.name === 'Scheduled fixture') ?? false,
+    );
+    const scheduledSession = launched.sessions!.find(
+      session => session.name === 'Scheduled fixture',
+    )!;
+    assert.equal(scheduledSession.cwd, outside);
+    peer.send({ type: 'subscribe', sessionId: scheduledSession.id });
+    await peer.next('subscribed');
+    const promptOutput = await peer.output(scheduledSession.id, 'SCHEDULE_LITERAL');
+    assert.ok(promptOutput.includes('--prompt-interactive'));
+    assert.ok(promptOutput.includes('%KEEP%'));
+    peer.send({ type: 'listSchedules' });
+    const jobs = await peer.next(
+      'schedules',
+      event =>
+        event.schedules?.some(job => job.id === scheduled.id && job.state === 'started') ?? false,
+    );
+    assert.equal(jobs.schedules!.find(job => job.id === scheduled.id)!.result, scheduledSession.id);
+    peer.send({
+      type: 'getDiff',
+      sessionId: scheduledSession.id,
+      scope: 'unstaged',
+      requestId: 'not-a-repository',
+    });
+    const diff = await peer.next('diff');
+    assert.equal(diff.requestId, 'not-a-repository');
+    assert.ok(diff.error);
+    peer.send({ type: 'close', sessionId: scheduledSession.id });
+    await peer.next('sessions', event => event.sessions?.length === 0);
+    peer.send({
+      type: 'scheduleSession',
+      spec: { name: 'Cancelled fixture', program: 'gemini', prompt: 'Must not launch' },
+      at: new Date(Date.now() + 120000).toISOString(),
+    });
+    const cancelled = await peer.next('scheduled');
+    peer.send({ type: 'cancelSchedule', id: cancelled.id });
+    await peer.next(
+      'schedules',
+      event =>
+        event.schedules?.some(job => job.id === cancelled.id && job.state === 'cancelled') ?? false,
+    );
     for (const [index, cwd] of ['nested', '   '].entries()) {
       peer.send({ type: 'create', name: 'Shell', cwd, requestId: `shell-${index}` });
       const shell = await peer.next('created');
