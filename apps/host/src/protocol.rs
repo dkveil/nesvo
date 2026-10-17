@@ -39,7 +39,10 @@ pub enum Command {
     DeleteTemplate {
         id: String,
     },
-    ListRecovery,
+    ListRecovery {
+        #[serde(default)]
+        offset: usize,
+    },
     RestoreSession {
         id: String,
     },

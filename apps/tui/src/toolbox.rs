@@ -128,6 +128,13 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
                         (selected + 1).min(rows.len().saturating_sub(1)),
                     ))
                 }
+                KeyCode::Char(']') if recovery => {
+                    if let Some(offset) = app.recovery_next {
+                        outcome
+                            .commands
+                            .push(json!({"type":"listRecovery","offset":offset}));
+                    }
+                }
                 KeyCode::Char('r') => outcome
                     .commands
                     .push(json!({"type":if recovery {"listRecovery"} else {"listTemplates"}})),
@@ -324,7 +331,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     "Launch templates · host"
                 },
                 lines,
-                "↑↓ select · Enter open · x remove · r refresh · Esc close",
+                "↑↓ select · Enter open · x remove · ] next · r first · Esc close",
             )
         }
         Overlay::Shortcuts(selected, capturing) => {

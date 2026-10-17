@@ -15,6 +15,13 @@ impl MetadataStore {
             spec.prompt.len() <= 8192 && !spec.prompt.contains('\0'),
             "Invalid prompt"
         );
+        let candidate = json!({"id":"00000000000000000000000000000000","name":name,"spec":spec});
+        let mut existing = self.templates()?;
+        existing.push(candidate);
+        ensure!(
+            serde_json::to_vec(&existing)?.len() <= 48 * 1024,
+            "Template storage is full (48 KiB). Shorten a prompt or delete a template."
+        );
         self.connection.execute(
             "INSERT INTO templates(id,name,spec) VALUES(?1,?2,?3)",
             params![
@@ -59,7 +66,7 @@ impl MetadataStore {
     pub fn recoveries(&self) -> Result<Vec<Value>> {
         let mut query = self
             .connection
-            .prepare("SELECT id,spec,state FROM recovery ORDER BY rowid DESC LIMIT 128")?;
+            .prepare("SELECT id,spec,state FROM recovery ORDER BY rowid DESC")?;
         query
             .query_map([], |row| {
                 Ok((
@@ -118,5 +125,23 @@ mod tests {
         assert!(store.claim_recovery("old").is_err());
         store.finish_recovery("old", true).unwrap();
         assert!(store.recoveries().unwrap().is_empty());
+    }
+    #[test]
+    fn templates_cannot_overflow_a_wire_frame() {
+        let store = MetadataStore::open(std::path::Path::new(":memory:")).unwrap();
+        let spec = LaunchSpec {
+            prompt: "x".repeat(8192),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            store.save_template("recipe", &spec).unwrap();
+        }
+        assert!(store.save_template("overflow", &spec).is_err());
+        assert!(
+            serde_json::to_vec(&store.templates().unwrap())
+                .unwrap()
+                .len()
+                < 48 * 1024
+        );
     }
 }

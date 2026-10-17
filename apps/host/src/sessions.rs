@@ -179,7 +179,7 @@ impl State {
             },
         )
     }
-    fn recovery_event(&self) -> Result<Value> {
+    fn recovery_event(&self, offset: usize) -> Result<Value> {
         let records: Vec<_> = self
             .metadata
             .recoveries()?
@@ -190,7 +190,21 @@ impl State {
                     .contains_key(r["id"].as_str().unwrap_or_default())
             })
             .collect();
-        Ok(json!({"type":"recovery","records":records}))
+        let total = records.len();
+        let mut page = Vec::new();
+        let mut size = 0;
+        for record in records.into_iter().skip(offset) {
+            let bytes = serde_json::to_vec(&record)?.len() + 1;
+            if size + bytes > 48 * 1024 {
+                break;
+            }
+            size += bytes;
+            page.push(record);
+        }
+        let next = offset.saturating_add(page.len());
+        Ok(
+            json!({"type":"recovery","records":page,"nextOffset":if next < total {Some(next)} else {None}}),
+        )
     }
 
     pub fn list(&self) -> Value {
@@ -698,14 +712,16 @@ impl State {
                     request_id,
                 );
             }
-            Command::ListRecovery => self.respond(client_id, self.recovery_event()?, request_id),
+            Command::ListRecovery { offset } => {
+                self.respond(client_id, self.recovery_event(offset)?, request_id)
+            }
             Command::ForgetRecovery { id } => {
                 ensure!(
                     !self.sessions.contains_key(&id),
                     "Cannot forget a live session."
                 );
                 self.metadata.finish_recovery(&id, true)?;
-                self.respond(client_id, self.recovery_event()?, request_id);
+                self.respond(client_id, self.recovery_event(0)?, request_id);
             }
             Command::RestoreSession { id } => {
                 ensure!(
@@ -728,7 +744,7 @@ impl State {
                     json!({"type":"created","sessionId":new_id}),
                     request_id,
                 );
-                self.respond(client_id, self.recovery_event()?, request_id);
+                self.respond(client_id, self.recovery_event(0)?, request_id);
                 self.broadcast_list();
             }
             Command::List => self.send(client_id, self.list()),

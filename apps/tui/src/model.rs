@@ -210,6 +210,7 @@ pub struct App {
     pub recent_sessions: Vec<String>,
     pub templates: Vec<Value>,
     pub recoveries: Vec<Value>,
+    pub recovery_next: Option<u64>,
     pub panes: [Option<String>; 2],
     pub split: bool,
     pub fullscreen: bool,
@@ -257,6 +258,7 @@ impl App {
             recent_sessions: Vec::new(),
             templates: Vec::new(),
             recoveries: Vec::new(),
+            recovery_next: None,
             panes: [None, None],
             split: false,
             fullscreen: false,
@@ -780,6 +782,9 @@ impl App {
             }
             "templates" | "recovery" => {
                 let recovery = event["type"] == "recovery";
+                if recovery {
+                    self.recovery_next = event["nextOffset"].as_u64();
+                }
                 let rows = if recovery {
                     &mut self.recoveries
                 } else {
