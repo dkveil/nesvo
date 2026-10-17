@@ -47,6 +47,8 @@ pub struct Attention {
     pub kind: String,
     pub at: u64,
     pub unread: bool,
+    #[serde(default)]
+    pub source: Option<crate::status::Source>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

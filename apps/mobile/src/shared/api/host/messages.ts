@@ -95,6 +95,8 @@ function session(value: unknown): value is RecordValue {
     (value.attention == null ||
       (record(value.attention) &&
         integer(value.attention.sequence, 1) &&
+        (value.attention.source === undefined ||
+          ['activity', 'screen', 'process'].includes(String(value.attention.source))) &&
         integer(value.attention.at) &&
         typeof value.attention.unread === 'boolean' &&
         typeof value.attention.kind === 'string' &&

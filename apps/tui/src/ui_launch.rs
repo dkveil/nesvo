@@ -137,7 +137,11 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         &form.name,
         form.field == Field::Name && app.dialog_button.is_none(),
         app,
-        "Type a name…",
+        if form.program == Program::Shell {
+            "Type a name…"
+        } else {
+            "Optional — auto title from prompt / agent"
+        },
     );
     frame.render_widget(
         Paragraph::new("FOLDER").style(Style::default().fg(MUTED)),

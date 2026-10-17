@@ -593,7 +593,17 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                                     .filter(|a| a.unread && !session.muted)
                                     .map_or_else(
                                         || display_status(session).to_owned(),
-                                        |a| format!("new {}", a.kind),
+                                        |a| {
+                                            format!(
+                                                "new {}{}",
+                                                if a.source == Some(crate::status::Source::Screen) {
+                                                    "~"
+                                                } else {
+                                                    ""
+                                                },
+                                                a.kind
+                                            )
+                                        },
                                     ),
                                 Style::default().fg(status_color(status, app.theme)),
                             ),
@@ -1251,11 +1261,13 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         }
         Dialog::Help => {
             frame.render_widget(
-                Paragraph::new(concat!(
+                Paragraph::new(app.shortcuts.hints(concat!(
                     "~ status: screen inference; open/quiet: I/O.\n\n",
                     "↑/↓ or j/k   Select and preview · Enter opens / expands\n",
                     "/ search · F2 expand · Ctrl+K palette (navigation)\n",
-                    "F4 diff · f status filters · S schedules · H onboarding\n",
+                    "F4 diff · F6 previous · F7 attention · u mute\n",
+                    "F8 templates · F9 restore · f filters · S schedules\n",
+                    "Settings → k: remap global shortcuts\n",
                     "New session F2: worktree, prompt, start time\n",
                     "i / t / x    Type / take over (confirm) / release\n",
                     "n / g        New session / group (choose parent)\n",
@@ -1271,7 +1283,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                     "Esc goes to the controlled session.\n",
                     "Ctrl+C goes to the shell while typing.\n\n",
                     "Click controls or use shortcuts. Splits are local."
-                ))
+                )))
                 .wrap(Wrap { trim: false }),
                 inner,
             );

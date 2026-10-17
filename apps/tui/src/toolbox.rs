@@ -75,6 +75,10 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
             }
             let row = mouse.row.saturating_sub(panel.y + 2) as usize;
             match overlay {
+                Overlay::Shortcuts(_, false) if row < 5 => {
+                    app.overlay = Some(Overlay::Shortcuts(row, false));
+                    KeyCode::Enter
+                }
                 Overlay::Filters(_) if row < FILTERS.len() => {
                     app.overlay = Some(Overlay::Filters(row));
                     KeyCode::Char(' ')
@@ -413,7 +417,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         "Schedules run on the host; keep that computer awake.",
                         "Agent login, trust and permission prompts still apply.",
                         "",
-                        "S  Scheduled sessions   H  Reopen this guide",
+                        "F8 Templates · F9 Restore · S Scheduled · H This guide",
                         "Missing quota data is shown as unavailable.",
                     ],
                 ),
@@ -421,7 +425,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             let (title, lines) = &pages[step];
             (
                 *title,
-                lines.iter().map(|line| Line::from(*line)).collect(),
+                lines
+                    .iter()
+                    .map(|line| Line::from(app.shortcuts.hints(line)))
+                    .collect(),
                 "← Back   Enter next / finish   Esc later",
             )
         }

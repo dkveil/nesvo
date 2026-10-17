@@ -9,6 +9,7 @@ pub struct Event {
     pub kind: &'static str,
     pub at: u64,
     pub unread: bool,
+    pub source: StatusSource,
 }
 
 #[derive(Default)]
@@ -51,6 +52,11 @@ impl Attention {
             kind,
             at: status.updated_at,
             unread: true,
+            source: if limited {
+                StatusSource::Screen
+            } else {
+                status.source
+            },
         });
         true
     }

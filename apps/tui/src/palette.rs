@@ -98,7 +98,7 @@ pub fn results(app: &App, query: &str) -> Vec<ResultRow> {
                     context: format!(
                         "Command · {}",
                         if key == 'D' {
-                            "F4".to_owned()
+                            format!("F{}", app.shortcuts.keys[0])
                         } else {
                             key.to_string()
                         }

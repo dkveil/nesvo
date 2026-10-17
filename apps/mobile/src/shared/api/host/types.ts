@@ -10,6 +10,7 @@ export type SessionStatus = {
   updatedAt: number;
 };
 export type AttentionEvent = {
+  source?: SessionStatusSource;
   sequence: number;
   kind: 'question' | 'permission' | 'done' | 'failed' | 'limit';
   at: number;
