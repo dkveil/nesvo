@@ -45,7 +45,16 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     let dialog_before = app.dialog.as_ref().map(std::mem::discriminant);
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => {
-            if key.code == KeyCode::F(1) {
+            if app.dialog.is_none()
+                && (key.code == KeyCode::Char('\u{11}')
+                    || (key.modifiers.contains(KeyModifiers::CONTROL)
+                        && matches!(key.code, KeyCode::Char('q' | 'Q'))))
+            {
+                app.mode = Mode::Navigate;
+                app.review.focused = false;
+                app.review.return_to_input = false;
+                app.notice.clear();
+            } else if key.code == KeyCode::F(1) {
                 app.dialog = Some(Dialog::Menu);
             } else if app.dialog.is_none()
                 && app.mode == Mode::Navigate

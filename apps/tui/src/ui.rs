@@ -27,7 +27,8 @@ pub struct Geometry {
 
 pub fn immersive(app: &App) -> bool {
     app.fullscreen
-        && (app.mode == Mode::Input || (app.review.visible && app.review.return_to_input))
+        && (app.mode == Mode::Input
+            || (app.review.visible && app.review.focused && app.review.return_to_input))
         && app.dialog.is_none()
 }
 
@@ -1468,6 +1469,7 @@ mod tests {
     fn diff_preserves_workspace_sidebar_and_fullscreen_visibility() {
         let mut app = App::new(1);
         app.dialog = None;
+        app.review.focused = true;
         app.mode = Mode::Input;
         app.fullscreen = false;
         let area = Rect::new(0, 0, 150, 44);
