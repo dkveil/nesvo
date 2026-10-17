@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 #[derive(Clone, Copy)]
 pub enum Overlay {
+    Themes(usize, crate::theme::Theme),
     Onboarding(usize),
     Shortcuts(usize, bool),
     Recipes(bool, usize),
@@ -75,6 +76,11 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
             }
             let row = mouse.row.saturating_sub(panel.y + 2) as usize;
             match overlay {
+                Overlay::Themes(_, original) if row < crate::theme::Theme::ALL.len() => {
+                    app.theme = crate::theme::Theme::ALL[row];
+                    app.overlay = Some(Overlay::Themes(row, original));
+                    return outcome;
+                }
                 Overlay::Shortcuts(_, false) if row < 5 => {
                     app.overlay = Some(Overlay::Shortcuts(row, false));
                     KeyCode::Enter
@@ -112,10 +118,28 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
         _ => return outcome,
     };
     if code == KeyCode::Esc {
+        if let Overlay::Themes(_, original) = overlay {
+            app.theme = original;
+        }
         app.overlay = None;
         return outcome;
     }
     match app.overlay {
+        Some(Overlay::Themes(selected, original)) => {
+            let count = crate::theme::Theme::ALL.len();
+            let next = match code {
+                KeyCode::Up | KeyCode::BackTab => selected.saturating_sub(1),
+                KeyCode::Down | KeyCode::Tab => (selected + 1).min(count - 1),
+                KeyCode::Enter => {
+                    app.overlay = None;
+                    return outcome;
+                }
+                _ => selected,
+            };
+            app.theme = crate::theme::Theme::ALL[next];
+            app.overlay = Some(Overlay::Themes(next, original));
+        }
+
         Some(Overlay::Recipes(recovery, selected)) => {
             let rows = if recovery {
                 &app.recoveries
@@ -289,6 +313,24 @@ pub fn render(frame: &mut Frame, app: &App) {
     let area = area(frame.area());
     frame.render_widget(Clear, area);
     let (title, lines, hint) = match overlay {
+        Overlay::Themes(selected, _) => (
+            "Appearance",
+            crate::theme::Theme::ALL
+                .iter()
+                .enumerate()
+                .map(|(index, theme)| {
+                    Line::styled(
+                        format!("  {}", theme.label()),
+                        if index == selected {
+                            Style::default().fg(TEXT).bg(theme.selection())
+                        } else {
+                            Style::default().fg(theme.accent())
+                        },
+                    )
+                })
+                .collect(),
+            "↑↓ preview   Enter apply   Esc cancel",
+        ),
         Overlay::Recipes(recovery, selected) => {
             let rows = if recovery {
                 &app.recoveries

@@ -314,7 +314,10 @@ pub fn run(
             send_or_disconnect(&mut app, connection, outcome.commands);
             dirty |= outcome.redraw;
             let current_preferences = Preferences {
-                theme: app.theme,
+                theme: match app.overlay {
+                    Some(crate::toolbox::Overlay::Themes(_, original)) => original,
+                    _ => app.theme,
+                },
                 shortcuts: app.shortcuts,
                 onboarded: app.onboarded,
                 fullscreen_default: app.fullscreen_default,

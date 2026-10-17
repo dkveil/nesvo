@@ -1097,7 +1097,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         }
         Dialog::Settings { selected } => {
             for (index, label) in [
-                format!("Theme: {}   ← →", app.theme.label()),
+                format!("Theme: {}   Enter choose", app.theme.label()),
                 format!(
                     "Full screen session by default: {}",
                     if app.fullscreen_default { "on" } else { "off" }
@@ -1129,7 +1129,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
             }
             if inner.height > 6 {
                 frame.render_widget(
-                    Paragraph::new("Saved immediately. k: keyboard shortcuts")
+                    Paragraph::new("Theme: preview then apply. k: shortcuts")
                         .style(Style::default().fg(MUTED)),
                     Rect::new(inner.x, inner.y + 6, inner.width, 1),
                 );

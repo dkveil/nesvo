@@ -1086,22 +1086,14 @@ fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
     }
 }
 
-fn apply_theme(app: &mut App, index: usize) {
-    if let Some(theme) = Theme::ALL.get(index) {
-        app.theme = *theme;
-    }
-}
-
-fn change_setting(app: &mut App, index: usize, reverse: bool) {
+fn change_setting(app: &mut App, index: usize, _reverse: bool) {
     match index {
         0 => {
-            let current = Theme::ALL
+            let selected = Theme::ALL
                 .iter()
                 .position(|theme| *theme == app.theme)
                 .unwrap_or(0);
-            let next =
-                (current + if reverse { Theme::ALL.len() - 1 } else { 1 }) % Theme::ALL.len();
-            apply_theme(app, next);
+            app.overlay = Some(crate::toolbox::Overlay::Themes(selected, app.theme));
         }
         1 => {
             app.fullscreen_default = !app.fullscreen_default;
@@ -2424,7 +2416,21 @@ mod tests {
                 .commands
                 .is_empty()
         );
+        assert!(matches!(
+            app.overlay,
+            Some(crate::toolbox::Overlay::Themes(..))
+        ));
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            area,
+        );
         assert_eq!(app.theme, Theme::Graphite);
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            area,
+        );
         assert!(matches!(app.dialog, Some(Dialog::Settings { .. })));
         click(&mut app, area, Action::Cancel);
         app.dialog = Some(Dialog::Menu);
