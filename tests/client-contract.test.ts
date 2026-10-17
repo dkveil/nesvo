@@ -206,6 +206,7 @@ test('attention and push boundaries reject malformed and cross-navigation payloa
     { ...attention, sequence: -1 },
     { ...attention, kind: 'random' },
     { ...attention, unread: 'yes' },
+    { ...attention, source: ['screen'] },
   ]) {
     assert.throws(() =>
       decodeServerMessage({ ...snapshot, sessions: [{ ...session, attention: invalid }] }),
