@@ -397,6 +397,11 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
                 *selected = index;
             }
         }
+        Action::FocusMenu => {
+            app.mode = Mode::Navigate;
+            app.review.focused = false;
+            app.pending_input = None;
+        }
         Action::FocusSearch => {
             if !matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
                 app.mode = Mode::Navigate;
@@ -1451,6 +1456,28 @@ mod tests {
             }),
             area,
         )
+    }
+
+    #[test]
+    fn menu_click_leaves_input_without_changing_session() {
+        let mut app = App::new(1);
+        app.dialog = None;
+        app.mode = Mode::Input;
+        app.review.focused = true;
+        let area = Rect::new(0, 0, 100, 32);
+        let tree = ui::geometry(area, &app).tree;
+        event(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: tree.x,
+                row: tree.bottom() - 1,
+                modifiers: KeyModifiers::NONE,
+            }),
+            area,
+        );
+        assert!(app.mode == Mode::Navigate);
+        assert!(!app.review.focused);
     }
 
     #[test]

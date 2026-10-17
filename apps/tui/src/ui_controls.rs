@@ -41,6 +41,7 @@ pub enum Action {
     OpenRow(usize),
     FocusTab(usize),
     FocusPane(usize),
+    FocusMenu,
 }
 
 pub struct Control {
@@ -445,6 +446,9 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
     if let Some(index) = ui::sidebar_hit(app, geometry.tree, column, row) {
         return Some(Action::OpenRow(index));
     }
+    if geometry.tree.contains(point) || geometry.sidebar_header.contains(point) {
+        return Some(Action::FocusMenu);
+    }
     if geometry.header.contains(point) {
         let (tabs, _) = ui::tab_areas(app, &geometry);
         return tabs
@@ -572,7 +576,10 @@ mod tests {
             hit_test(&app, area, tree.x, tree.y),
             Some(Action::FocusSearch)
         );
-        assert_eq!(hit_test(&app, area, tree.x, tree.y + 3), None);
+        assert_eq!(
+            hit_test(&app, area, tree.x, tree.y + 3),
+            Some(Action::FocusMenu)
+        );
     }
 
     #[test]
