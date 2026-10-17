@@ -420,7 +420,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                hint,
+                app.shortcuts.hints(hint),
                 Style::default().fg(if navigating { TEXT } else { MUTED }),
             ),
             Span::styled(notice, Style::default().fg(WARNING)),
@@ -1095,7 +1095,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
             }
             if inner.height > 6 {
                 frame.render_widget(
-                    Paragraph::new("Changes are shown and saved immediately.")
+                    Paragraph::new("Saved immediately. k: keyboard shortcuts")
                         .style(Style::default().fg(MUTED)),
                     Rect::new(inner.x, inner.y + 6, inner.width, 1),
                 );

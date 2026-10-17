@@ -108,6 +108,7 @@ pub fn run(
         })
         .unwrap_or_default();
     app.theme = saved_preferences.theme;
+    app.shortcuts = saved_preferences.shortcuts;
     app.onboarded = saved_preferences.onboarded;
     if !app.onboarded {
         app.overlay = Some(crate::toolbox::Overlay::Onboarding(0));
@@ -278,6 +279,7 @@ pub fn run(
             dirty |= outcome.redraw;
             let current_preferences = Preferences {
                 theme: app.theme,
+                shortcuts: app.shortcuts,
                 onboarded: app.onboarded,
                 fullscreen_default: app.fullscreen_default,
             };

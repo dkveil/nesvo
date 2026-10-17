@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 #[derive(Clone, Copy)]
 pub enum Overlay {
     Onboarding(usize),
+    Shortcuts(usize, bool),
     Filters(usize),
     Schedules(usize),
 }
@@ -95,6 +96,25 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
         return outcome;
     }
     match app.overlay {
+        Some(Overlay::Shortcuts(selected, capturing)) => match code {
+            KeyCode::F(key) if capturing => {
+                if app.shortcuts.assign(selected, key) {
+                    app.overlay = Some(Overlay::Shortcuts(selected, false));
+                    app.notice.clear();
+                } else {
+                    app.notice = "Choose an unused F3–F12 key. F1/F2 are reserved.".into();
+                }
+            }
+            KeyCode::Enter => app.overlay = Some(Overlay::Shortcuts(selected, true)),
+            KeyCode::Up if !capturing => {
+                app.overlay = Some(Overlay::Shortcuts(selected.saturating_sub(1), false))
+            }
+            KeyCode::Down if !capturing => {
+                app.overlay = Some(Overlay::Shortcuts((selected + 1).min(4), false))
+            }
+            KeyCode::Char('r') if !capturing => app.shortcuts = Default::default(),
+            _ => {}
+        },
         Some(Overlay::Onboarding(step)) => match code {
             KeyCode::Enter | KeyCode::Right => {
                 if step == 2 {
@@ -163,6 +183,42 @@ pub fn render(frame: &mut Frame, app: &App) {
     let area = area(frame.area());
     frame.render_widget(Clear, area);
     let (title, lines, hint) = match overlay {
+        Overlay::Shortcuts(selected, capturing) => {
+            let mut lines: Vec<Line> = crate::shortcuts::LABELS
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    Line::styled(
+                        format!(
+                            "{} F{:<2}  {label}",
+                            if selected == i { ">" } else { " " },
+                            app.shortcuts.keys[i]
+                        ),
+                        Style::default().fg(TEXT).bg(if selected == i {
+                            app.theme.selection()
+                        } else {
+                            SURFACE
+                        }),
+                    )
+                })
+                .collect();
+            lines.extend([
+                Line::from(""),
+                Line::from("Terminal: Ctrl+Q navigation · Esc belongs to the agent"),
+                Line::from("Navigation: n new · / search · f filters · u mute"),
+                Line::from("Review: arrows files/hunks · Space fold · r refresh"),
+                Line::from(app.notice.as_str()),
+            ]);
+            (
+                "Keyboard shortcuts · global actions",
+                lines,
+                if capturing {
+                    "Press an unused F3–F12 key · Esc close"
+                } else {
+                    "↑↓ select · Enter rebind · r defaults · Esc settings"
+                },
+            )
+        }
         Overlay::Onboarding(step) => {
             let pages = [
                 (
@@ -182,7 +238,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         "Enter opens a session. Ctrl+Q returns to navigation.",
                         "In input mode, keys belong to the agent — including Esc.",
                         "",
-                        "D  Read-only Git review   z  Focus mode",
+                        "F4 Read-only Git review   F6 Previous · F7 Attention",
                         "Tab changes review focus. Esc closes review.",
                         "F1 opens the menu. Settings apply live to the workspace.",
                     ],

@@ -12,6 +12,7 @@ use std::{
 #[serde(default)]
 pub struct Preferences {
     pub theme: Theme,
+    pub shortcuts: crate::shortcuts::Shortcuts,
     pub onboarded: bool,
     pub fullscreen_default: bool,
 }
@@ -25,7 +26,13 @@ impl Preferences {
             Err(error) => return Err(error).context("Cannot read nesvo preferences"),
             Ok(metadata) => ensure!(metadata.len() <= 8192, "Preferences file is too large"),
         }
-        serde_json::from_slice(&fs::read(path)?).context("Invalid nesvo preferences")
+        let preferences: Self =
+            serde_json::from_slice(&fs::read(path)?).context("Invalid nesvo preferences")?;
+        ensure!(
+            preferences.shortcuts.valid(),
+            "Conflicting or reserved shortcuts in preferences"
+        );
+        Ok(preferences)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -85,6 +92,7 @@ mod tests {
         Preferences::default().save(&path).unwrap();
         let chosen = Preferences {
             theme: Theme::Graphite,
+            shortcuts: Default::default(),
             onboarded: true,
             fullscreen_default: true,
         };

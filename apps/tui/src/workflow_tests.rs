@@ -307,3 +307,16 @@ fn attention_queue_uses_unread_events_skips_muted_and_acknowledges_exact_episode
                 && c["sessionId"] == "b")
     );
 }
+
+#[test]
+fn remapped_review_key_replaces_default_without_changing_printable_input() {
+    let mut app = app();
+    assert!(app.shortcuts.assign(0, 10));
+    key(&mut app, KeyCode::F(4));
+    assert!(!app.review.visible);
+    app.mode = Mode::Input;
+    key(&mut app, KeyCode::F(10));
+    assert!(app.review.visible);
+    key(&mut app, KeyCode::F(10));
+    assert!(!app.review.visible && app.mode == Mode::Input);
+}

@@ -53,9 +53,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 });
             } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
-            } else if key.code == KeyCode::F(4) && key.modifiers.is_empty() {
+            } else if key.code == KeyCode::F(app.shortcuts.keys[0]) && key.modifiers.is_empty() {
                 toggle_review(app, &mut outcome);
-            } else if key.code == KeyCode::F(6) && key.modifiers.is_empty() {
+            } else if key.code == KeyCode::F(app.shortcuts.keys[1]) && key.modifiers.is_empty() {
                 if let Some(id) = app
                     .recent_sessions
                     .iter()
@@ -66,7 +66,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 } else {
                     app.notice = "No previous session yet.".into();
                 }
-            } else if key.code == KeyCode::F(7) && key.modifiers.is_empty() {
+            } else if key.code == KeyCode::F(app.shortcuts.keys[2]) && key.modifiers.is_empty() {
                 let next = app
                     .sessions
                     .iter()
@@ -566,6 +566,7 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     }
     if let Some(Dialog::Settings { selected }) = &mut app.dialog {
         match key.code {
+            KeyCode::Char('k') => app.overlay = Some(crate::toolbox::Overlay::Shortcuts(0, false)),
             KeyCode::Up | KeyCode::BackTab => *selected = selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Tab if *selected == 1 => app.dialog_button = Some(0),
             KeyCode::Down | KeyCode::Tab => *selected = 1,
@@ -976,6 +977,7 @@ fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
                 .position(|row| row.kind == RowKind::Group(id.clone()))
                 .unwrap_or(0);
         }
+        crate::palette::Target::Command('D') => toggle_review(app, outcome),
         crate::palette::Target::Command(key) => navigation_key(
             app,
             KeyEvent::new(
@@ -1061,7 +1063,6 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             app.overlay = Some(crate::toolbox::Overlay::Schedules(0));
             outcome.commands.push(json!({"type":"listSchedules"}));
         }
-        KeyCode::F(4) => toggle_review(app, outcome),
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,
         KeyCode::Char('z') => app.fullscreen = !app.fullscreen,
