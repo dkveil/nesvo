@@ -976,7 +976,12 @@ impl App {
         self.dialog_button = None;
         match dialog {
             Dialog::NewSession(form) => {
-                let name = form.name.trim();
+                let auto_title = form.name.trim().is_empty() && form.program != Program::Shell;
+                let name = if auto_title {
+                    form.program.label()
+                } else {
+                    form.name.trim()
+                };
                 let error = if name.is_empty() || name.chars().count() > 80 {
                     Some("Use a name of 1–80 characters.")
                 } else if !self.connected {
@@ -999,7 +1004,8 @@ impl App {
                     self.dialog = Some(Dialog::NewSession(form));
                     return None;
                 }
-                let advanced = form.worktree || !form.prompt.is_empty() || !form.when.is_empty();
+                let advanced =
+                    auto_title || form.worktree || !form.prompt.is_empty() || !form.when.is_empty();
                 if advanced
                     && !self
                         .capabilities
@@ -1010,7 +1016,7 @@ impl App {
                     self.dialog = Some(Dialog::NewSession(form));
                     return None;
                 }
-                let spec = json!({"name":name,"cwd":form.cwd.trim(), "program":form.program,"groupId":form.group_id,"prompt":form.prompt,"worktree":form.worktree});
+                let spec = json!({"name":name,"cwd":form.cwd.trim(), "program":form.program,"groupId":form.group_id,"prompt":form.prompt,"worktree":form.worktree,"autoTitle":auto_title});
                 let command = if !form.when.is_empty() {
                     json!({"type":"scheduleSession","spec":spec,"at":form.when.trim()})
                 } else if advanced {

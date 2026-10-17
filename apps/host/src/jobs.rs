@@ -20,6 +20,8 @@ pub struct LaunchSpec {
     pub prompt: String,
     #[serde(default)]
     pub worktree: bool,
+    #[serde(default)]
+    pub auto_title: bool,
 }
 
 pub fn timestamp(input: &str) -> Result<i64> {

@@ -10,6 +10,7 @@ mod replay;
 mod sessions;
 mod status;
 mod storage;
+mod titles;
 mod transport;
 mod usage;
 use nesvo_host::wire;

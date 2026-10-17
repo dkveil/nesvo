@@ -71,6 +71,8 @@ struct Session {
     has_been_attached: bool,
     wake_at: Option<i64>,
     attention: crate::attention::Attention,
+    titles: crate::titles::Titles,
+    auto_title: bool,
 }
 
 pub struct State {
@@ -145,7 +147,7 @@ impl State {
 
     fn capabilities_event(&self) -> Value {
         json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
-            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true,
+            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true,
             "providerLimits":self.provider_limits})
     }
 
@@ -174,6 +176,7 @@ impl State {
                     serde_json::to_value(&session.info).expect("Session metadata serializes");
                 info["attention"] = json!(session.attention.event);
                 info["muted"] = json!(session.attention.muted);
+                info["autoTitle"] = json!(session.auto_title);
                 info["controllerId"] =
                     json!(session.controller.as_ref().map(|lease| lease.client_id));
                 info["status"] = json!(session.status.status());
@@ -250,6 +253,13 @@ impl State {
         let mut changed = self.wake_after_reset();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
+            if session.auto_title
+                && let Some(title) = &session.titles.title
+                && session.info.name != *title
+            {
+                session.info.name = title.clone();
+                changed = true;
+            }
             changed |= session
                 .attention
                 .observe(session.status.status(), session.status.rate_limited());
@@ -466,6 +476,17 @@ impl State {
             events.clone(),
         )?;
         session.info.group_id = spec.group_id.clone();
+        session.auto_title = spec.auto_title && spec.program != Program::Shell;
+        if session.auto_title && !spec.prompt.trim().is_empty() {
+            session.info.name = spec
+                .prompt
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(80)
+                .collect();
+        }
         let id = session.info.id.clone();
         // Scheduled agents must be able to finish startup without an attached client.
         #[cfg(windows)]
@@ -718,6 +739,7 @@ impl State {
                     .get_mut(&session_id)
                     .ok_or_else(|| anyhow!("Session no longer exists."))?;
                 session.info.name = name;
+                session.auto_title = false;
                 self.respond(
                     client_id,
                     json!({"type":"updated", "revision":self.metadata.revision()}),
@@ -961,6 +983,8 @@ fn spawn_session(
         has_been_attached: false,
         wake_at: None,
         attention: Default::default(),
+        titles: Default::default(),
+        auto_title: false,
     })
 }
 
@@ -980,6 +1004,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
             PtyEvent::Data(id, data) => {
                 if let Some(session) = state.sessions.get_mut(&id) {
                     session.status.output(&data, now_millis());
+                    if session.auto_title {
+                        session.titles.feed(&data);
+                    }
                     bounded_append(&mut session.backlog, &data);
                     let subscribers: Vec<u64> = session.subscribers.iter().copied().collect();
                     for client_id in subscribers {
