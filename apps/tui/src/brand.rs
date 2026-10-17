@@ -107,7 +107,11 @@ impl Widget for Logo {
 pub struct CompactLogo(pub Theme);
 impl Widget for CompactLogo {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        let source = pixels(0);
+        let mut source = pixels(0);
+        // Keep the sidebar wordmark still and omit the intro's satellite.
+        for row in source.iter_mut().take(TOP as usize) {
+            row.fill(0);
+        }
         let rows = [2, 4, 6, 7, 9, 11];
         let colors = [BACKGROUND, self.0.accent(), TEXT];
         let width = WIDTH.div_ceil(2).min(usize::from(area.width));
