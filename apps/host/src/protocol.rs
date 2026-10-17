@@ -31,6 +31,14 @@ pub enum Command {
         scope: String,
     },
     GetCapabilities,
+    AcknowledgeAttention {
+        session_id: String,
+        sequence: u64,
+    },
+    MuteSession {
+        session_id: String,
+        muted: bool,
+    },
     ListDirectories {
         path: Option<String>,
     },

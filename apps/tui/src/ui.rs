@@ -544,13 +544,19 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                     continue;
                 };
                 let status = session.status.as_ref();
-                let marker = match status.map(|status| (status.source, status.state)) {
-                    Some((Source::Screen, State::Working)) => "●",
-                    Some((_, State::Question)) => "?",
-                    Some((_, State::Blocked)) => "!",
-                    Some((_, State::Done)) => "✓",
-                    Some((_, State::Failed)) => "×",
-                    _ => "○",
+                let marker = if session.muted {
+                    "-"
+                } else if session.attention.as_ref().is_some_and(|a| a.unread) {
+                    "*"
+                } else {
+                    match status.map(|status| (status.source, status.state)) {
+                        Some((Source::Screen, State::Working)) => "●",
+                        Some((_, State::Question)) => "?",
+                        Some((_, State::Blocked)) => "!",
+                        Some((_, State::Done)) => "✓",
+                        Some((_, State::Failed)) => "×",
+                        _ => "○",
+                    }
                 };
                 let available = usize::from(entry.width).saturating_sub(4 + indent.len());
                 frame.render_widget(
@@ -581,7 +587,14 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                         Paragraph::new(Line::from(vec![
                             Span::raw(format!("  {indent}  ")),
                             Span::styled(
-                                display_status(session),
+                                session
+                                    .attention
+                                    .as_ref()
+                                    .filter(|a| a.unread && !session.muted)
+                                    .map_or_else(
+                                        || display_status(session).to_owned(),
+                                        |a| format!("new {}", a.kind),
+                                    ),
                                 Style::default().fg(status_color(status, app.theme)),
                             ),
                             Span::styled(" · ", Style::default().fg(MUTED)),

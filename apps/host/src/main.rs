@@ -1,3 +1,4 @@
+mod attention;
 mod git;
 mod groups;
 mod jobs;

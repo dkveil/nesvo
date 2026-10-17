@@ -66,6 +66,18 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 } else {
                     app.notice = "No previous session yet.".into();
                 }
+            } else if key.code == KeyCode::F(7) && key.modifiers.is_empty() {
+                let next = app
+                    .sessions
+                    .iter()
+                    .filter(|s| !s.muted && s.attention.as_ref().is_some_and(|a| a.unread))
+                    .min_by_key(|s| s.attention.as_ref().map(|a| a.at))
+                    .map(|s| s.id.clone());
+                if let Some(id) = next {
+                    outcome.commands.extend(app.activate_session(&id));
+                } else {
+                    app.notice = "No unread attention events.".into();
+                }
             } else if app.mode == Mode::Input {
                 let was_scrolled = app
                     .active_terminal()
@@ -1139,6 +1151,13 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
                 parent_index,
                 editing_parent: false,
             });
+        }
+        KeyCode::Char('u') => {
+            if let Some(session) = app.active_session().filter(|s| s.attention.is_some()) {
+                outcome.commands.push(
+                    json!({"type":"muteSession","sessionId":session.id,"muted":!session.muted}),
+                );
+            }
         }
         KeyCode::Char('r') => rename_selected(app),
         KeyCode::Char('m') => move_selected(app),

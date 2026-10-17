@@ -31,10 +31,22 @@ pub struct Session {
     pub rate_limited: bool,
     #[serde(default)]
     pub wake_at: Option<i64>,
+    #[serde(default)]
+    pub attention: Option<Attention>,
+    #[serde(default)]
+    pub muted: bool,
     pub group_id: Option<String>,
     pub controller_id: Option<u64>,
     #[serde(default)]
     pub status: Option<Status>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Attention {
+    pub sequence: u64,
+    pub kind: String,
+    pub at: u64,
+    pub unread: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -583,6 +595,15 @@ impl App {
             self.recent_sessions.truncate(32);
         }
         let mut commands = self.open_session(id);
+        if let Some(attention) = self
+            .session(id)
+            .and_then(|s| s.attention.as_ref())
+            .filter(|a| a.unread)
+        {
+            commands.push(
+                json!({"type":"acknowledgeAttention","sessionId":id,"sequence":attention.sequence}),
+            );
+        }
         let mut parent = self
             .session(id)
             .and_then(|session| session.group_id.clone());

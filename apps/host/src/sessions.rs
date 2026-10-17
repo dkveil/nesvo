@@ -70,6 +70,7 @@ struct Session {
     subscribers: HashSet<u64>,
     has_been_attached: bool,
     wake_at: Option<i64>,
+    attention: crate::attention::Attention,
 }
 
 pub struct State {
@@ -144,7 +145,7 @@ impl State {
 
     fn capabilities_event(&self) -> Value {
         json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
-            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true,
+            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true,
             "providerLimits":self.provider_limits})
     }
 
@@ -171,6 +172,8 @@ impl State {
             .map(|session| {
                 let mut info =
                     serde_json::to_value(&session.info).expect("Session metadata serializes");
+                info["attention"] = json!(session.attention.event);
+                info["muted"] = json!(session.attention.muted);
                 info["controllerId"] =
                     json!(session.controller.as_ref().map(|lease| lease.client_id));
                 info["status"] = json!(session.status.status());
@@ -247,6 +250,9 @@ impl State {
         let mut changed = self.wake_after_reset();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
+            changed |= session
+                .attention
+                .observe(session.status.status(), session.status.rate_limited());
         }
         if changed {
             self.broadcast_list();
@@ -594,6 +600,25 @@ impl State {
                 self.broadcast_schedules();
             }
             Command::GetDiff { .. } => return Err(anyhow!("Diff requires asynchronous dispatch.")),
+            Command::AcknowledgeAttention {
+                session_id,
+                sequence,
+            } => {
+                let session = self
+                    .sessions
+                    .get_mut(&session_id)
+                    .ok_or_else(|| anyhow!("Session no longer exists."))?;
+                session.attention.acknowledge(sequence);
+                self.broadcast_list();
+            }
+            Command::MuteSession { session_id, muted } => {
+                let session = self
+                    .sessions
+                    .get_mut(&session_id)
+                    .ok_or_else(|| anyhow!("Session no longer exists."))?;
+                session.attention.muted = muted;
+                self.broadcast_list();
+            }
             Command::List => self.send(client_id, self.list()),
             Command::GetCapabilities => {
                 self.respond(client_id, self.capabilities_event(), request_id)
@@ -935,6 +960,7 @@ fn spawn_session(
         subscribers: HashSet::new(),
         has_been_attached: false,
         wake_at: None,
+        attention: Default::default(),
     })
 }
 

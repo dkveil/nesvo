@@ -279,3 +279,31 @@ fn previous_session_toggles_and_previews_do_not_rewrite_history() {
     key(&mut app, KeyCode::F(6));
     assert_eq!(app.active_id(), Some("b"));
 }
+
+#[test]
+fn attention_queue_uses_unread_events_skips_muted_and_acknowledges_exact_episode() {
+    let mut app = app();
+    app.sessions[0].attention = Some(crate::model::Attention {
+        sequence: 2,
+        kind: "question".into(),
+        at: 5,
+        unread: true,
+    });
+    app.sessions[0].muted = true;
+    app.sessions[1].attention = Some(crate::model::Attention {
+        sequence: 3,
+        kind: "limit".into(),
+        at: 10,
+        unread: true,
+    });
+    let result = key(&mut app, KeyCode::F(7));
+    assert_eq!(app.active_id(), Some("b"));
+    assert!(
+        result
+            .commands
+            .iter()
+            .any(|c| c["type"] == "acknowledgeAttention"
+                && c["sequence"] == 3
+                && c["sessionId"] == "b")
+    );
+}
