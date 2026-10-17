@@ -238,7 +238,7 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
     match app.mode {
         Mode::Input => (
             " SESSION INPUT ",
-            " Typing in terminal · Ctrl+Q navigation · F4 diff",
+            " Ctrl+Q → z fullscreen · Ctrl+Q menu · F4 diff",
         ),
         Mode::Navigate => (
             " NESVO MENU ",
@@ -620,15 +620,17 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
         if selected && app.mode == Mode::Navigate && app.dialog.is_none() && app.overlay.is_none() {
-            // Highlight the focused item itself; preserve status colors on its second row.
+            // A session is one selectable item spanning both terminal rows.
             let highlight_start = if matches!(row.kind, RowKind::Group(_)) {
                 entry.x.saturating_add(3 + (row.depth.min(4) * 2) as u16)
             } else {
                 entry.x
             };
-            for x in highlight_start..entry.right() {
-                if let Some(cell) = frame.buffer_mut().cell_mut((x, entry.y)) {
-                    cell.set_fg(BACKGROUND).set_bg(app.theme.accent());
+            for y in entry.y..entry.bottom() {
+                for x in highlight_start..entry.right() {
+                    if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+                        cell.set_fg(BACKGROUND).set_bg(app.theme.accent());
+                    }
                 }
             }
             frame.render_widget(
