@@ -131,7 +131,8 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
                 },
                 layout.input.width.saturating_sub(2) as usize
             )
-        )),
+        ))
+        .style(Style::default().bg(crate::theme::BACKGROUND).fg(TEXT)),
         layout.input,
     );
     let category = if app.palette_expanded {

@@ -157,7 +157,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     if tree.width > 0 && tree.height > 0 && app.dialog.is_none() {
         let content = ui::tree_content(tree);
         output.push(Control {
-            area: Rect::new(content.x, content.y, content.width, 1),
+            area: Rect::new(content.x, content.y, content.width, content.height.min(3)),
             label: None,
             action: Action::FocusSearch,
             enabled: true,

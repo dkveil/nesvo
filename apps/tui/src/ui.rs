@@ -138,7 +138,9 @@ pub fn tree_content(area: Rect) -> Rect {
 }
 
 fn row_height(row: &crate::model::TreeRow) -> u16 {
-    if matches!(row.kind, RowKind::Session(_)) {
+    if matches!(row.kind, RowKind::Root) {
+        3
+    } else if matches!(row.kind, RowKind::Session(_)) {
         2
     } else {
         1
@@ -481,7 +483,8 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                             Span::styled("Search sessions", Style::default().fg(MUTED)),
                             Span::styled("  /", Style::default().fg(MUTED)),
                         ]))
-                        .style(Style::default().bg(SURFACE)),
+                        .style(Style::default().bg(crate::theme::BACKGROUND))
+                        .block(Block::bordered().border_style(Style::default().fg(BORDER))),
                         entry,
                     );
                     continue;
@@ -1266,7 +1269,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                 Paragraph::new(app.shortcuts.hints(concat!(
                     "~ status: screen inference; open/quiet: I/O.\n\n",
                     "↑/↓ or j/k   Select and preview · Enter opens / expands\n",
-                    "/ search · F2 expand · Ctrl+K palette (navigation)\n",
+                    "/ or Ctrl+K: palette · sidebar: quick search\n",
                     "F4 diff · F6 previous · F7 attention · u mute\n",
                     "F8 templates · F9 restore · f filters · S schedules\n",
                     "Settings → k: remap global shortcuts\n",
@@ -1336,7 +1339,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let heading = (tree.x..tree.right())
-            .map(|x| terminal.backend().buffer()[(x, tree.y)].symbol())
+            .map(|x| terminal.backend().buffer()[(x, tree.y + 1)].symbol())
             .collect::<String>();
         assert!(heading.contains("Search sessions"));
         app.dialog = Some(Dialog::QuickSwitch {
@@ -1528,7 +1531,7 @@ mod tests {
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let buffer = terminal.backend().buffer();
         let line: String = (layout.tree.x..layout.tree.right())
-            .map(|x| buffer[(x, layout.tree.y + 2)].symbol())
+            .map(|x| buffer[(x, layout.tree.y + 4)].symbol())
             .collect();
         assert!(line.contains("open"), "{line}");
         assert!(!line.contains("unknown"), "{line}");
@@ -1553,7 +1556,7 @@ mod tests {
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let tree = tree_content(geometry(area, &app).tree);
         let row: String = (tree.x..tree.right())
-            .map(|x| terminal.backend().buffer()[(x, tree.y + 1)].symbol())
+            .map(|x| terminal.backend().buffer()[(x, tree.y + 3)].symbol())
             .collect();
         assert!(row.contains("○"), "{row}");
         app.sessions[0].status = Some(Status {
@@ -1585,11 +1588,11 @@ mod tests {
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let buffer = terminal.backend().buffer();
         let sidebar: String = (layout.tree.x..layout.tree.right())
-            .map(|x| buffer[(x, layout.tree.y)].symbol())
+            .map(|x| buffer[(x, layout.tree.y + 1)].symbol())
             .collect();
         assert!(sidebar.contains("sessions"), "{sidebar}");
         assert_eq!(
-            buffer[(layout.tree.x, layout.tree.y + 1)].fg,
+            buffer[(layout.tree.x, layout.tree.y + 3)].fg,
             app.theme.accent()
         );
     }
@@ -1649,15 +1652,19 @@ mod tests {
                 .map(|x| buffer[(x, y)].symbol())
                 .collect::<String>()
         };
-        assert!(line(tree.y).contains("sessions"));
+        assert!(line(tree.y + 1).contains("sessions"));
         assert!(line(group.y).contains("Workspace"));
         assert!(!line(group.y).contains('▣'));
         assert!(line(agent.y + 1).contains("~question"));
         assert!(line(agent.y + 1).contains("Claude"));
-        assert!(
-            (agent.x..agent.right())
-                .any(|x| { buffer[(x, agent.y + 1)].fg == program_color(Program::Claude) })
-        );
+        app.selected = agent_index;
+        app.mode = Mode::Navigate;
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        for y in agent.y..agent.bottom() {
+            for x in agent.x..agent.right() {
+                assert_eq!(terminal.backend().buffer()[(x, y)].bg, app.theme.accent());
+            }
+        }
     }
 
     #[test]
@@ -1731,7 +1738,7 @@ mod tests {
             .map(|x| buffer[(x, layout.footer.y)].symbol())
             .collect();
         assert!(footer.contains("SESSION"), "{footer}");
-        assert!(footer.contains("Ctrl+Q navigation"), "{footer}");
+        assert!(footer.contains("Ctrl+Q → z fullscreen"), "{footer}");
         assert!(footer.contains(" z "), "{footer}");
         let handle = fullscreen_handle_area(&app, layout.footer);
         assert_eq!(buffer[(handle.x, handle.y)].bg, app.theme.accent());

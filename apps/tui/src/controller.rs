@@ -1080,7 +1080,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
     }
     match key.code {
         KeyCode::Char('/' | '\u{0b}') => {
-            app.palette_expanded = key.code != KeyCode::Char('/');
+            app.palette_expanded = true;
             app.palette_category = 0;
             app.dialog = Some(Dialog::QuickSwitch {
                 query: String::new(),
@@ -1116,10 +1116,15 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Char('M') => app.dialog = Some(Dialog::Menu),
         KeyCode::Char('p') => app.dialog = Some(Dialog::PairPhone),
         KeyCode::Up | KeyCode::Char('k') => {
-            app.selected = app
-                .selected
-                .saturating_sub(1)
-                .max(usize::from(app.tree().len() > 1));
+            app.selected = app.selected.saturating_sub(1);
+            if app.selected == 0 {
+                app.palette_expanded = false;
+                app.palette_category = 0;
+                app.dialog = Some(Dialog::QuickSwitch {
+                    query: String::new(),
+                    selected: 0,
+                });
+            }
             preview_selected_session(app, outcome);
         }
         KeyCode::Down | KeyCode::Char('j') => {
@@ -1425,6 +1430,36 @@ mod tests {
             }),
             area,
         )
+    }
+
+    #[test]
+    fn sidebar_search_clears_on_escape_and_slash_opens_expanded_palette() {
+        let mut app = App::new(1);
+        app.dialog = None;
+        app.mode = Mode::Navigate;
+        app.selected = 1;
+        let area = Rect::new(0, 0, 100, 32);
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(!app.palette_expanded);
+        event(&mut app, Event::Paste("żółć".into()), area);
+        assert!(matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query == "żółć"));
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            area,
+        );
+        assert!(app.dialog.is_none());
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE)),
+            area,
+        );
+        assert!(app.palette_expanded);
+        assert!(matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query.is_empty()));
     }
 
     #[test]
