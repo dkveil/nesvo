@@ -36,6 +36,16 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         Event::Key(key) if key.kind != KeyEventKind::Release => {
             if key.code == KeyCode::F(1) {
                 app.dialog = Some(Dialog::Menu);
+            } else if app.dialog.is_none()
+                && (key.code == KeyCode::Char('\u{0b}')
+                    || (key.modifiers.contains(KeyModifiers::CONTROL)
+                        && matches!(key.code, KeyCode::Char('k' | 'K'))))
+            {
+                app.mode = Mode::Navigate;
+                app.dialog = Some(Dialog::QuickSwitch {
+                    query: String::new(),
+                    selected: 0,
+                });
             } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
             } else if app.mode == Mode::Input {
@@ -174,6 +184,17 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         } else {
             None
         };
+    }
+    if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
+        let id = app
+            .quick_switch_results(query)
+            .get(*selected)
+            .map(|session| session.id.clone());
+        if let Some(id) = id
+            && (app.active_id() != Some(id.as_str()) || !app.subscribed.contains(&id))
+        {
+            outcome.commands.extend(app.open_session(&id));
+        }
     }
     outcome
 }
@@ -1139,6 +1160,30 @@ mod tests {
                 .commands
                 .iter()
                 .any(|command| command["type"] == "acquireControl")
+        );
+    }
+
+    #[test]
+    fn control_k_opens_palette_from_input_without_sending_it_to_shell() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"one","name":"Docs","cwd":"/docs","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        app.mode = Mode::Input;
+        app.fullscreen = true;
+        let result = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            Rect::new(0, 0, 120, 30),
+        );
+        assert!(matches!(app.dialog, Some(Dialog::QuickSwitch { .. })));
+        assert!(app.mode == Mode::Navigate);
+        assert!(app.subscribed.contains("one"));
+        assert!(
+            !result
+                .commands
+                .iter()
+                .any(|command| command["type"] == "input" || command["type"] == "acquireControl")
         );
     }
 

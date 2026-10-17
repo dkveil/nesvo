@@ -33,6 +33,39 @@ pub struct Session {
     pub status: Option<Status>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SearchScope {
+    Everything,
+    Agents,
+    Terminals,
+    Attention,
+}
+
+impl SearchScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Everything => "everything",
+            Self::Agents => "agents",
+            Self::Terminals => "terminals",
+            Self::Attention => "needs you",
+        }
+    }
+}
+
+pub fn search_scope(query: &str) -> (SearchScope, &str) {
+    let query = query.trim_start();
+    for (prefix, scope) in [
+        ('@', SearchScope::Agents),
+        ('$', SearchScope::Terminals),
+        ('!', SearchScope::Attention),
+    ] {
+        if let Some(rest) = query.strip_prefix(prefix) {
+            return (scope, rest.trim_start());
+        }
+    }
+    (SearchScope::Everything, query)
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
@@ -272,11 +305,23 @@ impl App {
     }
 
     pub fn quick_switch_results(&self, query: &str) -> Vec<&Session> {
+        let (scope, query) = search_scope(query);
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         let mut matches: Vec<(&Session, u32)> = self
             .sessions
             .iter()
             .filter_map(|session| {
+                let program = self.effective_program(session);
+                if (scope == SearchScope::Agents && program == Program::Shell)
+                    || (scope == SearchScope::Terminals && program != Program::Shell)
+                    || (scope == SearchScope::Attention
+                        && !session
+                            .status
+                            .as_ref()
+                            .is_some_and(|status| status.attention_priority() > 0))
+                {
+                    return None;
+                }
                 let mut terms = format!(
                     "{} {} {}",
                     session.name,
@@ -930,6 +975,22 @@ mod tests {
         assert_eq!(app.quick_switch_results("codex")[0].id, "codex");
         assert_eq!(app.quick_switch_results("wrkspace")[0].id, "claude");
         assert!(app.quick_switch_results("missing").is_empty());
+    }
+
+    #[test]
+    fn palette_scopes_filter_real_programs_and_verified_attention() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"shell","name":"API terminal","cwd":"/api","program":"shell","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"agent","name":"API review","cwd":"/api","program":"codex","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null,"status":{"state":"question","source":"screen","updatedAt":1}}
+        ]})).unwrap();
+        assert_eq!(app.quick_switch_results("@ api")[0].id, "agent");
+        assert_eq!(app.quick_switch_results("$ api")[0].id, "shell");
+        assert_eq!(app.quick_switch_results("! api")[0].id, "agent");
+        assert_eq!(app.quick_switch_results("api").len(), 2);
+        assert!(app.quick_switch_results("$ review").is_empty());
+        app.sessions[1].status.as_mut().unwrap().source = crate::status::Source::Activity;
+        assert!(app.quick_switch_results("!").is_empty());
     }
 
     #[test]

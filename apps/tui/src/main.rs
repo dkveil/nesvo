@@ -13,6 +13,7 @@ mod theme;
 mod ui;
 mod ui_controls;
 mod ui_launch;
+mod ui_palette;
 
 use anyhow::{Context, Result, ensure};
 use clap::Parser;

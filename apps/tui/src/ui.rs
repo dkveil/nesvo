@@ -6,7 +6,7 @@ use crate::{
     status::{Source, State, Status},
     terminal::TerminalWidget,
     theme::{BACKGROUND, BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, Theme, WARNING},
-    ui_controls, ui_launch,
+    ui_controls, ui_launch, ui_palette,
 };
 use ratatui::{
     Frame,
@@ -390,10 +390,6 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         );
     }
     if let Some(dialog) = &app.dialog {
-        if matches!(dialog, Dialog::QuickSwitch { .. }) && layout.tree.width > 0 {
-            ui_controls::render(frame, app);
-            return;
-        }
         render_dialog(frame, app, dialog);
     }
     ui_controls::render(frame, app);
@@ -410,10 +406,6 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
     let content = tree_content(area);
-    if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
-        render_sidebar_search(frame, app, content, query, *selected);
-        return;
-    }
     let rows = app.tree();
     for (entry, index) in sidebar_entries(app, content) {
         let row = &rows[index];
@@ -592,77 +584,6 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_sidebar_search(frame: &mut Frame, app: &App, area: Rect, query: &str, selected: usize) {
-    if area.height == 0 {
-        return;
-    }
-    let prompt = if query.is_empty() {
-        "Search sessions…"
-    } else {
-        query
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" ⌕ ", Style::default().fg(app.theme.accent())),
-            Span::styled(
-                truncate_cells(prompt, usize::from(area.width.saturating_sub(5))),
-                Style::default().fg(if query.is_empty() { MUTED } else { TEXT }),
-            ),
-        ]))
-        .style(Style::default().bg(app.theme.selection())),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    let results = app.quick_switch_results(query);
-    let visible = usize::from(area.height.saturating_sub(1) / 2);
-    let offset = selected.saturating_sub(visible.saturating_sub(1));
-    for (slot, session) in results.iter().enumerate().skip(offset).take(visible) {
-        let y = area.y + 1 + ((slot - offset) as u16) * 2;
-        let bg = if slot == selected {
-            app.theme.selection()
-        } else {
-            BACKGROUND
-        };
-        let marker = if slot == selected { "▎" } else { " " };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(marker, Style::default().fg(app.theme.accent())),
-                Span::styled(
-                    "● ",
-                    Style::default().fg(status_color(session.status.as_ref(), app.theme)),
-                ),
-                Span::styled(
-                    truncate_cells(&session.name, usize::from(area.width.saturating_sub(4))),
-                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-                ),
-            ]))
-            .style(Style::default().bg(bg)),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::raw("   "),
-                Span::styled(
-                    app.effective_program(session).label(),
-                    Style::default().fg(program_color(app.effective_program(session))),
-                ),
-                Span::styled(" · ", Style::default().fg(MUTED)),
-                Span::styled(
-                    truncate_cells(&session.cwd, usize::from(area.width.saturating_sub(13))),
-                    Style::default().fg(MUTED),
-                ),
-            ]))
-            .style(Style::default().bg(bg)),
-            Rect::new(area.x, y + 1, area.width, 1),
-        );
-    }
-    if results.is_empty() && area.height > 1 {
-        frame.render_widget(
-            Paragraph::new("  No matching sessions").style(Style::default().fg(MUTED)),
-            Rect::new(area.x, area.y + 1, area.width, 1),
-        );
-    }
-}
-
 fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_frame: usize) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -770,7 +691,7 @@ fn render_home(frame: &mut Frame, content: Rect, logo_frame: usize, theme: Theme
     );
 }
 
-fn truncate_cells(text: &str, max_width: usize) -> String {
+pub(crate) fn truncate_cells(text: &str, max_width: usize) -> String {
     let mut width = 0;
     text.chars()
         .take_while(|character| {
@@ -780,7 +701,7 @@ fn truncate_cells(text: &str, max_width: usize) -> String {
         .collect()
 }
 
-fn display_status(session: &crate::model::Session) -> &'static str {
+pub(crate) fn display_status(session: &crate::model::Session) -> &'static str {
     match session.status.as_ref().map(Status::label) {
         Some("unknown") | None => {
             if session.running {
@@ -817,7 +738,7 @@ fn group_session_count(app: &App, id: &str) -> usize {
         .count()
 }
 
-fn status_color(status: Option<&Status>, theme: Theme) -> Color {
+pub(crate) fn status_color(status: Option<&Status>, theme: Theme) -> Color {
     match status.map(|status| (status.source, status.state)) {
         Some((Source::Screen, State::Question | State::Blocked)) => WARNING,
         Some((Source::Process | Source::Screen, State::Failed)) => DANGER,
@@ -827,7 +748,7 @@ fn status_color(status: Option<&Status>, theme: Theme) -> Color {
     }
 }
 
-fn program_color(program: Program) -> Color {
+pub(crate) fn program_color(program: Program) -> Color {
     match program {
         Program::Shell => MUTED,
         Program::Claude => Color::Rgb(230, 145, 113),
@@ -953,6 +874,10 @@ pub fn dialog_area(size: Rect, dialog: &Dialog) -> Option<Rect> {
 }
 
 fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
+    if let Dialog::QuickSwitch { query, selected } = dialog {
+        ui_palette::render(frame, app, query, *selected);
+        return;
+    }
     let Some(area) = dialog_area(frame.area(), dialog) else {
         return;
     };
@@ -1013,78 +938,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
     }
     match dialog {
         Dialog::Menu => {}
-        Dialog::QuickSwitch { query, selected } => {
-            frame.render_widget(
-                Paragraph::new(format!(
-                    "  / {}",
-                    if query.is_empty() {
-                        "Search name, agent, folder…"
-                    } else {
-                        query
-                    }
-                ))
-                .style(Style::default().fg(TEXT).bg(app.theme.selection())),
-                Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height)),
-            );
-            let matches = app.quick_switch_results(query);
-            if inner.height > 2 {
-                frame.render_widget(
-                    Paragraph::new(format!(
-                        "{} matches · ↑↓ select · Enter open",
-                        matches.len()
-                    ))
-                    .style(Style::default().fg(MUTED)),
-                    Rect::new(inner.x, inner.y + 2, inner.width, 1),
-                );
-            }
-            let visible = inner.height.saturating_sub(5);
-            let offset = ui_controls::move_offset(*selected, visible);
-            for (index, session) in matches
-                .iter()
-                .enumerate()
-                .skip(offset)
-                .take(usize::from(visible))
-            {
-                let y = inner.y + 3 + (index - offset) as u16;
-                if y >= inner.bottom() {
-                    break;
-                }
-                let label = format!(
-                    "  {:<8} {}",
-                    app.effective_program(session).label(),
-                    session.name
-                );
-                frame.render_widget(
-                    Paragraph::new(truncate_cells(&label, usize::from(inner.width))).style(
-                        if index == *selected {
-                            Style::default()
-                                .fg(TEXT)
-                                .bg(app.theme.selection())
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(MUTED)
-                        },
-                    ),
-                    Rect::new(inner.x, y, inner.width, 1),
-                );
-            }
-            if let Some(session) = matches.get(*selected)
-                && inner.height > 1
-            {
-                let detail = format!("{} · {}", display_status(session), session.cwd);
-                frame.render_widget(
-                    Paragraph::new(truncate_cells(&detail, usize::from(inner.width)))
-                        .style(Style::default().fg(MUTED)),
-                    Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
-                );
-            }
-            if app.dialog_button.is_none() && inner.width > 4 && inner.height > 0 {
-                frame.set_cursor_position((
-                    inner.x + (4 + query.chars().count()).min(usize::from(inner.width - 1)) as u16,
-                    inner.y,
-                ));
-            }
-        }
+        Dialog::QuickSwitch { .. } => unreachable!("Palette has its own renderer"),
         Dialog::ExitConfirm { .. } => {
             frame.render_widget(
                 Paragraph::new(vec![
@@ -1351,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn search_renders_inside_sidebar_and_disconnect_hides_stale_sessions() {
+    fn search_opens_a_palette_and_disconnect_hides_stale_sessions() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
             {"id":"one","name":"Docs","cwd":"C:/dev/docs","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
@@ -1369,8 +1223,9 @@ mod tests {
             selected: 0,
         });
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
-        let result = (tree.x..tree.right())
-            .map(|x| terminal.backend().buffer()[(x, tree.y + 1)].symbol())
+        let palette = crate::ui_palette::geometry(area, app.sessions.len());
+        let result = (palette.results.x..palette.results.right())
+            .map(|x| terminal.backend().buffer()[(x, palette.results.y)].symbol())
             .collect::<String>();
         assert!(result.contains("Docs"));
         app.disconnect("connection lost".into());

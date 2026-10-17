@@ -4,7 +4,7 @@ use crate::{
     launch::{Field, Program},
     model::{App, Dialog, folder_choices},
     theme::{BACKGROUND, DANGER, FAINT, MUTED, TEXT},
-    ui,
+    ui, ui_palette,
 };
 use ratatui::{
     Frame,
@@ -134,10 +134,26 @@ fn buttons(
 pub fn controls(app: &App, area: Rect) -> Vec<Control> {
     let mut output = Vec::new();
     let tree = ui::geometry(area, app).tree;
-    if tree.width > 0
-        && tree.height > 0
-        && (app.dialog.is_none() || matches!(app.dialog, Some(Dialog::QuickSwitch { .. })))
-    {
+    if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
+        let layout = ui_palette::geometry(area, app.sessions.len());
+        let count = app.quick_switch_results(query).len();
+        let offset = ui_palette::offset(*selected, layout.results.height);
+        for index in offset..count.min(offset + usize::from(layout.results.height)) {
+            output.push(Control {
+                area: Rect::new(
+                    layout.results.x,
+                    layout.results.y + (index - offset) as u16,
+                    layout.results.width,
+                    1,
+                ),
+                label: None,
+                action: Action::QuickChoice(index),
+                enabled: true,
+            });
+        }
+        return output;
+    }
+    if tree.width > 0 && tree.height > 0 && app.dialog.is_none() {
         let content = ui::tree_content(tree);
         output.push(Control {
             area: Rect::new(content.x, content.y, content.width, 1),
@@ -145,25 +161,6 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             action: Action::FocusSearch,
             enabled: true,
         });
-        if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
-            let count = app.quick_switch_results(query).len();
-            let visible = usize::from(content.height.saturating_sub(1) / 2);
-            let offset = selected.saturating_sub(visible.saturating_sub(1));
-            for index in offset..count.min(offset + visible) {
-                output.push(Control {
-                    area: Rect::new(
-                        content.x,
-                        content.y + 1 + ((index - offset) as u16) * 2,
-                        content.width,
-                        2,
-                    ),
-                    label: None,
-                    action: Action::QuickChoice(index),
-                    enabled: true,
-                });
-            }
-            return output;
-        }
     }
     if let Some(dialog) = &app.dialog {
         if matches!(dialog, Dialog::Menu) {
@@ -184,24 +181,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
         let body = dialog_body(inner);
         match dialog {
             Dialog::Menu => unreachable!("Menu has its own full-screen geometry"),
-            Dialog::QuickSwitch { query, selected } => {
-                let count = app.quick_switch_results(query).len();
-                let visible = body.height.saturating_sub(5);
-                let offset = move_offset(*selected, visible);
-                for index in offset..count.min(offset + usize::from(visible)) {
-                    output.push(Control {
-                        area: row(body, 3 + (index - offset) as u16),
-                        label: None,
-                        action: Action::QuickChoice(index),
-                        enabled: true,
-                    });
-                }
-                buttons(
-                    dialog_actions(inner),
-                    [("Close", Action::Cancel, true)],
-                    &mut output,
-                );
-            }
+            Dialog::QuickSwitch { .. } => unreachable!("Palette has its own controls"),
             Dialog::ExitConfirm { .. } => {
                 buttons(
                     dialog_actions(inner),
@@ -578,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_search_replaces_the_root_heading_and_results_are_clickable() {
+    fn sidebar_search_opens_palette_with_clickable_results() {
         let mut app = App::new(1);
         app.event(serde_json::json!({"type":"sessions","revision":1,"groups":[],"sessions":[
             {"id":"one","name":"Docs","cwd":"C:/dev/docs","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
@@ -594,8 +574,9 @@ mod tests {
             query: "web".into(),
             selected: 0,
         });
+        let palette = ui_palette::geometry(area, app.sessions.len());
         assert_eq!(
-            hit_test(&app, area, tree.x + 2, tree.y + 1),
+            hit_test(&app, area, palette.results.x + 2, palette.results.y),
             Some(Action::QuickChoice(0))
         );
         assert_eq!(hit_test(&app, area, tree.x + 2, tree.y + 3), None);
