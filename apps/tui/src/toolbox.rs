@@ -3,7 +3,7 @@ use crate::{
     controller::Outcome,
     model::{App, Session},
     status::{Source, State},
-    theme::{MUTED, SURFACE, TEXT},
+    theme::{SURFACE, TEXT},
 };
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::{
@@ -571,7 +571,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
     frame.render_widget(Paragraph::new(lines), body);
     frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        Paragraph::new(Line::from(crate::ui::shortcut_spans(hint))),
         Rect::new(body.x, area.bottom().saturating_sub(2), body.width, 1),
     );
 }

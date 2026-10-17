@@ -316,11 +316,13 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
         }
     }
     frame.render_widget(
-        Paragraph::new(if app.palette_expanded {
-            format!("↑↓ move · Enter open · Tab filter · Esc close · {scope_label}")
-        } else {
-            "Enter open · F2 expand".to_owned()
-        })
+        Paragraph::new(Line::from(crate::ui::shortcut_spans(
+            &if app.palette_expanded {
+                format!("↑↓ move · Enter open · Tab filter · Esc close · {scope_label}")
+            } else {
+                "Enter open · F2 expand".to_owned()
+            },
+        )))
         .style(Style::default().fg(MUTED)),
         layout.footer,
     );
@@ -391,7 +393,12 @@ mod tests {
                 .collect::<String>();
             if width == 132 {
                 assert!(text.contains("Live preview content"));
-                assert!(text.contains("Enter open"));
+                assert!(
+                    text.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .contains("Enter open")
+                );
             } else {
                 assert_eq!(layout.preview.width, 0);
             }

@@ -97,7 +97,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         tree.x,
         area.y,
         tree.width,
-        (tree.height + header.height).min(1),
+        (tree.height + header.height).min(3),
     );
     let inset = sidebar_header
         .height
@@ -238,10 +238,7 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
         return (" NESVO MENU ", " Enter resume · w quota wake · F4 diff");
     }
     match app.mode {
-        Mode::Input => (
-            " SESSION INPUT ",
-            " Ctrl+Q → z fullscreen · Ctrl+Q menu · F4 diff",
-        ),
+        Mode::Input => (" SESSION INPUT ", " Ctrl+Q menu · F4 diff"),
         Mode::Navigate => (
             " NESVO MENU ",
             " Enter resume · n new · / search · F4 diff · ? help",
@@ -249,29 +246,81 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
     }
 }
 
-fn shortcut_spans(hint: &str) -> Vec<Span<'static>> {
-    hint.split_inclusive(' ')
-        .map(|part| {
-            let key = part.trim();
-            let is_key = matches!(
-                key,
-                "Ctrl+Q" | "Enter" | "Esc" | "n" | "z" | "w" | "r" | "/" | "?"
-            ) || key
-                .strip_prefix('F')
-                .is_some_and(|n| n.parse::<u8>().is_ok());
-            Span::styled(
-                part.to_owned(),
-                if is_key {
-                    Style::default()
-                        .fg(TEXT)
-                        .bg(BORDER)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(MUTED)
-                },
-            )
-        })
-        .collect()
+pub(crate) fn shortcut_spans(hint: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for part in hint.split_inclusive(' ') {
+        let key = part.trim();
+        let is_key = matches!(
+            key,
+            "Ctrl+Q"
+                | "Ctrl+K"
+                | "Enter"
+                | "Esc"
+                | "Tab"
+                | "Space"
+                | "PgUp/PgDn"
+                | "↑↓"
+                | "←→"
+                | "↑"
+                | "↓"
+                | "←"
+                | "→"
+                | "[]"
+                | "n"
+                | "z"
+                | "w"
+                | "r"
+                | "c"
+                | "s"
+                | "e"
+                | "o"
+                | "y"
+                | "Y"
+                | "x"
+                | "/"
+                | "?"
+        ) || key
+            .strip_prefix('F')
+            .is_some_and(|n| n.parse::<u8>().is_ok());
+        if is_key {
+            spans.push(Span::styled(
+                format!(" {key} "),
+                Style::default()
+                    .fg(TEXT)
+                    .bg(BORDER)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
+        } else {
+            spans.push(Span::styled(part.to_owned(), Style::default().fg(MUTED)));
+        }
+    }
+    spans
+}
+
+/// Wrap complete key-description pairs; never leave a keycap without its label.
+pub(crate) fn shortcut_lines(items: &[&str], width: u16) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for item in items {
+        let next = shortcut_spans(item);
+        let size = Line::from(next.clone()).width();
+        if used > 0 && used + size + 2 > usize::from(width) {
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            used = 0;
+        }
+        if used > 0 {
+            spans.push(Span::raw("  "));
+            used += 2;
+        }
+        spans.extend(next);
+        used += size;
+    }
+    if !spans.is_empty() {
+        lines.push(Line::from(spans));
+    }
+    lines
 }
 
 fn footer_limits(app: &App) -> String {
@@ -375,14 +424,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
             Block::default().style(Style::default().bg(SURFACE)),
             layout.sidebar_header,
         );
-        frame.render_widget(
-            Paragraph::new(" nesvo").style(
-                Style::default()
-                    .fg(app.theme.accent())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            layout.sidebar_header,
-        );
+        frame.render_widget(brand::CompactLogo(app.theme), layout.sidebar_header);
         let tab_strip = Rect::new(
             layout.tree.right(),
             layout.header.y,
@@ -914,9 +956,17 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
     let title_y = if brand::area(menu).is_some() { 7 } else { 0 };
     if title_y < menu.height {
         frame.render_widget(
-            Paragraph::new("Your terminals. One workspace.")
-                .centered()
-                .style(Style::default().fg(MUTED)),
+            Paragraph::new(format!(
+                "{} sessions · {}",
+                app.sessions.len(),
+                if app.connected {
+                    "Ready to work"
+                } else {
+                    "Connecting to host…"
+                }
+            ))
+            .centered()
+            .style(Style::default().fg(MUTED)),
             Rect::new(menu.x, menu.y + title_y, menu.width, 1),
         );
     }
@@ -943,10 +993,34 @@ fn render_menu(frame: &mut Frame, app: &App, logo_frame: usize) {
         let inside = Block::bordered().inner(target);
         frame.render_widget(
             Paragraph::new(match index {
-                0 => "Enter workspace",
-                1 => "Pair mobile",
-                2 => "Settings",
-                _ => "Keyboard shortcuts",
+                0 => {
+                    if selected {
+                        "›  Enter workspace"
+                    } else {
+                        "Enter workspace"
+                    }
+                }
+                1 => {
+                    if selected {
+                        "›  Pair mobile"
+                    } else {
+                        "Pair mobile"
+                    }
+                }
+                2 => {
+                    if selected {
+                        "›  Settings"
+                    } else {
+                        "Settings"
+                    }
+                }
+                _ => {
+                    if selected {
+                        "›  Keyboard shortcuts"
+                    } else {
+                        "Keyboard shortcuts"
+                    }
+                }
             })
             .centered()
             .style(Style::default().fg(if selected {
@@ -1350,15 +1424,11 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
     ];
     for (key, description) in pages[app.help_page % 3] {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!(" {:<16}", app.shortcuts.hints(key)),
-                Style::default()
-                    .fg(app.theme.accent())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(*description, Style::default().fg(TEXT)),
-        ]));
+        let mut keys = shortcut_spans(&app.shortcuts.hints(key));
+        let width = Line::from(keys.clone()).width();
+        keys.push(Span::raw(" ".repeat(22usize.saturating_sub(width).max(1))));
+        keys.push(Span::styled(*description, Style::default().fg(TEXT)));
+        lines.push(Line::from(keys));
         if area.height >= 23 {
             lines.push(Line::from(""));
         }
@@ -1388,8 +1458,8 @@ mod tests {
             let layout = geometry(Rect::new(0, 0, width, height), &app);
             assert_eq!(layout.header.height, 1);
             assert_eq!(layout.panes[0].y, 1);
-            assert_eq!(layout.sidebar_header.height, 1);
-            assert_eq!(layout.tree.y, 1);
+            assert_eq!(layout.sidebar_header.height, 3);
+            assert_eq!(layout.tree.y, 3);
             assert_eq!(layout.sidebar_header.right(), layout.panes[0].x);
         }
     }
@@ -1874,7 +1944,10 @@ mod tests {
             .map(|x| buffer[(x, layout.footer.y)].symbol())
             .collect();
         assert!(footer.contains("SESSION"), "{footer}");
-        assert!(footer.contains("Ctrl+Q → z fullscreen"), "{footer}");
+        assert!(
+            footer.contains("Ctrl+Q") && footer.contains("menu"),
+            "{footer}"
+        );
         assert!(footer.contains(" z "), "{footer}");
         let handle = fullscreen_handle_area(&app, layout.footer);
         assert_eq!(buffer[(handle.x, handle.y)].bg, BORDER);

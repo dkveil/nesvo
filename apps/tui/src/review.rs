@@ -107,7 +107,15 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let state = &app.review;
     frame.render_widget(Clear, area);
     let block = Block::bordered()
-        .title(format!(" Changes · {} ", SCOPES[state.scope]))
+        .title(format!(
+            " Changes · {}{} ",
+            SCOPES[state.scope],
+            if state.data.truncated {
+                " · partial"
+            } else {
+                ""
+            }
+        ))
         .style(Style::default().bg(SURFACE).fg(TEXT))
         .border_style(Style::default().fg(if state.focused {
             app.theme.accent()
@@ -116,11 +124,28 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }));
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let shortcuts = crate::ui::shortcut_lines(
+        &[
+            "↑↓ file",
+            "←→ hunk",
+            "Space fold",
+            "PgUp/PgDn scroll",
+            "r refresh",
+            "y copy",
+            "o folder",
+            "c scope",
+            "[] width",
+            "s split",
+            "e expand",
+            "Esc close",
+        ],
+        inner.width,
+    );
     let [files, heading, content, footer] = Layout::vertical([
         Constraint::Length((state.data.files.len() as u16).clamp(1, 5)),
         Constraint::Length(3),
         Constraint::Min(0),
-        Constraint::Length(3),
+        Constraint::Length(shortcuts.len() as u16),
     ])
     .areas(inner);
     let first = state
@@ -262,19 +287,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
     }
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from("↑↓ file  ←→ hunk  Space fold"),
-            Line::from("PgUp/PgDn scroll · r refresh · Tab focus"),
-            Line::from(if state.data.truncated {
-                "Partial · c scope · e expand · Esc close"
-            } else {
-                "c scope · [] width · e expand · Esc close"
-            }),
-        ])
-        .style(Style::default().fg(MUTED)),
-        footer,
-    );
+    frame.render_widget(Paragraph::new(shortcuts), footer);
 }
 
 fn tint(color: Color) -> Color {
@@ -340,12 +353,22 @@ fn unified_lines(file: &FileDiff, state: &ReviewState, selection: Color) -> Vec<
             Some(b'-') => {
                 let n = old;
                 old += 1;
-                (n.to_string(), String::new(), DANGER, tint(DANGER))
+                (
+                    n.to_string(),
+                    String::new(),
+                    Color::Rgb(255, 110, 130),
+                    tint(DANGER),
+                )
             }
             Some(b'+') => {
                 let n = new;
                 new += 1;
-                (String::new(), n.to_string(), SUCCESS, tint(SUCCESS))
+                (
+                    String::new(),
+                    n.to_string(),
+                    Color::Rgb(105, 245, 145),
+                    tint(SUCCESS),
+                )
             }
             Some(b' ') => {
                 let a = old;
@@ -374,15 +397,19 @@ fn unified_lines(file: &FileDiff, state: &ReviewState, selection: Color) -> Vec<
 
 fn styled(text: &str) -> Line<'_> {
     let color = if text.starts_with('+') {
-        SUCCESS
+        Color::Rgb(105, 245, 145)
     } else if text.starts_with('-') {
-        DANGER
+        Color::Rgb(255, 110, 130)
     } else {
         TEXT
     };
     Line::from(Span::styled(text, Style::default().fg(color))).style(Style::default().bg(
         if text.starts_with(['+', '-']) {
-            tint(color)
+            tint(if text.starts_with('+') {
+                SUCCESS
+            } else {
+                DANGER
+            })
         } else {
             SURFACE
         },
