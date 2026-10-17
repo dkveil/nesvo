@@ -107,7 +107,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         tree.x,
         area.y,
         tree.width,
-        (tree.height + header.height).min(4),
+        (tree.height + header.height).min(3),
     );
     let inset = sidebar_header
         .height
@@ -204,23 +204,8 @@ fn sidebar_entries(app: &App, area: Rect) -> Vec<(Rect, usize)> {
     entries
 }
 
-fn sidebar_rows_area(app: &App, area: Rect) -> Rect {
-    if matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
-        return area;
-    }
-    let count = app
-        .capabilities
-        .as_ref()
-        .map_or(0, |caps| caps.provider_limits.len());
-    let reserved = if count == 0 {
-        0
-    } else {
-        (count as u16 + 2).min(area.height / 3)
-    };
-    Rect {
-        height: area.height.saturating_sub(reserved),
-        ..area
-    }
+fn sidebar_rows_area(_app: &App, area: Rect) -> Rect {
+    area
 }
 
 fn limit_label(minutes: u32) -> String {
@@ -249,18 +234,12 @@ pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
     if app.review.visible && app.review.focused && app.mode == Mode::Navigate {
-        return (
-            " DIFF REVIEW ",
-            " Keys control review · F4 / Esc close · r refresh",
-        );
+        return (" DIFF REVIEW ", " F4 / Esc close · r refresh");
     }
     if app.mode == Mode::Navigate
         && (app.wake_available() || app.active_session().is_some_and(|s| s.wake_at.is_some()))
     {
-        return (
-            " NESVO MENU ",
-            " Keys control Nesvo · Enter resume · w quota wake · F4 diff",
-        );
+        return (" NESVO MENU ", " Enter resume · w quota wake · F4 diff");
     }
     match app.mode {
         Mode::Input => (
@@ -269,9 +248,34 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
         ),
         Mode::Navigate => (
             " NESVO MENU ",
-            " Keys control Nesvo · Enter resume · n new · / search · F4 diff · ? help",
+            " Enter resume · n new · / search · F4 diff · ? help",
         ),
     }
+}
+
+fn shortcut_spans(hint: &str) -> Vec<Span<'static>> {
+    hint.split_inclusive(' ')
+        .map(|part| {
+            let key = part.trim();
+            let is_key = matches!(
+                key,
+                "Ctrl+Q" | "Enter" | "Esc" | "n" | "z" | "w" | "r" | "/" | "?"
+            ) || key
+                .strip_prefix('F')
+                .is_some_and(|n| n.parse::<u8>().is_ok());
+            Span::styled(
+                part.to_owned(),
+                if is_key {
+                    Style::default()
+                        .fg(TEXT)
+                        .bg(BORDER)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(MUTED)
+                },
+            )
+        })
+        .collect()
 }
 
 fn footer_limits(app: &App) -> String {
@@ -372,42 +376,10 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     let layout = geometry(area, app);
     if !immersive(app) {
         frame.render_widget(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(BORDER))
-                .style(Style::default().bg(SURFACE)),
+            Block::default().style(Style::default().bg(SURFACE)),
             layout.sidebar_header,
         );
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
-                " nesvo ",
-                Style::default()
-                    .fg(app.theme.accent())
-                    .add_modifier(Modifier::BOLD),
-            )]))
-            .style(Style::default().bg(SURFACE)),
-            Rect::new(
-                layout.header.x + 7,
-                layout.header.y,
-                layout.tree.width.saturating_sub(7),
-                1,
-            ),
-        );
-        if layout.tree.width >= 20 {
-            frame.render_widget(
-                brand::Mark(app.theme),
-                Rect::new(layout.header.x + 1, layout.header.y, 6, 3),
-            );
-            frame.render_widget(
-                Paragraph::new(" ● Connected").style(Style::default().fg(SUCCESS).bg(SURFACE)),
-                Rect::new(
-                    layout.header.x + 7,
-                    layout.header.y + 1,
-                    layout.tree.width.saturating_sub(7),
-                    1,
-                ),
-            );
-        }
+        frame.render_widget(brand::CompactLogo(app.theme), layout.sidebar_header);
         let tab_strip = Rect::new(
             layout.tree.right(),
             layout.header.y,
@@ -485,32 +457,27 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     };
     let navigating = app.mode == Mode::Navigate;
     frame.render_widget(
-        Block::default().style(Style::default().bg(if navigating {
-            app.theme.selection()
-        } else {
-            SURFACE
-        })),
+        Block::default().style(Style::default().bg(SURFACE)),
         layout.footer,
     );
+    let mut spans = vec![
+        Span::styled(
+            mode,
+            Style::default()
+                .fg(if navigating { BACKGROUND } else { TEXT })
+                .bg(if navigating {
+                    app.theme.accent()
+                } else {
+                    BORDER
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+    ];
+    spans.extend(shortcut_spans(&app.shortcuts.hints(hint)));
+    spans.push(Span::styled(notice, Style::default().fg(WARNING)));
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                mode,
-                Style::default()
-                    .fg(if navigating { BACKGROUND } else { TEXT })
-                    .bg(if navigating {
-                        app.theme.accent()
-                    } else {
-                        BORDER
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                app.shortcuts.hints(hint),
-                Style::default().fg(if navigating { TEXT } else { MUTED }),
-            ),
-            Span::styled(notice, Style::default().fg(WARNING)),
-        ])),
+        Paragraph::new(Line::from(spans)),
         Rect::new(
             layout.footer.x,
             layout.footer.y,
@@ -526,11 +493,20 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     }
     if !handle.is_empty() {
         frame.render_widget(
-            Paragraph::new(if app.fullscreen {
-                " z full · on "
-            } else {
-                " z full · off "
-            })
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " z ",
+                    Style::default()
+                        .fg(TEXT)
+                        .bg(BORDER)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(if app.fullscreen {
+                    " full · on "
+                } else {
+                    " full · off "
+                }),
+            ]))
             .style(
                 Style::default()
                     .fg(if app.fullscreen {
@@ -722,53 +698,6 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                     .borders(Borders::RIGHT)
                     .border_style(Style::default().fg(app.theme.accent())),
                 Rect::new(area.right().saturating_sub(1), entry.y, 1, entry.height),
-            );
-        }
-    }
-    if let Some(caps) = &app.capabilities {
-        let rows_end = sidebar_rows_area(app, content).bottom();
-        if rows_end < content.bottom() {
-            let mut lines = vec![Line::from(Span::styled(
-                " LIMITS · USED",
-                Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
-            ))];
-            for provider in &caps.provider_limits {
-                let label = provider.id.label();
-                let detail = if provider.status == "ready" {
-                    provider
-                        .windows
-                        .iter()
-                        .map(|window| {
-                            format!(
-                                "{} {}%",
-                                limit_label(window.duration_mins),
-                                window.used_percent
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                } else if provider.status == "checking" {
-                    "checking…".into()
-                } else {
-                    match provider.id {
-                        Program::Claude => "/usage in CLI".into(),
-                        Program::Gemini => "/stats in CLI".into(),
-                        _ => "unavailable".into(),
-                    }
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(format!(" {label} "), Style::default().fg(TEXT)),
-                    Span::styled(detail, Style::default().fg(MUTED)),
-                ]));
-            }
-            frame.render_widget(
-                Paragraph::new(lines).style(Style::default().bg(SURFACE)),
-                Rect::new(
-                    content.x,
-                    rows_end,
-                    content.width,
-                    content.bottom() - rows_end,
-                ),
             );
         }
     }
@@ -1451,8 +1380,8 @@ mod tests {
             let layout = geometry(Rect::new(0, 0, width, height), &app);
             assert_eq!(layout.header.height, 1);
             assert_eq!(layout.panes[0].y, 1);
-            assert_eq!(layout.sidebar_header.height, 4);
-            assert_eq!(layout.tree.y, 4);
+            assert_eq!(layout.sidebar_header.height, 3);
+            assert_eq!(layout.tree.y, 3);
             assert_eq!(layout.sidebar_header.right(), layout.panes[0].x);
         }
     }
@@ -1504,12 +1433,21 @@ mod tests {
         .unwrap();
         let area = Rect::new(0, 0, 100, 24);
         let tree = tree_content(geometry(area, &app).tree);
-        let panel_y = sidebar_rows_area(&app, tree).bottom();
+        let panel_y = geometry(area, &app).footer.bottom() - 1;
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
-        let text = (tree.x..tree.right())
-            .map(|x| terminal.backend().buffer()[(x, panel_y + 1)].symbol())
+        let text = (0..area.width)
+            .map(|x| terminal.backend().buffer()[(x, panel_y)].symbol())
             .collect::<String>();
+        let all: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!all.contains("LIMITS · USED"));
+        assert_eq!(all.matches("Codex").count(), 1);
         assert!(text.contains("Codex"));
         assert!(text.contains("5h 73%"));
         assert_eq!(
@@ -1931,7 +1869,7 @@ mod tests {
         assert!(footer.contains("Ctrl+Q → z fullscreen"), "{footer}");
         assert!(footer.contains(" z "), "{footer}");
         let handle = fullscreen_handle_area(&app, layout.footer);
-        assert_eq!(buffer[(handle.x, handle.y)].bg, SURFACE);
+        assert_eq!(buffer[(handle.x, handle.y)].bg, BORDER);
     }
 
     #[test]
