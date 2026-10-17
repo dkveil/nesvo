@@ -431,6 +431,19 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
 }
 
 fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
+    if matches!(app.dialog, Some(Dialog::Help))
+        && matches!(key.code, KeyCode::Left | KeyCode::Right)
+    {
+        app.help_page = (app.help_page
+            + if matches!(key.code, KeyCode::Left) {
+                2
+            } else {
+                1
+            })
+            % 3;
+        app.dialog_button = None;
+        return;
+    }
     if key.code == KeyCode::Esc {
         if matches!(app.dialog, Some(Dialog::Menu)) {
             app.dialog = Some(Dialog::ExitConfirm {
@@ -1432,6 +1445,25 @@ mod tests {
             }),
             area,
         )
+    }
+
+    #[test]
+    fn keyboard_help_sections_change_without_losing_close_button() {
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::Help);
+        let area = Rect::new(0, 0, 80, 24);
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(app.help_page, 1);
+        event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            area,
+        );
+        assert_eq!(app.dialog_button, Some(0));
     }
 
     #[test]

@@ -1325,30 +1325,96 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                 );
             }
         }
-        Dialog::Help => {
-            frame.render_widget(
-                Paragraph::new(app.shortcuts.hints(concat!(
-                    "NAVIGATION (Ctrl+Q leaves session input)\n",
-                    "↑↓ / j k: select · Enter: open · z: full screen\n",
-                    "/ / Ctrl+K: palette · sidebar input: quick search\n",
-                    "Search: ↑↓ select · Enter open · Esc clear/close · F2 expand\n",
-                    "F4 diff · F6 previous session · F7 next attention\n",
-                    "F8 templates · F9 restore · u mute · f status filters\n",
-                    "n session · g group · r rename · m move · d delete\n",
-                    "New session F2: worktree / prompt / schedule · F3 save template\n",
-                    "S schedules · v split · Tab next pane · PgUp/PgDn scroll\n",
-                    "i type · t take over · x release · q detach · Esc confirm exit\n",
-                    "F1 menu · p pair phone · ? help · Settings → k remap keys\n",
-                    "DIFF: e expand · s split view · ↑↓ file · ←→ hunk · Space fold\n",
-                    "INPUT: keys go to the session, including Esc and Ctrl+C.\n",
-                    "Full screen while typing: Ctrl+Q, then z. Enter resumes input.\n",
-                    "~ status inferred from screen; open/quiet describes I/O.\n",
-                )))
-                .wrap(Wrap { trim: false }),
-                inner,
-            );
+        Dialog::Help => render_keyboard_help(frame, app, inner),
+    }
+}
+
+fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
+    let pages: [&[(&str, &str)]; 3] = [
+        &[
+            ("Ctrl+Q", "Leave terminal input / navigate Nesvo"),
+            ("↑ ↓", "Select session or group"),
+            ("Enter", "Open selected session"),
+            ("/  Ctrl+K", "Open command palette"),
+            ("z", "Toggle full screen"),
+            ("F6", "Previous session"),
+            ("F7", "Next session needing attention"),
+            ("F1  ?", "Main menu / keyboard help"),
+        ],
+        &[
+            ("n  g", "New session / group"),
+            ("r  m  d", "Rename / move / delete"),
+            ("f  u", "Filter status / mute attention"),
+            ("F8  F9", "Templates / restore sessions"),
+            ("S", "Scheduled sessions"),
+            ("F2 / F3", "New session: options / save template"),
+            ("v  Tab", "Split / change pane"),
+            ("i  t  x", "Type / take control / release"),
+        ],
+        &[
+            ("F4", "Toggle diff (preserves sidebar)"),
+            ("↑ ↓ / ← →", "Diff: select file / hunk"),
+            ("Space", "Diff: fold selected hunk"),
+            ("e  s", "Diff: expand / side-by-side"),
+            ("PgUp PgDn", "Scroll review or terminal history"),
+            ("Esc", "Close diff / cancel dialog"),
+            ("Ctrl+Q → z", "Toggle full screen from terminal input"),
+            ("Settings → k", "Customize global function keys"),
+        ],
+    ];
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                " NAVIGATION ",
+                Style::default().fg(if app.help_page == 0 {
+                    app.theme.accent()
+                } else {
+                    MUTED
+                }),
+            ),
+            Span::styled(
+                " SESSIONS ",
+                Style::default().fg(if app.help_page == 1 {
+                    app.theme.accent()
+                } else {
+                    MUTED
+                }),
+            ),
+            Span::styled(
+                " REVIEW ",
+                Style::default().fg(if app.help_page == 2 {
+                    app.theme.accent()
+                } else {
+                    MUTED
+                }),
+            ),
+        ]),
+        Line::from(""),
+    ];
+    for (key, description) in pages[app.help_page % 3] {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" {:<16}", app.shortcuts.hints(key)),
+                Style::default()
+                    .fg(app.theme.accent())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(*description, Style::default().fg(TEXT)),
+        ]));
+        if area.height >= 23 {
+            lines.push(Line::from(""));
         }
     }
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        " ← → sections · Tab close button · Esc back",
+        Style::default().fg(MUTED),
+    ));
+    lines.push(Line::styled(
+        " In terminal input, Esc and Ctrl+C go to the session.",
+        Style::default().fg(MUTED),
+    ));
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 #[cfg(test)]
@@ -1388,8 +1454,8 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        assert!(text.contains("Ctrl+Q, then z"));
-        assert!(text.contains("open/quiet describes I/O"));
+        assert!(text.contains("Toggle full screen"));
+        assert!(text.contains("Tab close button"));
     }
 
     #[test]
