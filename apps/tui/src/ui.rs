@@ -316,22 +316,24 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
         return;
     }
     let layout = geometry(area, app);
-    let connected = if app.connected {
-        "connected"
-    } else {
-        "offline"
-    };
     if !immersive(app) {
+        let navigating = app.mode == Mode::Navigate;
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    " nesvo ",
-                    Style::default()
-                        .fg(app.theme.accent())
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("· {connected}"), Style::default().fg(MUTED)),
-            ])),
+            Paragraph::new(if navigating {
+                " > NESVO MENU"
+            } else {
+                "   SESSION INPUT"
+            })
+            .style(
+                Style::default()
+                    .fg(if navigating { BACKGROUND } else { TEXT })
+                    .bg(if navigating {
+                        app.theme.accent()
+                    } else {
+                        SURFACE
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
             Rect::new(layout.header.x, layout.header.y, layout.tree.width, 1),
         );
         let tab_strip = Rect::new(
@@ -457,7 +459,11 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Block::default()
             .borders(Borders::RIGHT)
-            .border_style(Style::default().fg(BORDER)),
+            .border_style(Style::default().fg(if app.mode == Mode::Navigate {
+                app.theme.accent()
+            } else {
+                BORDER
+            })),
         area,
     );
     let content = tree_content(area);
@@ -508,7 +514,13 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled(
-                            if selected { "▎" } else { " " },
+                            if selected && app.mode == Mode::Navigate {
+                                ">"
+                            } else if selected {
+                                "▎"
+                            } else {
+                                " "
+                            },
                             Style::default().fg(app.theme.accent()),
                         ),
                         Span::raw(indent),
@@ -555,7 +567,13 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled(
-                            if selected { "▎" } else { " " },
+                            if selected && app.mode == Mode::Navigate {
+                                ">"
+                            } else if selected {
+                                "▎"
+                            } else {
+                                " "
+                            },
                             Style::default().fg(app.theme.accent()),
                         ),
                         Span::raw(indent.clone()),
