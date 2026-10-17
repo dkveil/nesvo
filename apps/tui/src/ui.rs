@@ -83,17 +83,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(if immersive { 0 } else { 1 }),
         Constraint::Min(0),
-        Constraint::Length(
-            if app
-                .capabilities
-                .as_ref()
-                .is_some_and(|c| !c.provider_limits.is_empty())
-            {
-                2
-            } else {
-                1
-            },
-        ),
+        Constraint::Length(1),
     ])
     .areas(area);
     let sidebar = if immersive || area.width < 65 {
@@ -107,7 +97,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         tree.x,
         area.y,
         tree.width,
-        (tree.height + header.height).min(3),
+        (tree.height + header.height).min(1),
     );
     let inset = sidebar_header
         .height
@@ -379,7 +369,14 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
             Block::default().style(Style::default().bg(SURFACE)),
             layout.sidebar_header,
         );
-        frame.render_widget(brand::CompactLogo(app.theme), layout.sidebar_header);
+        frame.render_widget(
+            Paragraph::new(" nesvo").style(
+                Style::default()
+                    .fg(app.theme.accent())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            layout.sidebar_header,
+        );
         let tab_strip = Rect::new(
             layout.tree.right(),
             layout.header.y,
@@ -439,7 +436,12 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     let text_width = if layout.footer.height > 1 {
         usize::from(layout.footer.width)
     } else {
-        usize::from(handle.x.saturating_sub(layout.footer.x))
+        usize::from(
+            handle
+                .x
+                .saturating_sub(layout.footer.x)
+                .saturating_sub(usage_width),
+        )
     };
     let (mode, hint) = if text_width < Line::from(full_mode).width() + 12 {
         match app.mode {
@@ -1380,8 +1382,8 @@ mod tests {
             let layout = geometry(Rect::new(0, 0, width, height), &app);
             assert_eq!(layout.header.height, 1);
             assert_eq!(layout.panes[0].y, 1);
-            assert_eq!(layout.sidebar_header.height, 3);
-            assert_eq!(layout.tree.y, 3);
+            assert_eq!(layout.sidebar_header.height, 1);
+            assert_eq!(layout.tree.y, 1);
             assert_eq!(layout.sidebar_header.right(), layout.panes[0].x);
         }
     }

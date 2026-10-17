@@ -103,43 +103,6 @@ impl Widget for Logo {
     }
 }
 
-/// Half-size wordmark sampled from the canonical pixel grid.
-pub struct CompactLogo(pub Theme);
-impl Widget for CompactLogo {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        if area.width < 26 || area.height < 3 {
-            return;
-        }
-        let source = pixels(0);
-        for y in 0..3 {
-            for x in 0..26 {
-                let sample = |half: usize| {
-                    let px = if x < 5 {
-                        Some(x * 2)
-                    } else if x == 5 || (x - 6) % 5 == 4 {
-                        None
-                    } else {
-                        Some(ORIGINS[1 + (x - 6) / 5] + ((x - 6) % 5) * 2)
-                    };
-                    let py = [2, 4, 6, 8, 10, 11][y * 2 + half];
-                    px.is_some_and(|px| {
-                        (0..2).any(|dx| source[py].get(px + dx).is_some_and(|p| *p != 0))
-                    })
-                };
-                let glyph = match (sample(0), sample(1)) {
-                    (true, true) => "█",
-                    (true, false) => "▀",
-                    (false, true) => "▄",
-                    _ => " ",
-                };
-                buffer[(area.x + x as u16, area.y + y as u16)]
-                    .set_symbol(glyph)
-                    .set_fg(if x < 6 { self.0.accent() } else { TEXT });
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
