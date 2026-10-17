@@ -34,6 +34,12 @@ import { SessionLaunchpad } from './session-launchpad';
 
 export type { DashboardTab } from './dashboard-navigation';
 
+function limitWindowLabel(minutes: number): string {
+  if (minutes % 1440 === 0) return `${minutes / 1440}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}m`;
+}
+
 export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; active?: boolean }) {
   const insets = useSafeAreaInsets();
   const motionAllowed = useMotionPreference();
@@ -116,6 +122,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
     sessions: visible.filter(session => (session.groupId ?? null) === id),
   }));
   const attentionCount = sessions.filter(session => statusNeedsAttention(session.status)).length;
+  const providerLimits = hostCapabilities?.providerLimits ?? [];
 
   return (
     <KeyboardAvoidingView
@@ -201,6 +208,60 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               </View>
               <Icon name="chevron-forward" size={18} color={c.faint} />
             </Pressable>
+            {mode === 'live' && connected && providerLimits.length > 0 ? (
+              <View style={s.providerSection}>
+                <Text style={s.eyebrow}>LIMITY DOSTAWCÓW</Text>
+                {providerLimits.map(provider => (
+                  <View key={provider.id} style={s.providerRow}>
+                    <Text style={s.providerName}>
+                      {provider.id === 'claude'
+                        ? 'Claude'
+                        : provider.id === 'gemini'
+                          ? 'Gemini'
+                          : 'Codex'}
+                    </Text>
+                    {provider.status === 'ready' ? (
+                      <View style={s.providerWindows}>
+                        {[...provider.windows]
+                          .sort((a, b) => a.durationMins - b.durationMins)
+                          .map(window => (
+                            <View key={window.durationMins} style={s.providerWindow}>
+                              <Text style={s.providerWindowText}>
+                                {limitWindowLabel(window.durationMins)} {window.usedPercent}%
+                              </Text>
+                              <View style={s.providerTrack}>
+                                <View
+                                  style={[
+                                    s.providerFill,
+                                    {
+                                      width: `${window.usedPercent}%`,
+                                      backgroundColor:
+                                        window.usedPercent >= 90 ? c.warning : c.accent,
+                                    },
+                                  ]}
+                                />
+                              </View>
+                            </View>
+                          ))}
+                      </View>
+                    ) : (
+                      <Text style={s.providerHint}>
+                        {provider.status === 'checking'
+                          ? 'Odczytywanie…'
+                          : provider.id === 'claude'
+                            ? 'Sprawdź w Claude: /usage'
+                            : provider.id === 'gemini'
+                              ? 'Sprawdź w Gemini: /stats model'
+                              : 'Limit niedostępny w Codex'}
+                      </Text>
+                    )}
+                  </View>
+                ))}
+                {providerLimits.some(provider => provider.status === 'ready') ? (
+                  <Text style={s.providerCaption}>Wykorzystano z limitu</Text>
+                ) : null}
+              </View>
+            ) : null}
             {!!showStartMenu && (
               <View
                 style={s.startMenu}
@@ -662,6 +723,23 @@ const s = StyleSheet.create({
   },
   grow: { flex: 1, minWidth: 0 },
   meta: { color: c.muted, fontSize: 13, lineHeight: 18 },
+  providerSection: { gap: 2, paddingVertical: 2 },
+  providerRow: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.border,
+  },
+  providerName: { width: 62, color: c.text, fontSize: 13, fontWeight: '600' },
+  providerWindows: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  providerWindow: { flex: 1, minWidth: 0, gap: 3 },
+  providerWindowText: { color: c.muted, fontSize: 11 },
+  providerTrack: { height: 3, backgroundColor: c.elevated, borderRadius: 2, overflow: 'hidden' },
+  providerFill: { height: 3, borderRadius: 2 },
+  providerHint: { flex: 1, color: c.muted, fontSize: 11 },
+  providerCaption: { color: c.faint, fontSize: 10, marginTop: 4 },
   reconnect: { gap: 12, paddingVertical: 8 },
   startMenu: { gap: 10 },
   search: {

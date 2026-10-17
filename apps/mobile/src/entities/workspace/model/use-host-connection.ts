@@ -35,7 +35,11 @@ export function useHostConnection(mode: WorkspaceMode) {
         setConnecting(false);
         setHostCapabilities(null);
       } else if (event.type === 'capabilities') {
-        setHostCapabilities({ workspace: event.workspace, programs: event.programs });
+        setHostCapabilities({
+          workspace: event.workspace,
+          programs: event.programs,
+          providerLimits: event.providerLimits ?? [],
+        });
       } else if (event.type === 'error') {
         setNotice(
           event.code === 'revision_conflict'

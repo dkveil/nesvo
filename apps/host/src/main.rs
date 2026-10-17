@@ -8,6 +8,7 @@ mod sessions;
 mod status;
 mod storage;
 mod transport;
+mod usage;
 use nesvo_host::wire;
 
 use anyhow::{Context, Result, ensure};
@@ -207,6 +208,7 @@ async fn main() -> Result<()> {
 
     let metadata = storage::MetadataStore::open(&pairing_dir.join("metadata.sqlite3"))?;
     let launchers = launchers::Launchers::discover();
+    let codex_probe = launchers.probe_command(launchers::Program::Codex);
     let state = Arc::new(Mutex::new(sessions::State::new(
         workspace.clone(),
         metadata,
@@ -214,6 +216,16 @@ async fn main() -> Result<()> {
     )));
     let (event_tx, event_rx) = mpsc::channel(128);
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
+    if let Some(command) = codex_probe {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                let windows = usage::read_codex_limits(&command).await.unwrap_or_default();
+                state.lock().unwrap().update_codex_limits(windows);
+                tokio::time::sleep(Duration::from_secs(120)).await;
+            }
+        });
+    }
     let permits = Arc::new(Semaphore::new(16));
     println!("nesvo Rust host listening on {bind}:{actual_port}");
     println!("Workspace: {}", workspace.display());

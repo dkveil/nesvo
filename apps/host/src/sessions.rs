@@ -7,6 +7,7 @@ use crate::{
     replay::{bounded_append, output_chunks, replay_history},
     status::{StatusTracker, now_millis},
     storage::MetadataStore,
+    usage::{self, LimitWindow, ProviderLimit},
 };
 use anyhow::{Result, anyhow, ensure};
 use portable_pty::{CommandBuilder, PtySize};
@@ -78,6 +79,7 @@ pub struct State {
     pub clients: HashMap<u64, Client>,
     metadata: MetadataStore,
     launchers: Launchers,
+    provider_limits: Vec<ProviderLimit>,
 }
 
 fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
@@ -95,6 +97,7 @@ fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
 
 impl State {
     pub fn new(workspace: PathBuf, metadata: MetadataStore, launchers: Launchers) -> Self {
+        let provider_limits = usage::installed(&launchers);
         Self {
             workspace,
             sessions: HashMap::new(),
@@ -103,7 +106,40 @@ impl State {
             clients: HashMap::new(),
             metadata,
             launchers,
+            provider_limits,
         }
+    }
+
+    pub fn update_codex_limits(&mut self, windows: Vec<LimitWindow>) {
+        let Some(index) = self
+            .provider_limits
+            .iter()
+            .position(|limit| limit.id == Program::Codex)
+        else {
+            return;
+        };
+        let status = if windows.is_empty() {
+            "unavailable"
+        } else {
+            "ready"
+        };
+        if self.provider_limits[index].status == status
+            && self.provider_limits[index].windows == windows
+        {
+            return;
+        }
+        self.provider_limits[index].status = status;
+        self.provider_limits[index].windows = windows;
+        let event = self.capabilities_event();
+        for id in self.clients.keys() {
+            self.send(*id, event.clone());
+        }
+    }
+
+    fn capabilities_event(&self) -> Value {
+        json!({"type":"capabilities", "workspace":crate::process::display_path(&self.workspace),
+            "programs":self.launchers.capabilities(), "directoryBrowser":true,
+            "providerLimits":self.provider_limits})
     }
 
     pub fn send(&self, client_id: u64, event: Value) {
@@ -327,13 +363,22 @@ impl State {
         match command {
             Command::Auth { .. } => return Err(anyhow!("Already authenticated.")),
             Command::List => self.send(client_id, self.list()),
-            Command::GetCapabilities => self.respond(client_id, json!({"type":"capabilities", "workspace":crate::process::display_path(&self.workspace), "programs":self.launchers.capabilities(), "directoryBrowser":true}), request_id),
+            Command::GetCapabilities => {
+                self.respond(client_id, self.capabilities_event(), request_id)
+            }
             Command::ListDirectories { path } => {
                 let directory = match path.as_deref().filter(|value| !value.is_empty()) {
                     Some(value) => {
-                        ensure!(value.len() <= 4096 && !value.chars().any(char::is_control), "Invalid folder path.");
+                        ensure!(
+                            value.len() <= 4096 && !value.chars().any(char::is_control),
+                            "Invalid folder path."
+                        );
                         let requested = PathBuf::from(value);
-                        if requested.is_absolute() { requested } else { self.workspace.join(requested) }
+                        if requested.is_absolute() {
+                            requested
+                        } else {
+                            self.workspace.join(requested)
+                        }
                     }
                     None => self.workspace.clone(),
                 };
@@ -341,11 +386,20 @@ impl State {
                 ensure!(directory.is_dir(), "This folder does not exist.");
                 let mut entries = std::fs::read_dir(&directory)?
                     .filter_map(|item| item.ok())
-                    .filter(|item| item.path().is_dir() && !item.file_name().to_string_lossy().chars().any(char::is_control))
-                    .map(|item| json!({
-                        "name": item.file_name().to_string_lossy(),
-                        "path": crate::process::display_path(&item.path()),
-                    }))
+                    .filter(|item| {
+                        item.path().is_dir()
+                            && !item
+                                .file_name()
+                                .to_string_lossy()
+                                .chars()
+                                .any(char::is_control)
+                    })
+                    .map(|item| {
+                        json!({
+                            "name": item.file_name().to_string_lossy(),
+                            "path": crate::process::display_path(&item.path()),
+                        })
+                    })
                     .collect::<Vec<_>>();
                 #[cfg(windows)]
                 if directory.parent().is_none() {
@@ -356,14 +410,24 @@ impl State {
                         }
                     }
                 }
-                entries.sort_by(|a, b| a["name"].as_str().unwrap_or_default().to_lowercase().cmp(&b["name"].as_str().unwrap_or_default().to_lowercase()));
+                entries.sort_by(|a, b| {
+                    a["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .cmp(&b["name"].as_str().unwrap_or_default().to_lowercase())
+                });
                 entries.truncate(512);
-                self.respond(client_id, json!({
-                    "type": "directories",
-                    "path": crate::process::display_path(&directory),
-                    "parent": directory.parent().map(crate::process::display_path),
-                    "entries": entries,
-                }), request_id);
+                self.respond(
+                    client_id,
+                    json!({
+                        "type": "directories",
+                        "path": crate::process::display_path(&directory),
+                        "parent": directory.parent().map(crate::process::display_path),
+                        "entries": entries,
+                    }),
+                    request_id,
+                );
             }
             Command::Create {
                 name,

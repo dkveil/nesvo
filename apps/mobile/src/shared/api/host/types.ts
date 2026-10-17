@@ -12,6 +12,12 @@ export type SessionStatus = {
 export type HostCapabilities = {
   workspace: string;
   programs: { id: SessionProgram; label: string; available: boolean }[];
+  providerLimits?: ProviderLimit[];
+};
+export type ProviderLimit = {
+  id: Exclude<SessionProgram, 'shell'>;
+  status: 'checking' | 'ready' | 'unavailable';
+  windows: { usedPercent: number; durationMins: number; resetsAt: number | null }[];
 };
 export type SessionLaunchOptions = { cwd?: string; program?: SessionProgram };
 

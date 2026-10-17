@@ -32,18 +32,48 @@ function sessionStatus(value: unknown): boolean {
   );
 }
 function capabilities(value: RecordValue): boolean {
+  const programs = value.programs;
+  const providerLimits = value.providerLimits;
   return (
     text(value.workspace, 32768) &&
-    Array.isArray(value.programs) &&
-    value.programs.length === 4 &&
-    value.programs.every(
+    Array.isArray(programs) &&
+    programs.length === 4 &&
+    programs.every(
       (item: unknown) =>
         record(item) &&
         program(item.id) &&
         text(item.label, 80) &&
         typeof item.available === 'boolean',
     ) &&
-    new Set(value.programs.map((item: RecordValue) => item.id)).size === 4
+    new Set(programs.map((item: RecordValue) => item.id)).size === 4 &&
+    (providerLimits === undefined ||
+      (Array.isArray(providerLimits) &&
+        providerLimits.length <= 3 &&
+        providerLimits.every(
+          (item: unknown) =>
+            record(item) &&
+            (item.id === 'claude' || item.id === 'gemini' || item.id === 'codex') &&
+            (item.status === 'checking' ||
+              item.status === 'ready' ||
+              item.status === 'unavailable') &&
+            Array.isArray(item.windows) &&
+            item.windows.length <= 2 &&
+            (item.status === 'ready' ? item.windows.length > 0 : item.windows.length === 0) &&
+            item.windows.every(
+              (window: unknown) =>
+                record(window) &&
+                integer(window.usedPercent, 0, 100) &&
+                integer(window.durationMins, 1, 1_000_000) &&
+                (window.resetsAt === null || integer(window.resetsAt)),
+            ),
+        ) &&
+        new Set(providerLimits.map((item: RecordValue) => item.id)).size ===
+          providerLimits.length &&
+        providerLimits.every((item: RecordValue) =>
+          programs.some(
+            (program: RecordValue) => program.id === item.id && program.available === true,
+          ),
+        )))
   );
 }
 function session(value: unknown): value is RecordValue {

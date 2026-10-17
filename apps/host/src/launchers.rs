@@ -120,6 +120,21 @@ impl Launchers {
             .collect()
     }
 
+    pub fn available(&self, program: Program) -> bool {
+        self.entries
+            .iter()
+            .any(|(id, launcher)| *id == program && launcher.is_some())
+    }
+
+    /// Reuse the resolved launcher for read-only CLI integration, including npm's Windows wrapper.
+    pub fn probe_command(&self, program: Program) -> Option<(PathBuf, Vec<OsString>)> {
+        self.entries
+            .iter()
+            .find(|(id, _)| *id == program)
+            .and_then(|(_, launcher)| launcher.as_ref())
+            .map(|launcher| (launcher.executable.clone(), launcher.args.clone()))
+    }
+
     pub fn command(&self, program: Program, cwd: &Path) -> Result<CommandBuilder> {
         self.entries
             .iter()

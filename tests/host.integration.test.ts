@@ -37,6 +37,7 @@ type Event = {
   requestId?: string;
   workspace?: string;
   programs?: { id: string; label: string; available: boolean }[];
+  providerLimits?: { id: string; status: string; windows: unknown[] }[];
   directoryBrowser?: boolean;
   path?: string;
   parent?: string | null;
@@ -445,6 +446,9 @@ done
     assert.equal(capabilities.requestId, 'capabilities-1');
     assert.equal(capabilities.workspace, workspace);
     assert.equal(capabilities.directoryBrowser, true);
+    assert.deepEqual(capabilities.providerLimits, [
+      { id: 'gemini', status: 'unavailable', windows: [] },
+    ]);
     peer.send({ type: 'listDirectories', requestId: 'browse-workspace' });
     const directory = await peer.next('directories');
     assert.equal(directory.requestId, 'browse-workspace');

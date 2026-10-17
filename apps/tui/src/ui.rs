@@ -132,6 +132,7 @@ fn row_height(row: &crate::model::TreeRow) -> u16 {
 }
 
 fn sidebar_entries(app: &App, area: Rect) -> Vec<(Rect, usize)> {
+    let area = sidebar_rows_area(app, area);
     let rows = app.tree();
     if area.height == 0 || rows.is_empty() {
         return Vec::new();
@@ -160,6 +161,35 @@ fn sidebar_entries(app: &App, area: Rect) -> Vec<(Rect, usize)> {
         y += height;
     }
     entries
+}
+
+fn sidebar_rows_area(app: &App, area: Rect) -> Rect {
+    if matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
+        return area;
+    }
+    let count = app
+        .capabilities
+        .as_ref()
+        .map_or(0, |caps| caps.provider_limits.len());
+    let reserved = if count == 0 {
+        0
+    } else {
+        (count as u16 + 2).min(area.height / 3)
+    };
+    Rect {
+        height: area.height.saturating_sub(reserved),
+        ..area
+    }
+}
+
+fn limit_label(minutes: u32) -> String {
+    if minutes.is_multiple_of(1440) {
+        format!("{}d", minutes / 1440)
+    } else if minutes.is_multiple_of(60) {
+        format!("{}h", minutes / 60)
+    } else {
+        format!("{minutes}m")
+    }
 }
 
 pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize> {
@@ -511,6 +541,53 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                     );
                 }
             }
+        }
+    }
+    if let Some(caps) = &app.capabilities {
+        let rows_end = sidebar_rows_area(app, content).bottom();
+        if rows_end < content.bottom() {
+            let mut lines = vec![Line::from(Span::styled(
+                " LIMITS · USED",
+                Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+            ))];
+            for provider in &caps.provider_limits {
+                let label = provider.id.label();
+                let detail = if provider.status == "ready" {
+                    provider
+                        .windows
+                        .iter()
+                        .map(|window| {
+                            format!(
+                                "{} {}%",
+                                limit_label(window.duration_mins),
+                                window.used_percent
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else if provider.status == "checking" {
+                    "checking…".into()
+                } else {
+                    match provider.id {
+                        Program::Claude => "/usage in CLI".into(),
+                        Program::Gemini => "/stats in CLI".into(),
+                        _ => "unavailable".into(),
+                    }
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {label} "), Style::default().fg(TEXT)),
+                    Span::styled(detail, Style::default().fg(MUTED)),
+                ]));
+            }
+            frame.render_widget(
+                Paragraph::new(lines).style(Style::default().bg(SURFACE)),
+                Rect::new(
+                    content.x,
+                    rows_end,
+                    content.width,
+                    content.bottom() - rows_end,
+                ),
+            );
         }
     }
 }
@@ -1246,6 +1323,32 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::json;
+
+    #[test]
+    fn installed_provider_limits_render_without_stealing_session_clicks() {
+        let mut app = App::new(1);
+        app.event(
+            json!({"type":"capabilities","workspace":"/work","programs":[],
+            "providerLimits":[{"id":"codex","status":"ready","windows":[
+                {"usedPercent":73,"durationMins":300}
+            ]}]}),
+        )
+        .unwrap();
+        let area = Rect::new(0, 0, 100, 24);
+        let tree = tree_content(geometry(area, &app).tree);
+        let panel_y = sidebar_rows_area(&app, tree).bottom();
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let text = (tree.x..tree.right())
+            .map(|x| terminal.backend().buffer()[(x, panel_y + 1)].symbol())
+            .collect::<String>();
+        assert!(text.contains("Codex"));
+        assert!(text.contains("5h 73%"));
+        assert_eq!(
+            sidebar_hit(&app, geometry(area, &app).tree, tree.x, panel_y + 1),
+            None
+        );
+    }
 
     #[test]
     fn search_renders_inside_sidebar_and_disconnect_hides_stale_sessions() {

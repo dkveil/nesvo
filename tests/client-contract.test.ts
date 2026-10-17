@@ -118,6 +118,18 @@ test('launcher capabilities require the four distinct known programs and explici
     ],
   };
   assert.deepEqual(decodeServerMessage(capabilities), capabilities);
+  const withLimits = {
+    ...capabilities,
+    providerLimits: [
+      { id: 'claude', status: 'unavailable', windows: [] },
+      {
+        id: 'codex',
+        status: 'ready',
+        windows: [{ usedPercent: 75, durationMins: 300, resetsAt: 1_792_783_619 }],
+      },
+    ],
+  };
+  assert.deepEqual(decodeServerMessage(withLimits), withLimits);
   for (const value of [
     { ...capabilities, workspace: '' },
     { ...capabilities, programs: [] },
@@ -134,6 +146,17 @@ test('launcher capabilities require the four distinct known programs and explici
       programs: [
         { id: 'custom', label: 'Custom', available: true },
         ...capabilities.programs.slice(1),
+      ],
+    },
+    { ...withLimits, providerLimits: [{ id: 'gemini', status: 'ready', windows: [] }] },
+    {
+      ...withLimits,
+      providerLimits: [
+        {
+          id: 'codex',
+          status: 'ready',
+          windows: [{ usedPercent: 101, durationMins: 300, resetsAt: null }],
+        },
       ],
     },
   ])

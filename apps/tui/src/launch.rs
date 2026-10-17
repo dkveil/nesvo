@@ -36,12 +36,28 @@ pub struct ProgramCapability {
     pub available: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitWindow {
+    pub used_percent: u8,
+    pub duration_mins: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProviderLimit {
+    pub id: Program,
+    pub status: String,
+    pub windows: Vec<LimitWindow>,
+}
+
 #[derive(Default, Debug, Deserialize)]
 pub struct Capabilities {
     pub workspace: String,
     pub programs: Vec<ProgramCapability>,
     #[serde(default, rename = "directoryBrowser")]
     pub directory_browser: bool,
+    #[serde(default, rename = "providerLimits")]
+    pub provider_limits: Vec<ProviderLimit>,
 }
 
 impl Capabilities {
