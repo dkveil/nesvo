@@ -71,7 +71,7 @@ fn input_row(
 pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect) {
     if form.advanced {
         for (offset, label) in [
-            (0, "LAUNCH OPTIONS · F2 back to session"),
+            (0, "LAUNCH OPTIONS · F2 back · F3 save template"),
             (2, "WORKTREE · new branch from HEAD"),
             (5, "INITIAL PROMPT"),
             (8, "START AT · empty = now"),

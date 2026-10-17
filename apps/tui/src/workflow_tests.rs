@@ -320,3 +320,25 @@ fn remapped_review_key_replaces_default_without_changing_printable_input() {
     key(&mut app, KeyCode::F(10));
     assert!(!app.review.visible && app.mode == Mode::Input);
 }
+
+#[test]
+fn template_opens_editable_form_and_restore_requires_confirmation() {
+    let mut app = app();
+    app.templates = vec![
+        json!({"id":"t","name":"Review","spec":{"name":"Review","cwd":"/repo","program":"claude","prompt":"review changes","worktree":true}}),
+    ];
+    app.overlay = Some(toolbox::Overlay::Recipes(false, 0));
+    let opened = key(&mut app, KeyCode::Enter);
+    assert!(opened.commands.is_empty());
+    assert!(
+        matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.prompt == "review changes" && form.worktree && form.when.is_empty())
+    );
+    app.dialog = None;
+    app.recoveries = vec![json!({"id":"old","state":"saved","spec":{"name":"Prior session"}})];
+    app.overlay = Some(toolbox::Overlay::Recipes(true, 0));
+    assert!(key(&mut app, KeyCode::Enter).commands.is_empty());
+    assert!(
+        matches!(&app.dialog, Some(Dialog::Confirm {command,..}) if command["type"] == "restoreSession")
+    );
+    assert_eq!(app.dialog_button, Some(1));
+}

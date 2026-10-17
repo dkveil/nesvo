@@ -207,6 +207,8 @@ pub struct App {
     pub selected: usize,
     pub tabs: Vec<String>,
     pub recent_sessions: Vec<String>,
+    pub templates: Vec<Value>,
+    pub recoveries: Vec<Value>,
     pub panes: [Option<String>; 2],
     pub split: bool,
     pub fullscreen: bool,
@@ -251,6 +253,8 @@ impl App {
             selected: 0,
             tabs: Vec::new(),
             recent_sessions: Vec::new(),
+            templates: Vec::new(),
+            recoveries: Vec::new(),
             panes: [None, None],
             split: false,
             fullscreen: false,
@@ -770,6 +774,42 @@ impl App {
                     self.overlay = Some(crate::toolbox::Overlay::Schedules(selected));
                 }
             }
+            "templates" | "recovery" => {
+                let recovery = event["type"] == "recovery";
+                let rows = if recovery {
+                    &mut self.recoveries
+                } else {
+                    &mut self.templates
+                };
+                let selected_id =
+                    if let Some(crate::toolbox::Overlay::Recipes(kind, index)) = self.overlay {
+                        if kind == recovery {
+                            rows.get(index)
+                                .and_then(|row| row["id"].as_str())
+                                .map(str::to_owned)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                *rows = serde_json::from_value(
+                    event[if recovery { "records" } else { "templates" }].clone(),
+                )?;
+                if matches!(self.overlay, Some(crate::toolbox::Overlay::Recipes(kind, _)) if kind == recovery)
+                {
+                    let index = selected_id
+                        .and_then(|id| rows.iter().position(|r| r["id"] == id))
+                        .unwrap_or(0);
+                    self.overlay = Some(crate::toolbox::Overlay::Recipes(recovery, index));
+                }
+                self.notice = if recovery {
+                    "Saved processes require explicit restart; old prompts are not replayed."
+                } else {
+                    "Launch templates loaded."
+                }
+                .into();
+            }
             "wakeConfigured" => {
                 self.notice = if event["wakeAt"].is_null() {
                     "Automatic wake disabled."
@@ -952,7 +992,7 @@ impl App {
         let id = format!("tui-{}-{}", self.client_id, self.request_counter);
         if matches!(
             command["type"].as_str(),
-            Some("create" | "launch" | "scheduleSession")
+            Some("create" | "launch" | "scheduleSession" | "restoreSession")
         ) {
             self.pending_create = Some(id.clone());
         }

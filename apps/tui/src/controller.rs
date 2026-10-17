@@ -78,6 +78,24 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 } else {
                     app.notice = "No unread attention events.".into();
                 }
+            } else if key.modifiers.is_empty()
+                && (key.code == KeyCode::F(app.shortcuts.keys[3])
+                    || key.code == KeyCode::F(app.shortcuts.keys[4]))
+            {
+                let recovery = key.code == KeyCode::F(app.shortcuts.keys[4]);
+                if app
+                    .capabilities
+                    .as_ref()
+                    .is_some_and(|c| if recovery { c.recovery } else { c.templates })
+                {
+                    app.overlay = Some(crate::toolbox::Overlay::Recipes(recovery, 0));
+                    app.notice = "Loading from host…".into();
+                    outcome.commands.push(
+                        json!({"type":if recovery { "listRecovery" } else { "listTemplates" }}),
+                    );
+                } else {
+                    app.notice = "Update the host to use saved launch workflows.".into();
+                }
             } else if app.mode == Mode::Input {
                 let was_scrolled = app
                     .active_terminal()
@@ -579,6 +597,20 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         return;
     }
     if let Some(Dialog::NewSession(form)) = &mut app.dialog {
+        if key.code == KeyCode::F(3) {
+            if !app.capabilities.as_ref().is_some_and(|c| c.templates) {
+                app.notice = "Update the host to save templates.".into();
+            } else if form.name.trim().is_empty() {
+                app.notice = "Enter a name for this template first.".into();
+            } else {
+                outcome.commands.push(json!({"type":"saveTemplate", "name":form.name.trim(), "spec":{
+                    "name":form.name.trim(),"cwd":form.cwd.trim(),"program":form.program,"groupId":form.group_id,
+                    "prompt":form.prompt,"worktree":form.worktree
+                }}));
+                app.notice = "Saving launch template…".into();
+            }
+            return;
+        }
         if key.code == KeyCode::F(2) {
             form.advanced = !form.advanced;
             form.field = if form.advanced {

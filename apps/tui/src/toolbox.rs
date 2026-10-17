@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 pub enum Overlay {
     Onboarding(usize),
     Shortcuts(usize, bool),
+    Recipes(bool, usize),
     Filters(usize),
     Schedules(usize),
 }
@@ -78,6 +79,21 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
                     app.overlay = Some(Overlay::Filters(row));
                     KeyCode::Char(' ')
                 }
+                Overlay::Recipes(recovery, selected)
+                    if row < panel.height.saturating_sub(7) as usize =>
+                {
+                    let count = if recovery {
+                        app.recoveries.len()
+                    } else {
+                        app.templates.len()
+                    };
+                    let first = selected.saturating_sub(panel.height.saturating_sub(8) as usize);
+                    app.overlay = Some(Overlay::Recipes(
+                        recovery,
+                        (first + row).min(count.saturating_sub(1)),
+                    ));
+                    return outcome;
+                }
                 Overlay::Schedules(selected) if row < panel.height.saturating_sub(7) as usize => {
                     let first = selected.saturating_sub(panel.height.saturating_sub(8) as usize);
                     app.overlay = Some(Overlay::Schedules(
@@ -96,6 +112,74 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
         return outcome;
     }
     match app.overlay {
+        Some(Overlay::Recipes(recovery, selected)) => {
+            let rows = if recovery {
+                &app.recoveries
+            } else {
+                &app.templates
+            };
+            match code {
+                KeyCode::Up | KeyCode::BackTab => {
+                    app.overlay = Some(Overlay::Recipes(recovery, selected.saturating_sub(1)))
+                }
+                KeyCode::Down | KeyCode::Tab => {
+                    app.overlay = Some(Overlay::Recipes(
+                        recovery,
+                        (selected + 1).min(rows.len().saturating_sub(1)),
+                    ))
+                }
+                KeyCode::Char('r') => outcome
+                    .commands
+                    .push(json!({"type":if recovery {"listRecovery"} else {"listTemplates"}})),
+                KeyCode::Enter => {
+                    if let Some(row) = rows.get(selected).cloned() {
+                        app.overlay = None;
+                        if recovery {
+                            if row["state"] != "saved" {
+                                app.notice = "Interrupted restart: inspect live sessions before forgetting this record.".into();
+                            } else {
+                                app.dialog = Some(crate::model::Dialog::Confirm {
+                                title: "Restart saved session?".into(),
+                                detail: "Starts a new process in the saved folder. Old prompts and conversations are not replayed.".into(),
+                                command:json!({"type":"restoreSession","id":row["id"]})
+                            });
+                                app.dialog_button = Some(1);
+                            }
+                        } else {
+                            let spec = &row["spec"];
+                            app.dialog = Some(crate::model::Dialog::NewSession(
+                                crate::launch::SessionForm {
+                                    name: spec["name"].as_str().unwrap_or_default().into(),
+                                    cwd: spec["cwd"].as_str().unwrap_or_default().into(),
+                                    prompt: spec["prompt"].as_str().unwrap_or_default().into(),
+                                    program: serde_json::from_value(spec["program"].clone())
+                                        .unwrap_or_default(),
+                                    worktree: spec["worktree"].as_bool().unwrap_or(false),
+                                    group_id: spec["groupId"]
+                                        .as_str()
+                                        .filter(|id| app.groups.iter().any(|g| g.id == *id))
+                                        .map(str::to_owned),
+                                    ..Default::default()
+                                },
+                            ));
+                            app.dialog_button = None;
+                        }
+                    }
+                }
+                KeyCode::Char('x') => {
+                    if let Some(row) = rows.get(selected) {
+                        app.dialog = Some(crate::model::Dialog::Confirm {
+                        title: if recovery { "Forget saved session?" } else { "Delete template?" }.into(),
+                        detail: "Removes only this saved description. Running processes and files remain untouched.".into(),
+                        command:json!({"type":if recovery {"forgetRecovery"} else {"deleteTemplate"},"id":row["id"]})
+                    });
+                        app.dialog_button = Some(1);
+                        app.overlay = None;
+                    }
+                }
+                _ => {}
+            }
+        }
         Some(Overlay::Shortcuts(selected, capturing)) => match code {
             KeyCode::F(key) if capturing => {
                 if app.shortcuts.assign(selected, key) {
@@ -183,6 +267,66 @@ pub fn render(frame: &mut Frame, app: &App) {
     let area = area(frame.area());
     frame.render_widget(Clear, area);
     let (title, lines, hint) = match overlay {
+        Overlay::Recipes(recovery, selected) => {
+            let rows = if recovery {
+                &app.recoveries
+            } else {
+                &app.templates
+            };
+            let first = selected.saturating_sub(area.height.saturating_sub(8) as usize);
+            let mut lines: Vec<Line> = rows
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(area.height.saturating_sub(7) as usize)
+                .map(|(i, row)| {
+                    let name = if recovery {
+                        &row["spec"]["name"]
+                    } else {
+                        &row["name"]
+                    };
+                    Line::styled(
+                        format!(
+                            "{} {} · {}",
+                            if i == selected { ">" } else { " " },
+                            name.as_str().unwrap_or("?"),
+                            if recovery {
+                                row["state"].as_str().unwrap_or("?")
+                            } else {
+                                row["spec"]["program"].as_str().unwrap_or("?")
+                            }
+                        ),
+                        Style::default().fg(TEXT).bg(if i == selected {
+                            app.theme.selection()
+                        } else {
+                            SURFACE
+                        }),
+                    )
+                })
+                .collect();
+            if rows.is_empty() {
+                lines.push(Line::from(if recovery {
+                    "No saved sessions from previous host runs."
+                } else {
+                    "No templates. In New session press F3 to save one."
+                }));
+            }
+            if let Some(row) = rows.get(selected) {
+                lines.push(Line::from(
+                    row["spec"]["cwd"].as_str().unwrap_or("Host workspace"),
+                ));
+            }
+            lines.push(Line::from(app.notice.as_str()));
+            (
+                if recovery {
+                    "Restore sessions · new processes"
+                } else {
+                    "Launch templates · host"
+                },
+                lines,
+                "↑↓ select · Enter open · x remove · r refresh · Esc close",
+            )
+        }
         Overlay::Shortcuts(selected, capturing) => {
             let mut lines: Vec<Line> = crate::shortcuts::LABELS
                 .iter()

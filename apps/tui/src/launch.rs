@@ -64,6 +64,10 @@ pub struct Capabilities {
     pub advanced_launch: bool,
     #[serde(default)]
     pub schedules: bool,
+    #[serde(default)]
+    pub templates: bool,
+    #[serde(default)]
+    pub recovery: bool,
     #[serde(default, rename = "quotaWake")]
     pub quota_wake: bool,
     #[serde(default, rename = "providerLimits")]
