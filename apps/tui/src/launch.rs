@@ -65,6 +65,8 @@ pub struct Capabilities {
     #[serde(default)]
     pub schedules: bool,
     #[serde(default)]
+    pub attention: bool,
+    #[serde(default)]
     pub templates: bool,
     #[serde(default)]
     pub recovery: bool,

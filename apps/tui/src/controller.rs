@@ -1197,7 +1197,10 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             });
         }
         KeyCode::Char('u') => {
-            if let Some(session) = app.active_session().filter(|s| s.attention.is_some()) {
+            if let Some(session) = app
+                .active_session()
+                .filter(|_| app.capabilities.as_ref().is_some_and(|c| c.attention))
+            {
                 outcome.commands.push(
                     json!({"type":"muteSession","sessionId":session.id,"muted":!session.muted}),
                 );
