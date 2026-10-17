@@ -177,6 +177,7 @@ impl State {
                 group_id: session.info.group_id.clone(),
                 program: session.info.program,
                 auto_title: session.auto_title,
+                muted: session.attention.muted,
                 ..Default::default()
             },
         )
@@ -330,10 +331,11 @@ impl State {
                 .observe(session.status.status(), session.status.rate_limited())
             {
                 changed = true;
-                if !session.attention.muted && session.info.program != Program::Shell {
-                    if let Some(event) = &session.attention.event {
-                        alerts.push((session.info.id.clone(), event.clone()));
-                    }
+                if !session.attention.muted
+                    && session.info.program != Program::Shell
+                    && let Some(event) = &session.attention.event
+                {
+                    alerts.push((session.info.id.clone(), event.clone()));
                 }
             }
         }
@@ -559,6 +561,13 @@ impl State {
     ) -> Result<String> {
         let cwd = self.validate_launch(spec)?;
         let mut command = self.launchers.command(spec.program, &cwd)?;
+        if spec.resume_picker {
+            ensure!(
+                spec.prompt.is_empty(),
+                "Resume picker cannot send an initial prompt"
+            );
+            command.args(crate::launchers::resume_arguments(spec.program)?);
+        }
         if !spec.prompt.is_empty() {
             if spec.program == Program::Gemini {
                 command.arg("--prompt-interactive");
@@ -576,6 +585,7 @@ impl State {
         )?;
         session.info.group_id = spec.group_id.clone();
         session.auto_title = spec.auto_title && spec.program != Program::Shell;
+        session.attention.muted = spec.muted;
         if session.auto_title && !spec.prompt.trim().is_empty() {
             session.info.name = spec
                 .prompt
@@ -738,6 +748,9 @@ impl State {
                     .get_mut(&session_id)
                     .ok_or_else(|| anyhow!("Session no longer exists."))?;
                 session.attention.muted = muted;
+                if let Some(session) = self.sessions.get(&session_id) {
+                    self.persist_session(session)?;
+                }
                 self.broadcast_list();
             }
             Command::RegisterPush { token, enabled } => {
@@ -780,12 +793,13 @@ impl State {
                 self.metadata.finish_recovery(&id, true)?;
                 self.respond(client_id, self.recovery_event(0)?, request_id);
             }
-            Command::RestoreSession { id } => {
+            Command::RestoreSession { id, resume } => {
                 ensure!(
                     !self.sessions.contains_key(&id),
                     "Session is already running."
                 );
                 let mut spec = self.metadata.claim_recovery(&id)?;
+                spec.resume_picker = resume;
                 if spec
                     .group_id
                     .as_ref()

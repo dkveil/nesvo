@@ -113,10 +113,10 @@ pub async fn run(state: Arc<Mutex<State>>) {
             match post(&client, "send", &job.payload).await {
                 Ok(response) if invalid_device(&response["data"]) => unregister(&state, &job.token),
                 Ok(response) if response["data"]["status"] == "ok" => {
-                    if let Some(id) = response["data"]["id"].as_str().filter(|id| id.len() <= 200) {
-                        if receipts.len() < 256 {
-                            receipts.push_back((Instant::now(), id.into(), job.token));
-                        }
+                    if let Some(id) = response["data"]["id"].as_str().filter(|id| id.len() <= 200)
+                        && receipts.len() < 256
+                    {
+                        receipts.push_back((Instant::now(), id.into(), job.token));
                     }
                 }
                 _ => eprintln!("Notification was not accepted; terminal sessions are unaffected"),
@@ -125,13 +125,12 @@ pub async fn run(state: Arc<Mutex<State>>) {
         if receipts
             .front()
             .is_some_and(|(at, _, _)| at.elapsed() >= Duration::from_secs(900))
+            && let Some((_, id, token)) = receipts.pop_front()
         {
-            if let Some((_, id, token)) = receipts.pop_front() {
-                match post(&client, "getReceipts", &json!({"ids":[id]})).await {
-                    Ok(value) if invalid_device(&value["data"][&id]) => unregister(&state, &token),
-                    Ok(value) if value["data"][&id]["status"] == "ok" => {}
-                    _ => eprintln!("Notification delivery receipt unavailable or rejected"),
-                }
+            match post(&client, "getReceipts", &json!({"ids":[id]})).await {
+                Ok(value) if invalid_device(&value["data"][&id]) => unregister(&state, &token),
+                Ok(value) if value["data"][&id]["status"] == "ok" => {}
+                _ => eprintln!("Notification delivery receipt unavailable or rejected"),
             }
         }
     }

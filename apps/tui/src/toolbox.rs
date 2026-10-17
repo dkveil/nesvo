@@ -138,8 +138,19 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
                 KeyCode::Char('r') => outcome
                     .commands
                     .push(json!({"type":if recovery {"listRecovery"} else {"listTemplates"}})),
-                KeyCode::Enter => {
+                KeyCode::Enter | KeyCode::Char('c') => {
+                    if code == KeyCode::Char('c') && !recovery {
+                        return outcome;
+                    }
+                    let resume = code == KeyCode::Char('c');
                     if let Some(row) = rows.get(selected).cloned() {
+                        if resume
+                            && !matches!(row["spec"]["program"].as_str(), Some("claude" | "codex"))
+                        {
+                            app.notice =
+                                "Conversation picker is available for Claude and Codex.".into();
+                            return outcome;
+                        }
                         app.overlay = None;
                         if recovery {
                             if row["state"] != "saved" {
@@ -147,8 +158,8 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
                             } else {
                                 app.dialog = Some(crate::model::Dialog::Confirm {
                                 title: "Restart saved session?".into(),
-                                detail: "Starts a new process in the saved folder. Old prompts and conversations are not replayed.".into(),
-                                command:json!({"type":"restoreSession","id":row["id"]})
+                                detail: if resume { "Starts the provider conversation picker in the saved folder. Choose the conversation explicitly." } else { "Starts a new process in the saved folder. Old prompts and conversations are not replayed." }.into(),
+                                command:json!({"type":"restoreSession","id":row["id"],"resume":resume})
                             });
                                 app.dialog_button = Some(1);
                             }
@@ -331,7 +342,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     "Launch templates · host"
                 },
                 lines,
-                "↑↓ select · Enter open · x remove · ] next · r first · Esc close",
+                "Enter open · c conversations · x remove · ] next · r first · Esc",
             )
         }
         Overlay::Shortcuts(selected, capturing) => {

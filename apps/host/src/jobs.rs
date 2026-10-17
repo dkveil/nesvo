@@ -22,6 +22,10 @@ pub struct LaunchSpec {
     pub worktree: bool,
     #[serde(default)]
     pub auto_title: bool,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub resume_picker: bool,
 }
 
 pub fn timestamp(input: &str) -> Result<i64> {

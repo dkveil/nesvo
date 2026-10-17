@@ -421,3 +421,26 @@ mod tests {
         assert!(find_program(Program::Claude, std::slice::from_ref(&fixture.0)).is_none());
     }
 }
+
+/// Explicit user selection in the CLI avoids guessing which conversation belongs to a process.
+pub fn resume_arguments(program: Program) -> Result<&'static [&'static str]> {
+    match program {
+        Program::Claude => Ok(&["--resume"]),
+        Program::Codex => Ok(&["resume"]),
+        _ => Err(anyhow!(
+            "Conversation picker is currently supported for Claude and Codex only"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    #[test]
+    fn resume_opens_provider_picker_without_prompt_or_latest_guess() {
+        assert_eq!(resume_arguments(Program::Claude).unwrap(), ["--resume"]);
+        assert_eq!(resume_arguments(Program::Codex).unwrap(), ["resume"]);
+        assert!(resume_arguments(Program::Shell).is_err());
+        assert!(resume_arguments(Program::Gemini).is_err());
+    }
+}

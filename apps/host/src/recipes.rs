@@ -60,6 +60,7 @@ impl MetadataStore {
         let mut spec = spec.clone();
         spec.prompt.clear();
         spec.worktree = false;
+        spec.resume_picker = false;
         self.connection.execute("INSERT INTO recovery(id,spec,state) VALUES(?1,?2,'saved') ON CONFLICT(id) DO UPDATE SET spec=excluded.spec", params![id, serde_json::to_string(&spec)?])?;
         Ok(())
     }

@@ -49,6 +49,8 @@ pub enum Command {
     },
     RestoreSession {
         id: String,
+        #[serde(default)]
+        resume: bool,
     },
     ForgetRecovery {
         id: String,
