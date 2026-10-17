@@ -6,6 +6,7 @@ mod launchers;
 mod process;
 mod protocol;
 mod pty;
+mod recipes;
 mod replay;
 mod sessions;
 mod status;

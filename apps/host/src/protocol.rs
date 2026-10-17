@@ -31,6 +31,21 @@ pub enum Command {
         scope: String,
     },
     GetCapabilities,
+    ListTemplates,
+    SaveTemplate {
+        name: String,
+        spec: crate::jobs::LaunchSpec,
+    },
+    DeleteTemplate {
+        id: String,
+    },
+    ListRecovery,
+    RestoreSession {
+        id: String,
+    },
+    ForgetRecovery {
+        id: String,
+    },
     AcknowledgeAttention {
         session_id: String,
         sequence: u64,

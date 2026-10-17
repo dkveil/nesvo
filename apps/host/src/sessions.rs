@@ -147,7 +147,7 @@ impl State {
 
     fn capabilities_event(&self) -> Value {
         json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
-            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true,
+            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
             "providerLimits":self.provider_limits})
     }
 
@@ -164,6 +164,33 @@ impl State {
             event["requestId"] = request_id.into();
         }
         self.send(client_id, event);
+    }
+
+    fn persist_session(&self, session: &Session) -> Result<()> {
+        self.metadata.save_recovery(
+            &session.info.id,
+            &crate::jobs::LaunchSpec {
+                name: session.info.name.clone(),
+                cwd: Some(session.info.cwd.clone()),
+                group_id: session.info.group_id.clone(),
+                program: session.info.program,
+                auto_title: session.auto_title,
+                ..Default::default()
+            },
+        )
+    }
+    fn recovery_event(&self) -> Result<Value> {
+        let records: Vec<_> = self
+            .metadata
+            .recoveries()?
+            .into_iter()
+            .filter(|r| {
+                !self
+                    .sessions
+                    .contains_key(r["id"].as_str().unwrap_or_default())
+            })
+            .collect();
+        Ok(json!({"type":"recovery","records":records}))
     }
 
     pub fn list(&self) -> Value {
@@ -251,6 +278,7 @@ impl State {
     fn refresh_status(&mut self) {
         let now = now_millis();
         let mut changed = self.wake_after_reset();
+        let mut renamed = Vec::new();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
             if session.auto_title
@@ -258,11 +286,19 @@ impl State {
                 && session.info.name != *title
             {
                 session.info.name = title.clone();
+                renamed.push(session.info.id.clone());
                 changed = true;
             }
             changed |= session
                 .attention
                 .observe(session.status.status(), session.status.rate_limited());
+        }
+        for id in renamed {
+            if let Some(session) = self.sessions.get(&id)
+                && let Err(error) = self.persist_session(session)
+            {
+                eprintln!("Could not persist session title: {error}");
+            }
         }
         if changed {
             self.broadcast_list();
@@ -494,6 +530,7 @@ impl State {
             session.pty.send_input("\x1b[1;1R".into())?;
             session.has_been_attached = true;
         }
+        self.persist_session(&session)?;
         self.sessions.insert(id.clone(), session);
         self.broadcast_list();
         Ok(id)
@@ -640,6 +677,60 @@ impl State {
                 session.attention.muted = muted;
                 self.broadcast_list();
             }
+            Command::ListTemplates => self.respond(
+                client_id,
+                json!({"type":"templates","templates":self.metadata.templates()?}),
+                request_id,
+            ),
+            Command::SaveTemplate { name, spec } => {
+                self.metadata.save_template(&name, &spec)?;
+                self.respond(
+                    client_id,
+                    json!({"type":"templates","templates":self.metadata.templates()?}),
+                    request_id,
+                );
+            }
+            Command::DeleteTemplate { id } => {
+                self.metadata.delete_template(&id)?;
+                self.respond(
+                    client_id,
+                    json!({"type":"templates","templates":self.metadata.templates()?}),
+                    request_id,
+                );
+            }
+            Command::ListRecovery => self.respond(client_id, self.recovery_event()?, request_id),
+            Command::ForgetRecovery { id } => {
+                ensure!(
+                    !self.sessions.contains_key(&id),
+                    "Cannot forget a live session."
+                );
+                self.metadata.finish_recovery(&id, true)?;
+                self.respond(client_id, self.recovery_event()?, request_id);
+            }
+            Command::RestoreSession { id } => {
+                ensure!(
+                    !self.sessions.contains_key(&id),
+                    "Session is already running."
+                );
+                let mut spec = self.metadata.claim_recovery(&id)?;
+                if spec
+                    .group_id
+                    .as_ref()
+                    .is_some_and(|id| !self.metadata.contains(id))
+                {
+                    spec.group_id = None;
+                }
+                let result = self.launch(&spec, pty_events);
+                self.metadata.finish_recovery(&id, result.is_ok())?;
+                let new_id = result?;
+                self.respond(
+                    client_id,
+                    json!({"type":"created","sessionId":new_id}),
+                    request_id,
+                );
+                self.respond(client_id, self.recovery_event()?, request_id);
+                self.broadcast_list();
+            }
             Command::List => self.send(client_id, self.list()),
             Command::GetCapabilities => {
                 self.respond(client_id, self.capabilities_event(), request_id)
@@ -724,6 +815,7 @@ impl State {
                 let mut session = spawn_session(&name, &cwd, program, command, pty_events.clone())?;
                 session.info.group_id = group_id;
                 let session_id = session.info.id.clone();
+                self.persist_session(&session)?;
                 self.sessions.insert(session_id.clone(), session);
                 self.respond(
                     client_id,
@@ -740,6 +832,7 @@ impl State {
                     .ok_or_else(|| anyhow!("Session no longer exists."))?;
                 session.info.name = name;
                 session.auto_title = false;
+                self.persist_session(self.sessions.get(&session_id).unwrap())?;
                 self.respond(
                     client_id,
                     json!({"type":"updated", "revision":self.metadata.revision()}),
@@ -854,6 +947,7 @@ impl State {
                     }
                     session.pty.kill()?;
                 }
+                self.metadata.finish_recovery(&session_id, true)?;
                 let removed = self.sessions.remove(&session_id);
                 self.cleanup_workers.retain(|worker| !worker.is_finished());
                 self.cleanup_workers
@@ -921,6 +1015,7 @@ impl State {
                 );
                 self.metadata.bump(expected_revision)?;
                 self.sessions.get_mut(&session_id).unwrap().info.group_id = group_id;
+                self.persist_session(self.sessions.get(&session_id).unwrap())?;
                 self.respond(
                     client_id,
                     json!({"type":"updated", "revision":self.metadata.revision()}),

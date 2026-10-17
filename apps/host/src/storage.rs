@@ -17,7 +17,7 @@ impl fmt::Display for RevisionConflict {
 impl std::error::Error for RevisionConflict {}
 
 pub struct MetadataStore {
-    connection: Connection,
+    pub(crate) connection: Connection,
     groups: Vec<Group>,
     revision: u64,
 }
@@ -93,6 +93,9 @@ impl MetadataStore {
         let connection = Connection::open(path).context("Could not open metadata database")?;
         connection.busy_timeout(Duration::from_secs(2))?;
         connection.execute_batch("PRAGMA foreign_keys=ON;
+            CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS recovery (id TEXT PRIMARY KEY, spec TEXT NOT NULL, state TEXT NOT NULL);
+            UPDATE recovery SET state='interrupted' WHERE state='starting';
             CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, due INTEGER NOT NULL, spec TEXT NOT NULL, state TEXT NOT NULL, result TEXT);
             UPDATE schedules SET state='interrupted', result='Host stopped during launch; inspect sessions before scheduling again.' WHERE state='starting';
             CREATE TABLE IF NOT EXISTS metadata (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
