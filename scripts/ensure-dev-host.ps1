@@ -24,8 +24,16 @@ function Test-PortAvailable([int]$port) {
 
 function Test-CompatibleHost {
     if (-not (Test-Path -LiteralPath $pairingFile)) { return $false }
-    & $ClientExe --pairing $pairingFile --check-host *> $null
-    return $LASTEXITCODE -eq 0
+    # Windows PowerShell converts redirected native stderr into error records.
+    # A stopped host is an expected probe failure, not a launcher failure.
+    $ErrorActionPreference = 'SilentlyContinue'
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        & $ClientExe --pairing $pairingFile --check-host *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
 }
 
 if (Test-CompatibleHost) {
