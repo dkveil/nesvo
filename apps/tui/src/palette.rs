@@ -57,6 +57,17 @@ pub fn results(app: &App, query: &str) -> Vec<ResultRow> {
                 }),
         );
     }
+    if query.trim().is_empty() {
+        results.sort_by_key(|row| match row.target.session_id() {
+            Some(id) if Some(id) == app.active_id() => usize::MAX,
+            Some(id) => app
+                .recent_sessions
+                .iter()
+                .position(|recent| recent == id)
+                .unwrap_or(32),
+            None => 33,
+        });
+    }
     let words: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
     let matches = |text: &str| {
         let text = text.to_lowercase();

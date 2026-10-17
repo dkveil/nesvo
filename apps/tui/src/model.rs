@@ -194,6 +194,7 @@ pub struct App {
     pub collapsed: HashSet<String>,
     pub selected: usize,
     pub tabs: Vec<String>,
+    pub recent_sessions: Vec<String>,
     pub panes: [Option<String>; 2],
     pub split: bool,
     pub fullscreen: bool,
@@ -236,6 +237,7 @@ impl App {
             collapsed: HashSet::new(),
             selected: 0,
             tabs: Vec::new(),
+            recent_sessions: Vec::new(),
             panes: [None, None],
             split: false,
             fullscreen: false,
@@ -575,6 +577,11 @@ impl App {
     }
 
     pub fn activate_session(&mut self, id: &str) -> Vec<Value> {
+        if self.session(id).is_some() {
+            self.recent_sessions.retain(|recent| recent != id);
+            self.recent_sessions.insert(0, id.to_owned());
+            self.recent_sessions.truncate(32);
+        }
         let mut commands = self.open_session(id);
         let mut parent = self
             .session(id)
@@ -686,6 +693,8 @@ impl App {
                 self.subscribed
                     .retain(|id| self.sessions.iter().any(|s| s.id == *id));
                 self.tabs
+                    .retain(|id| self.sessions.iter().any(|s| s.id == *id));
+                self.recent_sessions
                     .retain(|id| self.sessions.iter().any(|s| s.id == *id));
                 for pane in &mut self.panes {
                     if pane

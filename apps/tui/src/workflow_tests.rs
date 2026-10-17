@@ -261,3 +261,21 @@ fn session_click_and_passive_mouse_events_preserve_input() {
         .unwrap();
     assert!(app.mode == Mode::Navigate);
 }
+
+#[test]
+fn previous_session_toggles_and_previews_do_not_rewrite_history() {
+    let mut app = app();
+    app.activate_session("a");
+    app.activate_session("b");
+    key(&mut app, KeyCode::F(6));
+    assert_eq!(app.active_id(), Some("a"));
+    key(&mut app, KeyCode::F(6));
+    assert_eq!(app.active_id(), Some("b"));
+    let history = app.recent_sessions.clone();
+    app.preview_session("a");
+    assert_eq!(app.recent_sessions, history);
+    assert_eq!(app.palette_results("")[0].target.session_id(), Some("a"));
+    app.dialog = Some(Dialog::Help);
+    key(&mut app, KeyCode::F(6));
+    assert_eq!(app.active_id(), Some("b"));
+}

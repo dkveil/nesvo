@@ -55,6 +55,17 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 dialog_key(app, key, &mut outcome);
             } else if key.code == KeyCode::F(4) && key.modifiers.is_empty() {
                 toggle_review(app, &mut outcome);
+            } else if key.code == KeyCode::F(6) && key.modifiers.is_empty() {
+                if let Some(id) = app
+                    .recent_sessions
+                    .iter()
+                    .find(|id| Some(id.as_str()) != app.active_id())
+                    .cloned()
+                {
+                    outcome.commands.extend(app.activate_session(&id));
+                } else {
+                    app.notice = "No previous session yet.".into();
+                }
             } else if app.mode == Mode::Input {
                 let was_scrolled = app
                     .active_terminal()
