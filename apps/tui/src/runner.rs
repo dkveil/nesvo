@@ -187,14 +187,12 @@ pub fn run(
                     dirty = true;
                 }
                 Ok(NetworkEvent::Disconnected(message)) => {
-                    resume_session = app.active_id().map(str::to_owned);
                     app.disconnect(message);
                     dirty = true;
                     break;
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
                     if app.connected {
-                        resume_session = app.active_id().map(str::to_owned);
                         app.disconnect("Host connection lost. Reconnecting…".into());
                         dirty = true;
                     }
@@ -210,6 +208,7 @@ pub fn run(
             send_or_disconnect(&mut app, connection, vec![command]);
         }
         if !app.connected {
+            remember_disconnected_session(&app, &mut resume_session);
             let started = *reconnect_started.get_or_insert_with(Instant::now);
             if started.elapsed() >= Duration::from_secs(20) {
                 anyhow::bail!(
@@ -220,7 +219,11 @@ pub fn run(
                 match receiver.try_recv() {
                     Ok(Ok(new_connection)) => {
                         *connection = new_connection;
+                        saved_layout =
+                            Some(crate::workspace_layout::WorkspaceLayout::capture(&app));
+                        layout_loaded = false;
                         let mut next_app = App::new(connection.client_id);
+                        next_app.shortcuts = app.shortcuts;
                         next_app.theme = app.theme;
                         next_app.onboarded = app.onboarded;
                         next_app.fullscreen_default = app.fullscreen_default;
@@ -261,9 +264,6 @@ pub fn run(
                 dirty = true;
             }
         } else {
-            if resume_session.is_none() {
-                resume_session = app.active_id().map(str::to_owned);
-            }
             let commands = resize_commands(&app, area, &mut requested_sizes);
             send_or_disconnect(&mut app, connection, commands);
         }
@@ -332,6 +332,14 @@ pub fn run(
         }
     }
     Ok(())
+}
+
+// Only a lost connection may arm a one-shot selection restore. Healthy
+// snapshots must never reopen the pane: open_session deliberately leaves input.
+fn remember_disconnected_session(app: &App, pending: &mut Option<String>) {
+    if !app.connected && pending.is_none() {
+        *pending = app.active_id().map(str::to_owned);
+    }
 }
 
 fn logo_frame_for(app: &App, area: Rect, animate: bool, elapsed: Duration) -> usize {
@@ -498,5 +506,23 @@ mod tests {
         app.event(json!({"type":"control","sessionId":"s","controllerId":2,"cols":80,"rows":24}))
             .unwrap();
         assert!(resize_commands(&app, Rect::new(0, 0, 100, 30), &mut requested).is_empty());
+    }
+    #[test]
+    fn healthy_updates_never_arm_reconnect_selection() {
+        let mut app = App::new(1);
+        app.panes[0] = Some("session".into());
+        app.mode = crate::model::Mode::Input;
+        let mut pending = None;
+        for _ in 0..20 {
+            remember_disconnected_session(&app, &mut pending);
+        }
+        assert!(pending.is_none());
+        assert!(app.mode == crate::model::Mode::Input);
+        app.disconnect("lost".into());
+        remember_disconnected_session(&app, &mut pending);
+        assert_eq!(pending.as_deref(), Some("session"));
+        app.panes[0] = Some("different".into());
+        remember_disconnected_session(&app, &mut pending);
+        assert_eq!(pending.as_deref(), Some("session"));
     }
 }
