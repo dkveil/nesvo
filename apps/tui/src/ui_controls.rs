@@ -668,7 +668,7 @@ mod tests {
         let narrow = Rect::new(0, 0, 38, 20);
         let narrow_footer = ui::geometry(narrow, &app).footer;
         let narrow_handle = ui::fullscreen_handle_area(&app, narrow_footer);
-        assert_eq!(narrow_handle.width, 19);
+        assert_eq!(narrow_handle.width, 14);
         assert_eq!(
             hit_test(&app, narrow, narrow_handle.x, narrow_handle.y),
             Some(Action::ToggleFullscreen)

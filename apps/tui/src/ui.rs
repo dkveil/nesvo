@@ -18,6 +18,7 @@ use ratatui::{
 
 pub struct Geometry {
     pub header: Rect,
+    pub sidebar_header: Rect,
     pub tree: Rect,
     pub panes: [Rect; 2],
     pub footer: Rect,
@@ -64,13 +65,13 @@ pub fn tab_areas(app: &App, layout: &Geometry) -> (Vec<(usize, Rect)>, Rect) {
         }
         tabs.push((
             index,
-            Rect::new(x, layout.header.y + 1, visible, layout.header.height.min(1)),
+            Rect::new(x, layout.header.y, visible, layout.header.height.min(1)),
         ));
         x = x.saturating_add(visible);
     }
     let add = Rect::new(
         x,
-        layout.header.y + 1,
+        layout.header.y,
         3.min(layout.header.right().saturating_sub(x)),
         layout.header.height.min(1),
     );
@@ -80,7 +81,7 @@ pub fn tab_areas(app: &App, layout: &Geometry) -> (Vec<(usize, Rect)>, Rect) {
 pub fn geometry(area: Rect, app: &App) -> Geometry {
     let immersive = immersive(app);
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(if immersive { 0 } else { 4 }),
+        Constraint::Length(if immersive { 0 } else { 1 }),
         Constraint::Min(0),
         Constraint::Length(
             if app
@@ -102,6 +103,17 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
+    let sidebar_header = Rect::new(
+        tree.x,
+        area.y,
+        tree.width,
+        (tree.height + header.height).min(4),
+    );
+    let inset = sidebar_header
+        .height
+        .saturating_sub(header.height)
+        .min(tree.height);
+    let tree = Rect::new(tree.x, tree.y + inset, tree.width, tree.height - inset);
     let (content, review) = if app.review.visible {
         if app.review.expanded || content.width < 110 {
             (Rect::default(), content)
@@ -127,6 +139,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     };
     Geometry {
         header,
+        sidebar_header,
         tree,
         panes,
         footer,
@@ -286,7 +299,7 @@ pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
     if footer.width < 3 {
         return Rect::default();
     }
-    let width = footer.width.min(19);
+    let width = footer.width.min(14);
     Rect::new(
         footer.right() - width,
         footer.bottom().saturating_sub(1),
@@ -363,7 +376,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
                 .borders(Borders::BOTTOM)
                 .border_style(Style::default().fg(BORDER))
                 .style(Style::default().bg(SURFACE)),
-            layout.header,
+            layout.sidebar_header,
         );
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
@@ -397,7 +410,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
         }
         let tab_strip = Rect::new(
             layout.tree.right(),
-            layout.header.y + 1,
+            layout.header.y,
             layout.header.right().saturating_sub(layout.tree.right()),
             1,
         );
@@ -514,11 +527,19 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     if !handle.is_empty() {
         frame.render_widget(
             Paragraph::new(if app.fullscreen {
-                " z Full screen ON "
+                " z full · on "
             } else {
-                " z Full screen OFF "
+                " z full · off "
             })
-            .style(Style::default().fg(BACKGROUND).bg(app.theme.accent())),
+            .style(
+                Style::default()
+                    .fg(if app.fullscreen {
+                        app.theme.accent()
+                    } else {
+                        MUTED
+                    })
+                    .bg(SURFACE),
+            ),
             handle,
         );
     }
@@ -1424,6 +1445,19 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn tall_brand_header_only_uses_sidebar_space() {
+        let app = App::new(1);
+        for (width, height) in [(80, 24), (100, 32), (150, 44)] {
+            let layout = geometry(Rect::new(0, 0, width, height), &app);
+            assert_eq!(layout.header.height, 1);
+            assert_eq!(layout.panes[0].y, 1);
+            assert_eq!(layout.sidebar_header.height, 4);
+            assert_eq!(layout.tree.y, 4);
+            assert_eq!(layout.sidebar_header.right(), layout.panes[0].x);
+        }
+    }
+
+    #[test]
     fn diff_preserves_workspace_sidebar_and_fullscreen_visibility() {
         let mut app = App::new(1);
         app.dialog = None;
@@ -1897,7 +1931,7 @@ mod tests {
         assert!(footer.contains("Ctrl+Q → z fullscreen"), "{footer}");
         assert!(footer.contains(" z "), "{footer}");
         let handle = fullscreen_handle_area(&app, layout.footer);
-        assert_eq!(buffer[(handle.x, handle.y)].bg, app.theme.accent());
+        assert_eq!(buffer[(handle.x, handle.y)].bg, SURFACE);
     }
 
     #[test]
