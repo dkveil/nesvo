@@ -221,19 +221,28 @@ pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize
 }
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
+    if app.review.visible && app.review.focused && app.mode == Mode::Navigate {
+        return (
+            " DIFF REVIEW ",
+            " Keys control review · F4 / Esc close · r refresh",
+        );
+    }
     if app.mode == Mode::Navigate
         && (app.wake_available() || app.active_session().is_some_and(|s| s.wake_at.is_some()))
     {
         return (
-            " QUOTA ",
-            " w configure wake after reset · F4 diff · f filters · S schedules",
+            " NESVO MENU ",
+            " Keys control Nesvo · Enter resume · w quota wake · F4 diff",
         );
     }
     match app.mode {
-        Mode::Input => (" SESSION ", " Ctrl+Q navigation · Esc session · F1 menu"),
+        Mode::Input => (
+            " SESSION INPUT ",
+            " Typing in terminal · Ctrl+Q navigation · F4 diff",
+        ),
         Mode::Navigate => (
-            " NAVIGATION ",
-            " Enter open · n new · / search · F4 diff · f filters · S schedule · ? help",
+            " NESVO MENU ",
+            " Keys control Nesvo · Enter resume · n new · / search · F4 diff · ? help",
         ),
     }
 }
@@ -382,7 +391,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     let (mode, hint) = if text_width < Line::from(full_mode).width() + 12 {
         match app.mode {
             Mode::Input => (" INPUT ", " Ctrl+Q NAV"),
-            Mode::Navigate => (" NAV ", " i TYPE"),
+            Mode::Navigate => (" MENU ", " Enter TYPE"),
         }
     } else {
         (full_mode, full_hint)
@@ -393,15 +402,32 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     } else {
         String::new()
     };
+    let navigating = app.mode == Mode::Navigate;
+    frame.render_widget(
+        Block::default().style(Style::default().bg(if navigating {
+            app.theme.selection()
+        } else {
+            SURFACE
+        })),
+        layout.footer,
+    );
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
                 mode,
                 Style::default()
-                    .fg(app.theme.accent())
+                    .fg(if navigating { BACKGROUND } else { TEXT })
+                    .bg(if navigating {
+                        app.theme.accent()
+                    } else {
+                        BORDER
+                    })
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(hint, Style::default().fg(MUTED)),
+            Span::styled(
+                hint,
+                Style::default().fg(if navigating { TEXT } else { MUTED }),
+            ),
             Span::styled(notice, Style::default().fg(WARNING)),
         ])),
         Rect::new(
@@ -624,6 +650,8 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
         .map(|session| {
             let control = if !session.running {
                 "process exited"
+            } else if focused && app.mode == Mode::Navigate {
+                "PREVIEW ONLY · Enter to type in session"
             } else if app.owns(&session.id) {
                 "you control"
             } else if session.controller_id.is_some() {
