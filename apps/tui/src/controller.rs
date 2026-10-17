@@ -134,7 +134,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     outcome.redraw = was_scrolled;
                 }
             } else if app.review.visible && app.review.focused {
-                review_key(app, key, &mut outcome);
+                review_key(app, key, area, &mut outcome);
             } else if key.code == KeyCode::Esc {
                 app.dialog = Some(Dialog::ExitConfirm {
                     from_menu: false,
@@ -1411,7 +1411,10 @@ fn toggle_review(app: &mut App, outcome: &mut Outcome) {
     }
 }
 
-fn review_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
+fn review_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
+    if matches!(key.code, KeyCode::Char('[' | ']')) && app.review.width == 0 {
+        app.review.width = ui::geometry(area, app).review.width;
+    }
     if key.code == KeyCode::Char('y') {
         if let Some(file) = app.review.data.files.get(app.review.file) {
             outcome.clipboard = Some(file.patch.clone());
@@ -1459,12 +1462,12 @@ fn review_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         KeyCode::Char(' ') => review.toggle_hunk(),
         KeyCode::PageDown => review.scroll = review.scroll.saturating_add(10),
         KeyCode::PageUp => review.scroll = review.scroll.saturating_sub(10),
-        KeyCode::Char('[') => {
+        KeyCode::Char(']') => {
             review.width = (if review.width == 0 { 40 } else { review.width })
                 .saturating_sub(8)
                 .max(28)
         }
-        KeyCode::Char(']') => {
+        KeyCode::Char('[') => {
             review.width = (if review.width == 0 { 40 } else { review.width })
                 .saturating_add(8)
                 .min(160)

@@ -185,7 +185,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .or_else(|| app.active_session().map(|s| s.cwd.as_str()))
         .unwrap_or("No session");
     frame.render_widget(
-        Paragraph::new(format!(" {folder}  [o] folder")).style(Style::default().fg(MUTED)),
+        Paragraph::new(Line::from({
+            let mut spans = crate::ui::shortcut_spans("o folder");
+            spans.push(Span::styled(format!("  {folder}"), Style::default().fg(MUTED)));
+            spans
+        })),
         Rect::new(heading.x, heading.y, heading.width, heading.height.min(1)),
     );
     let heading = Rect::new(
@@ -224,16 +228,26 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     } else if let Some(error) = &state.error {
         Some(error.as_str())
     } else if state.data.files.is_empty() {
-        Some(
-            "No changes in this folder / scope.
- o change folder · c change scope",
-        )
+        Some("No changes in this folder / scope.")
     } else {
         None
     };
     if let Some(message) = message {
         frame.render_widget(
-            Paragraph::new(message).style(Style::default().fg(MUTED)),
+            Paragraph::new({
+                let mut lines = vec![Line::from(message)];
+                if state.data.files.is_empty()
+                    && state.error.is_none()
+                    && state.request_id.is_none()
+                {
+                    lines.extend(crate::ui::shortcut_lines(
+                        &["o change folder", "c change scope"],
+                        content.width,
+                    ));
+                }
+                lines
+            })
+            .style(Style::default().fg(MUTED)),
             content,
         );
     } else if let Some(file) = state.data.files.get(state.file) {
