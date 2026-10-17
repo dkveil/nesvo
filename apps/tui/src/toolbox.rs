@@ -335,7 +335,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
             if let Some(row) = rows.get(selected) {
                 lines.push(Line::from(
-                    row["spec"]["cwd"].as_str().unwrap_or("Host workspace"),
+                    row["spec"]["cwd"]
+                        .as_str()
+                        .filter(|path| !path.is_empty())
+                        .unwrap_or("Host workspace"),
                 ));
             }
             lines.push(Line::from(app.notice.as_str()));
@@ -346,7 +349,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                     "Launch templates · host"
                 },
                 lines,
-                "Enter open · c conversations · x remove · ] next · r first · Esc",
+                if recovery {
+                    "Enter restart · c conversations · x forget · ] next · r first · Esc"
+                } else {
+                    "↑↓ select · Enter edit · x delete · r refresh · Esc close"
+                },
             )
         }
         Overlay::Shortcuts(selected, capturing) => {

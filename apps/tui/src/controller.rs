@@ -595,7 +595,10 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     }
     if let Some(Dialog::Settings { selected }) = &mut app.dialog {
         match key.code {
-            KeyCode::Char('k') => app.overlay = Some(crate::toolbox::Overlay::Shortcuts(0, false)),
+            KeyCode::Char('k') => {
+                app.notice.clear();
+                app.overlay = Some(crate::toolbox::Overlay::Shortcuts(0, false));
+            }
             KeyCode::Up | KeyCode::BackTab => *selected = selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Tab if *selected == 1 => app.dialog_button = Some(0),
             KeyCode::Down | KeyCode::Tab => *selected = 1,
