@@ -31,6 +31,10 @@ pub enum Command {
         scope: String,
     },
     GetCapabilities,
+    RegisterPush {
+        token: String,
+        enabled: bool,
+    },
     ListTemplates,
     SaveTemplate {
         name: String,

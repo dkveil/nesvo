@@ -19,6 +19,7 @@ impl std::error::Error for RevisionConflict {}
 pub struct MetadataStore {
     pub(crate) connection: Connection,
     groups: Vec<Group>,
+    pub host_id: String,
     revision: u64,
 }
 
@@ -96,6 +97,9 @@ impl MetadataStore {
             CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS recovery (id TEXT PRIMARY KEY, spec TEXT NOT NULL, state TEXT NOT NULL);
             UPDATE recovery SET state='interrupted' WHERE state='starting';
+            CREATE TABLE IF NOT EXISTS push_devices (token TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS host_identity (id INTEGER PRIMARY KEY CHECK(id=1), public_id TEXT NOT NULL);
+            INSERT OR IGNORE INTO host_identity VALUES(1,lower(hex(randomblob(16))));
             CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, due INTEGER NOT NULL, spec TEXT NOT NULL, state TEXT NOT NULL, result TEXT);
             UPDATE schedules SET state='interrupted', result='Host stopped during launch; inspect sessions before scheduling again.' WHERE state='starting';
             CREATE TABLE IF NOT EXISTS metadata (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
@@ -138,7 +142,13 @@ impl MetadataStore {
                 group.order,
             )?;
         }
+        let host_id = connection.query_row(
+            "SELECT public_id FROM host_identity WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?;
         Ok(Self {
+            host_id,
             connection,
             groups,
             revision,

@@ -81,7 +81,8 @@ pub struct State {
     cleanup_workers: Vec<thread::JoinHandle<()>>,
     shutting_down: bool,
     pub clients: HashMap<u64, Client>,
-    metadata: MetadataStore,
+    pub(crate) metadata: MetadataStore,
+    push_queue: std::collections::VecDeque<crate::notifications::Job>,
     launchers: Launchers,
     provider_limits: Vec<ProviderLimit>,
     limits_read_at: i64,
@@ -111,6 +112,7 @@ impl State {
             shutting_down: false,
             clients: HashMap::new(),
             metadata,
+            push_queue: Default::default(),
             launchers,
             provider_limits,
             limits_read_at: 0,
@@ -147,7 +149,7 @@ impl State {
 
     fn capabilities_event(&self) -> Value {
         json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
-            "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
+            "hostId":self.metadata.host_id, "pushNotifications":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
             "providerLimits":self.provider_limits})
     }
 
@@ -289,10 +291,30 @@ impl State {
         changed
     }
 
+    pub fn next_push(&mut self) -> Option<crate::notifications::Job> {
+        while let Some(job) = self.push_queue.pop_front() {
+            if self.sessions.get(&job.session_id).is_some_and(|s| {
+                !s.attention.muted
+                    && s.attention
+                        .event
+                        .as_ref()
+                        .is_some_and(|e| e.unread && e.sequence == job.sequence)
+            }) && self
+                .metadata
+                .push_tokens()
+                .is_ok_and(|tokens| tokens.contains(&job.token))
+            {
+                return Some(job);
+            }
+        }
+        None
+    }
+
     fn refresh_status(&mut self) {
         let now = now_millis();
         let mut changed = self.wake_after_reset();
         let mut renamed = Vec::new();
+        let mut alerts = Vec::new();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
             if session.auto_title
@@ -303,9 +325,36 @@ impl State {
                 renamed.push(session.info.id.clone());
                 changed = true;
             }
-            changed |= session
+            if session
                 .attention
-                .observe(session.status.status(), session.status.rate_limited());
+                .observe(session.status.status(), session.status.rate_limited())
+            {
+                changed = true;
+                if !session.attention.muted && session.info.program != Program::Shell {
+                    if let Some(event) = &session.attention.event {
+                        alerts.push((session.info.id.clone(), event.clone()));
+                    }
+                }
+            }
+        }
+        if !alerts.is_empty() {
+            match self.metadata.push_tokens() {
+                Ok(tokens) => {
+                    for (id, event) in alerts {
+                        for token in &tokens {
+                            if self.push_queue.len() < 64 {
+                                self.push_queue.push_back(crate::notifications::Job::new(
+                                    token.clone(),
+                                    self.metadata.host_id.clone(),
+                                    id.clone(),
+                                    event.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(_) => eprintln!("Could not load notification registrations"),
+            }
         }
         for id in renamed {
             if let Some(session) = self.sessions.get(&id)
@@ -690,6 +739,14 @@ impl State {
                     .ok_or_else(|| anyhow!("Session no longer exists."))?;
                 session.attention.muted = muted;
                 self.broadcast_list();
+            }
+            Command::RegisterPush { token, enabled } => {
+                self.metadata.register_push(&token, enabled)?;
+                self.respond(
+                    client_id,
+                    json!({"type":"pushRegistered","enabled":enabled}),
+                    request_id,
+                );
             }
             Command::ListTemplates => self.respond(
                 client_id,
