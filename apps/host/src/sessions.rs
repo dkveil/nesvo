@@ -191,23 +191,32 @@ impl State {
 
     fn wake_after_reset(&mut self) -> bool {
         let now = chrono::Utc::now().timestamp();
+        let mut changed = false;
+        for session in self.sessions.values_mut() {
+            if session
+                .wake_at
+                .is_some_and(|at| now.saturating_sub(at) > 300)
+            {
+                session.wake_at = None;
+                changed = true;
+            }
+        }
         if now - self.limits_read_at > 180 {
-            return false;
+            return changed;
         }
         let Some(provider) = self
             .provider_limits
             .iter()
             .find(|p| p.id == Program::Codex && p.status == "ready")
         else {
-            return false;
+            return changed;
         };
         let reset_available = provider.windows.iter().any(|w| {
             w.duration_mins == 300 && w.used_percent < 90 && w.resets_at.is_some_and(|at| at > now)
         }) && provider.windows.iter().all(|w| w.used_percent < 100);
         if !reset_available {
-            return false;
+            return changed;
         }
-        let mut changed = false;
         for session in self.sessions.values_mut() {
             if let Some(at) = session.wake_at
                 && now >= at
@@ -226,9 +235,6 @@ impl State {
                     {
                         session.status.input(now_millis());
                     }
-                    changed = true;
-                } else if now - at > 300 {
-                    session.wake_at = None;
                     changed = true;
                 }
             }
