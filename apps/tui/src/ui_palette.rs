@@ -8,7 +8,7 @@ use crate::{
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Clear, Paragraph},
 };
@@ -40,20 +40,25 @@ pub fn geometry(size: Rect, session_count: usize) -> Geometry {
         inner.width.saturating_sub(2),
         inner.height,
     );
-    let input = Rect::new(body.x, body.y, body.width, body.height.min(1));
+    let input = Rect::new(
+        body.x + 1,
+        body.y + 1,
+        body.width.saturating_sub(2),
+        body.height.min(1),
+    );
     let footer = Rect::new(
         body.x,
         body.bottom().saturating_sub(1),
         body.width,
         body.height.min(1),
     );
-    let rows = body.height.saturating_sub(4);
+    let rows = body.height.saturating_sub(6);
     let list_width = if body.width >= 86 {
         body.width * 3 / 5
     } else {
         body.width
     };
-    let results = Rect::new(body.x, body.y + body.height.min(2), list_width, rows);
+    let results = Rect::new(body.x, body.y + body.height.min(4), list_width, rows);
     let preview = Rect::new(
         results.right().saturating_add(2),
         results.y,
@@ -69,12 +74,8 @@ pub fn geometry(size: Rect, session_count: usize) -> Geometry {
     }
 }
 
-pub fn row_height(app: &App, size: Rect) -> u16 {
-    if !app.palette_expanded && size.width >= 65 {
-        2
-    } else {
-        1
-    }
+pub fn row_height(_app: &App, _size: Rect) -> u16 {
+    2
 }
 
 pub fn offset(selected: usize, rows: u16) -> usize {
@@ -131,15 +132,29 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
             layout.panel
         },
     );
+    if !inline {
+        frame.render_widget(
+            Block::bordered()
+                .border_style(Style::default().fg(app.theme.accent()))
+                .style(Style::default().bg(crate::theme::BACKGROUND)),
+            Rect::new(
+                layout.input.x.saturating_sub(1),
+                layout.input.y.saturating_sub(1),
+                layout.input.width + 2,
+                3,
+            )
+            .intersection(layout.panel),
+        );
+    }
     if layout.input.is_empty() {
         return;
     }
     frame.render_widget(
         Paragraph::new(format!(
-            "> {}",
+            "⌕ {}",
             elide(
                 if query.is_empty() {
-                    "Search sessions / groups"
+                    "Search sessions, groups, commands…"
                 } else {
                     query
                 },
@@ -157,11 +172,11 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     if layout.panel.height > 4 && !inline {
         frame.render_widget(
             Paragraph::new(format!(
-                "{category} · {} · Tab categories",
+                "{category}   ·   {}   ·   Tab categories",
                 crate::model::search_scope(query).0.label()
             ))
             .style(Style::default().fg(MUTED)),
-            Rect::new(layout.input.x, layout.input.y + 1, layout.input.width, 1),
+            Rect::new(layout.input.x, layout.input.y + 2, layout.input.width, 1),
         );
     }
     let matches = app.palette_results(query);
@@ -174,16 +189,19 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
         .take((layout.results.height / row_height) as usize)
     {
         let active = index == selected;
-        let metadata_width = if layout.results.width >= 48 { 26 } else { 0 };
+        let metadata_width = 0;
         let name_width = layout.results.width.saturating_sub(metadata_width + 3) as usize;
         let name = elide(&result.title, name_width);
         let kind = match &result.target {
-            crate::palette::Target::Session(_) => "·",
+            crate::palette::Target::Session(_) => "●",
             crate::palette::Target::Group(_) => "/",
             crate::palette::Target::Command(_) => ">",
         };
         let line = Line::from(vec![
-            Span::styled(format!("{kind} {name}"), Style::default().fg(TEXT)),
+            Span::styled(
+                format!("{kind} {name}"),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 if metadata_width > 0 {
                     format!("  {}", elide(&result.context, metadata_width as usize - 2))

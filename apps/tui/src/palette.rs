@@ -51,7 +51,7 @@ pub fn results(app: &App, query: &str) -> Vec<ResultRow> {
                     context: format!(
                         "{} · {} · {}",
                         app.effective_program(s).label(),
-                        s.status.as_ref().map_or("unknown", |s| s.label()),
+                        crate::ui::display_status(s),
                         s.cwd
                     ),
                 }),
