@@ -436,7 +436,7 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
     if let Some(index) = ui::sidebar_hit(app, geometry.tree, column, row) {
         return Some(Action::OpenRow(index));
     }
-    if row == geometry.header.y {
+    if geometry.header.contains(point) {
         let (tabs, _) = ui::tab_areas(app, &geometry);
         return tabs
             .iter()
@@ -659,7 +659,7 @@ mod tests {
         let narrow = Rect::new(0, 0, 38, 20);
         let narrow_footer = ui::geometry(narrow, &app).footer;
         let narrow_handle = ui::fullscreen_handle_area(&app, narrow_footer);
-        assert_eq!(narrow_handle.width, 3);
+        assert_eq!(narrow_handle.width, 19);
         assert_eq!(
             hit_test(&app, narrow, narrow_handle.x, narrow_handle.y),
             Some(Action::ToggleFullscreen)

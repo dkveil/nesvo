@@ -25,7 +25,9 @@ pub struct Geometry {
 }
 
 pub fn immersive(app: &App) -> bool {
-    app.fullscreen && app.mode == Mode::Input && app.dialog.is_none()
+    app.fullscreen
+        && (app.mode == Mode::Input || (app.review.visible && app.review.return_to_input))
+        && app.dialog.is_none()
 }
 
 pub fn tab_areas(app: &App, layout: &Geometry) -> (Vec<(usize, Rect)>, Rect) {
@@ -62,13 +64,13 @@ pub fn tab_areas(app: &App, layout: &Geometry) -> (Vec<(usize, Rect)>, Rect) {
         }
         tabs.push((
             index,
-            Rect::new(x, layout.header.y, visible, layout.header.height.min(1)),
+            Rect::new(x, layout.header.y + 1, visible, layout.header.height.min(1)),
         ));
         x = x.saturating_add(visible);
     }
     let add = Rect::new(
         x,
-        layout.header.y,
+        layout.header.y + 1,
         3.min(layout.header.right().saturating_sub(x)),
         layout.header.height.min(1),
     );
@@ -78,19 +80,29 @@ pub fn tab_areas(app: &App, layout: &Geometry) -> (Vec<(usize, Rect)>, Rect) {
 pub fn geometry(area: Rect, app: &App) -> Geometry {
     let immersive = immersive(app);
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(if immersive { 0 } else { 1 }),
+        Constraint::Length(if immersive { 0 } else { 4 }),
         Constraint::Min(0),
-        Constraint::Length(1),
+        Constraint::Length(
+            if app
+                .capabilities
+                .as_ref()
+                .is_some_and(|c| !c.provider_limits.is_empty())
+            {
+                2
+            } else {
+                1
+            },
+        ),
     ])
     .areas(area);
-    let sidebar = if immersive || app.review.visible || area.width < 65 {
+    let sidebar = if immersive || area.width < 65 {
         0
     } else {
         27.min(area.width / 3)
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
-    let (content, review) = if app.review.visible && !immersive {
+    let (content, review) = if app.review.visible {
         if app.review.expanded || content.width < 110 {
             (Rect::default(), content)
         } else {
@@ -249,11 +261,38 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
     }
 }
 
+fn footer_limits(app: &App) -> String {
+    app.capabilities.as_ref().map_or_else(String::new, |caps| {
+        caps.provider_limits
+            .iter()
+            .map(|p| {
+                let values = if p.status == "ready" {
+                    p.windows
+                        .iter()
+                        .map(|w| format!("{} {}%", limit_label(w.duration_mins), w.used_percent))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else {
+                    "—".into()
+                };
+                format!(" {} {} ", p.id.label(), values)
+            })
+            .collect::<Vec<_>>()
+            .join("·")
+    })
+}
+
 pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
     if footer.width < 3 {
         return Rect::default();
     }
-    Rect::new(footer.right() - 3, footer.y, 3, 1)
+    let width = footer.width.min(19);
+    Rect::new(
+        footer.right() - width,
+        footer.bottom().saturating_sub(1),
+        width,
+        1,
+    )
 }
 
 pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
@@ -320,20 +359,45 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     let layout = geometry(area, app);
     if !immersive(app) {
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    " nesvo ",
-                    Style::default()
-                        .fg(app.theme.accent())
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("· connected", Style::default().fg(MUTED)),
-            ])),
-            Rect::new(layout.header.x, layout.header.y, layout.tree.width, 1),
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(BORDER))
+                .style(Style::default().bg(SURFACE)),
+            layout.header,
         );
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                " nesvo ",
+                Style::default()
+                    .fg(app.theme.accent())
+                    .add_modifier(Modifier::BOLD),
+            )]))
+            .style(Style::default().bg(SURFACE)),
+            Rect::new(
+                layout.header.x + 7,
+                layout.header.y,
+                layout.tree.width.saturating_sub(7),
+                1,
+            ),
+        );
+        if layout.tree.width >= 20 {
+            frame.render_widget(
+                brand::Mark(app.theme),
+                Rect::new(layout.header.x + 1, layout.header.y, 6, 3),
+            );
+            frame.render_widget(
+                Paragraph::new(" ● Connected").style(Style::default().fg(SUCCESS).bg(SURFACE)),
+                Rect::new(
+                    layout.header.x + 7,
+                    layout.header.y + 1,
+                    layout.tree.width.saturating_sub(7),
+                    1,
+                ),
+            );
+        }
         let tab_strip = Rect::new(
             layout.tree.right(),
-            layout.header.y,
+            layout.header.y + 1,
             layout.header.right().saturating_sub(layout.tree.right()),
             1,
         );
@@ -384,7 +448,14 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     }
     let (full_mode, full_hint) = footer_copy(app);
     let handle = fullscreen_handle_area(app, layout.footer);
-    let text_width = usize::from(handle.x.saturating_sub(layout.footer.x));
+    let usage = footer_limits(app);
+    let usage_width =
+        (Line::from(usage.as_str()).width() as u16).min(handle.x.saturating_sub(layout.footer.x));
+    let text_width = if layout.footer.height > 1 {
+        usize::from(layout.footer.width)
+    } else {
+        usize::from(handle.x.saturating_sub(layout.footer.x))
+    };
     let (mode, hint) = if text_width < Line::from(full_mode).width() + 12 {
         match app.mode {
             Mode::Input => (" INPUT ", " Ctrl+Q NAV"),
@@ -434,9 +505,20 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
             layout.footer.height,
         ),
     );
+    if usage_width > 0 {
+        frame.render_widget(
+            Paragraph::new(usage).style(Style::default().fg(MUTED)),
+            Rect::new(handle.x - usage_width, handle.y, usage_width, 1),
+        );
+    }
     if !handle.is_empty() {
         frame.render_widget(
-            Paragraph::new(" z ").style(Style::default().fg(BACKGROUND).bg(app.theme.accent())),
+            Paragraph::new(if app.fullscreen {
+                " z Full screen ON "
+            } else {
+                " z Full screen OFF "
+            })
+            .style(Style::default().fg(BACKGROUND).bg(app.theme.accent())),
             handle,
         );
     }
@@ -505,16 +587,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                 let available = usize::from(entry.width).saturating_sub(6 + indent.len());
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if selected && app.mode == Mode::Navigate {
-                                ">"
-                            } else if selected {
-                                "▎"
-                            } else {
-                                " "
-                            },
-                            Style::default().fg(app.theme.accent()),
-                        ),
+                        Span::styled(" ", Style::default().fg(app.theme.accent())),
                         Span::raw(indent),
                         Span::styled(
                             format!("{marker} "),
@@ -564,16 +637,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                 let available = usize::from(entry.width).saturating_sub(4 + indent.len());
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if selected && app.mode == Mode::Navigate {
-                                ">"
-                            } else if selected {
-                                "▎"
-                            } else {
-                                " "
-                            },
-                            Style::default().fg(app.theme.accent()),
-                        ),
+                        Span::styled(" ", Style::default().fg(app.theme.accent())),
                         Span::raw(indent.clone()),
                         Span::styled(marker, Style::default().fg(status_color(status, app.theme))),
                         Span::raw(" "),
@@ -624,11 +688,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
         }
         if selected && app.mode == Mode::Navigate && app.dialog.is_none() && app.overlay.is_none() {
             // A session is one selectable item spanning both terminal rows.
-            let highlight_start = if matches!(row.kind, RowKind::Group(_)) {
-                entry.x.saturating_add(3 + (row.depth.min(4) * 2) as u16)
-            } else {
-                entry.x
-            };
+            let highlight_start = entry.x;
             for y in entry.y..entry.bottom() {
                 for x in highlight_start..entry.right() {
                     if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
@@ -1298,6 +1358,24 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn diff_preserves_workspace_sidebar_and_fullscreen_visibility() {
+        let mut app = App::new(1);
+        app.dialog = None;
+        app.mode = Mode::Input;
+        app.fullscreen = false;
+        let area = Rect::new(0, 0, 150, 44);
+        let before = geometry(area, &app).tree;
+        app.review.visible = true;
+        app.review.return_to_input = true;
+        app.mode = Mode::Navigate;
+        assert_eq!(geometry(area, &app).tree, before);
+        assert!(geometry(area, &app).review.width > 0);
+        app.fullscreen = true;
+        assert_eq!(geometry(area, &app).tree.width, 0);
+        assert!(geometry(area, &app).review.width > 0);
+    }
+
+    #[test]
     fn keyboard_reference_fits_small_terminal() {
         let mut app = App::new(1);
         app.dialog = Some(Dialog::Help);
@@ -1716,7 +1794,7 @@ mod tests {
             .map(|x| buffer[(x, group_y)].symbol())
             .collect();
         assert!(group.contains("A very long"), "{group}");
-        assert_eq!(buffer[(tree.x + 1, group_y)].fg, WARNING);
+        assert_eq!(buffer[(tree.x + 1, group_y)].bg, app.theme.accent());
     }
 
     #[test]

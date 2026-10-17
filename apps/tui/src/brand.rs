@@ -103,6 +103,35 @@ impl Widget for Logo {
     }
 }
 
+/// Compact first glyph, packed losslessly into Unicode's 2×4 dot cells.
+pub struct Mark(pub Theme);
+impl Widget for Mark {
+    fn render(self, area: Rect, buffer: &mut Buffer) {
+        if area.width < 6 || area.height < 3 {
+            return;
+        }
+        let pixels = pixels(0);
+        let dots = [[1, 8], [2, 16], [4, 32], [64, 128]];
+        for y in 0..3 {
+            for x in 0..6 {
+                let mut code = 0;
+                for (dy, row) in dots.iter().enumerate() {
+                    for (dx, bit) in row.iter().enumerate() {
+                        let px = x * 2 + dx;
+                        if px < 11 && pixels[y * 4 + dy][px] != 0 {
+                            code |= bit;
+                        }
+                    }
+                }
+                let symbol = char::from_u32(0x2800 + code).unwrap_or(' ');
+                buffer[(area.x + x as u16, area.y + y as u16)]
+                    .set_char(symbol)
+                    .set_fg(self.0.accent());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
