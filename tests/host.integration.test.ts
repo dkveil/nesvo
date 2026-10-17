@@ -30,6 +30,10 @@ import { stopFixtureHost } from './host-fixture-shutdown';
 type Event = {
   type: string;
   id?: string;
+  enabled?: boolean;
+  hostId?: string;
+  templates?: { id: string; name: string; spec: { prompt: string } }[];
+  records?: { id: string; spec: { prompt: string; muted: boolean }; state: string }[];
   schedules?: { id: string; name: string; state: string; result?: string }[];
   error?: string;
   sessionId?: string;
@@ -669,3 +673,109 @@ done
     }
   }
 });
+
+test(
+  'templates, notification consent and recovery survive host restart without replaying input',
+  { timeout: 90000 },
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'nesvo-workflows-'));
+    let host: ChildProcess | undefined;
+    let peer: Peer | undefined;
+    async function start() {
+      host = spawn(
+        hostBinary(),
+        [
+          '--port',
+          '0',
+          '--pairing-dir',
+          fixture,
+          '--workspace',
+          process.cwd(),
+          '--exit-on-stdin-close',
+        ],
+        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+      let ready = false;
+      let failure = '';
+      host.stdout?.on('data', data => {
+        ready ||= data.toString().includes('Rust host listening');
+      });
+      host.stderr?.on('data', data => {
+        failure += data.toString();
+      });
+      host.on('error', error => {
+        failure += error.message;
+      });
+      await until(() => {
+        if (host?.exitCode !== null || failure) throw new Error(failure);
+        return ready || undefined;
+      }, 'workflow host');
+      peer = new Peer(parsePairing(await readFile(join(fixture, 'pairing.json'), 'utf8')));
+      await peer.authenticate();
+      await peer.next('sessions');
+      return peer;
+    }
+    try {
+      let client = await start();
+      client.send({ type: 'getCapabilities' });
+      const identity = (await client.next('capabilities')).hostId;
+      assert.match(identity!, /^[a-f0-9]{32}$/);
+      client.send({
+        type: 'registerPush',
+        token: 'https://invalid.example',
+        enabled: true,
+        requestId: 'bad-push',
+      });
+      await client.next('error', e => e.requestId === 'bad-push');
+      // Never send a push: unregister the fixture token before creating a process.
+      client.send({ type: 'registerPush', token: 'ExpoPushToken[fixture123456]', enabled: true });
+      assert.equal((await client.next('pushRegistered')).enabled, true);
+      client.send({ type: 'registerPush', token: 'ExpoPushToken[fixture123456]', enabled: false });
+      assert.equal((await client.next('pushRegistered')).enabled, false);
+      client.send({
+        type: 'saveTemplate',
+        name: 'Review recipe',
+        spec: {
+          name: 'Review',
+          program: 'claude',
+          prompt: 'Do not execute this fixture prompt',
+          worktree: false,
+        },
+      });
+      const template = (await client.next('templates')).templates![0]!;
+      client.send({
+        type: 'create',
+        name: 'Recover me',
+        program: 'shell',
+        requestId: 'recoverable',
+      });
+      const id = (await client.next('created', e => e.requestId === 'recoverable')).sessionId!;
+      client.send({ type: 'muteSession', sessionId: id, muted: true });
+      await client.next('sessions', e => e.sessions?.some(s => s.id === id && s.muted) ?? false);
+      await client.disconnect();
+      await stopFixtureHost(host!);
+      client = await start();
+      client.send({ type: 'getCapabilities' });
+      assert.equal((await client.next('capabilities')).hostId, identity);
+      client.send({ type: 'listTemplates' });
+      assert.equal((await client.next('templates')).templates![0]!.id, template.id);
+      client.send({ type: 'listRecovery' });
+      const saved = (await client.next('recovery')).records!.find(r => r.id === id)!;
+      assert.equal(saved.spec.prompt, '');
+      assert.equal(saved.spec.muted, true);
+      client.send({ type: 'restoreSession', id, requestId: 'restore' });
+      const newId = (await client.next('created', e => e.requestId === 'restore')).sessionId!;
+      assert.notEqual(newId, id);
+      await client.next('sessions', e => e.sessions?.some(s => s.id === newId && s.muted) ?? false);
+      client.send({ type: 'restoreSession', id, requestId: 'duplicate' });
+      await client.next('error', e => e.requestId === 'duplicate');
+      client.send({ type: 'close', sessionId: newId });
+      await client.next('sessions', e => e.sessions?.length === 0);
+      await client.disconnect();
+    } finally {
+      peer?.socket.terminate();
+      if (host) await stopFixtureHost(host);
+      await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  },
+);
