@@ -110,12 +110,26 @@ pub fn for_app(size: Rect, app: &App) -> Geometry {
 pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     let layout = for_app(frame.area(), app);
     frame.render_widget(Clear, layout.panel);
+    let inline = !app.palette_expanded && frame.area().width >= 65;
+    frame.render_widget(
+        Block::default().style(Style::default().bg(SURFACE)),
+        layout.panel,
+    );
     frame.render_widget(
         Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(app.theme.accent()))
             .style(Style::default().bg(SURFACE).fg(TEXT)),
-        layout.panel,
+        if inline {
+            Rect::new(
+                layout.panel.x,
+                layout.panel.y,
+                layout.panel.width,
+                layout.panel.height.min(3),
+            )
+        } else {
+            layout.panel
+        },
     );
     if layout.input.is_empty() {
         return;
@@ -140,7 +154,7 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     } else {
         "F2 expand"
     };
-    if layout.panel.height > 4 {
+    if layout.panel.height > 4 && !inline {
         frame.render_widget(
             Paragraph::new(format!(
                 "{category} · {} · Tab categories",

@@ -1268,27 +1268,21 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         Dialog::Help => {
             frame.render_widget(
                 Paragraph::new(app.shortcuts.hints(concat!(
-                    "~ status: screen inference; open/quiet: I/O.\n\n",
-                    "↑/↓ or j/k   Select and preview · Enter opens / expands\n",
-                    "/ or Ctrl+K: palette · sidebar: quick search\n",
-                    "F4 diff · F6 previous · F7 attention · u mute\n",
-                    "F8 templates · F9 restore · f filters · S schedules\n",
-                    "Settings → k: remap global shortcuts\n",
-                    "New session F2: worktree, prompt, start time\n",
-                    "i / t / x    Type / take over (confirm) / release\n",
-                    "n / g        New session / group (choose parent)\n",
-                    "r / m / d    Rename / move / delete (confirmation)\n",
-                    "v / Tab      Split / focus next pane\n",
-                    "PgUp/PgDn    Local scrollback\n",
-                    "F1 / p / ?   Menu / pair mobile / keyboard help\n",
-                    "z            Full screen / workspace\n",
-                    "Esc          Session key / cancel dialog / confirm exit\n",
-                    "q            Detach from navigation\n\n",
-                    "INPUT sends keys to the session.\n",
-                    "Ctrl+Q switches to NAVIGATION for nesvo.\n",
-                    "Esc goes to the controlled session.\n",
-                    "Ctrl+C goes to the shell while typing.\n\n",
-                    "Click controls or use shortcuts. Splits are local."
+                    "NAVIGATION (Ctrl+Q leaves session input)\n",
+                    "↑↓ / j k: select · Enter: open · z: full screen\n",
+                    "/ / Ctrl+K: palette · sidebar input: quick search\n",
+                    "Search: ↑↓ select · Enter open · Esc clear/close · F2 expand\n",
+                    "F4 diff · F6 previous session · F7 next attention\n",
+                    "F8 templates · F9 restore · u mute · f status filters\n",
+                    "n session · g group · r rename · m move · d delete\n",
+                    "New session F2: worktree / prompt / schedule · F3 save template\n",
+                    "S schedules · v split · Tab next pane · PgUp/PgDn scroll\n",
+                    "i type · t take over · x release · q detach · Esc confirm exit\n",
+                    "F1 menu · p pair phone · ? help · Settings → k remap keys\n",
+                    "DIFF: e expand · s split view · ↑↓ file · ←→ hunk · Space fold\n",
+                    "INPUT: keys go to the session, including Esc and Ctrl+C.\n",
+                    "Full screen while typing: Ctrl+Q, then z. Enter resumes input.\n",
+                    "~ status inferred from screen; open/quiet describes I/O.\n",
                 )))
                 .wrap(Wrap { trim: false }),
                 inner,
@@ -1302,6 +1296,23 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::json;
+
+    #[test]
+    fn keyboard_reference_fits_small_terminal() {
+        let mut app = App::new(1);
+        app.dialog = Some(Dialog::Help);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app, 0)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("Ctrl+Q, then z"));
+        assert!(text.contains("open/quiet describes I/O"));
+    }
 
     #[test]
     fn installed_provider_limits_render_without_stealing_session_clicks() {

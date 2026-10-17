@@ -99,3 +99,7 @@ cargo test --manifest-path apps/tui/Cargo.toml --locked
 ```
 
 Unit tests cover input and VT response ownership, mode transitions, session creation correlation, the group tree, key encoding, alternate screens, and rendering through Ratatui TestBackend. A real PTY with concurrent clients is a separate integration test.
+
+### Sidebar search and keyboard reference
+
+Click the bordered Search sessions input, or navigate Up to it, to type a quick filter. Escape clears the query and returns to the session list. `/` and Ctrl+K open the expanded palette in navigation mode; F2 expands a quick search without losing its query. Main menu → Keyboard shortcuts shows the reference. While typing in a session, use Ctrl+Q then z to toggle full screen; the footer shows this sequence. The highlighted session includes both its name and status/provider line.
