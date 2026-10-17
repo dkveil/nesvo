@@ -1455,9 +1455,17 @@ fn review_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
         }
         return;
     }
+    if key.code == KeyCode::Char('a') {
+        app.review.directory = None;
+        app.review.data = Default::default();
+        if let Some(command) = app.request_diff() {
+            outcome.commands.push(command);
+        }
+        return;
+    }
     if key.code == KeyCode::Char('o') {
         app.dialog = Some(Dialog::Text {
-            title: "Review folder on host".into(),
+            title: "Pin review folder · empty = Auto".into(),
             value: app.review.directory.clone().unwrap_or_else(|| {
                 app.active_session()
                     .map_or(String::new(), |s| s.cwd.clone())

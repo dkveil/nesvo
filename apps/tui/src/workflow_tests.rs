@@ -487,3 +487,30 @@ fn left_bracket_moves_review_boundary_left_from_actual_width() {
     key(&mut app, KeyCode::Char(']'));
     assert_eq!(app.review.width, before);
 }
+
+#[test]
+fn auto_review_clears_pin_and_repository_change_resets_position() {
+    let mut app = app();
+    key(&mut app, KeyCode::F(4));
+    app.review.focused = true;
+    app.review.directory = Some("/pinned".into());
+    let outcome = key(&mut app, KeyCode::Char('a'));
+    assert!(app.review.directory.is_none());
+    assert!(
+        outcome
+            .commands
+            .iter()
+            .any(|c| c["type"] == "getDiff" && c["directory"].is_null())
+    );
+    app.review.data = data();
+    app.review.data.directory = Some("/first".into());
+    app.review.scroll = 20;
+    app.review.hunk = 4;
+    app.review.folded.insert(("src/工程.rs".into(), 0));
+    let mut next = data();
+    next.directory = Some("/second".into());
+    app.review.accept(next);
+    assert_eq!(app.review.scroll, 0);
+    assert_eq!(app.review.hunk, 0);
+    assert!(app.review.folded.is_empty());
+}

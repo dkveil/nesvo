@@ -15,6 +15,10 @@ use std::collections::HashSet;
 
 #[derive(Default, Deserialize)]
 pub struct ReviewData {
+    #[serde(default)]
+    pub directory: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
     pub files: Vec<FileDiff>,
     pub truncated: bool,
 }
@@ -51,7 +55,15 @@ pub const SCOPES: [&str; 3] = ["unstaged", "staged", "untracked"];
 
 impl ReviewState {
     pub fn accept(&mut self, data: ReviewData) {
-        let path = self.data.files.get(self.file).map(|f| &f.path);
+        if self.data.directory != data.directory {
+            self.file = 0;
+            self.hunk = 0;
+            self.scroll = 0;
+            self.folded.clear();
+        }
+        let path = (self.data.directory == data.directory)
+            .then(|| self.data.files.get(self.file).map(|f| &f.path))
+            .flatten();
         self.file = path
             .and_then(|path| data.files.iter().position(|f| &f.path == path))
             .unwrap_or(0);
@@ -110,7 +122,8 @@ fn layout(app: &App, inner: Rect) -> ([Rect; 4], Vec<Line<'static>>) {
             "PgUp/PgDn scroll",
             "r refresh",
             "y copy",
-            "o folder",
+            "o pin folder",
+            "a auto",
             "c scope",
             "[] width",
             "s split",
@@ -193,15 +206,28 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         );
     }
     let folder = state
+        .data
         .directory
         .as_deref()
+        .or(state.directory.as_deref())
         .or_else(|| app.active_session().map(|s| s.cwd.as_str()))
         .unwrap_or("No session");
     frame.render_widget(
         Paragraph::new(Line::from({
             let mut spans = crate::ui::shortcut_spans("o folder");
             spans.push(Span::styled(
-                format!("  {folder}"),
+                format!(
+                    "  {} · {folder}",
+                    state
+                        .data
+                        .source
+                        .as_deref()
+                        .unwrap_or(if state.directory.is_some() {
+                            "Pinned"
+                        } else {
+                            "Auto"
+                        })
+                ),
                 Style::default().fg(MUTED),
             ));
             spans
