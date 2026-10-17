@@ -317,23 +317,16 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
     }
     let layout = geometry(area, app);
     if !immersive(app) {
-        let navigating = app.mode == Mode::Navigate;
         frame.render_widget(
-            Paragraph::new(if navigating {
-                " > NESVO MENU"
-            } else {
-                "   SESSION INPUT"
-            })
-            .style(
-                Style::default()
-                    .fg(if navigating { BACKGROUND } else { TEXT })
-                    .bg(if navigating {
-                        app.theme.accent()
-                    } else {
-                        SURFACE
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " nesvo ",
+                    Style::default()
+                        .fg(app.theme.accent())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("· connected", Style::default().fg(MUTED)),
+            ])),
             Rect::new(layout.header.x, layout.header.y, layout.tree.width, 1),
         );
         let tab_strip = Rect::new(
@@ -459,11 +452,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Block::default()
             .borders(Borders::RIGHT)
-            .border_style(Style::default().fg(if app.mode == Mode::Navigate {
-                app.theme.accent()
-            } else {
-                BORDER
-            })),
+            .border_style(Style::default().fg(BORDER)),
         area,
     );
     let content = tree_content(area);
@@ -606,6 +595,25 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                     );
                 }
             }
+        }
+        if selected && app.mode == Mode::Navigate && app.dialog.is_none() && app.overlay.is_none() {
+            // Highlight the focused item itself; preserve status colors on its second row.
+            let highlight_start = if matches!(row.kind, RowKind::Group(_)) {
+                entry.x.saturating_add(3 + (row.depth.min(4) * 2) as u16)
+            } else {
+                entry.x
+            };
+            for x in highlight_start..entry.right() {
+                if let Some(cell) = frame.buffer_mut().cell_mut((x, entry.y)) {
+                    cell.set_fg(BACKGROUND).set_bg(app.theme.accent());
+                }
+            }
+            frame.render_widget(
+                Block::default()
+                    .borders(Borders::RIGHT)
+                    .border_style(Style::default().fg(app.theme.accent())),
+                Rect::new(area.right().saturating_sub(1), entry.y, 1, entry.height),
+            );
         }
     }
     if let Some(caps) = &app.capabilities {
