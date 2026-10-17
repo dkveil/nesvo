@@ -180,6 +180,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         }
         Event::Mouse(mouse) => {
             let geometry = ui::geometry(area, app);
+            let immersive = ui::immersive(app);
             if app.dialog.is_none() && geometry.review.contains((mouse.column, mouse.row).into()) {
                 if !matches!(
                     mouse.kind,
@@ -267,7 +268,26 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     }) && let Some(id) = app.panes[index].as_ref()
                         && let Some(terminal) = app.terminals.get_mut(id)
                     {
-                        terminal.scroll(if up { 3 } else { -3 });
+                        let pane = ui::pane_content(geometry.panes[index], immersive);
+                        let id = id.clone();
+                        let encoded = input::encode_wheel(
+                            terminal.screen(),
+                            up,
+                            mouse.column.saturating_sub(pane.x),
+                            mouse.row.saturating_sub(pane.y),
+                        );
+                        if let Some(data) = encoded {
+                            if app.owns(&id) {
+                                outcome.commands.push(json!({"type":"input", "sessionId":id,
+                                    "leaseId":app.leases.get(&id), "data":data}));
+                            } else {
+                                app.notice =
+                                    "Read-only: acquire control to scroll this application's view."
+                                        .into();
+                            }
+                        } else {
+                            terminal.scroll(if up { 3 } else { -3 });
+                        }
                     }
                 }
             }

@@ -103,6 +103,30 @@ pub fn encode_paste(text: &str, screen: &vt100::Screen) -> String {
     }
 }
 
+/// Forward wheel gestures only when the inner application requests mouse input.
+pub fn encode_wheel(screen: &vt100::Screen, up: bool, col: u16, row: u16) -> Option<String> {
+    if screen.mouse_protocol_mode() == vt100::MouseProtocolMode::None {
+        return None;
+    }
+    let button = if up { 64 } else { 65 };
+    Some(match screen.mouse_protocol_encoding() {
+        vt100::MouseProtocolEncoding::Sgr => format!("\x1b[<{button};{};{}M", col + 1, row + 1),
+        encoding => {
+            let max = if encoding == vt100::MouseProtocolEncoding::Default {
+                94
+            } else {
+                2014
+            };
+            format!(
+                "\x1b[M{}{}{}",
+                char::from_u32(button + 32)?,
+                char::from_u32(u32::from(col.min(max)) + 33)?,
+                char::from_u32(u32::from(row.min(max)) + 33)?
+            )
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
