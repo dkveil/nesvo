@@ -36,25 +36,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let themes_source = brand.join("themes.json");
     println!("cargo:rerun-if-changed={}", themes_source.display());
     let themes: Value = serde_json::from_str(&fs::read_to_string(themes_source)?)?;
-    let graphite = themes["themes"]
-        .as_array()
-        .and_then(|items| items.iter().find(|theme| theme["id"] == "graphite"))
-        .ok_or("Missing Graphite theme")?;
-    for (constant, token) in [
-        ("GRAPHITE_ACCENT", "accent"),
-        ("GRAPHITE_SELECTION", "selection"),
-    ] {
-        let color = graphite["colors"][token]
-            .as_str()
-            .ok_or("Missing theme color")?;
-        if color.len() != 7 || !color.starts_with('#') || !color[1..].is_ascii() {
-            return Err(format!("Theme color {token} must be #RRGGBB").into());
+    for theme in themes["themes"].as_array().ok_or("Missing themes")? {
+        let id = theme["id"].as_str().ok_or("Missing theme id")?;
+        if id == "ultraviolet" {
+            continue;
         }
-        let rgb = u32::from_str_radix(&color[1..], 16)?;
-        generated.push_str(&format!(
-            "pub const {constant}: ratatui::style::Color = ratatui::style::Color::Rgb({}, {}, {});\n",
-            (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255,
-        ));
+        for token in ["accent", "selection"] {
+            let color = theme["colors"][token]
+                .as_str()
+                .ok_or("Missing theme color")?;
+            if color.len() != 7 || !color.starts_with('#') || !color[1..].is_ascii() {
+                return Err("Invalid theme color".into());
+            }
+            let rgb = u32::from_str_radix(&color[1..], 16)?;
+            let constant = format!("{}_{}", id.to_uppercase(), token.to_uppercase());
+            generated.push_str(&format!("pub const {constant}: ratatui::style::Color = ratatui::style::Color::Rgb({}, {}, {});\n", (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255));
+        }
     }
     fs::write(output, generated)?;
     generate_logo(&brand)?;

@@ -1,11 +1,50 @@
 {
   "default": "ultraviolet",
   "themes": [
-    { "id": "ultraviolet", "name": "Ultraviolet", "colors": {} },
+    {
+      "id": "ultraviolet",
+      "name": "Ultraviolet",
+      "colors": {}
+    },
     {
       "id": "graphite",
       "name": "Graphite",
-      "colors": { "accent": "#ADACB5", "selection": "#303036" }
+      "colors": {
+        "accent": "#ADACB5",
+        "selection": "#303036"
+      }
+    },
+    {
+      "id": "ocean",
+      "name": "Ocean",
+      "colors": {
+        "accent": "#8DBBEB",
+        "selection": "#233345"
+      }
+    },
+    {
+      "id": "sage",
+      "name": "Sage",
+      "colors": {
+        "accent": "#A0C9AE",
+        "selection": "#293A32"
+      }
+    },
+    {
+      "id": "amber",
+      "name": "Amber",
+      "colors": {
+        "accent": "#E3BB7A",
+        "selection": "#403426"
+      }
+    },
+    {
+      "id": "rose",
+      "name": "Rose",
+      "colors": {
+        "accent": "#DEA5BC",
+        "selection": "#3E2B36"
+      }
     }
   ]
 }
