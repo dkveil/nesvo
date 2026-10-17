@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 pub struct Outcome {
     pub commands: Vec<Value>,
+    pub clipboard: Option<String>,
     pub quit: bool,
     pub redraw: bool,
 }
@@ -23,6 +24,7 @@ impl Default for Outcome {
     fn default() -> Self {
         Self {
             commands: Vec::new(),
+            clipboard: None,
             quit: false,
             redraw: true,
         }
@@ -1401,6 +1403,12 @@ fn toggle_review(app: &mut App, outcome: &mut Outcome) {
 }
 
 fn review_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
+    if key.code == KeyCode::Char('y') {
+        if let Some(file) = app.review.data.files.get(app.review.file) {
+            outcome.clipboard = Some(file.patch.clone());
+        }
+        return;
+    }
     if key.code == KeyCode::Char('o') {
         app.dialog = Some(Dialog::Text {
             title: "Review folder on host".into(),

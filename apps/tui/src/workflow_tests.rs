@@ -345,3 +345,75 @@ fn template_opens_editable_form_and_restore_requires_confirmation() {
     );
     assert_eq!(app.dialog_button, Some(1));
 }
+
+#[test]
+fn theme_preview_cancel_and_commit_are_distinct() {
+    let mut app = app();
+    app.overlay = Some(toolbox::Overlay::Themes(
+        0,
+        crate::theme::Theme::Ultraviolet,
+    ));
+    key(&mut app, KeyCode::Down);
+    assert_eq!(app.theme, crate::theme::Theme::Graphite);
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.theme, crate::theme::Theme::Ultraviolet);
+    app.overlay = Some(toolbox::Overlay::Themes(0, app.theme));
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.theme, crate::theme::Theme::Graphite);
+    assert!(app.overlay.is_none());
+}
+
+#[test]
+fn wheel_over_session_preserves_focus_and_routes_application_mouse() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    let mut app = app();
+    app.dialog = None;
+    app.sessions[0].controller_id = Some(app.client_id);
+    app.leases.insert("a".into(), "lease".into());
+    let area = Rect::new(0, 0, 150, 44);
+    for mode in [Mode::Navigate, Mode::Input] {
+        app.mode = mode;
+        let mut terminal = crate::terminal::TerminalState::new(4, 80);
+        for n in 0..40 {
+            terminal.process(&format!("line {n}\r\n"), false);
+        }
+        app.terminals.insert("a".into(), terminal);
+        let pane = ui::pane_content(ui::geometry(area, &app).panes[0], ui::immersive(&app));
+        let wheel = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: pane.x + 2,
+            row: pane.y + 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        let result = controller::event(&mut app, wheel.clone(), area);
+        assert!(result.commands.is_empty());
+        assert!(app.terminals["a"].screen().scrollback() > 0);
+        assert!(app.mode == mode);
+        app.terminals
+            .get_mut("a")
+            .unwrap()
+            .process("\x1b[?1049h\x1b[?1000h\x1b[?1006h", false);
+        let result = controller::event(&mut app, wheel, area);
+        assert_eq!(result.commands[0]["data"], "\x1b[<64;3;3M");
+        assert_eq!(result.commands[0]["sessionId"], "a");
+        assert!(app.mode == mode);
+    }
+}
+
+#[test]
+fn review_copy_uses_full_patch_without_sending_session_input() {
+    let mut app = app();
+    app.dialog = None;
+    app.mode = Mode::Navigate;
+    app.review.visible = true;
+    app.review.focused = true;
+    app.review.session_id = "a".into();
+    app.review.accept(data());
+    let result = key(&mut app, KeyCode::Char('y'));
+    assert_eq!(
+        result.clipboard.as_deref(),
+        Some(app.review.data.files[0].patch.as_str())
+    );
+    assert!(result.commands.is_empty());
+}

@@ -144,7 +144,14 @@ pub fn run(
     let mut next_attempt = Instant::now();
     let mut reconnecting: Option<oneshot::Receiver<Result<Connection>>> = None;
     let mut resume_session: Option<String> = None;
+    let mut clipboard_pending = false;
+    let (clipboard_tx, clipboard_rx) = std::sync::mpsc::channel();
     loop {
+        if let Ok(message) = clipboard_rx.try_recv() {
+            clipboard_pending = false;
+            app.notice = message;
+            dirty = true;
+        }
         let phase = Instant::now();
         if layout_loaded && app.connected && layout_saved_at.elapsed() >= Duration::from_secs(1) {
             let current = crate::workspace_layout::WorkspaceLayout::capture(&app);
@@ -302,6 +309,19 @@ pub fn run(
                 }
             }
             let outcome = controller::event(&mut app, ev, area);
+            if let Some(text) = outcome.clipboard
+                && !clipboard_pending
+            {
+                clipboard_pending = true;
+                let tx = clipboard_tx.clone();
+                std::thread::spawn(move || {
+                    let message = match copy_text(&text) {
+                        Ok(()) => "Diff copied to clipboard.",
+                        Err(_) => "Clipboard unavailable; copying failed.",
+                    };
+                    let _ = tx.send(message.to_owned());
+                });
+            }
             if outcome.quit {
                 if layout_loaded
                     && app.connected
@@ -440,6 +460,44 @@ fn resize_commands(app: &App, area: Rect, requested: &mut RequestedSizes) -> Vec
             .push(json!({"type":"resize","sessionId":id,"leaseId":lease,"cols":cols,"rows":rows}));
     }
     commands
+}
+
+#[cfg(windows)]
+fn copy_text(text: &str) -> io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command",
+            "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())"])
+        .creation_flags(0x08000000)
+        .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes())?;
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(io::Error::other("Clipboard failed"))
+            };
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other("Clipboard timed out"));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(not(windows))]
+fn copy_text(text: &str) -> io::Result<()> {
+    execute!(
+        io::stdout(),
+        crossterm::clipboard::CopyToClipboard::to_clipboard_from(text)
+    )
 }
 
 #[cfg(test)]
