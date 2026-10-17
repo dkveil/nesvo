@@ -74,6 +74,7 @@ async fn main() -> Result<()> {
             while let Some(event) = connection.events.recv().await {
                 match event {
                     NetworkEvent::Message(value) if value["type"] == "capabilities" => {
+                        println!("{}", serde_json::to_string(&value)?);
                         return Ok(());
                     }
                     NetworkEvent::Disconnected(message) => anyhow::bail!(message),

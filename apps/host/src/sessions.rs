@@ -143,7 +143,7 @@ impl State {
     }
 
     fn capabilities_event(&self) -> Value {
-        json!({"type":"capabilities", "workspace":crate::process::display_path(&self.workspace),
+        json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
             "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true,
             "providerLimits":self.provider_limits})
     }

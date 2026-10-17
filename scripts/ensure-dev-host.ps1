@@ -29,15 +29,23 @@ function Test-CompatibleHost {
     $ErrorActionPreference = 'SilentlyContinue'
     $PSNativeCommandUseErrorActionPreference = $false
     try {
-        & $ClientExe --pairing $pairingFile --check-host *> $null
-        return $LASTEXITCODE -eq 0
+        $output = & $ClientExe --pairing $pairingFile --check-host 2>$null
+        $connected = $LASTEXITCODE -eq 0
+        if ($connected) {
+            try { $script:hostCapabilities = ($output -join "`n") | ConvertFrom-Json } catch { $script:hostCapabilities = $null }
+        }
+        return $connected
     } catch {
         return $false
     }
 }
 
 if (Test-CompatibleHost) {
-    Write-Host 'Using the running development host.'
+    $expectedBuild = & $HostExe --build-id
+    if ($hostCapabilities.buildId -ne $expectedBuild) {
+        Write-Warning 'The running host uses an older or different build. Current sessions are preserved. Save work and stop that host before restarting nesvo-dev to enable all new host features.'
+    }
+    Write-Host 'Using the running development host.' 
     exit 0
 }
 

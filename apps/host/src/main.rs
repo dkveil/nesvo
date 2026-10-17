@@ -37,6 +37,9 @@ use tokio::{
     about = "nesvo private terminal companion. Shells run only when requested in a paired client."
 )]
 struct Args {
+    /// Print the source build identity without starting a host.
+    #[arg(long)]
+    build_id: bool,
     #[arg(long)]
     lan: bool,
     #[arg(long)]
@@ -111,6 +114,10 @@ fn stdin_close_signal() -> oneshot::Receiver<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if args.build_id {
+        println!("{}", env!("NESVO_BUILD_ID"));
+        return Ok(());
+    }
     let workspace = fs::canonicalize(&args.workspace).context("Workspace does not exist")?;
     ensure!(workspace.is_dir(), "Workspace must be a directory");
     let bind = args.bind.unwrap_or(IpAddr::V4(if args.lan {
