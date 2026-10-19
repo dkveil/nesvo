@@ -89,7 +89,7 @@ fn catalog() -> Vec<Tool> {
             "nesvo_create_session",
             "Create one background process for a stable idempotency key. Reuse the same key/spec after timeout, never invent another key to retry. Created is not agent readiness or task success. Host authorization still applies.",
             object(
-                json!({"key":{"type":"string","minLength":1,"maxLength":128},"spec":{"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"program":{"enum":["shell","claude","codex","gemini"],"default":"shell"},"cwd":{"type":"string"},"groupId":{"type":["string","null"]},"prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},"worktree":{"type":"boolean","default":false},"autoTitle":{"type":"boolean","default":false},"muted":{"type":"boolean","default":false},"resumePicker":{"type":"boolean","default":false}}}}),
+                json!({"key":{"type":"string","minLength":1,"maxLength":128},"spec":{"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"program":{"enum":["shell","claude","codex","gemini"],"default":"shell"},"cwd":{"type":"string"},"groupId":{"type":["string","null"]},"parentSessionId":{"type":["string","null"],"description":"Live process parent ID: lineage only, never an authorization grant"},"prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},"worktree":{"type":"boolean","default":false},"autoTitle":{"type":"boolean","default":false},"muted":{"type":"boolean","default":false},"resumePicker":{"type":"boolean","default":false}}}}),
                 &["key", "spec"],
             ),
             false,
@@ -298,7 +298,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                         "program" => value
                             .as_str()
                             .is_some_and(|v| matches!(v, "shell" | "claude" | "codex" | "gemini")),
-                        "groupId" => value.is_null() || value.is_string(),
+                        "groupId" | "parentSessionId" => value.is_null() || value.is_string(),
                         "worktree" | "autoTitle" | "muted" | "resumePicker" => value.is_boolean(),
                         _ => false,
                     })
@@ -412,7 +412,16 @@ impl HostTools {
         } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
             cli::prompt_capability(&mut connection).await?;
         } else if kind == "operation" {
-            cli::operation_capability(&mut connection).await?;
+            let caps = cli::operation_capability(&mut connection).await?;
+            if name == "nesvo_create_session"
+                && command["spec"]["parentSessionId"].is_string()
+                && caps["sessionLineage"] != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host cannot preserve parent-session lineage; update nesvo-host",
+                ));
+            }
         }
         let mut result = cli::request(&mut connection, command, kind).await?;
         if matches!(

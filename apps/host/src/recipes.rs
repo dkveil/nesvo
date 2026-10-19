@@ -115,6 +115,7 @@ mod tests {
         let spec = LaunchSpec {
             name: "Review".into(),
             prompt: "Do work".into(),
+            parent_session_id: Some("parent-process".into()),
             worktree: true,
             ..Default::default()
         };
@@ -123,6 +124,10 @@ mod tests {
         store.save_recovery("old", &spec).unwrap();
         let restored = store.claim_recovery("old").unwrap();
         assert!(restored.prompt.is_empty() && !restored.worktree);
+        assert_eq!(
+            restored.parent_session_id.as_deref(),
+            Some("parent-process")
+        );
         assert!(store.claim_recovery("old").is_err());
         store.finish_recovery("old", true).unwrap();
         assert!(store.recoveries().unwrap().is_empty());

@@ -74,7 +74,11 @@ type Event = {
   enabled?: boolean;
   hostId?: string;
   templates?: { id: string; name: string; spec: { prompt: string } }[];
-  records?: { id: string; spec: { prompt: string; muted: boolean }; state: string }[];
+  records?: {
+    id: string;
+    spec: { prompt: string; muted: boolean; parentSessionId?: string };
+    state: string;
+  }[];
   schedules?: { id: string; name: string; state: string; result?: string }[];
   error?: string;
   sessionId?: string;
@@ -1474,6 +1478,43 @@ test(
       assert.equal(failed.phase, 'failed');
       assert.equal(failed.result.code, 'invalid_launch');
 
+      owner.send({ type: 'attach', sessionId: a.sessionId, cols: 80, rows: 24 });
+      await owner.next('attached', e => e.sessionId === a.sessionId);
+      await owner.next('control', e => e.sessionId === a.sessionId && !!e.leaseId);
+      owner.send({ type: 'list', requestId: 'before-child' });
+      const parentController = (
+        await owner.next('sessions', e => e.requestId === 'before-child')
+      ).sessions!.find(s => s.id === a.sessionId)!.controllerId;
+      assert.notEqual(parentController, null);
+      const childSpec = { ...spec, parentSessionId: a.sessionId };
+      other.send({ type: 'createOperation', key: 'child', spec: childSpec, requestId: 'child' });
+      const child = (await other.next('operation', e => e.requestId === 'child')).receipt!;
+      assert.equal(child.phase, 'created');
+      const late = await connect();
+      late.send({ type: 'list', requestId: 'lineage' });
+      const lineage = (await late.next('sessions', e => e.requestId === 'lineage')).sessions!;
+      assert.equal(lineage.find(s => s.id === child.sessionId)?.parentSessionId, a.sessionId);
+      assert.equal(lineage.find(s => s.id === child.sessionId)?.controllerId, null);
+      assert.equal(
+        lineage.find(s => s.id === a.sessionId)?.controllerId,
+        parentController,
+        'background child preserves parent ownership',
+      );
+      assert.equal(
+        lineage.filter(s => s.name === spec.name).length,
+        2,
+        'same-name sessions retain separate process identity',
+      );
+      other.send({
+        type: 'createOperation',
+        key: 'orphan',
+        spec: { ...spec, parentSessionId: 'missing-parent' },
+        requestId: 'orphan',
+      });
+      const orphan = (await other.next('operation', e => e.requestId === 'orphan')).receipt!;
+      assert.equal(orphan.phase, 'failed');
+      assert.equal(orphan.result.effectStarted, false);
+
       other.send({
         type: 'createOperation',
         key: 'disconnect',
@@ -1503,6 +1544,21 @@ test(
         (await owner.next('sessions', e => e.requestId === 'after-restart')).sessions,
         [],
         'replay cannot resurrect an exited process',
+      );
+      owner.send({ type: 'listRecovery', requestId: 'lineage-recovery' });
+      const history = (await owner.next('recovery', e => e.requestId === 'lineage-recovery'))
+        .records!;
+      assert.equal(history.find(r => r.id === child.sessionId)?.spec.parentSessionId, a.sessionId);
+      owner.send({
+        type: 'createOperation',
+        key: 'child',
+        spec: childSpec,
+        requestId: 'historical-child',
+      });
+      assert.equal(
+        (await owner.next('operation', e => e.requestId === 'historical-child')).receipt?.id,
+        child.id,
+        'a replay remains historical even when its parent no longer runs',
       );
       owner.send({ type: 'getOperation', id: failed.id, requestId: 'failed-replay' });
       assert.equal(

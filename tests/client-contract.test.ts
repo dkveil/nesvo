@@ -386,3 +386,27 @@ test('optional host session uptime is bounded and legacy snapshots still decode'
       /Invalid host message/,
     );
 });
+
+test('optional process lineage is validated independently from groups and authority', () => {
+  for (const parentSessionId of [undefined, null, 'parent-process']) {
+    const snapshot = {
+      type: 'sessions',
+      groups,
+      sessions: [{ ...session, parentSessionId }],
+      revision: 4,
+    };
+    assert.deepEqual(decodeServerMessage(snapshot), snapshot);
+  }
+  for (const parentSessionId of ['', 42, {}, 'x'.repeat(129)]) {
+    assert.throws(
+      () =>
+        decodeServerMessage({
+          type: 'sessions',
+          groups,
+          sessions: [{ ...session, parentSessionId }],
+          revision: 4,
+        }),
+      /Invalid host message/,
+    );
+  }
+});

@@ -36,7 +36,7 @@ not evidence that the expanded acceptance criteria pass.
 | F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                               |
 | F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: all native session commands implemented; coordinator/provider end-to-end gates pending          |
 | F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                       |
-| F11 | Visible child sessions                          | Missing                                                       | Pending                                                                                                  |
+| F11 | Visible child sessions                          | Missing                                                       | Partial: immutable persisted lineage and shared background launch; coordinator grants pending            |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: launch-local passive capabilities; coordinator grants/skill pending                             |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                                  |
 | F14 | Durable run/task/attempt DAG                    | Missing                                                       | Pending                                                                                                  |
@@ -528,3 +528,25 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Local Windows Clippy, the decoder regression, native SDK and CLI checks pass.
   This repairs an observed platform boundary, not an assertion-only test change;
   broader CI evidence will be recorded separately.
+
+### F11 process lineage
+
+- Advanced launch carries optional immutable parentSessionId, preserved in
+  session snapshots and prompt-free recovery metadata. A child is one ordinary
+  visible native process with its own control lease. Parent must be live at
+  launch; lineage never grants authority. CLI `--parent` and MCP use the same
+  normalized idempotent request and require advertised lineage capability.
+- Default lineage is omitted from serialization so existing durable launch-key
+  fingerprints remain identical. Same-name parent/child IDs stay distinct.
+  Host restart preserves historical metadata, not the live process or old grants;
+  recovery lineage remapping remains F41.
+- Native tests verify background child creation while a human controls the parent,
+  late-observer lineage, invalid parent refusal, restart metadata and replay with
+  no resurrection. SDK-to-MCP → CLI child replay creates only once. A TUI model
+  regression keeps input focus/lease when the same-name child arrives first.
+- Coordinator grants and the agent instruction/real-provider child-launch gate
+  are the next F12 boundary; this checkpoint does not label them complete.
+- Windows checks: fmt/Clippy, 127 TUI + 82 host + 3 wire tests, explicit native
+  SDK test, all 25 native host/sync/CLI checks, mobile typecheck/lint, 22 client
+  checks, 4 architecture checks and formatter pass. No new dependencies or UI
+  layout change. Actual device/provider orchestration remains an open gate.

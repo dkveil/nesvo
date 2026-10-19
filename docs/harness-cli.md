@@ -151,6 +151,15 @@ exit 0 does not claim agent readiness. Failed/unknown launch outcomes return exi
 6 with `error.receipt` in version 1 JSON. `idempotency_conflict` means the key was
 used for a different request. See [durable operations](harness-operations.md).
 
+`session create NAME --key KEY --parent PARENT_SESSION_ID` creates a normal
+background child process. The host requires a live parent and `sessionLineage`
+support; an old host is refused instead of silently creating a root session.
+The optional `parentSessionId` is returned in session queries and persisted in
+recovery metadata. Parent input ownership remains unchanged, including when
+the child has the same display name. A late observer sees the same relation.
+Lineage is not permission: a passive process still cannot create children or
+read its parent. Coordinator grants are a distinct F12 boundary.
+
 `nesvo mcp` exposes current shared operations over native stdio; see the
 [MCP adapter](harness-mcp.md) for scope and SDK integration tests.
 Job receipts and coordinator grants remain

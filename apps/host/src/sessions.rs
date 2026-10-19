@@ -42,6 +42,8 @@ struct SessionInfo {
     rows: u16,
     running: bool,
     group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_session_id: Option<String>,
     program: Program,
 }
 
@@ -356,6 +358,7 @@ impl State {
         event["operationReceipts"] = self.event_log.is_some().into();
         event["promptReceipts"] = self.event_log.is_some().into();
         event["controlReceipts"] = self.event_log.is_some().into();
+        event["sessionLineage"] = true.into();
         event
     }
 
@@ -384,6 +387,7 @@ impl State {
                 name: session.info.name.clone(),
                 cwd: Some(session.info.cwd.clone()),
                 group_id: session.info.group_id.clone(),
+                parent_session_id: session.info.parent_session_id.clone(),
                 program: session.info.program,
                 auto_title: session.auto_title,
                 muted: session.attention.muted,
@@ -888,6 +892,14 @@ impl State {
         ensure!(!self.shutting_down, "Host is shutting down.");
         valid_name(&spec.name)?;
         self.valid_group(spec.group_id.as_deref())?;
+        if let Some(parent) = &spec.parent_session_id {
+            ensure!(
+                self.sessions
+                    .get(parent)
+                    .is_some_and(|session| session.info.running),
+                "Parent session is not a live process"
+            );
+        }
         ensure!(
             self.sessions.len() < MAX_SESSIONS,
             "Maximum 8 sessions. Close a session first."
@@ -1222,6 +1234,7 @@ impl State {
             reserved,
         )?;
         session.info.group_id = spec.group_id.clone();
+        session.info.parent_session_id = spec.parent_session_id.clone();
         session.auto_title = spec.auto_title && spec.program != Program::Shell;
         session.attention.muted = spec.muted;
         if session.auto_title && !spec.prompt.trim().is_empty() {
@@ -1245,7 +1258,7 @@ impl State {
         self.emit(
             Some(&id),
             "session.created",
-            json!({"program":spec.program}),
+            json!({"program":spec.program,"parentSessionId":spec.parent_session_id}),
         );
         self.broadcast_list();
         Ok(id)
@@ -1955,6 +1968,7 @@ fn spawn_session(
             rows: 24,
             running: true,
             group_id: None,
+            parent_session_id: None,
             program,
         },
         pty,

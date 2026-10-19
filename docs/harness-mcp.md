@@ -36,6 +36,12 @@ the process-injected ID, never UI focus; changing that hint cannot grant access.
 
 ## Current tools
 
+Create accepts optional `spec.parentSessionId` for a live process parent, gated
+by `sessionLineage`. It creates an ordinary background session without changing
+parent input ownership. The relation appears in session data and survives client
+reconnect/recovery metadata storage; it grants no API authority. CLI `--parent`
+uses the same normalized intent/key, so cross-adapter replay cannot duplicate it.
+
 | Tool                      | Host operation                                     |
 | ------------------------- | -------------------------------------------------- |
 | nesvo_list_sessions       | list visible sessions/groups/lifecycle             |

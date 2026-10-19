@@ -1673,6 +1673,31 @@ mod tests {
     }
 
     #[test]
+    fn background_same_name_child_preserves_input_focus_and_the_existing_lease() {
+        let mut app = App::new(1);
+        let mut data = snapshot();
+        app.event(data.clone()).unwrap();
+        app.activate_session("s");
+        app.event(json!({"type":"control","sessionId":"s","controllerId":1,"cols":80,"rows":24,"leaseId":"human"})).unwrap();
+        assert!(app.mode == Mode::Input);
+        data["sessions"][0]["controllerId"] = json!(1);
+        let mut child = data["sessions"][0].clone();
+        child["id"] = json!("child");
+        child["parentSessionId"] = json!("s");
+        child["controllerId"] = Value::Null;
+        data["sessions"].as_array_mut().unwrap().insert(0, child);
+        let commands = app.event(data).unwrap();
+        assert_eq!(app.active_id(), Some("s"));
+        assert!(app.mode == Mode::Input);
+        assert!(
+            commands
+                .iter()
+                .all(|command| command["type"] != "acquireControl")
+        );
+        assert_eq!(app.input("still human".into()).unwrap()["leaseId"], "human");
+    }
+
+    #[test]
     fn created_shell_enters_input_and_answers_startup_query_after_lease() {
         let mut app = App::new(1);
         let request = app.request(json!({"type":"create","name":"same"}));

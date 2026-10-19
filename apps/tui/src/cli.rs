@@ -121,6 +121,9 @@ pub struct CreateOptions {
     cwd: Option<String>,
     #[arg(long)]
     group: Option<String>,
+    /// Lineage only: this does not grant access to the parent or its children.
+    #[arg(long)]
+    parent: Option<String>,
     #[arg(long)]
     worktree: bool,
     #[arg(long,conflicts_with_all=["prompt_file","stdin"])]
@@ -520,7 +523,7 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
     print_data(machine, response)
 }
 
-pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<()> {
+pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<Value> {
     let caps = request(
         connection,
         json!({"type":"getCapabilities"}),
@@ -533,7 +536,7 @@ pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<
             "Host does not support durable operations; update nesvo-host",
         ));
     }
-    Ok(())
+    Ok(caps)
 }
 fn read_prompt(
     literal: Option<String>,
@@ -567,8 +570,24 @@ fn read_prompt(
 }
 async fn create(options: CreateOptions, connection: &mut Connection) -> Result<()> {
     let prompt = read_prompt(options.prompt, options.prompt_file, options.stdin)?;
-    operation_capability(connection).await?;
-    let response=request(connection,json!({"type":"createOperation","key":options.key,"spec":{"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt}}),"operation").await?;
+    let caps = operation_capability(connection).await?;
+    let mut spec = json!({"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt});
+    if let Some(parent) = options.parent {
+        valid_id(&parent)?;
+        if caps["sessionLineage"] != true {
+            return Err(failure(
+                "unsupported",
+                "Host cannot preserve parent-session lineage; update nesvo-host",
+            ));
+        }
+        spec["parentSessionId"] = parent.into();
+    }
+    let response = request(
+        connection,
+        json!({"type":"createOperation","key":options.key,"spec":spec}),
+        "operation",
+    )
+    .await?;
     check_receipt(&response)?;
     print_data(options.json, response)
 }

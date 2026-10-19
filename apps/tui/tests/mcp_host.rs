@@ -187,6 +187,16 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
             1
         );
         let receipt = data(call(&mcp, "nesvo_get_operation", json!({"key":"sdk-once"})).await?)?;
+        let child = data(call(&mcp,"nesvo_create_session",json!({"key":"sdk-child","spec":{"name":"MCP child","program":"shell","cwd":fixture.directory,"parentSessionId":id}})).await?)?;
+        let child_id=child["data"]["receipt"]["sessionId"].as_str().context("child ID")?;
+        let replay_child=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing())
+            .args(["session","create","MCP child","--key","sdk-child","--parent",id,"--cwd"]).arg(&fixture.directory).arg("--json").output().await?;
+        ensure!(replay_child.status.success(),"CLI child replay failed: {}",String::from_utf8_lossy(&replay_child.stdout));
+        let replay_child:Value=serde_json::from_slice(&replay_child.stdout)?;
+        assert_eq!(replay_child["data"]["receipt"],child["data"]["receipt"]);
+        let child_view=data(call(&mcp,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
+        assert_eq!(child_view["data"]["session"]["parentSessionId"],id);
+        assert_eq!(child_view["data"]["session"]["controllerId"],Value::Null);
         assert_eq!(receipt["data"]["receipt"], created["data"]["receipt"]);
         assert!(receipt["data"]["cursor"].as_u64().context("cursor")? >= 3);
         let sent = data(call(&mcp,"nesvo_send_prompt",json!({"sessionId":id,"key":"sdk-send","prompt":"echo NESVO_MCP_SEND"})).await?)?;

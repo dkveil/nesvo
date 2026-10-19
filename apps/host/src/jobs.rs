@@ -14,6 +14,8 @@ pub struct LaunchSpec {
     pub name: String,
     pub cwd: Option<String>,
     pub group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
     #[serde(default)]
     pub program: Program,
     #[serde(default)]
@@ -97,6 +99,24 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>) {
 mod tests {
     use super::*;
     use crate::storage::MetadataStore;
+    #[test]
+    fn additive_lineage_keeps_legacy_launch_fingerprints_identical() {
+        let legacy = serde_json::json!({"name":"Existing receipt","cwd":null,"groupId":null,"program":"shell","prompt":"","worktree":false,"autoTitle":false,"muted":false,"resumePicker":false});
+        let spec: LaunchSpec = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&spec).unwrap(),
+            legacy,
+            "new default metadata must not invalidate stored idempotency keys"
+        );
+        let child = LaunchSpec {
+            parent_session_id: Some("parent".into()),
+            ..spec
+        };
+        assert_eq!(
+            serde_json::to_value(child).unwrap()["parentSessionId"],
+            "parent"
+        );
+    }
     #[test]
     fn schedules_survive_reopen_and_claimed_jobs_never_run_twice() {
         let path = std::env::temp_dir().join(format!(
