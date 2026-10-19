@@ -684,3 +684,16 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   receipt-to-publication p95: 261.562 ms over 26 batches.
 - `3e0ca01` and the native-fence baseline `0000309` passed all platform CI jobs
   (39339263905 and 39339747442). The new adapter needs its own CI evidence.
+
+### F44 legacy wake preemption repair
+
+- Auditing the existing quota wake found a direct-input path without the shared
+  human/draft/pending-submission guard. It now refuses wake while a user holds
+  control, an unresolved draft exists, another submission is pending, or current
+  state is no longer quota-blocked. The armed wake remains pending within its
+  existing grace window rather than overwriting the editor.
+- A regression uses one owned native shell with an explicit quota projection,
+  never a model. It verifies all three preemption cases against the actual wake
+  path. This closes the immediate human-priority hole; migration of the legacy
+  direct write to durable dispatch receipts, full quota trust and provider queue
+  policies remain F24/F44 work. This repair is not the complete quota feature.

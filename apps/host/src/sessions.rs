@@ -784,6 +784,10 @@ impl State {
                 if session.info.running
                     && session.info.program == Program::Codex
                     && session.status.rate_limited()
+                    && session.status.status().state == crate::status::StatusState::Blocked
+                    && session.controller.is_none()
+                    && !session.human_input_dirty
+                    && session.pending_input.is_none()
                 {
                     session.wake_at = None;
                     if session
@@ -2648,6 +2652,85 @@ mod tests {
                 .to_string()
                 .contains("90%")
         );
+    }
+    #[test]
+    fn quota_wake_never_types_over_a_human_draft_or_unsettled_submission() {
+        // One owned shell supplies native resource lifetime only; no model runs.
+        let workspace = std::env::temp_dir().canonicalize().unwrap();
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(workspace, metadata, Launchers::discover());
+        let (events, _receiver) = mpsc::channel(128);
+        let id = state
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Quota guard fixture".into(),
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        let now = chrono::Utc::now().timestamp();
+        state.provider_limits = vec![ProviderLimit {
+            id: Program::Codex,
+            status: "ready",
+            windows: vec![LimitWindow {
+                used_percent: 20,
+                duration_mins: 300,
+                resets_at: Some(now + 60),
+            }],
+        }];
+        state.limits_read_at = now;
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.info.program = Program::Codex;
+        session.status = StatusTracker::new(Program::Codex, 24, 80, 0);
+        session
+            .status
+            .output("You've hit your usage limit. Try again later.\r\n› ", 1);
+        session.status.refresh(2);
+        assert!(session.status.rate_limited());
+        session.wake_at = Some(now - 1);
+        session.controller = Some(ControlLease {
+            client_id: 1,
+            id: "owned-fixture-only".into(),
+            legacy: false,
+        });
+        assert!(
+            !state.wake_after_reset(),
+            "a current human lease must prevent automatic input"
+        );
+        assert_eq!(state.sessions[&id].wake_at, Some(now - 1));
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.controller = None;
+        session.human_input_dirty = true;
+        assert!(
+            !state.wake_after_reset(),
+            "releasing control does not discard an unresolved draft"
+        );
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.human_input_dirty = false;
+        let (canceled, _) = watch::channel(false);
+        session.pending_input = Some(crate::submission::Pending {
+            authority: Default::default(),
+            claim: crate::submission::Claim {
+                id: "owned-pending".into(),
+                issuer: "owner".into(),
+                token: "fixture".into(),
+            },
+            canceled,
+            correlation: None,
+            digest: String::new(),
+            source: None,
+            queued: false,
+            reconciliation_queued: false,
+        });
+        assert!(
+            !state.wake_after_reset(),
+            "quota recovery must not append to another pending submission"
+        );
+        assert_eq!(state.sessions[&id].wake_at, Some(now - 1));
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
     }
     use crate::replay::BACKLOG_BYTES;
     #[test]
