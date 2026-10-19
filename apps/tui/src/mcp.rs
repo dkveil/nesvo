@@ -95,6 +95,24 @@ fn catalog() -> Vec<Tool> {
             false,
         ),
         (
+            "nesvo_send_prompt",
+            "Submit one literal prompt to a ready idle session for a durable key. Never takes control; human drafts, pending input and decision dialogs are refused. Reuse the same key/prompt after uncertainty; delivery is not agent pickup or task success.",
+            object(
+                json!({"sessionId":id,"key":{"type":"string","minLength":1,"maxLength":128},"prompt":{"type":"string","minLength":1,"maxLength":8192,"description":"Literal prompt, at most 8192 UTF-8 bytes. Multiline/tab requires observed bracketed paste. No terminal controls."}}),
+                &["sessionId", "key", "prompt"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_wait_prompt",
+            "Passively wait for one send receipt by id or your original key. Exactly one selector. Binds the matching response, never old idle. Settled means response ended, not validated task success. A timeout returns the receipt and never retries input.",
+            object(
+                json!({"id":id,"key":{"type":"string","minLength":1,"maxLength":128},"sessionId":id,"until":{"enum":["delivered","received","started","settled"],"default":"settled"},"timeoutMs":{"type":"integer","minimum":1,"maximum":60000,"default":30000}}),
+                &[],
+            ),
+            true,
+        ),
+        (
             "nesvo_get_operation",
             "Recover a durable operation by its ID or your original idempotency key. Exactly one selector. Never resend with a fresh key after an unknown result.",
             object(
@@ -146,6 +164,22 @@ struct Create {
 struct Operation {
     id: Option<String>,
     key: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Send {
+    session_id: String,
+    key: String,
+    prompt: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Wait {
+    id: Option<String>,
+    key: Option<String>,
+    session_id: Option<String>,
+    until: Option<String>,
+    timeout_ms: Option<u64>,
 }
 fn parse<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T> {
     serde_json::from_value(arguments)
@@ -256,6 +290,52 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "operation",
             )
         }
+        "nesvo_send_prompt" => {
+            let a: Send = parse(arguments)?;
+            cli::valid_id(&a.session_id)?;
+            cli::valid_id(&a.key)?;
+            if a.prompt.trim().is_empty()
+                || a.prompt.len() > 8192
+                || a.prompt
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
+            {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Prompt must be nonempty UTF-8 within 8192 bytes, without terminal controls",
+                ));
+            }
+            (
+                json!({"type":"sendOperation","sessionId":a.session_id,"key":a.key,"prompt":a.prompt}),
+                "operation",
+            )
+        }
+        "nesvo_wait_prompt" => {
+            let a: Wait = parse(arguments)?;
+            if a.id.is_some() == a.key.is_some() {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Supply one operation ID or key",
+                ));
+            }
+            for id in [&a.id, &a.key, &a.session_id].into_iter().flatten() {
+                cli::valid_id(id)?;
+            }
+            let until = a.until.as_deref().unwrap_or("settled");
+            let timeout = a.timeout_ms.unwrap_or(30_000);
+            if !matches!(until, "delivered" | "received" | "started" | "settled")
+                || !(1..=60_000).contains(&timeout)
+            {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Invalid wait milestone or timeout (1–60000 ms)",
+                ));
+            }
+            (
+                json!({"type":"waitOperation","id":a.id,"key":a.key,"sessionId":a.session_id,"until":until,"timeoutMs":timeout}),
+                "operation",
+            )
+        }
         "nesvo_get_operation" => {
             let a: Operation = parse(arguments)?;
             if a.id.is_some() == a.key.is_some() {
@@ -294,12 +374,17 @@ impl HostTools {
                 "Cannot authenticate with the paired host",
             )
         })?;
-        if kind == "operation" {
+        if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
+            cli::prompt_capability(&mut connection).await?;
+        } else if kind == "operation" {
             cli::operation_capability(&mut connection).await?;
         }
         let mut result = cli::request(&mut connection, command, kind).await?;
-        if name == "nesvo_create_session" {
+        if matches!(name, "nesvo_create_session" | "nesvo_send_prompt") {
             cli::check_receipt(&result)?;
+        }
+        if name == "nesvo_wait_prompt" {
+            cli::check_wait(&result)?;
         }
         if let Some(o) = result.as_object_mut() {
             o.remove("requestId");
@@ -378,7 +463,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 9);
+        assert_eq!(catalog().len(), 11);
         assert!(
             command(
                 "nesvo_read_session",
@@ -396,6 +481,16 @@ mod tests {
         assert!(command("nesvo_list_sessions", json!({"owner":true})).is_err());
         assert!(command("nesvo_get_session", json!({"sessionId":"s","owner":true})).is_err());
         assert!(command("nesvo_get_operation", json!({"id":"a","key":"b"})).is_err());
+        assert!(command("nesvo_wait_prompt", json!({"id":"a","key":"b"})).is_err());
+        assert!(command("nesvo_wait_prompt", json!({"id":"a","until":"idle"})).is_err());
+        assert!(command("nesvo_wait_prompt", json!({"id":"a","timeoutMs":60001})).is_err());
+        assert!(
+            command(
+                "nesvo_send_prompt",
+                json!({"sessionId":"a","key":"k","prompt":"\u{1b}[201~"})
+            )
+            .is_err()
+        );
         assert!(
             command(
                 "nesvo_create_session",

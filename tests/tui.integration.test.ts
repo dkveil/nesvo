@@ -543,6 +543,66 @@ test(
             true,
           );
           assert.equal(current.sessions.find(s => s.id === receipt.sessionId)?.controllerId, null);
+          const sendFile = join(fixture, 'send prompt.txt');
+          await writeFile(sendFile, 'echo NESVO_CLI_FILE');
+          for (const [key, args, input] of [
+            ['send-file', ['--prompt-file', sendFile], undefined],
+            ['send-stdin', ['--stdin'], 'echo NESVO_CLI_STDIN'],
+          ] as const) {
+            const sendArgs = [
+              'session',
+              'send',
+              receipt.sessionId,
+              '--key',
+              key,
+              ...args,
+              '--json',
+            ];
+            const sent = await runTui(tuiBinary, pairingPath, runningTuis, sendArgs, {}, input);
+            queryOutput(sent.stdout);
+            assert.equal(sent.code, 0, sent.stdout);
+            const sentReceipt = JSON.parse(sent.stdout).data.receipt;
+            assert.equal(sentReceipt.phase, 'delivered');
+            assert.equal(sentReceipt.result.nativeWriteFlushed, true);
+            const repeated = await runTui(tuiBinary, pairingPath, runningTuis, sendArgs, {}, input);
+            assert.deepEqual(JSON.parse(repeated.stdout).data.receipt, sentReceipt);
+            const waited = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'session',
+              'wait',
+              '--key',
+              key,
+              '--until',
+              'delivered',
+              '--session',
+              receipt.sessionId,
+              '--timeout-ms',
+              '100',
+              '--json',
+            ]);
+            queryOutput(waited.stdout);
+            assert.equal(waited.code, 0, waited.stdout);
+            assert.equal(JSON.parse(waited.stdout).data.wait.reached, true);
+            const unsupported = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'session',
+              'wait',
+              sentReceipt.id,
+              '--until',
+              'settled',
+              '--timeout-ms',
+              '100',
+              '--json',
+            ]);
+            queryOutput(unsupported.stdout);
+            assert.equal(
+              unsupported.code,
+              8,
+              'shell delivery cannot imply provider response completion',
+            );
+          }
+          assert.equal(
+            (await snapshot()).sessions.find(s => s.id === receipt.sessionId)?.controllerId,
+            null,
+          );
           const prompt = 'Literal $(never-execute) `never-execute` "łódź"\r\nnext line';
           const file = join(fixture, 'prompt with spaces.txt');
           await writeFile(file, prompt);

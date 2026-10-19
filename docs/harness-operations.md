@@ -92,8 +92,8 @@ one owner in the stream decoder; prompted launches do not inject a second reply.
 The additive `promptReceipts:true` capability enables owner-authorized
 `sendOperation {key,sessionId,prompt}` and passive
 `waitOperation {id|key,sessionId?,until?,timeoutMs?}`. Managed passive contexts
-cannot send; wait/lookup can only see their issuer's receipts. CLI/MCP adapters
-and coordinator grants are tracked separately from this host boundary.
+cannot send; wait/lookup can only see their issuer's receipts. CLI and MCP use
+this same host boundary; coordinator grants remain a subsequent gate.
 
 Send accepts literal UTF-8 up to 8192 bytes and rejects terminal controls other
 than line endings/tab. Multiline/tab input requires observed bracketed-paste

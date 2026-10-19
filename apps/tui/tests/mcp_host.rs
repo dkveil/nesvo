@@ -131,7 +131,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
     let outcome = std::panic::AssertUnwindSafe(async {
         let mcp = client(&fixture.pairing()).await?;
         let tools = mcp.list_all_tools().await?;
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 11);
         assert!(tools.iter().all(|tool| tool.output_schema.is_some()));
         let initial = data(call(&mcp, "nesvo_list_sessions", json!({})).await?)?;
         assert_eq!(initial["data"]["sessions"], json!([]));
@@ -189,6 +189,20 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let receipt = data(call(&mcp, "nesvo_get_operation", json!({"key":"sdk-once"})).await?)?;
         assert_eq!(receipt["data"]["receipt"], created["data"]["receipt"]);
         assert!(receipt["data"]["cursor"].as_u64().context("cursor")? >= 3);
+        let sent = data(call(&mcp,"nesvo_send_prompt",json!({"sessionId":id,"key":"sdk-send","prompt":"echo NESVO_MCP_SEND"})).await?)?;
+        assert_eq!(sent["data"]["receipt"]["phase"],"delivered");
+        assert_eq!(sent["data"]["receipt"]["result"]["nativeWriteFlushed"],true);
+        let replay_send = Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing())
+            .args(["session","send",id,"--key","sdk-send","--prompt","echo NESVO_MCP_SEND","--json"]).output().await?;
+        ensure!(replay_send.status.success(),"CLI send replay failed: {}",String::from_utf8_lossy(&replay_send.stdout));
+        let replay_send:Value=serde_json::from_slice(&replay_send.stdout)?;
+        assert_eq!(replay_send["data"]["receipt"],sent["data"]["receipt"]);
+        let delivered=data(call(&mcp,"nesvo_wait_prompt",json!({"id":sent["data"]["receipt"]["id"],"sessionId":id,"until":"delivered","timeoutMs":100})).await?)?;
+        assert_eq!(delivered["data"]["wait"]["reached"],true);
+        assert_eq!(delivered["data"]["wait"]["outcome"],"reached");
+        let unsupported=call(&mcp,"nesvo_wait_prompt",json!({"key":"sdk-send","until":"settled","timeoutMs":100})).await?;
+        assert_eq!(unsupported.is_error,Some(true));
+        assert_eq!(unsupported.structured_content.context("wait error")?["error"]["code"],"unsupported","a shell write never claims an agent response");
         let read = data(
             call(
                 &mcp,
@@ -249,7 +263,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         .with_protocol_version(ProtocolVersion::V_2025_11_25)
         .serve(TokioChildProcess::new(legacy_command)?)
         .await?;
-        assert_eq!(legacy.list_all_tools().await?.len(), 9);
+        assert_eq!(legacy.list_all_tools().await?.len(), 11);
         let legacy_result = legacy
             .call_tool(
                 CallToolRequestParams::new("nesvo_get_session")
@@ -274,7 +288,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let scoped = client(&context).await?;
         assert_eq!(
             scoped.list_all_tools().await?.len(),
-            9,
+            11,
             "catalog/help need no host effects"
         );
         let refused = call(&scoped, "nesvo_list_sessions", json!({})).await?;

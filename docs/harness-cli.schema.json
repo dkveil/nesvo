@@ -34,7 +34,18 @@
               "properties": {
                 "type": { "const": "operation" },
                 "receipt": { "$ref": "#/definitions/receipt" },
-                "cursor": { "$ref": "#/definitions/cursor" }
+                "cursor": { "$ref": "#/definitions/cursor" },
+                "wait": {
+                  "type": "object",
+                  "required": ["until", "outcome", "reached"],
+                  "properties": {
+                    "until": { "enum": ["delivered", "received", "started", "settled"] },
+                    "outcome": {
+                      "enum": ["reached", "timeout", "failed", "unknown", "interrupted", "settled"]
+                    },
+                    "reached": { "type": "boolean" }
+                  }
+                }
               }
             },
             {

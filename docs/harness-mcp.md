@@ -46,16 +46,29 @@ the process-injected ID, never UI focus; changing that hint cannot grant access.
 | nesvo_read_diff           | host-side read-only diff with an explicit scope   |
 | nesvo_read_events         | bounded durable metadata page with domain cursors |
 | nesvo_create_session      | durable idempotent background create              |
+| nesvo_send_prompt         | durable literal prompt submission without control |
+| nesvo_wait_prompt         | passive correlated send milestone wait            |
 | nesvo_get_operation       | lookup by operation ID or original caller key     |
 
 Tools declare input/output schemas and effect hints. Results include text and
 `structuredContent` with `schemaVersion:1`, `ok`, and `data` or `error`. Host/tool
-failures use `isError:true` with stable codes; failed/unknown creates include the
+failures use `isError:true` with stable codes; failed/unknown effects include the
 receipt. Protocol/schema errors are distinct. Created means historical process
 creation, not readiness, delivery or task success. After a lost response query
 the original key, never invent a new one to retry. Domain and terminal cursors
 are independent. Event gaps explicitly mean incomplete history. Reads neither
 acknowledge results nor acquire control.
+
+Send requires `sessionId`, stable `key` and literal `prompt` (8192 UTF-8 bytes,
+no terminal controls). Wait takes exactly one `id` or original `key`, optional
+`sessionId` guard, `until:delivered|received|started|settled` and `timeoutMs` within
+1–60000. It binds receipt/turn evidence, never current idle. Milestone timeout or
+terminal failure returns a tool error with the current receipt; unsupported
+provider correlation returns `unsupported`. A shell write can confirm delivery
+only. Set the MCP client's request timeout above the chosen wait plus connection
+overhead. Accepted sends survive a lost reply and are never replayed. Human
+ownership/drafts and unready/busy agents remain host-side refusals. Full safety
+and phase semantics are in [durable operations](harness-operations.md).
 
 ## Protocol, bounds and dependencies
 
@@ -98,8 +111,11 @@ Windows/macOS/Linux. An official SDK client connects to a separate native MCP
 subprocess and isolated host. It checks catalog, create/replay, the same receipt
 through CLI, passive read/diagnostics/events, Git errors, wrong scope rejection,
 legacy initialization, host loss, bad/oversized stdio and clean PTY cleanup.
+Native prompt tests cover MCP send, CLI same-key replay, delivered wait and
+unsupported shell response correlation. A separate controlled Claude helper/PTY
+fixture exercises CLI Unicode/multiline send and timeout without false idle.
 No model calls or changes to user sessions/provider configuration.
 
-Send/delivery/start receipts, correlated wait, interrupt/stop, MCP event streaming,
+Actual provider prompt-correlation coverage, interrupt/stop, MCP event streaming,
 durable task/results and actual provider-to-child orchestration remain F10/F17
 gates. A model-driven evaluation corpus for those workflows is also pending.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   chmod,
@@ -337,7 +337,26 @@ process.stdin.on('data',text=>{
         owner!.send({ type: 'sendOperation', key, sessionId: id, prompt, requestId: key });
         return (await owner!.next('operation', e => e.requestId === key)).receipt!;
       };
-      const first = await send('one', 'literal łódź\nsecond line');
+      const cliBinary =
+        process.env.NESVO_TUI_BINARY ||
+        join(dirname(hostBinary()), process.platform === 'win32' ? 'nesvo.exe' : 'nesvo');
+      const cliSend = spawnSync(
+        cliBinary,
+        [
+          '--pairing',
+          join(fixture, 'pairing', 'pairing.json'),
+          'session',
+          'send',
+          id,
+          '--key',
+          'one',
+          '--stdin',
+          '--json',
+        ],
+        { windowsHide: true, timeout: 10000, encoding: 'utf8', input: 'literal łódź\nsecond line' },
+      );
+      assert.equal(cliSend.status, 0, cliSend.stdout + cliSend.stderr);
+      const first = JSON.parse(cliSend.stdout).data.receipt;
       assert.ok(['delivered', 'received', 'settled'].includes(first.phase), JSON.stringify(first));
       const replay = await send('one', 'literal łódź\nsecond line');
       assert.equal(replay.id, first.id);
@@ -355,17 +374,28 @@ process.stdin.on('data',text=>{
       await delay(300);
       const held = await send('held', 'hold');
       assert.notEqual(held.phase, 'settled');
-      owner.send({
-        type: 'waitOperation',
-        id: held.id,
-        sessionId: id,
-        until: 'settled',
-        timeoutMs: 100,
-        requestId: 'old-idle-wait',
-      });
-      const notComplete = await owner.next('operation', e => e.requestId === 'old-idle-wait');
-      assert.equal(notComplete.wait?.outcome, 'timeout');
-      assert.equal(notComplete.wait?.reached, false);
+      const cliWait = spawnSync(
+        cliBinary,
+        [
+          '--pairing',
+          join(fixture, 'pairing', 'pairing.json'),
+          'session',
+          'wait',
+          held.id,
+          '--session',
+          id,
+          '--until',
+          'settled',
+          '--timeout-ms',
+          '100',
+          '--json',
+        ],
+        { windowsHide: true, timeout: 5000, encoding: 'utf8' },
+      );
+      assert.equal(cliWait.status, 7, cliWait.stdout + cliWait.stderr);
+      const notComplete = JSON.parse(cliWait.stdout);
+      assert.equal(notComplete.error.code, 'timeout');
+      assert.equal(notComplete.error.receipt.id, held.id);
       await delay(450);
       assert.notEqual(
         (await lookup('held')).phase,
@@ -613,6 +643,16 @@ process.stdin.on('data', bytes=>{
         'operation_not_found',
       );
       scoped.send({ type: 'list', requestId: 'scope-list' });
+      scoped.send({
+        type: 'waitOperation',
+        id: privateReceipt.id,
+        timeoutMs: 100,
+        requestId: 'foreign-wait',
+      });
+      assert.equal(
+        (await scoped.next('error', e => e.requestId === 'foreign-wait')).code,
+        'operation_not_found',
+      );
       const scopedList = await scoped.next('sessions', e => e.requestId === 'scope-list');
       assert.deepEqual(scopedList.groups, [], 'foreign group names and rollups are not broadcast');
       assert.ok(

@@ -46,6 +46,24 @@ pub enum Command {
 pub enum SessionCommand {
     /// Launch once for a stable caller-supplied idempotency key; never acquires control.
     Create(CreateOptions),
+    /// Submit one literal prompt with a durable key; never takes human control.
+    Send(SendOptions),
+    /// Wait for one send receipt, never an old idle state or the focused session.
+    Wait {
+        #[arg(required_unless_present = "key", conflicts_with = "key")]
+        id: Option<String>,
+        #[arg(long)]
+        key: Option<String>,
+        /// Optional guard: receipt must belong to this stable session ID.
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, value_enum, default_value_t=Until::Settled)]
+        until: Until,
+        #[arg(long, default_value_t=30_000, value_parser=clap::value_parser!(u64).range(1..=60_000))]
+        timeout_ms: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// List authoritative session IDs and groups; never acquires control.
     List {
         #[arg(long)]
@@ -109,6 +127,38 @@ pub struct CreateOptions {
     stdin: bool,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(clap::Args)]
+pub struct SendOptions {
+    id: String,
+    #[arg(long)]
+    key: String,
+    #[arg(long,required_unless_present_any=["prompt_file","stdin"],conflicts_with_all=["prompt_file","stdin"])]
+    prompt: Option<String>,
+    #[arg(long, conflicts_with = "stdin")]
+    prompt_file: Option<std::path::PathBuf>,
+    #[arg(long)]
+    stdin: bool,
+    #[arg(long)]
+    json: bool,
+}
+#[derive(Clone, Copy, ValueEnum)]
+pub enum Until {
+    Delivered,
+    Received,
+    Started,
+    Settled,
+}
+impl Until {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Delivered => "delivered",
+            Self::Received => "received",
+            Self::Started => "started",
+            Self::Settled => "settled",
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -179,7 +229,9 @@ impl Command {
             }
             Self::Session { command } => match command {
                 SessionCommand::Create(options) => options.json,
+                SessionCommand::Send(options) => options.json,
                 SessionCommand::List { json }
+                | SessionCommand::Wait { json, .. }
                 | SessionCommand::Get { json, .. }
                 | SessionCommand::Current { json }
                 | SessionCommand::Read { json, .. }
@@ -236,12 +288,19 @@ pub(crate) async fn request(
     mut command: Value,
     kind: &str,
 ) -> Result<Value> {
+    let timeout = match command["type"].as_str() {
+        Some("waitOperation") => Duration::from_millis(
+            command["timeoutMs"].as_u64().unwrap_or(30_000).min(60_000) + 5_000,
+        ),
+        Some("sendOperation") => Duration::from_secs(15),
+        _ => Duration::from_secs(10),
+    };
     let id = format!("cli-{}", hex::encode(nesvo_wire::random::<8>()));
     command["requestId"] = json!(id);
     connection
         .send(command)
         .map_err(|_| failure("disconnected", "Host connection is closed"))?;
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(timeout, async {
         while let Some(event) = connection.events.recv().await {
             match event {
                 NetworkEvent::Disconnected(_) => {
@@ -416,7 +475,10 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
                 json,
             )
         }
-        SessionCommand::Explain { .. } | SessionCommand::Create(_) => {
+        SessionCommand::Explain { .. }
+        | SessionCommand::Create(_)
+        | SessionCommand::Send(_)
+        | SessionCommand::Wait { .. } => {
             unreachable!("effectful commands and diagnostics are dispatched separately")
         }
     };
@@ -458,22 +520,26 @@ pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<
     }
     Ok(())
 }
-async fn create(options: CreateOptions, connection: &mut Connection) -> Result<()> {
+fn read_prompt(
+    literal: Option<String>,
+    file: Option<std::path::PathBuf>,
+    stdin: bool,
+) -> Result<String> {
     use std::io::Read;
     let mut prompt = String::new();
-    if let Some(path) = options.prompt_file {
+    if let Some(path) = file {
         let file = std::fs::File::open(path)
             .map_err(|_| failure("invalid_argument", "Cannot read prompt file"))?;
         file.take(8193)
             .read_to_string(&mut prompt)
             .map_err(|_| failure("invalid_argument", "Prompt file must contain UTF-8 text"))?;
-    } else if options.stdin {
+    } else if stdin {
         std::io::stdin()
             .lock()
             .take(8193)
             .read_to_string(&mut prompt)
             .map_err(|_| failure("invalid_argument", "Prompt stdin must contain UTF-8 text"))?;
-    } else if let Some(value) = options.prompt {
+    } else if let Some(value) = literal {
         prompt = value;
     }
     if prompt.len() > 8192 || prompt.contains('\0') {
@@ -482,16 +548,68 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
             "Prompt exceeds 8192 UTF-8 bytes or contains NUL",
         ));
     }
+    Ok(prompt)
+}
+async fn create(options: CreateOptions, connection: &mut Connection) -> Result<()> {
+    let prompt = read_prompt(options.prompt, options.prompt_file, options.stdin)?;
     operation_capability(connection).await?;
     let response=request(connection,json!({"type":"createOperation","key":options.key,"spec":{"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt}}),"operation").await?;
     check_receipt(&response)?;
     print_data(options.json, response)
 }
 
+pub(crate) async fn prompt_capability(connection: &mut Connection) -> Result<()> {
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["promptReceipts"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support correlated prompt receipts; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+async fn send(options: SendOptions, connection: &mut Connection) -> Result<()> {
+    valid_id(&options.id)?;
+    let prompt = read_prompt(options.prompt, options.prompt_file, options.stdin)?;
+    prompt_capability(connection).await?;
+    let response = request(
+        connection,
+        json!({"type":"sendOperation","sessionId":options.id,"key":options.key,"prompt":prompt}),
+        "operation",
+    )
+    .await?;
+    check_receipt(&response)?;
+    print_data(options.json, response)
+}
+pub(crate) fn check_wait(response: &Value) -> Result<()> {
+    if response["wait"]["reached"] == false {
+        let outcome = response["wait"]["outcome"].as_str().unwrap_or("unknown");
+        return Err(Failure {
+            code: if outcome == "timeout" {
+                "timeout"
+            } else {
+                "operation_failed"
+            }
+            .into(),
+            message: format!(
+                "Wait ended with {outcome}; inspect the same receipt before another submission"
+            ),
+            receipt: Some(response["receipt"].clone()),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) fn check_receipt(response: &Value) -> Result<()> {
     if matches!(
         response["receipt"]["phase"].as_str(),
-        Some("failed" | "unknown")
+        Some("failed" | "unknown" | "interrupted")
     ) {
         return Err(Failure {
             code: "operation_failed".into(),
@@ -543,6 +661,28 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         Command::Session {
             command: SessionCommand::Create(options),
         } => return create(options, connection).await,
+        Command::Session {
+            command: SessionCommand::Send(options),
+        } => return send(options, connection).await,
+        Command::Session {
+            command:
+                SessionCommand::Wait {
+                    id,
+                    key,
+                    session,
+                    until,
+                    timeout_ms,
+                    json,
+                },
+        } => {
+            if let Some(target) = &session {
+                valid_id(target)?;
+            }
+            prompt_capability(connection).await?;
+            let response = request(connection,json!({"type":"waitOperation","id":id,"key":key,"sessionId":session,"until":until.as_str(),"timeoutMs":timeout_ms}),"operation").await?;
+            check_wait(&response)?;
+            return print_data(json, response);
+        }
         Command::Events {
             after,
             limit,

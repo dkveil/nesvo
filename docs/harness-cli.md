@@ -15,6 +15,8 @@ nesvo --pairing C:\private\pairing.json session diff SESSION_ID --scope unstaged
 nesvo --pairing C:\private\pairing.json session current --json
 nesvo --pairing C:\private\pairing.json session create "Review" --key review-1 --program claude --prompt-file C:\private\prompt.txt --json
 nesvo --pairing C:\private\pairing.json operation --key review-1 --json
+nesvo --pairing C:\private\pairing.json session send SESSION_ID --key review-turn-1 --prompt-file C:\private\followup.txt --json
+nesvo --pairing C:\private\pairing.json session wait --key review-turn-1 --session SESSION_ID --until settled --timeout-ms 30000 --json
 nesvo mcp
 ```
 
@@ -149,6 +151,31 @@ used for a different request. See [durable operations](harness-operations.md).
 
 `nesvo mcp` exposes current shared operations over native stdio; see the
 [MCP adapter](harness-mcp.md) for scope and SDK integration tests.
-Send/wait/interrupt/stop, prompt/job receipts and coordinator grants remain
+Interrupt/stop, job receipts and coordinator grants remain
 subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.
+
+## Literal send and receipt wait
+
+`session send SESSION_ID --key KEY` requires one of `--prompt TEXT`,
+`--prompt-file PATH` or `--stdin`. File/stdin decoding and the 8192-byte bound are
+shared with create. The host's `promptReceipts` capability is checked before
+dispatch; an old host is not given a legacy input fallback. Automated submission
+refuses human control, unresolved drafts, pending sends and unready/busy agents.
+It never acquires input ownership. The same key/payload returns the original
+receipt across CLI/MCP; a new key is not a safe way to retry an unknown effect.
+
+`session wait OPERATION_ID` or `session wait --key KEY` accepts an optional
+`--session SESSION_ID` target guard, `--until delivered|received|started|settled`
+(default settled), and `--timeout-ms 1..60000` (default 30000). The CLI connection
+deadline includes host wait time plus five seconds. The host waits on the receipt
+and exact turn rather than polling current idle. No model call is made.
+
+A reached milestone returns version 1 operation data with receipt, domain cursor
+and `wait:{until,outcome,reached}`. A host wait timeout returns exit 7 and JSON
+`error.code:"timeout"` with the current `error.receipt`; failed/interrupted/unknown
+before the target milestone returns exit 6 with its receipt. These outcomes do
+not replay or cancel accepted input. Look up the same receipt/key after a lost
+connection. Unsupported provider correlation returns exit 8, including ordinary
+shell writes when waiting beyond delivered. Response settlement is not task
+success. See [operation evidence and safety](harness-operations.md).
