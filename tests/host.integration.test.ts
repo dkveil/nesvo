@@ -28,7 +28,19 @@ import {
 import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Event = {
-  report?: { providerVersions?: { program: string; status: string; version: string | null }[] };
+  report?: {
+    providerVersions?: { program: string; status: string; version: string | null }[];
+    sessions?: {
+      sessionId: string;
+      publicationLatency: {
+        scope: string;
+        connectedBatches: number;
+        events: number;
+        p95Ms: number | null;
+        maxMs: number | null;
+      };
+    }[];
+  };
   type: string;
   id?: string;
   enabled?: boolean;
@@ -309,8 +321,46 @@ process.stdin.on('data', bytes=>{
         'sessions',
         e => e.sessions?.some(s => s.id === id && s.lifecycle?.turn?.phase === 'settled') ?? false,
       );
-      const turn = settled.sessions!.find(s => s.id === id)!.lifecycle!.turn!;
+      let turn = settled.sessions!.find(s => s.id === id)!.lifecycle!.turn!;
       assert.equal(settled.sessions!.find(s => s.id === id)!.currentAttention?.priority, 0);
+      // No model calls: measure real helper/journal/tick/transport batches with a controlled CLI.
+      for (let sample = 0; sample < 12; sample++) {
+        peer.send({ type: 'input', sessionId: id, data: 'question\r' });
+        const sampleQuestion = await peer.next(
+          'sessions',
+          e =>
+            e.sessions?.some(
+              s =>
+                s.id === id &&
+                s.lifecycle?.turn?.phase === 'waiting' &&
+                s.lifecycle.turn.id !== turn.id,
+            ) ?? false,
+        );
+        const questionId = sampleQuestion.sessions!.find(s => s.id === id)!.lifecycle!.turn!.id;
+        peer.send({ type: 'input', sessionId: id, data: 'fast-turn\r' });
+        const sampleEnd = await peer.next(
+          'sessions',
+          e =>
+            e.sessions?.some(
+              s =>
+                s.id === id &&
+                s.lifecycle?.turn?.phase === 'settled' &&
+                s.lifecycle.turn.id !== turn.id &&
+                s.lifecycle.turn.id !== questionId,
+            ) ?? false,
+        );
+        turn = sampleEnd.sessions!.find(s => s.id === id)!.lifecycle!.turn!;
+      }
+      peer.send({ type: 'getDiagnostics', sessionId: id, requestId: 'latency' });
+      const latency = (
+        await peer.next('diagnostics', e => e.requestId === 'latency')
+      ).report?.sessions?.find(s => s.sessionId === id)?.publicationLatency;
+      assert.ok(latency);
+      assert.equal(latency.scope, 'hostReceiptToSnapshotEnqueue');
+      assert.ok(latency.connectedBatches >= 24);
+      assert.ok(latency.events >= 26);
+      assert.ok(latency.p95Ms !== null && latency.p95Ms <= 1000, JSON.stringify(latency));
+      console.log('Controlled status publication:', JSON.stringify(latency));
       assert.notEqual(turn.id, oldTurn);
       assert.match(turn.outcome!, /task result not established/);
       const observer = new Peer(pairing);

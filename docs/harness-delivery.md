@@ -256,3 +256,16 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Windows: fmt/Clippy, 124 TUI + 64 host + 3 wire tests, 21 client checks,
   19 native integration checks, mobile typecheck/lint and 4 architecture checks pass.
   This is not physical iOS/Android verification.
+
+### F06 publication latency measurement
+
+- Diagnostics retain at most 256 coalesced batches per session, measuring the
+  oldest newly received structural event through snapshot enqueue. No-client
+  batches are distinguished; replay and diagnostic reads add no samples.
+  This measures host scheduling/queueing, not provider emission or network/UI
+  delivery. The lifecycle poll's wait before observation is outside this scope.
+- Controlled real helper/journal/PTY/transport fixture: 27 connected batches,
+  53 events, p95 261.95 ms, max 262.91 ms on Windows debug build. The <=1 second
+  gate passes for this local fixture; no claim is made about WAN latency.
+- Deterministic retention/coalescing tests pass. Native fixture submits no model
+  requests. It alternates questions and fast turns to exercise publication.

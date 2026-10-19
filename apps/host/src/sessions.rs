@@ -70,6 +70,7 @@ struct Session {
     conversation_identity: Option<crate::agent_events::Identity>,
     lifecycle_cursor: u64,
     lifecycle_gap: bool,
+    status_latency: crate::status_latency::Tracker,
     info: SessionInfo,
     status: StatusTracker,
     readiness: crate::readiness::Tracker,
@@ -313,10 +314,21 @@ impl State {
         json!({"type":"sessions", "sessions":sessions, "groups":groups, "attentionSummary":summary,"revision":self.metadata.revision()})
     }
 
-    pub fn broadcast_list(&self) {
+    pub fn broadcast_list(&mut self) {
         let list = self.list();
+        let mut recipients = 0;
         for id in self.clients.keys() {
-            self.send(*id, list.clone());
+            if let Some(client) = self.clients.get(id) {
+                if client.events.try_send(list.clone()).is_ok() {
+                    recipients += 1;
+                } else {
+                    let _ = client.cancelled.send(true);
+                }
+            }
+        }
+        let now = std::time::Instant::now();
+        for session in self.sessions.values_mut() {
+            session.status_latency.published(now, recipients);
         }
     }
 
@@ -765,6 +777,7 @@ impl State {
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
             "conversationIdentity":session.conversation_identity,
+            "publicationLatency":session.status_latency.snapshot(),
             "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())), "turnHistory":session.turn.history(), "terminalProtocol":session.terminal_protocol.diagnostics(),
         })).collect();
         Ok(
@@ -1299,6 +1312,7 @@ fn spawn_session(
         integration_shadow_sequence: None,
         conversation_identity: None,
         lifecycle_cursor: 0,
+        status_latency: Default::default(),
         lifecycle_gap: false,
         status: StatusTracker::new(program, 24, 80, now_millis()),
         readiness: crate::readiness::Tracker::new(program),
@@ -1399,7 +1413,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         },
                                         now_millis(),
                                     ) {
+                                        session.status_latency.received(std::time::Instant::now());
                                         session.status.record_hook_reason(&event.name, event.state);
+                                        session.program_status_dirty = true;
                                     }
                                 }
                             }
@@ -1441,6 +1457,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                 }
                             }
                             crate::terminal_protocol::Event::Report(report) => {
+                                session.status_latency.received(std::time::Instant::now());
                                 root_reported |= report.id.is_none();
                                 session.program_status.apply(report);
                                 session.program_status_dirty = true;
