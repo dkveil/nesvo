@@ -481,3 +481,16 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Windows checks: fmt/Clippy, all 208 Rust unit tests, explicit native SDK test,
   all 25 host/sync/CLI integration checks and repository formatter pass. Native
   scoped wait rejects foreign receipt IDs without revealing their existence.
+
+### F17 startup fence repair
+
+- CI `39331457639` passed app/browser/Linux/macOS, but its Windows fixture found
+  a transient `lifecycle_pending` rejection immediately after new-session readiness.
+  SessionStart can be published before the following startup event is consumed.
+- A send now subscribes before reading its source fence and waits at most two
+  seconds for journal progress. Only a rejected check before queue admission is
+  retried; accepted paste/Enter bytes are never retried. Human takeover cancels
+  the wait. A conversation change after paste blocks Enter and leaves unknown
+  outcome/editor reconciliation rather than silently targeting a new generation.
+- Local Windows Clippy, host unit checks and the native helper/PTY/CLI send
+  regression pass with the repair. Full platform CI evidence remains separate.

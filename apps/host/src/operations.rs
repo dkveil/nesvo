@@ -144,6 +144,58 @@ async fn flushed(answer: tokio::sync::oneshot::Receiver<bool>) -> Result<()> {
     }
 }
 
+/// Retry only a rejected fence check: the input queue has not accepted bytes.
+/// Journal notification is registered before reading to avoid a lost wakeup.
+async fn enqueue_fenced(
+    state: &Arc<Mutex<State>>,
+    log: &Service,
+    path: Option<std::path::PathBuf>,
+    session_id: &str,
+    operation: &str,
+    text: Option<&str>,
+    cancellation: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<(tokio::sync::oneshot::Receiver<bool>, bool)> {
+    use crate::api_error::Error;
+    let mut changed = log.subscribe();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if *cancellation.borrow() {
+            return Err(Error::new(
+                "submission_preempted",
+                "Submission was preempted before queue admission",
+            )
+            .into());
+        }
+        changed.borrow_and_update();
+        let latest = fence(path.clone(), session_id).await?;
+        let result =
+            state
+                .lock()
+                .unwrap()
+                .enqueue_submission(session_id, operation, text, latest.as_ref());
+        match result {
+            Ok(answer) => {
+                return Ok((
+                    answer,
+                    latest
+                        .as_ref()
+                        .is_some_and(|batch| batch.identity.prompt_correlation),
+                ));
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<Error>()
+                    .is_some_and(|e| e.code == "lifecycle_pending") => {}
+            Err(error) => return Err(error),
+        }
+        tokio::select! {
+            _=tokio::time::sleep_until(deadline)=>return Err(Error::new("lifecycle_pending","Lifecycle fence did not settle within two seconds; no further input was queued").into()),
+            _=cancellation.changed()=>return Err(Error::new("submission_preempted","Submission was preempted while waiting for lifecycle evidence").into()),
+            result=changed.changed()=>{if result.is_err(){return Err(anyhow!("Host journal closed while waiting for lifecycle evidence"));}},
+        }
+    }
+}
+
 pub async fn send(
     state: Arc<Mutex<State>>,
     log: Service,
@@ -178,13 +230,16 @@ pub async fn send(
                 .lock()
                 .unwrap()
                 .begin_submission(&session_id, reference, &prompt)?;
-        let initial = fence(path.clone(), &session_id).await?;
-        let answer = state.lock().unwrap().enqueue_submission(
+        let (answer, _) = enqueue_fenced(
+            &state,
+            &log,
+            path.clone(),
             &session_id,
             &claim.receipt.id,
             Some(&prompt),
-            initial.as_ref(),
-        )?;
+            &mut cancellation,
+        )
+        .await?;
         queued = true;
         flushed(answer).await?;
         // Keep paste and submit separate. Frameworks may debounce a paste event;
@@ -193,16 +248,16 @@ pub async fn send(
             _=tokio::time::sleep(std::time::Duration::from_millis(150))=>{},
             _=cancellation.changed()=>return Err(anyhow!("Submission was preempted")),
         }
-        let latest = fence(path, &session_id).await?;
-        let correlated = latest
-            .as_ref()
-            .is_some_and(|batch| batch.identity.prompt_correlation);
-        let answer = state.lock().unwrap().enqueue_submission(
+        let (answer, correlated) = enqueue_fenced(
+            &state,
+            &log,
+            path,
             &session_id,
             &claim.receipt.id,
             None,
-            latest.as_ref(),
-        )?;
+            &mut cancellation,
+        )
+        .await?;
         flushed(answer).await?;
         Ok::<_, anyhow::Error>(correlated)
     }

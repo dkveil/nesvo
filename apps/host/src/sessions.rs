@@ -900,6 +900,13 @@ impl State {
         prompt: &str,
     ) -> Result<(Option<PathBuf>, watch::Receiver<bool>)> {
         use crate::api_error::Error;
+        if self.shutting_down {
+            return Err(Error::new(
+                "host_stopping",
+                "Host is shutting down; no prompt was queued",
+            )
+            .into());
+        }
         let digest = crate::submission::digest(prompt)
             .filter(|_| !prompt.trim().is_empty())
             .ok_or_else(|| {
@@ -961,6 +968,7 @@ impl State {
             canceled,
             correlation: None,
             digest,
+            source: None,
             queued: false,
             reconciliation_queued: false,
         });
@@ -1002,6 +1010,17 @@ impl State {
             .into());
         }
         if let Some(fence) = fence {
+            if text.is_none()
+                && pending.source.as_ref().is_some_and(|(launch, generation)| {
+                    launch != &fence.identity.launch_id || *generation != fence.identity.generation
+                })
+            {
+                return Err(Error::new(
+                    "conversation_changed",
+                    "Conversation changed after paste; Enter was not queued",
+                )
+                .into());
+            }
             if session.lifecycle_cursor != fence.head_sequence
                 || session
                     .conversation_identity
@@ -1045,6 +1064,10 @@ impl State {
             None => "\r".into(),
         };
         let answer = session.pty.send_confirmed(data)?;
+        if text.is_some() {
+            pending.source =
+                fence.map(|batch| (batch.identity.launch_id.clone(), batch.identity.generation));
+        }
         pending.queued = true;
         session.wake_at = None;
         session.status.input(now_millis());

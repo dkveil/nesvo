@@ -22,6 +22,7 @@ pub struct Pending {
     pub canceled: watch::Sender<bool>,
     pub correlation: Option<Correlation>,
     pub digest: String,
+    pub source: Option<(String, u64)>,
     pub queued: bool,
     pub reconciliation_queued: bool,
 }
