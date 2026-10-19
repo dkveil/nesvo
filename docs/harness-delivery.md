@@ -344,3 +344,14 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   pass. Full native run measured status publication p95 252.36 ms (29 batches).
   A stale queued-snapshot assumption in the fixture was replaced with correlated
   list responses; the actual post-child/foreign-Stop state is now checked directly.
+
+### Cross-platform CI findings
+
+- First branch CI run `39315017157` passed app/browser jobs but found pre-existing
+  native gaps: non-Windows clipboard code compiled without Crossterm's `osc52`
+  feature, and Windows fixture assertions compared canonical long paths against
+  the runner's equivalent 8.3 temp aliases.
+- Enabled the existing clipboard feature (Base64 0.22.1 was already locked) and
+  canonicalized both sides of fixture path comparisons. No production folder
+  resolution or global system configuration changed. These are targeted repairs;
+  macOS/Linux runtime claims await the subsequent matrix run.

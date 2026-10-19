@@ -336,7 +336,12 @@ mod tests {
         .unwrap();
         std::fs::write(path.join("file"), "uncommitted").unwrap();
         let worktree = create_worktree(&path).await.unwrap();
-        assert!(worktree.starts_with(&parent));
+        assert!(
+            worktree
+                .canonicalize()
+                .unwrap()
+                .starts_with(parent.canonicalize().unwrap())
+        );
         assert_eq!(
             std::fs::read_to_string(path.join("file")).unwrap(),
             "uncommitted"

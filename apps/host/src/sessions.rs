@@ -1882,6 +1882,8 @@ mod tests {
         ));
         let child = workspace.join("child folder");
         std::fs::create_dir_all(&child).unwrap();
+        let workspace = workspace.canonicalize().unwrap();
+        let child = child.canonicalize().unwrap();
         std::fs::write(workspace.join("file.txt"), "not a directory").unwrap();
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
         let mut state = State::new(workspace.clone(), metadata, Launchers::discover());
