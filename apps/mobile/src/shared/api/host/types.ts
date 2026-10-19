@@ -34,6 +34,8 @@ export type SessionLifecycle = {
   } | null;
 };
 export type AttentionEvent = {
+  subject?: 'response';
+  turnId?: string;
   source?: SessionStatusSource;
   sequence: number;
   kind: 'question' | 'permission' | 'done' | 'failed' | 'limit';

@@ -323,6 +323,10 @@ process.stdin.on('data', bytes=>{
       );
       let turn = settled.sessions!.find(s => s.id === id)!.lifecycle!.turn!;
       assert.equal(settled.sessions!.find(s => s.id === id)!.currentAttention?.priority, 0);
+      const completion = settled.sessions!.find(s => s.id === id)!.attention;
+      assert.equal(completion?.subject, 'response');
+      assert.equal(completion?.turnId, turn.id);
+      assert.equal(completion?.unread, true);
       // No model calls: measure real helper/journal/tick/transport batches with a controlled CLI.
       for (let sample = 0; sample < 12; sample++) {
         peer.send({ type: 'input', sessionId: id, data: 'question\r' });
@@ -370,6 +374,7 @@ process.stdin.on('data', bytes=>{
         const observed = snapshot.sessions!.find(s => s.id === id)!;
         assert.equal(observed.lifecycle?.turn?.id, turn.id);
         assert.equal(observed.lifecycle?.process.running, true);
+        assert.equal(observed.attention?.turnId, turn.id);
         peer.send({ type: 'input', sessionId: id, data: 'fast-exit\r' });
         const ended = await observer.next(
           'sessions',

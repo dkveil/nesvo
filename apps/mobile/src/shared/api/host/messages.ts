@@ -184,6 +184,8 @@ function session(value: unknown): value is RecordValue {
     (value.muted === undefined || typeof value.muted === 'boolean') &&
     (value.attention == null ||
       (record(value.attention) &&
+        (value.attention.subject === undefined || value.attention.subject === 'response') &&
+        (value.attention.turnId === undefined || text(value.attention.turnId)) &&
         integer(value.attention.sequence, 1) &&
         (value.attention.source === undefined ||
           (typeof value.attention.source === 'string' &&

@@ -85,6 +85,8 @@ pub struct Attention {
     pub at: u64,
     pub unread: bool,
     #[serde(default)]
+    pub subject: Option<String>,
+    #[serde(default)]
     pub source: Option<crate::status::Source>,
 }
 

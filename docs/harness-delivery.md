@@ -269,3 +269,16 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   gate passes for this local fixture; no claim is made about WAN latency.
 - Deterministic retention/coalescing tests pass. Native fixture submits no model
   requests. It alternates questions and fast turns to exercise publication.
+
+### F08 unread response checkpoint
+
+- Confirmed lifecycle Stop creates one turn-correlated unread response event.
+  Duplicate/stale Stop, process exit and terminal silence do not invent results.
+  New working state stays current while the historical response can remain unread.
+  A later question supersedes the notification without losing current blockers.
+- The legacy wire kind remains `done` with additive response subject/turn ID;
+  new UI/push wording says response ended, without implying validated task success.
+- Windows fmt/Clippy, 124 TUI + 66 host + 3 wire tests, 21 client checks,
+  typecheck/lint and 19 native integration checks pass. The late-observer fixture
+  checks the same turn-correlated notification after reconnect. Native OSC done
+  remains a protocol facet; multi-provider outcome coverage is still a stage gate.

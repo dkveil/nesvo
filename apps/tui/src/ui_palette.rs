@@ -313,7 +313,11 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
                                     } else {
                                         ""
                                     },
-                                    a.kind
+                                    if a.subject.as_deref() == Some("response") {
+                                        "response"
+                                    } else {
+                                        a.kind.as_str()
+                                    }
                                 )
                             })
                     })

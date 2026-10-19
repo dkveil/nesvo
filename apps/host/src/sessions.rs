@@ -85,6 +85,7 @@ struct Session {
     has_been_attached: bool,
     wake_at: Option<i64>,
     attention: crate::attention::Attention,
+    attention_dirty: bool,
     titles: crate::titles::Titles,
     auto_title: bool,
 }
@@ -428,10 +429,10 @@ impl State {
                 renamed.push(session.info.id.clone());
                 changed = true;
             }
-            if session
+            let attention_changed = session
                 .attention
-                .observe(session.status.status(), session.status.rate_limited())
-            {
+                .observe(session.status.status(), session.status.rate_limited());
+            if std::mem::take(&mut session.attention_dirty) | attention_changed {
                 changed = true;
                 if !session.attention.muted
                     && session.info.program != Program::Shell
@@ -1338,6 +1339,7 @@ fn spawn_session(
         has_been_attached: false,
         wake_at: None,
         attention: Default::default(),
+        attention_dirty: false,
         titles: Default::default(),
         auto_title: false,
     })
@@ -1406,6 +1408,18 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         session.started.elapsed(),
                                         now_millis(),
                                     );
+                                    if event.name == "Stop"
+                                        && let Some(turn) =
+                                            session.turn.snapshot(session.started.elapsed())
+                                        && turn.phase == crate::turns::Phase::Settled
+                                    {
+                                        session.attention_dirty |=
+                                            session.attention.response_settled(
+                                                event.sequence,
+                                                turn.id,
+                                                turn.observed_at,
+                                            );
+                                    }
                                     if session.status.lifecycle_ordered(
                                         crate::agent_context::LifecycleReport {
                                             state: event.state,

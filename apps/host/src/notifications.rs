@@ -56,6 +56,9 @@ pub struct Job {
 impl Job {
     pub fn new(token: String, host_id: String, session_id: String, event: Event) -> Self {
         let body = match event.kind {
+            "done" if event.subject == Some("response") => {
+                "A response ended. Open the session to review the result."
+            }
             "done" if event.source == crate::status::StatusSource::Process => {
                 "Agent process exited. Open the session to review."
             }
@@ -172,6 +175,8 @@ mod tests {
                 at: 1,
                 unread: true,
                 source: crate::status::StatusSource::Screen,
+                subject: None,
+                turn_id: None,
             },
         );
         assert_eq!(
