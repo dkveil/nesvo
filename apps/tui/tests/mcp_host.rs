@@ -281,6 +281,39 @@ async fn observed_output(
     Ok(())
 }
 
+async fn report_from_controlled_worker(
+    client: &RunningService<RoleClient, ()>,
+    directory: &Path,
+    id: &str,
+) -> Result<Value> {
+    session_ready(client, id)
+        .await
+        .context("Task fixture readiness before its first submission")?;
+    let sent = data(
+        call(
+            client,
+            "nesvo_send_prompt",
+            json!({"sessionId":id,"key":format!("task-report-{id}"),"prompt":"report-task"}),
+        )
+        .await?,
+    )?;
+    let ended = data(
+        call(
+            client,
+            "nesvo_wait_prompt",
+            json!({"id":sent["data"]["receipt"]["id"],"sessionId":id,"timeoutMs":10000}),
+        )
+        .await?,
+    )?;
+    ensure!(
+        ended["data"]["wait"]["reached"] == true,
+        "Controlled report turn did not settle"
+    );
+    Ok(serde_json::from_slice(&std::fs::read(
+        directory.join("callers").join(format!("{id}.result.json")),
+    )?)?)
+}
+
 #[tokio::test]
 #[ignore = "requires cargo build --workspace and an isolated native PTY host"]
 async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() -> Result<()> {
@@ -288,7 +321,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
     let outcome = std::panic::AssertUnwindSafe(async {
         let mcp = client(&fixture.pairing()).await?;
         let tools = mcp.list_all_tools().await?;
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 24);
         assert!(tools.iter().all(|tool| tool.output_schema.is_some()));
         let run=data(call(&mcp,"nesvo_create_run",json!({"key":"sdk-run","spec":{"title":"SDK plan","goal":"A literal private goal"}})).await?)?;
         assert_eq!(run["data"]["run"]["state"],"draft");
@@ -475,7 +508,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         .with_protocol_version(ProtocolVersion::V_2025_11_25)
         .serve(TokioChildProcess::new(legacy_command)?)
         .await?;
-        assert_eq!(legacy.list_all_tools().await?.len(), 18);
+        assert_eq!(legacy.list_all_tools().await?.len(), 24);
         let legacy_result = legacy
             .call_tool(
                 CallToolRequestParams::new("nesvo_get_session")
@@ -500,7 +533,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let scoped = client(&context).await?;
         assert_eq!(
             scoped.list_all_tools().await?.len(),
-            18,
+            24,
             "catalog/help need no host effects"
         );
         let refused = call(&scoped, "nesvo_list_sessions", json!({})).await?;
@@ -612,6 +645,10 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let scoped_run=data(call(&coordinator,"nesvo_create_run",json!({"key":"scoped-run","spec":{"title":"Own run","goal":"Private goal"}})).await?)?;
         assert_eq!(scoped_run["data"]["run"]["coordinatorSessionId"],root_id);
         let scoped_run_id=scoped_run["data"]["run"]["id"].clone();
+        let planned=data(call(&coordinator,"nesvo_set_run_plan",json!({"key":"task-plan","runId":scoped_run_id,"expectedRevision":1,"tasks":[{"key":"implement","title":"Implement","instruction":"Controlled result only"},{"key":"review","title":"Review","instruction":"Controlled review only","dependencies":["implement"]}]})).await?)?;
+        let implementation=planned["data"]["tasks"][0]["id"].clone();
+        let review=planned["data"]["tasks"][1]["id"].clone();
+        data(call(&coordinator,"nesvo_activate_run",json!({"key":"task-activate","runId":scoped_run_id,"expectedRevision":2})).await?)?;
         let owner_run=data(call(&owner,"nesvo_create_run",json!({"key":"private-owner-run","spec":{"title":"Owner run","goal":"Owner-only goal"}})).await?)?;
         let unavailable=call(&coordinator,"nesvo_get_run",json!({"runId":owner_run["data"]["run"]["id"]})).await?;
         assert_eq!(unavailable.structured_content.context("run isolation")?["error"]["code"],"run_not_found");
@@ -670,6 +707,8 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let refused=refused.structured_content.context("human refusal")?;
         assert_eq!(refused["error"]["receipt"]["result"]["code"],"control_busy");
         assert_eq!(refused["error"]["receipt"]["result"]["effectStarted"],false);
+        let refused=call(&coordinator,"nesvo_assign_task",json!({"key":"human-assignment","runId":scoped_run_id,"taskId":implementation,"sessionId":child_id,"expectedRevision":3})).await?;
+        assert_eq!(refused.structured_content.context("human assignment refusal")?["error"]["code"],"control_busy");
         drop(human.stdin.take());
         ensure!(timeout(Duration::from_secs(5),human.wait()).await??.success(),"Human fixture shutdown");
         timeout(Duration::from_secs(5),async {
@@ -698,6 +737,31 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         assert_eq!(rejected.structured_content.context("worker refusal")?["error"]["code"],"forbidden");
         let parent=call(&worker,"nesvo_get_session",json!({"sessionId":root_id})).await?;
         assert_eq!(parent.structured_content.context("parent refusal")?["error"]["code"],"forbidden");
+        let foreign_assignment=call(&coordinator,"nesvo_assign_task",json!({"key":"foreign-assignment","runId":scoped_run_id,"taskId":implementation,"sessionId":foreign_id,"expectedRevision":3})).await?;
+        assert_eq!(foreign_assignment.structured_content.context("foreign worker refusal")?["error"]["code"],"forbidden");
+        let assigned=data(call(&coordinator,"nesvo_assign_task",json!({"key":"assign-implementation","runId":scoped_run_id,"taskId":implementation,"sessionId":child_id,"expectedRevision":3})).await?)?;
+        let attempt=assigned["data"]["tasks"][0]["currentAttempt"]["id"].clone();
+        let current=data(call(&worker,"nesvo_get_current_task",json!({})).await?)?;
+        assert_eq!(current["data"]["attempt"]["id"],attempt,"forged environment hints do not change task binding");
+        let report=report_from_controlled_worker(&coordinator,&fixture.directory,child_id).await?;
+        assert_eq!(report["data"]["attempt"]["state"],"reported");
+        let replay=data(call(&worker,"nesvo_get_run_mutation",json!({"key":"fixture-result"})).await?)?;
+        assert_eq!(replay["data"],report["data"],"worker CLI and MCP share the same result receipt");
+        let pending=data(call(&coordinator,"nesvo_get_run",json!({"runId":scoped_run_id})).await?)?;
+        assert_eq!(pending["data"]["tasks"][0]["taskResult"],Value::Null);
+        assert_eq!(pending["data"]["tasks"][1]["dependencyState"],"waiting");
+        let validation=json!({"passed":true,"summary":"Checked controlled result transport","checks":[{"name":"transport-review","outcome":"passed","details":"Controlled fixture only, no production code validation"}]});
+        let self_validation=call(&worker,"nesvo_validate_task_result",json!({"key":"self-validation","runId":scoped_run_id,"attemptId":attempt,"expectedRevision":5,"validation":validation})).await?;
+        assert_eq!(self_validation.structured_content.context("self validation refusal")?["error"]["code"],"forbidden");
+        let validated=data(call(&coordinator,"nesvo_validate_task_result",json!({"key":"validate-implementation","runId":scoped_run_id,"attemptId":attempt,"expectedRevision":5,"validation":validation})).await?)?;
+        assert_eq!(validated["data"]["tasks"][1]["dependencyState"],"ready");
+        let assigned=data(call(&coordinator,"nesvo_assign_task",json!({"key":"assign-review","runId":scoped_run_id,"taskId":review,"sessionId":opted_id,"expectedRevision":6})).await?)?;
+        let review_attempt=assigned["data"]["tasks"][1]["currentAttempt"]["id"].clone();
+        report_from_controlled_worker(&coordinator,&fixture.directory,opted_id).await?;
+        let finished=data(call(&coordinator,"nesvo_validate_task_result",json!({"key":"validate-review","runId":scoped_run_id,"attemptId":review_attempt,"expectedRevision":8,"validation":validation})).await?)?;
+        assert_eq!(finished["data"]["run"]["state"],"succeeded");
+        let history=data(call(&coordinator,"nesvo_get_task_attempts",json!({"runId":scoped_run_id,"taskId":implementation})).await?)?;
+        assert_eq!(history["data"]["attempts"][0]["validation"]["source"],"coordinatorAttestation");
         worker.cancel().await?;
         coordinator.cancel().await?;
         let reconnected=scoped_client(&context,root_id).await?;
@@ -715,6 +779,8 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         assert_eq!(revoked.is_error,Some(true));
         let surviving=data(call(&owner,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
         assert_eq!(surviving["data"]["session"]["running"],true,"coordinator exit does not kill child sessions");
+        let retained=data(call(&owner,"nesvo_get_run",json!({"runId":scoped_run_id})).await?)?;
+        assert_eq!(retained["data"]["run"]["state"],"succeeded");
         reconnected.cancel().await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())

@@ -52,6 +52,10 @@ fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value
 fn catalog() -> Vec<Tool> {
     let id = json!({"type":"string","minLength":1,"maxLength":128,"description":"Stable host session ID, never a display name or focused-session hint"});
     let cursor = json!({"type":"integer","minimum":0,"maximum":9_007_199_254_740_991_u64});
+    let key = json!({"type":"string","minLength":1,"maxLength":128});
+    let revision = json!({"type":"integer","minimum":1});
+    let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
+    let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
             "nesvo_list_sessions",
@@ -146,6 +150,63 @@ fn catalog() -> Vec<Tool> {
             object(
                 json!({"sessionId":id,"key":{"type":"string","minLength":1,"maxLength":128}}),
                 &["sessionId", "key"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_activate_run",
+            "Freeze a nonempty draft DAG at an expected revision. Does not start any process or send prompts.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_assign_task",
+            "Bind one existing worker process to a dependency-ready task. Only host-granted children for coordinators. Refuses human control/drafts/pending input. No prompt is sent. Retain the returned attempt identity; one process per attempt.",
+            object(
+                json!({"key":key,"runId":id,"taskId":id,"sessionId":id,"expectedRevision":revision}),
+                &["key", "runId", "taskId", "sessionId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_task_attempts",
+            "Read a task and four retained attempts per page. Owner/coordinator only. Follow nextOffset; reported success remains unvalidated until separately accepted.",
+            object(
+                json!({"runId":id,"taskId":id,"offset":{"type":"integer","minimum":0,"maximum":16}}),
+                &["runId", "taskId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_get_current_task",
+            "Read this authenticated worker's current task and attempt. Never uses UI focus or environment identity hints. A superseded attempt is refused.",
+            object(json!({}), &[]),
+            true,
+        ),
+        (
+            "nesvo_report_task_result",
+            "Report this worker's exact current attempt result. Include files/artifacts/checks/limitations, using empty arrays when none. Claims are not verification or validation. Reuse the original key after uncertainty; stale senders/replacement reports are refused. Result bound 4 KiB UTF-8.",
+            object(
+                json!({"key":key,"attemptId":id,"result":{"type":"object","additionalProperties":false,"required":["outcome","summary","files","artifacts","checks","limitations"],"properties":{"outcome":{"enum":["succeeded","failed","blocked","canceled"]},"summary":{"type":"string","minLength":1,"maxLength":2048},"files":strings(32),"artifacts":strings(16),"checks":checks,"limitations":strings(16)}}}),
+                &["key", "attemptId", "result"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_validate_task_result",
+            "Record owner/coordinator attestation of the current reported result. Success needs a succeeded report and passed validation checks. The host records evidence, without executing checks. Accepted results release dependencies; idle never does. Validation bound 2 KiB UTF-8.",
+            object(
+                json!({"key":key,"runId":id,"attemptId":id,"expectedRevision":revision,"validation":{"type":"object","additionalProperties":false,"required":["passed","summary","checks"],"properties":{"passed":{"type":"boolean"},"summary":{"type":"string","minLength":1,"maxLength":1024},"checks":checks}}}),
+                &[
+                    "key",
+                    "runId",
+                    "attemptId",
+                    "expectedRevision",
+                    "validation",
+                ],
             ),
             false,
         ),
@@ -282,12 +343,24 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         | "nesvo_list_runs"
         | "nesvo_get_run"
         | "nesvo_set_run_plan"
-        | "nesvo_get_run_mutation" => {
+        | "nesvo_get_run_mutation"
+        | "nesvo_activate_run"
+        | "nesvo_assign_task"
+        | "nesvo_get_task_attempts"
+        | "nesvo_get_current_task"
+        | "nesvo_report_task_result"
+        | "nesvo_validate_task_result" => {
             let action = match name {
                 "nesvo_create_run" => "create",
                 "nesvo_list_runs" => "list",
                 "nesvo_get_run" => "get",
                 "nesvo_set_run_plan" => "setPlan",
+                "nesvo_activate_run" => "activate",
+                "nesvo_assign_task" => "assign",
+                "nesvo_get_task_attempts" => "task",
+                "nesvo_get_current_task" => "context",
+                "nesvo_report_task_result" => "report",
+                "nesvo_validate_task_result" => "validate",
                 _ => "mutation",
             };
             (crate::workflow::tool(action, arguments)?, "workflow")
@@ -490,7 +563,7 @@ impl HostTools {
             command["sessionId"] = cli::current_session(&caps)?.into();
         }
         if kind == "workflow" {
-            crate::workflow::capability(&mut connection).await?;
+            crate::workflow::capability(&mut connection, &command).await?;
         } else if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
             cli::control_capability(&mut connection).await?;
         } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
@@ -615,7 +688,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 18);
+        assert_eq!(catalog().len(), 24);
         assert!(
             command(
                 "nesvo_read_session",

@@ -217,12 +217,41 @@ impl State {
         let caller = self.caller_session(client_id)?;
         if caller
             .is_some_and(|id| self.sessions[id].policy.role != crate::caller::Role::Coordinator)
+            && !matches!(
+                request,
+                crate::orchestration::Request::Context { .. }
+                    | crate::orchestration::Request::Report { .. }
+                    | crate::orchestration::Request::Mutation { .. }
+            )
         {
             return Err(crate::api_error::Error::new(
                 "forbidden",
-                "Workflow plans require owner or coordinator authority",
+                "Workers have access only to their own attempt context and result",
             )
             .into());
+        }
+        if let crate::orchestration::Request::Assign { session_id, .. } = request {
+            self.authorize_automation(&self.operation_authority(client_id)?, session_id)?;
+            let target = self
+                .sessions
+                .get(session_id)
+                .filter(|s| s.info.running && s.policy.role == crate::caller::Role::Worker)
+                .ok_or_else(|| {
+                    crate::api_error::Error::new(
+                        "session_not_found",
+                        "Assignment requires a live worker process",
+                    )
+                })?;
+            if target.controller.is_some()
+                || target.human_input_dirty
+                || target.pending_input.is_some()
+            {
+                return Err(crate::api_error::Error::new(
+                    "control_busy",
+                    "Cannot assign over human control, a draft or a pending submission",
+                )
+                .into());
+            }
         }
         if let crate::orchestration::Request::Create { spec, .. } = request {
             if let Some(id) = caller {
@@ -253,7 +282,13 @@ impl State {
         let (issuer, _) = self.operation_caller(client_id)?;
         Ok(crate::orchestration::Actor {
             issuer,
-            coordinator: caller.map(str::to_owned),
+            scope: caller.map_or(crate::orchestration::Scope::Owner, |id| {
+                if self.sessions[id].policy.role == crate::caller::Role::Coordinator {
+                    crate::orchestration::Scope::Coordinator(id.into())
+                } else {
+                    crate::orchestration::Scope::Worker(id.into())
+                }
+            }),
         })
     }
     fn can_read(&self, caller: &str, target: &str) -> bool {
@@ -569,6 +604,7 @@ impl State {
         event["controlReceipts"] = self.event_log.is_some().into();
         event["sessionLineage"] = true.into();
         event["coordinatorScopes"] = true.into();
+        event["workflowAttempts"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event
@@ -791,7 +827,7 @@ impl State {
         if event["type"] == "capabilities" {
             let mut event = event;
             let role = self.sessions.get(id)?.policy.role;
-            event["caller"] = json!({"sessionId":id,"role":role,"permissions":if role==crate::caller::Role::Coordinator{vec!["session:read","child:create","child:read","child:send","child:interrupt","child:stop","run:plan"]}else{vec!["session:read"]},"expires":"processExit"});
+            event["caller"] = json!({"sessionId":id,"role":role,"permissions":if role==crate::caller::Role::Coordinator{vec!["session:read","child:create","child:read","child:send","child:interrupt","child:stop","run:plan","run:assign","run:validate"]}else{vec!["session:read","attempt:context","attempt:report"]},"expires":"processExit"});
             if let Some(session) = self.sessions.get(id) {
                 event["workspace"] = session.info.cwd.clone().into();
             }

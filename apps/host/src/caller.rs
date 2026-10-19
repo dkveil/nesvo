@@ -9,6 +9,7 @@ use std::{
 };
 
 const INSTRUCTIONS: &str = include_str!("../../../skills/nesvo-harness/SKILL.md");
+const INSTRUCTION_VERSION: u32 = 2;
 
 pub fn runtime_client() -> Option<PathBuf> {
     resolve_client(
@@ -124,7 +125,7 @@ impl Context {
         crate::private_write(
             &context.path(),
             &serde_json::to_vec(
-                &json!({"version":1,"url":url,"key":hex::encode(context.key),"scopeId":context.scope_id,"sessionId":session_id,"authority":"session","role":role,"cli":context.client,"instructions":{"version":1,"path":context.skill()}}),
+                &json!({"version":1,"url":url,"key":hex::encode(context.key),"scopeId":context.scope_id,"sessionId":session_id,"authority":"session","role":role,"cli":context.client,"instructions":{"version":INSTRUCTION_VERSION,"path":context.skill()}}),
             )?,
         )?;
         Ok(context)
@@ -167,7 +168,7 @@ impl Context {
         self.directory.join("mcp.json")
     }
     pub fn configuration(&self, enabled: bool) -> serde_json::Value {
-        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":1,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"globalConfigChanged":false})
+        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":INSTRUCTION_VERSION,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"globalConfigChanged":false})
     }
 }
 impl Drop for Context {
@@ -230,7 +231,7 @@ mod tests {
             serde_json::from_slice(&std::fs::read(first.path()).unwrap()).unwrap();
         assert_eq!(value["sessionId"], "s");
         assert_eq!(value["authority"], "session");
-        assert_eq!(value["instructions"]["version"], 1);
+        assert_eq!(value["instructions"]["version"], INSTRUCTION_VERSION);
         assert_eq!(
             std::fs::read_to_string(first.skill()).unwrap(),
             INSTRUCTIONS

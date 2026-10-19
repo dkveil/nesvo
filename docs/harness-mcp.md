@@ -51,6 +51,13 @@ They use durable draft metadata and the same CLI recovery keys/revision checks.
 See [workflow contract](harness-workflows.md). Tool visibility does not grant
 access to another coordinator's runs or permit native dispatch.
 
+`workflowAttempts` adds activate/assign, task history, authenticated current task,
+worker report and coordinator/owner validation tools. Results are claims until
+separately accepted; no native process/prompt dispatch occurs in these metadata
+commands. Instruction version 2 documents the recovery namespaces, result shape,
+attempt fences and human priority. Older live launches keep their original
+instruction snapshot; they are not silently reconfigured.
+
 Create accepts optional `spec.parentSessionId` for a live process parent, gated
 by `sessionLineage`. It creates an ordinary background session without changing
 parent input ownership. The relation appears in session data and survives client

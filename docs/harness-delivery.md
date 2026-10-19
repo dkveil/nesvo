@@ -39,11 +39,11 @@ not evidence that the expanded acceptance criteria pass.
 | F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                 |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                                     |
-| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable draft runs/tasks, validated DAG, CLI/MCP and atomic revisions; attempts/dispatch pending   |
+| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable runs/tasks/attempts, explicit assignment and DAG gates; automatic dispatch pending         |
 | F15 | Durable inbox and ACK                           | Missing                                                       | Pending                                                                                                     |
 | F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                   |
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending    |
-| F18 | Attempt-bound worker result                     | Missing                                                       | Pending                                                                                                     |
+| F18 | Attempt-bound worker result                     | Missing                                                       | Partial: scoped explicit results, validation and retry fences; actual provider execution gate pending       |
 | F19 | Questions and decision gates                    | Missing                                                       | Pending                                                                                                     |
 | F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Pending                                                                                                     |
 | F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Pending                                                                                                     |
@@ -65,7 +65,7 @@ not evidence that the expanded acceptance criteria pass.
 | F37 | Provider-aware launch profiles                  | Partial: templates                                            | Pending                                                                                                     |
 | F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending   |
 | F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending                                                                                                     |
-| F40 | Durable goal/progress checkpoint                | Missing                                                       | Pending                                                                                                     |
+| F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: durable goal/plan/result/validation history; compaction/adoption/manual constraint edits pending   |
 | F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Pending                                                                                                     |
 | F42 | Safe resumable hibernation                      | Missing                                                       | Pending                                                                                                     |
 | F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                     |
@@ -719,3 +719,39 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   its expected receipt; Linux/macOS/app/browser passed. Local reproduction passed
   and a bounded rerun is pending. The test now prints its structured failure
   before dereferencing the receipt, so another failure has useful diagnostics.
+
+### F14/F18 explicit attempts and independent validation
+
+- Activated plans now bind exact worker processes to dependency-ready tasks.
+  Coordinator ownership and private child grants are checked by the host;
+  assignment refuses human control/drafts/pending input and has no PTY effects.
+  Creating/sending to a worker remains a deliberate native-receipt operation;
+  automatic dispatch and configurable execution budgets remain open.
+- Only the bound worker can read its task context and report its first explicit
+  outcome/files/artifacts/checks/limitations. The coordinator/owner independently
+  records validation evidence. This is explicitly an attestation, not host-run
+  checks. A report/idle/response Stop cannot release dependencies. Accepted
+  validation does; all accepted tasks complete a run without killing sessions.
+- Rejected attempts can be retried on fresh workers. Immutable history, exact
+  current-attempt fences and same-key recovery survive database reopen. Late
+  results from an old attempt cannot overwrite a retry. Bounded history is
+  paginated; capacity exhaustion never discards records or repeats input.
+- CLI and six additional MCP tools use the same path. Instruction version 2
+  includes task discovery/report/validation, recovery namespaces and honest
+  evidence rules. Existing live launches retain their original instruction
+  snapshot. An offline version-1/version-2 scenario preserves both versions'
+  refusal to self-validate; only version 2 supplies the new commands/namespace.
+  This small instruction check is not model/provider or performance evidence.
+- Windows unit checks pass (128 TUI + 96 host + 3 wire), along with both official
+  SDK/native integrations. A controlled worker discovers/reports its assigned
+  task through its actual inherited native CLI; independent validation releases
+  a controlled reviewer. No model calls, global configuration or visual changes;
+  no new dependencies. Full provider/decision/inbox/restart execution acceptance
+  remains open. See [workflow contract](harness-workflows.md).
+- The bounded rerun for `ecd99d3` passed all CI jobs (39341315170); its original
+  Windows receipt failure remains unclassified rather than being called fixed.
+  Draft-plan baseline `4c99ba0` passed all jobs in 39343029888, including native
+  SDK coverage on Windows, Linux and macOS. New attempt code needs its own CI.
+- All 26 Windows host/sync/CLI integrations pass with attempt-capable hosts.
+  Controlled status receipt-to-publication p95 is 263.076 ms over 26 batches;
+  this excludes native helper, model and network latency.

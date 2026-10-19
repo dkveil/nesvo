@@ -221,9 +221,10 @@ Job receipts, agent instruction installation and durable run grants remain
 subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.
 
-## Draft workflow plans
+## Workflow plans and attempts
 
-Durable draft plans use `nesvo run create|list|get|plan|mutation`; see
+Durable plans use `nesvo run create|list|get|plan|mutation`; activate, assign,
+task, context, report and validate add explicit worker attempts/results. See
 [workflow identities, DAG and recovery](harness-workflows.md). These metadata
 commands do not start agents or infer task outcomes from idle.
 

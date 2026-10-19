@@ -777,6 +777,29 @@ test(
           ]);
           queryOutput(malformed.stdout);
           assert.equal(malformed.code, 2);
+          const activated = await invoke([
+            'activate',
+            created.run.id,
+            '--key',
+            'run-activate',
+            '--revision',
+            '2',
+          ]);
+          assert.equal(activated.run.state, 'active');
+          assert.equal(activated.run.revision, 3);
+          const history = await invoke(['task', created.run.id, planned.tasks[0].id]);
+          assert.deepEqual(history.attempts, []);
+          const context = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'run',
+            'context',
+            '--json',
+          ]);
+          queryOutput(context.stdout);
+          assert.equal(
+            JSON.parse(context.stdout).error.code,
+            'forbidden',
+            'owner focus is not a worker binding',
+          );
           assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
         },
       );

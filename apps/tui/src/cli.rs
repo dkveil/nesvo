@@ -243,7 +243,12 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
         "invalid_argument" | "no_current_session" => 2,
         "pairing_unavailable" => 3,
         "host_unavailable" | "disconnected" => 4,
-        "session_not_found" | "operation_not_found" | "run_not_found" | "mutation_not_found" => 5,
+        "session_not_found"
+        | "operation_not_found"
+        | "run_not_found"
+        | "mutation_not_found"
+        | "task_not_found"
+        | "attempt_not_found" => 5,
         "timeout" => 7,
         "unsupported" => 8,
         _ => 6,

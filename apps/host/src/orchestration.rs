@@ -13,7 +13,36 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone)]
 pub struct Actor {
     pub issuer: String,
-    pub coordinator: Option<String>, // None is an already authenticated human owner.
+    pub scope: Scope,
+}
+#[derive(Clone)]
+pub enum Scope {
+    Owner,
+    Coordinator(String),
+    Worker(String),
+}
+impl Actor {
+    pub fn coordinator(&self) -> Result<Option<&str>> {
+        match &self.scope {
+            Scope::Owner => Ok(None),
+            Scope::Coordinator(id) => Ok(Some(id)),
+            Scope::Worker(_) => Err(Error::new(
+                "forbidden",
+                "Worker has only its own attempt/result authority",
+            )
+            .into()),
+        }
+    }
+    pub fn worker(&self) -> Result<&str> {
+        match &self.scope {
+            Scope::Worker(id) => Ok(id),
+            _ => Err(Error::new(
+                "forbidden",
+                "This operation requires a bound worker process",
+            )
+            .into()),
+        }
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -58,12 +87,43 @@ pub enum Request {
         expected_revision: u64,
         tasks: Vec<TaskSpec>,
     },
+    Activate {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    Assign {
+        key: String,
+        run_id: String,
+        task_id: String,
+        session_id: String,
+        expected_revision: u64,
+    },
+    Task {
+        run_id: String,
+        task_id: String,
+        offset: Option<usize>,
+    },
+    Context {},
+    Report {
+        key: String,
+        attempt_id: String,
+        result: crate::workflow_attempts::ResultSpec,
+    },
+    Validate {
+        key: String,
+        run_id: String,
+        attempt_id: String,
+        expected_revision: u64,
+        validation: crate::workflow_attempts::ValidationSpec,
+    },
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_runs(id TEXT PRIMARY KEY,title TEXT NOT NULL,goal TEXT NOT NULL,coordinator_id TEXT,revision INTEGER NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS workflow_runs_coordinator ON workflow_runs(coordinator_id,created_at);
       CREATE TABLE IF NOT EXISTS workflow_tasks(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES workflow_runs(id),task_key TEXT NOT NULL,spec TEXT NOT NULL,UNIQUE(run_id,task_key));
-      CREATE TABLE IF NOT EXISTS workflow_mutations(issuer TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,view TEXT NOT NULL,PRIMARY KEY(issuer,key));")?;
+      CREATE TABLE IF NOT EXISTS workflow_mutations(issuer TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,view TEXT NOT NULL,PRIMARY KEY(issuer,key));
+      CREATE TABLE IF NOT EXISTS workflow_attempts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES workflow_tasks(id),ordinal INTEGER NOT NULL,session_id TEXT NOT NULL UNIQUE,state TEXT NOT NULL,result TEXT,validation TEXT,UNIQUE(task_id,ordinal));")?;
     Ok(())
 }
 fn invalid(message: &'static str) -> anyhow::Error {
@@ -144,9 +204,10 @@ pub fn validate_plan(tasks: &[TaskSpec]) -> Result<()> {
     }
     Ok(())
 }
-fn run(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
+pub(crate) fn run(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
+    let coordinator = actor.coordinator()?;
     type Record = (String, String, String, Option<String>, i64, String, i64);
-    let row:Option<Record>=connection.query_row("SELECT id,title,goal,coordinator_id,revision,state,created_at FROM workflow_runs WHERE id=?1 AND (?2 IS NULL OR coordinator_id=?2)",params![id,actor.coordinator],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?;
+    let row:Option<Record>=connection.query_row("SELECT id,title,goal,coordinator_id,revision,state,created_at FROM workflow_runs WHERE id=?1 AND (?2 IS NULL OR coordinator_id=?2)",params![id,coordinator],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?;
     let Some((id, title, goal, coordinator, revision, state, created_at)) = row else {
         return Err(Error::new("run_not_found", "Run is unavailable to this caller").into());
     };
@@ -155,7 +216,7 @@ fn run(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
         "Invalid stored workflow metadata"
     );
     Ok(
-        json!({"id":id,"title":title,"goal":goal,"coordinatorSessionId":coordinator,"revision":revision,"state":state,"createdAt":created_at,"taskResult":null}),
+        json!({"id":id,"title":title,"goal":goal,"coordinatorSessionId":coordinator,"revision":revision,"state":state,"createdAt":created_at,"taskResult":if state=="succeeded"{Some("succeeded")}else{None}}),
     )
 }
 fn view(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
@@ -175,10 +236,15 @@ fn view(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
         .iter()
         .map(|(id, spec)| (spec.key.as_str(), id))
         .collect();
-    let records:Vec<_>=tasks.iter().map(|(id,spec)|json!({"id":id,"key":spec.key,"title":spec.title,"instruction":spec.instruction,"dependencies":spec.dependencies.iter().filter_map(|key|ids.get(key.as_str())).collect::<Vec<_>>(),"state":"planned","dependencyState":if spec.dependencies.is_empty(){"ready"}else{"waiting"},"attempts":0,"taskResult":null})).collect();
+    let attempts = crate::workflow_attempts::summaries(connection, id)?;
+    let records:Vec<_>=tasks.iter().map(|(id,spec)|{
+        let ready=spec.dependencies.iter().all(|key|ids.get(key.as_str()).and_then(|id|attempts.get(id.as_str())).is_some_and(|a|a["state"]=="succeeded"));
+        let attempt=attempts.get(id.as_str());
+        json!({"id":id,"key":spec.key,"title":spec.title,"instruction":spec.instruction,"dependencies":spec.dependencies.iter().filter_map(|key|ids.get(key.as_str())).collect::<Vec<_>>(),"state":attempt.map_or("planned",|a|a["state"].as_str().unwrap_or("unknown")),"dependencyState":if ready{"ready"}else{"waiting"},"attempts":attempt.map_or(0,|a|a["ordinal"].as_u64().unwrap_or(0)),"currentAttempt":attempt,"taskResult":attempt.filter(|a|matches!(a["state"].as_str(),Some("succeeded"|"failed"))).map(|a|a["state"].clone())})
+    }).collect();
     let result = json!({"run":run,"tasks":records});
-    if serde_json::to_vec(&result)?.len() > 40 * 1024 {
-        return Err(invalid("Workflow view exceeds 40 KiB; reduce the plan"));
+    if serde_json::to_vec(&result)?.len() > 64 * 1024 {
+        return Err(invalid("Workflow view exceeds 64 KiB; reduce the plan"));
     }
     Ok(result)
 }
@@ -186,6 +252,35 @@ fn random_id() -> String {
     hex::encode(crate::wire::random::<16>())
 }
 pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> Result<Value> {
+    if matches!(actor.scope, Scope::Worker(_))
+        && !matches!(
+            request,
+            Request::Context { .. } | Request::Report { .. } | Request::Mutation { .. }
+        )
+    {
+        return Err(Error::new(
+            "forbidden",
+            "Worker has only its own attempt/result authority",
+        )
+        .into());
+    }
+    if matches!(request, Request::Context { .. }) {
+        return crate::workflow_attempts::context(connection, &actor, None);
+    }
+    if let Request::Task {
+        run_id,
+        task_id,
+        offset,
+    } = &request
+    {
+        return crate::workflow_attempts::history(
+            connection,
+            &actor,
+            run_id,
+            task_id,
+            offset.unwrap_or(0),
+        );
+    }
     if let Request::Mutation { key } = &request {
         let result: Option<String> = connection
             .query_row(
@@ -202,13 +297,7 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
             .into());
         };
         let result: Value = serde_json::from_str(&result)?;
-        run(
-            connection,
-            &actor,
-            result["run"]["id"]
-                .as_str()
-                .ok_or_else(|| invalid("Stored workflow mutation has no run identity"))?,
-        )?;
+        authorize_history(connection, &actor, &result)?;
         return Ok(result);
     }
     if let Request::Get { run_id } = &request {
@@ -220,13 +309,18 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
             return Err(invalid("Run offset exceeds 1024"));
         }
         let mut statement=connection.prepare("SELECT id,title,coordinator_id,revision,state,created_at FROM workflow_runs WHERE (?1 IS NULL OR coordinator_id=?1) ORDER BY created_at DESC,id LIMIT 17 OFFSET ?2")?;
-        let mut runs=statement.query_map(params![actor.coordinator,offset as i64],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"coordinatorSessionId":r.get::<_,Option<String>>(2)?,"revision":r.get::<_,i64>(3)?,"state":r.get::<_,String>(4)?,"createdAt":r.get::<_,i64>(5)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut runs=statement.query_map(params![actor.coordinator()?,offset as i64],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"coordinatorSessionId":r.get::<_,Option<String>>(2)?,"revision":r.get::<_,i64>(3)?,"state":r.get::<_,String>(4)?,"createdAt":r.get::<_,i64>(5)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let more = runs.len() > 16;
         runs.truncate(16);
         return Ok(json!({"runs":runs,"nextOffset":more.then_some(offset+16)}));
     }
     let key = match &request {
-        Request::Create { key, .. } | Request::SetPlan { key, .. } => key,
+        Request::Create { key, .. }
+        | Request::SetPlan { key, .. }
+        | Request::Activate { key, .. }
+        | Request::Assign { key, .. }
+        | Request::Report { key, .. }
+        | Request::Validate { key, .. } => key,
         _ => unreachable!(),
     };
     if key.is_empty() || key.len() > 128 || key.chars().any(char::is_control) {
@@ -239,8 +333,15 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
     );
     let transaction = connection.transaction()?;
     // Recheck the run boundary even when recovering a historical mutation.
-    if let Request::SetPlan { run_id, .. } = &request {
+    if let Request::SetPlan { run_id, .. }
+    | Request::Activate { run_id, .. }
+    | Request::Assign { run_id, .. }
+    | Request::Validate { run_id, .. } = &request
+    {
         run(&transaction, &actor, run_id)?;
+    }
+    if let Request::Report { attempt_id, .. } = &request {
+        crate::workflow_attempts::context(&transaction, &actor, Some(attempt_id))?;
     }
     let previous: Option<(String, String)> = transaction
         .query_row(
@@ -258,13 +359,7 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
             .into());
         }
         let result: Value = serde_json::from_str(&result)?;
-        run(
-            &transaction,
-            &actor,
-            result["run"]["id"]
-                .as_str()
-                .ok_or_else(|| invalid("Stored mutation has no run identity"))?,
-        )?;
+        authorize_history(&transaction, &actor, &result)?;
         return Ok(result);
     }
     let count: i64 =
@@ -282,9 +377,8 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
                 || spec.title.chars().any(char::is_control)
                 || !text(&spec.goal, 8192)
                 || actor
-                    .coordinator
-                    .as_ref()
-                    .is_some_and(|id| spec.coordinator_session_id.as_ref() != Some(id))
+                    .coordinator()?
+                    .is_some_and(|id| spec.coordinator_session_id.as_deref() != Some(id))
             {
                 return Err(invalid(
                     "Run needs bounded title/goal and its authenticated coordinator",
@@ -345,12 +439,18 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
             )?;
             (run_id.clone(), "run.plan_changed")
         }
-        _ => unreachable!(),
+        _ => crate::workflow_attempts::mutate(&transaction, &actor, &request)?,
     };
-    let result = view(&transaction, &actor, &id)?;
-    let subject = result["run"]["coordinatorSessionId"]
-        .as_str()
-        .map(str::to_owned);
+    let result = if matches!(actor.scope, Scope::Worker(_)) {
+        crate::workflow_attempts::context(&transaction, &actor, None)?
+    } else {
+        view(&transaction, &actor, &id)?
+    };
+    let subject: Option<String> = transaction.query_row(
+        "SELECT coordinator_id FROM workflow_runs WHERE id=?1",
+        [&id],
+        |r| r.get(0),
+    )?;
     let cursor = append_transaction(
         &transaction,
         vec![Observation {
@@ -368,4 +468,22 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
     )?;
     transaction.commit()?;
     Ok(result)
+}
+
+fn authorize_history(connection: &Connection, actor: &Actor, result: &Value) -> Result<()> {
+    if matches!(actor.scope, Scope::Worker(_)) {
+        let attempt = result["attempt"]["id"]
+            .as_str()
+            .ok_or_else(|| invalid("Mutation does not belong to a worker attempt"))?;
+        crate::workflow_attempts::context(connection, actor, Some(attempt))?;
+    } else {
+        run(
+            connection,
+            actor,
+            result["run"]["id"]
+                .as_str()
+                .ok_or_else(|| invalid("Stored mutation has no run identity"))?,
+        )?;
+    }
+    Ok(())
 }

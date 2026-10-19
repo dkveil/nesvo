@@ -12,7 +12,7 @@ const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
 if (
-  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V1')
+  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V2')
 )
   throw new Error('Missing versioned launch-local harness instructions');
 fs.writeFileSync(path.join(directory, `${id}.txt`), process.env.NESVO_AGENT_CONTEXT);
@@ -26,7 +26,7 @@ if (process.argv.includes('--mcp-config')) {
   );
   if (
     config.mcpServers.nesvo.env.NESVO_AGENT_CONTEXT !== process.env.NESVO_AGENT_CONTEXT ||
-    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V1')
+    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V2')
   )
     throw new Error('Launch-local harness was not loaded by the controlled provider');
 }
@@ -81,6 +81,43 @@ function submit(prompt) {
     );
     if (result.status !== 0) throw new Error('Managed CLI child creation failed');
     fs.writeFileSync(path.join(directory, `${id}.child.json`), result.stdout);
+  }
+  if (prompt === 'report-task') {
+    const cli = args => {
+      const result = spawnSync(process.env.NESVO_CLI, args, {
+        windowsHide: true,
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+      if (result.status !== 0) throw new Error(`Managed task CLI failed: ${result.stdout}`);
+      return JSON.parse(result.stdout);
+    };
+    const context = cli(['run', 'context', '--json']);
+    const file = path.join(directory, `${id}.report-input.json`);
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        outcome: 'succeeded',
+        summary: 'Controlled fixture result',
+        files: [],
+        artifacts: [],
+        checks: [
+          { name: 'fixture', outcome: 'passed', details: 'Controlled result path exercised' },
+        ],
+        limitations: ['Controlled fixture only; no model or code validation'],
+      }),
+    );
+    const report = cli([
+      'run',
+      'report',
+      context.data.attempt.id,
+      '--key',
+      'fixture-result',
+      '--file',
+      file,
+      '--json',
+    ]);
+    fs.writeFileSync(path.join(directory, `${id}.result.json`), JSON.stringify(report));
   }
   process.stdout.write(`FIXTURE_RESPONSE ${prompt}\r\n`);
   hook('Stop');

@@ -61,8 +61,8 @@
                         "title": { "type": "string" },
                         "goal": { "type": "string" },
                         "revision": { "type": "integer", "minimum": 1 },
-                        "state": { "const": "draft" },
-                        "taskResult": { "type": "null" }
+                        "state": { "enum": ["draft", "active", "succeeded"] },
+                        "taskResult": { "enum": [null, "succeeded"] }
                       }
                     },
                     "tasks": {
@@ -85,13 +85,36 @@
                           "id": { "type": "string" },
                           "key": { "type": "string" },
                           "dependencies": { "type": "array", "items": { "type": "string" } },
-                          "state": { "const": "planned" },
+                          "state": {
+                            "enum": ["planned", "assigned", "reported", "succeeded", "failed"]
+                          },
                           "dependencyState": { "enum": ["ready", "waiting"] },
-                          "attempts": { "const": 0 },
-                          "taskResult": { "type": "null" }
+                          "attempts": { "type": "integer", "minimum": 0, "maximum": 16 },
+                          "taskResult": { "enum": [null, "succeeded", "failed"] }
                         }
                       }
                     }
+                  }
+                },
+                {
+                  "required": ["run", "task", "attempt"],
+                  "properties": {
+                    "run": { "type": "object", "required": ["id", "title", "revision", "state"] },
+                    "task": { "type": "object", "required": ["id", "key", "title", "instruction"] },
+                    "attempt": { "$ref": "#/definitions/workflowAttempt" }
+                  }
+                },
+                {
+                  "required": ["run", "task", "attempts", "nextOffset"],
+                  "properties": {
+                    "run": { "type": "object", "required": ["id", "revision", "state"] },
+                    "task": { "type": "object", "required": ["id", "spec"] },
+                    "attempts": {
+                      "type": "array",
+                      "maxItems": 4,
+                      "items": { "$ref": "#/definitions/workflowAttempt" }
+                    },
+                    "nextOffset": { "type": ["integer", "null"] }
                   }
                 }
               ]
@@ -231,6 +254,19 @@
     }
   ],
   "definitions": {
+    "workflowAttempt": {
+      "type": "object",
+      "required": ["id", "taskId", "ordinal", "sessionId", "state", "result", "validation"],
+      "properties": {
+        "id": { "type": "string" },
+        "taskId": { "type": "string" },
+        "ordinal": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "sessionId": { "type": "string" },
+        "state": { "enum": ["assigned", "reported", "succeeded", "failed"] },
+        "result": { "type": ["object", "null"] },
+        "validation": { "type": ["object", "null"] }
+      }
+    },
     "receipt": {
       "type": "object",
       "required": ["id", "operation", "phase", "sessionId", "result"],

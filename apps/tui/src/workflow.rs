@@ -58,6 +58,67 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Freeze a nonempty draft; no native process is started.
+    Activate {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Assign one existing controlled worker to a dependency-ready task.
+    Assign {
+        id: String,
+        #[arg(long)]
+        task: String,
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect a task and a bounded page of immutable attempt history.
+    Task {
+        id: String,
+        task: String,
+        #[arg(long, default_value_t = 0)]
+        offset: u16,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read this authenticated worker's exact task/attempt binding.
+    Context {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report this worker's result from a bounded JSON file; never self-validates.
+    Report {
+        attempt: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record explicit coordinator/owner validation of a worker result.
+    Validate {
+        id: String,
+        attempt: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 impl Command {
     pub fn machine(&self) -> bool {
@@ -66,7 +127,13 @@ impl Command {
             | Self::List { json, .. }
             | Self::Get { json, .. }
             | Self::Plan { json, .. }
-            | Self::Mutation { json, .. } => *json,
+            | Self::Mutation { json, .. }
+            | Self::Activate { json, .. }
+            | Self::Assign { json, .. }
+            | Self::Task { json, .. }
+            | Self::Context { json }
+            | Self::Report { json, .. }
+            | Self::Validate { json, .. } => *json,
         }
     }
     fn request(self) -> Result<Request> {
@@ -116,8 +183,66 @@ impl Command {
                 })?,
             },
             Self::Mutation { key, .. } => Request::Mutation { key },
+            Self::Activate {
+                id, key, revision, ..
+            } => Request::Activate {
+                key,
+                run_id: id,
+                expected_revision: revision,
+            },
+            Self::Assign {
+                id,
+                task,
+                session,
+                key,
+                revision,
+                ..
+            } => Request::Assign {
+                key,
+                run_id: id,
+                task_id: task,
+                session_id: session,
+                expected_revision: revision,
+            },
+            Self::Task {
+                id, task, offset, ..
+            } => Request::Task {
+                run_id: id,
+                task_id: task,
+                offset: Some(offset),
+            },
+            Self::Context { .. } => Request::Context {},
+            Self::Report {
+                attempt, key, file, ..
+            } => Request::Report {
+                key,
+                attempt_id: attempt,
+                result: read_json(&file, 4096)?,
+            },
+            Self::Validate {
+                id,
+                attempt,
+                key,
+                revision,
+                file,
+                ..
+            } => Request::Validate {
+                key,
+                run_id: id,
+                attempt_id: attempt,
+                expected_revision: revision,
+                validation: read_json(&file, 2048)?,
+            },
         })
     }
+}
+fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path, limit: usize) -> Result<T> {
+    serde_json::from_str(&read_file(path, limit)?).map_err(|_| {
+        cli::failure(
+            "invalid_argument",
+            "Workflow JSON must match its declared schema",
+        )
+    })
 }
 fn read_file(path: &std::path::Path, limit: usize) -> Result<String> {
     let mut source = String::new();
@@ -133,6 +258,45 @@ fn read_file(path: &std::path::Path, limit: usize) -> Result<String> {
     Ok(source)
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum Outcome {
+    Succeeded,
+    Failed,
+    Blocked,
+    Canceled,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum CheckOutcome {
+    Passed,
+    Failed,
+    Skipped,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Check {
+    name: String,
+    outcome: CheckOutcome,
+    details: String,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResultSpec {
+    outcome: Outcome,
+    summary: String,
+    files: Vec<String>,
+    artifacts: Vec<String>,
+    checks: Vec<Check>,
+    limitations: Vec<String>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ValidationSpec {
+    passed: bool,
+    summary: String,
+    checks: Vec<Check>,
+}
 // These DTOs validate the wire shape only; the host owns DAG, access and revision rules.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -177,6 +341,36 @@ enum Request {
         expected_revision: u64,
         tasks: Vec<TaskSpec>,
     },
+    Activate {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    Assign {
+        key: String,
+        run_id: String,
+        task_id: String,
+        session_id: String,
+        expected_revision: u64,
+    },
+    Task {
+        run_id: String,
+        task_id: String,
+        offset: Option<u16>,
+    },
+    Context {},
+    Report {
+        key: String,
+        attempt_id: String,
+        result: ResultSpec,
+    },
+    Validate {
+        key: String,
+        run_id: String,
+        attempt_id: String,
+        expected_revision: u64,
+        validation: ValidationSpec,
+    },
 }
 fn wire(request: Request) -> Result<Value> {
     let value = serde_json::to_value(request)?;
@@ -206,7 +400,7 @@ pub fn tool(action: &str, mut arguments: Value) -> Result<Value> {
         )
     })?)
 }
-pub async fn capability(connection: &mut Connection) -> Result<()> {
+pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
         connection,
         json!({"type":"getCapabilities"}),
@@ -219,12 +413,22 @@ pub async fn capability(connection: &mut Connection) -> Result<()> {
             "Host does not support durable workflow plans; update nesvo-host",
         ));
     }
+    if !matches!(
+        request["request"]["action"].as_str(),
+        Some("create" | "list" | "get" | "setPlan" | "mutation")
+    ) && caps["workflowAttempts"] != true
+    {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot enforce workflow attempts and result grants; update nesvo-host",
+        ));
+    }
     Ok(())
 }
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let machine = command.machine();
     let request = wire(command.request()?)?;
-    capability(connection).await?;
+    capability(connection, &request).await?;
     cli::print_data(
         machine,
         cli::request(connection, request, "workflow").await?,
@@ -236,6 +440,14 @@ mod tests {
     use super::*;
     #[test]
     fn adapters_reject_malformed_shapes_before_host_dispatch() {
+        assert!(tool("context", json!({"sessionId":"foreign"})).is_err());
+        assert!(
+            tool(
+                "report",
+                json!({"key":"k","attemptId":"a","result":{"outcome":"succeeded","summary":"x"}})
+            )
+            .is_err()
+        );
         assert!(tool("setPlan",json!({"key":"k","runId":"r","expectedRevision":1,"tasks":[{"key":"a","title":"a","instruction":"x","dependencies":false}]})).is_err());
         assert!(
             tool(

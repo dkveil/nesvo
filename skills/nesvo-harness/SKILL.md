@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 1 (`NESVO_HARNESS_INSTRUCTIONS_V1`).
+Instruction version: 2 (`NESVO_HARNESS_INSTRUCTIONS_V2`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -96,10 +96,59 @@ state are needed before another deliberate attempt.
 ## Completion and interruption
 
 Collect worker evidence: changed files/revision, checks actually run, findings,
-remaining risks and the requested result. Clearly distinguish observed response
-settlement from verified task success. Durable Run/Task/Attempt result submission,
-inbox ACK, schedules and decision APIs are not exposed by this instruction
-version; do not invent commands or claim those records were written.
+remaining risks and the requested result. Distinguish response settlement from
+verified task success. Inbox ACK, schedule and decision APIs are not exposed by
+this instruction version; do not invent commands or claim those records exist.
+
+## Durable plans and explicit task results
+
+When supported (`workflowPlans`/`workflowAttempts`), a coordinator can create a
+run with `run create TITLE --key KEY --goal-file PATH --json`, read it with
+`run get RUN_ID --json`, and set its draft DAG with `run plan RUN_ID --key KEY
+--revision REV --file PLAN_JSON --json`. The file is an array of
+`{key,title,instruction,dependencies:[TASK_KEY]}` records. Keep stable task keys
+when editing. Cycles/missing dependencies are refused. Read returned host IDs
+and revisions; titles and array positions are not identities.
+
+Freeze a nonempty draft using `run activate RUN_ID --key KEY --revision REV
+--json`. Create a fresh worker with the ordinary session API, **without an
+initial prompt**, and inspect readiness. Bind it before requesting task work:
+`run assign RUN_ID --task TASK_ID --session CHILD_ID --key KEY --revision REV
+--json`. The host allows only your granted worker children and dependency-ready
+tasks, refusing human control/drafts/pending input. Assignment does not type
+anything or start a process. Read the returned attempt ID, then deliberately
+send the task context through the normal guarded `session send` path. Native
+operation keys recover through `operation`; workflow metadata keys recover
+through `run mutation --key ORIGINAL_KEY --json`. Do not interchange namespaces
+or invent a fresh key after an uncertain effect. No automatic DAG executor or
+configurable run budgets are supplied by this instruction version.
+
+As a worker, `run context --json` returns your host-bound task and current
+attempt. It does not use `NESVO_SESSION_ID`/UI hints. If no attempt is assigned,
+ask the coordinator for assignment; do not fabricate IDs or access its plan.
+Submit `run report ATTEMPT_ID --key KEY --file RESULT_JSON --json`. The result
+object requires `outcome` (`succeeded|failed|blocked|canceled`), `summary`, `files`,
+`artifacts`, `checks` and `limitations`. Use empty arrays when none apply.
+Checks are `{name,outcome:passed|failed|skipped,details}`. Report only actual
+evidence and limitations, within the 4 KiB bound. Claims do not self-validate;
+an idle screen or settled response cannot replace this report. A superseded
+attempt returns `stale_attempt`: stop reporting for it and explain the conflict.
+Do not change context IDs, acquire owner credentials or retry under another ID.
+
+The coordinator/owner can inspect retained attempts with `run task RUN_ID
+TASK_ID --offset 0 --json` and independently validate the current reported result:
+`run validate RUN_ID ATTEMPT_ID --key KEY --revision REV --file VALIDATION_JSON
+--json`. Validation requires `{passed,summary,checks}` within 2 KiB. Success
+requires a succeeded report and explicit passed checks. It records an owner/
+coordinator attestation; the host does not run or verify those checks. Do not
+attest to work you did not review. Workers cannot validate their own results.
+Only an accepted result releases dependencies; all accepted tasks complete the
+run without killing sessions. A rejected attempt can be retried on a fresh
+worker process, retaining previous history. Current bounds: 16 attempts per
+task, 4096 retained attempts globally, one native process per attempt. A revision
+conflict requires re-reading the run; it never authorizes overwriting newer work.
+
+## Interruption
 
 When authorized, `session interrupt CHILD_ID --key KEY --json` delivers one
 Ctrl+C; delivery does not prove it was handled. `session stop CHILD_ID --key KEY
