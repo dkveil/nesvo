@@ -23,6 +23,7 @@ export function sessionStatusDetail(status: SessionStatus, source?: SessionStatu
   if (source === 'activity')
     return status === 'working' ? 'Ostatnio używany terminal' : 'Brak sygnału pracy agenta';
   if (source === 'screen') return 'Stan przybliżony, wywnioskowany z treści terminala';
+  if (source === 'hook') return 'Stan potwierdzony zdarzeniem agenta';
   if (source === 'process') return 'Stan procesu na komputerze';
   return 'Brak informacji o stanie agenta';
 }

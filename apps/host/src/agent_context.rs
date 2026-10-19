@@ -25,7 +25,15 @@ impl Tracker {
         let hook = json!({"type":"command", "command": std::env::current_exe()?,
             "args":["--agent-context-hook", tracker.report()], "timeout":3});
         let settings = json!({"hooks": {
-            "PostToolUse":[{"matcher":"Edit|Write", "hooks":[hook.clone()]}],
+            "SessionStart":[{"hooks":[hook.clone()]}],
+            "UserPromptSubmit":[{"hooks":[hook.clone()]}],
+            "PreToolUse":[{"hooks":[hook.clone()]}],
+            "PostToolUse":[{"hooks":[hook.clone()]}],
+            "PostToolUseFailure":[{"hooks":[hook.clone()]}],
+            "PermissionRequest":[{"hooks":[hook.clone()]}],
+            "Notification":[{"hooks":[hook.clone()]}],
+            "Stop":[{"hooks":[hook.clone()]}],
+            "StopFailure":[{"hooks":[hook.clone()]}],
             "CwdChanged":[{"hooks":[hook]}]
         }})
         .to_string();
@@ -88,7 +96,26 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
     if bytes.len() > 2 * 1024 * 1024 {
         return Ok(());
     }
-    if let Some(context) = extract(&serde_json::from_slice(&bytes)?) {
+    let value: Value = serde_json::from_slice(&bytes)?;
+    if let Some(state) = lifecycle_state(&value) {
+        let status = LifecycleReport {
+            state,
+            sequence: chrono::Utc::now()
+                .timestamp_nanos_opt()
+                .unwrap_or_default()
+                .max(0) as u64,
+        };
+        let destination = report.with_file_name("status.json");
+        let temporary =
+            destination.with_extension(format!("{}.tmp", hex::encode(crate::wire::random::<8>())));
+        crate::private_write(&temporary, &serde_json::to_vec(&status)?)?;
+        let result = std::fs::rename(&temporary, &destination);
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        result?;
+    }
+    if let Some(context) = extract(&value) {
         let temporary =
             report.with_extension(format!("{}.tmp", hex::encode(crate::wire::random::<8>())));
         crate::private_write(&temporary, &serde_json::to_vec(&context)?)?;
@@ -100,6 +127,48 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
     }
     Ok(())
 }
+/// Only lifecycle metadata is persisted; never prompts or tool arguments.
+#[derive(Serialize, Deserialize)]
+pub struct LifecycleReport {
+    pub state: crate::status::StatusState,
+    pub sequence: u64,
+}
+fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
+    use crate::status::StatusState::*;
+    // A subagent finishing must not mark the owning conversation idle.
+    if value.get("agent_id").and_then(Value::as_str).is_some() {
+        return None;
+    }
+    Some(match value["hook_event_name"].as_str()? {
+        "SessionStart" | "Stop" => Idle,
+        "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" => Working,
+        "PreToolUse" if value["tool_name"] == "AskUserQuestion" => Question,
+        "PreToolUse" => Working,
+        "PermissionRequest" => Blocked,
+        "StopFailure" if value["error"] == "rate_limit" => Blocked,
+        "StopFailure" => Failed,
+        "Notification" => match value["notification_type"].as_str()? {
+            "permission_prompt" => Blocked,
+            "elicitation_dialog" => Question,
+            "idle_prompt" => Idle,
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+pub async fn read_lifecycle(report: &Path) -> Option<LifecycleReport> {
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(report.with_file_name("status.json"))
+        .await
+        .ok()?;
+    let mut bytes = Vec::new();
+    file.take(1025).read_to_end(&mut bytes).await.ok()?;
+    if bytes.len() > 1024 {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
 pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
     if let Some(report) = report {
         // Reports contain only two bounded strings, never the original hook payload.
@@ -123,6 +192,58 @@ pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn lifecycle_events_store_only_state_and_ignore_subagents() {
+        use crate::status::StatusState::*;
+        let mut command = CommandBuilder::new("claude");
+        let tracker = Tracker::install(&mut command).unwrap();
+        let settings: Value =
+            serde_json::from_str(&command.get_argv()[2].to_string_lossy()).unwrap();
+        for (event, expected) in [
+            ("SessionStart", Idle),
+            ("UserPromptSubmit", Working),
+            ("PermissionRequest", Blocked),
+            ("PostToolUse", Working),
+            ("Stop", Idle),
+            ("StopFailure", Failed),
+        ] {
+            assert!(settings["hooks"][event].is_array());
+            receive_from(
+                &tracker.report(),
+                json!({"hook_event_name":event,"prompt":"SECRET"})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(
+                read_lifecycle(&tracker.report()).await.unwrap().state,
+                expected
+            );
+        }
+        receive_from(
+            &tracker.report(),
+            br#"{"hook_event_name":"Stop","agent_id":"child"}"#.as_slice(),
+        )
+        .unwrap();
+        assert_eq!(
+            read_lifecycle(&tracker.report()).await.unwrap().state,
+            Failed
+        );
+        let bytes =
+            std::fs::read_to_string(tracker.report().with_file_name("status.json")).unwrap();
+        assert!(!bytes.contains("SECRET"));
+        assert!(
+            lifecycle_state(
+                &json!({"hook_event_name":"Notification","notification_type":"auth_success"})
+            )
+            .is_none()
+        );
+        assert_eq!(
+            lifecycle_state(&json!({"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"})),
+            Some(Question)
+        );
+    }
+
     #[test]
     fn edited_file_and_cwd_are_explicit_signals() {
         let root = std::env::temp_dir();

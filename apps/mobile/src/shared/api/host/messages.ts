@@ -21,12 +21,14 @@ function program(value: unknown): boolean {
 }
 function sessionStatus(value: unknown): boolean {
   if (!record(value) || !integer(value.updatedAt)) return false;
+  if (value.evidence !== undefined && (value.evidence !== 'hook' || value.source !== 'screen'))
+    return false;
   if (value.source === 'activity')
     return value.state === 'working' || value.state === 'idle' || value.state === 'unknown';
   if (value.source === 'process')
     return value.state === 'done' || value.state === 'failed' || value.state === 'unknown';
   return (
-    value.source === 'screen' &&
+    (value.source === 'screen' || value.source === 'hook') &&
     typeof value.state === 'string' &&
     ['working', 'idle', 'done', 'blocked', 'question', 'failed', 'unknown'].includes(value.state)
   );
@@ -97,7 +99,7 @@ function session(value: unknown): value is RecordValue {
         integer(value.attention.sequence, 1) &&
         (value.attention.source === undefined ||
           (typeof value.attention.source === 'string' &&
-            ['activity', 'screen', 'process'].includes(value.attention.source))) &&
+            ['activity', 'screen', 'hook', 'process'].includes(value.attention.source))) &&
         integer(value.attention.at) &&
         typeof value.attention.unread === 'boolean' &&
         typeof value.attention.kind === 'string' &&

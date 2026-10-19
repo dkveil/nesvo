@@ -173,6 +173,9 @@ test('session status preserves its evidence source and rejects invented or malfo
     { state: 'blocked', source: 'screen', updatedAt: 103 },
     { state: 'done', source: 'process', updatedAt: 104 },
     { state: 'failed', source: 'process', updatedAt: 105 },
+    { state: 'working', source: 'screen', evidence: 'hook', updatedAt: 106 },
+    { state: 'idle', source: 'hook', updatedAt: 107 },
+    { state: 'blocked', source: 'hook', updatedAt: 108 },
   ]) {
     const message = { ...snapshot, sessions: [{ ...session, status }] };
     assert.deepEqual(decodeServerMessage(message), message);

@@ -18,30 +18,63 @@ pub enum State {
 pub enum Source {
     Activity,
     Screen,
+    Hook,
     Process,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(from = "WireStatus")]
 pub struct Status {
     pub state: State,
     pub source: Source,
     // Preserve the required wire field without introducing wall-clock reads in rendering.
-    #[serde(rename = "updatedAt")]
     pub _updated_at: u64,
+}
+
+#[derive(Deserialize)]
+struct WireStatus {
+    state: State,
+    source: Source,
+    #[serde(default)]
+    evidence: Option<String>,
+    #[serde(rename = "updatedAt")]
+    updated_at: u64,
+}
+impl From<WireStatus> for Status {
+    fn from(wire: WireStatus) -> Self {
+        Self {
+            state: wire.state,
+            source: if wire.source == Source::Screen && wire.evidence.as_deref() == Some("hook") {
+                Source::Hook
+            } else {
+                wire.source
+            },
+            _updated_at: wire.updated_at,
+        }
+    }
 }
 
 impl Status {
     pub fn attention_priority(&self) -> u8 {
         match (self.source, self.state) {
-            (Source::Screen, State::Question) => 3,
-            (Source::Screen, State::Blocked) => 2,
-            (Source::Screen | Source::Process, State::Failed) => 1,
+            (Source::Screen | Source::Hook, State::Question) => 3,
+            (Source::Screen | Source::Hook, State::Blocked) => 2,
+            (Source::Screen | Source::Hook | Source::Process, State::Failed) => 1,
             _ => 0,
         }
     }
 
     pub fn label(&self) -> &'static str {
         match (self.source, self.state) {
+            (Source::Hook, state) => match state {
+                State::Working => "running",
+                State::Idle => "idle",
+                State::Done => "done",
+                State::Blocked => "blocked",
+                State::Question => "question",
+                State::Failed => "failed",
+                State::Unknown => "unknown",
+            },
             (Source::Activity, State::Working) => "open",
             (Source::Activity, State::Idle) => "quiet",
             (Source::Activity, _) => "unknown",
@@ -62,6 +95,19 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hook_states_are_confirmed_and_participate_in_attention() {
+        let mut status: Status = serde_json::from_str(
+            r#"{"state":"working","source":"screen","evidence":"hook","updatedAt":1}"#,
+        )
+        .unwrap();
+        assert_eq!(status.label(), "running");
+        status.state = State::Idle;
+        assert_eq!(status.label(), "idle");
+        status.state = State::Blocked;
+        assert_eq!(status.attention_priority(), 2);
+        assert_eq!(status.label(), "blocked");
+    }
     #[test]
     fn terminal_io_does_not_claim_agent_work_and_screen_is_inferred() {
         let mut status = Status {

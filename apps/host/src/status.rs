@@ -1,11 +1,11 @@
 //! Observed terminal activity and conservative, informational CLI screen hints.
 use crate::launchers::Program;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const QUIET_MS: u64 = 1_500;
 const VISIBLE_TAIL_LINES: usize = 12;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StatusState {
     Working,
@@ -17,15 +17,16 @@ pub enum StatusState {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StatusSource {
     Activity,
     Screen,
+    Hook,
     Process,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
     pub state: StatusState,
@@ -38,6 +39,9 @@ pub struct StatusTracker {
     parser: Option<vt100::Parser>,
     screen_hint: Option<StatusState>,
     screen_dirty: bool,
+    lifecycle: Option<StatusState>,
+    lifecycle_sequence: u64,
+    lifecycle_received: u64,
     last_activity: Option<u64>,
     exited: bool,
     exit_code: Option<u32>,
@@ -56,6 +60,9 @@ impl StatusTracker {
             parser: (program != Program::Shell).then(|| vt100::Parser::new(rows, cols, 0)),
             screen_hint: None,
             screen_dirty: false,
+            lifecycle: None,
+            lifecycle_sequence: 0,
+            lifecycle_received: 0,
             last_activity: None,
             exited: false,
             exit_code: None,
@@ -65,6 +72,17 @@ impl StatusTracker {
                 updated_at: now,
             },
         }
+    }
+
+    pub fn lifecycle(&mut self, report: crate::agent_context::LifecycleReport, now: u64) {
+        if self.exited || report.sequence <= self.lifecycle_sequence {
+            return;
+        }
+        self.lifecycle_sequence = report.sequence;
+        self.lifecycle_received = now;
+        self.lifecycle = Some(report.state);
+        self.screen_hint = None;
+        self.screen_dirty = false;
     }
 
     pub fn rate_limited(&self) -> bool {
@@ -132,8 +150,17 @@ impl StatusTracker {
                     .and_then(|parser| infer_screen(self.program, parser.screen()));
                 self.screen_dirty = false;
             }
-            if let Some(hint) = self.screen_hint {
+            let screen = self.screen_hint.filter(|_| {
+                self.lifecycle.is_none()
+                    || (now.saturating_sub(self.lifecycle_received) >= 750
+                        && self
+                            .last_activity
+                            .is_some_and(|at| at > self.lifecycle_received))
+            });
+            if let Some(hint) = screen {
                 (hint, StatusSource::Screen)
+            } else if let Some(hint) = self.lifecycle {
+                (hint, StatusSource::Hook)
             } else if self
                 .last_activity
                 .is_some_and(|last| now.saturating_sub(last) < QUIET_MS)
@@ -266,7 +293,15 @@ fn infer_screen(program: Program, screen: &vt100::Screen) -> Option<StatusState>
             {
                 return Some(StatusState::Blocked);
             }
-            if footer.iter().any(|line| line.contains("? for shortcuts"))
+            if footer
+                .iter()
+                .any(|line| line.to_lowercase().contains("esc to interrupt"))
+            {
+                return Some(StatusState::Working);
+            }
+            if footer
+                .iter()
+                .any(|line| line.contains("? for shortcuts") || line.contains("shift+tab to cycle"))
                 && cursor_has_prompt(screen, '❯')
             {
                 return Some(StatusState::Idle);
@@ -290,6 +325,60 @@ fn cursor_has_prompt(screen: &vt100::Screen, marker: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_survives_silence_rejects_old_events_and_yields_to_exit() {
+        let mut tracker = StatusTracker::new(Program::Claude, 24, 100, 0);
+        let report = |state, sequence| crate::agent_context::LifecycleReport { state, sequence };
+        tracker.lifecycle(report(StatusState::Working, 1), 10);
+        tracker.refresh(60_000);
+        assert_eq!(
+            (tracker.status.state, tracker.status.source),
+            (StatusState::Working, StatusSource::Hook)
+        );
+        tracker.lifecycle(report(StatusState::Blocked, 2), 60_001);
+        tracker.refresh(60_100);
+        assert_eq!(tracker.status.state, StatusState::Blocked);
+        tracker.lifecycle(report(StatusState::Working, 1), 60_200);
+        tracker.refresh(60_300);
+        assert_eq!(tracker.status.state, StatusState::Blocked);
+        tracker.lifecycle(report(StatusState::Idle, 3), 60_400);
+        tracker.refresh(60_500);
+        assert_eq!(tracker.status.state, StatusState::Idle);
+        tracker.exited(Some(1));
+        tracker.lifecycle(report(StatusState::Working, 4), 60_600);
+        tracker.refresh(60_700);
+        assert_eq!(
+            (tracker.status.state, tracker.status.source),
+            (StatusState::Failed, StatusSource::Process)
+        );
+    }
+
+    #[test]
+    fn claude_current_permission_mode_footer_recognizes_idle_and_interrupt() {
+        let mut tracker = StatusTracker::new(Program::Claude, 24, 100, 0);
+        tracker.lifecycle(
+            crate::agent_context::LifecycleReport {
+                state: StatusState::Working,
+                sequence: 1,
+            },
+            10,
+        );
+        tracker.output(
+            "\x1b[2J\x1b[H❯ \r\naccept edits on (shift+tab to cycle)\x1b[1;3H",
+            100,
+        );
+        tracker.refresh(250);
+        assert_eq!(tracker.status.source, StatusSource::Hook);
+        tracker.refresh(1000);
+        assert_eq!(
+            (tracker.status.state, tracker.status.source),
+            (StatusState::Idle, StatusSource::Screen)
+        );
+        tracker.output("\x1b[2J\x1b[H✻ Thinking… (esc to interrupt)", 1100);
+        tracker.refresh(1200);
+        assert_eq!(tracker.status.state, StatusState::Working);
+    }
 
     #[test]
     fn quota_detection_uses_current_screen_and_never_marks_shell_output() {

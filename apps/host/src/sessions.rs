@@ -229,6 +229,14 @@ impl State {
                 info["controllerId"] =
                     json!(session.controller.as_ref().map(|lease| lease.client_id));
                 info["status"] = json!(session.status.status());
+                // Legacy v2 clients accept screen evidence and ignore extra fields.
+                if session.status.status().source == crate::status::StatusSource::Hook {
+                    info["status"]["source"] = json!("screen");
+                    info["status"]["evidence"] = json!("hook");
+                }
+                if info["attention"]["source"] == "hook" {
+                    info["attention"]["source"] = json!("screen");
+                }
                 info["rateLimited"] = json!(session.status.rate_limited());
                 info["wakeAt"] = json!(session.wake_at);
                 info
@@ -1190,6 +1198,36 @@ fn spawn_session(
 }
 
 pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receiver<PtyEvent>) {
+    let weak = Arc::downgrade(&state);
+    // File I/O runs independently of PTY dispatch and outside the host mutex.
+    let lifecycle_task = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(500));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let Some(state) = weak.upgrade() else { break };
+            let reports: Vec<_> = state
+                .lock()
+                .unwrap()
+                .sessions
+                .iter()
+                .filter(|(_, session)| session.info.running)
+                .filter_map(|(id, session)| {
+                    session
+                        .agent_context
+                        .as_ref()
+                        .map(|tracker| (id.clone(), tracker.report()))
+                })
+                .collect();
+            for (id, path) in reports {
+                if let Some(report) = crate::agent_context::read_lifecycle(&path).await
+                    && let Some(session) = state.lock().unwrap().sessions.get_mut(&id)
+                {
+                    session.status.lifecycle(report, now_millis());
+                }
+            }
+        }
+    });
     let mut status_tick = tokio::time::interval(Duration::from_millis(250));
     status_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -1252,6 +1290,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
             }
         }
     }
+    lifecycle_task.abort();
 }
 
 #[cfg(test)]

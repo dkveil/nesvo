@@ -76,3 +76,7 @@ Output remains bounded transcript replay, not a full VT screen snapshot. Histori
 ## Rust client codec
 
 The shared `nesvo-wire` crate exports `nesvo_wire::{encode_client,decode_host}` with the same arguments as `encode`/`decode`; those existing wrappers retain host direction. The host keeps `nesvo_host::wire` as a compatibility re-export, while the TUI depends directly on the shared crate. Use a fresh random client nonce for every connection and verify the echoed nonce before trusting events. `encode_client` starts at sequence 1 for auth; `decode_host` starts at sequence 1 for connected.
+
+### Confirmed agent status evidence
+
+Session status may include additive `evidence: "hook"` alongside `source: "screen"`. Updated clients can display this as confirmed lifecycle evidence; older clients continue to accept the status as inferred. The source enum sent to legacy clients is unchanged. See [agent session status](agent-session-status.md).

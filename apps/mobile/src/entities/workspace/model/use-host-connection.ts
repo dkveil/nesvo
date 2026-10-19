@@ -61,7 +61,7 @@ export function useHostConnection(mode: WorkspaceMode) {
           project: session.cwd.split(/[\\/]/).filter(Boolean).at(-1) || session.cwd,
           host: pairingRef.current ? new URL(pairingRef.current.url).hostname : 'Komputer',
           status: session.status?.state ?? 'unknown',
-          statusSource: session.status?.source,
+          statusSource: session.status?.evidence === 'hook' ? 'hook' : session.status?.source,
           statusUpdatedAt: session.status?.updatedAt,
           preview: session.running
             ? 'Sesja działa na Twoim komputerze'
