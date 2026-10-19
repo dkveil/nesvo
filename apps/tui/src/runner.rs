@@ -136,6 +136,7 @@ pub fn run(
         .and_then(|path| crate::workspace_layout::WorkspaceLayout::load(path).ok());
     let mut layout_loaded = false;
     let mut layout_saved_at = Instant::now();
+    let mut runtime_updated_at = Instant::now();
     let mut requested_sizes = HashMap::new();
     let mut last_draw = Instant::now() - Duration::from_secs(1);
     let mut dirty = true;
@@ -172,6 +173,10 @@ pub fn run(
             dirty = true;
         }
         let phase = Instant::now();
+        if runtime_updated_at.elapsed() >= Duration::from_secs(1) {
+            dirty |= app.refresh_session_times(phase);
+            runtime_updated_at = phase;
+        }
         if layout_loaded && app.connected && layout_saved_at.elapsed() >= Duration::from_secs(1) {
             let current = crate::workspace_layout::WorkspaceLayout::capture(&app);
             if saved_layout.as_ref() != Some(&current) {

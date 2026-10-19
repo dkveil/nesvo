@@ -63,33 +63,6 @@ impl Status {
             _ => 0,
         }
     }
-
-    pub fn label(&self) -> &'static str {
-        match (self.source, self.state) {
-            (Source::Hook, state) => match state {
-                State::Working => "running",
-                State::Idle => "idle",
-                State::Done => "done",
-                State::Blocked => "blocked",
-                State::Question => "question",
-                State::Failed => "failed",
-                State::Unknown => "unknown",
-            },
-            (Source::Activity, State::Working) => "open",
-            (Source::Activity, State::Idle) => "quiet",
-            (Source::Activity, _) => "unknown",
-            (Source::Screen, State::Working) => "~working",
-            (Source::Screen, State::Idle) => "~idle",
-            (Source::Screen, State::Done) => "~done",
-            (Source::Screen, State::Blocked) => "~blocked",
-            (Source::Screen, State::Question) => "~question",
-            (Source::Screen, State::Failed) => "~failed",
-            (Source::Screen, State::Unknown) => "unknown",
-            (Source::Process, State::Done) => "done",
-            (Source::Process, State::Failed) => "failed",
-            (Source::Process, _) => "unknown",
-        }
-    }
 }
 
 #[cfg(test)]
@@ -101,28 +74,10 @@ mod tests {
             r#"{"state":"working","source":"screen","evidence":"hook","updatedAt":1}"#,
         )
         .unwrap();
-        assert_eq!(status.label(), "running");
+        assert_eq!(status.source, Source::Hook);
         status.state = State::Idle;
-        assert_eq!(status.label(), "idle");
+        assert_eq!(status.attention_priority(), 0);
         status.state = State::Blocked;
         assert_eq!(status.attention_priority(), 2);
-        assert_eq!(status.label(), "blocked");
-    }
-    #[test]
-    fn terminal_io_does_not_claim_agent_work_and_screen_is_inferred() {
-        let mut status = Status {
-            state: State::Working,
-            source: Source::Activity,
-            _updated_at: 1,
-        };
-        assert_eq!(status.label(), "open");
-        status.state = State::Idle;
-        assert_eq!(status.label(), "quiet");
-        status.state = State::Done;
-        assert_eq!(status.label(), "unknown");
-        status.source = Source::Screen;
-        assert_eq!(status.label(), "~done");
-        status.source = Source::Process;
-        assert_eq!(status.label(), "done");
     }
 }

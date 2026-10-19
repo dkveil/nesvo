@@ -28,6 +28,12 @@ pub struct Session {
     pub rows: u16,
     pub running: bool,
     #[serde(default)]
+    pub uptime_seconds: Option<u64>,
+    #[serde(skip, default = "std::time::Instant::now")]
+    received_at: std::time::Instant,
+    #[serde(skip)]
+    pub runtime_label: String,
+    #[serde(default)]
     pub rate_limited: bool,
     #[serde(default)]
     pub wake_at: Option<i64>,
@@ -39,6 +45,27 @@ pub struct Session {
     pub controller_id: Option<u64>,
     #[serde(default)]
     pub status: Option<Status>,
+}
+
+impl Session {
+    fn refresh_time(&mut self, now: std::time::Instant) -> bool {
+        let label = self
+            .uptime_seconds
+            .map(|seconds| {
+                let live = if self.running {
+                    now.saturating_duration_since(self.received_at).as_secs()
+                } else {
+                    0
+                };
+                crate::session_row::duration_label(seconds.saturating_add(live))
+            })
+            .unwrap_or_else(|| "—".into());
+        if self.runtime_label == label {
+            return false;
+        }
+        self.runtime_label = label;
+        true
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -297,6 +324,14 @@ impl App {
             pending_selection: None,
             pending_directory: None,
         }
+    }
+
+    pub fn refresh_session_times(&mut self, now: std::time::Instant) -> bool {
+        let mut changed = false;
+        for session in &mut self.sessions {
+            changed |= session.refresh_time(now);
+        }
+        changed
     }
 
     pub fn session(&self, id: &str) -> Option<&Session> {
@@ -727,6 +762,7 @@ impl App {
                     .map(|id| RowKind::Session(id.clone()))
                     .or_else(|| self.selected_row().map(|row| row.kind));
                 self.sessions = serde_json::from_value(event["sessions"].clone())?;
+                self.refresh_session_times(std::time::Instant::now());
                 self.groups = serde_json::from_value(event["groups"].clone())?;
                 self.collapsed
                     .retain(|id| self.groups.iter().any(|group| &group.id == id));
@@ -1237,6 +1273,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn session_time_advances_locally_freezes_on_exit_and_accepts_legacy_hosts() {
+        use std::time::{Duration, Instant};
+        let mut session: Session = serde_json::from_value(json!({"id":"s","name":"S","cwd":".","running":true,"cols":80,"rows":24,"groupId":null,"controllerId":null,"uptimeSeconds":59})).unwrap();
+        let now = Instant::now();
+        session.received_at = now;
+        assert!(session.refresh_time(now));
+        assert_eq!(session.runtime_label, "<1m");
+        assert!(!session.refresh_time(now + Duration::from_millis(500)));
+        assert!(session.refresh_time(now + Duration::from_secs(1)));
+        assert_eq!(session.runtime_label, "1m");
+        session.running = false;
+        session.uptime_seconds = Some(120);
+        session.refresh_time(now + Duration::from_secs(86400));
+        assert_eq!(session.runtime_label, "2m");
+        session.uptime_seconds = None;
+        session.refresh_time(now);
+        assert_eq!(session.runtime_label, "—");
+    }
+
+    #[test]
     fn fullscreen_review_refreshes_and_recovers_expired_requests() {
         let mut app = App::new(1);
         app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[{"id":"s","name":"Shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}]})).unwrap();
@@ -1397,13 +1453,19 @@ mod tests {
             json!({"state":"blocked","source":"screen","updatedAt":1});
         app.event(snapshot.clone()).unwrap();
         app.collapsed.insert("a".into());
-        assert_eq!(app.group_attention("a").unwrap().label(), "~blocked");
+        assert_eq!(
+            app.group_attention("a").unwrap().state,
+            crate::status::State::Blocked
+        );
         let mut question = snapshot["sessions"][0].clone();
         question["id"] = "q".into();
         question["status"] = json!({"state":"question","source":"screen","updatedAt":2});
         snapshot["sessions"].as_array_mut().unwrap().push(question);
         app.event(snapshot).unwrap();
-        assert_eq!(app.group_attention("a").unwrap().label(), "~question");
+        assert_eq!(
+            app.group_attention("a").unwrap().state,
+            crate::status::State::Question
+        );
         assert!(app.group_attention("unrelated").is_none());
     }
 

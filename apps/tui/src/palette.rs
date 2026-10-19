@@ -49,9 +49,10 @@ pub fn results(app: &App, query: &str) -> Vec<ResultRow> {
                     target: Target::Session(s.id.clone()),
                     title: s.name.clone(),
                     context: format!(
-                        "{} · {} · {}",
+                        "{} · {} · {} · {}",
                         app.effective_program(s).label(),
-                        crate::ui::display_status(s),
+                        crate::session_row::status_label(s, app.effective_program(s)).text,
+                        s.runtime_label,
                         s.cwd
                     ),
                 }),

@@ -225,68 +225,8 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
         );
         let row_y = layout.results.y + (index - start) as u16 * row_height;
         let session = result.target.session_id().and_then(|id| app.session(id));
-        let status = session.map(crate::ui::display_status).unwrap_or("");
-        let status_width = if !inline && session.is_some() && layout.results.width >= 42 {
-            12
-        } else {
-            0
-        };
-        let project_width = if !inline && session.is_some() && layout.results.width >= 60 {
-            14
-        } else {
-            0
-        };
-        let name_width = layout
-            .results
-            .width
-            .saturating_sub(status_width + project_width + 5) as usize;
-        let name = elide(&result.title, name_width);
-        let (kind, color) = match &result.target {
-            crate::palette::Target::Session(_) => (
-                session.map_or("·", |s| app.effective_program(s).icon(app.ascii_icons)),
-                session.map_or(MUTED, |s| {
-                    crate::ui::program_color(app.effective_program(s))
-                }),
-            ),
-            crate::palette::Target::Group(_) => ("/", MUTED),
-            crate::palette::Target::Command(_) => (">", MUTED),
-        };
-        let mut spans = vec![Span::styled(
-            format!(" {kind} "),
-            Style::default().fg(color),
-        )];
-        spans.extend(matched_name(&name, query, app.theme.accent()));
-        frame.render_widget(
-            Paragraph::new(Line::from(spans)),
-            Rect::new(
-                layout.results.x,
-                row_y,
-                layout
-                    .results
-                    .width
-                    .saturating_sub(status_width + project_width + 1),
-                1,
-            ),
-        );
-        if status_width > 0 {
-            frame.render_widget(
-                Paragraph::new(elide(status, status_width as usize))
-                    .right_aligned()
-                    .style(Style::default().fg(crate::ui::status_color(
-                        session.and_then(|s| s.status.as_ref()),
-                        app.theme,
-                    ))),
-                Rect::new(
-                    layout.results.right() - status_width - 1,
-                    row_y,
-                    status_width,
-                    1,
-                ),
-            );
-        }
-        if project_width > 0
-            && let Some(session) = session
-        {
+        if let Some(session) = session {
+            let program = app.effective_program(session);
             let project = session
                 .cwd
                 .trim_end_matches(['/', '\\'])
@@ -294,17 +234,39 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
                 .next()
                 .unwrap_or(&session.cwd);
             frame.render_widget(
-                Paragraph::new(elide(project, project_width as usize - 2))
-                    .right_aligned()
-                    .style(Style::default().fg(MUTED)),
-                Rect::new(
-                    layout.results.right() - status_width - project_width - 2,
-                    row_y,
-                    project_width,
-                    1,
-                ),
+                crate::session_row::SessionRow {
+                    name: &session.name,
+                    icon: program.icon(app.ascii_icons),
+                    icon_color: crate::ui::program_color(program),
+                    status: crate::session_row::status_label(session, program),
+                    runtime: &session.runtime_label,
+                    project: (!inline).then_some(project),
+                    indent: 0,
+                    query: crate::model::search_scope(query).1,
+                    accent: app.theme.accent(),
+                },
+                Rect::new(layout.results.x, row_y, layout.results.width, 1),
             );
+            continue;
         }
+        let name = elide(
+            &result.title,
+            layout.results.width.saturating_sub(5) as usize,
+        );
+        let kind = match &result.target {
+            crate::palette::Target::Group(_) => "/",
+            crate::palette::Target::Command(_) => ">",
+            crate::palette::Target::Session(_) => "·",
+        };
+        let mut spans = vec![Span::styled(
+            format!(" {kind} "),
+            Style::default().fg(MUTED),
+        )];
+        spans.extend(matched_name(&name, query, app.theme.accent()));
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect::new(layout.results.x, row_y, layout.results.width, 1),
+        );
     }
     if matches.is_empty() {
         frame.render_widget(
@@ -516,7 +478,7 @@ mod tests {
             .map(|x| terminal.backend().buffer()[(x, layout.results.y)].symbol())
             .collect();
         assert!(
-            line.contains("✳") && line.contains("project") && line.contains("~question"),
+            line.contains("✳") && line.contains("project") && line.contains("~needs you"),
             "{line}"
         );
         assert_eq!(row_height(&app, size), 1);

@@ -91,7 +91,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         0
     } else {
         if app.sidebar_width == 0 {
-            30.min(area.width / 3)
+            42.min(area.width / 2).min(area.width.saturating_sub(48))
         } else {
             app.sidebar_width
                 .clamp(22, 80)
@@ -687,49 +687,21 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                 let Some(session) = app.session(id) else {
                     continue;
                 };
-                let status = session.status.as_ref();
-                let marker = if session.muted {
-                    "-"
-                } else if session.attention.as_ref().is_some_and(|a| a.unread) {
-                    "*"
-                } else {
-                    match status.map(|status| (status.source, status.state)) {
-                        Some((Source::Screen | Source::Hook, State::Working)) => "●",
-                        Some((_, State::Question)) => "?",
-                        Some((_, State::Blocked)) => "!",
-                        Some((_, State::Done)) => "✓",
-                        Some((_, State::Failed)) => "×",
-                        _ => "○",
-                    }
-                };
-                let available = usize::from(entry.width).saturating_sub(6 + indent.len());
+                let program = app.effective_program(session);
                 frame.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled(" ", Style::default().fg(app.theme.accent())),
-                        Span::raw(indent.clone()),
-                        Span::styled(
-                            app.effective_program(session).icon(app.ascii_icons),
-                            Style::default().fg(program_color(app.effective_program(session))),
-                        ),
-                        Span::raw(" "),
-                        Span::styled(
-                            truncate_cells(&row.label, available),
-                            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-                        ),
-                    ]))
-                    .style(Style::default().bg(background)),
-                    Rect::new(entry.x, entry.y, entry.width, 1),
+                    crate::session_row::SessionRow {
+                        name: &session.name,
+                        icon: program.icon(app.ascii_icons),
+                        icon_color: program_color(program),
+                        status: crate::session_row::status_label(session, program),
+                        runtime: &session.runtime_label,
+                        project: None,
+                        indent: (row.depth.min(4) * 2) as u16,
+                        query: "",
+                        accent: app.theme.accent(),
+                    },
+                    entry,
                 );
-                if entry.width >= 2 {
-                    frame.render_widget(
-                        Paragraph::new(marker).style(
-                            Style::default()
-                                .fg(status_color(status, app.theme))
-                                .bg(background),
-                        ),
-                        Rect::new(entry.right() - 2, entry.y, 1, 1),
-                    );
-                }
             }
         }
         if selected && app.mode == Mode::Navigate && app.dialog.is_none() && app.overlay.is_none() {
@@ -738,7 +710,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
             for y in entry.y..entry.bottom() {
                 for x in highlight_start..entry.right() {
                     if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
-                        cell.set_fg(BACKGROUND).set_bg(app.theme.accent());
+                        cell.set_bg(app.theme.selection());
                     }
                 }
             }
@@ -871,26 +843,6 @@ pub(crate) fn truncate_cells(text: &str, max_width: usize) -> String {
         })
         .map(|grapheme| grapheme.symbol)
         .collect()
-}
-
-pub(crate) fn display_status(session: &crate::model::Session) -> &'static str {
-    if session.rate_limited {
-        return if session.wake_at.is_some() {
-            "limit · wake armed"
-        } else {
-            "~rate limited"
-        };
-    }
-    match session.status.as_ref().map(Status::label) {
-        Some("unknown") | None => {
-            if session.running {
-                "open"
-            } else {
-                "ended"
-            }
-        }
-        Some(label) => label,
-    }
 }
 
 fn group_session_count(app: &App, id: &str) -> usize {
@@ -1703,7 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_agent_state_is_shown_as_an_open_process() {
+    fn unclassified_shell_is_shown_as_a_terminal() {
         let mut app = App::new(1);
         app.event(
             json!({"type":"sessions","revision":0,"groups":[],"sessions":[
@@ -1714,8 +1666,11 @@ mod tests {
         )
         .unwrap();
         let session = app.session("agent").unwrap();
-        assert_eq!(session.status.as_ref().unwrap().label(), "unknown");
-        assert_eq!(display_status(session), "open");
+        assert_eq!(session.status.as_ref().unwrap().state, State::Unknown);
+        assert_eq!(
+            crate::session_row::status_label(session, app.effective_program(session)).text,
+            "terminal"
+        );
         let area = Rect::new(0, 0, 100, 24);
         let layout = geometry(area, &app);
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
@@ -1724,7 +1679,10 @@ mod tests {
         let line: String = (layout.tree.x..layout.tree.right())
             .map(|x| buffer[(x, layout.tree.y + 3)].symbol())
             .collect();
-        assert!(line.contains("Claude task") && line.contains("○"), "{line}");
+        assert!(
+            line.contains("Claude task") && line.contains("terminal"),
+            "{line}"
+        );
         assert!(!line.contains("unknown"), "{line}");
     }
 
@@ -1740,7 +1698,14 @@ mod tests {
         )
         .unwrap();
         let status = app.sessions[0].status.as_ref().unwrap();
-        assert_eq!(display_status(&app.sessions[0]), "open");
+        assert_eq!(
+            crate::session_row::status_label(
+                &app.sessions[0],
+                app.effective_program(&app.sessions[0])
+            )
+            .text,
+            "unknown"
+        );
         assert_eq!(status_color(Some(status), app.theme), MUTED);
         let area = Rect::new(0, 0, 100, 30);
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
@@ -1749,13 +1714,20 @@ mod tests {
         let row: String = (tree.x..tree.right())
             .map(|x| terminal.backend().buffer()[(x, tree.y + 3)].symbol())
             .collect();
-        assert!(row.contains("○"), "{row}");
+        assert!(row.contains("unknown"), "{row}");
         app.sessions[0].status = Some(Status {
             state: State::Working,
             source: Source::Screen,
             _updated_at: 2,
         });
-        assert_eq!(display_status(&app.sessions[0]), "~working");
+        assert_eq!(
+            crate::session_row::status_label(
+                &app.sessions[0],
+                app.effective_program(&app.sessions[0])
+            )
+            .text,
+            "~working"
+        );
         assert_eq!(
             status_color(app.sessions[0].status.as_ref(), app.theme),
             app.theme.accent()
@@ -1846,14 +1818,17 @@ mod tests {
         assert!(line(tree.y + 1).contains("sessions"));
         assert!(line(group.y).contains("Workspace"));
         assert!(!line(group.y).contains('▣'));
-        assert!(line(agent.y).contains("?"));
+        assert!(line(agent.y).contains("~needs you"));
         assert!(line(agent.y).contains("✳"));
         app.selected = agent_index;
         app.mode = Mode::Navigate;
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         for y in agent.y..agent.bottom() {
             for x in agent.x..agent.right() {
-                assert_eq!(terminal.backend().buffer()[(x, y)].bg, app.theme.accent());
+                assert_eq!(
+                    terminal.backend().buffer()[(x, y)].bg,
+                    app.theme.selection()
+                );
             }
         }
     }
@@ -1895,7 +1870,7 @@ mod tests {
             .map(|x| buffer[(x, group_y)].symbol())
             .collect();
         assert!(group.contains("A very long"), "{group}");
-        assert_eq!(buffer[(tree.x + 1, group_y)].bg, app.theme.accent());
+        assert_eq!(buffer[(tree.x + 1, group_y)].bg, app.theme.selection());
     }
 
     #[test]

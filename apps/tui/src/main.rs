@@ -10,6 +10,7 @@ mod preferences;
 mod review;
 mod runner;
 mod selection;
+mod session_row;
 mod shortcuts;
 mod status;
 mod terminal;
