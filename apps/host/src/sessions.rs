@@ -67,6 +67,9 @@ struct Session {
     agent_context: Option<crate::agent_context::Tracker>,
     info: SessionInfo,
     status: StatusTracker,
+    terminal_protocol: crate::terminal_protocol::Decoder,
+    program_status: crate::program_status::Records,
+    program_status_dirty: bool,
     pty: Pty,
     backlog: String,
     controller: Option<ControlLease>,
@@ -242,7 +245,15 @@ impl State {
                     info["status"]["source"] = json!("screen");
                     info["status"]["evidence"] = json!("hook");
                 }
-                if info["attention"]["source"] == "hook" {
+                if session.status.status().source == crate::status::StatusSource::Program {
+                    info["status"]["source"] = json!("screen");
+                    info["status"]["confirmedSource"] = json!("osc7501");
+                }
+                info["programStatus"] = session.program_status.summary();
+                if matches!(
+                    info["attention"]["source"].as_str(),
+                    Some("hook" | "program")
+                ) {
                     info["attention"]["source"] = json!("screen");
                 }
                 info["rateLimited"] = json!(session.status.rate_limited());
@@ -339,6 +350,7 @@ impl State {
         let mut alerts = Vec::new();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
+            changed |= std::mem::take(&mut session.program_status_dirty);
             if session.auto_title
                 && let Some(title) = &session.titles.title
                 && session.info.name != *title
@@ -1184,6 +1196,9 @@ fn spawn_session(
         elapsed_at_exit: None,
         agent_context,
         status: StatusTracker::new(program, 24, 80, now_millis()),
+        terminal_protocol: Default::default(),
+        program_status: Default::default(),
+        program_status_dirty: false,
         info: SessionInfo {
             id,
             name: name.into(),
@@ -1252,6 +1267,51 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
         match event {
             PtyEvent::Data(id, data) => {
                 if let Some(session) = state.sessions.get_mut(&id) {
+                    let feed = session.terminal_protocol.feed(&data);
+                    let previous_root = session.program_status.root().cloned();
+                    let mut root_reported = false;
+                    let mut replies = String::new();
+                    for event in feed.events {
+                        if !session.info.running {
+                            continue;
+                        }
+                        match event {
+                            crate::terminal_protocol::Event::Reply(reply) => {
+                                // Bound reply amplification per PTY chunk and enqueue once.
+                                if replies.len() + reply.len() <= 4096 {
+                                    replies.push_str(reply);
+                                }
+                            }
+                            crate::terminal_protocol::Event::Report(report) => {
+                                root_reported |= report.id.is_none();
+                                session.program_status.apply(report);
+                                session.program_status_dirty = true;
+                            }
+                            crate::terminal_protocol::Event::Reset => {
+                                session.program_status.reset();
+                                session.program_status_dirty = true;
+                            }
+                            crate::terminal_protocol::Event::Prompt => {
+                                session.program_status.end_program();
+                                session.program_status_dirty = true;
+                            }
+                        }
+                    }
+                    // Protocol replies precede forwarding the DA1/output sentinel and
+                    // never pass through user input/turn accounting.
+                    if !replies.is_empty()
+                        && let Err(error) = session.pty.send_input(replies)
+                    {
+                        eprintln!(
+                            "Terminal protocol replies could not be queued for {id}: {error}"
+                        );
+                    }
+                    if root_reported || previous_root.as_ref() != session.program_status.root() {
+                        session
+                            .status
+                            .program_report(session.program_status.root(), now_millis());
+                    }
+                    let data = feed.visible;
                     session.status.output(&data, now_millis());
                     if session.auto_title {
                         session.titles.feed(&data);
@@ -1273,6 +1333,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     session.info.running = false;
                     session.elapsed_at_exit = Some(session.started.elapsed());
                     session.status.exited(code);
+                    session.program_status.end_program();
                     let data = match code {
                         Some(code) => format!("\r\n[Process exited with code {code}]\r\n"),
                         None => "\r\n[Process ended without a readable exit status]\r\n".into(),

@@ -3,11 +3,12 @@ export type Pairing = { version: 1; url: string; key: string };
 export type SessionProgram = 'shell' | 'claude' | 'gemini' | 'codex';
 export type SessionStatusState =
   'working' | 'idle' | 'done' | 'blocked' | 'question' | 'failed' | 'unknown';
-export type SessionStatusSource = 'activity' | 'screen' | 'hook' | 'process';
+export type SessionStatusSource = 'activity' | 'screen' | 'hook' | 'program' | 'process';
 export type SessionStatus = {
   state: SessionStatusState;
   source: SessionStatusSource;
   evidence?: 'hook';
+  confirmedSource?: 'osc7501';
   updatedAt: number;
 };
 export type AttentionEvent = {

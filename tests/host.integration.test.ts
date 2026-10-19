@@ -381,6 +381,8 @@ while IFS= read -r input; do
   case "$input" in
     status-blocked*) printf '\033[2J\033[HAllow execution of [Shell]?\r\n1. Allow once\r\n2. No, suggest changes (esc)' ;;
     status-clear*) printf '\033[2J\033[HUnrecognized ordinary output\r\n' ;;
+    status-osc*) printf '\033]7501;state=working:app=fixture\007\033]7501;state=blocked:id=child:kind=question\007' ;;
+    status-reset*) printf '\033]7501;state=clear\007\033[2J\033[HClear protocol\r\n' ;;
     status-exit*) exit 7 ;;
     *) printf 'CLI_CWD=%s\nCLI_ARGC=0\nCLI_NO_COLOR=%s\n' "$PWD" "${'$'}{NO_COLOR-<unset>}" ;;
   esac
@@ -405,6 +407,8 @@ done
         const command = data.toString();
         if (command.includes('status-blocked')) process.stdout.write('\x1b[2J\x1b[HAllow execution of [Shell]?\r\n1. Allow once\r\n2. No, suggest changes (esc)');
         else if (command.includes('status-clear')) process.stdout.write('\x1b[2J\x1b[HUnrecognized ordinary output\r\n');
+        else if (command.includes('status-osc')) process.stdout.write('\x1b]7501;state=working:app=fixture\x07\x1b]7501;state=blocked:id=child:kind=question\x07');
+        else if (command.includes('status-reset')) process.stdout.write('\x1b]7501;state=clear\x07\x1b[2J\x1b[HClear protocol\r\n');
         else if (command.includes('status-exit')) process.exit(7);
         else process.stdout.write('CLI_CWD='+process.cwd()+'\nCLI_ARGC='+process.argv.length+'\nCLI_NO_COLOR='+(process.env.NO_COLOR ?? '<unset>')+'\n');
       }); process.stdin.resume();`,
@@ -567,6 +571,38 @@ done
       assert.equal(
         cleared.sessions!.find(session => session.id === created.sessionId)!.status!.source,
         'activity',
+      );
+      peer.send({ type: 'input', sessionId: created.sessionId, data: 'status-osc\r' });
+      const structured = await observer.next(
+        'sessions',
+        event =>
+          event.sessions?.some(
+            s =>
+              s.id === created.sessionId &&
+              s.status?.confirmedSource === 'osc7501' &&
+              s.status.state === 'working',
+          ) ?? false,
+      );
+      assert.equal(
+        structured.sessions!.find(s => s.id === created.sessionId)!.status!.source,
+        'screen',
+      );
+      // Child blocker must not overwrite its working parent, including after reconnect.
+      const lateObserver = new Peer(pairing);
+      await lateObserver.authenticate();
+      const late = await lateObserver.next('sessions');
+      assert.equal(late.sessions!.find(s => s.id === created.sessionId)!.status!.state, 'working');
+      await lateObserver.disconnect();
+      assert.ok(
+        !peer.events.filter(e => e.type === 'output').some(e => e.data?.includes('\x1b]7501;')),
+        'host-owned protocol is absent from live output and replay',
+      );
+      peer.send({ type: 'input', sessionId: created.sessionId, data: 'status-reset\r' });
+      await observer.next(
+        'sessions',
+        event =>
+          event.sessions?.some(s => s.id === created.sessionId && s.status?.state === 'unknown') ??
+          false,
       );
       peer.send({ type: 'input', sessionId: created.sessionId, data: 'status-exit\r' });
       const exited = await observer.next(

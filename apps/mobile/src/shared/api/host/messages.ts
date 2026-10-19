@@ -21,6 +21,11 @@ function program(value: unknown): boolean {
 }
 function sessionStatus(value: unknown): boolean {
   if (!record(value) || !integer(value.updatedAt)) return false;
+  if (
+    value.confirmedSource !== undefined &&
+    (value.confirmedSource !== 'osc7501' || value.source !== 'screen')
+  )
+    return false;
   if (value.evidence !== undefined && (value.evidence !== 'hook' || value.source !== 'screen'))
     return false;
   if (value.source === 'activity')

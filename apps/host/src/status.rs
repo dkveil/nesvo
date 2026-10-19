@@ -23,6 +23,7 @@ pub enum StatusSource {
     Activity,
     Screen,
     Hook,
+    Program,
     Process,
 }
 
@@ -42,6 +43,8 @@ pub struct StatusTracker {
     lifecycle: Option<StatusState>,
     lifecycle_sequence: u64,
     lifecycle_received: u64,
+    program_status: Option<crate::program_status::Report>,
+    program_received: u64,
     last_activity: Option<u64>,
     exited: bool,
     exit_code: Option<u32>,
@@ -63,6 +66,8 @@ impl StatusTracker {
             lifecycle: None,
             lifecycle_sequence: 0,
             lifecycle_received: 0,
+            program_status: None,
+            program_received: 0,
             last_activity: None,
             exited: false,
             exit_code: None,
@@ -91,6 +96,14 @@ impl StatusTracker {
                 .parser
                 .as_ref()
                 .is_some_and(|parser| quota_screen(parser.screen()))
+    }
+
+    pub fn program_report(&mut self, report: Option<&crate::program_status::Report>, now: u64) {
+        if self.exited {
+            return;
+        }
+        self.program_status = report.cloned();
+        self.program_received = now;
     }
 
     pub fn status(&self) -> SessionStatus {
@@ -157,7 +170,21 @@ impl StatusTracker {
                             .last_activity
                             .is_some_and(|at| at > self.lifecycle_received))
             });
-            if let Some(hint) = screen {
+            let program = self.program_status.as_ref().filter(|_| {
+                self.lifecycle.is_none() || self.program_received >= self.lifecycle_received
+            });
+            if let Some(report) = program {
+                use crate::program_status::{Kind, State};
+                let state = match report.state {
+                    State::Idle | State::Done => StatusState::Idle,
+                    State::Working => StatusState::Working,
+                    State::Blocked if report.kind == Some(Kind::Question) => StatusState::Question,
+                    State::Blocked => StatusState::Blocked,
+                    State::Error => StatusState::Failed,
+                    State::Clear => StatusState::Unknown,
+                };
+                (state, StatusSource::Program)
+            } else if let Some(hint) = screen {
                 (hint, StatusSource::Screen)
             } else if let Some(hint) = self.lifecycle {
                 (hint, StatusSource::Hook)

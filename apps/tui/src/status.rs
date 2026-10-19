@@ -19,6 +19,7 @@ pub enum Source {
     Activity,
     Screen,
     Hook,
+    Program,
     Process,
 }
 
@@ -37,6 +38,8 @@ struct WireStatus {
     source: Source,
     #[serde(default)]
     evidence: Option<String>,
+    #[serde(default, rename = "confirmedSource")]
+    confirmed_source: Option<String>,
     #[serde(rename = "updatedAt")]
     updated_at: u64,
 }
@@ -46,6 +49,10 @@ impl From<WireStatus> for Status {
             state: wire.state,
             source: if wire.source == Source::Screen && wire.evidence.as_deref() == Some("hook") {
                 Source::Hook
+            } else if wire.source == Source::Screen
+                && wire.confirmed_source.as_deref() == Some("osc7501")
+            {
+                Source::Program
             } else {
                 wire.source
             },
@@ -57,9 +64,9 @@ impl From<WireStatus> for Status {
 impl Status {
     pub fn attention_priority(&self) -> u8 {
         match (self.source, self.state) {
-            (Source::Screen | Source::Hook, State::Question) => 3,
-            (Source::Screen | Source::Hook, State::Blocked) => 2,
-            (Source::Screen | Source::Hook | Source::Process, State::Failed) => 1,
+            (Source::Screen | Source::Hook | Source::Program, State::Question) => 3,
+            (Source::Screen | Source::Hook | Source::Program, State::Blocked) => 2,
+            (Source::Screen | Source::Hook | Source::Program | Source::Process, State::Failed) => 1,
             _ => 0,
         }
     }
@@ -68,6 +75,15 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn program_status_is_confirmed_without_breaking_legacy_screen_wire() {
+        let status: Status = serde_json::from_str(
+            r#"{"state":"blocked","source":"screen","confirmedSource":"osc7501","updatedAt":2}"#,
+        )
+        .unwrap();
+        assert_eq!(status.source, Source::Program);
+        assert_eq!(status.attention_priority(), 2);
+    }
     #[test]
     fn hook_states_are_confirmed_and_participate_in_attention() {
         let mut status: Status = serde_json::from_str(

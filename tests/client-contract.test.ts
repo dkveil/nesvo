@@ -29,6 +29,19 @@ const session = {
   controllerId: null,
 };
 
+test('program status retains legacy wire sources and validates structured provenance', () => {
+  const status = { state: 'blocked', source: 'screen', confirmedSource: 'osc7501', updatedAt: 1 };
+  const snapshot = { type: 'sessions', groups, sessions: [{ ...session, status }], revision: 0 };
+  assert.equal(decodeServerMessage(snapshot).type, 'sessions');
+  for (const invalid of [
+    { ...status, confirmedSource: 'arbitrary' },
+    { ...status, source: 'activity' },
+  ])
+    assert.throws(() =>
+      decodeServerMessage({ ...snapshot, sessions: [{ ...session, status: invalid }] }),
+    );
+});
+
 test('group navigation includes descendants, preserves sibling ordering and never mutates snapshots', () => {
   const before = structuredClone(groups);
   assert.deepEqual([...groupDescendants(groups, 'root')].sort(), ['child', 'grandchild', 'root']);

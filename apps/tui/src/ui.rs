@@ -871,10 +871,18 @@ fn group_session_count(app: &App, id: &str) -> usize {
 
 pub(crate) fn status_color(status: Option<&Status>, theme: Theme) -> Color {
     match status.map(|status| (status.source, status.state)) {
-        Some((Source::Screen | Source::Hook, State::Question | State::Blocked)) => WARNING,
-        Some((Source::Process | Source::Screen | Source::Hook, State::Failed)) => DANGER,
-        Some((Source::Process | Source::Screen | Source::Hook, State::Done)) => SUCCESS,
-        Some((Source::Screen | Source::Hook, State::Working)) => theme.accent(),
+        Some((
+            Source::Screen | Source::Hook | Source::Program,
+            State::Question | State::Blocked,
+        )) => WARNING,
+        Some((
+            Source::Process | Source::Screen | Source::Hook | Source::Program,
+            State::Failed,
+        )) => DANGER,
+        Some((Source::Process | Source::Screen | Source::Hook | Source::Program, State::Done)) => {
+            SUCCESS
+        }
+        Some((Source::Screen | Source::Hook | Source::Program, State::Working)) => theme.accent(),
         _ => MUTED,
     }
 }

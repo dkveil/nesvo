@@ -80,3 +80,11 @@ The shared `nesvo-wire` crate exports `nesvo_wire::{encode_client,decode_host}` 
 ### Confirmed agent status evidence
 
 Session status may include additive `evidence: "hook"` alongside `source: "screen"`. Updated clients can display this as confirmed lifecycle evidence; older clients continue to accept the status as inferred. The source enum sent to legacy clients is unchanged. See [agent session status](agent-session-status.md).
+
+Program Status Protocol reports use `source:"screen"` with additive
+`confirmedSource:"osc7501"` (not a new legacy source/evidence enum). A session may
+also include `programStatus:{root,childCount,blockedChildren,blockedChildApps}`.
+The root carries validated report fields; child text is excluded to keep snapshots
+bounded. These observations confer no control privileges. Host-owned OSC 7501 and
+primary DA1 queries are consumed from live output before backlog/subscriber
+delivery. Clients never answer them, including on first-attachment replay.

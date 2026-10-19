@@ -46,6 +46,7 @@ async function main(): Promise<void> {
   const created: string[] = [];
   const attached = new Set<string>();
   let wireError: unknown;
+  let stopAgent: (() => Promise<void>) | undefined;
   const started = performance.now();
   async function until<T>(
     read: () => T | undefined | Promise<T | undefined>,
@@ -196,20 +197,80 @@ async function main(): Promise<void> {
       let text = output.get(created[0]!) ?? '';
       if (
         process.env.NESVO_PROBE_ACCEPT_TRUST === '1' &&
-        /Yes, I trust|trust this folder|trust this project/i.test(text)
+        /Yes,Itrustthisfolder/i.test(
+          text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\s/g, ''),
+        )
       ) {
         // Explicit opt-in only acknowledges this fresh, empty fixture workspace.
-        send({ type: 'input', sessionId: created[0], data: '\r' });
+        send({ type: 'input', sessionId: created[0], data: '\x1b[B\r' });
         await delay(15000);
         text = output.get(created[0]!) ?? '';
+        const plain = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\s/g, '');
+        if (plain.includes('❯ContinuewithoutusingthisMCPserver')) {
+          // Keep discovered external tools disabled for this empty fixture.
+          send({ type: 'input', sessionId: created[0], data: '\r' });
+          await delay(12000);
+          text = output.get(created[0]!) ?? '';
+        }
       }
       const labels = ['trust', 'hooks', 'Claude Code', 'Welcome', 'API Error', 'sign in', '7501'];
+      const ready = transitions.some(t => JSON.stringify(t.sessions).includes('"evidence":"hook"'));
+      if (ready)
+        stopAgent = async () => {
+          send({ type: 'input', sessionId: created[0], data: '/exit\r' });
+          await until(
+            () =>
+              events.some(
+                e =>
+                  e.type === 'sessions' &&
+                  (e.sessions as Record<string, unknown>[]).some(
+                    s => s.id === created[0] && s.running === false,
+                  ),
+              )
+                ? true
+                : undefined,
+            'Claude exits normally',
+            15000,
+          );
+        };
+      if (ready && process.env.NESVO_PROBE_PROMPT === '1') {
+        const before = transitions.length;
+        send({
+          type: 'input',
+          sessionId: created[0],
+          data: 'Reply exactly NESVO_PROBE_OK. Do not use tools.\r',
+        });
+        await until(
+          () =>
+            transitions
+              .slice(before)
+              .some(t => JSON.stringify(t.sessions).includes('"state":"working"'))
+              ? true
+              : undefined,
+          'real turn starts',
+        );
+        await until(
+          () =>
+            (output.get(created[0]!) ?? '').includes('NESVO_PROBE_OK') &&
+            transitions
+              .slice(before)
+              .some(
+                t =>
+                  JSON.stringify(t.sessions).includes('"evidence":"hook"') &&
+                  JSON.stringify(t.sessions).includes('"state":"idle"'),
+              )
+              ? true
+              : undefined,
+          'real turn settles',
+          60000,
+        );
+      }
       const report = {
         mode,
         binary,
         transitions,
         screenMarkers: labels.filter(label => text.toLowerCase().includes(label.toLowerCase())),
-        noModelPromptSent: true,
+        noModelPromptSent: process.env.NESVO_PROBE_PROMPT !== '1' || !ready,
       };
       await mkdir('artifacts/harness', { recursive: true });
       await writeFile('artifacts/harness/claude-start.json', JSON.stringify(report, null, 2));
@@ -218,9 +279,13 @@ async function main(): Promise<void> {
       console.log(JSON.stringify(report));
     }
   } finally {
-    socket?.close();
-    await stopFixtureHost(host);
-    await rm(root, { recursive: true, force: true });
+    try {
+      await stopAgent?.();
+    } finally {
+      socket?.close();
+      await stopFixtureHost(host);
+      await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 200 });
+    }
   }
 }
 main().catch(error => {

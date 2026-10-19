@@ -99,3 +99,23 @@ unknown` by 2.3 s. Output included a folder-trust screen and OSC 7501 probe.
 
 Each green stage records commands, provider versions, measurements, limitations
 and commit IDs here, then pushes its branch. No automatic main merge or PR.
+
+### F01 implementation checkpoint
+
+- Added bounded OSC 7501 reports, independent child records, hierarchical clear,
+  reset/prompt/exit handling, host-owned probe/DA1 ordering, first ConPTY cursor
+  negotiation, and legacy-compatible structured provenance in both clients.
+- Parser/record tests, a real native PTY provider fixture, reconnect, replay
+  isolation and child-vs-parent state checks pass. Added `base64` 0.22.1, already
+  present transitively, for strict protocol text decoding.
+- fmt/Clippy pass; 122 TUI, 51 host, 3 wire, 18 client, 17 native integration
+  checks and 4 architecture checks pass locally on Windows. Mobile typecheck and
+  lint pass. The full formatter found three pre-existing unformatted documents
+  (agent-diff-context, tui-workflows, TUI README), tracked for a separate cleanup.
+- Real Claude 2.1.303: startup hook delivered after trust/MCP consent; one short
+  no-tool turn produced working and Stop/idle hook evidence and exited normally.
+  No external MCP server was approved. This does not yet establish live OSC
+  reporting in Windows ConPTY; that provider negotiation gate remains open.
+- The real turn exposed an existing freshness bug: screen idle can replace a
+  fresh working hook before Stop. F06 must address this before the status stage
+  can pass. No complete lifecycle/provider matrix or latency p95 is claimed.
