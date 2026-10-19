@@ -1032,10 +1032,14 @@ impl State {
                     "This shell has exited. Create a new session."
                 );
                 let has_input = !data.is_empty();
+                let interrupt = data == "\x03" || data == "\x1b";
                 session.pty.send_input(data)?;
                 if has_input {
                     session.wake_at = None;
                     session.status.input(now_millis());
+                    if interrupt {
+                        session.status.interrupted(now_millis());
+                    }
                 }
             }
             Command::Resize {

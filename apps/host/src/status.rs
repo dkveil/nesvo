@@ -43,6 +43,7 @@ pub struct StatusTracker {
     lifecycle: Option<StatusState>,
     lifecycle_sequence: u64,
     lifecycle_received: u64,
+    interrupt_received: Option<u64>,
     program_status: Option<crate::program_status::Report>,
     program_received: u64,
     last_activity: Option<u64>,
@@ -66,6 +67,7 @@ impl StatusTracker {
             lifecycle: None,
             lifecycle_sequence: 0,
             lifecycle_received: 0,
+            interrupt_received: None,
             program_status: None,
             program_received: 0,
             last_activity: None,
@@ -85,6 +87,7 @@ impl StatusTracker {
         }
         self.lifecycle_sequence = report.sequence;
         self.lifecycle_received = now;
+        self.interrupt_received = None;
         self.lifecycle = Some(report.state);
         self.screen_hint = None;
         self.screen_dirty = false;
@@ -131,6 +134,12 @@ impl StatusTracker {
         }
     }
 
+    pub fn interrupted(&mut self, now: u64) {
+        if !self.exited {
+            self.interrupt_received = Some(now);
+        }
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) {
         if let Some(parser) = &mut self.parser {
             parser.screen_mut().set_size(rows, cols);
@@ -163,9 +172,22 @@ impl StatusTracker {
                     .and_then(|parser| infer_screen(self.program, parser.screen()));
                 self.screen_dirty = false;
             }
-            let screen = self.screen_hint.filter(|_| {
-                self.lifecycle.is_none()
-                    || (now.saturating_sub(self.lifecycle_received) >= 750
+            let screen = self.screen_hint.filter(|hint| {
+                if self.lifecycle.is_none() {
+                    return true;
+                }
+                // A prompt can remain visible during a real turn. New output or
+                // elapsed time alone cannot turn confirmed work into idle.
+                let interrupted_work = self.interrupt_received.is_some_and(|at| {
+                    at >= self.lifecycle_received
+                        && now.saturating_sub(at) <= 5000
+                        && self.last_activity.is_some_and(|last| last > at)
+                });
+                self.lifecycle != Some(*hint)
+                    && !(*hint == StatusState::Idle
+                        && self.lifecycle == Some(StatusState::Working)
+                        && !interrupted_work)
+                    && (now.saturating_sub(self.lifecycle_received) >= 750
                         && self
                             .last_activity
                             .is_some_and(|at| at > self.lifecycle_received))
@@ -382,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_current_permission_mode_footer_recognizes_idle_and_interrupt() {
+    fn visible_idle_does_not_override_work_until_a_real_interrupt_and_new_prompt() {
         let mut tracker = StatusTracker::new(Program::Claude, 24, 100, 0);
         tracker.lifecycle(
             crate::agent_context::LifecycleReport {
@@ -398,12 +420,25 @@ mod tests {
         tracker.refresh(250);
         assert_eq!(tracker.status.source, StatusSource::Hook);
         tracker.refresh(1000);
+        assert_eq!(tracker.status.state, StatusState::Working);
+        tracker.refresh(120_000);
+        assert_eq!(
+            tracker.status.state,
+            StatusState::Working,
+            "silence is not completion"
+        );
+        tracker.interrupted(120_001);
+        tracker.output(
+            "\x1b[2J\x1b[H❯ \r\naccept edits on (shift+tab to cycle)\x1b[1;3H",
+            120_002,
+        );
+        tracker.refresh(120_003);
         assert_eq!(
             (tracker.status.state, tracker.status.source),
             (StatusState::Idle, StatusSource::Screen)
         );
-        tracker.output("\x1b[2J\x1b[H✻ Thinking… (esc to interrupt)", 1100);
-        tracker.refresh(1200);
+        tracker.output("\x1b[2J\x1b[H✻ Thinking… (esc to interrupt)", 120_004);
+        tracker.refresh(120_005);
         assert_eq!(tracker.status.state, StatusState::Working);
     }
 

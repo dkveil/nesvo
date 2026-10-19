@@ -238,13 +238,17 @@ async function main(): Promise<void> {
         send({
           type: 'input',
           sessionId: created[0],
-          data: 'Reply exactly NESVO_PROBE_OK. Do not use tools.\r',
+          data: 'Join NESVO_ and PROBE_OK into one word and reply only with that word. Do not use tools.\r',
         });
         await until(
           () =>
             transitions
               .slice(before)
-              .some(t => JSON.stringify(t.sessions).includes('"state":"working"'))
+              .some(
+                t =>
+                  JSON.stringify(t.sessions).includes('"state":"working"') &&
+                  JSON.stringify(t.sessions).includes('"evidence":"hook"'),
+              )
               ? true
               : undefined,
           'real turn starts',
@@ -263,6 +267,22 @@ async function main(): Promise<void> {
               : undefined,
           'real turn settles',
           60000,
+        );
+        const turn = transitions
+          .slice(before)
+          .flatMap(
+            t => t.sessions as { status: { state: string; source: string; evidence?: string } }[],
+          );
+        const began = turn.findIndex(
+          s => s.status.evidence === 'hook' && s.status.state === 'working',
+        );
+        const settled = turn.findIndex(
+          (s, i) => i > began && s.status.evidence === 'hook' && s.status.state === 'idle',
+        );
+        assert.ok(began >= 0 && settled > began, 'actual hook-bound turn and response observed');
+        assert.ok(
+          !turn.slice(began, settled).some(s => s.status.state === 'idle'),
+          'screen cannot manufacture idle before Stop',
         );
       }
       const report = {
