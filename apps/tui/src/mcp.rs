@@ -113,6 +113,24 @@ fn catalog() -> Vec<Tool> {
             true,
         ),
         (
+            "nesvo_interrupt_session",
+            "Submit one Ctrl+C with a durable key; never takes human control. Delivery proves only a native write, not that the agent stopped. May discard the agent's current work. Inspect the same receipt after uncertainty.",
+            object(
+                json!({"sessionId":id,"key":{"type":"string","minLength":1,"maxLength":128}}),
+                &["sessionId", "key"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_stop_session",
+            "Request native stop of this managed process once for a durable key. Destructive: can lose in-memory work. Refuses human control, retains terminal output/session record. stopRequested is not observed process exit or task success.",
+            object(
+                json!({"sessionId":id,"key":{"type":"string","minLength":1,"maxLength":128}}),
+                &["sessionId", "key"],
+            ),
+            false,
+        ),
+        (
             "nesvo_get_operation",
             "Recover a durable operation by its ID or your original idempotency key. Exactly one selector. Never resend with a fresh key after an unknown result.",
             object(
@@ -123,7 +141,7 @@ fn catalog() -> Vec<Tool> {
         ),
     ];
     definitions.into_iter().map(|(name,description,schema,read_only)| {
-        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(false).idempotent(true).open_world(!read_only))
+        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session")).idempotent(true).open_world(!read_only))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
     }).collect()
 }
@@ -171,6 +189,12 @@ struct Send {
     session_id: String,
     key: String,
     prompt: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Control {
+    session_id: String,
+    key: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -290,6 +314,15 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "operation",
             )
         }
+        "nesvo_interrupt_session" | "nesvo_stop_session" => {
+            let a: Control = parse(arguments)?;
+            cli::valid_id(&a.session_id)?;
+            cli::valid_id(&a.key)?;
+            (
+                json!({"type":if name=="nesvo_interrupt_session"{"interruptOperation"}else{"stopOperation"},"sessionId":a.session_id,"key":a.key}),
+                "operation",
+            )
+        }
         "nesvo_send_prompt" => {
             let a: Send = parse(arguments)?;
             cli::valid_id(&a.session_id)?;
@@ -374,13 +407,21 @@ impl HostTools {
                 "Cannot authenticate with the paired host",
             )
         })?;
-        if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
+        if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
+            cli::control_capability(&mut connection).await?;
+        } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
             cli::prompt_capability(&mut connection).await?;
         } else if kind == "operation" {
             cli::operation_capability(&mut connection).await?;
         }
         let mut result = cli::request(&mut connection, command, kind).await?;
-        if matches!(name, "nesvo_create_session" | "nesvo_send_prompt") {
+        if matches!(
+            name,
+            "nesvo_create_session"
+                | "nesvo_send_prompt"
+                | "nesvo_interrupt_session"
+                | "nesvo_stop_session"
+        ) {
             cli::check_receipt(&result)?;
         }
         if name == "nesvo_wait_prompt" {
@@ -463,7 +504,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 11);
+        assert_eq!(catalog().len(), 13);
         assert!(
             command(
                 "nesvo_read_session",

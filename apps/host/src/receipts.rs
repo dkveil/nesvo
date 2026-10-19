@@ -56,14 +56,14 @@ pub fn initialize(connection: &mut Connection) -> Result<()> {
     let transaction = connection.transaction()?;
     let pending: Vec<String> = {
         let mut statement = transaction.prepare(
-            "SELECT id FROM operation_receipts WHERE phase IN ('accepted','dispatching','received','started','waiting') OR (phase='delivered' AND COALESCE(json_extract(result,'$.correlation'),'launchHook')!='unavailable') LIMIT 256",
+            "SELECT id FROM operation_receipts WHERE phase IN ('accepted','dispatching','received','started','waiting') OR (operation='send' AND phase='delivered' AND COALESCE(json_extract(result,'$.correlation'),'launchHook')!='unavailable') LIMIT 256",
         )?;
         statement
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?
     };
     for id in pending {
-        transaction.execute("UPDATE operation_receipts SET phase='unknown',claim_token=NULL,result=?2 WHERE id=?1",params![id,json!({"code":"host_restart","message":"Host restarted before the launch outcome was confirmed; inspect before retrying"}).to_string()])?;
+        transaction.execute("UPDATE operation_receipts SET phase='unknown',claim_token=NULL,result=?2 WHERE id=?1",params![id,json!({"code":"host_restart","message":"Host restarted before the operation outcome was confirmed; inspect before retrying"}).to_string()])?;
         let receipt = read_record(&transaction, &id, None)?
             .ok_or_else(|| Error::new("operation_not_found", "Operation no longer exists"))?;
         append_transaction(&transaction, vec![event(&receipt)])?;
@@ -93,15 +93,15 @@ pub fn accept(
 ) -> Result<Accepted> {
     valid_key(key)?;
     ensure!(
-        matches!(operation, "create" | "send"),
+        matches!(operation, "create" | "send" | "interrupt" | "stop"),
         "Unsupported operation"
     );
-    let target = if operation == "send" {
+    let target = if operation != "create" {
         let id = request["sessionId"]
             .as_str()
-            .ok_or_else(|| Error::new("invalid_argument", "Send needs a target session"))?;
+            .ok_or_else(|| Error::new("invalid_argument", "Operation needs a target session"))?;
         if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
-            return Err(Error::new("invalid_argument", "Invalid send target").into());
+            return Err(Error::new("invalid_argument", "Invalid operation target").into());
         }
         Some(id.to_owned())
     } else {
@@ -136,7 +136,7 @@ pub fn accept(
         });
     }
     let pending: i64 = transaction.query_row(
-        "SELECT count(*) FROM operation_receipts WHERE phase IN ('accepted','dispatching','received','started','waiting') OR (phase='delivered' AND COALESCE(json_extract(result,'$.correlation'),'launchHook')!='unavailable')",
+        "SELECT count(*) FROM operation_receipts WHERE phase IN ('accepted','dispatching','received','started','waiting') OR (operation='send' AND phase='delivered' AND COALESCE(json_extract(result,'$.correlation'),'launchHook')!='unavailable')",
         [],
         |r| r.get(0),
     )?;
@@ -188,6 +188,7 @@ pub fn finish(
                 | "waiting"
                 | "settled"
                 | "interrupted"
+                | "stopRequested"
         ),
         "Invalid operation outcome"
     );
@@ -223,13 +224,15 @@ pub fn finish(
             return Err(Error::new("stale_operation", "This operation is already terminal").into());
         }
     }
-    if send && phase == "created" {
-        return Err(Error::new("invalid_argument", "A send cannot create a process").into());
-    }
-    if !send
-        && (receipt.phase != "dispatching" || !matches!(phase, "created" | "failed" | "unknown"))
-    {
-        return Err(Error::new("invalid_argument", "Invalid create transition").into());
+    let valid = match receipt.operation.as_str() {
+        "create" => matches!(phase, "created" | "failed" | "unknown"),
+        "send" => !matches!(phase, "created" | "stopRequested"),
+        "interrupt" => matches!(phase, "delivered" | "failed" | "unknown"),
+        "stop" => matches!(phase, "stopRequested" | "failed" | "unknown"),
+        _ => false,
+    };
+    if !valid || (!send && receipt.phase != "dispatching") {
+        return Err(Error::new("invalid_argument", "Invalid operation transition").into());
     }
     if send
         && matches!(

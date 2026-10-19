@@ -34,7 +34,7 @@ not evidence that the expanded acceptance criteria pass.
 | F06 | Evidence freshness and last-known state         | Partial: short hook/screen grace                              | Partial: 7445eb3; freshness/disconnect policy pending                                                    |
 | F07 | Starting, readiness and timeout                 | Missing                                                       | Implemented: readiness/timeout; platform/device matrix pending                                           |
 | F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                               |
-| F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: queries plus durable create/operation lookup; send/wait/interrupt/stop pending                  |
+| F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: all native session commands implemented; coordinator/provider end-to-end gates pending          |
 | F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                       |
 | F11 | Visible child sessions                          | Missing                                                       | Pending                                                                                                  |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: launch-local passive capabilities; coordinator grants/skill pending                             |
@@ -494,3 +494,22 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   outcome/editor reconciliation rather than silently targeting a new generation.
 - Local Windows Clippy, host unit checks and the native helper/PTY/CLI send
   regression pass with the repair. Full platform CI evidence remains separate.
+
+### F09/F10 durable interruption and stop
+
+- Added shared owner-authorized native process controls, CLI `session interrupt`
+  / `session stop` and MCP equivalents. Accepted intent and claim precede effects;
+  keys include operation kind. Replays return the original receipt without a
+  second Ctrl+C/stop, including after process exit or host restart.
+- Active human ownership refuses effects. Automated pending input is preempted;
+  editor reuse requires reconciliation. Interrupt delivery proves write/flush,
+  while stopRequested proves a native request, not observed exit or task success.
+  Session identity and terminal replay remain readable. Passive workers remain
+  unable to signal or stop anything; run/descendant cancel/drain is separate F20.
+- SQLite regression verifies transition kinds and historical controls after
+  restart. Native SDK and CLI tests exercise interrupt/stop/replay and retained
+  output; helper/PTY tests refuse both while a human holds the session. No model
+  calls, real user process termination or provider/global settings changes.
+- Windows validation: fmt/Clippy, 126 TUI + 80 host + 3 wire unit tests, the
+  explicit native SDK test, all 25 host/sync/CLI checks and formatter pass.
+  Controlled publication p95: 263.307 ms (26 batches, 53 structural events).

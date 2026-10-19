@@ -342,6 +342,7 @@ impl State {
         event["domainEvents"] = self.event_log.is_some().into();
         event["operationReceipts"] = self.event_log.is_some().into();
         event["promptReceipts"] = self.event_log.is_some().into();
+        event["controlReceipts"] = self.event_log.is_some().into();
         event
     }
 
@@ -893,6 +894,57 @@ impl State {
         working_directory(&self.workspace, spec.cwd.as_deref())
     }
 
+    pub fn dispatch_control(
+        &mut self,
+        id: &str,
+        action: crate::operations::ControlAction,
+    ) -> Result<Option<tokio::sync::oneshot::Receiver<bool>>> {
+        use crate::{api_error::Error, operations::ControlAction};
+        if self.shutting_down {
+            return Err(Error::new(
+                "host_stopping",
+                "Host is shutting down; no control effect was started",
+            )
+            .into());
+        }
+        let session = self
+            .sessions
+            .get_mut(id)
+            .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
+        if session.controller.is_some() {
+            return Err(Error::new(
+                "control_busy",
+                "Human terminal control must be released before automated interruption or stop",
+            )
+            .into());
+        }
+        if !session.info.running {
+            return Err(Error::new("process_exited", "Process has already exited").into());
+        }
+        if let Some(pending) = &session.pending_input {
+            pending.canceled.send_replace(true);
+        }
+        let answer = match action {
+            ControlAction::Interrupt => {
+                Some(session.pty.send_confirmed("\x03".into()).map_err(|_| {
+                    Error::new(
+                        "busy",
+                        "Interrupt was not queued; terminal input is unavailable",
+                    )
+                })?)
+            }
+            ControlAction::Stop => {
+                session.pty.kill()?;
+                None
+            }
+        };
+        session.human_input_dirty = true;
+        session.wake_at = None;
+        session.status.input(now_millis());
+        session.status.interrupted(now_millis());
+        session.turn.interrupt();
+        Ok(answer)
+    }
     pub fn begin_submission(
         &mut self,
         id: &str,
@@ -1275,6 +1327,8 @@ impl State {
             Command::CreateOperation { .. }
             | Command::SendOperation { .. }
             | Command::WaitOperation { .. }
+            | Command::InterruptOperation { .. }
+            | Command::StopOperation { .. }
             | Command::GetOperation { .. } => {
                 return Err(anyhow!("Operations require asynchronous dispatch"));
             }

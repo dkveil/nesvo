@@ -285,7 +285,7 @@ impl Service {
     ) -> Result<crate::receipts::Accepted> {
         self.accept_operation(issuer, key, "send", request).await
     }
-    async fn accept_operation(
+    pub(crate) async fn accept_operation(
         &self,
         issuer: String,
         key: String,
@@ -870,6 +870,72 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+    #[test]
+    fn confirmed_control_receipts_survive_restart_without_replay_or_kind_confusion() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (operation, phase) in [("interrupt", "delivered"), ("stop", "stopRequested")] {
+            let accepted = crate::receipts::accept(
+                &mut store.0,
+                "owner",
+                operation,
+                operation,
+                json!({"sessionId":"target"}),
+            )
+            .unwrap();
+            let claim = crate::receipts::claim(&mut store.0, &accepted.receipt.id, "owner")
+                .unwrap()
+                .unwrap();
+            assert!(
+                crate::receipts::finish(
+                    &mut store.0,
+                    &accepted.receipt.id,
+                    "owner",
+                    &claim.token,
+                    "created",
+                    json!({})
+                )
+                .is_err()
+            );
+            crate::receipts::finish(
+                &mut store.0,
+                &accepted.receipt.id,
+                "owner",
+                &claim.token,
+                phase,
+                json!({"taskResult":null}),
+            )
+            .unwrap();
+            crate::receipts::initialize(&mut store.0).unwrap();
+            let historical =
+                crate::receipts::get(&store.0, "owner", true, Some(&accepted.receipt.id), None)
+                    .unwrap();
+            assert_eq!(historical.receipt.phase, phase);
+            let replay = crate::receipts::accept(
+                &mut store.0,
+                "owner",
+                operation,
+                operation,
+                json!({"sessionId":"target"}),
+            )
+            .unwrap();
+            assert!(!replay.is_new);
+            assert!(
+                crate::receipts::claim(&mut store.0, &accepted.receipt.id, "owner")
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                crate::receipts::accept(
+                    &mut store.0,
+                    "owner",
+                    operation,
+                    "send",
+                    json!({"sessionId":"target","prompt":"different effect"})
+                )
+                .is_err()
+            );
+        }
     }
     #[test]
     fn informational_backpressure_is_bounded_and_visible() {

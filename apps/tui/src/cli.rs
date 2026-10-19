@@ -48,6 +48,10 @@ pub enum SessionCommand {
     Create(CreateOptions),
     /// Submit one literal prompt with a durable key; never takes human control.
     Send(SendOptions),
+    /// Write one Ctrl+C without taking control. Does not claim the agent stopped.
+    Interrupt(ControlOptions),
+    /// Request native process stop once; retain the session and terminal output.
+    Stop(ControlOptions),
     /// Wait for one send receipt, never an old idle state or the focused session.
     Wait {
         #[arg(required_unless_present = "key", conflicts_with = "key")]
@@ -129,6 +133,14 @@ pub struct CreateOptions {
     json: bool,
 }
 
+#[derive(clap::Args)]
+pub struct ControlOptions {
+    id: String,
+    #[arg(long)]
+    key: String,
+    #[arg(long)]
+    json: bool,
+}
 #[derive(clap::Args)]
 pub struct SendOptions {
     id: String,
@@ -230,6 +242,7 @@ impl Command {
             Self::Session { command } => match command {
                 SessionCommand::Create(options) => options.json,
                 SessionCommand::Send(options) => options.json,
+                SessionCommand::Interrupt(options) | SessionCommand::Stop(options) => options.json,
                 SessionCommand::List { json }
                 | SessionCommand::Wait { json, .. }
                 | SessionCommand::Get { json, .. }
@@ -476,6 +489,8 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
             )
         }
         SessionCommand::Explain { .. }
+        | SessionCommand::Interrupt(_)
+        | SessionCommand::Stop(_)
         | SessionCommand::Create(_)
         | SessionCommand::Send(_)
         | SessionCommand::Wait { .. } => {
@@ -573,6 +588,37 @@ pub(crate) async fn prompt_capability(connection: &mut Connection) -> Result<()>
     }
     Ok(())
 }
+pub(crate) async fn control_capability(connection: &mut Connection) -> Result<()> {
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["controlReceipts"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support durable interruption/stop; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+async fn control(
+    options: ControlOptions,
+    command_type: &str,
+    connection: &mut Connection,
+) -> Result<()> {
+    valid_id(&options.id)?;
+    control_capability(connection).await?;
+    let response = request(
+        connection,
+        json!({"type":command_type,"sessionId":options.id,"key":options.key}),
+        "operation",
+    )
+    .await?;
+    check_receipt(&response)?;
+    print_data(options.json, response)
+}
 async fn send(options: SendOptions, connection: &mut Connection) -> Result<()> {
     valid_id(&options.id)?;
     let prompt = read_prompt(options.prompt, options.prompt_file, options.stdin)?;
@@ -664,6 +710,12 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         Command::Session {
             command: SessionCommand::Send(options),
         } => return send(options, connection).await,
+        Command::Session {
+            command: SessionCommand::Interrupt(options),
+        } => return control(options, "interruptOperation", connection).await,
+        Command::Session {
+            command: SessionCommand::Stop(options),
+        } => return control(options, "stopOperation", connection).await,
         Command::Session {
             command:
                 SessionCommand::Wait {

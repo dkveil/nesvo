@@ -144,6 +144,27 @@ receipts are not authorization to submit a new key blindly. Job dispatch
 deduplication, explicit worker results and provider coverage remain F17/F18/F28
 gates; response settlement is never validated task success.
 
+## Idempotent process controls
+
+`controlReceipts:true` adds owner-only `interruptOperation {key,sessionId}` and
+`stopOperation {key,sessionId}` over the same durable intent/claim engine. An
+active human controller blocks both before any native effect. Pending automated
+submission is preempted, but no human lease is taken or silently released.
+
+Interrupt writes one Ctrl+C and confirms only native write/flush (`delivered`,
+`agentStopped:null`). Stop invokes the native managed-process killer and confirms
+the request (`stopRequested`, `processExited:null`), retaining the process record
+and terminal replay. Observe `process.exited`/session running separately. It does
+not assert that every descendant is drained, that work was saved, or that a task
+succeeded. Run-level budgets, descendant cancellation and drain are F20 policy.
+
+Before-effect validation returns failed; native uncertainty returns unknown.
+Neither a lost reply nor restart reissues a signal. Confirmed control receipts
+remain historical across restart and do not consume pending-send capacity.
+Operation kind is part of key identity, so a key cannot change from a send into
+a stop even with an otherwise identical target. CLI/MCP capability checks never
+fall back to legacy takeover/input/close requests on an older host.
+
 ## Evidence
 
 Native host/CLI integration covers concurrent same-key create from two clients,

@@ -327,7 +327,7 @@ pub async fn handle(
                             state.lock().unwrap().send(id,event);
                             continue;
                         }
-                        if matches!(command,Command::CreateOperation{..}|Command::SendOperation{..}|Command::WaitOperation{..}|Command::GetOperation{..}) {
+                        if matches!(command,Command::CreateOperation{..}|Command::SendOperation{..}|Command::WaitOperation{..}|Command::InterruptOperation{..}|Command::StopOperation{..}|Command::GetOperation{..}) {
                             let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.operation_caller(id)?))})();
                             let permit=event_gate.clone().try_acquire_owned();
                             match (prepared,permit) {
@@ -340,6 +340,8 @@ pub async fn handle(
                                             Command::CreateOperation{key,spec}=>crate::operations::create(state.clone(),events,log,issuer,key,spec).await.map(|receipt|json!({"type":"operation","receipt":receipt})),
                                             Command::SendOperation{key,session_id,prompt}=>crate::operations::send(state.clone(),log,issuer,key,session_id,prompt).await.map(|receipt|json!({"type":"operation","receipt":receipt})),
                                             Command::WaitOperation{wait}=>crate::operations::wait(log,issuer,admin,wait,canceled).await,
+                                            Command::InterruptOperation{key,session_id}=>crate::operations::control(state.clone(),log,issuer,key,session_id,crate::operations::ControlAction::Interrupt).await.map(|receipt|json!({"type":"operation","receipt":receipt})),
+                                            Command::StopOperation{key,session_id}=>crate::operations::control(state.clone(),log,issuer,key,session_id,crate::operations::ControlAction::Stop).await.map(|receipt|json!({"type":"operation","receipt":receipt})),
                                             Command::GetOperation{id,key}=>log.operation(issuer,admin,id,key).await.map(|view|json!({"type":"operation","receipt":view.receipt,"cursor":view.cursor})),
                                             _=>unreachable!(),
                                         };

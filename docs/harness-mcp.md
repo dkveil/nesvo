@@ -36,19 +36,21 @@ the process-injected ID, never UI focus; changing that hint cannot grant access.
 
 ## Current tools
 
-| Tool                      | Host operation                                    |
-| ------------------------- | ------------------------------------------------- |
-| nesvo_list_sessions       | list visible sessions/groups/lifecycle            |
-| nesvo_get_session         | inspect one stable process identity               |
-| nesvo_get_current_session | get the injected process session                  |
-| nesvo_read_session        | bounded terminal replay with byte cursors         |
-| nesvo_explain_session     | status/readiness/provider diagnostics             |
-| nesvo_read_diff           | host-side read-only diff with an explicit scope   |
-| nesvo_read_events         | bounded durable metadata page with domain cursors |
-| nesvo_create_session      | durable idempotent background create              |
-| nesvo_send_prompt         | durable literal prompt submission without control |
-| nesvo_wait_prompt         | passive correlated send milestone wait            |
-| nesvo_get_operation       | lookup by operation ID or original caller key     |
+| Tool                      | Host operation                                     |
+| ------------------------- | -------------------------------------------------- |
+| nesvo_list_sessions       | list visible sessions/groups/lifecycle             |
+| nesvo_get_session         | inspect one stable process identity                |
+| nesvo_get_current_session | get the injected process session                   |
+| nesvo_read_session        | bounded terminal replay with byte cursors          |
+| nesvo_explain_session     | status/readiness/provider diagnostics              |
+| nesvo_read_diff           | host-side read-only diff with an explicit scope    |
+| nesvo_read_events         | bounded durable metadata page with domain cursors  |
+| nesvo_create_session      | durable idempotent background create               |
+| nesvo_send_prompt         | durable literal prompt submission without control  |
+| nesvo_wait_prompt         | passive correlated send milestone wait             |
+| nesvo_interrupt_session   | durable single Ctrl+C without taking human control |
+| nesvo_stop_session        | durable native process stop request                |
+| nesvo_get_operation       | lookup by operation ID or original caller key      |
 
 Tools declare input/output schemas and effect hints. Results include text and
 `structuredContent` with `schemaVersion:1`, `ok`, and `data` or `error`. Host/tool
@@ -69,6 +71,13 @@ only. Set the MCP client's request timeout above the chosen wait plus connection
 overhead. Accepted sends survive a lost reply and are never replayed. Human
 ownership/drafts and unready/busy agents remain host-side refusals. Full safety
 and phase semantics are in [durable operations](harness-operations.md).
+
+Interrupt/stop require `sessionId` and stable `key`. Both declare destructive
+hints, remain owner-authorized and refuse an active human controller. Interrupt
+delivery is not proof the agent stopped; `stopRequested` is not observed process
+exit. The session and output remain available. Repeating a key through CLI/MCP
+does not signal twice, including after the process exits. Run-level cancel/drain
+and coordinator child permissions are separate policy boundaries.
 
 ## Protocol, bounds and dependencies
 
@@ -116,6 +125,6 @@ unsupported shell response correlation. A separate controlled Claude helper/PTY
 fixture exercises CLI Unicode/multiline send and timeout without false idle.
 No model calls or changes to user sessions/provider configuration.
 
-Actual provider prompt-correlation coverage, interrupt/stop, MCP event streaming,
+Actual provider prompt-correlation coverage, MCP event streaming,
 durable task/results and actual provider-to-child orchestration remain F10/F17
 gates. A model-driven evaluation corpus for those workflows is also pending.

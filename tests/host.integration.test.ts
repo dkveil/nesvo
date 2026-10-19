@@ -439,6 +439,13 @@ process.stdin.on('data',text=>{
       }, 'human preemption');
       const controlBusy = await send('human-controls', 'never send');
       assert.equal(controlBusy.result.code, 'control_busy');
+      for (const type of ['interruptOperation', 'stopOperation']) {
+        owner.send({ type, sessionId: id, key: type, requestId: type });
+        const refused = (await owner.next('operation', e => e.requestId === type)).receipt!;
+        assert.equal(refused.phase, 'failed');
+        assert.equal(refused.result.code, 'control_busy');
+        assert.equal(refused.result.effectStarted, false);
+      }
       owner.send({ type: 'releaseControl', sessionId: id, leaseId: humanLease.leaseId });
       await delay(150);
       const unsafe = await send('preempted-draft', 'do not append');
@@ -615,6 +622,8 @@ process.stdin.on('data', bytes=>{
         { type: 'getDiff', sessionId: id, scope: 'unstaged', directory: fixture },
         { type: 'launch', spec: { name: 'unauthorized', program: 'shell' } },
         { type: 'sendOperation', key: 'not-permitted', sessionId: id, prompt: 'Do not send' },
+        { type: 'interruptOperation', key: 'not-permitted-interrupt', sessionId: id },
+        { type: 'stopOperation', key: 'not-permitted-stop', sessionId: id },
         {
           type: 'createOperation',
           key: 'forged',

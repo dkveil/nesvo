@@ -17,6 +17,8 @@ nesvo --pairing C:\private\pairing.json session create "Review" --key review-1 -
 nesvo --pairing C:\private\pairing.json operation --key review-1 --json
 nesvo --pairing C:\private\pairing.json session send SESSION_ID --key review-turn-1 --prompt-file C:\private\followup.txt --json
 nesvo --pairing C:\private\pairing.json session wait --key review-turn-1 --session SESSION_ID --until settled --timeout-ms 30000 --json
+nesvo --pairing C:\private\pairing.json session interrupt SESSION_ID --key review-interrupt-1 --json
+nesvo --pairing C:\private\pairing.json session stop SESSION_ID --key review-stop-1 --json
 nesvo mcp
 ```
 
@@ -151,7 +153,7 @@ used for a different request. See [durable operations](harness-operations.md).
 
 `nesvo mcp` exposes current shared operations over native stdio; see the
 [MCP adapter](harness-mcp.md) for scope and SDK integration tests.
-Interrupt/stop, job receipts and coordinator grants remain
+Job receipts and coordinator grants remain
 subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.
 
@@ -179,3 +181,21 @@ not replay or cancel accepted input. Look up the same receipt/key after a lost
 connection. Unsupported provider correlation returns exit 8, including ordinary
 shell writes when waiting beyond delivered. Response settlement is not task
 success. See [operation evidence and safety](harness-operations.md).
+
+## Interrupt and stop
+
+`session interrupt SESSION_ID --key KEY` writes one Ctrl+C through the confirmed
+native writer. `delivered` proves write/flush only; `agentStopped:null` deliberately
+does not claim the provider handled it. `session stop SESSION_ID --key KEY`
+requests native process termination and returns `stopRequested` with
+`processExited:null`. Inspect the session until the host observes process exit;
+this is not validated task success. Terminal output and session identity remain
+readable until explicitly closed through the existing session UI.
+
+Both commands require `controlReceipts`, reject an active human controller,
+preempt pending automated input, and never acquire a lease. They can interrupt
+in-memory work and make the editor unavailable for automatic prompt reuse until
+reconciled. Native failures with uncertain effects return an unknown receipt.
+Same-key replay returns the original receipt without sending another signal;
+restart never repeats it. These are single-process controls, separate from the
+future run-level cancel/drain policy. Passive worker scopes cannot use them.

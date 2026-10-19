@@ -24,6 +24,14 @@ pub enum Command {
         #[serde(flatten)]
         wait: crate::operations::WaitRequest,
     },
+    InterruptOperation {
+        key: String,
+        session_id: String,
+    },
+    StopOperation {
+        key: String,
+        session_id: String,
+    },
     GetOperation {
         id: Option<String>,
         key: Option<String>,

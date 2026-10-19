@@ -168,7 +168,7 @@
       "required": ["id", "operation", "phase", "sessionId", "result"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
-        "operation": { "enum": ["create", "send"] },
+        "operation": { "enum": ["create", "send", "interrupt", "stop"] },
         "phase": {
           "enum": [
             "accepted",
@@ -181,7 +181,8 @@
             "started",
             "waiting",
             "settled",
-            "interrupted"
+            "interrupted",
+            "stopRequested"
           ]
         },
         "sessionId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },

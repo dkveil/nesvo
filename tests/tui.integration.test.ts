@@ -644,6 +644,33 @@ test(
           ]);
           queryOutput(absent.stdout);
           assert.equal(absent.code, 5, 'oversized input never creates a receipt');
+          for (const [operation, phase] of [
+            ['interrupt', 'delivered'],
+            ['stop', 'stopRequested'],
+          ] as const) {
+            const args = [
+              'session',
+              operation,
+              receipt.sessionId,
+              '--key',
+              `cli-${operation}`,
+              '--json',
+            ];
+            const controlled = await runTui(tuiBinary, pairingPath, runningTuis, args);
+            queryOutput(controlled.stdout);
+            assert.equal(controlled.code, 0, controlled.stdout);
+            const historical = JSON.parse(controlled.stdout).data.receipt;
+            assert.equal(historical.phase, phase);
+            const repeat = await runTui(tuiBinary, pairingPath, runningTuis, args);
+            assert.equal(repeat.code, 0, repeat.stdout);
+            assert.deepEqual(JSON.parse(repeat.stdout).data.receipt, historical);
+          }
+          await until(
+            async () =>
+              (await snapshot()).sessions.some(s => s.id === receipt.sessionId && !s.running) ||
+              undefined,
+            'native stopped session remains readable',
+          );
           client.closeSession(receipt.sessionId);
           await next('sessions', e => !e.sessions.some(s => s.id === receipt.sessionId));
         },

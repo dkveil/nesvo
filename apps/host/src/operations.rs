@@ -1,4 +1,4 @@
-//! Idempotent launch flow. Durable intent precedes native/Git effects.
+//! Durable intent precedes native effects; observation never dispatches input.
 use crate::{
     event_log::Service,
     jobs::LaunchSpec,
@@ -29,6 +29,73 @@ pub struct WaitRequest {
     #[serde(default)]
     pub until: Until,
     pub timeout_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+pub enum ControlAction {
+    Interrupt,
+    Stop,
+}
+impl ControlAction {
+    fn operation(self) -> &'static str {
+        match self {
+            Self::Interrupt => "interrupt",
+            Self::Stop => "stop",
+        }
+    }
+}
+pub async fn control(
+    state: Arc<Mutex<State>>,
+    log: Service,
+    issuer: String,
+    key: String,
+    session_id: String,
+    action: ControlAction,
+) -> Result<Receipt> {
+    let accepted = log
+        .accept_operation(
+            issuer.clone(),
+            key,
+            action.operation(),
+            json!({"sessionId":session_id}),
+        )
+        .await?;
+    if !accepted.is_new {
+        return Ok(accepted.receipt);
+    }
+    let claim = log
+        .claim(issuer.clone(), accepted.receipt.id)
+        .await?
+        .ok_or_else(|| anyhow!("Control operation claim is unavailable"))?;
+    let dispatched = state.lock().unwrap().dispatch_control(&session_id, action);
+    let result = async {
+        if let Some(answer) = dispatched? {
+            flushed(answer).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    let (phase, result) = match result {
+        Ok(()) => match action {
+            ControlAction::Interrupt => (
+                "delivered",
+                json!({"nativeWriteFlushed":true,"taskResult":null,"agentStopped":null}),
+            ),
+            ControlAction::Stop => (
+                "stopRequested",
+                json!({"nativeStopRequested":true,"taskResult":null,"processExited":null}),
+            ),
+        },
+        Err(error) => {
+            let typed = error.downcast_ref::<crate::api_error::Error>();
+            (
+                if typed.is_some() { "failed" } else { "unknown" },
+                json!({"code":typed.map(|e|e.code).unwrap_or("control_unconfirmed"),"message":if typed.is_some(){error.to_string()}else{"Inspect the original receipt and process state before another control attempt".into()},"effectStarted":typed.is_none(),"taskResult":null}),
+            )
+        }
+    };
+    log.finish(issuer, claim.receipt.id, claim.token, phase.into(), result)
+        .await
 }
 pub async fn wait(
     log: Service,
