@@ -7,6 +7,15 @@ use std::{io::Write, path::Path, time::Duration};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Inspect a durable operation by ID, or find the caller's idempotency key.
+    Operation {
+        #[arg(required_unless_present = "key", conflicts_with = "key")]
+        id: Option<String>,
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Read or watch the durable domain journal (not terminal replay).
     Events {
         #[arg(long, default_value_t = 0)]
@@ -33,6 +42,8 @@ pub enum Command {
 }
 #[derive(Subcommand)]
 pub enum SessionCommand {
+    /// Launch once for a stable caller-supplied idempotency key; never acquires control.
+    Create(CreateOptions),
     /// List authoritative session IDs and groups; never acquires control.
     List {
         #[arg(long)]
@@ -75,6 +86,29 @@ pub enum SessionCommand {
     },
 }
 
+#[derive(clap::Args)]
+pub struct CreateOptions {
+    name: String,
+    #[arg(long)]
+    key: String,
+    #[arg(long,default_value="shell",value_parser=["shell","claude","gemini","codex"])]
+    program: String,
+    #[arg(long)]
+    cwd: Option<String>,
+    #[arg(long)]
+    group: Option<String>,
+    #[arg(long)]
+    worktree: bool,
+    #[arg(long,conflicts_with_all=["prompt_file","stdin"])]
+    prompt: Option<String>,
+    #[arg(long, conflicts_with = "stdin")]
+    prompt_file: Option<std::path::PathBuf>,
+    #[arg(long)]
+    stdin: bool,
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 pub enum Scope {
     Unstaged,
@@ -95,6 +129,7 @@ impl Scope {
 struct Failure {
     code: String,
     message: String,
+    receipt: Option<Value>,
 }
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -106,15 +141,20 @@ fn failure(code: &str, message: &str) -> anyhow::Error {
     Failure {
         code: code.into(),
         message: message.into(),
+        receipt: None,
     }
     .into()
 }
 pub fn emit_failure(machine: bool, code: &str, message: &str) -> i32 {
+    emit_failure_receipt(machine, code, message, None)
+}
+fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Option<&Value>) -> i32 {
     if machine {
-        println!(
-            "{}",
-            json!({"schemaVersion":1,"ok":false,"error":{"code":code,"message":message,"retryable":matches!(code,"host_unavailable"|"disconnected"|"timeout")}})
-        );
+        let mut error = json!({"schemaVersion":1,"ok":false,"error":{"code":code,"message":message,"retryable":matches!(code,"host_unavailable"|"disconnected"|"timeout")}});
+        if let Some(receipt) = receipt {
+            error["error"]["receipt"] = receipt.clone();
+        }
+        println!("{error}");
     } else {
         eprintln!("{code}: {message}");
     }
@@ -122,7 +162,7 @@ pub fn emit_failure(machine: bool, code: &str, message: &str) -> i32 {
         "invalid_argument" | "no_current_session" => 2,
         "pairing_unavailable" => 3,
         "host_unavailable" | "disconnected" => 4,
-        "session_not_found" => 5,
+        "session_not_found" | "operation_not_found" => 5,
         "timeout" => 7,
         "unsupported" => 8,
         _ => 6,
@@ -131,8 +171,11 @@ pub fn emit_failure(machine: bool, code: &str, message: &str) -> i32 {
 impl Command {
     fn machine(&self) -> bool {
         match self {
-            Self::Doctor { json } | Self::Events { json, .. } => *json,
+            Self::Doctor { json } | Self::Events { json, .. } | Self::Operation { json, .. } => {
+                *json
+            }
             Self::Session { command } => match command {
+                SessionCommand::Create(options) => options.json,
                 SessionCommand::List { json }
                 | SessionCommand::Get { json, .. }
                 | SessionCommand::Current { json }
@@ -164,7 +207,9 @@ pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -
     match result {
         Ok(()) => 0,
         Err(error) => match error.downcast_ref::<Failure>() {
-            Some(error) => emit_failure(machine, &error.code, &error.message),
+            Some(error) => {
+                emit_failure_receipt(machine, &error.code, &error.message, error.receipt.as_ref())
+            }
             None => emit_failure(
                 machine,
                 "operation_failed",
@@ -355,7 +400,9 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
                 json,
             )
         }
-        SessionCommand::Explain { .. } => unreachable!("diagnostics are dispatched separately"),
+        SessionCommand::Explain { .. } | SessionCommand::Create(_) => {
+            unreachable!("effectful commands and diagnostics are dispatched separately")
+        }
     };
     let mut response = request(connection, query, kind).await?;
     if let Some(value) = response.as_object_mut() {
@@ -380,8 +427,81 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
     print_data(machine, response)
 }
 
+async fn operation_capability(connection: &mut Connection) -> Result<()> {
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["operationReceipts"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support durable operations; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+async fn create(options: CreateOptions, connection: &mut Connection) -> Result<()> {
+    use std::io::Read;
+    let mut prompt = String::new();
+    if let Some(path) = options.prompt_file {
+        let file = std::fs::File::open(path)
+            .map_err(|_| failure("invalid_argument", "Cannot read prompt file"))?;
+        file.take(8193)
+            .read_to_string(&mut prompt)
+            .map_err(|_| failure("invalid_argument", "Prompt file must contain UTF-8 text"))?;
+    } else if options.stdin {
+        std::io::stdin()
+            .lock()
+            .take(8193)
+            .read_to_string(&mut prompt)
+            .map_err(|_| failure("invalid_argument", "Prompt stdin must contain UTF-8 text"))?;
+    } else if let Some(value) = options.prompt {
+        prompt = value;
+    }
+    if prompt.len() > 8192 || prompt.contains('\0') {
+        return Err(failure(
+            "invalid_argument",
+            "Prompt exceeds 8192 UTF-8 bytes or contains NUL",
+        ));
+    }
+    operation_capability(connection).await?;
+    let response=request(connection,json!({"type":"createOperation","key":options.key,"spec":{"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt}}),"operation").await?;
+    if matches!(
+        response["receipt"]["phase"].as_str(),
+        Some("failed" | "unknown")
+    ) {
+        return Err(Failure {
+            code: "operation_failed".into(),
+            message: format!(
+                "Inspect operation {} before creating another request",
+                response["receipt"]["id"].as_str().unwrap_or("unknown")
+            ),
+            receipt: Some(response["receipt"].clone()),
+        }
+        .into());
+    }
+    print_data(options.json, response)
+}
+
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let (session, machine) = match command {
+        Command::Operation { id, key, json } => {
+            operation_capability(connection).await?;
+            return print_data(
+                json,
+                request(
+                    connection,
+                    json!({"type":"getOperation","id":id,"key":key}),
+                    "operation",
+                )
+                .await?,
+            );
+        }
+        Command::Session {
+            command: SessionCommand::Create(options),
+        } => return create(options, connection).await,
         Command::Events {
             after,
             limit,

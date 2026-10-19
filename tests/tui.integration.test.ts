@@ -2,7 +2,7 @@ import Ajv from 'ajv';
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -57,14 +57,16 @@ function runTui(
   running: Set<ChildProcess>,
   command = ['--list'],
   environment: NodeJS.ProcessEnv = {},
+  input?: string,
 ): Promise<CommandResult> {
   return new Promise((resolveResult, reject) => {
     const child = spawn(binary, [...(pairingPath ? ['--pairing', pairingPath] : []), ...command], {
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, ...environment },
     });
     running.add(child);
+    child.stdin.end(input);
     let stdout = '';
     let stderr = '';
     let failure: Error | undefined;
@@ -497,6 +499,93 @@ test(
             await stopProcess(watcher);
             runningTuis.delete(watcher);
           }
+        },
+      );
+
+      await suite.test(
+        'CLI creates once with receipts and preserves literal paths and prompts',
+        async () => {
+          const cwd = join(fixture, 'folder with spaces łódź');
+          await mkdir(cwd);
+          const command = [
+            'session',
+            'create',
+            'Literal session łódź',
+            '--key',
+            'cli-key',
+            '--cwd',
+            cwd,
+            '--json',
+          ];
+          const first = await runTui(tuiBinary, pairingPath, runningTuis, command);
+          assert.equal(first.code, 0, first.stderr);
+          queryOutput(first.stdout);
+          const receipt = JSON.parse(first.stdout).data.receipt;
+          assert.equal(receipt.phase, 'created');
+          const repeat = await runTui(tuiBinary, pairingPath, runningTuis, command);
+          queryOutput(repeat.stdout);
+          assert.equal(JSON.parse(repeat.stdout).data.receipt.id, receipt.id);
+          const lookup = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'operation',
+            '--key',
+            'cli-key',
+            '--json',
+          ]);
+          queryOutput(lookup.stdout);
+          assert.equal(JSON.parse(lookup.stdout).data.receipt.id, receipt.id);
+          const current = await snapshot();
+          assert.equal(current.sessions.filter(s => s.id === receipt.sessionId).length, 1);
+          assert.equal(
+            current.sessions
+              .find(s => s.id === receipt.sessionId)
+              ?.cwd.replace(/\\/g, '/')
+              .endsWith('/folder with spaces łódź'),
+            true,
+          );
+          assert.equal(current.sessions.find(s => s.id === receipt.sessionId)?.controllerId, null);
+          const prompt = 'Literal $(never-execute) `never-execute` "łódź"\r\nnext line';
+          const file = join(fixture, 'prompt with spaces.txt');
+          await writeFile(file, prompt);
+          for (const [key, args, input] of [
+            ['file', ['--prompt-file', file], undefined],
+            ['stdin', ['--stdin'], prompt],
+          ] as const) {
+            const rejected = await runTui(
+              tuiBinary,
+              pairingPath,
+              runningTuis,
+              ['session', 'create', 'No shell prompt execution', '--key', key, ...args, '--json'],
+              {},
+              input,
+            );
+            queryOutput(rejected.stdout);
+            assert.equal(rejected.code, 6, 'shell prompts fail validation, never execute');
+            assert.equal(JSON.parse(rejected.stdout).error.receipt.phase, 'failed');
+            assert.equal(JSON.parse(rejected.stdout).error.receipt.result.effectStarted, false);
+          }
+          await writeFile(file, 'x'.repeat(8193));
+          const large = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'session',
+            'create',
+            'Oversized',
+            '--key',
+            'large',
+            '--prompt-file',
+            file,
+            '--json',
+          ]);
+          queryOutput(large.stdout);
+          assert.equal(large.code, 2);
+          const absent = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'operation',
+            '--key',
+            'large',
+            '--json',
+          ]);
+          queryOutput(absent.stdout);
+          assert.equal(absent.code, 5, 'oversized input never creates a receipt');
+          client.closeSession(receipt.sessionId);
+          await next('sessions', e => !e.sessions.some(s => s.id === receipt.sessionId));
         },
       );
 

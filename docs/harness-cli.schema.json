@@ -16,7 +16,8 @@
           "properties": {
             "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
             "message": { "type": "string" },
-            "retryable": { "type": "boolean" }
+            "retryable": { "type": "boolean" },
+            "receipt": { "$ref": "#/definitions/receipt" }
           }
         }
       }
@@ -27,6 +28,15 @@
         "ok": { "const": true },
         "data": {
           "oneOf": [
+            {
+              "type": "object",
+              "required": ["type", "receipt"],
+              "properties": {
+                "type": { "const": "operation" },
+                "receipt": { "$ref": "#/definitions/receipt" },
+                "cursor": { "$ref": "#/definitions/cursor" }
+              }
+            },
             {
               "type": "object",
               "required": [
@@ -142,6 +152,17 @@
     }
   ],
   "definitions": {
+    "receipt": {
+      "type": "object",
+      "required": ["id", "operation", "phase", "sessionId", "result"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+        "operation": { "const": "create" },
+        "phase": { "enum": ["accepted", "dispatching", "created", "failed", "unknown"] },
+        "sessionId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+        "result": { "type": "object" }
+      }
+    },
     "id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "cursor": { "type": "integer", "minimum": 0 },
     "session": {

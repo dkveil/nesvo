@@ -13,6 +13,8 @@ nesvo --pairing C:\private\pairing.json session read SESSION_ID --max-bytes 4096
 nesvo --pairing C:\private\pairing.json session read SESSION_ID --after CURSOR --json
 nesvo --pairing C:\private\pairing.json session diff SESSION_ID --scope unstaged --json
 nesvo --pairing C:\private\pairing.json session current --json
+nesvo --pairing C:\private\pairing.json session create "Review" --key review-1 --program claude --prompt-file C:\private\prompt.txt --json
+nesvo --pairing C:\private\pairing.json operation --key review-1 --json
 ```
 
 `current` reads `NESVO_SESSION_ID` injected into the managed process environment.
@@ -71,11 +73,11 @@ Runtime and argument failures with `--json` return:
 
 | Exit | Meaning                                                           |
 | ---- | ----------------------------------------------------------------- |
-| 0    | Successful query/help                                             |
+| 0    | Successful query/help or accepted operation receipt               |
 | 2    | Invalid arguments, or missing current process context             |
 | 3    | Missing/invalid private pairing                                   |
 | 4    | Host unavailable, unauthenticated or disconnected                 |
-| 5    | Session no longer exists                                          |
+| 5    | Session/operation not found or not visible                        |
 | 6    | Host operation rejected, invalid cursor or unavailable Git review |
 | 7    | Request timed out                                                 |
 | 8    | Host lacks the required capability                                |
@@ -130,6 +132,20 @@ add `--watch` for NDJSON deltas without heartbeat output. See `harness-events.md
 for retention, gaps, health and reconnect behavior. This cursor space is separate
 from `session read`.
 
-Create/send/wait/interrupt/stop, durable receipts, scoped caller policy and MCP
-are subsequent feature commits. The current query API is not a completed
-orchestration interface. Existing legacy `nesvo --list` remains compatible.
+`session create NAME --key KEY` uses durable launch receipts. Optional flags are
+`--program shell|claude|gemini|codex`, `--cwd PATH`, `--group ID`, `--worktree` and
+one of `--prompt TEXT`, `--prompt-file PATH`, or `--stdin`. Prompt input is literal
+UTF-8 bounded to 8192 bytes; shell sessions reject nonempty agent prompts. No
+local folder resolution is applied to a remote `--cwd`. File/stdin failures occur
+before accepting an intent. No key, prompt, command or input is retried silently.
+
+`operation OPERATION_ID --json` or `operation --key KEY --json` recovers its
+receipt and domain cursor after a timeout/reconnect. Create can return accepted
+or dispatching when another connection is already processing that same intent;
+exit 0 does not claim agent readiness. Failed/unknown launch outcomes return exit
+6 with `error.receipt` in version 1 JSON. `idempotency_conflict` means the key was
+used for a different request. See [durable operations](harness-operations.md).
+
+Send/wait/interrupt/stop, prompt/job receipts, coordinator grants and MCP remain
+subsequent gates. This is not a completed orchestration interface. Existing
+legacy `nesvo --list` remains compatible.
