@@ -104,6 +104,7 @@ async function main(): Promise<void> {
               id: s.id,
               running: s.running,
               status: s.status,
+              readiness: s.readiness,
             })),
           });
         if (

@@ -189,3 +189,23 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   artifacts under `artifacts/harness-conpty-20261019/current-previews`.
 - F02 remains partial: Claude lifecycle has real delivery evidence; Codex/Gemini
   adapter/version coverage and disabled-hook scenarios still need work.
+
+### F05 implementation checkpoint
+
+- New Claude launches use a bounded SQLite lifecycle journal with host session,
+  launch nonce, provider conversation and generation. Ordered batches preserve
+  short turns between polls; retention overflow is explicit. No new dependency:
+  this uses the host's existing SQLite adapter. Legacy JSON helper scopes remain
+  compatible, and JSON shadow writes cannot overwrite journal authority.
+- Empty agent IDs are root; nonempty/malformed children cannot alter parent
+  status or review context. Foreign conversation Stop/context and mismatched
+  host-session reads are rejected. Clear/resume/compact can bind a new generation.
+  Source ordering no longer depends on UTC timestamps. Task/attempt correlation
+  remains a future F17/F18 boundary; asynchronous emitter order is not invented.
+- Tests cover fast ordered turns, stale identities, ownership, retention/gaps,
+  empty/child IDs and a regressing wall clock. 123 TUI, 59 host and 3 wire unit
+  checks pass; Clippy and 18 native integration checks pass on Windows.
+- Real Claude 2.1.303 verified generation 1, provider identity, launch sequence,
+  no gap, readiness starting → trust waiting → MCP waiting → ready, then one
+  short working → Stop/idle turn with normal cleanup. No intermediate idle was
+  observed and no external MCP tool was approved.

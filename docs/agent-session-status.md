@@ -2,7 +2,7 @@
 
 Claude sessions launched by Nesvo install session-scoped hooks alongside the existing automatic diff context hooks. Global Claude settings are not edited. The helper observes UserPromptSubmit, tool boundaries, PermissionRequest, AskUserQuestion, Notification, Stop and StopFailure. SessionStart and Stop mean idle; they do not mean that the process exited or that a task succeeded. Subagent events cannot mark the parent idle. Silence never clears a confirmed running state.
 
-Only state and a sequence timestamp are stored in the private session directory. Prompts, responses and tool arguments are not persisted. Reports are atomically replaced and read asynchronously every 500 ms, outside the host mutex and PTY dispatch loop. Status broadcasts remain coalesced. Process exit has final precedence. Fresh visible UI evidence can supersede a different hook state after a short transition grace period, covering approvals. An idle prompt cannot override confirmed working just because output arrived or time passed: a real Ctrl+C/Esc interrupt followed by a newly rendered prompt is required for that fallback. Identical screen/hook states keep hook provenance. Losing a hook does not manufacture completion.
+Only lifecycle metadata and conversation/launch identities are stored in the private session directory. Prompts, responses and tool arguments are not persisted. A bounded launch-scoped SQLite journal is read asynchronously every 500 ms, outside the host mutex and PTY dispatch loop; the compatibility JSON shadow is diagnostic data rather than the new host's event source. Status broadcasts remain coalesced. Process exit has final precedence. Fresh visible UI evidence can supersede a different hook state after a short transition grace period, covering approvals. An idle prompt cannot override confirmed working just because output arrived or time passed: a real Ctrl+C/Esc interrupt followed by a newly rendered prompt is required for that fallback. Identical screen/hook states keep hook provenance. Losing a hook does not manufacture completion.
 
 The wire contract remains compatible with older v2 clients: confirmed reports use `source: screen` with additive `evidence: hook`. Older clients show an inferred state; updated clients show confirmed running/idle/blocked/question/failed. Attention events retain a legacy-compatible source. TUI labels prefixed with `~` are screen inferences; open/quiet are terminal I/O observations only.
 
@@ -92,3 +92,27 @@ The corpus includes sanitized shapes observed with Claude 2.1.303 and existing
 synthetic Codex/Gemini layouts. The Codex multi-question predicate remains a
 tested code fallback pending catalog migration. Login/model-selection/viewer
 screens and other provider versions are not certified by this initial catalog.
+
+## Launch and conversation correlation (F05)
+
+Each newly launched Claude process has a private journal bound to its host session,
+an opaque launch ID, a provider conversation ID and a generation. SQLite assigns
+strictly increasing event sequences inside bounded transactions. Observation
+order between OSC and hooks is host-local, independent of wall-clock movement.
+The default synchronous hooks await this short helper; delivery failure remains
+fail-open and observable. Exact emission order from arbitrary asynchronous
+third-party hooks is not claimed.
+
+An empty `agent_id` is a root event; a nonempty or malformed one cannot update
+parent status/context. Foreign-conversation events are rejected. Rebinding an
+already known conversation requires SessionStart from clear/resume/compact rather
+than a replayed startup. Context reports from a different conversation are also
+ignored. Task/attempt authorization is a later orchestration boundary.
+
+The journal retains 1024 records, reads at most 256 per batch and reports cursor
+gaps explicitly. Fast synchronous turns cannot overwrite each other between
+polls. UI coalescing need not draw every short intermediate state; run/turn event
+consumption is tracked separately. Diagnostics expose identities, cursor, gap,
+rejections and shadow sequence. Old launch scopes without a journal retain their
+legacy JSON helper contract. Cleanup validates ownership of the resolved private
+temporary directory and briefly retries Windows read-handle races.

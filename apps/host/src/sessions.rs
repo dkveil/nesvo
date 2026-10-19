@@ -66,6 +66,10 @@ struct Session {
     elapsed_at_exit: Option<Duration>,
     agent_context: Option<crate::agent_context::Tracker>,
     integration_delivery: crate::agent_context::Delivery,
+    integration_shadow_sequence: Option<u64>,
+    conversation_identity: Option<crate::agent_events::Identity>,
+    lifecycle_cursor: u64,
+    lifecycle_gap: bool,
     info: SessionInfo,
     status: StatusTracker,
     readiness: crate::readiness::Tracker,
@@ -714,7 +718,8 @@ impl State {
             "processAgeSeconds":session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed()).as_secs(),
             "integration":{"configured":session.agent_context.is_some(), "adapter":if session.agent_context.is_some(){"claude-hooks-v1"}else{"screen/protocol"},
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
-                "delivery":session.integration_delivery},
+                "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
+            "conversationIdentity":session.conversation_identity,
             "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "terminalProtocol":session.terminal_protocol.diagnostics(),
         })).collect();
         Ok(
@@ -1232,7 +1237,10 @@ fn spawn_session(
 ) -> Result<Session> {
     let id = hex::encode(crate::wire::random::<16>());
     let agent_context = if program == Program::Claude {
-        Some(crate::agent_context::Tracker::install(&mut command)?)
+        Some(crate::agent_context::Tracker::install_for(
+            &mut command,
+            &id,
+        )?)
     } else {
         None
     };
@@ -1242,6 +1250,10 @@ fn spawn_session(
         elapsed_at_exit: None,
         agent_context,
         integration_delivery: Default::default(),
+        integration_shadow_sequence: None,
+        conversation_identity: None,
+        lifecycle_cursor: 0,
+        lifecycle_gap: false,
         status: StatusTracker::new(program, 24, 80, now_millis()),
         readiness: crate::readiness::Tracker::new(program),
         terminal_protocol: Default::default(),
@@ -1289,15 +1301,43 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     session
                         .agent_context
                         .as_ref()
-                        .map(|tracker| (id.clone(), tracker.report()))
+                        .map(|tracker| (id.clone(), tracker.report(), session.lifecycle_cursor))
                 })
                 .collect();
-            for (id, path) in reports {
+            for (id, path, after) in reports {
                 let observation = crate::agent_context::observe(&path).await;
+                let expected = id.clone();
+                let batch = tokio::task::spawn_blocking(move || {
+                    crate::agent_events::read(&path, &expected, after)
+                })
+                .await;
                 if let Some(session) = state.lock().unwrap().sessions.get_mut(&id) {
                     session.integration_delivery = observation.delivery;
-                    if let Some(report) = observation.report {
-                        session.status.lifecycle(report, now_millis());
+                    session.integration_shadow_sequence = observation.report.map(|r| r.sequence);
+                    match batch {
+                        Ok(Ok(batch)) => {
+                            session.lifecycle_gap |= batch.gap;
+                            if !batch.observed {
+                                session.integration_delivery.outcome = "missing";
+                            } else {
+                                session.integration_delivery.outcome =
+                                    if batch.gap { "gap" } else { "received" };
+                            }
+                            for event in batch.events {
+                                session.lifecycle_cursor = event.sequence;
+                                if event.generation == batch.identity.generation {
+                                    session.status.lifecycle_ordered(
+                                        crate::agent_context::LifecycleReport {
+                                            state: event.state,
+                                            sequence: event.sequence,
+                                        },
+                                        now_millis(),
+                                    );
+                                }
+                            }
+                            session.conversation_identity = Some(batch.identity);
+                        }
+                        _ => session.integration_delivery.outcome = "queueUnreadable",
                     }
                 }
             }

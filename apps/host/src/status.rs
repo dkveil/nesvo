@@ -44,6 +44,10 @@ pub struct StatusTracker {
     lifecycle: Option<StatusState>,
     lifecycle_sequence: u64,
     lifecycle_received: u64,
+    observation_order: u64,
+    lifecycle_order: u64,
+    program_order: u64,
+    lifecycle_ordering: &'static str,
     interrupt_received: Option<u64>,
     program_status: Option<crate::program_status::Report>,
     program_received: u64,
@@ -69,6 +73,10 @@ impl StatusTracker {
             lifecycle: None,
             lifecycle_sequence: 0,
             lifecycle_received: 0,
+            observation_order: 0,
+            lifecycle_order: 0,
+            program_order: 0,
+            lifecycle_ordering: "legacy-wall-clock",
             interrupt_received: None,
             program_status: None,
             program_received: 0,
@@ -88,12 +96,18 @@ impl StatusTracker {
             return;
         }
         self.lifecycle_sequence = report.sequence;
+        self.observation_order = self.observation_order.saturating_add(1);
+        self.lifecycle_order = self.observation_order;
         self.lifecycle_received = now;
         self.interrupt_received = None;
         self.lifecycle = Some(report.state);
         self.screen_hint = None;
         self.screen_rule = None;
         self.screen_dirty = false;
+    }
+    pub fn lifecycle_ordered(&mut self, report: crate::agent_context::LifecycleReport, now: u64) {
+        self.lifecycle(report, now);
+        self.lifecycle_ordering = "launch-sequence";
     }
 
     pub fn rate_limited(&self) -> bool {
@@ -109,6 +123,8 @@ impl StatusTracker {
             return;
         }
         self.program_status = report.cloned();
+        self.observation_order = self.observation_order.saturating_add(1);
+        self.program_order = self.observation_order;
         self.program_received = now;
     }
 
@@ -136,7 +152,7 @@ impl StatusTracker {
         serde_json::json!({"selected":self.status, "reason":reason, "screenHint":self.screen_hint, "matchedRule":self.screen_rule,
             "hook":{"state":self.lifecycle,"sequence":self.lifecycle_sequence,
                 "receivedAt":if self.lifecycle.is_some(){Some(self.lifecycle_received)}else{None},
-                "ageMs":self.lifecycle.map(|_|now.saturating_sub(self.lifecycle_received)), "ordering":"legacy-wall-clock"},
+                "ageMs":self.lifecycle.map(|_|now.saturating_sub(self.lifecycle_received)), "ordering":self.lifecycle_ordering},
             "lastOutputAgeMs":self.last_activity.map(|at|now.saturating_sub(at)),
             "processExited":self.exited,"exitCode":self.exit_code})
     }
@@ -227,9 +243,10 @@ impl StatusTracker {
                             .last_activity
                             .is_some_and(|at| at > self.lifecycle_received))
             });
-            let program = self.program_status.as_ref().filter(|_| {
-                self.lifecycle.is_none() || self.program_received >= self.lifecycle_received
-            });
+            let program = self
+                .program_status
+                .as_ref()
+                .filter(|_| self.lifecycle.is_none() || self.program_order >= self.lifecycle_order);
             if let Some(report) = program {
                 use crate::program_status::{Kind, State};
                 let state = match report.state {
@@ -409,6 +426,38 @@ fn cursor_has_prompt(screen: &vt100::Screen, marker: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_order_and_event_sequences_survive_wall_clock_regression() {
+        let mut tracker = StatusTracker::new(Program::Claude, 24, 100, 1000);
+        tracker.lifecycle_ordered(
+            crate::agent_context::LifecycleReport {
+                state: StatusState::Working,
+                sequence: 1,
+            },
+            1000,
+        );
+        let report = crate::program_status::parse("state=blocked:kind=permission").unwrap();
+        tracker.program_report(Some(&report), 900);
+        tracker.refresh(900);
+        assert_eq!(tracker.status.source, StatusSource::Program);
+        tracker.lifecycle_ordered(
+            crate::agent_context::LifecycleReport {
+                state: StatusState::Working,
+                sequence: 2,
+            },
+            800,
+        );
+        tracker.lifecycle_ordered(
+            crate::agent_context::LifecycleReport {
+                state: StatusState::Idle,
+                sequence: 1,
+            },
+            1200,
+        );
+        tracker.refresh(1200);
+        assert_eq!(tracker.status.state, StatusState::Working);
+        assert_eq!(tracker.status.source, StatusSource::Hook);
+    }
 
     #[test]
     fn lifecycle_survives_silence_rejects_old_events_and_yields_to_exit() {

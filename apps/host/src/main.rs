@@ -1,4 +1,5 @@
 mod agent_context;
+mod agent_events;
 mod attention;
 mod git;
 mod groups;

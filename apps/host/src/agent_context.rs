@@ -10,7 +10,14 @@ use std::{
 
 pub struct Tracker(PathBuf);
 impl Tracker {
+    #[cfg(test)]
     pub fn install(command: &mut CommandBuilder) -> Result<Self> {
+        Self::install_inner(command, None)
+    }
+    pub fn install_for(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
+        Self::install_inner(command, Some(session_id))
+    }
+    fn install_inner(command: &mut CommandBuilder, session_id: Option<&str>) -> Result<Self> {
         let directory = std::env::temp_dir().join(format!(
             "nesvo-context-{}",
             hex::encode(crate::wire::random::<16>())
@@ -22,6 +29,10 @@ impl Tracker {
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
         let tracker = Self(directory);
+        if let Some(session_id) = session_id {
+            crate::agent_events::initialize(&tracker.report(), session_id)?;
+            command.env("NESVO_SESSION_ID", session_id);
+        }
         let hook = json!({"type":"command", "command": std::env::current_exe()?,
             "args":["--agent-context-hook", tracker.report()], "timeout":3});
         let settings = json!({"hooks": {
@@ -53,7 +64,37 @@ impl Tracker {
 impl Drop for Tracker {
     fn drop(&mut self) {
         // Only this randomly allocated session directory is owned by the tracker.
-        let _ = std::fs::remove_dir_all(&self.0);
+        let Ok(parent) = std::env::temp_dir().canonicalize() else {
+            return;
+        };
+        let Ok(target) = self.0.canonicalize() else {
+            return;
+        };
+        if target.parent() != Some(parent.as_path())
+            || !target
+                .file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|name| {
+                    name.strip_prefix("nesvo-context-").is_some_and(|suffix| {
+                        suffix.len() == 32 && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+                })
+        {
+            return;
+        }
+        for attempt in 0..4 {
+            match std::fs::remove_dir_all(&target) {
+                Ok(()) => return,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(_) if cfg!(windows) && attempt < 3 => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                Err(_) => {
+                    eprintln!("Private lifecycle scope cleanup did not complete");
+                    return;
+                }
+            }
+        }
     }
 }
 #[derive(Serialize, Deserialize, Debug)]
@@ -105,14 +146,32 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
         return Ok(());
     }
     let value: Value = serde_json::from_slice(&bytes)?;
+    if is_child(&value) {
+        return Ok(());
+    }
     if let Some(state) = lifecycle_state(&value) {
-        let status = LifecycleReport {
-            state,
-            sequence: chrono::Utc::now()
+        let sequence = if crate::agent_events::exists(report) {
+            match crate::agent_events::append(
+                report,
+                value["session_id"].as_str(),
+                value["hook_event_name"].as_str().unwrap_or_default(),
+                state,
+                matches!(
+                    value["source"].as_str(),
+                    Some("clear" | "resume" | "compact")
+                ),
+            )? {
+                Some(sequence) => sequence,
+                None => return Ok(()),
+            }
+        } else {
+            // Existing launch scopes created by older hosts retain compatibility.
+            chrono::Utc::now()
                 .timestamp_nanos_opt()
                 .unwrap_or_default()
-                .max(0) as u64,
+                .max(0) as u64
         };
+        let status = LifecycleReport { state, sequence };
         let destination = report.with_file_name("status.json");
         let temporary =
             destination.with_extension(format!("{}.tmp", hex::encode(crate::wire::random::<8>())));
@@ -124,6 +183,11 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
         result?;
     }
     if let Some(context) = extract(&value) {
+        if crate::agent_events::exists(report)
+            && !crate::agent_events::accepts_context(report, value["session_id"].as_str())?
+        {
+            return Ok(());
+        }
         let temporary =
             report.with_extension(format!("{}.tmp", hex::encode(crate::wire::random::<8>())));
         crate::private_write(&temporary, &serde_json::to_vec(&context)?)?;
@@ -144,7 +208,7 @@ pub struct LifecycleReport {
 fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
     use crate::status::StatusState::*;
     // A subagent finishing must not mark the owning conversation idle.
-    if value.get("agent_id").and_then(Value::as_str).is_some() {
+    if is_child(value) {
         return None;
     }
     Some(match value["hook_event_name"].as_str()? {
@@ -163,6 +227,13 @@ fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
         },
         _ => return None,
     })
+}
+fn is_child(value: &Value) -> bool {
+    match value.get("agent_id") {
+        None | Some(Value::Null) => false,
+        Some(Value::String(id)) => !id.is_empty(),
+        Some(_) => true,
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,6 +310,35 @@ pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_agent_id_is_root_but_children_cannot_change_parent_context() {
+        assert_eq!(
+            lifecycle_state(&json!({"hook_event_name":"Stop","agent_id":""})),
+            Some(crate::status::StatusState::Idle)
+        );
+        let mut command = CommandBuilder::new("claude");
+        let tracker = Tracker::install_for(&mut command, "host-session").unwrap();
+        for value in [
+            json!({"hook_event_name":"SessionStart","session_id":"conversation-a","source":"startup","agent_id":""}),
+            json!({"hook_event_name":"UserPromptSubmit","session_id":"conversation-a"}),
+            json!({"hook_event_name":"Stop","session_id":"conversation-a","agent_id":"child"}),
+            json!({"hook_event_name":"CwdChanged","session_id":"conversation-a","agent_id":"child","new_cwd":tracker.0}),
+            json!({"hook_event_name":"CwdChanged","session_id":"old-conversation","new_cwd":tracker.0}),
+            json!({"hook_event_name":"Stop","session_id":"conversation-a","agent_id":""}),
+        ] {
+            receive_from(&tracker.report(), value.to_string().as_bytes()).unwrap();
+        }
+        let batch = crate::agent_events::read(&tracker.report(), "host-session", 0).unwrap();
+        assert_eq!(batch.events.len(), 3);
+        assert_eq!(
+            batch.identity.provider_session_id.as_deref(),
+            Some("conversation-a")
+        );
+        assert!(
+            !tracker.report().exists(),
+            "child directory signals cannot change the parent review context"
+        );
+    }
     #[tokio::test]
     async fn diagnostics_distinguish_missing_bad_and_received_reports_without_payloads() {
         let mut command = CommandBuilder::new("claude");
