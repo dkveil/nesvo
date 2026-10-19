@@ -24,6 +24,7 @@ mod status;
 mod status_latency;
 mod status_rules;
 mod storage;
+mod submission;
 mod terminal_protocol;
 mod titles;
 mod transport;

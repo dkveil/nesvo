@@ -198,6 +198,7 @@ impl Store {
 
 enum Work {
     Accept {
+        operation: &'static str,
         issuer: String,
         key: String,
         request: Value,
@@ -259,17 +260,42 @@ pub struct Service {
     health_changed: watch::Sender<u64>,
     drops: Arc<AtomicU64>,
     failures: Arc<AtomicU64>,
+    wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub fn wait_slot(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
+        self.wait_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::new("busy", "Host wait capacity is exhausted").into())
+    }
     pub async fn accept(
         &self,
         issuer: String,
         key: String,
         request: Value,
     ) -> Result<crate::receipts::Accepted> {
+        self.accept_operation(issuer, key, "create", request).await
+    }
+    pub async fn accept_send(
+        &self,
+        issuer: String,
+        key: String,
+        request: Value,
+    ) -> Result<crate::receipts::Accepted> {
+        self.accept_operation(issuer, key, "send", request).await
+    }
+    async fn accept_operation(
+        &self,
+        issuer: String,
+        key: String,
+        operation: &'static str,
+        request: Value,
+    ) -> Result<crate::receipts::Accepted> {
         let (reply, answer) = oneshot::channel();
         self.sender
             .send(Work::Accept {
+                operation,
                 issuer,
                 key,
                 request,
@@ -371,6 +397,7 @@ impl Service {
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
                         Work::Accept {
+                            operation,
                             issuer,
                             key,
                             request,
@@ -380,7 +407,7 @@ impl Service {
                                 &mut store.0,
                                 &issuer,
                                 &key,
-                                "create",
+                                operation,
                                 request,
                             );
                             record_storage_failure(&result, &worker_failures, &changed_tx);
@@ -468,6 +495,7 @@ impl Service {
             health_changed,
             drops,
             failures,
+            wait_slots: Arc::new(tokio::sync::Semaphore::new(32)),
         })
     }
     /// Informational observations fail open; the health counter exposes any loss.
@@ -719,6 +747,131 @@ mod tests {
         }
     }
     #[test]
+    fn early_response_beats_late_write_ack_and_send_restart_never_replays() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let accepted = crate::receipts::accept(
+            &mut store.0,
+            "owner",
+            "send-key",
+            "send",
+            json!({"sessionId":"s","prompt":"wanted"}),
+        )
+        .unwrap();
+        let claim = crate::receipts::claim(&mut store.0, &accepted.receipt.id, "owner")
+            .unwrap()
+            .unwrap();
+        let id = &claim.receipt.id;
+        let started = crate::receipts::finish(
+            &mut store.0,
+            id,
+            "owner",
+            &claim.token,
+            "received",
+            json!({"turnId":"launch:2","sourceSequence":2}),
+        )
+        .unwrap();
+        assert_eq!(started.phase, "received");
+        let delivered = crate::receipts::finish(
+            &mut store.0,
+            id,
+            "owner",
+            &claim.token,
+            "delivered",
+            json!({"nativeWriteFlushed":true}),
+        )
+        .unwrap();
+        assert_eq!(delivered.phase, "received");
+        assert_eq!(delivered.result["turnId"], "launch:2");
+        let settled = crate::receipts::finish(
+            &mut store.0,
+            id,
+            "owner",
+            &claim.token,
+            "settled",
+            json!({"sourceSequence":3,"taskResult":null}),
+        )
+        .unwrap();
+        assert_eq!(settled.phase, "settled");
+        let late = crate::receipts::finish(
+            &mut store.0,
+            id,
+            "owner",
+            &claim.token,
+            "delivered",
+            json!({"nativeWriteFlushed":true,"ackArrivedLate":true}),
+        )
+        .unwrap();
+        assert_eq!(late.phase, "settled");
+        assert_eq!(late.result["ackArrivedLate"], true);
+        let other = crate::receipts::accept(
+            &mut store.0,
+            "owner",
+            "other",
+            "send",
+            json!({"sessionId":"s","prompt":"next"}),
+        )
+        .unwrap();
+        let other_claim = crate::receipts::claim(&mut store.0, &other.receipt.id, "owner")
+            .unwrap()
+            .unwrap();
+        crate::receipts::finish(
+            &mut store.0,
+            &other.receipt.id,
+            "owner",
+            &other_claim.token,
+            "delivered",
+            json!({"nativeWriteFlushed":true}),
+        )
+        .unwrap();
+        let untracked = crate::receipts::accept(
+            &mut store.0,
+            "owner",
+            "untracked",
+            "send",
+            json!({"sessionId":"shell","prompt":"literal"}),
+        )
+        .unwrap();
+        let untracked_claim = crate::receipts::claim(&mut store.0, &untracked.receipt.id, "owner")
+            .unwrap()
+            .unwrap();
+        crate::receipts::finish(
+            &mut store.0,
+            &untracked.receipt.id,
+            "owner",
+            &untracked_claim.token,
+            "delivered",
+            json!({"nativeWriteFlushed":true,"correlation":"unavailable"}),
+        )
+        .unwrap();
+        crate::receipts::initialize(&mut store.0).unwrap();
+        let delivery =
+            crate::receipts::get(&store.0, "owner", true, Some(&untracked.receipt.id), None)
+                .unwrap();
+        assert_eq!(
+            delivery.receipt.phase, "delivered",
+            "confirmed delivery without response tracking remains historical after restart"
+        );
+        let unknown =
+            crate::receipts::get(&store.0, "owner", true, Some(&other.receipt.id), None).unwrap();
+        assert_eq!(unknown.receipt.phase, "unknown");
+        assert!(
+            !crate::receipts::accept(
+                &mut store.0,
+                "owner",
+                "other",
+                "send",
+                json!({"sessionId":"s","prompt":"next"})
+            )
+            .unwrap()
+            .is_new
+        );
+        assert!(
+            crate::receipts::claim(&mut store.0, &other.receipt.id, "owner")
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[test]
     fn informational_backpressure_is_bounded_and_visible() {
         let (sender, _held_receiver) = mpsc::channel(1);
         let (health_changed, changed) = watch::channel(0);
@@ -728,6 +881,7 @@ mod tests {
             health_changed,
             drops: Arc::new(AtomicU64::new(0)),
             failures: Arc::new(AtomicU64::new(0)),
+            wait_slots: Arc::new(tokio::sync::Semaphore::new(32)),
         };
         service.observe(event("s", 1));
         service.observe(event("s", 2));

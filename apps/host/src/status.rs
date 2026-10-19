@@ -156,6 +156,11 @@ impl StatusTracker {
     pub fn status(&self) -> SessionStatus {
         self.status
     }
+    pub fn bracketed_paste(&self) -> bool {
+        self.parser
+            .as_ref()
+            .is_some_and(|parser| parser.screen().bracketed_paste())
+    }
     pub fn agent_projection(&self) -> serde_json::Value {
         let current =
             (!self.exited && self.status.source != StatusSource::Activity).then_some(self.status);

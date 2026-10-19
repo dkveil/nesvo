@@ -56,7 +56,7 @@ pub fn initialize(connection: &mut Connection) -> Result<()> {
     let transaction = connection.transaction()?;
     let pending: Vec<String> = {
         let mut statement = transaction.prepare(
-            "SELECT id FROM operation_receipts WHERE phase IN ('accepted','dispatching') LIMIT 256",
+            "SELECT id FROM operation_receipts WHERE phase IN ('accepted','dispatching','received','started','waiting') OR (phase='delivered' AND COALESCE(json_extract(result,'$.correlation'),'launchHook')!='unavailable') LIMIT 256",
         )?;
         statement
             .query_map([], |row| row.get(0))?
@@ -92,22 +92,36 @@ pub fn accept(
     request: Value,
 ) -> Result<Accepted> {
     valid_key(key)?;
-    ensure!(operation == "create", "Unsupported operation");
+    ensure!(
+        matches!(operation, "create" | "send"),
+        "Unsupported operation"
+    );
+    let target = if operation == "send" {
+        let id = request["sessionId"]
+            .as_str()
+            .ok_or_else(|| Error::new("invalid_argument", "Send needs a target session"))?;
+        if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
+            return Err(Error::new("invalid_argument", "Invalid send target").into());
+        }
+        Some(id.to_owned())
+    } else {
+        None
+    };
     let request = serde_json::to_vec(&request)?;
     if request.len() > 24 * 1024 {
         return Err(Error::new("invalid_argument", "Operation request exceeds 24 KiB").into());
     }
     let digest = hex::encode(ring::digest::digest(&ring::digest::SHA256, &request).as_ref());
     let transaction = connection.transaction()?;
-    let existing: Option<(String, String)> = transaction
+    let existing: Option<(String, String, String)> = transaction
         .query_row(
-            "SELECT id,digest FROM operation_receipts WHERE issuer=?1 AND key=?2",
+            "SELECT id,digest,operation FROM operation_receipts WHERE issuer=?1 AND key=?2",
             params![issuer, key],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
-    if let Some((id, stored)) = existing {
-        if stored != digest {
+    if let Some((id, stored, stored_operation)) = existing {
+        if stored != digest || stored_operation != operation {
             return Err(Error::new(
                 "idempotency_conflict",
                 "This idempotency key already describes a different request",
@@ -122,7 +136,7 @@ pub fn accept(
         });
     }
     let pending: i64 = transaction.query_row(
-        "SELECT count(*) FROM operation_receipts WHERE phase IN ('accepted','dispatching')",
+        "SELECT count(*) FROM operation_receipts WHERE phase IN ('accepted','dispatching','received','started','waiting') OR (phase='delivered' AND COALESCE(json_extract(result,'$.correlation'),'launchHook')!='unavailable')",
         [],
         |r| r.get(0),
     )?;
@@ -133,7 +147,7 @@ pub fn accept(
         id: hex::encode(crate::wire::random::<16>()),
         operation: operation.into(),
         phase: "accepted".into(),
-        session_id: hex::encode(crate::wire::random::<16>()),
+        session_id: target.unwrap_or_else(|| hex::encode(crate::wire::random::<16>())),
         result: json!({}),
     };
     transaction.execute("INSERT INTO operation_receipts(id,issuer,key,digest,operation,phase,session_id,result) VALUES(?1,?2,?3,?4,?5,?6,?7,'{}')",params![receipt.id,issuer,key,digest,operation,receipt.phase,receipt.session_id])?;
@@ -163,15 +177,102 @@ pub fn finish(
     result: Value,
 ) -> Result<Receipt> {
     ensure!(
-        matches!(phase, "created" | "failed" | "unknown"),
+        matches!(
+            phase,
+            "created"
+                | "failed"
+                | "unknown"
+                | "delivered"
+                | "received"
+                | "started"
+                | "waiting"
+                | "settled"
+                | "interrupted"
+        ),
         "Invalid operation outcome"
     );
-    let result = serde_json::to_string(&result)?;
-    ensure!(result.len() <= 4096, "Operation result is too large");
+    ensure!(
+        result.is_object(),
+        "Operation result must be metadata object"
+    );
     let transaction = connection.transaction()?;
-    if transaction.execute("UPDATE operation_receipts SET phase=?4,result=?5,claim_token=NULL WHERE id=?1 AND issuer=?2 AND claim_token=?3 AND phase='dispatching'",params![id,issuer,token,phase,result])?!=1 {return Err(Error::new("stale_operation","This operation claim is no longer current").into());}
-    let receipt = read_record(&transaction, id, Some(issuer))?
+    let mut receipt = read_record(&transaction, id, Some(issuer))?
         .ok_or_else(|| Error::new("operation_not_found", "Operation no longer exists"))?;
+    let stored_token: Option<String> = transaction.query_row(
+        "SELECT claim_token FROM operation_receipts WHERE id=?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    if stored_token.as_deref() != Some(token) {
+        return Err(Error::new(
+            "stale_operation",
+            "This operation claim is no longer current",
+        )
+        .into());
+    }
+    let send = receipt.operation == "send";
+    let terminal = !matches!(
+        receipt.phase.as_str(),
+        "dispatching" | "delivered" | "received" | "started" | "waiting"
+    );
+    if terminal {
+        if send && phase == "unknown" {
+            return Ok(receipt);
+        }
+        if !(send && phase == "delivered") {
+            return Err(Error::new("stale_operation", "This operation is already terminal").into());
+        }
+    }
+    if send && phase == "created" {
+        return Err(Error::new("invalid_argument", "A send cannot create a process").into());
+    }
+    if !send
+        && (receipt.phase != "dispatching" || !matches!(phase, "created" | "failed" | "unknown"))
+    {
+        return Err(Error::new("invalid_argument", "Invalid create transition").into());
+    }
+    if send
+        && matches!(
+            phase,
+            "received" | "started" | "waiting" | "settled" | "interrupted"
+        )
+    {
+        let sequence = result["sourceSequence"]
+            .as_u64()
+            .filter(|s| *s > 0)
+            .ok_or_else(|| {
+                Error::new(
+                    "invalid_argument",
+                    "Lifecycle transition needs source order",
+                )
+            })?;
+        if receipt.result["sourceSequence"]
+            .as_u64()
+            .is_some_and(|old| old >= sequence)
+        {
+            return Ok(receipt);
+        }
+    }
+    let next_phase = if phase == "delivered"
+        && (terminal || matches!(receipt.phase.as_str(), "received" | "started" | "waiting"))
+    {
+        receipt.phase.clone()
+    } else {
+        phase.into()
+    };
+    if let Some(object) = receipt.result.as_object_mut() {
+        object.extend(
+            result
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+    }
+    let result = serde_json::to_string(&receipt.result)?;
+    ensure!(result.len() <= 4096, "Operation result is too large");
+    transaction.execute("UPDATE operation_receipts SET phase=?4,result=?5,claim_token=?6 WHERE id=?1 AND issuer=?2 AND claim_token=?3",params![id,issuer,token,next_phase,result,send.then_some(token)])?;
+    receipt.phase = next_phase;
     append_transaction(&transaction, vec![event(&receipt)])?;
     transaction.commit()?;
     Ok(receipt)

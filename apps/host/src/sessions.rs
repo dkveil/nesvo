@@ -77,6 +77,8 @@ struct Session {
     status: StatusTracker,
     readiness: crate::readiness::Tracker,
     turn: crate::turns::Tracker,
+    pending_input: Option<crate::submission::Pending>,
+    human_input_dirty: bool,
     terminal_protocol: crate::terminal_protocol::Decoder,
     program_status: crate::program_status::Records,
     program_status_dirty: bool,
@@ -106,6 +108,7 @@ impl Session {
 
 pub struct State {
     event_log: Option<crate::event_log::Service>,
+    submission_updates: Vec<crate::submission::Transition>,
     caller_url: Option<String>,
     workspace: PathBuf,
     sessions: HashMap<String, Session>,
@@ -140,6 +143,7 @@ impl State {
         let provider_versions = launchers.pending_versions();
         Self {
             event_log: None,
+            submission_updates: Vec::new(),
             caller_url: None,
             workspace,
             sessions: HashMap::new(),
@@ -263,7 +267,7 @@ impl State {
             return Ok(());
         };
         let target = match command {
-            Command::GetOperation { .. } => return Ok(()),
+            Command::GetOperation { .. } | Command::WaitOperation { .. } => return Ok(()),
             Command::UnsubscribeEvents => return Ok(()),
             Command::ReadEvents { session_id, .. }
             | Command::SubscribeEvents { session_id, .. } => {
@@ -337,6 +341,7 @@ impl State {
             "providerLimits":self.provider_limits});
         event["domainEvents"] = self.event_log.is_some().into();
         event["operationReceipts"] = self.event_log.is_some().into();
+        event["promptReceipts"] = self.event_log.is_some().into();
         event
     }
 
@@ -828,6 +833,9 @@ impl State {
             }
         }
         let session = self.sessions.get_mut(session_id).unwrap();
+        if let Some(pending) = &session.pending_input {
+            pending.canceled.send_replace(true);
+        }
         if session.info.running {
             session.pty.resize(size)?;
         }
@@ -885,6 +893,185 @@ impl State {
         working_directory(&self.workspace, spec.cwd.as_deref())
     }
 
+    pub fn begin_submission(
+        &mut self,
+        id: &str,
+        claim: crate::submission::Claim,
+        prompt: &str,
+    ) -> Result<(Option<PathBuf>, watch::Receiver<bool>)> {
+        use crate::api_error::Error;
+        let digest = crate::submission::digest(prompt)
+            .filter(|_| !prompt.trim().is_empty())
+            .ok_or_else(|| {
+                Error::new(
+                    "invalid_argument",
+                    "Prompt must be nonempty UTF-8, at most 8192 bytes, without terminal controls",
+                )
+            })?;
+        let session = self
+            .sessions
+            .get_mut(id)
+            .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
+        if !session.info.running {
+            return Err(Error::new("process_exited", "Process has exited").into());
+        }
+        if session.controller.is_some() {
+            return Err(Error::new(
+                "control_busy",
+                "Release human terminal control before automated submission",
+            )
+            .into());
+        }
+        if session.human_input_dirty {
+            return Err(Error::new(
+                "unsafe_draft",
+                "This process has human input; reconcile its editor before automated reuse",
+            )
+            .into());
+        }
+        if session.pending_input.is_some() {
+            return Err(Error::new(
+                "submission_pending",
+                "A previous submission still needs correlation or reconciliation",
+            )
+            .into());
+        }
+        if session.info.program != Program::Shell
+            && (!matches!(
+                session.status.status().state,
+                crate::status::StatusState::Idle | crate::status::StatusState::Done
+            ) || session.readiness.snapshot().phase != crate::readiness::Phase::Ready)
+        {
+            return Err(Error::new(
+                "agent_not_ready",
+                "Agent must be ready and observably idle before submission",
+            )
+            .into());
+        }
+        if !session.status.bracketed_paste() && prompt.contains(['\r', '\n', '\t']) {
+            return Err(Error::new(
+                "paste_unsupported",
+                "Multiline/tab input needs provider bracketed-paste support",
+            )
+            .into());
+        }
+        let (canceled, cancellation) = watch::channel(false);
+        session.pending_input = Some(crate::submission::Pending {
+            claim,
+            canceled,
+            correlation: None,
+            digest,
+            queued: false,
+            reconciliation_queued: false,
+        });
+        Ok((
+            session
+                .agent_context
+                .as_ref()
+                .map(|tracker| tracker.report()),
+            cancellation,
+        ))
+    }
+    pub fn enqueue_submission(
+        &mut self,
+        id: &str,
+        operation: &str,
+        text: Option<&str>,
+        fence: Option<&crate::agent_events::Batch>,
+    ) -> Result<tokio::sync::oneshot::Receiver<bool>> {
+        use crate::api_error::Error;
+        let session = self
+            .sessions
+            .get_mut(id)
+            .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
+        let pending = session
+            .pending_input
+            .as_mut()
+            .filter(|p| p.claim.id == operation && !*p.canceled.borrow())
+            .ok_or_else(|| {
+                Error::new(
+                    "submission_preempted",
+                    "Human control or reconciliation superseded this submission",
+                )
+            })?;
+        if session.controller.is_some() || !session.info.running {
+            return Err(Error::new(
+                "submission_preempted",
+                "Target is no longer available for automated input",
+            )
+            .into());
+        }
+        if let Some(fence) = fence {
+            if session.lifecycle_cursor != fence.head_sequence
+                || session
+                    .conversation_identity
+                    .as_ref()
+                    .is_none_or(|identity| {
+                        identity.launch_id != fence.identity.launch_id
+                            || identity.generation != fence.identity.generation
+                    })
+            {
+                return Err(Error::new(
+                    "lifecycle_pending",
+                    "Wait for pending lifecycle evidence before submitting",
+                )
+                .into());
+            }
+            if text.is_none() && fence.identity.prompt_correlation {
+                pending.correlation = Some(crate::submission::Correlation::new(
+                    &fence.identity,
+                    fence.head_sequence,
+                    pending.digest.clone(),
+                ));
+            }
+        }
+        if session.info.program != Program::Shell
+            && (!matches!(
+                session.status.status().state,
+                crate::status::StatusState::Idle | crate::status::StatusState::Done
+            ) || session.readiness.snapshot().phase != crate::readiness::Phase::Ready)
+        {
+            return Err(Error::new(
+                "agent_not_ready",
+                "Agent is no longer ready and idle; no further input was queued",
+            )
+            .into());
+        }
+        let data = match text {
+            Some(prompt) if session.status.bracketed_paste() => {
+                format!("\x1b[200~{prompt}\x1b[201~")
+            }
+            Some(prompt) => prompt.into(),
+            None => "\r".into(),
+        };
+        let answer = session.pty.send_confirmed(data)?;
+        pending.queued = true;
+        session.wake_at = None;
+        session.status.input(now_millis());
+        Ok(answer)
+    }
+    pub fn end_submission(&mut self, id: &str, operation: &str, phase: &str) {
+        if let Some(session) = self.sessions.get_mut(id)
+            && session
+                .pending_input
+                .as_ref()
+                .is_some_and(|p| p.claim.id == operation)
+            && (!matches!(phase, "delivered" | "received" | "started" | "waiting")
+                || session.info.program == Program::Shell)
+        {
+            // A partial write or preempted Enter can leave a draft in the editor.
+            // A new idempotency key is not permission to append to that draft.
+            if phase == "unknown"
+                && session
+                    .pending_input
+                    .as_ref()
+                    .is_some_and(|pending| pending.queued || pending.reconciliation_queued)
+            {
+                session.human_input_dirty = true;
+            }
+            session.pending_input = None;
+        }
+    }
     pub fn launch(
         &mut self,
         spec: &crate::jobs::LaunchSpec,
@@ -1038,7 +1225,8 @@ impl State {
             "sessionId":session.info.id, "program":session.info.program, "running":session.info.running,
             "processIdentity":{"pid":session.pty.process_id(),"launchedAt":session.info.created_at,"launchId":session.info.id},
             "processAgeSeconds":session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed()).as_secs(),
-            "integration":{"configured":session.agent_context.is_some(), "adapter":if session.agent_context.is_some(){"claude-hooks-v1"}else{"screen/protocol"},
+            "inputOperation":session.pending_input.as_ref().map(|pending|json!({"id":pending.claim.id,"queued":pending.queued,"canceled":*pending.canceled.borrow(),"correlated":pending.correlation.is_some()})),
+            "integration":{"configured":session.agent_context.is_some(), "adapter":if session.agent_context.is_some(){"claude-hooks-v2"}else{"screen/protocol"},
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
             "conversationIdentity":session.conversation_identity,
@@ -1061,7 +1249,10 @@ impl State {
         ensure!(!self.shutting_down, "Host is shutting down.");
         self.authorize(client_id, &command)?;
         match command {
-            Command::CreateOperation { .. } | Command::GetOperation { .. } => {
+            Command::CreateOperation { .. }
+            | Command::SendOperation { .. }
+            | Command::WaitOperation { .. }
+            | Command::GetOperation { .. } => {
                 return Err(anyhow!("Operations require asynchronous dispatch"));
             }
             Command::ReadEvents { .. }
@@ -1460,6 +1651,7 @@ impl State {
                 let interrupt = data == "\x03" || data == "\x1b";
                 session.pty.send_input(data)?;
                 if has_input {
+                    session.human_input_dirty = true;
                     session.wake_at = None;
                     session.status.input(now_millis());
                     if interrupt {
@@ -1506,7 +1698,18 @@ impl State {
                     session.pty.kill()?;
                 }
                 self.metadata.finish_recovery(&session_id, true)?;
-                let removed = self.sessions.remove(&session_id);
+                let mut removed = self.sessions.remove(&session_id);
+                if let Some(pending) = removed
+                    .as_mut()
+                    .and_then(|session| session.pending_input.take())
+                {
+                    pending.canceled.send_replace(true);
+                    self.submission_updates.push(crate::submission::Transition {
+                        claim: pending.claim,
+                        phase: "unknown",
+                        result: json!({"code":"session_closed","taskResult":null}),
+                    });
+                }
                 self.cleanup_workers.retain(|worker| !worker.is_finished());
                 self.cleanup_workers
                     .push(thread::spawn(move || drop(removed)));
@@ -1650,6 +1853,8 @@ fn spawn_session(
         status: StatusTracker::new(program, 24, 80, now_millis()),
         readiness: crate::readiness::Tracker::new(program),
         turn: Default::default(),
+        pending_input: None,
+        human_input_dirty: false,
         terminal_protocol: Default::default(),
         program_status: Default::default(),
         program_status_dirty: false,
@@ -1678,6 +1883,108 @@ fn spawn_session(
     })
 }
 
+async fn flush_submission_updates(state: &Arc<Mutex<State>>) {
+    let (log, updates) = {
+        let mut state = state.lock().unwrap();
+        for session in state.sessions.values_mut() {
+            let exit_expired = session.elapsed_at_exit.is_some_and(|at| {
+                session.started.elapsed().saturating_sub(at) >= Duration::from_secs(2)
+            });
+            if let Some(pending) = &mut session.pending_input
+                && pending.queued
+                && (*pending.canceled.borrow() || exit_expired)
+            {
+                pending.canceled.send_replace(true);
+                pending.correlation = None;
+                pending.queued = false;
+                pending.reconciliation_queued = true;
+            }
+        }
+        let canceled: Vec<_> = state
+            .sessions
+            .values()
+            .filter_map(|session| session.pending_input.as_ref())
+            .filter(|p| p.reconciliation_queued)
+            .map(|p| p.claim.clone())
+            .collect();
+        for claim in canceled {
+            if !state
+                .submission_updates
+                .iter()
+                .any(|update| update.claim.id == claim.id)
+            {
+                state
+                    .submission_updates
+                    .push(crate::submission::Transition {
+                        claim,
+                        phase: "unknown",
+                        result: json!({"code":"submission_reconciliation","taskResult":null}),
+                    });
+            }
+        }
+        let updates = std::mem::take(&mut state.submission_updates);
+        (state.event_log.clone(), updates)
+    };
+    let Some(log) = log else {
+        return;
+    };
+    for update in updates {
+        let claim = update.claim;
+        match log
+            .finish(
+                claim.issuer.clone(),
+                claim.id.clone(),
+                claim.token.clone(),
+                update.phase.into(),
+                update.result.clone(),
+            )
+            .await
+        {
+            Ok(receipt) => state.lock().unwrap().end_submission(
+                &receipt.session_id,
+                &receipt.id,
+                &receipt.phase,
+            ),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::api_error::Error>()
+                    .is_some_and(|error| {
+                        matches!(error.code, "stale_operation" | "operation_not_found")
+                    }) =>
+            {
+                // A fenced/terminal claim can never become writable by retrying.
+                let mut state = state.lock().unwrap();
+                for session in state.sessions.values_mut() {
+                    if session
+                        .pending_input
+                        .as_ref()
+                        .is_some_and(|pending| pending.claim.id == claim.id)
+                    {
+                        session.pending_input = None;
+                        if error
+                            .downcast_ref::<crate::api_error::Error>()
+                            .is_some_and(|error| error.code == "operation_not_found")
+                        {
+                            session.human_input_dirty = true;
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                state
+                    .lock()
+                    .unwrap()
+                    .submission_updates
+                    .push(crate::submission::Transition {
+                        claim,
+                        phase: update.phase,
+                        result: update.result,
+                    })
+            }
+        }
+    }
+}
+
 pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receiver<PtyEvent>) {
     let weak = Arc::downgrade(&state);
     // File I/O runs independently of PTY dispatch and outside the host mutex.
@@ -1687,6 +1994,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
         loop {
             tick.tick().await;
             let Some(state) = weak.upgrade() else { break };
+            flush_submission_updates(&state).await;
             let reports: Vec<_> = state
                 .lock()
                 .unwrap()
@@ -1714,6 +2022,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 .await;
                 let mut state = state.lock().unwrap();
                 let event_log = state.event_log.clone();
+                let mut submission_updates = Vec::new();
                 if let Some(session) = state.sessions.get_mut(&id) {
                     let elapsed = session
                         .elapsed_at_exit
@@ -1725,6 +2034,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                             session.lifecycle_gap |= batch.gap;
                             if batch.gap {
                                 session.turn.gap(elapsed);
+                                if let Some(pending) = &session.pending_input {
+                                    pending.canceled.send_replace(true);
+                                }
                             }
                             if !batch.observed {
                                 session.integration_delivery.outcome = "missing";
@@ -1735,6 +2047,18 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                             for event in batch.events {
                                 session.lifecycle_cursor = event.sequence;
                                 if event.generation == batch.identity.generation {
+                                    if let Some(pending) = &mut session.pending_input
+                                        && !*pending.canceled.borrow()
+                                        && let Some(correlation) = &mut pending.correlation
+                                        && let Some((phase, result)) =
+                                            correlation.observe(&batch.identity, &event)
+                                    {
+                                        submission_updates.push(crate::submission::Transition {
+                                            claim: pending.claim.clone(),
+                                            phase,
+                                            result,
+                                        });
+                                    }
                                     session.program_status_dirty |= session.turn.event(
                                         crate::turns::Signal {
                                             launch: &batch.identity.launch_id,
@@ -1771,7 +2095,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         session.status.record_hook_reason(&event.name, event.state);
                                         session.program_status_dirty = true;
                                         if let Some(log) = &event_log {
-                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"agent.lifecycle",at:now_millis(),payload:json!({"event":event.name,"state":event.state,"generation":event.generation,"sourceSequence":event.sequence})});
+                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"agent.lifecycle",at:now_millis(),payload:json!({"event":event.name,"state":event.state,"generation":event.generation,"sourceSequence":event.sequence,"submissionEvidence":event.prompt_digest.is_some()})});
                                         }
                                     }
                                 }
@@ -1784,7 +2108,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         _ => session.integration_delivery.outcome = "queueUnreadable",
                     }
                 }
+                state.submission_updates.extend(submission_updates);
             }
+            flush_submission_updates(&state).await;
         }
     });
     let mut status_tick = tokio::time::interval(Duration::from_millis(250));

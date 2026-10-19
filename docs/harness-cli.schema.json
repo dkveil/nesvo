@@ -157,8 +157,22 @@
       "required": ["id", "operation", "phase", "sessionId", "result"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
-        "operation": { "const": "create" },
-        "phase": { "enum": ["accepted", "dispatching", "created", "failed", "unknown"] },
+        "operation": { "enum": ["create", "send"] },
+        "phase": {
+          "enum": [
+            "accepted",
+            "dispatching",
+            "created",
+            "failed",
+            "unknown",
+            "delivered",
+            "received",
+            "started",
+            "waiting",
+            "settled",
+            "interrupted"
+          ]
+        },
         "sessionId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
         "result": { "type": "object" }
       }

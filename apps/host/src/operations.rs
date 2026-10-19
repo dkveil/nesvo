@@ -6,9 +6,238 @@ use crate::{
     sessions::{PtyEvent, State},
 };
 use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Until {
+    Delivered,
+    Received,
+    Started,
+    #[default]
+    Settled,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitRequest {
+    pub id: Option<String>,
+    pub key: Option<String>,
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub until: Until,
+    pub timeout_ms: Option<u64>,
+}
+pub async fn wait(
+    log: Service,
+    issuer: String,
+    admin: bool,
+    request: WaitRequest,
+    mut canceled: tokio::sync::watch::Receiver<bool>,
+) -> Result<serde_json::Value> {
+    use crate::api_error::Error;
+    let timeout = request.timeout_ms.unwrap_or(30_000);
+    if !(1..=60_000).contains(&timeout) {
+        return Err(Error::new("invalid_argument", "Wait timeout must be 1–60000 ms").into());
+    }
+    let _slot = log.wait_slot()?;
+    let mut changed = log.subscribe();
+    changed.borrow_and_update();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout);
+    loop {
+        if *canceled.borrow() {
+            return Err(Error::new(
+                "disconnected",
+                "Wait caller disconnected; no effect was retried",
+            )
+            .into());
+        }
+        let view = log
+            .operation(
+                issuer.clone(),
+                admin,
+                request.id.clone(),
+                request.key.clone(),
+            )
+            .await?;
+        let receipt = &view.receipt;
+        if receipt.operation != "send" {
+            return Err(Error::new(
+                "unsupported",
+                "This wait targets a send receipt; process creation is not a response turn",
+            )
+            .into());
+        }
+        if request
+            .session_id
+            .as_ref()
+            .is_some_and(|id| id != &receipt.session_id)
+        {
+            return Err(Error::new(
+                "invalid_argument",
+                "Receipt belongs to a different target session",
+            )
+            .into());
+        }
+        let reached = match request.until {
+            Until::Delivered => {
+                receipt.result["nativeWriteFlushed"] == true
+                    || receipt.result["providerPromptObserved"] == true
+            }
+            Until::Received => receipt.result["providerPromptObserved"] == true,
+            Until::Started => receipt.result["processingObserved"] == true,
+            Until::Settled => receipt.phase == "settled",
+        };
+        let terminal = matches!(
+            receipt.phase.as_str(),
+            "failed" | "unknown" | "interrupted" | "settled"
+        );
+        let expired = tokio::time::Instant::now() >= deadline;
+        if reached || terminal || expired {
+            let outcome = if reached {
+                "reached"
+            } else if terminal {
+                receipt.phase.as_str()
+            } else {
+                "timeout"
+            };
+            return Ok(
+                json!({"type":"operation","receipt":receipt,"cursor":view.cursor,"wait":{"until":request.until,"outcome":outcome,"reached":reached}}),
+            );
+        }
+        if !matches!(request.until, Until::Delivered)
+            && receipt.result["correlation"] == "unavailable"
+        {
+            return Err(Error::new(
+                "unsupported",
+                "Provider prompt correlation is unavailable; do not infer completion from idle",
+            )
+            .into());
+        }
+        tokio::select! {
+            _=tokio::time::sleep_until(deadline)=>{},
+            _=canceled.changed()=>return Err(Error::new("disconnected","Wait caller disconnected; no effect was retried").into()),
+            result=changed.changed()=>{if result.is_err(){return Err(Error::new("disconnected","Host journal closed during wait").into());}},
+        }
+    }
+}
+
+async fn fence(
+    path: Option<std::path::PathBuf>,
+    session_id: &str,
+) -> Result<Option<crate::agent_events::Batch>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let session_id = session_id.to_owned();
+    Ok(Some(
+        tokio::task::spawn_blocking(move || crate::agent_events::read(&path, &session_id, 0))
+            .await??,
+    ))
+}
+async fn flushed(answer: tokio::sync::oneshot::Receiver<bool>) -> Result<()> {
+    match tokio::time::timeout(std::time::Duration::from_secs(5), answer).await {
+        Ok(Ok(true)) => Ok(()),
+        _ => Err(anyhow!("Native terminal write was not confirmed")),
+    }
+}
+
+pub async fn send(
+    state: Arc<Mutex<State>>,
+    log: Service,
+    issuer: String,
+    key: String,
+    session_id: String,
+    prompt: String,
+) -> Result<Receipt> {
+    let accepted = log
+        .accept_send(
+            issuer.clone(),
+            key,
+            json!({"sessionId":session_id,"prompt":prompt}),
+        )
+        .await?;
+    if !accepted.is_new {
+        return Ok(accepted.receipt);
+    }
+    let claim = log
+        .claim(issuer.clone(), accepted.receipt.id.clone())
+        .await?
+        .ok_or_else(|| anyhow!("Submission claim is unavailable"))?;
+    let reference = crate::submission::Claim {
+        id: claim.receipt.id.clone(),
+        issuer: issuer.clone(),
+        token: claim.token.clone(),
+    };
+    let mut queued = false;
+    let result = async {
+        let (path, mut cancellation) =
+            state
+                .lock()
+                .unwrap()
+                .begin_submission(&session_id, reference, &prompt)?;
+        let initial = fence(path.clone(), &session_id).await?;
+        let answer = state.lock().unwrap().enqueue_submission(
+            &session_id,
+            &claim.receipt.id,
+            Some(&prompt),
+            initial.as_ref(),
+        )?;
+        queued = true;
+        flushed(answer).await?;
+        // Keep paste and submit separate. Frameworks may debounce a paste event;
+        // a human taking control in this interval cancels the Enter entirely.
+        tokio::select! {
+            _=tokio::time::sleep(std::time::Duration::from_millis(150))=>{},
+            _=cancellation.changed()=>return Err(anyhow!("Submission was preempted")),
+        }
+        let latest = fence(path, &session_id).await?;
+        let correlated = latest
+            .as_ref()
+            .is_some_and(|batch| batch.identity.prompt_correlation);
+        let answer = state.lock().unwrap().enqueue_submission(
+            &session_id,
+            &claim.receipt.id,
+            None,
+            latest.as_ref(),
+        )?;
+        flushed(answer).await?;
+        Ok::<_, anyhow::Error>(correlated)
+    }
+    .await;
+    let (phase, result) = match result {
+        Ok(correlated) => (
+            "delivered",
+            json!({"nativeWriteFlushed":true,"correlation":if correlated {"launchHook"} else {"unavailable"},"taskResult":null}),
+        ),
+        Err(error) => {
+            let code = error
+                .downcast_ref::<crate::api_error::Error>()
+                .map(|e| e.code)
+                .unwrap_or("submission_unconfirmed");
+            let message = error
+                .downcast_ref::<crate::api_error::Error>()
+                .map(|_| error.to_string())
+                .unwrap_or_else(|| {
+                    "Inspect the original receipt and terminal before another submission".into()
+                });
+            (
+                if queued { "unknown" } else { "failed" },
+                json!({"code":code,"message":message,"effectStarted":queued,"taskResult":null}),
+            )
+        }
+    };
+    let receipt = log
+        .finish(issuer, claim.receipt.id, claim.token, phase.into(), result)
+        .await?;
+    state
+        .lock()
+        .unwrap()
+        .end_submission(&session_id, &receipt.id, &receipt.phase);
+    Ok(receipt)
+}
 
 pub async fn create(
     state: Arc<Mutex<State>>,

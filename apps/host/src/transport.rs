@@ -327,16 +327,19 @@ pub async fn handle(
                             state.lock().unwrap().send(id,event);
                             continue;
                         }
-                        if matches!(command,Command::CreateOperation{..}|Command::GetOperation{..}) {
+                        if matches!(command,Command::CreateOperation{..}|Command::SendOperation{..}|Command::WaitOperation{..}|Command::GetOperation{..}) {
                             let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.operation_caller(id)?))})();
                             let permit=event_gate.clone().try_acquire_owned();
                             match (prepared,permit) {
                                 (Ok((log,(issuer,admin))),Ok(permit))=>{
                                     let state=state.clone();let events=pty_events.clone();
+                                    let canceled=cancelled.clone();
                                     tokio::spawn(async move {
                                         let _permit=permit;
                                         let result:Result<serde_json::Value>=match command {
                                             Command::CreateOperation{key,spec}=>crate::operations::create(state.clone(),events,log,issuer,key,spec).await.map(|receipt|json!({"type":"operation","receipt":receipt})),
+                                            Command::SendOperation{key,session_id,prompt}=>crate::operations::send(state.clone(),log,issuer,key,session_id,prompt).await.map(|receipt|json!({"type":"operation","receipt":receipt})),
+                                            Command::WaitOperation{wait}=>crate::operations::wait(log,issuer,admin,wait,canceled).await,
                                             Command::GetOperation{id,key}=>log.operation(issuer,admin,id,key).await.map(|view|json!({"type":"operation","receipt":view.receipt,"cursor":view.cursor})),
                                             _=>unreachable!(),
                                         };

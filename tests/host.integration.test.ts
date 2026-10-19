@@ -28,8 +28,20 @@ import {
 import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Event = {
-  receipt?: { id: string; sessionId: string; phase: string; result: { code?: string } };
+  receipt?: {
+    id: string;
+    sessionId: string;
+    phase: string;
+    result: {
+      code?: string;
+      turnId?: string;
+      nativeWriteFlushed?: boolean;
+      effectStarted?: boolean;
+    };
+  };
   cursor?: number;
+  leaseId?: string;
+  wait?: { until: string; outcome: string; reached: boolean };
   report?: {
     providerVersions?: { program: string; status: string; version: string | null }[];
     sessions?: {
@@ -189,6 +201,8 @@ class Peer {
       if (index >= 0) return this.events.splice(index, 1)[0];
       const failure = this.events.find(event => event.type === 'error');
       if (failure && type !== 'error') throw new Error(`Host error: ${failure.message}`);
+      if (this.closed)
+        throw new Error(`Host socket closed before ${type} (code ${this.closeCode})`);
       return undefined;
     }, type);
   }
@@ -220,6 +234,218 @@ class Peer {
     await until(() => this.closed || undefined, 'socket closed');
   }
 }
+
+test(
+  'native send receipts bind the observed prompt and survive fast responses without input ownership',
+  { timeout: 90000 },
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'nesvo-submit-'));
+    const bin = join(fixture, 'bin');
+    await mkdir(bin);
+    const inputLog = join(fixture, 'submissions.txt');
+    const script = String.raw`#!/usr/bin/env node
+const {spawnSync}=require('node:child_process');
+if(process.argv.includes('--version')) { console.log('2.1.303-submission-fixture');process.exit(0); }
+const settings=JSON.parse(process.argv[process.argv.indexOf('--settings')+1]);
+function hook(name,extra={}) {const h=settings.hooks[name][0].hooks[0];const result=spawnSync(h.command,h.args,{windowsHide:true,input:JSON.stringify({hook_event_name:name,session_id:'submission-conversation',agent_id:'',...extra}),stdio:['pipe','ignore','ignore']});if(result.status!==0)throw Error('fixture hook failed');}
+process.stdin.setEncoding('utf8');if(process.stdin.isTTY)process.stdin.setRawMode(true);
+process.stdout.write('\x1b[?2004h');hook('SessionStart',{source:'startup'});hook('Stop');
+let pending='',draft='',count=0;
+function submit(prompt) {
+ require('node:fs').appendFileSync(process.env.NESVO_SUBMISSION_LOG,String(++count)+'\n');
+ hook('UserPromptSubmit',{prompt:prompt==='mismatch'?'a different prompt':prompt});
+ if(prompt==='hold') {hook('PreToolUse',{tool_name:'Read'});hook('Notification',{notification_type:'idle_prompt'});setTimeout(()=>hook('Stop'),1200);}
+ else {hook('Stop');if(prompt==='fast-exit')process.exit(0);}
+}
+process.stdin.on('data',text=>{
+ pending+=text;
+ while(pending.length) {
+  if(pending.startsWith('\x1b[200~')) {const end=pending.indexOf('\x1b[201~',6);if(end<0)break;draft+=pending.slice(6,end);pending=pending.slice(end+6);}
+  else if(pending[0]==='\r'||pending[0]==='\n') {pending=pending.slice(1);const text=draft;draft='';if(text)submit(text);}
+  else if(pending[0]==='\x1b') {const m=pending.match(/^\x1b\[[0-9;?]*[A-Za-z~]/);if(!m)break;pending=pending.slice(m[0].length);}
+  else {let end=pending.search(/[\x1b\r\n]/);if(end<0)end=pending.length;draft+=pending.slice(0,end);pending=pending.slice(end);}
+ }
+});process.stdin.resume();`;
+    if (process.platform === 'win32') {
+      await link(process.execPath, join(bin, 'node.exe')).catch(() =>
+        copyFile(process.execPath, join(bin, 'node.exe')),
+      );
+      const pkg = join(bin, 'node_modules', '@anthropic-ai', 'claude-code');
+      await mkdir(pkg, { recursive: true });
+      await writeFile(join(pkg, 'package.json'), JSON.stringify({ bin: { claude: 'main.js' } }));
+      await writeFile(join(pkg, 'main.js'), script);
+      await writeFile(join(bin, 'claude.cmd'), '@echo off\r\necho NEVER_RUN_SHIM\r\n');
+    } else {
+      await link(process.execPath, join(bin, 'node')).catch(() =>
+        copyFile(process.execPath, join(bin, 'node')),
+      );
+      await chmod(join(bin, 'node'), 0o755);
+      await writeFile(join(bin, 'claude'), script);
+      await chmod(join(bin, 'claude'), 0o755);
+    }
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'path'),
+    );
+    env.PATH = [bin, dirname(process.execPath)].join(delimiter);
+    env.NESVO_SUBMISSION_LOG = inputLog;
+    const host = spawn(
+      hostBinary(),
+      [
+        '--port',
+        '0',
+        '--pairing-dir',
+        join(fixture, 'pairing'),
+        '--workspace',
+        fixture,
+        '--exit-on-stdin-close',
+      ],
+      { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    host.stdout?.resume();
+    host.stderr?.resume();
+    let owner: Peer | undefined;
+    try {
+      const pairing = await until(async () => {
+        try {
+          return parsePairing(await readFile(join(fixture, 'pairing', 'pairing.json'), 'utf8'));
+        } catch {
+          return undefined;
+        }
+      }, 'submission host');
+      owner = new Peer(pairing);
+      await owner.authenticate();
+      await owner.next('sessions');
+      owner.send({
+        type: 'create',
+        name: 'Submission fixture',
+        program: 'claude',
+        requestId: 'native-agent',
+      });
+      let id = (await owner.next('created', e => e.requestId === 'native-agent')).sessionId!;
+      await owner.next(
+        'sessions',
+        e =>
+          e.sessions?.some(
+            s => s.id === id && s.readiness?.phase === 'ready' && s.status?.state === 'idle',
+          ) ?? false,
+      );
+      const lookup = async (key: string) => {
+        owner!.send({ type: 'getOperation', key, requestId: 'lookup' });
+        return (await owner!.next('operation', e => e.requestId === 'lookup')).receipt!;
+      };
+      const send = async (key: string, prompt: string) => {
+        owner!.send({ type: 'sendOperation', key, sessionId: id, prompt, requestId: key });
+        return (await owner!.next('operation', e => e.requestId === key)).receipt!;
+      };
+      const first = await send('one', 'literal łódź\nsecond line');
+      assert.ok(['delivered', 'received', 'settled'].includes(first.phase), JSON.stringify(first));
+      const replay = await send('one', 'literal łódź\nsecond line');
+      assert.equal(replay.id, first.id);
+      const settled = await until(async () => {
+        const r = await lookup('one');
+        return r.phase === 'settled' ? r : undefined;
+      }, 'correlated fast response');
+      assert.match(settled.result.turnId!, /^[a-f0-9]{32}:\d+$/);
+      assert.equal(settled.result.nativeWriteFlushed, true);
+      assert.equal(
+        (await readFile(inputLog, 'utf8')).trim(),
+        '1',
+        'the same intent sends one prompt only',
+      );
+      await delay(300);
+      const held = await send('held', 'hold');
+      assert.notEqual(held.phase, 'settled');
+      owner.send({
+        type: 'waitOperation',
+        id: held.id,
+        sessionId: id,
+        until: 'settled',
+        timeoutMs: 100,
+        requestId: 'old-idle-wait',
+      });
+      const notComplete = await owner.next('operation', e => e.requestId === 'old-idle-wait');
+      assert.equal(notComplete.wait?.outcome, 'timeout');
+      assert.equal(notComplete.wait?.reached, false);
+      await delay(450);
+      assert.notEqual(
+        (await lookup('held')).phase,
+        'settled',
+        'idle notification is not this response completion',
+      );
+      await until(async () => {
+        const r = await lookup('held');
+        return r.phase === 'settled' ? r : undefined;
+      }, 'held response');
+      owner.send({
+        type: 'waitOperation',
+        id: held.id,
+        sessionId: id,
+        until: 'settled',
+        timeoutMs: 1000,
+        requestId: 'late-wait',
+      });
+      const late = await owner.next('operation', e => e.requestId === 'late-wait');
+      assert.equal(late.wait?.reached, true);
+      assert.equal(late.receipt?.id, held.id);
+      await delay(300);
+      const mismatch = await send('mismatch', 'mismatch');
+      assert.equal(mismatch.result.nativeWriteFlushed, true);
+      await delay(650);
+      assert.equal(
+        (await lookup('mismatch')).phase,
+        'delivered',
+        'a different observed prompt cannot finish this send',
+      );
+      const blocked = await send('blocked-next', 'never send');
+      assert.equal(blocked.phase, 'failed');
+      assert.equal(blocked.result.effectStarted, false);
+      assert.equal(blocked.result.code, 'submission_pending');
+      owner.send({ type: 'attach', sessionId: id, cols: 80, rows: 24 });
+      await owner.next('attached', e => e.sessionId === id);
+      const humanLease = await owner.next('control', e => e.sessionId === id && !!e.leaseId);
+      await until(async () => {
+        const r = await lookup('mismatch');
+        return r.phase === 'unknown' ? r : undefined;
+      }, 'human preemption');
+      const controlBusy = await send('human-controls', 'never send');
+      assert.equal(controlBusy.result.code, 'control_busy');
+      owner.send({ type: 'releaseControl', sessionId: id, leaseId: humanLease.leaseId });
+      await delay(150);
+      const unsafe = await send('preempted-draft', 'do not append');
+      assert.equal(unsafe.result.code, 'unsafe_draft');
+      owner.send({
+        type: 'create',
+        name: 'Clean exit fixture',
+        program: 'claude',
+        requestId: 'exit-agent',
+      });
+      id = (await owner.next('created', e => e.requestId === 'exit-agent')).sessionId!;
+      await owner.next(
+        'sessions',
+        e =>
+          e.sessions?.some(
+            s => s.id === id && s.readiness?.phase === 'ready' && s.status?.state === 'idle',
+          ) ?? false,
+      );
+      const exit = await send('exit', 'fast-exit');
+      assert.ok(['delivered', 'received', 'settled'].includes(exit.phase), JSON.stringify(exit));
+      await until(async () => {
+        const r = await lookup('exit');
+        return r.phase === 'settled' ? r : undefined;
+      }, 'final Stop after process exit');
+      assert.equal((await readFile(inputLog, 'utf8')).trim().split('\n').length, 4);
+      owner.send({ type: 'list', requestId: 'no-controller' });
+      const snapshot = await owner.next('sessions', e => e.requestId === 'no-controller');
+      assert.equal(snapshot.sessions?.find(s => s.id === id)?.controllerId, null);
+    } finally {
+      owner?.socket.terminate();
+      await stopFixtureHost(host);
+      assert.equal(dirname(resolve(fixture)), resolve(tmpdir()));
+      assert.ok(fixture.includes('nesvo-submit-'));
+      await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  },
+);
 
 test(
   'launch-scoped lifecycle reaches real helper, host and late observers without a model',
@@ -358,6 +584,7 @@ process.stdin.on('data', bytes=>{
         { type: 'input', sessionId: id, data: 'DO_NOT_SEND\r' },
         { type: 'getDiff', sessionId: id, scope: 'unstaged', directory: fixture },
         { type: 'launch', spec: { name: 'unauthorized', program: 'shell' } },
+        { type: 'sendOperation', key: 'not-permitted', sessionId: id, prompt: 'Do not send' },
         {
           type: 'createOperation',
           key: 'forged',

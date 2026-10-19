@@ -16,7 +16,7 @@ pub fn exists(report: &Path) -> bool {
 pub fn initialize(report: &Path, session_id: &str) -> Result<()> {
     let connection = Connection::open(database(report))?;
     connection.execute_batch("CREATE TABLE scope (id INTEGER PRIMARY KEY CHECK(id=1), host_session TEXT NOT NULL, launch_id TEXT NOT NULL, provider_session TEXT, generation INTEGER NOT NULL DEFAULT 1, rejected INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, provider_session TEXT, event TEXT NOT NULL, state TEXT NOT NULL);")?;
+      CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, provider_session TEXT, event TEXT NOT NULL, state TEXT NOT NULL, prompt_digest TEXT);")?;
     connection.execute(
         "INSERT INTO scope(id,host_session,launch_id) VALUES(1,?1,?2)",
         params![session_id, hex::encode(crate::wire::random::<16>())],
@@ -44,7 +44,14 @@ pub fn append(
     event: &str,
     state: StatusState,
     allow_rebind: bool,
+    prompt_digest: Option<&str>,
 ) -> Result<Option<u64>> {
+    ensure!(
+        prompt_digest.is_none_or(|hash| event == "UserPromptSubmit"
+            && hash.len() == 64
+            && hash.bytes().all(|b| b.is_ascii_hexdigit())),
+        "Invalid prompt fingerprint"
+    );
     ensure!(
         provider_session.is_none_or(|id| !id.is_empty()
             && id.len() <= 128
@@ -79,15 +86,18 @@ pub fn append(
             params![provider_session, generation],
         )?;
     }
-    transaction.execute(
-        "INSERT INTO events(generation,provider_session,event,state) VALUES(?1,?2,?3,?4)",
-        params![
-            generation,
-            provider_session,
-            event,
-            serde_json::to_string(&state)?
-        ],
-    )?;
+    // Old launch journals remain readable/writable if a helper is upgraded while
+    // their host is still running. They simply provide no prompt correlation.
+    let digest_column = has_digest_column(&transaction)?;
+    let state = serde_json::to_string(&state)?;
+    if digest_column {
+        transaction.execute("INSERT INTO events(generation,provider_session,event,state,prompt_digest) VALUES(?1,?2,?3,?4,?5)",params![generation,provider_session,event,state,prompt_digest])?;
+    } else {
+        transaction.execute(
+            "INSERT INTO events(generation,provider_session,event,state) VALUES(?1,?2,?3,?4)",
+            params![generation, provider_session, event, state],
+        )?;
+    }
     let sequence = u64::try_from(transaction.last_insert_rowid())?;
     transaction.execute(
         "DELETE FROM events WHERE sequence<=?1",
@@ -95,6 +105,16 @@ pub fn append(
     )?;
     transaction.commit()?;
     Ok(Some(sequence))
+}
+fn has_digest_column(connection: &Connection) -> Result<bool> {
+    let mut statement = connection.prepare("PRAGMA table_info(events)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "prompt_digest" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 pub fn accepts_context(report: &Path, provider_session: Option<&str>) -> Result<bool> {
     let active: Option<String> = open(report, false)?.query_row(
@@ -113,18 +133,21 @@ pub struct Identity {
     pub provider_session_id: Option<String>,
     pub generation: u64,
     pub rejected: u64,
+    pub prompt_correlation: bool,
 }
 pub struct Event {
     pub name: String,
     pub sequence: u64,
     pub generation: u64,
     pub state: StatusState,
+    pub prompt_digest: Option<String>,
 }
 pub struct Batch {
     pub identity: Identity,
     pub events: Vec<Event>,
     pub gap: bool,
     pub observed: bool,
+    pub head_sequence: u64,
 }
 fn unsigned(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
     let value: i64 = row.get(index)?;
@@ -134,6 +157,7 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
     ensure!(after <= i64::MAX as u64, "Invalid lifecycle cursor");
     let mut connection = open(report, false)?;
     let transaction = connection.transaction()?;
+    let prompt_correlation = has_digest_column(&transaction)?;
     let identity = transaction.query_row(
         "SELECT host_session,launch_id,provider_session,generation,rejected FROM scope WHERE id=1",
         [],
@@ -144,6 +168,7 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
                 provider_session_id: row.get(2)?,
                 generation: unsigned(row, 3)?,
                 rejected: unsigned(row, 4)?,
+                prompt_correlation,
             })
         },
     )?;
@@ -153,6 +178,9 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
     );
     let first: Option<i64> =
         transaction.query_row("SELECT min(sequence) FROM events", [], |row| row.get(0))?;
+    let head: Option<i64> =
+        transaction.query_row("SELECT max(sequence) FROM events", [], |row| row.get(0))?;
+    let head_sequence = head.map(u64::try_from).transpose()?.unwrap_or(0);
     ensure!(
         first.is_none_or(|first| first >= 0),
         "Invalid journal sequence"
@@ -160,23 +188,31 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
     let gap = first.is_some_and(|first| first as u64 > after.saturating_add(1));
     let mut events = Vec::new();
     {
-        let mut statement=transaction.prepare("SELECT sequence,generation,state,event FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?;
+        let mut statement=transaction.prepare(if prompt_correlation {"SELECT sequence,generation,state,event,prompt_digest FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2"} else {"SELECT sequence,generation,state,event,NULL FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2"})?;
         let rows = statement.query_map(params![after as i64, BATCH as i64], |row| {
             Ok((
                 unsigned(row, 0)?,
                 unsigned(row, 1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })?;
         for row in rows {
-            let (sequence, generation, state, name) = row?;
+            let (sequence, generation, state, name, prompt_digest) = row?;
             ensure!(state.len() <= 32, "Invalid lifecycle state");
+            ensure!(
+                prompt_digest
+                    .as_ref()
+                    .is_none_or(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())),
+                "Invalid stored prompt fingerprint"
+            );
             events.push(Event {
                 name,
                 sequence,
                 generation,
                 state: serde_json::from_str(&state)?,
+                prompt_digest,
             });
         }
     }
@@ -186,6 +222,7 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
         events,
         gap,
         observed: first.is_some(),
+        head_sequence,
     })
 }
 
@@ -201,6 +238,49 @@ mod tests {
         dir.join("context.json")
     }
     #[test]
+    fn prompt_evidence_is_private_and_legacy_journals_keep_status_compatibility() {
+        let report = fixture();
+        initialize(&report, "host-session").unwrap();
+        let hash = crate::submission::digest("private prompt never stored").unwrap();
+        append(
+            &report,
+            Some("conversation"),
+            "UserPromptSubmit",
+            StatusState::Working,
+            false,
+            Some(&hash),
+        )
+        .unwrap();
+        let batch = read(&report, "host-session", 0).unwrap();
+        assert!(batch.identity.prompt_correlation);
+        assert_eq!(
+            batch.events[0].prompt_digest.as_deref(),
+            Some(hash.as_str())
+        );
+        assert_eq!(batch.head_sequence, 1);
+        assert!(
+            !String::from_utf8_lossy(&std::fs::read(database(&report)).unwrap())
+                .contains("private prompt never stored")
+        );
+        Connection::open(database(&report))
+            .unwrap()
+            .execute_batch("ALTER TABLE events DROP COLUMN prompt_digest")
+            .unwrap();
+        append(
+            &report,
+            Some("conversation"),
+            "UserPromptSubmit",
+            StatusState::Working,
+            false,
+            Some(&hash),
+        )
+        .unwrap();
+        let legacy = read(&report, "host-session", 0).unwrap();
+        assert!(!legacy.identity.prompt_correlation);
+        assert!(legacy.events.iter().all(|e| e.prompt_digest.is_none()));
+        std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
+    }
+    #[test]
     fn fast_turns_remain_ordered_and_foreign_conversations_cannot_stop_new_ones() {
         let report = fixture();
         initialize(&report, "host-session").unwrap();
@@ -209,7 +289,7 @@ mod tests {
             ("UserPromptSubmit", StatusState::Working),
             ("Stop", StatusState::Idle),
         ] {
-            append(&report, Some("conversation-a"), name, state, false).unwrap();
+            append(&report, Some("conversation-a"), name, state, false, None).unwrap();
         }
         let batch = read(&report, "host-session", 0).unwrap();
         assert_eq!(
@@ -223,6 +303,7 @@ mod tests {
             "SessionStart",
             StatusState::Idle,
             true,
+            None,
         )
         .unwrap();
         assert!(
@@ -231,7 +312,8 @@ mod tests {
                 Some("conversation-a"),
                 "Stop",
                 StatusState::Idle,
-                false
+                false,
+                None
             )
             .unwrap()
             .is_none()
@@ -248,7 +330,7 @@ mod tests {
         let report = fixture();
         initialize(&report, "session").unwrap();
         for _ in 0..1026 {
-            append(&report, None, "Stop", StatusState::Idle, false).unwrap();
+            append(&report, None, "Stop", StatusState::Idle, false, None).unwrap();
         }
         let batch = read(&report, "session", 0).unwrap();
         assert!(batch.gap);

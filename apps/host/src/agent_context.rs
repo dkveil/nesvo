@@ -150,6 +150,9 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
         return Ok(());
     }
     if let Some(state) = lifecycle_state(&value) {
+        let digest = (value["hook_event_name"] == "UserPromptSubmit")
+            .then(|| value["prompt"].as_str().and_then(crate::submission::digest))
+            .flatten();
         let sequence = if crate::agent_events::exists(report) {
             match crate::agent_events::append(
                 report,
@@ -160,6 +163,7 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
                     value["source"].as_str(),
                     Some("clear" | "resume" | "compact")
                 ),
+                digest.as_deref(),
             )? {
                 Some(sequence) => sequence,
                 None => return Ok(()),

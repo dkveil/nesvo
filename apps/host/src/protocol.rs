@@ -15,6 +15,15 @@ pub enum Command {
         key: String,
         spec: crate::jobs::LaunchSpec,
     },
+    SendOperation {
+        key: String,
+        session_id: String,
+        prompt: String,
+    },
+    WaitOperation {
+        #[serde(flatten)]
+        wait: crate::operations::WaitRequest,
+    },
     GetOperation {
         id: Option<String>,
         key: Option<String>,

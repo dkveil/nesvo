@@ -1,4 +1,4 @@
-# Durable launch operations
+# Durable session operations
 
 The host advertises `operationReceipts:true` when its durable event worker is
 available. This is additive to protocol v2; legacy `create`/`launch` requests keep
@@ -87,9 +87,62 @@ inspection. A process whose recovery write fails is killed and cleaned up rather
 than becoming an untracked background PTY. Initial Windows cursor negotiation has
 one owner in the stream decoder; prompted launches do not inject a second reply.
 
-This checkpoint covers **create** receipts. Delivered/started prompt receipts,
-turn-correlated wait, send/job deduplication and worker results are separate open
-F17/F18/F28 gates. Do not interpret `created` as those acknowledgements.
+## Prompt submission and correlated wait
+
+The additive `promptReceipts:true` capability enables owner-authorized
+`sendOperation {key,sessionId,prompt}` and passive
+`waitOperation {id|key,sessionId?,until?,timeoutMs?}`. Managed passive contexts
+cannot send; wait/lookup can only see their issuer's receipts. CLI/MCP adapters
+and coordinator grants are tracked separately from this host boundary.
+
+Send accepts literal UTF-8 up to 8192 bytes and rejects terminal controls other
+than line endings/tab. Multiline/tab input requires observed bracketed-paste
+support. It never acquires control. A human controller, an unreconciled human
+draft, an existing pending send, or an agent without ready/idle evidence blocks
+submission. The host rechecks ownership, lifecycle generation and pending source
+events immediately before each input chunk. Paste and Enter are separate writes;
+human takeover between them cancels Enter. A queued/partial write with uncertain
+outcome makes the editor unsafe for automatic reuse, including with a new key.
+There is no automatic clear-draft/reconciliation command at this checkpoint.
+
+Delivery acknowledges the actual native writer's complete write and flush, not
+just queue admission. The durable send phases add:
+
+| Phase       | Evidence                                                                |
+| ----------- | ----------------------------------------------------------------------- |
+| delivered   | Paste and submit were written/flushed; provider pickup is not implied   |
+| received    | The launch-local provider hook observed the matching prompt             |
+| started     | A subsequent provider tool event proves processing                      |
+| waiting     | That correlated response needs a question, permission or quota decision |
+| settled     | Provider Stop for that response; task result remains null               |
+| interrupted | A newer prompt superseded the matched response                          |
+
+The private Claude v2 journal records only a SHA-256 prompt fingerprint. Matching
+normalizes line endings and surrounding whitespace; it does not rewrite sent
+bytes. Correlation also fences launch, conversation generation and source
+sequence. Unmatched prompts, child/foreign events, old idle/Stop and later
+conversations cannot settle a send. Provider-specific pasted-content rewriting
+may prevent matching and remains unconfirmed; it is never guessed into success.
+An old journal without the fingerprint column stays compatible but advertises
+no correlation. Other providers currently have no prompt-correlation adapter.
+
+`until` is `delivered`, `received`, `started` or default `settled`. Wait uses the
+receipt's exact operation/turn, registers before its transactional receipt read,
+and rereads on journal notification. It catches already-finished fast responses
+without polling or consulting the UI-focused session. Results contain the
+receipt, cursor and `wait:{until,outcome,reached}`; outcome is `reached`, `timeout`
+or a terminal phase. Timeout is 1–60000 ms (default 30000); 32 waits globally and
+four journal operations per connection are allowed. Disconnect cancels only the
+wait. Unsupported correlation returns `unsupported` rather than interpreting
+idle as completion. No wait retries input or performs a model call.
+
+Lifecycle transitions and their domain events commit atomically. A late native
+write ACK merges its evidence without regressing a faster received/settled
+response. Restart marks unresolved tracked sends unknown and never resends;
+confirmed delivery-only receipts remain historical delivery. Failed/unknown
+receipts are not authorization to submit a new key blindly. Job dispatch
+deduplication, explicit worker results and provider coverage remain F17/F18/F28
+gates; response settlement is never validated task success.
 
 ## Evidence
 
