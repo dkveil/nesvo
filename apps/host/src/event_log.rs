@@ -100,6 +100,9 @@ pub(crate) fn append_transaction(
 }
 
 struct Store(Connection);
+#[cfg(test)]
+#[path = "orchestration_tests.rs"]
+mod orchestration_tests;
 impl Store {
     fn open(path: &std::path::Path) -> Result<Self> {
         let mut connection = Connection::open(path)?;
@@ -110,6 +113,7 @@ impl Store {
           CREATE TABLE IF NOT EXISTS domain_event_cursor(id INTEGER PRIMARY KEY CHECK(id=1),head INTEGER NOT NULL,floor INTEGER NOT NULL);
           INSERT OR IGNORE INTO domain_event_cursor VALUES(1,0,0);")?;
         crate::receipts::initialize(&mut connection)?;
+        crate::orchestration::initialize(&connection)?;
         Ok(Self(connection))
     }
     fn cursors(&self) -> Result<(u64, u64)> {
@@ -197,6 +201,11 @@ impl Store {
 }
 
 enum Work {
+    Workflow {
+        actor: crate::orchestration::Actor,
+        request: crate::orchestration::Request,
+        reply: oneshot::Sender<Result<Value>>,
+    },
     Accept {
         operation: &'static str,
         issuer: String,
@@ -263,6 +272,24 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub async fn workflow(
+        &self,
+        actor: crate::orchestration::Actor,
+        request: crate::orchestration::Request,
+    ) -> Result<Value> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::Workflow {
+                actor,
+                request,
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!("Workflow store is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!("Workflow outcome was not confirmed; recover the same mutation key")
+        })?
+    }
     pub fn wait_slot(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
         self.wait_slots
             .clone()
@@ -396,6 +423,17 @@ impl Service {
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
+                        Work::Workflow {
+                            actor,
+                            request,
+                            reply,
+                        } => {
+                            let result =
+                                crate::orchestration::execute(&mut store.0, actor, request);
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
                         Work::Accept {
                             operation,
                             issuer,

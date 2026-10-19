@@ -209,6 +209,53 @@ impl State {
             .authority
             .clone())
     }
+    pub fn workflow_actor(
+        &self,
+        client_id: u64,
+        request: &mut crate::orchestration::Request,
+    ) -> Result<crate::orchestration::Actor> {
+        let caller = self.caller_session(client_id)?;
+        if caller
+            .is_some_and(|id| self.sessions[id].policy.role != crate::caller::Role::Coordinator)
+        {
+            return Err(crate::api_error::Error::new(
+                "forbidden",
+                "Workflow plans require owner or coordinator authority",
+            )
+            .into());
+        }
+        if let crate::orchestration::Request::Create { spec, .. } = request {
+            if let Some(id) = caller {
+                if spec
+                    .coordinator_session_id
+                    .as_ref()
+                    .is_some_and(|requested| requested != id)
+                {
+                    return Err(crate::api_error::Error::new(
+                        "forbidden",
+                        "Coordinator may create runs only under its own identity",
+                    )
+                    .into());
+                }
+                spec.coordinator_session_id = Some(id.into());
+            } else if let Some(id) = &spec.coordinator_session_id
+                && !self.sessions.get(id).is_some_and(|session| {
+                    session.info.running && session.policy.role == crate::caller::Role::Coordinator
+                })
+            {
+                return Err(crate::api_error::Error::new(
+                    "invalid_argument",
+                    "Run coordinator must be a live coordinator process",
+                )
+                .into());
+            }
+        }
+        let (issuer, _) = self.operation_caller(client_id)?;
+        Ok(crate::orchestration::Actor {
+            issuer,
+            coordinator: caller.map(str::to_owned),
+        })
+    }
     fn can_read(&self, caller: &str, target: &str) -> bool {
         self.sessions
             .get(caller)
@@ -415,6 +462,11 @@ impl State {
             return Ok(());
         };
         let target = match command {
+            Command::Workflow { request } => {
+                return self
+                    .workflow_actor(client_id, &mut request.clone())
+                    .map(|_| ());
+            }
             Command::CreateOperation { spec, .. } => {
                 let mut spec = spec.clone();
                 return self
@@ -518,6 +570,7 @@ impl State {
         event["sessionLineage"] = true.into();
         event["coordinatorScopes"] = true.into();
         event["sessionHarness"] = true.into();
+        event["workflowPlans"] = true.into();
         event
     }
 
@@ -738,7 +791,7 @@ impl State {
         if event["type"] == "capabilities" {
             let mut event = event;
             let role = self.sessions.get(id)?.policy.role;
-            event["caller"] = json!({"sessionId":id,"role":role,"permissions":if role==crate::caller::Role::Coordinator{vec!["session:read","child:create","child:read","child:send","child:interrupt","child:stop"]}else{vec!["session:read"]},"expires":"processExit"});
+            event["caller"] = json!({"sessionId":id,"role":role,"permissions":if role==crate::caller::Role::Coordinator{vec!["session:read","child:create","child:read","child:send","child:interrupt","child:stop","run:plan"]}else{vec!["session:read"]},"expires":"processExit"});
             if let Some(session) = self.sessions.get(id) {
                 event["workspace"] = session.info.cwd.clone().into();
             }
@@ -1561,7 +1614,8 @@ impl State {
         ensure!(!self.shutting_down, "Host is shutting down.");
         self.authorize(client_id, &command)?;
         match command {
-            Command::CreateOperation { .. }
+            Command::Workflow { .. }
+            | Command::CreateOperation { .. }
             | Command::SendOperation { .. }
             | Command::WaitOperation { .. }
             | Command::InterruptOperation { .. }

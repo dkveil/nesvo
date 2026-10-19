@@ -11,6 +11,9 @@ pub enum Command {
         client_nonce: String,
     },
     List,
+    Workflow {
+        request: crate::orchestration::Request,
+    },
     CreateOperation {
         key: String,
         spec: crate::jobs::LaunchSpec,

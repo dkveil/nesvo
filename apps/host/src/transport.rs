@@ -327,6 +327,35 @@ pub async fn handle(
                             state.lock().unwrap().send(id,event);
                             continue;
                         }
+                        if let Command::Workflow{mut request}=command {
+                            let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.workflow_actor(id,&mut request)?))})();
+                            let permit=event_gate.clone().try_acquire_owned();
+                            match (prepared,permit) {
+                                (Ok((log,actor)),Ok(permit))=>{
+                                    let state=state.clone();
+                                    tokio::spawn(async move {
+                                        let _permit=permit;
+                                        let mut event=match log.workflow(actor,request).await {
+                                            Ok(mut data)=>{data["type"]="workflow".into();data},
+                                            Err(error)=>json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("workflow_failed"),"message":error.to_string()}),
+                                        };
+                                        if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
+                                        state.lock().unwrap().send(id,event);
+                                    });
+                                },
+                                (Err(error),_)=>{
+                                    let mut event=json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("workflow_failed"),"message":error.to_string()});
+                                    if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
+                                    state.lock().unwrap().send(id,event);
+                                },
+                                _=>{
+                                    let mut event=json!({"type":"error","code":"busy","message":"Workflow service is unavailable or busy"});
+                                    if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
+                                    state.lock().unwrap().send(id,event);
+                                }
+                            }
+                            continue;
+                        }
                         if matches!(command,Command::CreateOperation{..}|Command::SendOperation{..}|Command::WaitOperation{..}|Command::InterruptOperation{..}|Command::StopOperation{..}|Command::GetOperation{..}) {
                             let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.operation_caller(id)?,state.operation_authority(id)?))})();
                             let permit=event_gate.clone().try_acquire_owned();

@@ -12,6 +12,7 @@ mod jobs;
 mod launchers;
 mod notifications;
 mod operations;
+mod orchestration;
 mod process;
 mod program_status;
 mod protocol;

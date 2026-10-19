@@ -45,6 +45,12 @@ path uses UI focus, and changing the hint or private-file role cannot grant acce
 
 ## Current tools
 
+The five workflow tools (`nesvo_create_run`, `nesvo_list_runs`, `nesvo_get_run`,
+`nesvo_set_run_plan`, `nesvo_get_run_mutation`) are gated by `workflowPlans`.
+They use durable draft metadata and the same CLI recovery keys/revision checks.
+See [workflow contract](harness-workflows.md). Tool visibility does not grant
+access to another coordinator's runs or permit native dispatch.
+
 Create accepts optional `spec.parentSessionId` for a live process parent, gated
 by `sessionLineage`. It creates an ordinary background session without changing
 parent input ownership. The relation appears in session data and survives client

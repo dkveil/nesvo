@@ -624,6 +624,7 @@ test(
             );
             queryOutput(rejected.stdout);
             assert.equal(rejected.code, 6, 'shell prompts fail validation, never execute');
+            assert.ok(JSON.parse(rejected.stdout).error.receipt, rejected.stdout);
             assert.equal(JSON.parse(rejected.stdout).error.receipt.phase, 'failed');
             assert.equal(JSON.parse(rejected.stdout).error.receipt.result.effectStarted, false);
           }
@@ -682,6 +683,101 @@ test(
           );
           client.closeSession(receipt.sessionId);
           await next('sessions', e => !e.sessions.some(s => s.id === receipt.sessionId));
+        },
+      );
+
+      await suite.test(
+        'workflow CLI commits a DAG once and recovers the same revision without native effects',
+        async () => {
+          const invoke = async (args: string[]) => {
+            const output = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'run',
+              ...args,
+              '--json',
+            ]);
+            queryOutput(output.stdout);
+            assert.equal(output.code, 0, output.stdout);
+            return JSON.parse(output.stdout).data;
+          };
+          const goalPath = join(fixture, 'goal łódź.txt');
+          await writeFile(goalPath, 'Literal $(do-not-execute) goal\nwith Unicode łódź');
+          const created = await invoke([
+            'create',
+            'CLI plan',
+            '--key',
+            'run-create',
+            '--goal-file',
+            goalPath,
+          ]);
+          assert.equal(created.run.state, 'draft');
+          assert.equal(created.run.goal, await readFile(goalPath, 'utf8'));
+          assert.deepEqual(await invoke(['mutation', '--key', 'run-create']), created);
+          const planPath = join(fixture, 'plan.json');
+          await writeFile(
+            planPath,
+            JSON.stringify([
+              { key: 'implement', title: 'Implement', instruction: 'Produce explicit result' },
+              {
+                key: 'review',
+                title: 'Review',
+                instruction: 'Validate',
+                dependencies: ['implement'],
+              },
+            ]),
+          );
+          const planned = await invoke([
+            'plan',
+            created.run.id,
+            '--key',
+            'run-plan',
+            '--revision',
+            '1',
+            '--file',
+            planPath,
+          ]);
+          assert.equal(planned.run.revision, 2);
+          assert.equal(planned.tasks[0].state, 'planned');
+          assert.equal(planned.tasks[1].dependencyState, 'waiting');
+          assert.equal(planned.tasks[1].dependencies[0], planned.tasks[0].id);
+          const current = await invoke(['get', created.run.id]);
+          assert.deepEqual(current.tasks, planned.tasks);
+          assert.ok(
+            (await invoke(['list'])).runs.some((r: { id: string }) => r.id === created.run.id),
+          );
+          const stale = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'run',
+            'plan',
+            created.run.id,
+            '--key',
+            'run-stale',
+            '--revision',
+            '1',
+            '--file',
+            planPath,
+            '--json',
+          ]);
+          queryOutput(stale.stdout);
+          assert.equal(JSON.parse(stale.stdout).error.code, 'revision_conflict');
+          assert.equal((await invoke(['get', created.run.id])).run.revision, 2);
+          await writeFile(
+            planPath,
+            JSON.stringify([{ key: 'bad', title: 'bad', instruction: 'x', dependencies: false }]),
+          );
+          const malformed = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'run',
+            'plan',
+            created.run.id,
+            '--key',
+            'malformed',
+            '--revision',
+            '2',
+            '--file',
+            planPath,
+            '--json',
+          ]);
+          queryOutput(malformed.stdout);
+          assert.equal(malformed.code, 2);
+          assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
         },
       );
 

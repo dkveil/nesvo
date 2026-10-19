@@ -30,6 +30,74 @@
           "oneOf": [
             {
               "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": { "const": "workflow" },
+                "cursor": { "$ref": "#/definitions/cursor" }
+              },
+              "oneOf": [
+                {
+                  "required": ["runs", "nextOffset"],
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "maxItems": 16,
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "title", "revision", "state"]
+                      }
+                    },
+                    "nextOffset": { "type": ["integer", "null"] }
+                  }
+                },
+                {
+                  "required": ["run", "tasks"],
+                  "properties": {
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "title", "goal", "revision", "state", "taskResult"],
+                      "properties": {
+                        "id": { "type": "string" },
+                        "title": { "type": "string" },
+                        "goal": { "type": "string" },
+                        "revision": { "type": "integer", "minimum": 1 },
+                        "state": { "const": "draft" },
+                        "taskResult": { "type": "null" }
+                      }
+                    },
+                    "tasks": {
+                      "type": "array",
+                      "maxItems": 64,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "key",
+                          "title",
+                          "instruction",
+                          "dependencies",
+                          "state",
+                          "dependencyState",
+                          "attempts",
+                          "taskResult"
+                        ],
+                        "properties": {
+                          "id": { "type": "string" },
+                          "key": { "type": "string" },
+                          "dependencies": { "type": "array", "items": { "type": "string" } },
+                          "state": { "const": "planned" },
+                          "dependencyState": { "enum": ["ready", "waiting"] },
+                          "attempts": { "const": 0 },
+                          "taskResult": { "type": "null" }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "object",
               "required": ["type", "receipt"],
               "properties": {
                 "type": { "const": "operation" },

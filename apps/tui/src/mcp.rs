@@ -150,6 +150,48 @@ fn catalog() -> Vec<Tool> {
             false,
         ),
         (
+            "nesvo_create_run",
+            "Create a durable draft run once for a stable key. No agent or task is started; scoped coordinators are bound by the host.",
+            object(
+                json!({"key":{"type":"string","minLength":1,"maxLength":128},"spec":{"type":"object","additionalProperties":false,"required":["title","goal"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"goal":{"type":"string","minLength":1,"maxLength":8192},"coordinatorSessionId":{"type":["string","null"]}}}}),
+                &["key", "spec"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_list_runs",
+            "List a bounded page of visible workflow summaries. Follow nextOffset; does not expose goal/instruction text.",
+            object(
+                json!({"offset":{"type":"integer","minimum":0,"maximum":1024,"default":0}}),
+                &[],
+            ),
+            true,
+        ),
+        (
+            "nesvo_get_run",
+            "Read a visible run and its draft DAG by stable run ID. Planned/dependency-ready never means executed or successful.",
+            object(json!({"runId":id}), &["runId"]),
+            true,
+        ),
+        (
+            "nesvo_set_run_plan",
+            "Atomically replace a draft DAG at an expected revision. Task keys retain IDs. Dependencies are task keys, not names. Cycles/missing edges are refused. Reuse the original key after uncertainty.",
+            object(
+                json!({"key":{"type":"string","minLength":1,"maxLength":128},"runId":id,"expectedRevision":{"type":"integer","minimum":1},"tasks":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["key","title","instruction"],"properties":{"key":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"dependencies":{"type":"array","maxItems":64,"items":{"type":"string"}}}}}}),
+                &["key", "runId", "expectedRevision", "tasks"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_run_mutation",
+            "Recover the historical result of your workflow metadata mutation by its original key. Separate from native process-operation receipts; never starts an agent.",
+            object(
+                json!({"key":{"type":"string","minLength":1,"maxLength":128}}),
+                &["key"],
+            ),
+            true,
+        ),
+        (
             "nesvo_get_operation",
             "Recover a durable operation by its ID or your original idempotency key. Exactly one selector. Never resend with a fresh key after an unknown result.",
             object(
@@ -236,6 +278,20 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_create_run"
+        | "nesvo_list_runs"
+        | "nesvo_get_run"
+        | "nesvo_set_run_plan"
+        | "nesvo_get_run_mutation" => {
+            let action = match name {
+                "nesvo_create_run" => "create",
+                "nesvo_list_runs" => "list",
+                "nesvo_get_run" => "get",
+                "nesvo_set_run_plan" => "setPlan",
+                _ => "mutation",
+            };
+            (crate::workflow::tool(action, arguments)?, "workflow")
+        }
         "nesvo_list_sessions" | "nesvo_get_current_session" => {
             let args: serde_json::Map<String, Value> = parse(arguments)?;
             if !args.is_empty() {
@@ -433,7 +489,9 @@ impl HostTools {
             .await?;
             command["sessionId"] = cli::current_session(&caps)?.into();
         }
-        if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
+        if kind == "workflow" {
+            crate::workflow::capability(&mut connection).await?;
+        } else if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
             cli::control_capability(&mut connection).await?;
         } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
             cli::prompt_capability(&mut connection).await?;
@@ -557,7 +615,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 13);
+        assert_eq!(catalog().len(), 18);
         assert!(
             command(
                 "nesvo_read_session",

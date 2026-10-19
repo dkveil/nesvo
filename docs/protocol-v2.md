@@ -4,6 +4,12 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+Hosts advertising `workflowPlans` also accept authenticated `workflow` requests
+with a nested `request` tagged by `action`. The [draft workflow contract](harness-workflows.md)
+specifies IDs, DAG validation, atomic revisions, scoped metadata recovery and
+bounds. These requests have no PTY effects and produce no unsolicited workflow
+packets for legacy clients.
+
 Session-scoped native callers may send one `x-nesvo-scope` WebSocket handshake
 header with the public random scope ID from their private context file. The host
 selects that launch's independent key before the existing challenge/nonce/sequence

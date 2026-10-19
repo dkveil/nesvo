@@ -39,7 +39,7 @@ not evidence that the expanded acceptance criteria pass.
 | F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                 |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                                     |
-| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Pending                                                                                                     |
+| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable draft runs/tasks, validated DAG, CLI/MCP and atomic revisions; attempts/dispatch pending   |
 | F15 | Durable inbox and ACK                           | Missing                                                       | Pending                                                                                                     |
 | F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                   |
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending    |
@@ -697,3 +697,25 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   path. This closes the immediate human-priority hole; migration of the legacy
   direct write to durable dispatch receipts, full quota trust and provider queue
   policies remain F24/F44 work. This repair is not the complete quota feature.
+
+### F14 durable draft plans and shared API
+
+- Runs/goals and task DAGs now persist through the existing SQLite journal
+  actor, with stable IDs, revision guards and atomic metadata mutation recovery.
+  Cycle, missing-edge, duplicate-key and size checks precede commit. Plan state
+  remains separate from process state; no draft is treated as executed/successful.
+- Five MCP tools and `nesvo run` use the same scoped host path. Coordinators
+  access only their own runs; workers cannot read plans or claim authority from
+  lineage metadata. Native process receipts remain a separate recovery namespace.
+- Windows fmt/Clippy, 128 TUI + 93 host + 3 wire unit checks, both SDK/native
+  integrations and all 26 host/sync/CLI integrations pass. Controlled status
+  receipt-to-publication p95: 252.491 ms (26 batches). SDK checks also verify
+  MCP-to-CLI plan recovery, coordinator isolation and worker denial. No model
+  calls or layout changes; no new dependencies. See [contract](harness-workflows.md).
+- Native attempts, dispatch, explicit task results/validation and automatic DAG
+  progression remain open; this is a partial F14 checkpoint, not the stage-3 gate.
+- `acbb7af` passed every CI job in run 39340978030. The following wake-guard
+  commit's first Windows run failed because a CLI test received an error without
+  its expected receipt; Linux/macOS/app/browser passed. Local reproduction passed
+  and a bounded rerun is pending. The test now prints its structured failure
+  before dereferencing the receipt, so another failure has useful diagnostics.

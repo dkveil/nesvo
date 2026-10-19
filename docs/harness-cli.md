@@ -221,6 +221,12 @@ Job receipts, agent instruction installation and durable run grants remain
 subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.
 
+## Draft workflow plans
+
+Durable draft plans use `nesvo run create|list|get|plan|mutation`; see
+[workflow identities, DAG and recovery](harness-workflows.md). These metadata
+commands do not start agents or infer task outcomes from idle.
+
 ## Literal send and receipt wait
 
 `session send SESSION_ID --key KEY` requires one of `--prompt TEXT`,

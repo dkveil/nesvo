@@ -9,6 +9,11 @@ use std::{io::Write, path::Path, time::Duration};
 pub enum Command {
     /// Serve scoped host tools over MCP stdio. No global provider setup is changed.
     Mcp,
+    /// Durable workflow plans (separate run/task identities, no automatic launch).
+    Run {
+        #[command(subcommand)]
+        command: crate::workflow::Command,
+    },
     /// Inspect a durable operation by ID, or find the caller's idempotency key.
     Operation {
         #[arg(required_unless_present = "key", conflicts_with = "key")]
@@ -238,7 +243,7 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
         "invalid_argument" | "no_current_session" => 2,
         "pairing_unavailable" => 3,
         "host_unavailable" | "disconnected" => 4,
-        "session_not_found" | "operation_not_found" => 5,
+        "session_not_found" | "operation_not_found" | "run_not_found" | "mutation_not_found" => 5,
         "timeout" => 7,
         "unsupported" => 8,
         _ => 6,
@@ -248,6 +253,7 @@ impl Command {
     fn machine(&self) -> bool {
         match self {
             Self::Mcp => false,
+            Self::Run { command } => command.machine(),
             Self::Doctor { json } | Self::Events { json, .. } | Self::Operation { json, .. } => {
                 *json
             }
@@ -368,7 +374,7 @@ pub(crate) fn valid_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
-fn print_data(machine: bool, mut value: Value) -> Result<()> {
+pub(crate) fn print_data(machine: bool, mut value: Value) -> Result<()> {
     if let Some(object) = value.as_object_mut() {
         object.remove("requestId");
     }
@@ -746,6 +752,7 @@ pub(crate) fn error_value(error: &anyhow::Error) -> Value {
 
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let (session, machine) = match command {
+        Command::Run { command } => return crate::workflow::run(command, connection).await,
         Command::Mcp => {
             return Err(failure(
                 "invalid_argument",
