@@ -440,7 +440,8 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
             layout.sidebar_header,
         );
         frame.render_widget(
-            Paragraph::new(" nesvo").style(Style::default().fg(MUTED).bg(SURFACE)),
+            Paragraph::new(" nesvo")
+                .style(Style::default().fg(crate::theme::BRAND_MUTED).bg(SURFACE)),
             layout.sidebar_header,
         );
         let tab_strip = Rect::new(

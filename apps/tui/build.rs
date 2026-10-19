@@ -15,6 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("MUTED", "muted"),
         ("FAINT", "faint"),
         ("ACCENT", "accent"),
+        ("BRAND_MUTED", "brandMuted"),
         ("SUCCESS", "success"),
         ("WARNING", "warning"),
         ("DANGER", "danger"),
