@@ -9,6 +9,7 @@ mod process;
 mod program_status;
 mod protocol;
 mod pty;
+mod readiness;
 mod recipes;
 mod replay;
 mod sessions;

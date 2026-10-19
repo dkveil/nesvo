@@ -31,6 +31,20 @@ pub struct Status {
     // Preserve the required wire field without introducing wall-clock reads in rendering.
     pub _updated_at: u64,
 }
+#[derive(Clone, Debug, Deserialize)]
+pub struct Readiness {
+    pub phase: ReadinessPhase,
+}
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadinessPhase {
+    NotApplicable,
+    Starting,
+    Waiting,
+    Ready,
+    TimedOut,
+    Exited,
+}
 
 #[derive(Deserialize)]
 struct WireStatus {

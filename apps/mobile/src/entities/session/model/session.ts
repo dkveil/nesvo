@@ -2,6 +2,7 @@ import type {
   AttentionEvent,
   SessionStatusSource as HostSessionStatusSource,
   SessionProgram,
+  SessionReadiness,
   SessionStatusState,
 } from '@shared/api/host';
 
@@ -24,6 +25,7 @@ export const programAgents = {
 
 /** Presentation metadata derived from a host snapshot, or explicit demo data. */
 export type Session = {
+  readiness?: SessionReadiness;
   attention?: AttentionEvent | null;
   muted?: boolean;
   id: string;

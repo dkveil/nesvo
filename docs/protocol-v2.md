@@ -88,3 +88,13 @@ The root carries validated report fields; child text is excluded to keep snapsho
 bounded. These observations confer no control privileges. Host-owned OSC 7501 and
 primary DA1 queries are consumed from live output before backlog/subscriber
 delivery. Clients never answer them, including on first-attachment replay.
+
+Sessions may include additive `readiness:{phase,initialized,reason}`. Phases are
+`notApplicable` (generic shell), `starting`, `waiting` (consent/question), `ready`,
+`timedOut`, and `exited`. It is separate from `status`, process exit and task
+success. A managed CLI needs semantic evidence before initialization is recorded.
+Startup times out after 45 monotonic seconds without it; an explicit blocker can
+wait indefinitely, and clearing consent starts a new window. Late readiness can
+recover from timeout. Initialized does not authorize sending into a busy or
+blocked session. Older clients ignore this field; updated clients show starting
+and startup failure while preserving the legacy unknown agent state underneath.

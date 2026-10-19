@@ -1,4 +1,10 @@
-import type { SessionStatus, SessionStatusSource } from './session';
+import type { Session, SessionStatus, SessionStatusSource } from './session';
+
+export function sessionReadinessLabel(readiness: Session['readiness']): string | undefined {
+  if (readiness?.phase === 'starting') return 'Uruchamianie';
+  if (readiness?.phase === 'timedOut') return 'Błąd startu';
+  return undefined;
+}
 
 export function statusNeedsAttention(status: SessionStatus): boolean {
   return status === 'question' || status === 'blocked' || status === 'failed';

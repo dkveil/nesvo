@@ -190,6 +190,7 @@ export function SessionScreen({
             ) : (
               <SessionStatusBadge
                 status={session.status}
+                readiness={session.readiness}
                 source={session.statusSource}
                 demo={!session.live}
                 variant="plain"

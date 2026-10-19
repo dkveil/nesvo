@@ -115,6 +115,12 @@ impl StatusTracker {
     pub fn status(&self) -> SessionStatus {
         self.status
     }
+    pub fn rule_reason(&self) -> Option<&'static str> {
+        (self.status.source == StatusSource::Screen)
+            .then_some(self.screen_rule)
+            .flatten()
+            .map(|r| r.reason)
+    }
 
     pub fn explain(&self, now: u64) -> serde_json::Value {
         let reason = match self.status.source {

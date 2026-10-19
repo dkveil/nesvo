@@ -11,6 +11,7 @@ export type {
   SessionGroup,
   SessionLaunchOptions,
   SessionProgram,
+  SessionReadiness,
   SessionStatus,
   SessionStatusSource,
   SessionStatusState,

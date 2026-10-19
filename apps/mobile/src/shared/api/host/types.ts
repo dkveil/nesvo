@@ -11,6 +11,11 @@ export type SessionStatus = {
   confirmedSource?: 'osc7501';
   updatedAt: number;
 };
+export type SessionReadiness = {
+  phase: 'notApplicable' | 'starting' | 'waiting' | 'ready' | 'timedOut' | 'exited';
+  initialized: boolean;
+  reason: string;
+};
 export type AttentionEvent = {
   source?: SessionStatusSource;
   sequence: number;
@@ -43,6 +48,7 @@ export type SessionControl = {
 };
 
 export type TerminalSession = {
+  readiness?: SessionReadiness;
   attention?: AttentionEvent | null;
   muted?: boolean;
   id: string;

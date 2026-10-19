@@ -68,6 +68,7 @@ struct Session {
     integration_delivery: crate::agent_context::Delivery,
     info: SessionInfo,
     status: StatusTracker,
+    readiness: crate::readiness::Tracker,
     terminal_protocol: crate::terminal_protocol::Decoder,
     program_status: crate::program_status::Records,
     program_status_dirty: bool,
@@ -241,6 +242,7 @@ impl State {
                         .as_secs()
                 );
                 info["status"] = json!(session.status.status());
+                info["readiness"] = json!(session.readiness.snapshot());
                 // Legacy v2 clients accept screen evidence and ignore extra fields.
                 if session.status.status().source == crate::status::StatusSource::Hook {
                     info["status"]["source"] = json!("screen");
@@ -351,6 +353,11 @@ impl State {
         let mut alerts = Vec::new();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
+            changed |= session.readiness.observe(
+                session.status.status(),
+                session.status.rule_reason(),
+                session.started.elapsed(),
+            );
             changed |= std::mem::take(&mut session.program_status_dirty);
             if session.auto_title
                 && let Some(title) = &session.titles.title
@@ -708,7 +715,7 @@ impl State {
             "integration":{"configured":session.agent_context.is_some(), "adapter":if session.agent_context.is_some(){"claude-hooks-v1"}else{"screen/protocol"},
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
                 "delivery":session.integration_delivery},
-            "status":session.status.explain(now), "terminalProtocol":session.terminal_protocol.diagnostics(),
+            "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "terminalProtocol":session.terminal_protocol.diagnostics(),
         })).collect();
         Ok(
             json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
@@ -1236,6 +1243,7 @@ fn spawn_session(
         agent_context,
         integration_delivery: Default::default(),
         status: StatusTracker::new(program, 24, 80, now_millis()),
+        readiness: crate::readiness::Tracker::new(program),
         terminal_protocol: Default::default(),
         program_status: Default::default(),
         program_status_dirty: false,

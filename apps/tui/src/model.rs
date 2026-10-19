@@ -45,6 +45,8 @@ pub struct Session {
     pub controller_id: Option<u64>,
     #[serde(default)]
     pub status: Option<Status>,
+    #[serde(default)]
+    pub readiness: Option<crate::status::Readiness>,
 }
 
 impl Session {

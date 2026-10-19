@@ -99,6 +99,14 @@ function session(value: unknown): value is RecordValue {
     dimensions(value) &&
     (value.program === undefined || program(value.program)) &&
     (value.status === undefined || sessionStatus(value.status)) &&
+    (value.readiness === undefined ||
+      (record(value.readiness) &&
+        typeof value.readiness.initialized === 'boolean' &&
+        text(value.readiness.reason, 128) &&
+        typeof value.readiness.phase === 'string' &&
+        ['notApplicable', 'starting', 'waiting', 'ready', 'timedOut', 'exited'].includes(
+          value.readiness.phase,
+        ))) &&
     (value.muted === undefined || typeof value.muted === 'boolean') &&
     (value.attention == null ||
       (record(value.attention) &&

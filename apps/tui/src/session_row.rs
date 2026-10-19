@@ -30,6 +30,13 @@ pub struct StatusLabel {
 
 pub fn status_label(session: &Session, program: Program) -> StatusLabel {
     let label = |text, color| StatusLabel { text, color };
+    if let Some(readiness) = &session.readiness {
+        match readiness.phase {
+            crate::status::ReadinessPhase::Starting => return label("starting", MUTED),
+            crate::status::ReadinessPhase::TimedOut => return label("start fail", DANGER),
+            _ => {}
+        }
+    }
     if session.rate_limited {
         return label("needs you", WARNING);
     }
@@ -212,5 +219,18 @@ mod tests {
         assert_eq!(status_label(&session, Program::Claude).text, "~needs you");
         session.status.as_mut().unwrap().source = Source::Activity;
         assert_eq!(status_label(&session, Program::Claude).text, "unknown");
+    }
+    #[test]
+    fn launch_phase_is_visible_without_inventing_an_idle_agent() {
+        let mut session: Session = serde_json::from_value(json!({"id":"s","name":"S","cwd":".","running":true,"program":"claude","cols":80,"rows":24,"groupId":null,"controllerId":null,"status":{"state":"unknown","source":"activity","updatedAt":0},"readiness":{"phase":"starting","initialized":false,"reason":"awaiting provider readiness"}})).unwrap();
+        assert_eq!(status_label(&session, Program::Claude).text, "starting");
+        session.readiness.as_mut().unwrap().phase = crate::status::ReadinessPhase::TimedOut;
+        assert_eq!(status_label(&session, Program::Claude).text, "start fail");
+        session.readiness = None;
+        assert_eq!(
+            status_label(&session, Program::Claude).text,
+            "unknown",
+            "legacy hosts remain honest"
+        );
     }
 }

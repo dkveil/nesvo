@@ -7,6 +7,7 @@ import {
   groupPath,
   validGroupName,
 } from '../apps/mobile/src/entities/group/model/groups';
+import { sessionReadinessLabel } from '../apps/mobile/src/entities/session/model/status-presentation';
 import { decodeServerMessage } from '../apps/mobile/src/shared/api/host/messages';
 import type { SessionGroup } from '../apps/mobile/src/shared/api/host/types';
 import { parseTarget } from '../apps/mobile/src/shared/notifications/target';
@@ -28,6 +29,25 @@ const session = {
   groupId: 'child',
   controllerId: null,
 };
+
+test('readiness is independent from legacy agent state and validates at the wire boundary', () => {
+  const readiness = {
+    phase: 'starting',
+    initialized: false,
+    reason: 'awaiting provider readiness',
+  } as const;
+  const snapshot = { type: 'sessions', groups, sessions: [{ ...session, readiness }], revision: 0 };
+  assert.equal(decodeServerMessage(snapshot).type, 'sessions');
+  assert.equal(sessionReadinessLabel(readiness), 'Uruchamianie');
+  assert.equal(sessionReadinessLabel({ ...readiness, phase: 'timedOut' }), 'Błąd startu');
+  assert.equal(sessionReadinessLabel(undefined), undefined);
+  assert.throws(() =>
+    decodeServerMessage({
+      ...snapshot,
+      sessions: [{ ...session, readiness: { ...readiness, phase: 'success' } }],
+    }),
+  );
+});
 
 test('program status retains legacy wire sources and validates structured provenance', () => {
   const status = { state: 'blocked', source: 'screen', confirmedSource: 'osc7501', updatedAt: 1 };

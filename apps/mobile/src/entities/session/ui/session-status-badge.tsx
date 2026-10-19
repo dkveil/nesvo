@@ -5,8 +5,12 @@ import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native
 import { useMotionPreference } from '@shared/brand';
 import { colors, mono } from '@shared/theme';
 
-import type { SessionStatus, SessionStatusSource } from '../model/session';
-import { sessionStatusDetail, sessionStatusLabel } from '../model/status-presentation';
+import type { Session, SessionStatus, SessionStatusSource } from '../model/session';
+import {
+  sessionReadinessLabel,
+  sessionStatusDetail,
+  sessionStatusLabel,
+} from '../model/status-presentation';
 
 const symbols: Record<SessionStatus, string> = {
   working: '›',
@@ -80,19 +84,22 @@ export function SessionStatusDot({
 export function SessionStatusBadge({
   status,
   source,
+  readiness,
   demo = false,
   variant = 'badge',
 }: {
   status: SessionStatus;
   source?: SessionStatusSource;
+  readiness?: Session['readiness'];
   demo?: boolean;
   variant?: 'badge' | 'plain';
 }) {
-  const label = sessionStatusLabel(status, source);
-  const tone = statusColor(status, source);
+  const startup = sessionReadinessLabel(readiness);
+  const label = startup ?? sessionStatusLabel(status, source);
+  const tone = readiness?.phase === 'timedOut' ? colors.danger : statusColor(status, source);
   return (
     <View
-      accessibilityLabel={`${label}. ${demo ? 'Stan przykładowy' : sessionStatusDetail(status, source)}`}
+      accessibilityLabel={`${label}. ${demo ? 'Stan przykładowy' : startup ? readiness?.reason : sessionStatusDetail(status, source)}`}
       style={variant === 'plain' ? styles.plain : [styles.badge, { borderColor: `${tone}55` }]}
     >
       {variant === 'badge' && (
@@ -101,7 +108,7 @@ export function SessionStatusBadge({
         </Text>
       )}
       <Text style={[styles.label, { color: tone }]}>
-        {source === 'screen' ? `~ ${label}` : label}
+        {source === 'screen' && !startup ? `~ ${label}` : label}
       </Text>
     </View>
   );

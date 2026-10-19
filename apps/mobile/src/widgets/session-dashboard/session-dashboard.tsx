@@ -387,6 +387,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                           </Text>
                           <SessionStatusBadge
                             variant="plain"
+                            readiness={session.readiness}
                             status={session.status}
                             source={session.statusSource}
                             demo={!session.live}
@@ -613,6 +614,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                         </Text>
                         <SessionStatusBadge
                           variant="plain"
+                          readiness={session.readiness}
                           status={session.status}
                           source={session.statusSource}
                           demo={!session.live}
