@@ -640,3 +640,18 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   including both SDK/native tests on Windows, macOS and Linux.
 - All 25 Windows host/sync/CLI integration checks also pass with the launch
   adapter. Controlled receipt-to-publication p95: 261.772 ms (26 batches).
+
+### F05 native provider turn fence
+
+- Codex CLI 0.156.0 and its release-tagged hook schemas expose native `turn_id`;
+  the lifecycle journal now accepts an explicit provider-turn fence. Repeated
+  prompt pickup, old prompt pickup after a newer turn, and late tool/Stop events
+  from a prior turn cannot regress the active work. Native identity is checked
+  in the same transaction as journal acceptance, without wall-clock ordering.
+- A bounded 4096-entry launch-local seen-turn set prevents forgotten IDs from
+  becoming fresh work. Exhaustion fails explicitly rather than weakening the
+  fence; prompt text is not stored. Old journals and Claude's existing optional
+  prompt-digest path retain compatibility.
+- The journal regression passes with the old-generation and legacy journal
+  checks. This is the prerequisite for the Codex adapter, not a claim that its
+  per-launch configuration or actual provider lifecycle gate is complete.

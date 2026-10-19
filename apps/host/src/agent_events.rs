@@ -15,8 +15,9 @@ pub fn exists(report: &Path) -> bool {
 }
 pub fn initialize(report: &Path, session_id: &str) -> Result<()> {
     let connection = Connection::open(database(report))?;
-    connection.execute_batch("CREATE TABLE scope (id INTEGER PRIMARY KEY CHECK(id=1), host_session TEXT NOT NULL, launch_id TEXT NOT NULL, provider_session TEXT, generation INTEGER NOT NULL DEFAULT 1, rejected INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, provider_session TEXT, event TEXT NOT NULL, state TEXT NOT NULL, prompt_digest TEXT);")?;
+    connection.execute_batch("CREATE TABLE scope (id INTEGER PRIMARY KEY CHECK(id=1), host_session TEXT NOT NULL, launch_id TEXT NOT NULL, provider_session TEXT, provider_turn TEXT, generation INTEGER NOT NULL DEFAULT 1, rejected INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, provider_session TEXT, event TEXT NOT NULL, state TEXT NOT NULL, prompt_digest TEXT);
+      CREATE TABLE native_turns (generation INTEGER NOT NULL, id TEXT NOT NULL, PRIMARY KEY(generation,id));")?;
     connection.execute(
         "INSERT INTO scope(id,host_session,launch_id) VALUES(1,?1,?2)",
         params![session_id, hex::encode(crate::wire::random::<16>())],
@@ -46,6 +47,35 @@ pub fn append(
     allow_rebind: bool,
     prompt_digest: Option<&str>,
 ) -> Result<Option<u64>> {
+    append_scoped(
+        report,
+        SourceEvent {
+            provider_session,
+            provider_turn: None,
+            event,
+            state,
+            allow_rebind,
+            prompt_digest,
+        },
+    )
+}
+pub struct SourceEvent<'a> {
+    pub provider_session: Option<&'a str>,
+    pub provider_turn: Option<&'a str>,
+    pub event: &'a str,
+    pub state: StatusState,
+    pub allow_rebind: bool,
+    pub prompt_digest: Option<&'a str>,
+}
+pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u64>> {
+    let SourceEvent {
+        provider_session,
+        provider_turn,
+        event,
+        state,
+        allow_rebind,
+        prompt_digest,
+    } = source;
     ensure!(
         prompt_digest.is_none_or(|hash| event == "UserPromptSubmit"
             && hash.len() == 64
@@ -59,6 +89,14 @@ pub fn append(
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))),
         "Invalid provider identity"
+    );
+    ensure!(
+        provider_turn.is_none_or(|id| !id.is_empty()
+            && id.len() <= 128
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))),
+        "Invalid provider turn identity"
     );
     let mut connection = open(report, true)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -86,6 +124,46 @@ pub fn append(
             params![provider_session, generation],
         )?;
     }
+    let turn_column = has_column(&transaction, "scope", "provider_turn")?;
+    if let Some(turn) = provider_turn {
+        ensure!(
+            turn_column,
+            "Native turn correlation requires a current launch journal"
+        );
+        let current: Option<String> =
+            transaction.query_row("SELECT provider_turn FROM scope WHERE id=1", [], |row| {
+                row.get(0)
+            })?;
+        if event == "UserPromptSubmit" {
+            let seen: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM native_turns WHERE generation=?1 AND id=?2)",
+                params![generation, turn],
+                |row| row.get(0),
+            )?;
+            if seen {
+                // Repeated pickup cannot supersede or duplicate the same native turn.
+                transaction.commit()?;
+                return Ok(None);
+            }
+            let count: i64 =
+                transaction.query_row("SELECT count(*) FROM native_turns", [], |row| row.get(0))?;
+            ensure!(
+                count < 4096,
+                "Native turn fence capacity exhausted; reconcile this launch before further native correlation"
+            );
+            transaction.execute(
+                "INSERT INTO native_turns(generation,id) VALUES(?1,?2)",
+                params![generation, turn],
+            )?;
+            transaction.execute("UPDATE scope SET provider_turn=?1 WHERE id=1", [turn])?;
+        } else if current.as_deref() != Some(turn) {
+            transaction.execute("UPDATE scope SET rejected=rejected+1 WHERE id=1", [])?;
+            transaction.commit()?;
+            return Ok(None);
+        }
+    } else if event == "SessionStart" && turn_column {
+        transaction.execute("UPDATE scope SET provider_turn=NULL WHERE id=1", [])?;
+    }
     // Old launch journals remain readable/writable if a helper is upgraded while
     // their host is still running. They simply provide no prompt correlation.
     let digest_column = has_digest_column(&transaction)?;
@@ -107,10 +185,13 @@ pub fn append(
     Ok(Some(sequence))
 }
 fn has_digest_column(connection: &Connection) -> Result<bool> {
-    let mut statement = connection.prepare("PRAGMA table_info(events)")?;
+    has_column(connection, "events", "prompt_digest")
+}
+fn has_column(connection: &Connection, table: &'static str, wanted: &str) -> Result<bool> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
     let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
     for column in columns {
-        if column? == "prompt_digest" {
+        if column? == wanted {
             return Ok(true);
         }
     }
@@ -236,6 +317,55 @@ mod tests {
         ));
         std::fs::create_dir(&dir).unwrap();
         dir.join("context.json")
+    }
+    #[test]
+    fn native_turn_fence_rejects_late_stops_and_duplicate_pickup_without_losing_new_work() {
+        let report = fixture();
+        initialize(&report, "native-session").unwrap();
+        let emit = |event, state, turn| {
+            append_scoped(
+                &report,
+                SourceEvent {
+                    provider_session: Some("native-conversation"),
+                    provider_turn: turn,
+                    event,
+                    state,
+                    allow_rebind: false,
+                    prompt_digest: None,
+                },
+            )
+            .unwrap()
+        };
+        assert!(emit("SessionStart", StatusState::Idle, None).is_some());
+        assert!(emit("UserPromptSubmit", StatusState::Working, Some("turn-1")).is_some());
+        assert_eq!(
+            emit("UserPromptSubmit", StatusState::Working, Some("turn-1")),
+            None
+        );
+        assert!(emit("UserPromptSubmit", StatusState::Working, Some("turn-2")).is_some());
+        assert_eq!(
+            emit("UserPromptSubmit", StatusState::Working, Some("turn-1")),
+            None
+        );
+        assert_eq!(emit("Stop", StatusState::Idle, Some("turn-1")), None);
+        assert_eq!(
+            emit("PreToolUse", StatusState::Working, Some("turn-1")),
+            None
+        );
+        let batch = read(&report, "native-session", 0).unwrap();
+        assert_eq!(batch.events.last().unwrap().state, StatusState::Working);
+        assert_eq!(batch.identity.rejected, 2);
+        assert!(emit("Stop", StatusState::Idle, Some("turn-2")).is_some());
+        assert_eq!(
+            read(&report, "native-session", 0)
+                .unwrap()
+                .events
+                .last()
+                .unwrap()
+                .state,
+            StatusState::Idle
+        );
+        std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
     }
     #[test]
     fn prompt_evidence_is_private_and_legacy_journals_keep_status_compatibility() {
