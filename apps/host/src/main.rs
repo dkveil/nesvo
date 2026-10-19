@@ -3,6 +3,7 @@ mod agent_events;
 mod api_error;
 mod attention;
 mod attention_projection;
+mod caller;
 mod git;
 mod groups;
 mod jobs;
@@ -260,6 +261,7 @@ async fn run(args: Args) -> Result<()> {
         launchers,
     )));
     let (event_tx, event_rx) = mpsc::channel(128);
+    state.lock().unwrap().set_caller_url(pairing.url.clone());
     {
         let state = state.clone();
         tokio::spawn(async move {

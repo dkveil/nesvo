@@ -72,6 +72,9 @@ pub async fn handle(
     config.max_frame_size = Some(wire::MAX_FRAME);
     config.max_write_buffer_size = 512 * 1024;
     config.write_buffer_size = 0;
+    let binding = Arc::new(Mutex::new((key, crate::caller::Authority::Owner)));
+    let chosen_binding = binding.clone();
+    let scope_state = state.clone();
     // tungstenite's callback requires this exact unboxed response error type.
     #[allow(clippy::result_large_err)]
     let handshake = move |request: &Request,
@@ -90,6 +93,25 @@ pub async fn handle(
                 .body(Some("Origin or path not allowed".into()))
                 .unwrap());
         }
+        if request.headers().get_all("x-nesvo-scope").iter().count() > 1 {
+            return Err(Response::builder()
+                .status(403)
+                .body(Some("Authentication failed".into()))
+                .unwrap());
+        }
+        if let Some(scope) = request.headers().get("x-nesvo-scope") {
+            let resolved = scope
+                .to_str()
+                .ok()
+                .and_then(|id| scope_state.lock().ok()?.resolve_caller(id));
+            let Some(resolved) = resolved else {
+                return Err(Response::builder()
+                    .status(403)
+                    .body(Some("Authentication failed".into()))
+                    .unwrap());
+            };
+            *chosen_binding.lock().unwrap() = resolved;
+        }
         Ok(response)
     };
     let mut websocket = timeout(
@@ -97,6 +119,7 @@ pub async fn handle(
         accept_hdr_async_with_config(socket, handshake, Some(config)),
     )
     .await??;
+    let (key, authority) = binding.lock().unwrap().clone();
     let challenge = hex::encode(wire::random::<32>());
     websocket
         .send(Message::Text(
@@ -144,6 +167,7 @@ pub async fn handle(
             Client {
                 events: event_tx,
                 cancelled: cancel_tx,
+                authority,
             },
         );
         state.send(
@@ -202,6 +226,13 @@ pub async fn handle(
                             }
                         };
                         incoming_seq += 1;
+                        let authorization=state.lock().unwrap().authorize(id,&command);
+                        if let Err(error)=authorization {
+                            let mut event=json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("forbidden"),"message":error.to_string()});
+                            if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
+                            state.lock().unwrap().send(id,event);
+                            continue;
+                        }
                         if let Command::Launch { mut spec } = command {
                             let directory = state.lock().unwrap().validate_launch(&spec);
                             let permit = git_gate.clone().try_acquire_owned();

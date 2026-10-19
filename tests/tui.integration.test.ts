@@ -59,7 +59,7 @@ function runTui(
   environment: NodeJS.ProcessEnv = {},
 ): Promise<CommandResult> {
   return new Promise((resolveResult, reject) => {
-    const child = spawn(binary, ['--pairing', pairingPath, ...command], {
+    const child = spawn(binary, [...(pairingPath ? ['--pairing', pairingPath] : []), ...command], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, ...environment },
@@ -341,6 +341,71 @@ test(
           assert.equal(session.running, true);
           assert.equal(session.controllerId, null);
           assert.deepEqual(stableSnapshot(afterExit), stableSnapshot(expected));
+        },
+      );
+
+      await suite.test(
+        'managed-process CLI uses its own capability and cannot turn a context hint into authority',
+        async () => {
+          const pointer = join(fixture, 'caller-path.txt');
+          client.acquireControl(created.sessionId, 80, 24);
+          await next('control', e => e.sessionId === created.sessionId && !!e.leaseId);
+          const command =
+            process.platform === 'win32'
+              ? `[System.IO.File]::WriteAllText('${pointer.replaceAll("'", "''")}',$env:NESVO_AGENT_CONTEXT)\r`
+              : `printf '%s' "$NESVO_AGENT_CONTEXT" > '${pointer.replaceAll("'", "'\\''")}'\r`;
+          client.sendInput(created.sessionId, command);
+          const contextPath = await until(async () => {
+            try {
+              return (await readFile(pointer, 'utf8')).trim() || undefined;
+            } catch {
+              return undefined;
+            }
+          }, 'private caller context');
+          client.releaseControl(created.sessionId);
+          await next('control', e => e.sessionId === created.sessionId && e.controllerId === null);
+          const capability = JSON.parse(await readFile(contextPath, 'utf8'));
+          assert.notEqual(capability.key, pairing.key);
+          for (const subcommand of [
+            ['session', 'current', '--json'],
+            ['session', 'list', '--json'],
+            ['session', 'explain', created.sessionId, '--json'],
+          ]) {
+            const result = await runTui(tuiBinary, '', runningTuis, subcommand, {
+              NESVO_AGENT_CONTEXT: contextPath,
+              NESVO_SESSION_ID: created.sessionId,
+            });
+            assert.equal(result.code, 0, result.stderr);
+            queryOutput(result.stdout);
+            assertNoSecret(result, [pairing.key, capability.key]);
+            const body = JSON.parse(result.stdout);
+            if (subcommand[1] === 'current') assert.equal(body.data.session.id, created.sessionId);
+            if (subcommand[1] === 'list')
+              assert.deepEqual(
+                body.data.sessions.map((s: { id: string }) => s.id),
+                [created.sessionId],
+              );
+          }
+          const forbidden = await runTui(
+            tuiBinary,
+            '',
+            runningTuis,
+            ['session', 'current', '--json'],
+            { NESVO_AGENT_CONTEXT: contextPath, NESVO_SESSION_ID: 'someone-else' },
+          );
+          assert.equal(forbidden.code, 6);
+          assert.equal(JSON.parse(forbidden.stdout).error.code, 'forbidden');
+          const forged = join(fixture, 'forged-context.json');
+          await writeFile(forged, JSON.stringify({ ...capability, scopeId: '0'.repeat(32) }));
+          const rejected = await runTui(tuiBinary, forged, runningTuis, [
+            'session',
+            'list',
+            '--json',
+          ]);
+          assert.equal(rejected.code, 4);
+          assert.equal(JSON.parse(rejected.stdout).error.code, 'host_unavailable');
+          assertNoSecret(rejected, [pairing.key, capability.key]);
+          assert.equal((await snapshot()).sessions[0]?.controllerId, null);
         },
       );
 

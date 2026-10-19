@@ -35,8 +35,8 @@ use std::{io::IsTerminal, path::PathBuf, time::Duration};
 )]
 struct Arguments {
     /// Private pairing file written by the host. Its key is never printed.
-    #[arg(long, default_value = "host/.local/pairing.json", global = true)]
-    pairing: PathBuf,
+    #[arg(long, global = true)]
+    pairing: Option<PathBuf>,
     /// Override only the connection address, e.g. ws://127.0.0.1:8787.
     #[arg(long, global = true)]
     url: Option<String>,
@@ -65,8 +65,15 @@ async fn main() -> Result<()> {
         }
         error.exit()
     });
+    let headless = arguments.command.is_some() || arguments.list || arguments.check_host;
+    let pairing_path = arguments.pairing.unwrap_or_else(|| {
+        if headless && let Some(context) = std::env::var_os("NESVO_AGENT_CONTEXT") {
+            return context.into();
+        }
+        PathBuf::from("host/.local/pairing.json")
+    });
     if let Some(command) = arguments.command {
-        let code = cli::execute(command, &arguments.pairing, arguments.url.as_deref()).await;
+        let code = cli::execute(command, &pairing_path, arguments.url.as_deref()).await;
         if code != 0 {
             std::process::exit(code);
         }
@@ -84,10 +91,10 @@ async fn main() -> Result<()> {
             "Interactive mode needs a terminal. Use --list for a JSON snapshot."
         );
     }
-    let pairing = Pairing::load(&arguments.pairing, arguments.url.as_deref()).with_context(|| {
+    let pairing = Pairing::load(&pairing_path, arguments.url.as_deref()).with_context(|| {
         format!(
             "Cannot load pairing from {}. Start nesvo-host first, then pass its private pairing.json with --pairing.",
-            arguments.pairing.display()
+            pairing_path.display()
         )
     })?;
     let mut connection = Connection::open(pairing).await?;
@@ -129,7 +136,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let pairing_path =
-        std::path::absolute(&arguments.pairing).context("Cannot resolve pairing file path")?;
+        std::path::absolute(&pairing_path).context("Cannot resolve pairing file path")?;
     runner::run(
         &mut connection,
         &pairing_path,

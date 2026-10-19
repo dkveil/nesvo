@@ -42,6 +42,10 @@ type Event = {
     }[];
   };
   type: string;
+  code?: string;
+  groupId?: string;
+  revision?: number;
+  groups?: { id: string; name: string; parentId: string | null }[];
   id?: string;
   enabled?: boolean;
   hostId?: string;
@@ -100,8 +104,10 @@ class Peer {
   authFrame = '';
   attached = new Set<string>();
 
-  constructor(private pairing: Pairing) {
-    this.socket = new WebSocket(pairing.url);
+  constructor(private pairing: Pairing & { scopeId?: string }) {
+    this.socket = new WebSocket(pairing.url, {
+      headers: pairing.scopeId ? { 'x-nesvo-scope': pairing.scopeId } : {},
+    });
     this.socket.on('error', error => {
       this.error = error;
     });
@@ -213,6 +219,7 @@ test(
     const script = String.raw`#!/usr/bin/env node
 const {spawnSync}=require('node:child_process');
 if(process.argv.includes('--version')) { console.log('2.1.303-fixture'); process.exit(0); }
+require('node:fs').writeFileSync(process.env.NESVO_FIXTURE_CALLER_PATH,process.env.NESVO_AGENT_CONTEXT);
 const settings=JSON.parse(process.argv[process.argv.indexOf('--settings')+1]);
 function hook(name, extra={}) {
   const command=settings.hooks[name][0].hooks[0];
@@ -250,6 +257,7 @@ process.stdin.on('data', bytes=>{
       Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'path'),
     );
     env.PATH = [bin, dirname(process.execPath)].join(delimiter);
+    env.NESVO_FIXTURE_CALLER_PATH = join(fixture, 'caller-path.txt');
     const host = spawn(
       hostBinary(),
       [
@@ -287,6 +295,82 @@ process.stdin.on('data', bytes=>{
       peer.send({ type: 'attach', sessionId: id, cols: 100, rows: 32 });
       await peer.next('attached');
       await peer.output(id, 'FIXTURE_READY');
+      const contextPath = await readFile(env.NESVO_FIXTURE_CALLER_PATH, 'utf8');
+      const scopedPairing = JSON.parse(await readFile(contextPath, 'utf8')) as Pairing & {
+        scopeId: string;
+      };
+      assert.notEqual(scopedPairing.key, pairing.key);
+      const scoped = new Peer(scopedPairing);
+      await scoped.authenticate();
+      const scopedInitial = await scoped.next('sessions');
+      assert.deepEqual(
+        scopedInitial.sessions?.map(s => s.id),
+        [id],
+      );
+      peer.send({
+        type: 'create',
+        name: 'Unrelated private process',
+        program: 'shell',
+        requestId: 'private-other',
+      });
+      const other = (await peer.next('created', e => e.requestId === 'private-other')).sessionId!;
+      const outsider = new Peer(pairing);
+      await outsider.authenticate();
+      outsider.send({ type: 'attach', sessionId: other, cols: 80, rows: 24 });
+      await outsider.next('attached', e => e.sessionId === other);
+      peer.send({
+        type: 'createGroup',
+        name: 'Unrelated private group',
+        parentId: null,
+        expectedRevision: 0,
+        requestId: 'private-group',
+      });
+      const privateGroup = await peer.next('groupCreated', e => e.requestId === 'private-group');
+      peer.send({
+        type: 'moveSession',
+        sessionId: other,
+        groupId: privateGroup.groupId,
+        expectedRevision: privateGroup.revision,
+        requestId: 'private-move',
+      });
+      await peer.next('updated', e => e.requestId === 'private-move');
+      for (const forbidden of [
+        { type: 'getSession', sessionId: other },
+        { type: 'getDiagnostics' },
+        { type: 'acquireControl', sessionId: id, cols: 80, rows: 24 },
+        { type: 'input', sessionId: id, data: 'DO_NOT_SEND\r' },
+        { type: 'getDiff', sessionId: id, scope: 'unstaged', directory: fixture },
+        { type: 'launch', spec: { name: 'unauthorized', program: 'shell' } },
+        { type: 'close', sessionId: other },
+      ]) {
+        scoped.send({ ...forbidden, requestId: 'forbidden' });
+        assert.equal(
+          (await scoped.next('error', e => e.requestId === 'forbidden')).code,
+          'forbidden',
+        );
+      }
+      scoped.send({ type: 'list', requestId: 'scope-list' });
+      const scopedList = await scoped.next('sessions', e => e.requestId === 'scope-list');
+      assert.deepEqual(scopedList.groups, [], 'foreign group names and rollups are not broadcast');
+      assert.ok(
+        scoped.events.every(e => e.sessionId !== other),
+        'background control notifications cannot reveal foreign sessions',
+      );
+      await outsider.disconnect();
+      for (const proof of ['wrong-key', 'recorded-auth']) {
+        const impostor = new Peer(
+          proof === 'wrong-key' ? { ...scopedPairing, key: pairing.key } : scopedPairing,
+        );
+        await impostor.hello();
+        if (proof === 'wrong-key') impostor.send({ type: 'auth', clientNonce: impostor.nonce });
+        else impostor.socket.send(scoped.authFrame);
+        await until(() => impostor.closed || undefined, 'scoped authentication rejection');
+        assert.equal(impostor.closeCode, 4003);
+      }
+      assert.deepEqual(
+        scopedList.sessions?.map(s => s.id),
+        [id],
+      );
       await peer.next(
         'sessions',
         e =>
@@ -307,10 +391,12 @@ process.stdin.on('data', bytes=>{
       peer.send({ type: 'input', sessionId: id, data: 'child-stop\r' });
       peer.send({ type: 'input', sessionId: id, data: 'foreign-stop\r' });
       await delay(600);
-      peer.send({ type: 'list' });
+      peer.send({ type: 'list', requestId: 'after-foreign' });
       const stillWaiting = await peer.next(
         'sessions',
-        e => e.sessions?.some(s => s.id === id && s.lifecycle?.turn?.id === oldTurn) ?? false,
+        e =>
+          e.requestId === 'after-foreign' &&
+          (e.sessions?.some(s => s.id === id && s.lifecycle?.turn?.id === oldTurn) ?? false),
       );
       assert.equal(
         stillWaiting.sessions!.find(s => s.id === id)!.lifecycle?.turn?.phase,
@@ -388,7 +474,13 @@ process.stdin.on('data', bytes=>{
             ) ?? false,
         );
         assert.equal(ended.sessions!.find(s => s.id === id)!.lifecycle?.agent.current, null);
+        scoped.send({ type: 'getSession', sessionId: id, requestId: 'revoked' });
+        assert.equal(
+          (await scoped.next('error', e => e.requestId === 'revoked')).code,
+          'scope_revoked',
+        );
       } finally {
+        await scoped.disconnect();
         await observer.disconnect();
       }
     } finally {

@@ -4,6 +4,23 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+Session-scoped native callers may send one `x-nesvo-scope` WebSocket handshake
+header with the public random scope ID from their private context file. The host
+selects that launch's independent key before the existing challenge/nonce/sequence
+proof; an unknown/expired scope is rejected, never downgraded to owner. Without
+the header, legacy owner pairing behaves as before. A scope ID or claimed parent
+session ID alone grants no access. Authorization precedes both synchronous and
+asynchronous host dispatch. Scoped snapshots and background control events are
+filtered at publication; group rollups are recomputed for the visible set.
+
+The initial session capability is read-only and expires at process exit. Its
+capabilities response includes `caller:{sessionId,permissions:["session:read"],
+expires:"processExit"}`. Mutations, global diagnostics and pinned review folders
+are denied with `forbidden`; existing connections after exit get `scope_revoked`.
+Future run/child grants will extend this policy explicitly. Context credentials
+are never sent in application snapshots. This is API authorization, not an OS
+process sandbox.
+
 - `auth { clientNonce }` → `connected { clientNonce, clientId, protocolVersion: 2 }`; `clientId` is a JSON number, scoped to this connection.
 - Then `sessions { sessions, groups, revision }`. `list` requests the same snapshot. Snapshots are broadcast when session metadata, groups or observed status changes.
 - Session: existing `id,name,cwd,createdAt,cols,rows,running`, optional `uptimeSeconds` (non-negative integer, monotonic process age frozen at exit), plus `program: "shell" | "claude" | "gemini" | "codex"`, `groupId: string|null`, `controllerId: number|null`. Lease secrets are never in snapshots. Current hosts always supply `program`; clients can treat a missing value in an older snapshot as `shell`.

@@ -17,9 +17,25 @@ nesvo --pairing C:\private\pairing.json session current --json
 
 `current` reads `NESVO_SESSION_ID` injected into the managed process environment.
 It never guesses from the TUI's selection. This identifier is context, not an
-authorization credential. These initial commands require the owner's pairing;
-do not distribute that pairing to worker agents. Scoped agent credentials are
-a separate F12 gate before automated child creation/send is exposed.
+authorization credential. The host also injects `NESVO_AGENT_CONTEXT`, a private
+file containing an independent per-process key. Headless commands prefer that
+capability when no explicit `--pairing` is supplied. Missing/invalid context fails
+closed; it never falls back to the owner's pairing. For an agent running inside
+a managed session, `nesvo session current --json` needs no pairing argument.
+
+The initial session capability can list/get/read/explain only its own session and
+inspect its automatic repository diff. It cannot send input, acquire control,
+launch/stop processes, choose arbitrary review directories, inspect global doctor
+data or see unrelated sessions/groups/control notifications. It expires when the
+managed process exits. Permissions are host-owned; editing `sessionId` or an
+`authority` hint in a context file grants nothing. Coordinator/run/child grants
+are a subsequent F11/F12 gate before automated child creation/send is exposed.
+
+The owner can explicitly supply the private owner pairing for full human access.
+Do not give that pairing to workers. Capabilities constrain the authenticated API;
+they do not provide an OS sandbox against code running as the same account with
+filesystem access to other private files. Tokens are launch-local, use no global
+provider configuration and are never included in snapshots/diagnostics.
 
 ## Version 1 query output
 
@@ -64,7 +80,7 @@ Runtime and argument failures with `--json` return:
 | 7    | Request timed out                                                 |
 | 8    | Host lacks the required capability                                |
 
-Error codes distinguish `invalid_argument`, `no_current_session`,
+Error codes distinguish `invalid_argument`, `no_current_session`, `forbidden`, `scope_revoked`,
 `pairing_unavailable`, `host_unavailable`, `disconnected`, `session_not_found`,
 `invalid_cursor`, `git_unavailable`, `request_rejected`, `timeout`, `unsupported`
 and `operation_failed`. Only connection/disconnect/timeout errors are marked

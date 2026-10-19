@@ -28,6 +28,7 @@ const MAX_SESSIONS: usize = 8;
 pub struct Client {
     pub events: mpsc::Sender<Value>,
     pub cancelled: watch::Sender<bool>,
+    pub authority: crate::caller::Authority,
 }
 
 #[derive(Serialize)]
@@ -62,6 +63,7 @@ impl ControlLease {
 }
 
 struct Session {
+    caller_context: Option<crate::caller::Context>,
     started: std::time::Instant,
     elapsed_at_exit: Option<Duration>,
     agent_context: Option<crate::agent_context::Tracker>,
@@ -103,6 +105,7 @@ impl Session {
 }
 
 pub struct State {
+    caller_url: Option<String>,
     workspace: PathBuf,
     sessions: HashMap<String, Session>,
     cleanup_workers: Vec<thread::JoinHandle<()>>,
@@ -135,6 +138,7 @@ impl State {
         let provider_limits = usage::installed(&launchers);
         let provider_versions = launchers.pending_versions();
         Self {
+            caller_url: None,
             workspace,
             sessions: HashMap::new(),
             cleanup_workers: Vec::new(),
@@ -153,6 +157,83 @@ impl State {
     pub fn update_codex_limits(&mut self, windows: Vec<LimitWindow>) {
         self.limits_read_at = chrono::Utc::now().timestamp();
         self.update_provider_limits(Program::Codex, windows);
+    }
+    pub fn set_caller_url(&mut self, url: String) {
+        self.caller_url = Some(url);
+    }
+    pub fn resolve_caller(&self, scope_id: &str) -> Option<([u8; 32], crate::caller::Authority)> {
+        if !crate::caller::valid_scope_id(scope_id) {
+            return None;
+        }
+        self.sessions
+            .values()
+            .filter(|s| s.info.running)
+            .find_map(|s| {
+                s.caller_context
+                    .as_ref()
+                    .filter(|c| c.scope_id == scope_id)
+                    .map(|c| {
+                        (
+                            c.key,
+                            crate::caller::Authority::Session {
+                                id: s.info.id.clone(),
+                                scope_id: c.scope_id.clone(),
+                            },
+                        )
+                    })
+            })
+    }
+    fn caller_session(&self, client_id: u64) -> Result<Option<&str>> {
+        let client = self.clients.get(&client_id).ok_or_else(|| {
+            crate::api_error::Error::new("forbidden", "Caller is not authenticated")
+        })?;
+        match &client.authority {
+            crate::caller::Authority::Owner => Ok(None),
+            crate::caller::Authority::Session { id, scope_id } => {
+                let active = self.sessions.get(id).is_some_and(|s| {
+                    s.info.running
+                        && s.caller_context
+                            .as_ref()
+                            .is_some_and(|c| c.scope_id == *scope_id)
+                });
+                if !active {
+                    return Err(crate::api_error::Error::new(
+                        "scope_revoked",
+                        "Caller process capability has expired",
+                    )
+                    .into());
+                }
+                Ok(Some(id))
+            }
+        }
+    }
+    pub fn authorize(&self, client_id: u64, command: &Command) -> Result<()> {
+        let Some(caller) = self.caller_session(client_id)? else {
+            return Ok(());
+        };
+        let target = match command {
+            Command::List | Command::GetCapabilities => return Ok(()),
+            Command::GetSession { session_id } | Command::ReadSession { session_id, .. } => {
+                Some(session_id.as_str())
+            }
+            Command::GetDiagnostics {
+                session_id: Some(session_id),
+            } => Some(session_id.as_str()),
+            Command::GetDiff {
+                session_id,
+                directory: None,
+                ..
+            } => Some(session_id.as_str()),
+            _ => None,
+        };
+        if target != Some(caller) {
+            return Err(crate::api_error::Error::new(
+                "forbidden",
+                "Caller capability does not permit this operation or target",
+            )
+            .into());
+        }
+        Ok(())
     }
     pub fn provider_version(&mut self, version: crate::launchers::Version) {
         if let Some(current) = self
@@ -197,6 +278,9 @@ impl State {
     }
 
     pub fn send(&self, client_id: u64, event: Value) {
+        let Some(event) = self.project_event(client_id, event) else {
+            return;
+        };
         if let Some(client) = self.clients.get(&client_id)
             && client.events.try_send(event).is_err()
         {
@@ -254,15 +338,44 @@ impl State {
     }
 
     pub fn list(&self) -> Value {
+        self.list_scoped(None)
+    }
+    fn list_scoped(&self, caller: Option<&str>) -> Value {
         let mut sessions: Vec<&Session> = self.sessions.values().collect();
+        sessions.retain(|s| caller.is_none_or(|id| s.info.id == id));
         sessions.sort_by(|left, right| left.info.created_at.cmp(&right.info.created_at));
         let projections: Vec<_> = sessions
             .iter()
             .map(|s| (s.info.group_id.as_deref(), s.current_attention()))
             .collect();
-        let groups = self.metadata.groups();
-        let (summary, by_group) =
-            crate::attention_projection::rollup(groups, projections.iter().map(|(id, p)| (*id, p)));
+        let mut visible_groups = HashSet::new();
+        if caller.is_some() {
+            for session in &sessions {
+                let mut parent = session.info.group_id.as_deref();
+                while let Some(id) = parent {
+                    if !visible_groups.insert(id) {
+                        break;
+                    }
+                    parent = self
+                        .metadata
+                        .groups()
+                        .iter()
+                        .find(|g| g.id == id)
+                        .and_then(|g| g.parent_id.as_deref());
+                }
+            }
+        }
+        let groups: Vec<_> = self
+            .metadata
+            .groups()
+            .iter()
+            .filter(|g| caller.is_none() || visible_groups.contains(g.id.as_str()))
+            .cloned()
+            .collect();
+        let (summary, by_group) = crate::attention_projection::rollup(
+            &groups,
+            projections.iter().map(|(id, p)| (*id, p)),
+        );
         let groups: Vec<_> = groups
             .iter()
             .map(|g| {
@@ -320,8 +433,11 @@ impl State {
         let list = self.list();
         let mut recipients = 0;
         for id in self.clients.keys() {
+            let Some(event) = self.project_event(*id, list.clone()) else {
+                continue;
+            };
             if let Some(client) = self.clients.get(id) {
-                if client.events.try_send(list.clone()).is_ok() {
+                if client.events.try_send(event).is_ok() {
                     recipients += 1;
                 } else {
                     let _ = client.cancelled.send(true);
@@ -332,6 +448,54 @@ impl State {
         for session in self.sessions.values_mut() {
             session.status_latency.published(now, recipients);
         }
+    }
+
+    fn project_event(&self, client_id: u64, event: Value) -> Option<Value> {
+        let Ok(Some(id)) = self.caller_session(client_id) else {
+            return Some(
+                if self.clients.get(&client_id).is_some_and(|c| {
+                    matches!(c.authority, crate::caller::Authority::Session { .. })
+                }) && event["type"] == "sessions"
+                {
+                    let mut empty = json!({"type":"sessions","sessions":[],"groups":[],"revision":self.metadata.revision()});
+                    if let Some(request) = event.get("requestId") {
+                        empty["requestId"] = request.clone();
+                    }
+                    empty
+                } else if self.clients.get(&client_id).is_some_and(|c| {
+                    matches!(c.authority, crate::caller::Authority::Session { .. })
+                }) && event["type"] != "error"
+                {
+                    json!({"type":"error","code":"scope_revoked","message":"Caller process capability has expired"})
+                } else {
+                    event
+                },
+            );
+        };
+        if event
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .is_some_and(|target| target != id)
+        {
+            return None;
+        }
+        if event["type"] == "sessions" {
+            let mut projection = self.list_scoped(Some(id));
+            if let Some(request) = event.get("requestId") {
+                projection["requestId"] = request.clone();
+            }
+            return Some(projection);
+        }
+        if event["type"] == "capabilities" {
+            let mut event = event;
+            event["caller"] =
+                json!({"sessionId":id,"permissions":["session:read"],"expires":"processExit"});
+            if let Some(session) = self.sessions.get(id) {
+                event["workspace"] = session.info.cwd.clone().into();
+            }
+            return Some(event);
+        }
+        Some(event)
     }
 
     fn wake_after_reset(&mut self) -> bool {
@@ -686,6 +850,7 @@ impl State {
             spec.program,
             command,
             events.clone(),
+            self.caller_url.as_deref(),
         )?;
         session.info.group_id = spec.group_id.clone();
         session.auto_title = spec.auto_title && spec.program != Program::Shell;
@@ -802,6 +967,7 @@ impl State {
         pty_events: &mpsc::Sender<PtyEvent>,
     ) -> Result<()> {
         ensure!(!self.shutting_down, "Host is shutting down.");
+        self.authorize(client_id, &command)?;
         match command {
             Command::GetSession { session_id } => {
                 let snapshot = self.list();
@@ -1086,7 +1252,14 @@ impl State {
                 );
                 let cwd = working_directory(&self.workspace, cwd.as_deref())?;
                 let command = self.launchers.command(program, &cwd)?;
-                let mut session = spawn_session(&name, &cwd, program, command, pty_events.clone())?;
+                let mut session = spawn_session(
+                    &name,
+                    &cwd,
+                    program,
+                    command,
+                    pty_events.clone(),
+                    self.caller_url.as_deref(),
+                )?;
                 session.info.group_id = group_id;
                 let session_id = session.info.id.clone();
                 self.persist_session(&session)?;
@@ -1334,9 +1507,16 @@ fn spawn_session(
     program: Program,
     mut command: CommandBuilder,
     events: mpsc::Sender<PtyEvent>,
+    caller_url: Option<&str>,
 ) -> Result<Session> {
     let id = hex::encode(crate::wire::random::<16>());
     command.env("NESVO_SESSION_ID", &id);
+    let caller_context = caller_url
+        .map(|url| crate::caller::Context::new(url, &id))
+        .transpose()?;
+    if let Some(context) = &caller_context {
+        command.env("NESVO_AGENT_CONTEXT", context.path());
+    }
     let agent_context = if program == Program::Claude {
         Some(crate::agent_context::Tracker::install_for(
             &mut command,
@@ -1347,6 +1527,7 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        caller_context,
         started: std::time::Instant::now(),
         elapsed_at_exit: None,
         agent_context,
@@ -1608,7 +1789,14 @@ mod tests {
         let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
         let (events, mut receiver) = mpsc::channel(8);
         let (cancelled, _) = watch::channel(false);
-        state.clients.insert(1, Client { events, cancelled });
+        state.clients.insert(
+            1,
+            Client {
+                events,
+                cancelled,
+                authority: Default::default(),
+            },
+        );
         state.broadcast_schedules();
         assert!(receiver.try_recv().is_err());
         let (pty_events, _) = mpsc::channel(1);
@@ -1626,6 +1814,16 @@ mod tests {
     fn wake_requires_fresh_ninety_percent_five_hour_reading() {
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
         let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        let (client_events, _) = mpsc::channel(16);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(
+            1,
+            Client {
+                events: client_events,
+                cancelled,
+                authority: Default::default(),
+            },
+        );
         let now = chrono::Utc::now().timestamp();
         state.provider_limits = vec![ProviderLimit {
             id: Program::Codex,
@@ -1689,7 +1887,14 @@ mod tests {
         let mut state = State::new(workspace.clone(), metadata, Launchers::discover());
         let (events, mut receiver) = mpsc::channel(8);
         let (cancelled, _) = watch::channel(false);
-        state.clients.insert(1, Client { events, cancelled });
+        state.clients.insert(
+            1,
+            Client {
+                events,
+                cancelled,
+                authority: Default::default(),
+            },
+        );
         let (pty_events, _) = mpsc::channel(1);
         state
             .command(
@@ -1739,7 +1944,14 @@ mod tests {
         let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
         let (events, mut receiver) = mpsc::channel(crate::transport::CLIENT_EVENT_CAPACITY);
         let (cancelled, cancellation) = watch::channel(false);
-        state.clients.insert(1, Client { events, cancelled });
+        state.clients.insert(
+            1,
+            Client {
+                events,
+                cancelled,
+                authority: Default::default(),
+            },
+        );
         let history = "a".repeat(BACKLOG_BYTES);
         // Exercise the real replay chunking and queue overflow path without a
         // scheduler draining messages between subscriptions or any local PTYs.

@@ -10,6 +10,7 @@ use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{
         Message,
+        client::IntoClientRequest,
         protocol::{WebSocketConfig, frame::coding::CloseCode},
     },
 };
@@ -19,6 +20,8 @@ pub struct Pairing {
     version: u8,
     url: String,
     key: String,
+    #[serde(default, rename = "scopeId")]
+    scope_id: Option<String>,
 }
 
 impl Pairing {
@@ -43,6 +46,13 @@ impl Pairing {
 
     fn validate(&self) -> Result<()> {
         ensure!(self.version == 1, "Unsupported pairing format");
+        ensure!(
+            self.scope_id.as_ref().is_none_or(|id| id.len() == 32
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))),
+            "Invalid caller scope"
+        );
         let url = url::Url::parse(&self.url).context("Invalid host URL")?;
         ensure!(
             matches!(url.scheme(), "ws" | "wss")
@@ -84,9 +94,15 @@ impl Connection {
         let config = WebSocketConfig::default()
             .max_message_size(Some(wire::MAX_FRAME))
             .max_frame_size(Some(wire::MAX_FRAME));
+        let mut request = pairing.url.as_str().into_client_request()?;
+        if let Some(scope) = &pairing.scope_id {
+            request
+                .headers_mut()
+                .insert("x-nesvo-scope", scope.parse()?);
+        }
         let (mut socket, _) = timeout(
             Duration::from_secs(8),
-            connect_async_with_config(&pairing.url, Some(config), true),
+            connect_async_with_config(request, Some(config), true),
         )
         .await
         .context("Host connection timed out")?
@@ -216,6 +232,7 @@ mod tests {
     #[test]
     fn pairing_rejects_credential_and_query_urls() {
         let mut pairing = Pairing {
+            scope_id: None,
             version: 1,
             url: "ws://127.0.0.1:8787".into(),
             key: "a".repeat(64),
