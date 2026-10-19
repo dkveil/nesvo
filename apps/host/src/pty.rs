@@ -148,14 +148,19 @@ impl Pty {
         self.process_id
     }
 
-    /// Release ConPTY's initial cursor-position handshake when a session is
-    /// closed before any terminal has been attached to answer it.
+    /// Finish the initial ConPTY handshake and drain earlier input before kill.
+    /// An empty barrier flushes an already queued reply without duplicating it.
     #[cfg(windows)]
-    pub fn answer_unattached_cursor_query(&self) -> Result<()> {
+    pub fn prepare_termination(&self, reply_initial_cursor: bool) -> Result<()> {
         let (flushed_tx, flushed_rx) = sync_mpsc::channel();
         self.input
             .try_send(Input {
-                data: "\x1b[1;1R".into(),
+                data: if reply_initial_cursor {
+                    "\x1b[1;1R"
+                } else {
+                    ""
+                }
+                .into(),
                 confirmation: Some(Confirmation::Cleanup(flushed_tx)),
             })
             .map_err(|_| anyhow!("Terminal input queue is full or closed."))?;

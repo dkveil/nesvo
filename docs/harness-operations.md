@@ -165,6 +165,13 @@ Operation kind is part of key identity, so a key cannot change from a send into
 a stop even with an otherwise identical target. CLI/MCP capability checks never
 fall back to legacy takeover/input/close requests on an older host.
 
+If the host already observed process exit before a stop, it returns `stopped`
+with `processExited:true`, `nativeStopRequested:false` and `effectStarted:false`.
+This is an observed no-op, not a fabricated signal acknowledgement. Interrupt
+still rejects an exited process. Ctrl+C may itself exit a shell on Windows;
+subsequent stop/replay remains explicit and harmless. Process exit is not task
+success, and a native kill failure without exit evidence remains unknown.
+
 ## Evidence
 
 Native host/CLI integration covers concurrent same-key create from two clients,

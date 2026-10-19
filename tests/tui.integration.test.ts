@@ -660,7 +660,12 @@ test(
             queryOutput(controlled.stdout);
             assert.equal(controlled.code, 0, controlled.stdout);
             const historical = JSON.parse(controlled.stdout).data.receipt;
-            assert.equal(historical.phase, phase);
+            if (operation === 'stop' && historical.phase === 'stopped') {
+              assert.equal(historical.result.processExited, true);
+              assert.equal(historical.result.nativeStopRequested, false);
+            } else {
+              assert.equal(historical.phase, phase);
+            }
             const repeat = await runTui(tuiBinary, pairingPath, runningTuis, args);
             assert.equal(repeat.code, 0, repeat.stdout);
             assert.deepEqual(JSON.parse(repeat.stdout).data.receipt, historical);

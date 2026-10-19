@@ -182,7 +182,8 @@
             "waiting",
             "settled",
             "interrupted",
-            "stopRequested"
+            "stopRequested",
+            "stopped"
           ]
         },
         "sessionId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },

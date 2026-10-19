@@ -189,6 +189,7 @@ pub fn finish(
                 | "settled"
                 | "interrupted"
                 | "stopRequested"
+                | "stopped"
         ),
         "Invalid operation outcome"
     );
@@ -226,9 +227,9 @@ pub fn finish(
     }
     let valid = match receipt.operation.as_str() {
         "create" => matches!(phase, "created" | "failed" | "unknown"),
-        "send" => !matches!(phase, "created" | "stopRequested"),
+        "send" => !matches!(phase, "created" | "stopRequested" | "stopped"),
         "interrupt" => matches!(phase, "delivered" | "failed" | "unknown"),
-        "stop" => matches!(phase, "stopRequested" | "failed" | "unknown"),
+        "stop" => matches!(phase, "stopRequested" | "stopped" | "failed" | "unknown"),
         _ => false,
     };
     if !valid || (!send && receipt.phase != "dispatching") {

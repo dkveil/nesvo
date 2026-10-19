@@ -513,3 +513,18 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Windows validation: fmt/Clippy, 126 TUI + 80 host + 3 wire unit tests, the
   explicit native SDK test, all 25 host/sync/CLI checks and formatter pass.
   Controlled publication p95: 263.307 ms (26 batches, 53 structural events).
+
+### Native stop/teardown repair
+
+- Windows CI `39333069514` found that Ctrl+C can exit the shell before the next
+  stop. An already observed exit now produces `stopped` with no native effect,
+  rather than a failed or fabricated stop request. The SDK fixture independently
+  checks interrupt, actual stop on an un-interrupted process, already-stopped
+  no-op, replay and retained output.
+- Very early native stop also exposed ConPTY teardown before its startup cursor
+  handshake completed. Stop/close/shutdown now share one bounded writer barrier
+  and decoder-owned initial reply. A late startup query is consumed without a
+  duplicate response; cleanup no longer assumes a terminal was attached.
+- Local Windows Clippy, the decoder regression, native SDK and CLI checks pass.
+  This repairs an observed platform boundary, not an assertion-only test change;
+  broader CI evidence will be recorded separately.

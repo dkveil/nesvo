@@ -96,6 +96,19 @@ struct Session {
 }
 
 impl Session {
+    fn kill(&mut self) -> Result<()> {
+        // Early native stop can precede ConPTY's first query reaching the reader.
+        // Confirm its one reply before termination; the decoder consumes it later.
+        #[cfg(windows)]
+        {
+            let reply_needed = self.terminal_protocol.initial_cursor_reply_needed();
+            self.pty.prepare_termination(reply_needed)?;
+            if reply_needed {
+                self.terminal_protocol.confirm_initial_cursor_reply();
+            }
+        }
+        self.pty.kill()
+    }
     fn current_attention(&self) -> crate::attention_projection::Projection {
         crate::attention_projection::Projection::current(
             self.status.status(),
@@ -898,8 +911,11 @@ impl State {
         &mut self,
         id: &str,
         action: crate::operations::ControlAction,
-    ) -> Result<Option<tokio::sync::oneshot::Receiver<bool>>> {
-        use crate::{api_error::Error, operations::ControlAction};
+    ) -> Result<crate::operations::ControlDispatch> {
+        use crate::{
+            api_error::Error,
+            operations::{ControlAction, ControlDispatch},
+        };
         if self.shutting_down {
             return Err(Error::new(
                 "host_stopping",
@@ -919,14 +935,19 @@ impl State {
             .into());
         }
         if !session.info.running {
-            return Err(Error::new("process_exited", "Process has already exited").into());
+            return match action {
+                ControlAction::Stop => Ok(ControlDispatch::AlreadyExited),
+                ControlAction::Interrupt => {
+                    Err(Error::new("process_exited", "Process has already exited").into())
+                }
+            };
         }
         if let Some(pending) = &session.pending_input {
             pending.canceled.send_replace(true);
         }
         let answer = match action {
             ControlAction::Interrupt => {
-                Some(session.pty.send_confirmed("\x03".into()).map_err(|_| {
+                ControlDispatch::Write(session.pty.send_confirmed("\x03".into()).map_err(|_| {
                     Error::new(
                         "busy",
                         "Interrupt was not queued; terminal input is unavailable",
@@ -934,8 +955,8 @@ impl State {
                 })?)
             }
             ControlAction::Stop => {
-                session.pty.kill()?;
-                None
+                session.kill()?;
+                ControlDispatch::StopRequested
             }
         };
         session.human_input_dirty = true;
@@ -1215,9 +1236,7 @@ impl State {
         }
         let id = session.info.id.clone();
         if let Err(error) = self.persist_session(&session) {
-            #[cfg(windows)]
-            let _ = session.pty.answer_unattached_cursor_query();
-            let _ = session.pty.kill();
+            let _ = session.kill();
             self.cleanup_workers
                 .push(thread::spawn(move || drop(session)));
             return Err(error);
@@ -1768,11 +1787,7 @@ impl State {
                     .get_mut(&session_id)
                     .ok_or_else(|| anyhow!("Session no longer exists."))?;
                 if session.info.running {
-                    #[cfg(windows)]
-                    if !session.has_been_attached {
-                        session.pty.answer_unattached_cursor_query()?;
-                    }
-                    session.pty.kill()?;
+                    session.kill()?;
                 }
                 self.metadata.finish_recovery(&session_id, true)?;
                 let mut removed = self.sessions.remove(&session_id);
@@ -1873,11 +1888,7 @@ impl State {
         }
         for session in self.sessions.values_mut() {
             if session.info.running {
-                #[cfg(windows)]
-                if !session.has_been_attached {
-                    let _ = session.pty.answer_unattached_cursor_query();
-                }
-                let _ = session.pty.kill();
+                let _ = session.kill();
             }
         }
         for (_, session) in self.sessions.drain() {

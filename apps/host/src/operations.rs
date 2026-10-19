@@ -36,6 +36,11 @@ pub enum ControlAction {
     Interrupt,
     Stop,
 }
+pub enum ControlDispatch {
+    Write(tokio::sync::oneshot::Receiver<bool>),
+    StopRequested,
+    AlreadyExited,
+}
 impl ControlAction {
     fn operation(self) -> &'static str {
         match self {
@@ -69,23 +74,24 @@ pub async fn control(
         .ok_or_else(|| anyhow!("Control operation claim is unavailable"))?;
     let dispatched = state.lock().unwrap().dispatch_control(&session_id, action);
     let result = async {
-        if let Some(answer) = dispatched? {
-            flushed(answer).await?;
-        }
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    let (phase, result) = match result {
-        Ok(()) => match action {
-            ControlAction::Interrupt => (
+        let outcome=match dispatched? {
+            ControlDispatch::Write(answer) => {
+                flushed(answer).await?;
+                (
                 "delivered",
                 json!({"nativeWriteFlushed":true,"taskResult":null,"agentStopped":null}),
-            ),
-            ControlAction::Stop => (
+            )},
+            ControlDispatch::StopRequested => (
                 "stopRequested",
                 json!({"nativeStopRequested":true,"taskResult":null,"processExited":null}),
             ),
-        },
+            ControlDispatch::AlreadyExited => ("stopped",json!({"nativeStopRequested":false,"processExited":true,"effectStarted":false,"taskResult":null})),
+        };
+        Ok::<_, anyhow::Error>(outcome)
+    }
+    .await;
+    let (phase, result) = match result {
+        Ok(outcome) => outcome,
         Err(error) => {
             let typed = error.downcast_ref::<crate::api_error::Error>();
             (

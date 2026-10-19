@@ -29,6 +29,7 @@ pub struct Decoder {
     pending: String,
     overflow: bool,
     initial_cursor: bool,
+    initial_cursor_reply_sent: bool,
     passthrough_bell: bool,
     queries: u64,
     reports: u64,
@@ -46,11 +47,20 @@ impl Decoder {
             pending: String::new(),
             overflow: false,
             initial_cursor,
+            initial_cursor_reply_sent: false,
             passthrough_bell: false,
             queries: 0,
             reports: 0,
             rejected: 0,
         }
+    }
+    #[cfg(windows)]
+    pub fn initial_cursor_reply_needed(&self) -> bool {
+        self.initial_cursor && !self.initial_cursor_reply_sent
+    }
+    #[cfg(windows)]
+    pub fn confirm_initial_cursor_reply(&mut self) {
+        self.initial_cursor_reply_sent = true;
     }
     pub fn feed(&mut self, data: &str) -> Feed {
         let mut feed = Feed {
@@ -95,7 +105,10 @@ impl Decoder {
                             "\x1b[c" | "\x1b[0c" => feed.events.push(Event::Reply("\x1b[?1;2c")),
                             "\x1b[6n" if self.initial_cursor => {
                                 self.initial_cursor = false;
-                                feed.events.push(Event::Reply("\x1b[1;1R"));
+                                if !self.initial_cursor_reply_sent {
+                                    self.initial_cursor_reply_sent = true;
+                                    feed.events.push(Event::Reply("\x1b[1;1R"));
+                                }
                             }
                             _ => feed.visible.push_str(&self.pending),
                         }
@@ -197,6 +210,28 @@ impl Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(windows)]
+    fn early_cleanup_and_live_decoder_share_the_initial_cursor_reply() {
+        let mut early = Decoder::new(true);
+        assert!(early.initial_cursor_reply_needed());
+        early.confirm_initial_cursor_reply();
+        assert!(!early.initial_cursor_reply_needed());
+        let feed = early.feed("\x1b[6n");
+        assert!(
+            feed.visible.is_empty() && feed.events.is_empty(),
+            "late startup query is consumed without a second reply"
+        );
+        let mut normal = Decoder::new(true);
+        assert!(matches!(
+            &normal.feed("\x1b[6n").events[..],
+            [Event::Reply("\x1b[1;1R")]
+        ));
+        assert!(
+            !normal.initial_cursor_reply_needed(),
+            "cleanup cannot send a duplicate after normal negotiation"
+        );
+    }
     #[test]
     fn fragmented_queries_have_one_reply_owner_and_keep_negotiation_order() {
         for split in 0..=29 {

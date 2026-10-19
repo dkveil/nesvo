@@ -249,20 +249,28 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let interrupted=data(call(&mcp,"nesvo_interrupt_session",json!({"sessionId":id,"key":"sdk-interrupt"})).await?)?;
         assert_eq!(interrupted["data"]["receipt"]["phase"],"delivered");
         assert_eq!(interrupted["data"]["receipt"]["result"]["agentStopped"],Value::Null);
-        let stopped=data(call(&mcp,"nesvo_stop_session",json!({"sessionId":id,"key":"sdk-stop"})).await?)?;
+        // Ctrl+C is allowed to exit the original shell, especially on Windows.
+        // Exercise actual native stop on a separate process that was not interrupted.
+        let stop_fixture=data(call(&mcp,"nesvo_create_session",json!({"key":"sdk-stop-fixture","spec":{"name":"Stop fixture","program":"shell","cwd":fixture.directory}})).await?)?;
+        let stop_id=stop_fixture["data"]["receipt"]["sessionId"].as_str().context("stop fixture")?;
+        let stopped=data(call(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-stop"})).await?)?;
         assert_eq!(stopped["data"]["receipt"]["phase"],"stopRequested");
         let replay_stop=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing())
-            .args(["session","stop",id,"--key","sdk-stop","--json"]).output().await?;
+            .args(["session","stop",stop_id,"--key","sdk-stop","--json"]).output().await?;
         ensure!(replay_stop.status.success(),"CLI stop replay failed");
         let replay_stop:Value=serde_json::from_slice(&replay_stop.stdout)?;
         assert_eq!(replay_stop["data"]["receipt"],stopped["data"]["receipt"]);
         timeout(Duration::from_secs(5), async {
             loop {
-                let observed=data(call(&mcp,"nesvo_get_session",json!({"sessionId":id})).await?)?;
+                let observed=data(call(&mcp,"nesvo_get_session",json!({"sessionId":stop_id})).await?)?;
                 if observed["data"]["session"]["running"]==false {return Ok::<_,anyhow::Error>(());}
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         }).await??;
+        let already_stopped=data(call(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-already-stopped"})).await?)?;
+        assert_eq!(already_stopped["data"]["receipt"]["phase"],"stopped");
+        assert_eq!(already_stopped["data"]["receipt"]["result"]["processExited"],true);
+        assert_eq!(already_stopped["data"]["receipt"]["result"]["nativeStopRequested"],false);
         let retained=data(call(&mcp,"nesvo_read_session",json!({"sessionId":id})).await?)?;
         assert!(retained["data"]["page"]["data"].as_str().context("retained output")?.contains("NESVO_MCP_SEND"));
         mcp.cancel().await?;
