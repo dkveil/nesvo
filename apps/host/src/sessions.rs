@@ -62,6 +62,8 @@ impl ControlLease {
 }
 
 struct Session {
+    started: std::time::Instant,
+    elapsed_at_exit: Option<Duration>,
     agent_context: Option<crate::agent_context::Tracker>,
     info: SessionInfo,
     status: StatusTracker,
@@ -228,6 +230,12 @@ impl State {
                 info["autoTitle"] = json!(session.auto_title);
                 info["controllerId"] =
                     json!(session.controller.as_ref().map(|lease| lease.client_id));
+                info["uptimeSeconds"] = json!(
+                    session
+                        .elapsed_at_exit
+                        .unwrap_or_else(|| session.started.elapsed())
+                        .as_secs()
+                );
                 info["status"] = json!(session.status.status());
                 // Legacy v2 clients accept screen evidence and ignore extra fields.
                 if session.status.status().source == crate::status::StatusSource::Hook {
@@ -1172,6 +1180,8 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        started: std::time::Instant::now(),
+        elapsed_at_exit: None,
         agent_context,
         status: StatusTracker::new(program, 24, 80, now_millis()),
         info: SessionInfo {
@@ -1261,6 +1271,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
             PtyEvent::Exited(id, code) => {
                 if let Some(session) = state.sessions.get_mut(&id) {
                     session.info.running = false;
+                    session.elapsed_at_exit = Some(session.started.elapsed());
                     session.status.exited(code);
                     let data = match code {
                         Some(code) => format!("\r\n[Process exited with code {code}]\r\n"),

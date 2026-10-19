@@ -48,6 +48,7 @@ export type TerminalSession = {
   name: string;
   cwd: string;
   createdAt: string;
+  uptimeSeconds?: number;
   cols: number;
   rows: number;
   running: boolean;

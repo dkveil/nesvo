@@ -87,6 +87,7 @@ function session(value: unknown): value is RecordValue {
     record(value) &&
     text(value.id) &&
     text(value.name, 320) &&
+    (value.uptimeSeconds === undefined || integer(value.uptimeSeconds)) &&
     text(value.cwd, 32768) &&
     text(value.createdAt) &&
     typeof value.running === 'boolean' &&

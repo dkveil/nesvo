@@ -226,3 +226,18 @@ test('attention and push boundaries reject malformed and cross-navigation payloa
   assert.equal(parseTarget({ ...target, hostId: 'https://malicious.example' }), null);
   assert.equal(parseTarget({ ...target, sequence: Infinity }), null);
 });
+
+test('optional host session uptime is bounded and legacy snapshots still decode', () => {
+  const snapshot = {
+    type: 'sessions',
+    groups,
+    sessions: [{ ...session, uptimeSeconds: 8040 }],
+    revision: 4,
+  };
+  assert.deepEqual(decodeServerMessage(snapshot), snapshot);
+  for (const uptimeSeconds of [-1, 0.5, '8040', Number.MAX_SAFE_INTEGER + 1])
+    assert.throws(
+      () => decodeServerMessage({ ...snapshot, sessions: [{ ...session, uptimeSeconds }] }),
+      /Invalid host message/,
+    );
+});
