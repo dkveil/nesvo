@@ -107,26 +107,30 @@ impl Widget for Logo {
 pub struct CompactLogo(pub Theme);
 impl Widget for CompactLogo {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        let mut source = pixels(0);
-        // Keep the sidebar wordmark still and omit the intro's satellite.
-        for row in source.iter_mut().take(TOP as usize) {
-            row.fill(0);
-        }
-        let rows = [2, 4, 6, 7, 9, 11];
-        let colors = [BACKGROUND, self.0.accent(), TEXT];
-        let width = WIDTH.div_ceil(2).min(usize::from(area.width));
-        let left = area.x + area.width.saturating_sub(width as u16) / 2;
-        for y in 0..3usize.min(usize::from(area.height)) {
-            for x in 0..width {
-                let top = source[rows[y * 2]][x * 2];
-                let bottom = source[rows[y * 2 + 1]][x * 2];
-                buffer[(left + x as u16, area.y + y as u16)]
-                    .set_symbol("▀")
-                    .set_style(
-                        Style::default()
-                            .fg(colors[top as usize])
-                            .bg(colors[bottom as usize]),
-                    );
+        // Sample each canonical glyph independently so the small wordmark keeps
+        // its stems and counters. No satellite, animation or private font glyphs.
+        const ROWS: [usize; 6] = [0, 2, 3, 4, 6, 7];
+        const COLUMNS: [[usize; 3]; 5] = [[1, 4, 7], [1, 4, 6], [1, 4, 6], [1, 3, 6], [1, 4, 6]];
+        let width = 19u16.min(area.width);
+        let left = area.x + area.width.saturating_sub(width) / 2;
+        for (index, glyph) in GLYPHS.iter().enumerate() {
+            let ink = if index == 0 { self.0.accent() } else { TEXT };
+            for y in 0..3usize.min(usize::from(area.height)) {
+                for (x, source_x) in COLUMNS[index].iter().enumerate() {
+                    let column = index * 4 + x;
+                    if column >= usize::from(width) {
+                        continue;
+                    }
+                    let top = glyph[ROWS[y * 2]].as_bytes()[*source_x] == b'1';
+                    let bottom = glyph[ROWS[y * 2 + 1]].as_bytes()[*source_x] == b'1';
+                    buffer[(left + column as u16, area.y + y as u16)]
+                        .set_symbol("▀")
+                        .set_style(
+                            Style::default()
+                                .fg(if top { ink } else { crate::theme::SURFACE })
+                                .bg(if bottom { ink } else { crate::theme::SURFACE }),
+                        );
+                }
             }
         }
     }
@@ -170,5 +174,19 @@ mod tests {
         Logo(0, Theme::Graphite).render(Rect::new(2, 1, WIDTH as u16, ROWS), &mut buffer);
         assert_eq!(buffer[(10, 2)].fg, Theme::Graphite.accent());
         assert_eq!(buffer[(10, 2)].bg, BACKGROUND);
+    }
+    #[test]
+    fn compact_wordmark_is_nineteen_cells_by_three_without_satellite() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 5));
+        CompactLogo(Theme::Ultraviolet).render(Rect::new(0, 0, 30, 3), &mut buffer);
+        assert_eq!(
+            buffer
+                .content()
+                .iter()
+                .filter(|c| c.symbol() == "▀")
+                .count(),
+            45
+        );
+        assert!((0..30).all(|x| buffer[(x, 3)].symbol() == " "));
     }
 }
