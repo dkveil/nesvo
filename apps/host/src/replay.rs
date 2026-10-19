@@ -2,6 +2,64 @@
 
 pub const BACKLOG_BYTES: usize = 128 * 1024;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Page<'a> {
+    pub format: &'static str,
+    pub data: &'a str,
+    pub from_cursor: u64,
+    pub next_cursor: u64,
+    pub floor_cursor: u64,
+    pub head_cursor: u64,
+    pub gap: bool,
+    pub more: bool,
+}
+pub fn page(backlog: &str, head: u64, after: Option<u64>, max: usize) -> anyhow::Result<Page<'_>> {
+    use crate::api_error::Error;
+    if !(1..=8192).contains(&max) {
+        return Err(Error::new("invalid_argument", "Read limit must be 1–8192 bytes").into());
+    }
+    let floor = head.saturating_sub(backlog.len() as u64);
+    let gap = after.is_some_and(|at| at < floor);
+    let from = match after {
+        Some(at) if at > head => {
+            return Err(
+                Error::new("invalid_cursor", "Cursor is ahead of this process output").into(),
+            );
+        }
+        Some(at) => at.max(floor),
+        None => floor + (backlog.len().saturating_sub(max) as u64),
+    };
+    let mut start = (from - floor) as usize;
+    if after.is_some() && !backlog.is_char_boundary(start) {
+        return Err(Error::new("invalid_cursor", "Cursor splits a UTF-8 character").into());
+    }
+    while !backlog.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (start + max).min(backlog.len());
+    while !backlog.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == start && end < backlog.len() {
+        return Err(Error::new(
+            "invalid_argument",
+            "Read limit cannot hold the next UTF-8 character",
+        )
+        .into());
+    }
+    Ok(Page {
+        format: "terminalReplay",
+        data: &backlog[start..end],
+        from_cursor: floor + start as u64,
+        next_cursor: floor + end as u64,
+        floor_cursor: floor,
+        head_cursor: head,
+        gap,
+        more: end < backlog.len(),
+    })
+}
+
 pub fn bounded_append(backlog: &mut String, data: &str) {
     backlog.push_str(data);
     if backlog.len() > BACKLOG_BYTES {
@@ -107,6 +165,32 @@ pub fn replay_history(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn incremental_pages_have_explicit_gaps_utf8_boundaries_and_bounded_json() {
+        let mut backlog = String::new();
+        let text = "x".repeat(BACKLOG_BYTES + 20) + "猫😀\n";
+        bounded_append(&mut backlog, &text);
+        let head = text.len() as u64;
+        let first = page(&backlog, head, Some(0), 4096).unwrap();
+        assert!(first.gap);
+        assert!(first.more);
+        let next = page(&backlog, head, Some(first.next_cursor), 4096).unwrap();
+        assert!(!next.gap);
+        assert_eq!(next.from_cursor, first.next_cursor);
+        assert!(page(&backlog, head, Some(head + 1), 4096).is_err());
+        let tail = page(&backlog, head, None, 6).unwrap();
+        assert_eq!(tail.data, "😀\n");
+        assert!(page(&backlog, head, Some(head - 2), 4096).is_err());
+        assert!(page(&backlog, head, Some(head - 5), 1).is_err());
+        let worst = "\x00".repeat(8192);
+        assert!(
+            serde_json::to_vec(&page(&worst, worst.len() as u64, None, 8192).unwrap())
+                .unwrap()
+                .len()
+                < crate::wire::MAX_PLAINTEXT - 2048
+        );
+        assert!(page(&backlog, head, None, 8193).is_err());
+    }
     #[test]
     fn backlog_and_chunks_preserve_utf8_and_stay_bounded() {
         let text = "zażółć 🦀 東京\n".repeat(20000);

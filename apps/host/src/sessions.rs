@@ -80,6 +80,7 @@ struct Session {
     program_status_dirty: bool,
     pty: Pty,
     backlog: String,
+    output_cursor: u64,
     controller: Option<ControlLease>,
     subscribers: HashSet<u64>,
     has_been_attached: bool,
@@ -191,7 +192,7 @@ impl State {
 
     fn capabilities_event(&self) -> Value {
         json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
-            "hostId":self.metadata.host_id, "pushNotifications":true, "diagnostics":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
+            "hostId":self.metadata.host_id, "pushNotifications":true, "diagnostics":true, "sessionQueries":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
             "providerLimits":self.provider_limits})
     }
 
@@ -760,8 +761,14 @@ impl State {
     }
 
     fn diagnostics(&self, id: Option<&str>) -> Result<Value> {
-        if let Some(id) = id {
-            ensure!(self.sessions.contains_key(id), "Session no longer exists.");
+        if let Some(id) = id
+            && !self.sessions.contains_key(id)
+        {
+            return Err(crate::api_error::Error::new(
+                "session_not_found",
+                "Session no longer exists",
+            )
+            .into());
         }
         let now = now_millis();
         let mut sessions: Vec<_> = self
@@ -796,6 +803,39 @@ impl State {
     ) -> Result<()> {
         ensure!(!self.shutting_down, "Host is shutting down.");
         match command {
+            Command::GetSession { session_id } => {
+                let snapshot = self.list();
+                let session = snapshot["sessions"]
+                    .as_array()
+                    .and_then(|sessions| sessions.iter().find(|s| s["id"] == session_id))
+                    .ok_or_else(|| {
+                        crate::api_error::Error::new(
+                            "session_not_found",
+                            "Session no longer exists",
+                        )
+                    })?;
+                self.respond(
+                    client_id,
+                    json!({"type":"session","session":session}),
+                    request_id,
+                );
+            }
+            Command::ReadSession {
+                session_id,
+                after,
+                max_bytes,
+            } => {
+                let session = self.sessions.get(&session_id).ok_or_else(|| {
+                    crate::api_error::Error::new("session_not_found", "Session no longer exists")
+                })?;
+                let page = crate::replay::page(
+                    &session.backlog,
+                    session.output_cursor,
+                    after,
+                    max_bytes.unwrap_or(4096),
+                )?;
+                self.respond(client_id,json!({"type":"sessionRead","sessionId":session_id,"cols":session.info.cols,"rows":session.info.rows,"page":page}),request_id);
+            }
             Command::GetDiagnostics { session_id } => {
                 let report = self.diagnostics(session_id.as_deref())?;
                 self.respond(
@@ -965,7 +1005,7 @@ impl State {
                 self.respond(client_id, self.recovery_event(0)?, request_id);
                 self.broadcast_list();
             }
-            Command::List => self.send(client_id, self.list()),
+            Command::List => self.respond(client_id, self.list(), request_id),
             Command::GetCapabilities => {
                 self.respond(client_id, self.capabilities_event(), request_id)
             }
@@ -1296,6 +1336,7 @@ fn spawn_session(
     events: mpsc::Sender<PtyEvent>,
 ) -> Result<Session> {
     let id = hex::encode(crate::wire::random::<16>());
+    command.env("NESVO_SESSION_ID", &id);
     let agent_context = if program == Program::Claude {
         Some(crate::agent_context::Tracker::install_for(
             &mut command,
@@ -1334,6 +1375,7 @@ fn spawn_session(
         },
         pty,
         backlog: String::new(),
+        output_cursor: 0,
         controller: None,
         subscribers: HashSet::new(),
         has_been_attached: false,
@@ -1506,6 +1548,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         session.titles.feed(&data);
                     }
                     bounded_append(&mut session.backlog, &data);
+                    session.output_cursor = session.output_cursor.saturating_add(data.len() as u64);
                     let subscribers: Vec<u64> = session.subscribers.iter().copied().collect();
                     for client_id in subscribers {
                         for chunk in output_chunks(&data) {

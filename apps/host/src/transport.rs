@@ -279,6 +279,9 @@ pub async fn handle(
                                 event["code"] = "revision_conflict".into();
                                 event["revision"] = conflict.0.into();
                             }
+                            if let Some(error)=error.downcast_ref::<crate::api_error::Error>() {
+                                event["code"]=error.code.into();
+                            }
                             state.send(id, event);
                         }
                     }

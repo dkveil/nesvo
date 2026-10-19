@@ -1,5 +1,6 @@
 mod agent_context;
 mod agent_events;
+mod api_error;
 mod attention;
 mod attention_projection;
 mod git;

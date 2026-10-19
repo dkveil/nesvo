@@ -282,3 +282,15 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   typecheck/lint and 19 native integration checks pass. The late-observer fixture
   checks the same turn-correlated notification after reconnect. Native OSC done
   remains a protocol facet; multi-provider outcome coverage is still a stage gate.
+
+### F09/F32 shared read foundation
+
+- Added correlated host get/read queries with bounded incremental terminal pages,
+  UTF-8 byte cursors, explicit retention gaps and frame-safe control-heavy data.
+  This is output observation, not a resumable domain event log (F16).
+- Typed application failures support headless callers. The host injects its stable
+  process session ID for `current`; that context is not authorization. This shared
+  foundation lands before effectful CLI/MCP dispatch to keep one host API.
+- The stage 1 provider matrix remains open (especially native Codex/Gemini and
+  ConPTY OSC negotiation); dependencies may progress without relabeling that gate.
+  F32 turn-time presentation and preview retention behavior are still tracked.

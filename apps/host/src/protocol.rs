@@ -11,6 +11,14 @@ pub enum Command {
         client_nonce: String,
     },
     List,
+    GetSession {
+        session_id: String,
+    },
+    ReadSession {
+        session_id: String,
+        after: Option<u64>,
+        max_bytes: Option<usize>,
+    },
     Launch {
         spec: crate::jobs::LaunchSpec,
     },

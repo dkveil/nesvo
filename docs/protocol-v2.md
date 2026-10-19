@@ -17,6 +17,16 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Sessions and groups
 
+Hosts advertising `sessionQueries:true` accept `getSession {sessionId}` and
+`readSession {sessionId,after?,maxBytes?}`. Both echo request IDs. The former
+returns `session {session}` using the snapshot DTO. The latter returns
+`sessionRead {sessionId,cols,rows,page}` with bounded UTF-8 stream cursors, explicit
+retention gaps and at most 8192 raw bytes per page; see `harness-cli.md` for the
+complete page contract. Neither operation subscribes or acquires control. `list`
+now echoes a supplied request ID as well, preserving the legacy snapshot shape.
+Typed application errors include `session_not_found`, `invalid_cursor` and
+`invalid_argument`. Older hosts are gated by capability before these new commands.
+
 | Command                                                                        | Result                                                                                                                      |
 | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
 | `getCapabilities { requestId? }`                                               | Targeted `capabilities { workspace, programs:[{id,label,available}], directoryBrowser:true, providerLimits?, requestId? }`. |
