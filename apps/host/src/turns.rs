@@ -161,7 +161,7 @@ impl Tracker {
         turn.phase = phase;
         turn.outcome = outcome;
         turn.observed_at = at;
-        if !active(phase) {
+        if !active(phase) && !final_report {
             turn.elapsed = elapsed.saturating_sub(turn.started);
         }
         changed
@@ -274,6 +274,11 @@ mod tests {
             Phase::Settled
         );
         assert_eq!(t.history().len(), 1);
+        assert_eq!(
+            t.snapshot(Duration::from_secs(90)).unwrap().elapsed_seconds,
+            1,
+            "late final evidence cannot add time after process exit"
+        );
         assert!(
             t.snapshot(Duration::from_secs(9))
                 .unwrap()

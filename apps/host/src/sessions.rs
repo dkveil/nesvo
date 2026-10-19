@@ -1603,13 +1603,16 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 })
                 .await;
                 if let Some(session) = state.lock().unwrap().sessions.get_mut(&id) {
+                    let elapsed = session
+                        .elapsed_at_exit
+                        .unwrap_or_else(|| session.started.elapsed());
                     session.integration_delivery = observation.delivery;
                     session.integration_shadow_sequence = observation.report.map(|r| r.sequence);
                     match batch {
                         Ok(Ok(batch)) => {
                             session.lifecycle_gap |= batch.gap;
                             if batch.gap {
-                                session.turn.gap(session.started.elapsed());
+                                session.turn.gap(elapsed);
                             }
                             if !batch.observed {
                                 session.integration_delivery.outcome = "missing";
@@ -1628,12 +1631,11 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                             event: &event.name,
                                             state: event.state,
                                         },
-                                        session.started.elapsed(),
+                                        elapsed,
                                         now_millis(),
                                     );
                                     if event.name == "Stop"
-                                        && let Some(turn) =
-                                            session.turn.snapshot(session.started.elapsed())
+                                        && let Some(turn) = session.turn.snapshot(elapsed)
                                         && turn.phase == crate::turns::Phase::Settled
                                     {
                                         session.attention_dirty |=
@@ -1657,6 +1659,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                 }
                             }
                             session.conversation_identity = Some(batch.identity);
+                            if !session.info.running {
+                                session.turn.process_exit(elapsed);
+                            }
                         }
                         _ => session.integration_delivery.outcome = "queueUnreadable",
                     }

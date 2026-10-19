@@ -355,3 +355,17 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   canonicalized both sides of fixture path comparisons. No production folder
   resolution or global system configuration changed. These are targeted repairs;
   macOS/Linux runtime claims await the subsequent matrix run.
+
+### Verified checkpoint and late-exit timing
+
+- CI run `39320283775` at `a44f196` passed the app, browser and native Windows,
+  Ubuntu and macOS jobs, including native PTY/transport/CLI checks. This is CI
+  evidence, not physical mobile or interactive Unix terminal verification.
+- Local real ConPTY smoke passed after scoped authentication: onboarding, input,
+  menu focus, diff/review, search, filters, launch dialogs, 150×44/100×32/80×24,
+  resize and clean terminal restoration. Current renderer PNGs are kept in ignored
+  `artifacts/harness-conpty-20261019/current-previews` with explicit fixture data.
+- F32 repair: the final lifecycle drain retains the duration frozen at process
+  exit. Late Stop can settle response evidence but cannot add post-exit time;
+  late prompt evidence is reconciled to the exited process. Pure turn tests and
+  the real helper/PTY late-exit fixture verify the distinction.
