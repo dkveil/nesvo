@@ -111,7 +111,6 @@ To produce the cache, copy `scripts/nesvo_usage_cache.py` beside your Python Cla
 
 The workspace header and footer each use one row. Click unused sidebar space or its heading to return to navigation without switching sessions. Git review defaults to a narrow panel; `[` / `]` resize it and `e` expands it. `o` edits the review directory on the host (empty resets to the session launch directory). The panel displays its directory and scope; it does not infer repositories from agent prose. `c` switches unstaged/staged/untracked. Refresh continues in fullscreen mode and retries requests unanswered for 15 seconds.
 
-
 ## Pointer scrolling, appearance and copy
 
 Wheel input above a session preserves focus. Ordinary terminals use local scrollback; applications requesting mouse reporting receive coordinates relative to their pane using their selected SGR/UTF-8/legacy encoding, only while the client owns control. A read-only client cannot scroll a remote application's internal view. Applications without local history or mouse reporting cannot expose history through that mechanism.
@@ -119,7 +118,6 @@ Wheel input above a session preserves focus. Ordinary terminals use local scroll
 Settings → Theme opens the full list with live preview. Enter applies the selection; Escape restores the original. Preview values are not persisted. The sidebar uses a compact solid-cell rendering of the canonical pixel wordmark; the intro retains its shared subtle logo animation and adds live session/connection context. No continuous workspace animation is added.
 
 Shortcut keycaps use balanced inner padding and an outer gap in the footer, review, palette, workflow overlays and keyboard reference. Review hints wrap as complete key/description pairs. Diff additions/deletions have brighter text while retaining the existing backgrounds. In focused review, `y` copies the selected file's complete available patch (including only the returned portion when marked partial). Windows uses a hidden clipboard helper off the render loop with a five-second timeout and a single in-flight request; other platforms request OSC 52 clipboard copying, subject to terminal support. No remote host command is involved. Clipboard content delivery was not verified against the user's clipboard.
-
 
 ## Selection and focus refinements
 
