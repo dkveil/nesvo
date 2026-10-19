@@ -33,6 +33,8 @@ pub struct Session {
     received_at: std::time::Instant,
     #[serde(skip)]
     pub runtime_label: String,
+    #[serde(skip)]
+    pub turn_runtime_label: String,
     #[serde(default)]
     pub rate_limited: bool,
     #[serde(default)]
@@ -49,6 +51,8 @@ pub struct Session {
     pub readiness: Option<crate::status::Readiness>,
     #[serde(default)]
     pub current_attention: Option<crate::status::CurrentAttention>,
+    #[serde(default)]
+    pub lifecycle: Option<crate::status::Lifecycle>,
 }
 
 impl Session {
@@ -70,11 +74,32 @@ impl Session {
                 crate::session_row::duration_label(seconds.saturating_add(live))
             })
             .unwrap_or_else(|| "—".into());
-        if self.runtime_label == label {
-            return false;
-        }
+        let turn_label = self
+            .lifecycle
+            .as_ref()
+            .and_then(|l| l.turn.as_ref())
+            .map(|turn| {
+                let live = if self.running && turn.phase.active() {
+                    now.saturating_duration_since(self.received_at).as_secs()
+                } else {
+                    0
+                };
+                let seconds = turn.elapsed_seconds.saturating_add(live);
+                format!(
+                    "{} {}",
+                    turn.phase.label(),
+                    if seconds < 60 {
+                        format!("{seconds}s")
+                    } else {
+                        crate::session_row::duration_label(seconds)
+                    }
+                )
+            })
+            .unwrap_or_default();
+        let changed = self.runtime_label != label || self.turn_runtime_label != turn_label;
         self.runtime_label = label;
-        true
+        self.turn_runtime_label = turn_label;
+        changed
     }
 }
 
@@ -1298,6 +1323,37 @@ mod tests {
         session.uptime_seconds = None;
         session.refresh_time(now);
         assert_eq!(session.runtime_label, "—");
+    }
+
+    #[test]
+    fn process_age_and_response_duration_use_separate_clocks_and_stop_on_their_own_boundaries() {
+        use std::time::{Duration, Instant};
+        let mut session:Session=serde_json::from_value(json!({"id":"s","name":"S","cwd":".","running":true,"cols":80,"rows":24,"groupId":null,"controllerId":null,"uptimeSeconds":120,"lifecycle":{"turn":{"phase":"started","elapsedSeconds":3}}})).unwrap();
+        let now = Instant::now();
+        session.received_at = now;
+        session.refresh_time(now + Duration::from_secs(8));
+        assert_eq!(session.runtime_label, "2m");
+        assert_eq!(session.turn_runtime_label, "turn 11s");
+        let turn = session.lifecycle.as_mut().unwrap().turn.as_mut().unwrap();
+        turn.phase = crate::status::TurnPhase::Settled;
+        turn.elapsed_seconds = 13;
+        session.refresh_time(now + Duration::from_secs(120));
+        assert_eq!(session.runtime_label, "4m");
+        assert_eq!(session.turn_runtime_label, "response 13s");
+        session.uptime_seconds = Some(240);
+        session.running = false;
+        session.refresh_time(now + Duration::from_secs(86400));
+        assert_eq!(
+            session.runtime_label, "4m",
+            "host exit snapshot provides frozen process age"
+        );
+        assert_eq!(session.turn_runtime_label, "response 13s");
+        session.lifecycle = None;
+        session.refresh_time(now);
+        assert!(
+            session.turn_runtime_label.is_empty(),
+            "legacy data does not invent turn time"
+        );
     }
 
     #[test]

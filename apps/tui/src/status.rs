@@ -36,6 +36,39 @@ pub struct Readiness {
     pub phase: ReadinessPhase,
 }
 #[derive(Clone, Debug, Deserialize)]
+pub struct Lifecycle {
+    pub turn: Option<Turn>,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Turn {
+    pub phase: TurnPhase,
+    pub elapsed_seconds: u64,
+}
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TurnPhase {
+    Accepted,
+    Started,
+    Waiting,
+    Settled,
+    Interrupted,
+    Failed,
+}
+impl TurnPhase {
+    pub fn active(self) -> bool {
+        matches!(self, Self::Accepted | Self::Started | Self::Waiting)
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Accepted | Self::Started | Self::Waiting => "turn",
+            Self::Settled => "response",
+            Self::Interrupted => "interrupted",
+            Self::Failed => "failed",
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentAttention {
     pub priority: u8,

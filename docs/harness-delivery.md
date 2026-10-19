@@ -309,3 +309,16 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   repository tooling, to validate these machine contracts. No new native runtime
   dependency or provider installation. Effectful CLI operations and scoped MCP
   remain pending F12/F17 foundations; read-only coverage is not full F09 delivery.
+
+### F32 time and preview checkpoint
+
+- The approved single-row age column remains process age. Search preview metadata
+  now explicitly labels process age separately from active turn duration and
+  settled/interrupted response duration. Rendering uses labels prepared by the
+  monotonic event-loop clock; a settled response does not keep accumulating time.
+- Preview keeps its bounded initial replay/live chunks and does not change active
+  session/control before confirmation. New read cursors provide a bounded passive
+  incremental path for CLI/MCP callers, with explicit retention gaps rather than a
+  claim of a complete screen/transcript. Recovery does not share cursor space.
+- Unit regressions cover independent/frozen clocks and legacy hosts. 125 TUI tests
+  and Clippy pass; existing render/focus checks cover 80×24, 100×32 and 150×44.
