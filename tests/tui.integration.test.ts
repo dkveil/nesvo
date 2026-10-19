@@ -275,6 +275,19 @@ test(
             '--json',
           ]);
           assert.equal(first.code, 0, first.stderr);
+          const journal = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'events',
+            '--session',
+            created.sessionId,
+            '--json',
+          ]);
+          assert.equal(journal.code, 0, journal.stderr);
+          queryOutput(journal.stdout);
+          const eventPage = JSON.parse(journal.stdout).data;
+          assert.ok(
+            eventPage.events.every((e: { sessionId: string }) => e.sessionId === created.sessionId),
+          );
+          assert.ok(eventPage.events.some((e: { kind: string }) => e.kind === 'session.created'));
           const page = JSON.parse(first.stdout).data.page;
           queryOutput(first.stdout);
           assert.equal(page.format, 'terminalReplay');
@@ -367,6 +380,7 @@ test(
           const capability = JSON.parse(await readFile(contextPath, 'utf8'));
           assert.notEqual(capability.key, pairing.key);
           for (const subcommand of [
+            ['events', '--json'],
             ['session', 'current', '--json'],
             ['session', 'list', '--json'],
             ['session', 'explain', created.sessionId, '--json'],
@@ -406,6 +420,83 @@ test(
           assert.equal(JSON.parse(rejected.stdout).error.code, 'host_unavailable');
           assertNoSecret(rejected, [pairing.key, capability.key]);
           assert.equal((await snapshot()).sessions[0]?.controllerId, null);
+        },
+      );
+
+      await suite.test(
+        'event CLI watch streams versioned deltas and stays quiet without changes',
+        async () => {
+          const watcher = spawn(
+            tuiBinary,
+            ['--pairing', pairingPath, 'events', '--watch', '--json'],
+            { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+          );
+          runningTuis.add(watcher);
+          let buffer = '';
+          let stderr = '';
+          let parseFailure: unknown;
+          const pages: {
+            events: { sessionId: string | null; kind: string }[];
+            nextCursor: number;
+          }[] = [];
+          watcher.stdout.setEncoding('utf8');
+          watcher.stdout.on('data', (chunk: string) => {
+            buffer += chunk;
+            for (let newline; (newline = buffer.indexOf('\n')) >= 0;) {
+              const line = buffer.slice(0, newline);
+              buffer = buffer.slice(newline + 1);
+              try {
+                queryOutput(line);
+                const value = JSON.parse(line);
+                assert.equal(value.ok, true);
+                pages.push(value.data);
+              } catch (error) {
+                parseFailure = error;
+              }
+            }
+          });
+          watcher.stderr.on('data', chunk => {
+            stderr += chunk.toString();
+          });
+          try {
+            await until(() => {
+              if (parseFailure) throw parseFailure;
+              return pages.length || undefined;
+            }, 'first event CLI page');
+            const initial = pages.length;
+            const cursor = pages.at(-1)!.nextCursor;
+            await delay(300);
+            assert.equal(pages.length, initial, 'idle watch must not poll or print heartbeat data');
+            const request = client.createSession('Event watch fixture', null);
+            const started = await next('created', e => e.requestId === request);
+            await until(() => {
+              if (parseFailure) throw parseFailure;
+              return (
+                pages.some(p =>
+                  p.events.some(
+                    e => e.sessionId === started.sessionId && e.kind === 'session.created',
+                  ),
+                ) || undefined
+              );
+            }, 'new process event');
+            assert.ok(pages.at(-1)!.nextCursor > cursor);
+            client.closeSession(started.sessionId);
+            await until(
+              () =>
+                pages.some(p =>
+                  p.events.some(
+                    e => e.sessionId === started.sessionId && e.kind === 'session.closed',
+                  ),
+                ) || undefined,
+              'closed process event',
+            );
+            assert.equal((await snapshot()).sessions[0]?.controllerId, null);
+            assert.equal(stderr, '');
+            assert.equal(parseFailure, undefined);
+          } finally {
+            await stopProcess(watcher);
+            runningTuis.delete(watcher);
+          }
         },
       );
 

@@ -4,6 +4,7 @@ mod api_error;
 mod attention;
 mod attention_projection;
 mod caller;
+mod event_log;
 mod git;
 mod groups;
 mod jobs;
@@ -251,6 +252,15 @@ async fn run(args: Args) -> Result<()> {
     private_write(&qr_path, svg.as_bytes())?;
 
     let metadata = storage::MetadataStore::open(&pairing_dir.join("metadata.sqlite3"))?;
+    let event_log = event_log::Service::open(pairing_dir.join("metadata.sqlite3")).await?;
+    event_log
+        .append(vec![event_log::Observation {
+            session_id: None,
+            kind: "host.started",
+            at: status::now_millis(),
+            payload: serde_json::json!({"buildId":env!("NESVO_BUILD_ID")}),
+        }])
+        .await?;
     let launchers = launchers::Launchers::discover();
     let claude_installed = launchers.available(launchers::Program::Claude);
     let codex_probe = launchers.probe_command(launchers::Program::Codex);
@@ -262,6 +272,7 @@ async fn run(args: Args) -> Result<()> {
     )));
     let (event_tx, event_rx) = mpsc::channel(128);
     state.lock().unwrap().set_caller_url(pairing.url.clone());
+    state.lock().unwrap().set_event_log(event_log.clone());
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -360,6 +371,9 @@ async fn run(args: Args) -> Result<()> {
         panicked == 0,
         "{panicked} terminal cleanup workers panicked"
     );
+    tokio::time::timeout(Duration::from_secs(3), event_log.shutdown())
+        .await
+        .context("Event journal shutdown timed out")?;
     Ok(())
 }
 

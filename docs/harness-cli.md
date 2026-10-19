@@ -125,6 +125,11 @@ explicit staged, unstaged or untracked scope.
 
 ## Remaining delivery gates
 
+`events --after CURSOR --session SESSION_ID --json` reads a durable domain page;
+add `--watch` for NDJSON deltas without heartbeat output. See `harness-events.md`
+for retention, gaps, health and reconnect behavior. This cursor space is separate
+from `session read`.
+
 Create/send/wait/interrupt/stop, durable receipts, scoped caller policy and MCP
 are subsequent feature commits. The current query API is not a completed
 orchestration interface. Existing legacy `nesvo --list` remains compatible.

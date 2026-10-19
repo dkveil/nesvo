@@ -29,6 +29,50 @@
           "oneOf": [
             {
               "type": "object",
+              "required": [
+                "type",
+                "events",
+                "nextCursor",
+                "headCursor",
+                "floorCursor",
+                "gap",
+                "more",
+                "health"
+              ],
+              "properties": {
+                "type": { "const": "events" },
+                "events": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "required": ["sequence", "sessionId", "kind", "at", "payload"],
+                    "properties": {
+                      "sequence": { "type": "integer", "minimum": 1 },
+                      "sessionId": { "type": ["string", "null"] },
+                      "kind": { "type": "string" },
+                      "at": { "$ref": "#/definitions/cursor" },
+                      "payload": { "type": "object" }
+                    }
+                  }
+                },
+                "nextCursor": { "$ref": "#/definitions/cursor" },
+                "headCursor": { "$ref": "#/definitions/cursor" },
+                "floorCursor": { "$ref": "#/definitions/cursor" },
+                "gap": { "type": "boolean" },
+                "more": { "type": "boolean" },
+                "health": {
+                  "type": "object",
+                  "required": ["observationDrops", "writeFailures"],
+                  "properties": {
+                    "observationDrops": { "$ref": "#/definitions/cursor" },
+                    "writeFailures": { "$ref": "#/definitions/cursor" }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
               "required": ["type", "session"],
               "properties": {
                 "type": { "const": "session" },

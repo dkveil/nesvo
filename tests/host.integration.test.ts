@@ -42,6 +42,16 @@ type Event = {
     }[];
   };
   type: string;
+  events?: {
+    sequence: number;
+    sessionId: string | null;
+    kind: string;
+    payload: { state?: string; turnId?: string };
+  }[];
+  nextCursor?: number;
+  headCursor?: number;
+  gap?: boolean;
+  more?: boolean;
   code?: string;
   groupId?: string;
   revision?: number;
@@ -303,6 +313,11 @@ process.stdin.on('data', bytes=>{
       const scoped = new Peer(scopedPairing);
       await scoped.authenticate();
       const scopedInitial = await scoped.next('sessions');
+      scoped.send({ type: 'subscribeEvents', after: 0, requestId: 'live-events' });
+      const initialEvents = await scoped.next('events', e => e.requestId === 'live-events');
+      assert.equal(initialEvents.gap, false);
+      assert.ok(initialEvents.events?.every(e => e.sessionId === id));
+      const eventCursor = initialEvents.nextCursor!;
       assert.deepEqual(
         scopedInitial.sessions?.map(s => s.id),
         [id],
@@ -342,6 +357,7 @@ process.stdin.on('data', bytes=>{
         { type: 'getDiff', sessionId: id, scope: 'unstaged', directory: fixture },
         { type: 'launch', spec: { name: 'unauthorized', program: 'shell' } },
         { type: 'close', sessionId: other },
+        { type: 'readEvents', after: 0, sessionId: other },
       ]) {
         scoped.send({ ...forbidden, requestId: 'forbidden' });
         assert.equal(
@@ -385,6 +401,14 @@ process.stdin.on('data', bytes=>{
       );
       const waiting = question.sessions!.find(s => s.id === id)!;
       assert.equal(waiting.lifecycle?.agent.blockReason, 'question');
+      const questionEvents = await scoped.next(
+        'events',
+        e =>
+          e.events?.some(
+            item => item.kind === 'agent.lifecycle' && item.payload.state === 'question',
+          ) ?? false,
+      );
+      assert.ok(questionEvents.events?.every(e => e.sessionId === id));
       assert.equal(waiting.currentAttention?.reason, 'question');
       assert.equal(waiting.currentAttention?.priority, 3);
       const oldTurn = waiting.lifecycle!.turn!.id;
@@ -410,6 +434,16 @@ process.stdin.on('data', bytes=>{
       let turn = settled.sessions!.find(s => s.id === id)!.lifecycle!.turn!;
       assert.equal(settled.sessions!.find(s => s.id === id)!.currentAttention?.priority, 0);
       const completion = settled.sessions!.find(s => s.id === id)!.attention;
+      const finishedEvents = await scoped.next(
+        'events',
+        e =>
+          e.events?.some(
+            item => item.kind === 'response.settled' && item.payload.turnId === turn.id,
+          ) ?? false,
+      );
+      assert.ok(finishedEvents.nextCursor! > eventCursor);
+      scoped.send({ type: 'unsubscribeEvents', requestId: 'stop-events' });
+      await scoped.next('eventsUnsubscribed', e => e.requestId === 'stop-events');
       assert.equal(completion?.subject, 'response');
       assert.equal(completion?.turnId, turn.id);
       assert.equal(completion?.unread, true);
@@ -461,6 +495,32 @@ process.stdin.on('data', bytes=>{
         assert.equal(observed.lifecycle?.turn?.id, turn.id);
         assert.equal(observed.lifecycle?.process.running, true);
         assert.equal(observed.attention?.turnId, turn.id);
+        observer.send({
+          type: 'readEvents',
+          after: eventCursor,
+          sessionId: id,
+          requestId: 'replay-events',
+        });
+        let replayed = await observer.next('events', e => e.requestId === 'replay-events');
+        const resultEvents = [...(replayed.events ?? [])];
+        while (replayed.more) {
+          observer.send({
+            type: 'readEvents',
+            after: replayed.nextCursor,
+            sessionId: id,
+            requestId: 'replay-events',
+          });
+          replayed = await observer.next('events', e => e.requestId === 'replay-events');
+          resultEvents.push(...(replayed.events ?? []));
+        }
+        assert.ok(
+          resultEvents.some(e => e.kind === 'response.settled' && e.payload.turnId === turn.id),
+          'fast completion survives a later observer',
+        );
+        assert.ok(
+          resultEvents.every(e => e.sessionId === id),
+          'replay excludes unrelated sessions',
+        );
         peer.send({ type: 'input', sessionId: id, data: 'fast-exit\r' });
         const ended = await observer.next(
           'sessions',
@@ -474,6 +534,22 @@ process.stdin.on('data', bytes=>{
             ) ?? false,
         );
         assert.equal(ended.sessions!.find(s => s.id === id)!.lifecycle?.agent.current, null);
+        observer.send({
+          type: 'readSession',
+          sessionId: id,
+          maxBytes: 8192,
+          requestId: 'exit-page',
+        });
+        const exitRead = await observer.next('sessionRead', e => e.requestId === 'exit-page');
+        const exitPage = (
+          exitRead as Event & { page: { data: string; nextCursor: number; headCursor: number } }
+        ).page;
+        assert.ok(exitPage.data.includes('[Process exited'));
+        assert.equal(
+          exitPage.nextCursor,
+          exitPage.headCursor,
+          'synthetic process exit rows advance the terminal cursor',
+        );
         scoped.send({ type: 'getSession', sessionId: id, requestId: 'revoked' });
         assert.equal(
           (await scoped.next('error', e => e.requestId === 'revoked')).code,
@@ -1101,11 +1177,32 @@ test(
       const id = (await client.next('created', e => e.requestId === 'recoverable')).sessionId!;
       client.send({ type: 'muteSession', sessionId: id, muted: true });
       await client.next('sessions', e => e.sessions?.some(s => s.id === id && s.muted) ?? false);
+      client.send({ type: 'readEvents', after: 0, sessionId: id, requestId: 'journal-before' });
+      const beforeRestart = await client.next('events', e => e.requestId === 'journal-before');
+      const createdEvent = beforeRestart.events?.find(e => e.kind === 'session.created');
+      assert.ok(createdEvent);
       await client.disconnect();
       await stopFixtureHost(host!);
       client = await start();
       client.send({ type: 'getCapabilities' });
       assert.equal((await client.next('capabilities')).hostId, identity);
+      client.send({ type: 'readEvents', after: 0, sessionId: id, requestId: 'journal-after' });
+      const afterRestart = await client.next('events', e => e.requestId === 'journal-after');
+      assert.equal(
+        afterRestart.events?.find(e => e.kind === 'session.created')?.sequence,
+        createdEvent.sequence,
+      );
+      client.send({
+        type: 'readEvents',
+        after: beforeRestart.nextCursor,
+        requestId: 'journal-resume',
+      });
+      const resumed = await client.next('events', e => e.requestId === 'journal-resume');
+      assert.ok(
+        resumed.events?.some(
+          e => e.kind === 'host.started' && e.sequence > beforeRestart.nextCursor!,
+        ),
+      );
       client.send({ type: 'listTemplates' });
       assert.equal((await client.next('templates')).templates![0]!.id, template.id);
       client.send({ type: 'listRecovery' });

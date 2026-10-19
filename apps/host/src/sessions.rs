@@ -105,6 +105,7 @@ impl Session {
 }
 
 pub struct State {
+    event_log: Option<crate::event_log::Service>,
     caller_url: Option<String>,
     workspace: PathBuf,
     sessions: HashMap<String, Session>,
@@ -138,6 +139,7 @@ impl State {
         let provider_limits = usage::installed(&launchers);
         let provider_versions = launchers.pending_versions();
         Self {
+            event_log: None,
             caller_url: None,
             workspace,
             sessions: HashMap::new(),
@@ -160,6 +162,49 @@ impl State {
     }
     pub fn set_caller_url(&mut self, url: String) {
         self.caller_url = Some(url);
+    }
+    pub fn set_event_log(&mut self, service: crate::event_log::Service) {
+        self.event_log = Some(service);
+    }
+    pub fn event_log(&self) -> Result<crate::event_log::Service> {
+        self.event_log.clone().ok_or_else(|| {
+            crate::api_error::Error::new("unsupported", "Host event journal is unavailable").into()
+        })
+    }
+    pub fn event_subject(
+        &self,
+        client_id: u64,
+        requested: Option<String>,
+    ) -> Result<Option<String>> {
+        if requested
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
+        {
+            return Err(
+                crate::api_error::Error::new("invalid_argument", "Invalid event subject").into(),
+            );
+        }
+        if let Some(id) = self.caller_session(client_id)? {
+            if requested.as_ref().is_some_and(|target| target != id) {
+                return Err(crate::api_error::Error::new(
+                    "forbidden",
+                    "Caller cannot observe this event subject",
+                )
+                .into());
+            }
+            return Ok(Some(id.into()));
+        }
+        Ok(requested)
+    }
+    fn emit(&self, id: Option<&str>, kind: &'static str, payload: Value) {
+        if let Some(log) = &self.event_log {
+            log.observe(crate::event_log::Observation {
+                session_id: id.map(str::to_owned),
+                kind,
+                at: now_millis(),
+                payload,
+            });
+        }
     }
     pub fn resolve_caller(&self, scope_id: &str) -> Option<([u8; 32], crate::caller::Authority)> {
         if !crate::caller::valid_scope_id(scope_id) {
@@ -212,6 +257,14 @@ impl State {
             return Ok(());
         };
         let target = match command {
+            Command::UnsubscribeEvents => return Ok(()),
+            Command::ReadEvents { session_id, .. }
+            | Command::SubscribeEvents { session_id, .. } => {
+                if session_id.as_ref().is_none_or(|id| id == caller) {
+                    return Ok(());
+                }
+                None
+            }
             Command::List | Command::GetCapabilities => return Ok(()),
             Command::GetSession { session_id } | Command::ReadSession { session_id, .. } => {
                 Some(session_id.as_str())
@@ -272,9 +325,11 @@ impl State {
     }
 
     fn capabilities_event(&self) -> Value {
-        json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
+        let mut event = json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
             "hostId":self.metadata.host_id, "pushNotifications":true, "diagnostics":true, "sessionQueries":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
-            "providerLimits":self.provider_limits})
+            "providerLimits":self.provider_limits});
+        event["domainEvents"] = self.event_log.is_some().into();
+        event
     }
 
     pub fn send(&self, client_id: u64, event: Value) {
@@ -874,6 +929,11 @@ impl State {
         }
         self.persist_session(&session)?;
         self.sessions.insert(id.clone(), session);
+        self.emit(
+            Some(&id),
+            "session.created",
+            json!({"program":spec.program}),
+        );
         self.broadcast_list();
         Ok(id)
     }
@@ -955,7 +1015,7 @@ impl State {
         })).collect();
         Ok(
             json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
-            "programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"sessions":sessions}),
+            "programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"eventJournal":self.event_log.as_ref().map(|log|log.health()),"sessions":sessions}),
         )
     }
 
@@ -969,6 +1029,11 @@ impl State {
         ensure!(!self.shutting_down, "Host is shutting down.");
         self.authorize(client_id, &command)?;
         match command {
+            Command::ReadEvents { .. }
+            | Command::SubscribeEvents { .. }
+            | Command::UnsubscribeEvents => {
+                return Err(anyhow!("Event observation requires asynchronous dispatch"));
+            }
             Command::GetSession { session_id } => {
                 let snapshot = self.list();
                 let session = snapshot["sessions"]
@@ -1264,6 +1329,11 @@ impl State {
                 let session_id = session.info.id.clone();
                 self.persist_session(&session)?;
                 self.sessions.insert(session_id.clone(), session);
+                self.emit(
+                    Some(&session_id),
+                    "session.created",
+                    json!({"program":program}),
+                );
                 self.respond(
                     client_id,
                     json!({"type":"created", "sessionId":session_id}),
@@ -1404,6 +1474,7 @@ impl State {
                 self.cleanup_workers.retain(|worker| !worker.is_finished());
                 self.cleanup_workers
                     .push(thread::spawn(move || drop(removed)));
+                self.emit(Some(&session_id), "session.closed", json!({}));
                 self.broadcast_list();
             }
             Command::CreateGroup {
@@ -1602,7 +1673,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     crate::agent_events::read(&path, &expected, after)
                 })
                 .await;
-                if let Some(session) = state.lock().unwrap().sessions.get_mut(&id) {
+                let mut state = state.lock().unwrap();
+                let event_log = state.event_log.clone();
+                if let Some(session) = state.sessions.get_mut(&id) {
                     let elapsed = session
                         .elapsed_at_exit
                         .unwrap_or_else(|| session.started.elapsed());
@@ -1638,12 +1711,15 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         && let Some(turn) = session.turn.snapshot(elapsed)
                                         && turn.phase == crate::turns::Phase::Settled
                                     {
-                                        session.attention_dirty |=
-                                            session.attention.response_settled(
-                                                event.sequence,
-                                                turn.id,
-                                                turn.observed_at,
-                                            );
+                                        let new_response = session.attention.response_settled(
+                                            event.sequence,
+                                            turn.id,
+                                            turn.observed_at,
+                                        );
+                                        session.attention_dirty |= new_response;
+                                        if new_response && let Some(log) = &event_log {
+                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"response.settled",at:now_millis(),payload:json!({"turnId":turn.id,"taskResult":null})});
+                                        }
                                     }
                                     if session.status.lifecycle_ordered(
                                         crate::agent_context::LifecycleReport {
@@ -1655,6 +1731,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         session.status_latency.received(std::time::Instant::now());
                                         session.status.record_hook_reason(&event.name, event.state);
                                         session.program_status_dirty = true;
+                                        if let Some(log) = &event_log {
+                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"agent.lifecycle",at:now_millis(),payload:json!({"event":event.name,"state":event.state,"generation":event.generation,"sourceSequence":event.sequence})});
+                                        }
                                     }
                                 }
                             }
@@ -1758,6 +1837,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         None => "\r\n[Process ended without a readable exit status]\r\n".into(),
                     };
                     bounded_append(&mut session.backlog, &data);
+                    session.output_cursor = session.output_cursor.saturating_add(data.len() as u64);
                     let subscribers: Vec<u64> = session.subscribers.iter().copied().collect();
                     session.controller = None;
                     for client_id in subscribers {
@@ -1767,6 +1847,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         );
                     }
                     state.broadcast_control(&id);
+                    state.emit(Some(&id), "process.exited", json!({"exitCode":code}));
                     // The timer coalesces final state with other status changes.
                 }
             }

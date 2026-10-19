@@ -34,6 +34,13 @@ process sandbox.
 
 ## Sessions and groups
 
+`domainEvents:true` adds `readEvents`, `subscribeEvents` and `unsubscribeEvents`.
+Their bounded durable cursors, retention gaps, subject authorization and health
+contract are defined in `harness-events.md`. These domain cursors cannot be used
+as terminal `readSession` byte cursors. Only the requesting/subscribing connection
+receives event packets, so legacy mobile clients never receive unknown packets
+without opting in.
+
 Hosts advertising `sessionQueries:true` accept `getSession {sessionId}` and
 `readSession {sessionId,after?,maxBytes?}`. Both echo request IDs. The former
 returns `session {session}` using the snapshot DTO. The latter returns

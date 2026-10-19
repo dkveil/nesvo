@@ -19,6 +19,91 @@ use tokio::{
     sync::{mpsc, watch},
     time::timeout,
 };
+
+struct EventSubscription(Option<tokio::task::JoinHandle<()>>);
+impl Drop for EventSubscription {
+    fn drop(&mut self) {
+        if let Some(task) = self.0.take() {
+            task.abort();
+        }
+    }
+}
+struct EventRequest {
+    after: u64,
+    limit: usize,
+    subject: Option<String>,
+    subscribe: bool,
+    request_id: Option<String>,
+}
+async fn serve_events(
+    state: std::sync::Weak<Mutex<State>>,
+    client_id: u64,
+    log: crate::event_log::Service,
+    mut request: EventRequest,
+    mut cancelled: watch::Receiver<bool>,
+) {
+    let mut changed = log.subscribe();
+    loop {
+        if *cancelled.borrow() {
+            return;
+        }
+        changed.borrow_and_update();
+        let page = log
+            .read(request.after, request.limit, request.subject.clone())
+            .await;
+        if *cancelled.borrow() {
+            return;
+        }
+        let Some(state) = state.upgrade() else {
+            return;
+        };
+        let mut event = match page {
+            Ok(page) => {
+                let done = !request.subscribe || page.gap;
+                let more = page.more;
+                request.after = page.next_cursor;
+                let mut event=serde_json::to_value(page).unwrap_or_else(|_|json!({"type":"error","code":"event_log_unavailable","message":"Cannot encode event page"}));
+                event["type"] = "events".into();
+                event["subscribed"] = request.subscribe.into();
+                event["health"] = log.health();
+                if let Some(id) = &request.request_id {
+                    event["requestId"] = id.clone().into();
+                }
+                {
+                    let state = state.lock().unwrap();
+                    if state
+                        .event_subject(client_id, request.subject.clone())
+                        .is_err()
+                    {
+                        let mut error = json!({"type":"error","code":"scope_revoked","message":"Event subscription authority has expired"});
+                        if let Some(id) = &request.request_id {
+                            error["requestId"] = id.clone().into();
+                        }
+                        state.send(client_id, error);
+                        return;
+                    }
+                    state.send(client_id, event);
+                }
+                if done {
+                    return;
+                }
+                if more {
+                    continue;
+                }
+                tokio::select! {result=changed.changed()=>if result.is_err(){return;},_=cancelled.changed()=>return}
+                continue;
+            }
+            Err(error) => {
+                json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("event_log_unavailable"),"message":if error.downcast_ref::<crate::api_error::Error>().is_some(){error.to_string()}else{"Event journal cannot be read".into()}})
+            }
+        };
+        if let Some(id) = &request.request_id {
+            event["requestId"] = id.clone().into();
+        }
+        state.lock().unwrap().send(client_id, event);
+        return;
+    }
+}
 use tokio_tungstenite::{
     accept_hdr_async_with_config,
     tungstenite::{
@@ -186,6 +271,8 @@ pub async fn handle(
     let mut outgoing_seq = 0;
     let mut rate_start = Instant::now();
     let mut rate_count = 0u32;
+    let event_gate = Arc::new(tokio::sync::Semaphore::new(4));
+    let mut domain_subscription = EventSubscription(None);
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     heartbeat.tick().await;
     let mut last_seen = Instant::now();
@@ -231,6 +318,34 @@ pub async fn handle(
                             let mut event=json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("forbidden"),"message":error.to_string()});
                             if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
                             state.lock().unwrap().send(id,event);
+                            continue;
+                        }
+                        if matches!(command,Command::UnsubscribeEvents) {
+                            if let Some(task)=domain_subscription.0.take(){task.abort();}
+                            let mut event=json!({"type":"eventsUnsubscribed"});
+                            if let Some(id)=request_id {event["requestId"]=id.into();}
+                            state.lock().unwrap().send(id,event);
+                            continue;
+                        }
+                        if matches!(command,Command::ReadEvents{..}|Command::SubscribeEvents{..}) {
+                            let (after,limit,subject,subscribe)=match command {
+                                Command::ReadEvents{after,limit,session_id}=>(after,limit.unwrap_or(32),session_id,false),
+                                Command::SubscribeEvents{after,limit,session_id}=>(after,limit.unwrap_or(32),session_id,true),
+                                _=>unreachable!(),
+                            };
+                            if subscribe && let Some(task)=domain_subscription.0.take(){task.abort();}
+                            let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.event_subject(id,subject)?))})();
+                            let permit=event_gate.clone().try_acquire_owned();
+                            match (prepared,permit) {
+                                (Ok((log,subject)),Ok(permit))=>{
+                                    let task=tokio::spawn({let state=Arc::downgrade(&state);let cancelled=cancelled.clone();async move {
+                                        let _permit=permit;
+                                        serve_events(state,id,log,EventRequest{after,limit,subject,subscribe,request_id},cancelled).await;
+                                    }});
+                                    if subscribe {domain_subscription.0=Some(task);}
+                                },
+                                _=>{let mut event=json!({"type":"error","code":"event_log_unavailable","message":"Event service is unavailable or busy"});if let Some(id)=request_id {event["requestId"]=id.into();}state.lock().unwrap().send(id,event);}
+                            }
                             continue;
                         }
                         if let Command::Launch { mut spec } = command {

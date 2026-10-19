@@ -3,10 +3,23 @@ use crate::network::{Connection, NetworkEvent, Pairing};
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
 use serde_json::{Value, json};
-use std::{path::Path, time::Duration};
+use std::{io::Write, path::Path, time::Duration};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Read or watch the durable domain journal (not terminal replay).
+    Events {
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long,default_value_t=32,value_parser=clap::value_parser!(u16).range(1..=32))]
+        limit: u16,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        watch: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Explain host/provider integration health without changing any session.
     Doctor {
         #[arg(long)]
@@ -118,7 +131,7 @@ pub fn emit_failure(machine: bool, code: &str, message: &str) -> i32 {
 impl Command {
     fn machine(&self) -> bool {
         match self {
-            Self::Doctor { json } => *json,
+            Self::Doctor { json } | Self::Events { json, .. } => *json,
             Self::Session { command } => match command {
                 SessionCommand::List { json }
                 | SessionCommand::Get { json, .. }
@@ -210,13 +223,89 @@ fn valid_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
-fn print_data(machine: bool, value: Value) -> Result<()> {
+fn print_data(machine: bool, mut value: Value) -> Result<()> {
+    if let Some(object) = value.as_object_mut() {
+        object.remove("requestId");
+    }
     if machine {
         println!("{}", json!({"schemaVersion":1,"ok":true,"data":value}));
+        std::io::stdout().flush()?;
     } else {
         println!("{}", serde_json::to_string_pretty(&value)?);
     }
     Ok(())
+}
+async fn events(
+    after: u64,
+    limit: u16,
+    session: Option<String>,
+    watch: bool,
+    machine: bool,
+    connection: &mut Connection,
+) -> Result<()> {
+    if let Some(id) = &session {
+        valid_id(id)?;
+    }
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["domainEvents"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support durable events; update nesvo-host",
+        ));
+    }
+    let mut query = json!({"type":if watch{"subscribeEvents"}else{"readEvents"},"after":after,"limit":limit,"sessionId":session});
+    if !watch {
+        return print_data(machine, request(connection, query, "events").await?);
+    }
+    let id = format!("cli-events-{}", hex::encode(nesvo_wire::random::<8>()));
+    query["requestId"] = id.clone().into();
+    connection
+        .send(query)
+        .map_err(|_| failure("disconnected", "Host connection is closed"))?;
+    loop {
+        let event = tokio::select! {
+            event=connection.events.recv()=>event,
+            _=tokio::signal::ctrl_c()=>return Ok(()),
+        };
+        match event {
+            Some(NetworkEvent::Message(mut value)) if value["requestId"] == id => {
+                if value["type"] == "error" {
+                    return Err(failure(
+                        value["code"].as_str().unwrap_or("request_rejected"),
+                        value["message"]
+                            .as_str()
+                            .unwrap_or("Event subscription failed"),
+                    ));
+                }
+                if value["type"] != "events" {
+                    continue;
+                }
+                let gap = value["gap"] == true;
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("requestId");
+                }
+                print_data(machine, value)?;
+                if gap {
+                    return Err(failure(
+                        "cursor_expired",
+                        "Event retention expired; reconcile current state before resuming",
+                    ));
+                }
+            }
+            Some(NetworkEvent::Disconnected(_)) | None => {
+                return Err(failure(
+                    "disconnected",
+                    "Event connection closed; resume from the last received cursor",
+                ));
+            }
+            _ => {}
+        }
+    }
 }
 async fn session_query(command: SessionCommand, connection: &mut Connection) -> Result<()> {
     let caps = request(
@@ -293,6 +382,13 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
 
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let (session, machine) = match command {
+        Command::Events {
+            after,
+            limit,
+            session,
+            watch,
+            json,
+        } => return events(after, limit, session, watch, json, connection).await,
         Command::Doctor { json } => (None, json),
         Command::Session {
             command: SessionCommand::Explain { id, json },

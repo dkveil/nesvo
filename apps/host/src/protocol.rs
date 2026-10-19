@@ -11,6 +11,17 @@ pub enum Command {
         client_nonce: String,
     },
     List,
+    ReadEvents {
+        after: u64,
+        limit: Option<usize>,
+        session_id: Option<String>,
+    },
+    SubscribeEvents {
+        after: u64,
+        limit: Option<usize>,
+        session_id: Option<String>,
+    },
+    UnsubscribeEvents,
     GetSession {
         session_id: String,
     },

@@ -16,7 +16,7 @@ nesvo-wire.workspace = true
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
 url.workspace = true
 vt100 = "0.16"
