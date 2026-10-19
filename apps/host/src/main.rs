@@ -249,12 +249,22 @@ async fn run(args: Args) -> Result<()> {
     let launchers = launchers::Launchers::discover();
     let claude_installed = launchers.available(launchers::Program::Claude);
     let codex_probe = launchers.probe_command(launchers::Program::Codex);
+    let version_probes = launchers.version_probes();
     let state = Arc::new(Mutex::new(sessions::State::new(
         workspace.clone(),
         metadata,
         launchers,
     )));
     let (event_tx, event_rx) = mpsc::channel(128);
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            for (program, executable, args) in version_probes {
+                let version = launchers::read_version(program, executable, args).await;
+                state.lock().unwrap().provider_version(version);
+            }
+        });
+    }
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
     tokio::spawn(jobs::run(state.clone(), event_tx.clone()));
     tokio::spawn(notifications::run(state.clone()));

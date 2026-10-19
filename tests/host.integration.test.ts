@@ -28,6 +28,7 @@ import {
 import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Event = {
+  report?: { providerVersions?: { program: string; status: string; version: string | null }[] };
   type: string;
   id?: string;
   enabled?: boolean;
@@ -376,6 +377,7 @@ test('cached CLI discovery and literal cwd/launcher arguments', { timeout: 12000
     mkdir(bin),
   ]);
   const unixFixture = String.raw`#!/bin/sh
+if [ "$1" = "--version" ]; then printf '0.0.0-fixture\n'; exit 0; fi
 printf 'CLI_PROMPT=%s\n' "$*"
 while IFS= read -r input; do
   case "$input" in
@@ -402,7 +404,8 @@ done
     );
     await writeFile(
       join(packageDirectory, 'main.js'),
-      String.raw`process.stdout.write('CLI_PROMPT='+JSON.stringify(process.argv.slice(2))+'\n');
+      String.raw`if(process.argv.includes('--version')) { process.stdout.write('0.0.0-fixture\n'); process.exit(0); }
+      process.stdout.write('CLI_PROMPT='+JSON.stringify(process.argv.slice(2))+'\n');
       process.stdin.on('data', data => {
         const command = data.toString();
         if (command.includes('status-blocked')) process.stdout.write('\x1b[2J\x1b[HAllow execution of [Shell]?\r\n1. Allow once\r\n2. No, suggest changes (esc)');
@@ -538,6 +541,16 @@ done
     assert.ok(output.includes(`CLI_ARGC=${process.platform === 'win32' ? 2 : 0}`), output);
     assert.ok(output.includes('CLI_NO_COLOR=<unset>'), output);
     assert.ok(!output.includes('WRAPPER_MUST_NOT_EXECUTE'));
+    peer.send({
+      type: 'getDiagnostics',
+      sessionId: created.sessionId,
+      requestId: 'provider-version',
+    });
+    const diagnostic = await peer.next('diagnostics', e => e.requestId === 'provider-version');
+    assert.equal(
+      diagnostic.report?.providerVersions?.find(v => v.program === 'gemini')?.version,
+      '0.0.0-fixture',
+    );
     peer.send({ type: 'input', sessionId: created.sessionId, data: 'status-blocked\r' });
     const blocked = await peer.next(
       'sessions',

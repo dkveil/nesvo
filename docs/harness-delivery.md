@@ -209,3 +209,14 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   no gap, readiness starting → trust waiting → MCP waiting → ready, then one
   short working → Stop/idle turn with normal cleanup. No intermediate idle was
   observed and no external MCP tool was approved.
+
+### Additional status verification
+
+- F06 now latches evidence of an interrupted idle prompt. Neither an old hook
+  nor an old protocol working record revives it when the short detection window
+  expires; a newer structured report still wins. Both paths have regressions.
+- F03 caches installed-provider versions from bounded asynchronous `--version`
+  probes. No prompt, login or setting write is involved, and diagnostics do not
+  spawn a CLI. Native launcher fixtures verify a real process version reaches
+  the cached diagnostic report. Provider/parser/build identity is now visible;
+  the full provider lifecycle/version matrix remains a stage gate.

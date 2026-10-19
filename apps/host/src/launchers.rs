@@ -55,6 +55,12 @@ pub struct Capability {
     label: &'static str,
     available: bool,
 }
+#[derive(Clone, Serialize)]
+pub struct Version {
+    pub program: Program,
+    pub status: &'static str,
+    pub version: Option<String>,
+}
 
 struct Launcher {
     executable: PathBuf,
@@ -90,6 +96,28 @@ pub struct Launchers {
 }
 
 impl Launchers {
+    pub fn version_probes(&self) -> Vec<(Program, PathBuf, Vec<OsString>)> {
+        Program::ALL
+            .into_iter()
+            .skip(1)
+            .filter_map(|program| {
+                self.probe_command(program)
+                    .map(|(exe, args)| (program, exe, args))
+            })
+            .collect()
+    }
+    pub fn pending_versions(&self) -> Vec<Version> {
+        Program::ALL
+            .into_iter()
+            .skip(1)
+            .filter(|program| self.available(*program))
+            .map(|program| Version {
+                program,
+                status: "checking",
+                version: None,
+            })
+            .collect()
+    }
     pub fn discover() -> Self {
         let paths: Vec<PathBuf> = std::env::var_os("PATH")
             .map(|path| {
@@ -148,6 +176,61 @@ impl Launchers {
                 )
             })
     }
+}
+pub async fn read_version(program: Program, executable: PathBuf, args: Vec<OsString>) -> Version {
+    use tokio::io::AsyncReadExt;
+    let mut command = tokio::process::Command::new(executable);
+    command
+        .args(args)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let version = match command.spawn() {
+        Err(_) => None,
+        Ok(mut child) => {
+            let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let mut bytes = Vec::new();
+                let stdout = child.stdout.take()?;
+                stdout.take(1025).read_to_end(&mut bytes).await.ok()?;
+                if bytes.len() > 1024 || !child.wait().await.ok()?.success() {
+                    return None;
+                }
+                let text = std::str::from_utf8(&bytes).ok()?;
+                text.split_whitespace()
+                    .find(|token| valid_version(token))
+                    .map(str::to_owned)
+            })
+            .await;
+            if result.is_err() {
+                let _ = child.kill().await;
+            }
+            result.ok().flatten()
+        }
+    };
+    Version {
+        program,
+        status: if version.is_some() {
+            "ready"
+        } else {
+            "unavailable"
+        },
+        version,
+    }
+}
+fn valid_version(value: &str) -> bool {
+    value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-+".contains(&b))
+        && value.split('.').take(3).count() == 3
+        && value
+            .split('.')
+            .take(3)
+            .all(|part| part.bytes().next().is_some_and(|b| b.is_ascii_digit()))
 }
 
 fn executable(path: &Path) -> Option<PathBuf> {

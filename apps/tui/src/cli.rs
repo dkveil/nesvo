@@ -96,6 +96,17 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
             report["host"]["buildId"].as_str().unwrap_or("unknown"),
             report["host"]["protocolVersion"]
         );
+        if let Some(versions) = report["providerVersions"].as_array() {
+            for item in versions {
+                println!(
+                    "{}: {}",
+                    item["program"].as_str().unwrap_or("provider"),
+                    item["version"]
+                        .as_str()
+                        .unwrap_or_else(|| item["status"].as_str().unwrap_or("unavailable"))
+                );
+            }
+        }
         if let Some(sessions) = report["sessions"].as_array() {
             if sessions.is_empty() {
                 println!("No live session records; create a session to inspect provider delivery.");

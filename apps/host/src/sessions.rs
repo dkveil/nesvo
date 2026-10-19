@@ -96,6 +96,7 @@ pub struct State {
     pub(crate) metadata: MetadataStore,
     push_queue: std::collections::VecDeque<crate::notifications::Job>,
     launchers: Launchers,
+    provider_versions: Vec<crate::launchers::Version>,
     provider_limits: Vec<ProviderLimit>,
     limits_read_at: i64,
     schedule_watchers: HashSet<u64>,
@@ -117,6 +118,7 @@ fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
 impl State {
     pub fn new(workspace: PathBuf, metadata: MetadataStore, launchers: Launchers) -> Self {
         let provider_limits = usage::installed(&launchers);
+        let provider_versions = launchers.pending_versions();
         Self {
             workspace,
             sessions: HashMap::new(),
@@ -126,6 +128,7 @@ impl State {
             metadata,
             push_queue: Default::default(),
             launchers,
+            provider_versions,
             provider_limits,
             limits_read_at: 0,
             schedule_watchers: HashSet::new(),
@@ -135,6 +138,15 @@ impl State {
     pub fn update_codex_limits(&mut self, windows: Vec<LimitWindow>) {
         self.limits_read_at = chrono::Utc::now().timestamp();
         self.update_provider_limits(Program::Codex, windows);
+    }
+    pub fn provider_version(&mut self, version: crate::launchers::Version) {
+        if let Some(current) = self
+            .provider_versions
+            .iter_mut()
+            .find(|v| v.program == version.program)
+        {
+            *current = version;
+        }
     }
 
     pub fn update_provider_limits(&mut self, program: Program, windows: Vec<LimitWindow>) {
@@ -724,7 +736,7 @@ impl State {
         })).collect();
         Ok(
             json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
-            "programs":self.launchers.capabilities(),"sessions":sessions}),
+            "programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"sessions":sessions}),
         )
     }
 

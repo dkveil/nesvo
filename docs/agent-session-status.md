@@ -121,3 +121,10 @@ An interrupt plus a newly visible idle prompt settles the prior work observation
 That settlement persists after the short prompt-detection window; an old working
 hook or protocol record cannot revive it on a later timer tick. New structured
 evidence takes authority again. Silence alone never establishes that settlement.
+
+Provider versions are probed once asynchronously at host startup through each
+resolved launcher's literal `--version` argv. Probes have null stdin, no model
+prompt, a two-second deadline and a 1024-byte output cap. Diagnostics cache only
+the version token and checking/ready/unavailable outcome, never arbitrary output.
+Listing capabilities or rendering does not spawn probes. Existing hooks, MCP,
+authentication and configuration are not changed by this read-only probe.
