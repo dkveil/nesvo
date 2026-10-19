@@ -1,4 +1,4 @@
-//! Launch-scoped Claude hooks. Never store prompts, output, or transcript contents.
+//! Launch-scoped native hooks. Never store prompts, output, or transcript contents.
 use anyhow::Result;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub struct Tracker(PathBuf);
+enum Adapter {
+    Claude,
+    Codex,
+}
+pub struct Tracker(PathBuf, Adapter);
 impl Tracker {
     #[cfg(test)]
     pub fn install(command: &mut CommandBuilder) -> Result<Self> {
@@ -17,21 +21,22 @@ impl Tracker {
     pub fn install_for(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
         Self::install_inner(command, Some(session_id))
     }
-    fn install_inner(command: &mut CommandBuilder, session_id: Option<&str>) -> Result<Self> {
-        let directory = std::env::temp_dir().join(format!(
-            "nesvo-context-{}",
-            hex::encode(crate::wire::random::<16>())
-        ));
-        std::fs::create_dir(&directory)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+    pub fn install_codex(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
+        let mut tracker = Self::create(Some(session_id))?;
+        tracker.1 = Adapter::Codex;
+        crate::codex_context::configure(command, &tracker.report())?;
+        Ok(tracker)
+    }
+    pub fn adapter(&self) -> &'static str {
+        match self.1 {
+            Adapter::Codex => "codex-hooks-v1",
+            Adapter::Claude => "claude-hooks-v2",
         }
-        let tracker = Self(directory);
-        if let Some(session_id) = session_id {
-            crate::agent_events::initialize(&tracker.report(), session_id)?;
-            command.env("NESVO_SESSION_ID", session_id);
+    }
+    fn install_inner(command: &mut CommandBuilder, session_id: Option<&str>) -> Result<Self> {
+        let tracker = Self::create(session_id)?;
+        if let Some(id) = session_id {
+            command.env("NESVO_SESSION_ID", id);
         }
         let hook = json!({"type":"command", "command": std::env::current_exe()?,
             "args":["--agent-context-hook", tracker.report()], "timeout":3});
@@ -48,13 +53,29 @@ impl Tracker {
             "CwdChanged":[{"hooks":[hook]}]
         }})
         .to_string();
-        // Insert before any prompt separator, preserving launcher and resume arguments.
         let argv = command.get_argv_mut();
         let index = argv
             .iter()
             .position(|arg| arg == "--")
             .unwrap_or(argv.len());
         argv.splice(index..index, ["--settings".into(), settings.into()]);
+        Ok(tracker)
+    }
+    fn create(session_id: Option<&str>) -> Result<Self> {
+        let directory = std::env::temp_dir().join(format!(
+            "nesvo-context-{}",
+            hex::encode(crate::wire::random::<16>())
+        ));
+        std::fs::create_dir(&directory)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let tracker = Self(directory, Adapter::Claude);
+        if let Some(session_id) = session_id {
+            crate::agent_events::initialize(&tracker.report(), session_id)?;
+        }
         Ok(tracker)
     }
     pub fn report(&self) -> PathBuf {
@@ -129,7 +150,13 @@ fn extract(value: &Value) -> Option<Context> {
     })
 }
 pub fn receive(report: &Path) -> Result<()> {
-    let result = receive_from(report, std::io::stdin());
+    receive_adapter(report, std::io::stdin(), false)
+}
+pub fn receive_codex(report: &Path) -> Result<()> {
+    receive_adapter(report, std::io::stdin(), true)
+}
+fn receive_adapter(report: &Path, input: impl Read, codex: bool) -> Result<()> {
+    let result = receive_inner(report, input, codex);
     let diagnostic = report.with_file_name("diagnostic.json");
     if result.is_err() {
         // Constant metadata only: serde errors can contain supplied payload text.
@@ -139,7 +166,11 @@ pub fn receive(report: &Path) -> Result<()> {
     }
     result
 }
+#[cfg(test)]
 fn receive_from(report: &Path, input: impl Read) -> Result<()> {
+    receive_inner(report, input, false)
+}
+fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
     let mut bytes = Vec::new();
     input.take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > 2 * 1024 * 1024 {
@@ -149,21 +180,32 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
     if is_child(&value) {
         return Ok(());
     }
-    if let Some(state) = lifecycle_state(&value) {
+    if let Some(state) = if codex {
+        crate::codex_context::state(&value)?
+    } else {
+        lifecycle_state(&value)
+    } {
         let digest = (value["hook_event_name"] == "UserPromptSubmit")
             .then(|| value["prompt"].as_str().and_then(crate::submission::digest))
             .flatten();
         let sequence = if crate::agent_events::exists(report) {
-            match crate::agent_events::append(
+            match crate::agent_events::append_scoped(
                 report,
-                value["session_id"].as_str(),
-                value["hook_event_name"].as_str().unwrap_or_default(),
-                state,
-                matches!(
-                    value["source"].as_str(),
-                    Some("clear" | "resume" | "compact")
-                ),
-                digest.as_deref(),
+                crate::agent_events::SourceEvent {
+                    provider_session: value["session_id"].as_str(),
+                    provider_turn: if codex {
+                        value["turn_id"].as_str()
+                    } else {
+                        None
+                    },
+                    event: value["hook_event_name"].as_str().unwrap_or_default(),
+                    state,
+                    allow_rebind: matches!(
+                        value["source"].as_str(),
+                        Some("clear" | "resume" | "compact")
+                    ),
+                    prompt_digest: digest.as_deref(),
+                },
             )? {
                 Some(sequence) => sequence,
                 None => return Ok(()),
@@ -186,7 +228,7 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
         }
         result?;
     }
-    if let Some(context) = extract(&value) {
+    if !codex && let Some(context) = extract(&value) {
         if crate::agent_events::exists(report)
             && !crate::agent_events::accepts_context(report, value["session_id"].as_str())?
         {
@@ -216,6 +258,7 @@ fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
         return None;
     }
     Some(match value["hook_event_name"].as_str()? {
+        "SessionStart" if value["source"] == "compact" => Working,
         "SessionStart" | "Stop" => Idle,
         "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" => Working,
         "PreToolUse" if value["tool_name"] == "AskUserQuestion" => Question,
@@ -232,7 +275,7 @@ fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
         _ => return None,
     })
 }
-fn is_child(value: &Value) -> bool {
+pub(crate) fn is_child(value: &Value) -> bool {
     match value.get("agent_id") {
         None | Some(Value::Null) => false,
         Some(Value::String(id)) => !id.is_empty(),

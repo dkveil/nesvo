@@ -3,8 +3,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const codex = path.basename(process.argv[1]).startsWith('codex');
 if (process.argv.includes('--version')) {
-  console.log('2.1.303-scoped-fixture');
+  console.log(codex ? '0.156.0' : '2.1.303-scoped-fixture');
   process.exit(0);
 }
 const id = process.env.NESVO_SESSION_ID;
@@ -29,15 +30,25 @@ if (process.argv.includes('--mcp-config')) {
   )
     throw new Error('Launch-local harness was not loaded by the controlled provider');
 }
-const settings = JSON.parse(process.argv[process.argv.indexOf('--settings') + 1]);
+const settings = codex ? null : JSON.parse(process.argv[process.argv.indexOf('--settings') + 1]);
+// The fixture consumes only the host's bounded literal inline shape, not arbitrary TOML.
+const codexHook = codex
+  ? JSON.parse(process.argv[process.argv.indexOf('-c') + 1].match(/command=("(?:[^"\\]|\\.)*")/)[1])
+  : null;
+if (codex && !process.argv.includes('--no-daemon'))
+  throw new Error('Codex must own its local executor');
+let turn = 0;
 function hook(name, extra = {}) {
-  const command = settings.hooks[name][0].hooks[0];
+  const command = codex ? { command: codexHook, args: [] } : settings.hooks[name][0].hooks[0];
   const result = spawnSync(command.command, command.args, {
+    shell: codex, // Trusted host-produced command, payload stays on stdin.
     windowsHide: true,
+    timeout: 5000,
     input: JSON.stringify({
       hook_event_name: name,
       session_id: `fixture-${id}`,
       agent_id: '',
+      ...(codex && name !== 'SessionStart' ? { turn_id: `turn-${turn}` } : {}),
       ...extra,
     }),
     stdio: ['pipe', 'ignore', 'ignore'],
@@ -48,8 +59,9 @@ process.stdin.setEncoding('utf8');
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdout.write('\x1b[?2004hSCOPE_FIXTURE_READY\r\n');
 hook('SessionStart', { source: 'startup' });
-hook('Stop');
+if (!codex) hook('Stop');
 function submit(prompt) {
+  turn++;
   hook('UserPromptSubmit', { prompt });
   if (prompt === 'spawn-child') {
     // Inherit only this managed process's scoped context. No owner pairing flag.
@@ -91,7 +103,7 @@ process.stdin.on('data', text => {
     } else if (pending[0] === '\x03') {
       pending = pending.slice(1);
       draft = '';
-      hook('Stop');
+      hook(codex ? 'Interrupt' : 'Stop');
     } else if (pending[0] === '\x1b') {
       const escape = pending.match(/^\x1b\[[0-9;?]*[A-Za-z~]/);
       if (!escape) return;

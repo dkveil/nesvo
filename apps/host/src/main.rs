@@ -4,6 +4,7 @@ mod api_error;
 mod attention;
 mod attention_projection;
 mod caller;
+mod codex_context;
 mod event_log;
 mod git;
 mod groups;
@@ -58,6 +59,8 @@ use tokio::{
 struct Args {
     #[arg(long, hide = true)]
     agent_context_hook: Option<PathBuf>,
+    #[arg(long, hide = true)]
+    codex_context_hook: bool,
     /// Print the source build identity without starting a host.
     #[arg(long)]
     build_id: bool,
@@ -134,6 +137,17 @@ fn stdin_close_signal() -> oneshot::Receiver<()> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if args.codex_context_hook {
+        if std::env::var_os("NESVO_LIFECYCLE_REPORT")
+            .map(PathBuf::from)
+            .is_none_or(|path| agent_context::receive_codex(&path).is_err())
+        {
+            eprintln!(
+                "nesvo Codex hook delivery failed; inspect this session with nesvo session explain"
+            );
+        }
+        return Ok(());
+    }
     if let Some(report) = args.agent_context_hook {
         // Tracking must never prevent an agent tool from completing.
         if agent_context::receive(&report).is_err() {

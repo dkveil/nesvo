@@ -27,7 +27,7 @@ not evidence that the expanded acceptance criteria pass.
 | ID  | Feature                                         | Baseline                                                      | Delivery / tests / commits                                                                                  |
 | --- | ----------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | F01 | OSC 7501 parser and host query responder        | Missing                                                       | Partial: 0946401; live Windows negotiation gate open                                                        |
-| F02 | Provider lifecycle adapters                     | Partial: Claude launch hooks; other providers screen hints    | Pending real provider verification                                                                          |
+| F02 | Provider lifecycle adapters                     | Partial: Claude launch hooks; other providers screen hints    | Partial: Claude and Codex 0.156 native adapters; real provider matrix/Gemini pending                        |
 | F03 | Status doctor and session explain               | Missing                                                       | Implemented diagnostics/version/correlation; provider matrix pending                                        |
 | F04 | Versioned detection rules and screen corpus     | Partial: hard-coded current-screen rules                      | Partial: 3e851ba; wider provider corpus pending                                                             |
 | F05 | Launch, conversation and event identity         | Partial: private launch report directory; wall-clock sequence | Partial: 173162e; Claude scoped journal; attempt identity in F17/F18                                        |
@@ -655,3 +655,32 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - The journal regression passes with the old-generation and legacy journal
   checks. This is the prerequisite for the Codex adapter, not a claim that its
   per-launch configuration or actual provider lifecycle gate is complete.
+
+### F02 Codex 0.156 launch-local adapter
+
+- Version-gated Codex native hooks share the host's private journal, status,
+  readiness, prompt correlation and explicit native Interrupt handling. A local
+  executor (`--no-daemon`) keeps another app-server from owning the hook context.
+  Native turn IDs fence duplicate/late events. Compaction preserves an active
+  native fence and does not manufacture idle; Stop/Interrupt retire it.
+- User/project hooks remain alongside the session layer; native hook trust and
+  disabled/managed policy are respected. No bypass flag, global config write,
+  model API or transcript-format parsing. Commands use owned literal helper
+  paths; Windows stdin/Unicode forwarding is verified through the actual helper.
+- The controlled Codex process consumes the generated config, emits real helper
+  reports and receives a literal prompt via MCP/native PTY. Its matching receipt
+  settles through the shared host wait. This is an explicit provider fixture,
+  not an LLM integration claim. The installed 0.156.0 CLI also accepts the TOML
+  using `features list`; `--strict-config` is unsupported for that subcommand,
+  so no strict-validation claim is made.
+- Real Windows Codex startup without a prompt left `readiness:starting`, hook
+  delivery missing after 12 seconds, with no helper error; only the Codex screen
+  marker was observed. No hook-trust or readiness claim follows from that probe.
+  Its isolated host exited cleanly. Actual trust/start/working/question/permission/
+  interrupt/Stop paths remain an open stage-1 gate, as does Gemini availability.
+- Windows fmt/Clippy, 127 TUI + 89 host + 3 wire unit checks, both SDK/native
+  tests and all 25 host/sync/CLI integration checks pass. The opt-in installed
+  Codex parser test passes separately (no model/hook execution). Controlled
+  receipt-to-publication p95: 261.562 ms over 26 batches.
+- `3e0ca01` and the native-fence baseline `0000309` passed all platform CI jobs
+  (39339263905 and 39339747442). The new adapter needs its own CI evidence.

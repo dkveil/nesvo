@@ -1,6 +1,6 @@
 # Agent session status
 
-Claude sessions launched by Nesvo install session-scoped hooks alongside the existing automatic diff context hooks. Global Claude settings are not edited. The helper observes UserPromptSubmit, tool boundaries, PermissionRequest, AskUserQuestion, Notification, Stop and StopFailure. SessionStart and Stop mean idle; they do not mean that the process exited or that a task succeeded. Subagent events cannot mark the parent idle. Silence never clears a confirmed running state.
+Claude sessions launched by Nesvo install session-scoped hooks alongside the existing automatic diff context hooks. Global Claude settings are not edited. The helper observes UserPromptSubmit, tool boundaries, PermissionRequest, AskUserQuestion, Notification, Stop and StopFailure. Initial SessionStart and Stop mean idle; compaction remains working. None means that the process exited or that a task succeeded. Subagent events cannot mark the parent idle. Silence never clears a confirmed running state.
 
 Only lifecycle metadata and conversation/launch identities are stored in the private session directory. Prompts, responses and tool arguments are not persisted. A bounded launch-scoped SQLite journal is read asynchronously every 500 ms, outside the host mutex and PTY dispatch loop; the compatibility JSON shadow is diagnostic data rather than the new host's event source. Status broadcasts remain coalesced. Process exit has final precedence. Fresh visible UI evidence can supersede a different hook state after a short transition grace period, covering approvals. An idle prompt cannot override confirmed working just because output arrived or time passed: a real Ctrl+C/Esc interrupt followed by a newly rendered prompt is required for that fallback. Identical screen/hook states keep hook provenance. Losing a hook does not manufacture completion.
 
@@ -10,12 +10,49 @@ The wire contract remains compatible with older v2 clients: confirmed reports us
 
 - New Claude sessions: lifecycle events, with current-screen fallback. Restarting the Nesvo client alone cannot install hooks into an already running Claude process. Launch a new Claude session for hook support.
 - Existing Claude sessions: current prompt and permission-mode footer identify idle; the interrupt footer identifies work. A real cursor at the prompt is required for idle.
-- Codex: existing conservative current-screen inference for working, idle, questions and approvals. No direct lifecycle adapter is claimed.
+- Codex 0.156.0: launch-local native lifecycle adapter plus conservative screen inference. Native hooks require the provider's user trust review; configured is separate from observed. Other/unprobed versions retain screen/protocol fallback. See the adapter boundary below.
 - Gemini: existing approval screen inference. Its BeforeAgent/AfterAgent hooks are the preferred future adapter, but require a separate launch-scoped settings implementation; no global settings are overwritten.
 - Agents started manually inside a generic shell do not inherit a dedicated provider adapter.
 - Hooks disabled by user/managed settings fall back to screen inference. Unknown is deliberately retained when there is no trustworthy evidence.
 
 References: [Claude hooks](https://code.claude.com/docs/en/hooks), [Gemini hook reference](https://geminicli.com/docs/hooks/reference/).
+
+## Codex native adapter boundary
+
+For a successfully probed Codex 0.156.0, the host adds a launch-local inline
+`hooks` config for SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest,
+PostToolUse, Stop and Interrupt. `--no-daemon` keeps the executor and hook report
+environment local to this managed process. Subscription login, user/project
+hooks and native approval policy remain intact. No shared config is written,
+hooks are not forced on, and hook trust is never bypassed. Unknown versions do
+not receive unverified flags; doctor lists their actual probe outcome.
+
+The helper receives metadata through stdin and a launch-local report path in the
+environment. The hook definition contains a stable helper invocation rather than
+an ephemeral report path. Windows uses a literal PowerShell encoded command to
+preserve spaces/Unicode and stdin without shell interpolation of agent payloads.
+The same private journal, 500 ms reader and coalesced host projection are used
+for both providers. No transcript parsing or model-facing hook output is added.
+
+Codex supplies `turn_id`, so duplicate pickup and late tool/Stop events are
+filtered transactionally against the active native turn. Stop/Interrupt retire
+the native fence; a late tool event cannot revive that turn. Same-conversation
+compaction preserves the fence and remains working. Native Interrupt settles
+the host turn/receipt as interrupted, never task success. Subagent IDs are
+rejected before journaling; a worker's events cannot change its parent.
+
+The installed 0.156.0 CLI accepts the generated TOML through its read-only
+`features list` path. Controlled native CLI/helper/PTY/MCP tests establish
+readiness and literal prompt correlation on Windows. They do not establish
+actual-provider hook activation. A real no-prompt startup showed the adapter
+configured but no hook after 12 seconds; that delivery/trust gate remains open.
+Use `/hooks` in the original Codex CLI to inspect/review exact hook definitions.
+Provider/managed settings may disable them. Missing delivery is diagnostic
+evidence, not permission to manufacture idle or silently enable hooks.
+
+Sources: [official hooks guide](https://learn.chatgpt.com/docs/hooks),
+[configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+Input schemas were checked against the installed release tag `rust-v0.156.0`.
 
 ## Program Status Protocol (F01)
 

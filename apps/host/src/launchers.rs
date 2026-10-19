@@ -83,7 +83,12 @@ impl Launcher {
         command.env("COLORTERM", "truecolor");
         command.env("NESVO_SESSION", "1");
         // Each native process receives its own caller binding later at spawn.
-        for key in ["NESVO_AGENT_CONTEXT", "NESVO_AGENT_SKILL", "NESVO_CLI"] {
+        for key in [
+            "NESVO_AGENT_CONTEXT",
+            "NESVO_AGENT_SKILL",
+            "NESVO_CLI",
+            "NESVO_LIFECYCLE_REPORT",
+        ] {
             command.env_remove(key);
         }
         // Codex and CI commonly run the host with NO_COLOR=1. That setting

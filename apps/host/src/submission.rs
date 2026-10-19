@@ -73,6 +73,10 @@ impl Correlation {
         } else {
             self.turn.as_ref()?;
             match event.name.as_str() {
+                "Interrupt" => {
+                    self.closed = true;
+                    "interrupted"
+                }
                 "Stop" => {
                     self.closed = true;
                     "settled"

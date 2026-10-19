@@ -39,6 +39,7 @@ fn open(report: &Path, writable: bool) -> Result<Connection> {
     connection.busy_timeout(Duration::from_millis(50))?;
     Ok(connection)
 }
+#[cfg(test)]
 pub fn append(
     report: &Path,
     provider_session: Option<&str>,
@@ -161,7 +162,7 @@ pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u6
             transaction.commit()?;
             return Ok(None);
         }
-    } else if event == "SessionStart" && turn_column {
+    } else if event == "SessionStart" && turn_column && changed {
         transaction.execute("UPDATE scope SET provider_turn=NULL WHERE id=1", [])?;
     }
     // Old launch journals remain readable/writable if a helper is upgraded while
@@ -181,6 +182,9 @@ pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u6
         "DELETE FROM events WHERE sequence<=?1",
         [sequence.saturating_sub(RETENTION) as i64],
     )?;
+    if provider_turn.is_some() && matches!(event, "Stop" | "Interrupt") {
+        transaction.execute("UPDATE scope SET provider_turn=NULL WHERE id=1", [])?;
+    }
     transaction.commit()?;
     Ok(Some(sequence))
 }
@@ -352,10 +356,19 @@ mod tests {
             emit("PreToolUse", StatusState::Working, Some("turn-1")),
             None
         );
+        assert!(
+            emit("SessionStart", StatusState::Working, None).is_some(),
+            "same-conversation compaction must preserve the native turn fence"
+        );
         let batch = read(&report, "native-session", 0).unwrap();
         assert_eq!(batch.events.last().unwrap().state, StatusState::Working);
         assert_eq!(batch.identity.rejected, 2);
         assert!(emit("Stop", StatusState::Idle, Some("turn-2")).is_some());
+        assert_eq!(
+            emit("PreToolUse", StatusState::Working, Some("turn-2")),
+            None,
+            "completed native turns cannot revive through late tool events"
+        );
         assert_eq!(
             read(&report, "native-session", 0)
                 .unwrap()

@@ -139,6 +139,7 @@ impl Tracker {
             return false;
         }
         let (phase, outcome) = match event {
+            "Interrupt" => (Phase::Interrupted, Some("provider confirmed interruption")),
             "Stop" => (
                 if self.interrupt_requested {
                     Phase::Interrupted
@@ -209,6 +210,49 @@ fn active(phase: Phase) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_interrupt_is_observed_without_becoming_response_or_task_success() {
+        let mut tracker = Tracker::default();
+        tracker.event(
+            Signal {
+                launch: "native",
+                generation: 1,
+                sequence: 1,
+                event: "UserPromptSubmit",
+                state: StatusState::Working,
+            },
+            Duration::from_secs(1),
+            1000,
+        );
+        tracker.event(
+            Signal {
+                launch: "native",
+                generation: 1,
+                sequence: 2,
+                event: "Interrupt",
+                state: StatusState::Idle,
+            },
+            Duration::from_secs(3),
+            3000,
+        );
+        let snapshot = serde_json::to_value(tracker.snapshot(Duration::from_secs(6))).unwrap();
+        assert_eq!(snapshot["phase"], "interrupted");
+        tracker.event(
+            Signal {
+                launch: "native",
+                generation: 1,
+                sequence: 3,
+                event: "Stop",
+                state: StatusState::Idle,
+            },
+            Duration::from_secs(8),
+            8000,
+        );
+        assert_eq!(
+            serde_json::to_value(tracker.snapshot(Duration::from_secs(9))).unwrap()["phase"],
+            "interrupted"
+        );
+    }
     fn emit(t: &mut Tracker, sequence: u64, event: &str, state: StatusState, seconds: u64) -> bool {
         t.event(
             Signal {

@@ -470,6 +470,16 @@ impl State {
             *current = version;
         }
     }
+    fn codex_hooks_available(&self) -> bool {
+        self.provider_versions.iter().any(|version| {
+            version.program == Program::Codex
+                && version.status == "ready"
+                && version
+                    .version
+                    .as_deref()
+                    .is_some_and(crate::codex_context::supported)
+        })
+    }
 
     pub fn update_provider_limits(&mut self, program: Program, windows: Vec<LimitWindow>) {
         let Some(index) = self
@@ -1417,6 +1427,7 @@ impl State {
                 id: reserved,
                 role: spec.role,
                 harness: spec.harness == Some(true),
+                codex_hooks: self.codex_hooks_available(),
             },
         )?;
         session.info.group_id = spec.group_id.clone();
@@ -1523,7 +1534,7 @@ impl State {
             "processAgeSeconds":session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed()).as_secs(),
             "harness":session.caller_context.as_ref().map(|context|context.configuration(session.harness_enabled)),
             "inputOperation":session.pending_input.as_ref().map(|pending|json!({"id":pending.claim.id,"queued":pending.queued,"canceled":*pending.canceled.borrow(),"correlated":pending.correlation.is_some()})),
-            "integration":{"configured":session.agent_context.is_some(), "adapter":if session.agent_context.is_some(){"claude-hooks-v2"}else{"screen/protocol"},
+            "integration":{"configured":session.agent_context.is_some(), "adapter":session.agent_context.as_ref().map_or("screen/protocol",|tracker|tracker.adapter()),
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
             "conversationIdentity":session.conversation_identity,
@@ -1853,6 +1864,7 @@ impl State {
                         id: None,
                         role: crate::caller::Role::Worker,
                         harness: false,
+                        codex_hooks: self.codex_hooks_available(),
                     },
                 )?;
                 session.info.group_id = group_id;
@@ -2110,6 +2122,7 @@ struct SpawnIdentity<'a> {
     id: Option<&'a str>,
     role: crate::caller::Role,
     harness: bool,
+    codex_hooks: bool,
 }
 fn spawn_session(
     name: &str,
@@ -2136,6 +2149,11 @@ fn spawn_session(
     }
     let agent_context = if program == Program::Claude {
         Some(crate::agent_context::Tracker::install_for(
+            &mut command,
+            &id,
+        )?)
+    } else if program == Program::Codex && identity.codex_hooks {
+        Some(crate::agent_context::Tracker::install_codex(
             &mut command,
             &id,
         )?)

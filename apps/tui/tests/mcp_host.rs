@@ -120,25 +120,30 @@ async fn install_agent_fixture(directory: &Path, host: &mut Command) -> Result<(
         std::fs::copy(&node, &linked)?;
     }
     let source = include_str!("../../../tests/fixtures/scoped-agent.cjs");
-    if cfg!(windows) {
-        let package = bin.join("node_modules/@anthropic-ai/claude-code");
-        std::fs::create_dir_all(&package)?;
-        std::fs::write(
-            package.join("package.json"),
-            r#"{"bin":{"claude":"main.js"}}"#,
-        )?;
-        std::fs::write(package.join("main.js"), source)?;
-        std::fs::write(
-            bin.join("claude.cmd"),
-            "@echo off\r\necho NEVER_EXECUTE_FIXTURE_SHIM\r\n",
-        )?;
-    } else {
-        let script = bin.join("claude");
-        std::fs::write(&script, source)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755))?;
+    for (program, package_name, main) in [
+        ("claude", "@anthropic-ai/claude-code", "main.js"),
+        ("codex", "@openai/codex", "codex.cjs"),
+    ] {
+        if cfg!(windows) {
+            let package = bin.join("node_modules").join(package_name);
+            std::fs::create_dir_all(&package)?;
+            std::fs::write(
+                package.join("package.json"),
+                serde_json::to_vec(&json!({"bin":{program:main}}))?,
+            )?;
+            std::fs::write(package.join(main), source)?;
+            std::fs::write(
+                bin.join(format!("{program}.cmd")),
+                "@echo off\r\necho NEVER_EXECUTE_FIXTURE_SHIM\r\n",
+            )?;
+        } else {
+            let script = bin.join(program);
+            std::fs::write(&script, source)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755))?;
+            }
         }
     }
     let mut paths = vec![bin];
@@ -618,6 +623,14 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         session_ready(&owner,cli_id).await?;
         let cli_view=data(call(&owner,"nesvo_get_session",json!({"sessionId":cli_id})).await?)?;
         assert_eq!(cli_view["data"]["session"]["harness"]["enabled"],true);
+        let native_codex=data(call(&owner,"nesvo_create_session",json!({"key":"codex-adapter","spec":{"name":"Native Codex adapter fixture","program":"codex","cwd":workspace}})).await?)?;
+        let codex_id=native_codex["data"]["receipt"]["sessionId"].as_str().context("Codex ID")?;
+        session_ready(&owner,codex_id).await?;
+        let explained=data(call(&owner,"nesvo_explain_session",json!({"sessionId":codex_id})).await?)?;
+        assert_eq!(explained["data"]["report"]["sessions"][0]["integration"]["adapter"],"codex-hooks-v1");
+        let codex_sent=data(call(&owner,"nesvo_send_prompt",json!({"sessionId":codex_id,"key":"native-codex-turn","prompt":"literal native Codex prompt"})).await?)?;
+        let codex_done=data(call(&owner,"nesvo_wait_prompt",json!({"id":codex_sent["data"]["receipt"]["id"],"timeoutMs":5000})).await?)?;
+        assert_eq!(codex_done["data"]["receipt"]["phase"],"settled");
         let unsupported=call(&owner,"nesvo_create_session",json!({"key":"unsupported-harness","spec":{"name":"Unsupported shell harness","program":"shell","harness":true}})).await?;
         assert_eq!(unsupported.structured_content.context("unsupported provider")?["error"]["receipt"]["result"]["code"],"unsupported");
         for spec in [json!({"name":"recursive","role":"coordinator"}),json!({"name":"forged-parent","parentSessionId":foreign_id})] {
