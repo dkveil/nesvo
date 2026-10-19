@@ -125,7 +125,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(report) = args.agent_context_hook {
         // Tracking must never prevent an agent tool from completing.
-        let _ = agent_context::receive(&report);
+        if agent_context::receive(&report).is_err() {
+            eprintln!(
+                "nesvo hook delivery failed; inspect this session with nesvo session explain"
+            );
+        }
         return Ok(());
     }
     if args.build_id {

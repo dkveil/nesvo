@@ -119,3 +119,18 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - The real turn exposed an existing freshness bug: screen idle can replace a
   fresh working hook before Stop. F06 must address this before the status stage
   can pass. No complete lifecycle/provider matrix or latency p95 is claimed.
+
+### F03 and F06 checkpoints
+
+- `0946401`: F01 protocol parser/host owner and client provenance checkpoint.
+- `7445eb3`: F06 rejects idle screen fallback while a confirmed turn works,
+  unless actual Ctrl+C/Esc and a fresh prompt establish an interruption. Unit
+  regression covers silence beyond two minutes. Full source-freshness policy,
+  stale/disconnected projections and a complete live lifecycle matrix remain open.
+- F03 exposes read-only `doctor` and `session explain ID` (human/JSON) through
+  an advertised authenticated host capability. Missing/malformed/oversized hook
+  files and helper failure markers are observable without logging payloads.
+  Native CLI integration verifies correct IDs, build identity, no control
+  acquisition, unknown-session failure and no credential disclosure.
+- F03 still needs provider-version caching, matched-rule IDs (F04), and migrated
+  conversation/ordering identity (F05) before its full acceptance criteria pass.

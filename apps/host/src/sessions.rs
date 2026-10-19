@@ -65,6 +65,7 @@ struct Session {
     started: std::time::Instant,
     elapsed_at_exit: Option<Duration>,
     agent_context: Option<crate::agent_context::Tracker>,
+    integration_delivery: crate::agent_context::Delivery,
     info: SessionInfo,
     status: StatusTracker,
     terminal_protocol: crate::terminal_protocol::Decoder,
@@ -159,7 +160,7 @@ impl State {
 
     fn capabilities_event(&self) -> Value {
         json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
-            "hostId":self.metadata.host_id, "pushNotifications":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
+            "hostId":self.metadata.host_id, "pushNotifications":true, "diagnostics":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
             "providerLimits":self.provider_limits})
     }
 
@@ -689,6 +690,32 @@ impl State {
             .ok_or_else(|| anyhow!("Session no longer exists."))
     }
 
+    fn diagnostics(&self, id: Option<&str>) -> Result<Value> {
+        if let Some(id) = id {
+            ensure!(self.sessions.contains_key(id), "Session no longer exists.");
+        }
+        let now = now_millis();
+        let mut sessions: Vec<_> = self
+            .sessions
+            .values()
+            .filter(|s| id.is_none_or(|id| s.info.id == id))
+            .collect();
+        sessions.sort_by(|a, b| a.info.id.cmp(&b.info.id));
+        let sessions: Vec<_> = sessions.into_iter().map(|session| json!({
+            "sessionId":session.info.id, "program":session.info.program, "running":session.info.running,
+            "processIdentity":{"pid":session.pty.process_id(),"launchedAt":session.info.created_at,"launchId":session.info.id},
+            "processAgeSeconds":session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed()).as_secs(),
+            "integration":{"configured":session.agent_context.is_some(), "adapter":if session.agent_context.is_some(){"claude-hooks-v1"}else{"screen/protocol"},
+                "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
+                "delivery":session.integration_delivery},
+            "status":session.status.explain(now), "terminalProtocol":session.terminal_protocol.diagnostics(),
+        })).collect();
+        Ok(
+            json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
+            "programs":self.launchers.capabilities(),"sessions":sessions}),
+        )
+    }
+
     pub fn command(
         &mut self,
         client_id: u64,
@@ -698,6 +725,14 @@ impl State {
     ) -> Result<()> {
         ensure!(!self.shutting_down, "Host is shutting down.");
         match command {
+            Command::GetDiagnostics { session_id } => {
+                let report = self.diagnostics(session_id.as_deref())?;
+                self.respond(
+                    client_id,
+                    json!({"type":"diagnostics", "report":report}),
+                    request_id,
+                );
+            }
             Command::Auth { .. } => return Err(anyhow!("Already authenticated.")),
             Command::Launch { .. } => {
                 return Err(anyhow!("Launch requires asynchronous dispatch."));
@@ -1199,6 +1234,7 @@ fn spawn_session(
         started: std::time::Instant::now(),
         elapsed_at_exit: None,
         agent_context,
+        integration_delivery: Default::default(),
         status: StatusTracker::new(program, 24, 80, now_millis()),
         terminal_protocol: Default::default(),
         program_status: Default::default(),
@@ -1249,10 +1285,12 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 })
                 .collect();
             for (id, path) in reports {
-                if let Some(report) = crate::agent_context::read_lifecycle(&path).await
-                    && let Some(session) = state.lock().unwrap().sessions.get_mut(&id)
-                {
-                    session.status.lifecycle(report, now_millis());
+                let observation = crate::agent_context::observe(&path).await;
+                if let Some(session) = state.lock().unwrap().sessions.get_mut(&id) {
+                    session.integration_delivery = observation.delivery;
+                    if let Some(report) = observation.report {
+                        session.status.lifecycle(report, now_millis());
+                    }
                 }
             }
         }

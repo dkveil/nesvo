@@ -44,9 +44,10 @@ function runTui(
   binary: string,
   pairingPath: string,
   running: Set<ChildProcess>,
+  command = ['--list'],
 ): Promise<CommandResult> {
   return new Promise((resolveResult, reject) => {
-    const child = spawn(binary, ['--pairing', pairingPath, '--list'], {
+    const child = spawn(binary, ['--pairing', pairingPath, ...command], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -184,6 +185,37 @@ test(
         child.groupId,
       );
       assert.equal(expected.sessions[0]?.running, true);
+
+      await suite.test(
+        'doctor and session explain use authenticated read-only commands',
+        async () => {
+          for (const command of [
+            ['doctor', '--json'],
+            ['session', 'explain', created.sessionId, '--json'],
+          ]) {
+            const result = await runTui(tuiBinary, pairingPath, runningTuis, command);
+            assertNoSecret(result, [pairing.key]);
+            assert.equal(result.code, 0, result.stderr);
+            const report = JSON.parse(result.stdout);
+            assert.equal(report.schemaVersion, 1);
+            assert.match(report.host.buildId, /^[a-f0-9]{16}$/);
+            assert.equal(report.sessions.length, 1);
+            assert.equal(report.sessions[0].sessionId, created.sessionId);
+            assert.equal(report.sessions[0].integration.configured, false);
+            assert.equal(report.sessions[0].terminalProtocol.owner, 'host');
+          }
+          const unknown = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'session',
+            'explain',
+            'absent',
+            '--json',
+          ]);
+          assert.notEqual(unknown.code, 0);
+          assertNoSecret(unknown, [pairing.key]);
+          const after = await snapshot();
+          assert.equal(after.sessions[0]?.controllerId, null, 'diagnostics cannot acquire control');
+        },
+      );
 
       await suite.test(
         'headless TUI returns identical authoritative IDs, hierarchy and revision',

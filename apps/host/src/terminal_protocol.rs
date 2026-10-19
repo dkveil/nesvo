@@ -30,6 +30,9 @@ pub struct Decoder {
     overflow: bool,
     initial_cursor: bool,
     passthrough_bell: bool,
+    queries: u64,
+    reports: u64,
+    rejected: u64,
 }
 impl Default for Decoder {
     fn default() -> Self {
@@ -44,6 +47,9 @@ impl Decoder {
             overflow: false,
             initial_cursor,
             passthrough_bell: false,
+            queries: 0,
+            reports: 0,
+            rejected: 0,
         }
     }
     pub fn feed(&mut self, data: &str) -> Feed {
@@ -160,7 +166,10 @@ impl Decoder {
         }
         feed
     }
-    fn finish_osc(&self, feed: &mut Feed) {
+    pub fn diagnostics(&self) -> serde_json::Value {
+        serde_json::json!({"owner":"host","queries":self.queries,"reports":self.reports,"rejected":self.rejected})
+    }
+    fn finish_osc(&mut self, feed: &mut Feed) {
         let body = self
             .pending
             .strip_suffix('\x07')
@@ -168,9 +177,13 @@ impl Decoder {
             .unwrap_or_default();
         if let Some(body) = body.strip_prefix("\x1b]7501;") {
             if body.trim() == "?" {
+                self.queries = self.queries.saturating_add(1);
                 feed.events.push(Event::Reply(program_status::REPLY));
             } else if let Some(report) = program_status::parse(body) {
+                self.reports = self.reports.saturating_add(1);
                 feed.events.push(Event::Report(report));
+            } else {
+                self.rejected = self.rejected.saturating_add(1);
             }
         } else {
             if body == "\x1b]133;A" || body.starts_with("\x1b]133;A;") {

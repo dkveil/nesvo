@@ -1,4 +1,5 @@
 mod brand;
+mod cli;
 mod controller;
 mod input;
 mod launch;
@@ -34,11 +35,13 @@ use std::{io::IsTerminal, path::PathBuf, time::Duration};
 )]
 struct Arguments {
     /// Private pairing file written by the host. Its key is never printed.
-    #[arg(long, default_value = "host/.local/pairing.json")]
+    #[arg(long, default_value = "host/.local/pairing.json", global = true)]
     pairing: PathBuf,
     /// Override only the connection address, e.g. ws://127.0.0.1:8787.
-    #[arg(long)]
+    #[arg(long, global = true)]
     url: Option<String>,
+    #[command(subcommand)]
+    command: Option<cli::Command>,
     /// Print one authenticated session/group snapshot as JSON, then disconnect.
     #[arg(long)]
     list: bool,
@@ -53,13 +56,13 @@ struct Arguments {
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = Arguments::parse();
-    if !arguments.list && !arguments.check_host {
+    if arguments.command.is_none() && !arguments.list && !arguments.check_host {
         ensure!(
             std::env::var_os("NESVO_SESSION").is_none(),
             "nesvo is already running inside this terminal session. Open a separate terminal to start another client."
         );
     }
-    if !arguments.list && !arguments.check_host {
+    if arguments.command.is_none() && !arguments.list && !arguments.check_host {
         ensure!(
             std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
             "Interactive mode needs a terminal. Use --list for a JSON snapshot."
@@ -72,6 +75,9 @@ async fn main() -> Result<()> {
         )
     })?;
     let mut connection = Connection::open(pairing).await?;
+    if let Some(command) = arguments.command {
+        return cli::run(command, &mut connection).await;
+    }
     if arguments.check_host {
         connection.send(serde_json::json!({"type":"getCapabilities"}))?;
         tokio::time::timeout(Duration::from_secs(5), async {

@@ -113,6 +113,25 @@ impl StatusTracker {
         self.status
     }
 
+    pub fn explain(&self, now: u64) -> serde_json::Value {
+        let reason = match self.status.source {
+            StatusSource::Process => "observed process exit",
+            StatusSource::Hook => "provider lifecycle event",
+            StatusSource::Program => "program status root report",
+            StatusSource::Screen => "current visible terminal rule",
+            StatusSource::Activity if self.status.state == StatusState::Unknown => {
+                "no supported semantic signal; inspect startup consent or disabled integration"
+            }
+            StatusSource::Activity => "terminal I/O only; no task outcome inferred",
+        };
+        serde_json::json!({"selected":self.status, "reason":reason, "screenHint":self.screen_hint,
+            "hook":{"state":self.lifecycle,"sequence":self.lifecycle_sequence,
+                "receivedAt":if self.lifecycle.is_some(){Some(self.lifecycle_received)}else{None},
+                "ageMs":self.lifecycle.map(|_|now.saturating_sub(self.lifecycle_received)), "ordering":"legacy-wall-clock"},
+            "lastOutputAgeMs":self.last_activity.map(|at|now.saturating_sub(at)),
+            "processExited":self.exited,"exitCode":self.exit_code})
+    }
+
     pub fn output(&mut self, data: &str, now: u64) {
         if data.is_empty() || self.exited {
             return;

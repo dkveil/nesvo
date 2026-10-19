@@ -33,6 +33,9 @@ pub enum Command {
         directory: Option<String>,
     },
     GetCapabilities,
+    GetDiagnostics {
+        session_id: Option<String>,
+    },
     RegisterPush {
         token: String,
         enabled: bool,

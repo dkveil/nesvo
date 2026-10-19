@@ -17,6 +17,7 @@ pub enum PtyEvent {
 }
 
 pub struct Pty {
+    process_id: Option<u32>,
     // Close the input channel before ConPTY's potentially blocking destructor.
     input: sync_mpsc::SyncSender<Input>,
     master: Box<dyn MasterPty + Send>,
@@ -37,6 +38,7 @@ impl Pty {
     ) -> Result<Self> {
         let pair = native_pty_system().openpty(size)?;
         let mut child = pair.slave.spawn_command(command)?;
+        let process_id = child.process_id();
         drop(pair.slave);
         let killer = crate::process::killer(child.as_ref())?;
         let mut reader = pair.master.try_clone_reader()?;
@@ -94,6 +96,7 @@ impl Pty {
         });
 
         Ok(Self {
+            process_id,
             input: input_tx,
             master: pair.master,
             killer,
@@ -107,6 +110,9 @@ impl Pty {
                 flushed: None,
             })
             .map_err(|_| anyhow!("Terminal input queue is full or closed. Input was not sent."))
+    }
+    pub fn process_id(&self) -> Option<u32> {
+        self.process_id
     }
 
     /// Release ConPTY's initial cursor-position handshake when a session is

@@ -214,9 +214,28 @@ async function main(): Promise<void> {
         }
       }
       const labels = ['trust', 'hooks', 'Claude Code', 'Welcome', 'API Error', 'sign in', '7501'];
+      send({ type: 'getDiagnostics', sessionId: created[0], requestId: 'probe-diagnostics' });
+      const diagnostics = await until(
+        () => events.find(e => e.type === 'diagnostics' && e.requestId === 'probe-diagnostics'),
+        'diagnostic evidence',
+      );
       const ready = transitions.some(t => JSON.stringify(t.sessions).includes('"evidence":"hook"'));
       if (ready)
         stopAgent = async () => {
+          send({ type: 'input', sessionId: created[0], data: '\x03' });
+          await delay(200);
+          send({ type: 'input', sessionId: created[0], data: '\x03' });
+          await delay(800);
+          if (
+            events.some(
+              e =>
+                e.type === 'sessions' &&
+                (e.sessions as Record<string, unknown>[]).some(
+                  s => s.id === created[0] && s.running === false,
+                ),
+            )
+          )
+            return;
           send({ type: 'input', sessionId: created[0], data: '/exit\r' });
           await until(
             () =>
@@ -288,6 +307,7 @@ async function main(): Promise<void> {
       const report = {
         mode,
         binary,
+        diagnostics: diagnostics.report,
         transitions,
         screenMarkers: labels.filter(label => text.toLowerCase().includes(label.toLowerCase())),
         noModelPromptSent: process.env.NESVO_PROBE_PROMPT !== '1' || !ready,
@@ -298,6 +318,18 @@ async function main(): Promise<void> {
         await writeFile('artifacts/harness/claude-start-private-screen.txt', text);
       console.log(JSON.stringify(report));
     }
+  } catch (error) {
+    await mkdir('artifacts/harness', { recursive: true });
+    await writeFile(
+      'artifacts/harness/probe-failure.json',
+      JSON.stringify({ transitions, error: String(error) }, null, 2),
+    );
+    if (process.env.NESVO_PROBE_CAPTURE_SCREEN === '1')
+      await writeFile(
+        'artifacts/harness/claude-start-private-screen.txt',
+        output.get(created[0]!) ?? '',
+      );
+    throw error;
   } finally {
     try {
       await stopAgent?.();

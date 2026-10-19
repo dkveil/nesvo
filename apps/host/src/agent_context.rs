@@ -88,7 +88,15 @@ fn extract(value: &Value) -> Option<Context> {
     })
 }
 pub fn receive(report: &Path) -> Result<()> {
-    receive_from(report, std::io::stdin())
+    let result = receive_from(report, std::io::stdin());
+    let diagnostic = report.with_file_name("diagnostic.json");
+    if result.is_err() {
+        // Constant metadata only: serde errors can contain supplied payload text.
+        let _ = crate::private_write(&diagnostic, br#"{"code":"hook_receive_failed"}"#);
+    } else if diagnostic.exists() {
+        let _ = std::fs::remove_file(diagnostic);
+    }
+    result
 }
 fn receive_from(report: &Path, input: impl Read) -> Result<()> {
     let mut bytes = Vec::new();
@@ -156,17 +164,56 @@ fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
         _ => return None,
     })
 }
-pub async fn read_lifecycle(report: &Path) -> Option<LifecycleReport> {
-    use tokio::io::AsyncReadExt;
-    let file = tokio::fs::File::open(report.with_file_name("status.json"))
-        .await
-        .ok()?;
-    let mut bytes = Vec::new();
-    file.take(1025).read_to_end(&mut bytes).await.ok()?;
-    if bytes.len() > 1024 {
-        return None;
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Delivery {
+    pub outcome: &'static str,
+    pub helper_error: bool,
+}
+impl Default for Delivery {
+    fn default() -> Self {
+        Self {
+            outcome: "notObserved",
+            helper_error: false,
+        }
     }
-    serde_json::from_slice(&bytes).ok()
+}
+pub struct Observation {
+    pub report: Option<LifecycleReport>,
+    pub delivery: Delivery,
+}
+pub async fn observe(report: &Path) -> Observation {
+    use tokio::io::AsyncReadExt;
+    let helper_error = tokio::fs::try_exists(report.with_file_name("diagnostic.json"))
+        .await
+        .unwrap_or(false);
+    let (report, outcome) = match tokio::fs::File::open(report.with_file_name("status.json")).await
+    {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, "missing"),
+        Err(_) => (None, "unreadable"),
+        Ok(file) => {
+            let mut bytes = Vec::new();
+            match file.take(1025).read_to_end(&mut bytes).await {
+                Err(_) => (None, "unreadable"),
+                Ok(_) if bytes.len() > 1024 => (None, "oversized"),
+                Ok(_) => match serde_json::from_slice(&bytes) {
+                    Ok(report) => (Some(report), "received"),
+                    Err(_) => (None, "malformed"),
+                },
+            }
+        }
+    };
+    Observation {
+        report,
+        delivery: Delivery {
+            outcome,
+            helper_error,
+        },
+    }
+}
+#[cfg(test)]
+async fn read_lifecycle(report: &Path) -> Option<LifecycleReport> {
+    observe(report).await.report
 }
 
 pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
@@ -192,6 +239,35 @@ pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn diagnostics_distinguish_missing_bad_and_received_reports_without_payloads() {
+        let mut command = CommandBuilder::new("claude");
+        let tracker = Tracker::install(&mut command).unwrap();
+        assert_eq!(observe(&tracker.report()).await.delivery.outcome, "missing");
+        let path = tracker.report().with_file_name("status.json");
+        std::fs::write(&path, "{PRIVATE INVALID PAYLOAD").unwrap();
+        let observation = observe(&tracker.report()).await;
+        assert_eq!(observation.delivery.outcome, "malformed");
+        assert!(
+            !serde_json::to_string(&observation.delivery)
+                .unwrap()
+                .contains("PRIVATE")
+        );
+        std::fs::write(&path, "x".repeat(1025)).unwrap();
+        assert_eq!(
+            observe(&tracker.report()).await.delivery.outcome,
+            "oversized"
+        );
+        receive_from(
+            &tracker.report(),
+            br#"{"hook_event_name":"SessionStart"}"#.as_slice(),
+        )
+        .unwrap();
+        assert_eq!(
+            observe(&tracker.report()).await.delivery.outcome,
+            "received"
+        );
+    }
     #[tokio::test]
     async fn lifecycle_events_store_only_state_and_ignore_subagents() {
         use crate::status::StatusState::*;

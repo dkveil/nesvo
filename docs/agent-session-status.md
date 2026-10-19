@@ -52,3 +52,28 @@ Real OSC negotiation/provider coverage remains an explicit stage-1 gate.
 
 Dependency: `base64` 0.22.1 (already present transitively in Cargo.lock) provides
 strict padded/unpadded UTF-8 field decoding without a custom codec.
+
+## Diagnostics (F03)
+
+`nesvo doctor` lists session integration health; `nesvo session explain ID`
+explains one stable session ID. Append `--json` for schema version 1, or override
+the private pairing file with `--pairing PATH`. `--help` is local and never opens
+a connection. These commands authenticate but never attach, take control, send
+input, or alter settings. An older host without the `diagnostics` capability is
+rejected with an upgrade message before sending the additive command.
+
+The authenticated `getDiagnostics {sessionId?,requestId?}` operation returns a
+targeted `diagnostics {report,requestId?}` event. The report contains host/build
+and helper identities, PID/launch identity, observed process age, selected status
+and reason, last hook sequence/receive age, current screen hint, integration
+delivery (`notObserved`, `missing`, `received`, `unreadable`, `malformed`,
+`oversized`) and live OSC probe/report/rejection counts. It contains no pairing
+key, lease, prompt, tool arguments, transcript, or report message text.
+
+Delivery is cached asynchronously outside the state mutex. Helper failures write
+only a constant private diagnostic marker and emit a constant stderr warning;
+they still exit successfully so tracking failure cannot block the agent. The next
+successful helper call clears that marker. A missing report does not claim that
+the provider loaded its settings. Sequence ordering still identifies the legacy
+wall-clock implementation until the F05 identity migration. Provider-version
+probes and matched-rule IDs remain separate status-stage gates.
