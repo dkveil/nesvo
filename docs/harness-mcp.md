@@ -22,7 +22,11 @@ process, just like the CLI. Example per-session provider configuration:
 ```
 
 This is an example, not an installed global registration. Use the provider's
-per-launch configuration when F38 wires profiles. Do not put owner pairing keys
+per-launch configuration: supported Claude sessions can opt in with
+`spec.harness:true` (CLI `--harness`), or inherit the coordinator's setting.
+Explicit false opts out. Unknown hosts fail the `sessionHarness` check; unsupported
+provider versions fail host validation. Broader declarative profiles are F37/F38
+work. Do not put owner pairing keys
 in worker prompts, arguments, logs or this JSON. For manual human testing only,
 `--pairing PRIVATE_PATH mcp` explicitly selects owner access. Otherwise managed
 context is selected automatically; invalid context fails closed. Catalog/help
@@ -46,6 +50,15 @@ by `sessionLineage`. It creates an ordinary background session without changing
 parent input ownership. The relation appears in session data and survives client
 reconnect/recovery metadata storage; it grants no API authority. CLI `--parent`
 uses the same normalized intent/key, so cross-adapter replay cannot duplicate it.
+
+For opt-in Claude launches the host supplies `--mcp-config` and
+`--append-system-prompt-file` before the prompt separator. It does not replace
+default system instructions, suppress global tools, skip permissions, or write
+global configuration. The generated stdio server inherits only the scoped
+authentication path, not an owner pairing argument/key. Effective configuration
+is visible through session queries/explain; prepared is separate from loaded.
+These native flags are documented in the official
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 | Tool                      | Host operation                                     |
 | ------------------------- | -------------------------------------------------- |

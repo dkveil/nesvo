@@ -10,6 +10,19 @@ use std::{
 
 const INSTRUCTIONS: &str = include_str!("../../../skills/nesvo-harness/SKILL.md");
 
+pub fn runtime_client() -> Option<PathBuf> {
+    resolve_client(
+        std::env::var_os("NESVO_CLIENT_BINARY"),
+        &std::env::current_exe().ok()?,
+    )
+}
+
+pub fn supports_claude_harness(version: &str) -> bool {
+    let stable = version.split(['-', '+']).next().unwrap_or_default();
+    let numbers: Option<Vec<u32>> = stable.split('.').map(|part| part.parse().ok()).collect();
+    numbers.is_some_and(|v| v.len() == 3 && v[0] == 2 && v[1] == 1 && v[2] >= 303)
+}
+
 // Explicit owner configuration wins. An invalid override never falls through to PATH.
 fn resolve_client(explicit: Option<OsString>, host: &Path) -> Option<PathBuf> {
     let candidate = explicit
@@ -99,10 +112,7 @@ impl Context {
                 "nesvo-caller-{}",
                 hex::encode(crate::wire::random::<16>())
             )),
-            client: resolve_client(
-                std::env::var_os("NESVO_CLIENT_BINARY"),
-                &std::env::current_exe()?,
-            ),
+            client: runtime_client(),
         };
         std::fs::create_dir(&context.directory)?;
         #[cfg(unix)]
@@ -133,6 +143,32 @@ impl Context {
             command.env("NESVO_CLI", path);
         }
     }
+    pub fn configure_claude(&self, command: &mut portable_pty::CommandBuilder) -> Result<()> {
+        let client = self.client.as_ref().ok_or_else(||crate::api_error::Error::new("harness_client_unavailable","Harness needs a discoverable native nesvo executable beside the host or NESVO_CLIENT_BINARY"))?;
+        let config = json!({"mcpServers":{"nesvo":{"type":"stdio","command":crate::process::display_path(client),"args":["mcp"],"env":{"NESVO_AGENT_CONTEXT":self.path()}}}});
+        crate::private_write(&self.mcp(), &serde_json::to_vec(&config)?)?;
+        let argv = command.get_argv_mut();
+        let index = argv
+            .iter()
+            .position(|arg| arg == "--")
+            .unwrap_or(argv.len());
+        argv.splice(
+            index..index,
+            [
+                "--mcp-config".into(),
+                self.mcp().into_os_string(),
+                "--append-system-prompt-file".into(),
+                self.skill().into_os_string(),
+            ],
+        );
+        Ok(())
+    }
+    fn mcp(&self) -> PathBuf {
+        self.directory.join("mcp.json")
+    }
+    pub fn configuration(&self, enabled: bool) -> serde_json::Value {
+        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":1,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"globalConfigChanged":false})
+    }
 }
 impl Drop for Context {
     fn drop(&mut self) {
@@ -146,6 +182,7 @@ impl Drop for Context {
         if let Some(directory) = safe() {
             let _ = std::fs::remove_file(directory.join("context.json"));
             let _ = std::fs::remove_file(directory.join("SKILL.md"));
+            let _ = std::fs::remove_file(directory.join("mcp.json"));
             // Never recursively delete caller-controlled contents.
             let _ = std::fs::remove_dir(directory);
         }
@@ -231,6 +268,42 @@ mod tests {
         let path = second.path();
         drop(second);
         assert!(!path.exists());
+    }
+    #[test]
+    fn launch_local_config_is_literal_private_and_does_not_claim_loaded() {
+        assert!(supports_claude_harness("2.1.303"));
+        assert!(supports_claude_harness("2.1.304-fixture"));
+        for unsupported in ["2.1.302", "unknown", "3.0.0", "2.broken.1.303", "2.1.303.1"] {
+            assert!(!supports_claude_harness(unsupported), "{unsupported}");
+        }
+        let mut context = Context::new("ws://127.0.0.1:1", "s", Role::Coordinator).unwrap();
+        context.client = Some(PathBuf::from(if cfg!(windows) {
+            r"C:\native client\nesvo.exe"
+        } else {
+            "/native client/nesvo"
+        }));
+        let mut command = portable_pty::CommandBuilder::new("fixture");
+        command.args(["--resume", "--", "literal --mcp-config malicious"]);
+        context.configure_claude(&mut command).unwrap();
+        let argv = command.get_argv();
+        assert_eq!(argv.last().unwrap(), "literal --mcp-config malicious");
+        assert_eq!(argv[2], "--mcp-config");
+        assert_eq!(argv[6], "--");
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(context.mcp()).unwrap()).unwrap();
+        assert_eq!(config["mcpServers"]["nesvo"]["args"], json!(["mcp"]));
+        assert_eq!(
+            config["mcpServers"]["nesvo"]["env"]["NESVO_AGENT_CONTEXT"],
+            json!(context.path())
+        );
+        assert!(!config.to_string().contains(&hex::encode(context.key)));
+        assert_eq!(
+            context.configuration(true)["loaded"],
+            serde_json::Value::Null
+        );
+        let directory = context.directory.clone();
+        drop(context);
+        assert!(!directory.exists());
     }
     #[test]
     fn client_discovery_is_absolute_explicit_and_never_uses_a_shell_shim() {

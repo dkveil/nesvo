@@ -29,6 +29,7 @@ fn launch_schema() -> Value {
             "name":{"type":"string","minLength":1,"maxLength":80},
             "program":{"enum":["shell","claude","codex","gemini"],"default":"shell"},
             "role":{"enum":["worker","coordinator"],"default":"worker","description":"Only owner access may grant coordinator at launch; a coordinator cannot create coordinators"},
+            "harness":{"type":"boolean","description":"Launch-local Nesvo MCP/instructions on supported Claude; inherits coordinator setting when omitted"},
             "cwd":{"type":"string"}, "groupId":{"type":["string","null"]},
             "parentSessionId":{"type":["string","null"],"description":"Lineage only; scoped creation binds the authenticated parent automatically"},
             "prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},
@@ -313,7 +314,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                         "role" => value
                             .as_str()
                             .is_some_and(|role| matches!(role, "worker" | "coordinator")),
-                        "worktree" | "autoTitle" | "muted" | "resumePicker" => value.is_boolean(),
+                        "harness" | "worktree" | "autoTitle" | "muted" | "resumePicker" => {
+                            value.is_boolean()
+                        }
                         _ => false,
                     })
             });
@@ -436,6 +439,15 @@ impl HostTools {
             cli::prompt_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
+            if name == "nesvo_create_session"
+                && command["spec"]["harness"].is_boolean()
+                && caps["sessionHarness"] != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host cannot configure session-scoped harness tools; update nesvo-host",
+                ));
+            }
             if name == "nesvo_create_session"
                 && command["spec"]["role"] == "coordinator"
                 && caps["coordinatorScopes"] != true

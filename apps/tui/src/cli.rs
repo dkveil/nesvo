@@ -127,6 +127,12 @@ pub struct CreateOptions {
     /// Only owner access can grant coordinator capabilities at launch.
     #[arg(long,default_value="worker",value_parser=["worker","coordinator"])]
     role: String,
+    /// Load the launch-local Nesvo instruction and MCP (supported Claude versions).
+    #[arg(long, conflicts_with = "no_harness")]
+    harness: bool,
+    /// Explicitly opt out when the coordinator profile would inherit the harness.
+    #[arg(long, conflicts_with = "harness")]
+    no_harness: bool,
     #[arg(long)]
     worktree: bool,
     #[arg(long,conflicts_with_all=["prompt_file","stdin"])]
@@ -598,6 +604,15 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
         }
         spec["role"] = options.role.into();
     }
+    if options.harness || options.no_harness {
+        if caps["sessionHarness"] != true {
+            return Err(failure(
+                "unsupported",
+                "Host cannot configure session-scoped harness tools; update nesvo-host",
+            ));
+        }
+        spec["harness"] = options.harness.into();
+    }
     if let Some(parent) = options.parent {
         valid_id(&parent)?;
         if caps["sessionLineage"] != true {
@@ -856,6 +871,11 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
                         .as_str()
                         .unwrap_or("No explanation")
                 );
+                if session["harness"]["enabled"] == true {
+                    println!(
+                        "  Harness: launch-local Nesvo MCP + instruction v1 prepared; provider loading not yet verified"
+                    );
+                }
                 println!(
                     "  Integration: {} · delivery {} · helper error {}",
                     session["integration"]["adapter"].as_str().unwrap_or("none"),

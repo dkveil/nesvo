@@ -15,6 +15,20 @@ if (
 )
   throw new Error('Missing versioned launch-local harness instructions');
 fs.writeFileSync(path.join(directory, `${id}.txt`), process.env.NESVO_AGENT_CONTEXT);
+if (process.argv.includes('--mcp-config')) {
+  const config = JSON.parse(
+    fs.readFileSync(process.argv[process.argv.indexOf('--mcp-config') + 1], 'utf8'),
+  );
+  const instruction = fs.readFileSync(
+    process.argv[process.argv.indexOf('--append-system-prompt-file') + 1],
+    'utf8',
+  );
+  if (
+    config.mcpServers.nesvo.env.NESVO_AGENT_CONTEXT !== process.env.NESVO_AGENT_CONTEXT ||
+    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V1')
+  )
+    throw new Error('Launch-local harness was not loaded by the controlled provider');
+}
 const settings = JSON.parse(process.argv[process.argv.indexOf('--settings') + 1]);
 function hook(name, extra = {}) {
   const command = settings.hooks[name][0].hooks[0];

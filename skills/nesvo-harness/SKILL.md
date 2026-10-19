@@ -49,6 +49,10 @@ Do not request a coordinator child, foreign parent/group or permission bypass.
 Use `--worktree` when the user requests isolation; this does not authorize
 deleting/merging worktrees. Default live-process and 256 lifetime child-grant
 bounds apply. Configurable run budgets are not yet available.
+Harness-enabled coordinators pass the setting to children by default. When
+requesting a shell or another provider without the Claude harness adapter, use
+`--no-harness` (MCP `spec.harness:false`) explicitly. It does not change the child's
+API permissions. Do not silently bypass a refused provider configuration.
 
 Parse `data.receipt` and retain its ID, key and stable child session ID. A
 `created` receipt proves process creation only. Inspect `session get CHILD_ID

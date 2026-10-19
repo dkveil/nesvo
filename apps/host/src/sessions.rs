@@ -65,6 +65,7 @@ impl ControlLease {
 }
 
 struct Session {
+    harness_enabled: bool,
     policy: crate::caller::Policy,
     caller_context: Option<crate::caller::Context>,
     started: std::time::Instant,
@@ -341,6 +342,9 @@ impl State {
             .into());
         }
         spec.parent_session_id = Some(session.info.id.clone());
+        if spec.harness.is_none() {
+            spec.harness = Some(session.harness_enabled);
+        }
         Ok(())
     }
     pub fn resolve_launch(
@@ -503,6 +507,7 @@ impl State {
         event["controlReceipts"] = self.event_log.is_some().into();
         event["sessionLineage"] = true.into();
         event["coordinatorScopes"] = true.into();
+        event["sessionHarness"] = true.into();
         event
     }
 
@@ -533,6 +538,7 @@ impl State {
                 group_id: session.info.group_id.clone(),
                 parent_session_id: session.info.parent_session_id.clone(),
                 role: session.policy.role,
+                harness: session.harness_enabled.then_some(true),
                 program: session.info.program,
                 auto_title: session.auto_title,
                 muted: session.attention.muted,
@@ -621,6 +627,7 @@ impl State {
                 let mut info =
                     serde_json::to_value(&session.info).expect("Session metadata serializes");
                 info["role"]=json!(session.policy.role);
+                info["harness"]=json!(session.caller_context.as_ref().map(|context|context.configuration(session.harness_enabled)));
                 info["attention"] = json!(session.attention.event);
                 info["currentAttention"] = json!(session.current_attention());
                 info["muted"] = json!(session.attention.muted);
@@ -1037,6 +1044,23 @@ impl State {
     pub fn validate_launch(&self, spec: &crate::jobs::LaunchSpec) -> Result<PathBuf> {
         ensure!(!self.shutting_down, "Host is shutting down.");
         valid_name(&spec.name)?;
+        if spec.harness == Some(true) {
+            if spec.program != Program::Claude
+                || !self.provider_versions.iter().any(|version| {
+                    version.program == Program::Claude
+                        && version.status == "ready"
+                        && version
+                            .version
+                            .as_deref()
+                            .is_some_and(crate::caller::supports_claude_harness)
+                })
+            {
+                return Err(crate::api_error::Error::new("unsupported","Session harness currently requires verified Claude Code 2.1.303+ in the 2.1 series; inspect doctor providerVersions").into());
+            }
+            if crate::caller::runtime_client().is_none() {
+                return Err(crate::api_error::Error::new("harness_client_unavailable","Harness needs a discoverable native nesvo executable beside the host or NESVO_CLIENT_BINARY").into());
+            }
+        }
         self.valid_group(spec.group_id.as_deref())?;
         if let Some(parent) = &spec.parent_session_id {
             ensure!(
@@ -1392,6 +1416,7 @@ impl State {
             SpawnIdentity {
                 id: reserved,
                 role: spec.role,
+                harness: spec.harness == Some(true),
             },
         )?;
         session.info.group_id = spec.group_id.clone();
@@ -1496,6 +1521,7 @@ impl State {
             "sessionId":session.info.id, "program":session.info.program, "running":session.info.running,
             "processIdentity":{"pid":session.pty.process_id(),"launchedAt":session.info.created_at,"launchId":session.info.id},
             "processAgeSeconds":session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed()).as_secs(),
+            "harness":session.caller_context.as_ref().map(|context|context.configuration(session.harness_enabled)),
             "inputOperation":session.pending_input.as_ref().map(|pending|json!({"id":pending.claim.id,"queued":pending.queued,"canceled":*pending.canceled.borrow(),"correlated":pending.correlation.is_some()})),
             "integration":{"configured":session.agent_context.is_some(), "adapter":if session.agent_context.is_some(){"claude-hooks-v2"}else{"screen/protocol"},
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
@@ -1826,6 +1852,7 @@ impl State {
                     SpawnIdentity {
                         id: None,
                         role: crate::caller::Role::Worker,
+                        harness: false,
                     },
                 )?;
                 session.info.group_id = group_id;
@@ -2082,6 +2109,7 @@ impl State {
 struct SpawnIdentity<'a> {
     id: Option<&'a str>,
     role: crate::caller::Role,
+    harness: bool,
 }
 fn spawn_session(
     name: &str,
@@ -2102,6 +2130,9 @@ fn spawn_session(
         .transpose()?;
     if let Some(context) = &caller_context {
         context.bind(&mut command);
+        if identity.harness {
+            context.configure_claude(&mut command)?;
+        }
     }
     let agent_context = if program == Program::Claude {
         Some(crate::agent_context::Tracker::install_for(
@@ -2113,6 +2144,7 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        harness_enabled: identity.harness,
         policy: crate::caller::Policy::new(identity.role),
         caller_context,
         started: std::time::Instant::now(),

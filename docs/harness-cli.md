@@ -78,6 +78,26 @@ does not remove/overwrite the agent's executable. An already-running host is
 preserved and retains its original runtime pair; restart it deliberately after
 saving work to adopt new host features. Runtime disk cleanup/pooling is F39/F42.
 
+On a host advertising `sessionHarness:true`, `session create NAME --program
+claude --harness --key KEY` appends the versioned instruction and adds the Nesvo
+stdio MCP through launch-local files. Add `--role coordinator` for child creation.
+This currently requires a probed Claude Code 2.1.303 or newer in the 2.1 series;
+unknown/older/other providers are refused before spawning or Git setup. The
+existing subscription login and native permission checks remain in effect.
+
+Coordinator children inherit this setting when omitted. `--no-harness` (MCP
+`spec.harness:false`) explicitly opts out; the child's API role still defaults to
+worker. Disabling tools does not grant authority. Existing processes are never
+silently restarted or reconfigured. To change the launch setting, create a new
+session deliberately; controlled conversation resume/profile migration remains
+F37/F38/F41 work.
+
+Session queries and explain expose a prompt/credential-free `harness` effective
+configuration: enabled, CLI availability, instruction version, declared MCP
+names, scope and `loaded:null`. Prepared launch arguments do not establish that
+the provider actually loaded the tools or used the instruction. File paths and
+credentials are confined to the private process context.
+
 ## Version 1 query output
 
 The machine-readable schema is `docs/harness-cli.schema.json` (JSON Schema draft 7).

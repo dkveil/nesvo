@@ -18,6 +18,8 @@ pub struct LaunchSpec {
     pub parent_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "crate::caller::Role::is_worker")]
     pub role: crate::caller::Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<bool>,
     #[serde(default)]
     pub program: Program,
     #[serde(default)]

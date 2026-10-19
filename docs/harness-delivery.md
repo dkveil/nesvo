@@ -63,7 +63,7 @@ not evidence that the expanded acceptance criteria pass.
 | F35 | Revision-bound checks and review readiness      | Missing                                                       | Pending                                                                                                     |
 | F36 | Trusted worktree setup/run/archive              | Partial: create worktree only                                 | Pending                                                                                                     |
 | F37 | Provider-aware launch profiles                  | Partial: templates                                            | Pending                                                                                                     |
-| F38 | Session-scoped MCP and skills                   | Missing                                                       | Pending                                                                                                     |
+| F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending   |
 | F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending                                                                                                     |
 | F40 | Durable goal/progress checkpoint                | Missing                                                       | Pending                                                                                                     |
 | F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Pending                                                                                                     |
@@ -610,3 +610,33 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Windows fmt/Clippy, all 214 Rust unit checks, both native SDK tests and isolated
   PowerShell runtime/probe checks pass. Provider loading and real model-to-child
   launch remain open until per-session configuration is wired and verified.
+
+### F38 opt-in native Claude harness
+
+- CLI `--harness` and MCP `spec.harness:true` configure Nesvo MCP and instruction
+  files per process on probed Claude Code 2.1.303+ (2.1 series). Host validation
+  refuses unsupported providers/versions or missing native CLI before effects.
+  Additive omitted defaults retain legacy receipt fingerprints.
+- Scoped children inherit the coordinator setting; explicit false/`--no-harness`
+  opts out. Configuration is immutable for a live process; no implicit restart,
+  permission bypass, default-system-prompt replacement or global MCP mutation.
+- Session/explain JSON exposes effective configuration with `loaded:null` to
+  distinguish prepared arguments from actual provider consumption. Native SDK
+  tests consume the generated MCP config and the controlled provider reads the
+  actual instruction. Tests cover CLI opt-in, inherited config, explicit opt-out,
+  unsupported provider refusal, literal argv and private no-key MCP files.
+- The official Claude CLI reference was checked for native append-file/MCP flags.
+  Windows fmt/Clippy, 127 TUI + 85 host + 3 wire unit checks and both native SDK
+  tests pass. Broader profile settings, dynamic declared tools and controlled
+  resume remain tracked separately; this checkpoint does not complete F38.
+- Real Windows smoke discovered Claude Code 2.1.304 (the CLI updated since the
+  earlier 2.1.303 baseline). A single opt-in coordinator was launched against an
+  existing isolated Git fixture with no edits or permission bypass. It remained
+  at `readiness:waiting`, reason `folder trust`, with rule `claude_trust_v1` and
+  no lifecycle hook yet. No model response or child was observed; the host
+  cleaned up successfully. This is an explicit provider gate, not a passing
+  orchestration test. No global trust/settings entry was written by the test.
+- Prior capability commit `d962c52` passed all CI jobs in run `39337845395`,
+  including both SDK/native tests on Windows, macOS and Linux.
+- All 25 Windows host/sync/CLI integration checks also pass with the launch
+  adapter. Controlled receipt-to-publication p95: 261.772 ms (26 batches).

@@ -151,9 +151,26 @@ async fn install_agent_fixture(directory: &Path, host: &mut Command) -> Result<(
     Ok(())
 }
 async fn scoped_client(context: &Path, id: &str) -> Result<RunningService<RoleClient, ()>> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
+    let config = context.with_file_name("mcp.json");
+    let mut command = if config.exists() {
+        // Consume the actual provider-facing launch config, not a hand-built equivalent.
+        let config: Value = serde_json::from_slice(&std::fs::read(config)?)?;
+        let server = &config["mcpServers"]["nesvo"];
+        assert_eq!(server["args"], json!(["mcp"]));
+        assert_eq!(server["env"]["NESVO_AGENT_CONTEXT"], json!(context));
+        let mut command = Command::new(
+            server["command"]
+                .as_str()
+                .context("native MCP executable")?,
+        );
+        command.arg("mcp");
+        command
+    } else {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
+        command.arg("mcp");
+        command
+    };
     command
-        .arg("mcp")
         .env("NESVO_AGENT_CONTEXT", context)
         .env("NESVO_SESSION_ID", id);
     #[cfg(windows)]
@@ -544,11 +561,21 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let workspace=fixture.directory.join("workspace");
         std::fs::create_dir(&workspace)?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"coordinator","spec":{"name":"Coordinator fixture","program":"claude","role":"coordinator","cwd":workspace}})).await?)?;
+        timeout(Duration::from_secs(5),async {
+            loop {
+                let report=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing()).args(["doctor","--json"]).output().await?;
+                let report:Value=serde_json::from_slice(&report.stdout)?;
+                if report["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")) {return Ok::<_,anyhow::Error>(());}
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await??;
+        let root=data(call(&owner,"nesvo_create_session",json!({"key":"coordinator","spec":{"name":"Coordinator fixture","program":"claude","role":"coordinator","harness":true,"cwd":workspace}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator ID")?;
         session_ready(&owner,root_id).await?;
         let root_view=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
         assert_eq!(root_view["data"]["session"]["role"],"coordinator");
+        assert_eq!(root_view["data"]["session"]["harness"]["enabled"],true);
+        assert_eq!(root_view["data"]["session"]["harness"]["loaded"],Value::Null,"prepared configuration does not prove model pickup");
         data(call(&owner,"nesvo_send_prompt",json!({"sessionId":root_id,"key":"spawn-child","prompt":"spawn-child"})).await?)?;
         let result_path=fixture.directory.join("callers").join(format!("{root_id}.child.json"));
         let spawned=timeout(Duration::from_secs(10),async {
@@ -569,6 +596,7 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let child=data(call(&coordinator,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
         assert_eq!(child["data"]["session"]["parentSessionId"],root_id);
         assert_eq!(child["data"]["session"]["role"],"worker");
+        assert_eq!(child["data"]["session"]["harness"]["enabled"],true,"coordinator profile is inherited by default");
         assert_eq!(child["data"]["session"]["controllerId"],Value::Null);
         assert_eq!(std::fs::canonicalize(child["data"]["session"]["cwd"].as_str().context("child cwd")?)?,workspace.canonicalize()?);
         let replay=data(call(&coordinator,"nesvo_create_session",json!({"key":"agent-child-once","spec":{"name":"Scoped child","program":"claude"}})).await?)?;
@@ -579,6 +607,19 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         assert_eq!(forbidden.structured_content.context("foreign refusal")?["error"]["code"],"forbidden","parent metadata alone does not grant access");
         let visible=data(call(&coordinator,"nesvo_list_sessions",json!({})).await?)?;
         assert_eq!(visible["data"]["sessions"].as_array().context("filtered list")?.len(),2,"metadata-only child must not appear in coordinator snapshots");
+        let opt_out=data(call(&coordinator,"nesvo_create_session",json!({"key":"opt-out","spec":{"name":"No harness worker","program":"claude","harness":false}})).await?)?;
+        let opted_id=opt_out["data"]["receipt"]["sessionId"].as_str().context("opt-out child")?;
+        let opted=data(call(&coordinator,"nesvo_get_session",json!({"sessionId":opted_id})).await?)?;
+        assert_eq!(opted["data"]["session"]["harness"]["enabled"],false);
+        let cli_launch=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing()).args(["session","create","CLI harness worker","--program","claude","--harness","--key","cli-harness-worker","--json"]).output().await?;
+        ensure!(cli_launch.status.success(),"CLI harness launch failed");
+        let cli_launch:Value=serde_json::from_slice(&cli_launch.stdout)?;
+        let cli_id=cli_launch["data"]["receipt"]["sessionId"].as_str().context("CLI harness ID")?;
+        session_ready(&owner,cli_id).await?;
+        let cli_view=data(call(&owner,"nesvo_get_session",json!({"sessionId":cli_id})).await?)?;
+        assert_eq!(cli_view["data"]["session"]["harness"]["enabled"],true);
+        let unsupported=call(&owner,"nesvo_create_session",json!({"key":"unsupported-harness","spec":{"name":"Unsupported shell harness","program":"shell","harness":true}})).await?;
+        assert_eq!(unsupported.structured_content.context("unsupported provider")?["error"]["receipt"]["result"]["code"],"unsupported");
         for spec in [json!({"name":"recursive","role":"coordinator"}),json!({"name":"forged-parent","parentSessionId":foreign_id})] {
             let rejected=call(&coordinator,"nesvo_create_session",json!({"key":"rejected-create","spec":spec})).await?;
             assert_eq!(rejected.structured_content.context("create refusal")?["error"]["code"],"forbidden");
