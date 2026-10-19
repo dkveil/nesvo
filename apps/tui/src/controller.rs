@@ -167,6 +167,22 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     // console write for a key that has not changed the local view.
                     outcome.redraw = was_scrolled;
                 }
+            } else if key.modifiers.is_empty() && matches!(key.code, KeyCode::Char('[' | ']')) {
+                if app.review.visible {
+                    review_key(app, key, area, &mut outcome);
+                } else {
+                    let width = ui::geometry(area, app).tree.width;
+                    if width > 0 {
+                        app.sidebar_width = if key.code == KeyCode::Char('[') {
+                            width.saturating_sub(4).max(22)
+                        } else {
+                            width
+                                .saturating_add(4)
+                                .min(80)
+                                .min(area.width.saturating_sub(48))
+                        };
+                    }
+                }
             } else if app.review.visible && app.review.focused {
                 review_key(app, key, area, &mut outcome);
             } else if key.code == KeyCode::Esc {

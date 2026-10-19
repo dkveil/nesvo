@@ -249,6 +249,7 @@ pub fn run(
                             Some(crate::workspace_layout::WorkspaceLayout::capture(&app));
                         layout_loaded = false;
                         let mut next_app = App::new(connection.client_id);
+                        next_app.sidebar_width = app.sidebar_width;
                         next_app.ascii_icons = app.ascii_icons;
                         next_app.shortcuts = app.shortcuts;
                         next_app.theme = app.theme;

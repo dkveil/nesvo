@@ -14,6 +14,7 @@ pub struct WorkspaceLayout {
     collapsed: HashSet<String>,
     split: bool,
     fullscreen: bool,
+    sidebar_width: u16,
     focused: usize,
 }
 impl WorkspaceLayout {
@@ -25,6 +26,7 @@ impl WorkspaceLayout {
             collapsed: app.collapsed.clone(),
             split: app.split,
             fullscreen: app.fullscreen,
+            sidebar_width: app.sidebar_width,
             focused: app.focused,
         }
     }
@@ -50,6 +52,7 @@ impl WorkspaceLayout {
         let mut commands = Vec::new();
         app.split = self.split;
         app.fullscreen = self.fullscreen;
+        app.sidebar_width = self.sidebar_width;
         for index in 0..if self.split { 2 } else { 1 } {
             if let Some(id) = self.panes[index]
                 .as_deref()

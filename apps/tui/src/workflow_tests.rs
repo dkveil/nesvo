@@ -514,3 +514,50 @@ fn auto_review_clears_pin_and_repository_change_resets_position() {
     assert_eq!(app.review.hunk, 0);
     assert!(app.review.folded.is_empty());
 }
+
+#[test]
+fn brackets_resize_sidebar_or_visible_review_without_stealing_input() {
+    let mut app = app();
+    app.mode = Mode::Navigate;
+    let area = Rect::new(0, 0, 150, 44);
+    let initial = ui::geometry(area, &app).tree.width;
+    key(&mut app, KeyCode::Char(']'));
+    assert_eq!(ui::geometry(area, &app).tree.width, initial + 4);
+    key(&mut app, KeyCode::Char('['));
+    assert_eq!(ui::geometry(area, &app).tree.width, initial);
+    let saved = crate::workspace_layout::WorkspaceLayout::capture(&app);
+    let mut restored = App::new(2);
+    saved.apply(&mut restored);
+    assert_eq!(restored.sidebar_width, app.sidebar_width);
+    app.review.visible = true;
+    app.review.focused = false;
+    let sidebar = app.sidebar_width;
+    key(&mut app, KeyCode::Char('['));
+    assert!(app.review.width > 0);
+    assert_eq!(app.sidebar_width, sidebar);
+    let review = app.review.width;
+    app.mode = Mode::Input;
+    app.sessions[0].controller_id = Some(app.client_id);
+    app.leases.insert("a".into(), "lease".into());
+    app.terminals
+        .insert("a".into(), crate::terminal::TerminalState::new(24, 80));
+    let outcome = key(&mut app, KeyCode::Char(']'));
+    assert_eq!(app.sidebar_width, sidebar);
+    assert_eq!(app.review.width, review);
+    assert!(
+        outcome
+            .commands
+            .iter()
+            .any(|c| c["type"] == "input" && c["data"] == "]")
+    );
+    app.mode = Mode::Navigate;
+    app.review.visible = false;
+    for _ in 0..30 {
+        key(&mut app, KeyCode::Char(']'));
+    }
+    assert!(ui::geometry(area, &app).panes[0].width >= 48);
+    for _ in 0..30 {
+        key(&mut app, KeyCode::Char('['));
+    }
+    assert_eq!(app.sidebar_width, 22);
+}

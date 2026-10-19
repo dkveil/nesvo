@@ -193,6 +193,7 @@ pub(crate) fn folder_choices<'a>(
 }
 
 pub struct App {
+    pub sidebar_width: u16,
     pub ascii_icons: bool,
     pub selection: Option<crate::selection::Selection>,
     pub menu_phase: u8,
@@ -246,6 +247,7 @@ pub struct App {
 impl App {
     pub fn new(client_id: u64) -> Self {
         Self {
+            sidebar_width: 0,
             ascii_icons: false,
             selection: None,
             menu_phase: 0,

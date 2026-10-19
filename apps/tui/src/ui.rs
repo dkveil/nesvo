@@ -90,7 +90,13 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     let sidebar = if immersive || area.width < 65 {
         0
     } else {
-        30.min(area.width / 3)
+        if app.sidebar_width == 0 {
+            30.min(area.width / 3)
+        } else {
+            app.sidebar_width
+                .clamp(22, 80)
+                .min(area.width.saturating_sub(48))
+        }
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
@@ -1342,6 +1348,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("Enter", "Open selected session"),
             ("/  Ctrl+K", "Open command palette"),
             ("z", "Toggle full screen"),
+            ("[ ]", "Resize sidebar; when diff is open, resize diff"),
             ("F6", "Previous session"),
             ("F7", "Next session needing attention"),
             ("F1  ?", "Main menu / keyboard help"),
