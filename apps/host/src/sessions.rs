@@ -171,6 +171,12 @@ impl State {
             crate::api_error::Error::new("unsupported", "Host event journal is unavailable").into()
         })
     }
+    pub fn operation_caller(&self, client_id: u64) -> Result<(String, bool)> {
+        Ok(match self.caller_session(client_id)? {
+            Some(id) => (format!("session:{id}"), false),
+            None => ("owner".into(), true),
+        })
+    }
     pub fn event_subject(
         &self,
         client_id: u64,
@@ -257,6 +263,7 @@ impl State {
             return Ok(());
         };
         let target = match command {
+            Command::GetOperation { .. } => return Ok(()),
             Command::UnsubscribeEvents => return Ok(()),
             Command::ReadEvents { session_id, .. }
             | Command::SubscribeEvents { session_id, .. } => {
@@ -329,6 +336,7 @@ impl State {
             "hostId":self.metadata.host_id, "pushNotifications":true, "diagnostics":true, "sessionQueries":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
             "providerLimits":self.provider_limits});
         event["domainEvents"] = self.event_log.is_some().into();
+        event["operationReceipts"] = self.event_log.is_some().into();
         event
     }
 
@@ -882,6 +890,28 @@ impl State {
         spec: &crate::jobs::LaunchSpec,
         events: &mpsc::Sender<PtyEvent>,
     ) -> Result<String> {
+        self.launch_inner(spec, events, None)
+    }
+    pub fn launch_reserved(
+        &mut self,
+        spec: &crate::jobs::LaunchSpec,
+        events: &mpsc::Sender<PtyEvent>,
+        id: &str,
+    ) -> Result<String> {
+        ensure!(
+            id.len() == 32
+                && id.bytes().all(|b| b.is_ascii_hexdigit())
+                && !self.sessions.contains_key(id),
+            "Reserved process identity is invalid or already running"
+        );
+        self.launch_inner(spec, events, Some(id))
+    }
+    fn launch_inner(
+        &mut self,
+        spec: &crate::jobs::LaunchSpec,
+        events: &mpsc::Sender<PtyEvent>,
+        reserved: Option<&str>,
+    ) -> Result<String> {
         let cwd = self.validate_launch(spec)?;
         let mut command = self.launchers.command(spec.program, &cwd)?;
         if spec.resume_picker {
@@ -906,6 +936,7 @@ impl State {
             command,
             events.clone(),
             self.caller_url.as_deref(),
+            reserved,
         )?;
         session.info.group_id = spec.group_id.clone();
         session.auto_title = spec.auto_title && spec.program != Program::Shell;
@@ -921,13 +952,14 @@ impl State {
                 .collect();
         }
         let id = session.info.id.clone();
-        // Scheduled agents must be able to finish startup without an attached client.
-        #[cfg(windows)]
-        if !spec.prompt.is_empty() {
-            session.pty.send_input("\x1b[1;1R".into())?;
-            session.has_been_attached = true;
+        if let Err(error) = self.persist_session(&session) {
+            #[cfg(windows)]
+            let _ = session.pty.answer_unattached_cursor_query();
+            let _ = session.pty.kill();
+            self.cleanup_workers
+                .push(thread::spawn(move || drop(session)));
+            return Err(error);
         }
-        self.persist_session(&session)?;
         self.sessions.insert(id.clone(), session);
         self.emit(
             Some(&id),
@@ -1029,6 +1061,9 @@ impl State {
         ensure!(!self.shutting_down, "Host is shutting down.");
         self.authorize(client_id, &command)?;
         match command {
+            Command::CreateOperation { .. } | Command::GetOperation { .. } => {
+                return Err(anyhow!("Operations require asynchronous dispatch"));
+            }
             Command::ReadEvents { .. }
             | Command::SubscribeEvents { .. }
             | Command::UnsubscribeEvents => {
@@ -1324,6 +1359,7 @@ impl State {
                     command,
                     pty_events.clone(),
                     self.caller_url.as_deref(),
+                    None,
                 )?;
                 session.info.group_id = group_id;
                 let session_id = session.info.id.clone();
@@ -1579,8 +1615,11 @@ fn spawn_session(
     mut command: CommandBuilder,
     events: mpsc::Sender<PtyEvent>,
     caller_url: Option<&str>,
+    reserved: Option<&str>,
 ) -> Result<Session> {
-    let id = hex::encode(crate::wire::random::<16>());
+    let id = reserved
+        .map(str::to_owned)
+        .unwrap_or_else(|| hex::encode(crate::wire::random::<16>()));
     command.env("NESVO_SESSION_ID", &id);
     let caller_context = caller_url
         .map(|url| crate::caller::Context::new(url, &id))

@@ -1169,6 +1169,7 @@ dependencies = [
  "portable-pty",
  "qrcode",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

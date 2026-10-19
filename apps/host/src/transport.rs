@@ -327,6 +327,28 @@ pub async fn handle(
                             state.lock().unwrap().send(id,event);
                             continue;
                         }
+                        if matches!(command,Command::CreateOperation{..}|Command::GetOperation{..}) {
+                            let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.operation_caller(id)?))})();
+                            let permit=event_gate.clone().try_acquire_owned();
+                            match (prepared,permit) {
+                                (Ok((log,(issuer,admin))),Ok(permit))=>{
+                                    let state=state.clone();let events=pty_events.clone();
+                                    tokio::spawn(async move {
+                                        let _permit=permit;
+                                        let result:Result<serde_json::Value>=match command {
+                                            Command::CreateOperation{key,spec}=>crate::operations::create(state.clone(),events,log,issuer,key,spec).await.map(|receipt|json!({"type":"operation","receipt":receipt})),
+                                            Command::GetOperation{id,key}=>log.operation(issuer,admin,id,key).await.map(|view|json!({"type":"operation","receipt":view.receipt,"cursor":view.cursor})),
+                                            _=>unreachable!(),
+                                        };
+                                        let mut event=match result {Ok(event)=>event,Err(error)=>json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("operation_unconfirmed"),"message":if error.downcast_ref::<crate::api_error::Error>().is_some(){error.to_string()}else{"Operation outcome is unconfirmed; look up the same idempotency key before retrying".into()}})};
+                                        if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
+                                        state.lock().unwrap().send(id,event);
+                                    });
+                                },
+                                _=>{let mut event=json!({"type":"error","code":"busy","message":"Operation service is unavailable or busy"});if let Some(request_id)=request_id {event["requestId"]=request_id.into();}state.lock().unwrap().send(id,event);},
+                            }
+                            continue;
+                        }
                         if matches!(command,Command::ReadEvents{..}|Command::SubscribeEvents{..}) {
                             let (after,limit,subject,subscribe)=match command {
                                 Command::ReadEvents{after,limit,session_id}=>(after,limit.unwrap_or(32),session_id,false),

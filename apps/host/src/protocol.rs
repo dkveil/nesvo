@@ -11,6 +11,14 @@ pub enum Command {
         client_nonce: String,
     },
     List,
+    CreateOperation {
+        key: String,
+        spec: crate::jobs::LaunchSpec,
+    },
+    GetOperation {
+        id: Option<String>,
+        key: Option<String>,
+    },
     ReadEvents {
         after: u64,
         limit: Option<usize>,

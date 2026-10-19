@@ -28,6 +28,8 @@ import {
 import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Event = {
+  receipt?: { id: string; sessionId: string; phase: string; result: { code?: string } };
+  cursor?: number;
   report?: {
     providerVersions?: { program: string; status: string; version: string | null }[];
     sessions?: {
@@ -356,6 +358,11 @@ process.stdin.on('data', bytes=>{
         { type: 'input', sessionId: id, data: 'DO_NOT_SEND\r' },
         { type: 'getDiff', sessionId: id, scope: 'unstaged', directory: fixture },
         { type: 'launch', spec: { name: 'unauthorized', program: 'shell' } },
+        {
+          type: 'createOperation',
+          key: 'forged',
+          spec: { name: 'unauthorized', program: 'shell' },
+        },
         { type: 'close', sessionId: other },
         { type: 'readEvents', after: 0, sessionId: other },
       ]) {
@@ -365,6 +372,19 @@ process.stdin.on('data', bytes=>{
           'forbidden',
         );
       }
+      peer.send({
+        type: 'createOperation',
+        key: 'private-receipt',
+        spec: { name: 'Invalid folder', program: 'shell', cwd: join(fixture, 'absent') },
+        requestId: 'private-receipt',
+      });
+      const privateReceipt = (await peer.next('operation', e => e.requestId === 'private-receipt'))
+        .receipt!;
+      scoped.send({ type: 'getOperation', id: privateReceipt.id, requestId: 'foreign-receipt' });
+      assert.equal(
+        (await scoped.next('error', e => e.requestId === 'foreign-receipt')).code,
+        'operation_not_found',
+      );
       scoped.send({ type: 'list', requestId: 'scope-list' });
       const scopedList = await scoped.next('sessions', e => e.requestId === 'scope-list');
       assert.deepEqual(scopedList.groups, [], 'foreign group names and rollups are not broadcast');
@@ -1098,6 +1118,130 @@ done
     }
   }
 });
+
+test(
+  'durable create receipts deduplicate native launches across clients, disconnect and restart',
+  { timeout: 90000 },
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'nesvo-operation-'));
+    let host: ChildProcess | undefined;
+    const peers: Peer[] = [];
+    async function connect(): Promise<Peer> {
+      const peer = new Peer(parsePairing(await readFile(join(fixture, 'pairing.json'), 'utf8')));
+      peers.push(peer);
+      await peer.authenticate();
+      await peer.next('sessions');
+      return peer;
+    }
+    async function start(): Promise<Peer> {
+      host = spawn(
+        hostBinary(),
+        ['--port', '0', '--pairing-dir', fixture, '--workspace', fixture, '--exit-on-stdin-close'],
+        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+      let ready = false;
+      let failure = '';
+      host.stdout?.on('data', data => {
+        ready ||= data.toString().includes('Rust host listening');
+      });
+      host.stderr?.on('data', data => {
+        failure += data.toString();
+      });
+      host.on('error', error => {
+        failure += error.message;
+      });
+      await until(() => {
+        if (host?.exitCode !== null || failure) throw new Error(failure);
+        return ready || undefined;
+      }, 'operation host');
+      return connect();
+    }
+    const spec = { name: 'One native process łódź', program: 'shell', cwd: fixture };
+    try {
+      let owner = await start();
+      const other = await connect();
+      owner.send({ type: 'createOperation', key: 'one', spec, requestId: 'a' });
+      other.send({ type: 'createOperation', key: 'one', spec, requestId: 'b' });
+      const a = (await owner.next('operation', e => e.requestId === 'a')).receipt!;
+      const b = (await other.next('operation', e => e.requestId === 'b')).receipt!;
+      assert.equal(a.id, b.id);
+      assert.equal(a.sessionId, b.sessionId);
+      await until(async () => {
+        owner.send({ type: 'getOperation', key: 'one', requestId: 'lookup' });
+        const result = await owner.next('operation', e => e.requestId === 'lookup');
+        assert.ok(result.cursor! >= 3);
+        return result.receipt?.phase === 'created' || undefined;
+      }, 'native process confirmation');
+      owner.send({ type: 'list', requestId: 'count' });
+      const sessions = (await owner.next('sessions', e => e.requestId === 'count')).sessions!;
+      assert.equal(sessions.length, 1);
+      assert.equal(sessions[0].id, a.sessionId);
+      assert.equal(sessions[0].running, true);
+      assert.equal(sessions[0].controllerId, null, 'background create never takes input ownership');
+      owner.send({
+        type: 'createOperation',
+        key: 'one',
+        spec: { ...spec, name: 'Changed' },
+        requestId: 'conflict',
+      });
+      assert.equal(
+        (await owner.next('error', e => e.requestId === 'conflict')).code,
+        'idempotency_conflict',
+      );
+      owner.send({
+        type: 'createOperation',
+        key: 'invalid',
+        spec: { ...spec, cwd: join(fixture, 'missing') },
+        requestId: 'invalid',
+      });
+      const failed = (await owner.next('operation', e => e.requestId === 'invalid')).receipt!;
+      assert.equal(failed.phase, 'failed');
+      assert.equal(failed.result.code, 'invalid_launch');
+
+      other.send({
+        type: 'createOperation',
+        key: 'disconnect',
+        spec: { ...spec, name: 'Disconnected caller' },
+        requestId: 'lost-reply',
+      });
+      await other.disconnect();
+      await until(async () => {
+        owner.send({ type: 'getOperation', key: 'disconnect', requestId: 'after-disconnect' });
+        const response = await owner.next('operation', e => e.requestId === 'after-disconnect');
+        return response.receipt?.phase === 'created' || undefined;
+      }, 'lookup after response channel closes');
+      for (const peer of peers) await peer.disconnect();
+      await stopFixtureHost(host!);
+      owner = await start();
+      owner.send({ type: 'createOperation', key: 'one', spec, requestId: 'restart-replay' });
+      const replay = (await owner.next('operation', e => e.requestId === 'restart-replay'))
+        .receipt!;
+      assert.equal(replay.id, a.id);
+      assert.equal(
+        replay.phase,
+        'created',
+        'receipt records historical creation, not a new launch',
+      );
+      owner.send({ type: 'list', requestId: 'after-restart' });
+      assert.deepEqual(
+        (await owner.next('sessions', e => e.requestId === 'after-restart')).sessions,
+        [],
+        'replay cannot resurrect an exited process',
+      );
+      owner.send({ type: 'getOperation', id: failed.id, requestId: 'failed-replay' });
+      assert.equal(
+        (await owner.next('operation', e => e.requestId === 'failed-replay')).receipt?.phase,
+        'failed',
+      );
+    } finally {
+      for (const peer of peers) peer.socket.terminate();
+      if (host) await stopFixtureHost(host);
+      assert.equal(dirname(resolve(fixture)), resolve(tmpdir()));
+      assert.ok(fixture.includes('nesvo-operation-'));
+      await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  },
+);
 
 test(
   'templates, notification consent and recovery survive host restart without replaying input',

@@ -152,3 +152,14 @@ never revives the agent or supplies a task result. Cursor gaps interrupt pending
 turn correlation until a new submitted prompt. Diagnostic turn history is bounded
 to 16 entries and retained only while the host session exists; it is not durable
 workflow history.
+
+### Durable operation receipts
+
+`operationReceipts:true` enables asynchronous `createOperation {key,spec}` and
+`getOperation {id|key}`. Both return `type:"operation"` with a durable receipt;
+lookup also returns the domain cursor from the same database snapshot. Accepted,
+dispatching, created, failed and unknown phases do not imply agent readiness or
+task success. Same caller/key/spec never creates another process; conflicting
+specs are rejected. Unconfirmed effects are never retried automatically. Scoped
+passive workers cannot create or inspect another issuer's receipt. See
+[durable operations](harness-operations.md) for transactions, restart and limits.
