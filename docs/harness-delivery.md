@@ -220,3 +220,23 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   spawn a CLI. Native launcher fixtures verify a real process version reaches
   the cached diagnostic report. Provider/parser/build identity is now visible;
   the full provider lifecycle/version matrix remains a stage gate.
+
+### F08 lifecycle checkpoint
+
+- Process lifetime, current/historical agent observations, startup and response
+  turn state are separate. Turn IDs derive from launch identity and event sequence;
+  old idle does not start or settle a new turn. Stop establishes response settlement,
+  never task success. Questions/quota/permissions wait; interruption, replacement,
+  history gaps and process exit have explicit outcomes. A two-second final drain
+  handles Stop committed immediately before exit without reviving the process.
+- Host snapshots include additive lifecycle data; mobile validates it while older
+  clients ignore it. Diagnostics expose a bounded 16-entry turn history. Run/task
+  results remain unassigned until the durable orchestration stage. Completion
+  unread integration and full multi-provider lifecycle coverage remain open.
+- New native integration uses a clearly labeled controlled CLI process and the
+  real launch-scoped settings/helper/journal/PTY/host transport. It verifies
+  question, child/foreign Stop isolation, fast turns between polls, late observer,
+  final process drain and no implied task success without any model request.
+- Rust unit checks: 123 TUI, 62 host, 3 wire passed; client checks: 20, with
+  typecheck/lint/architecture passing. This fixture supplements, rather than
+  replaces, recorded real Claude verification.

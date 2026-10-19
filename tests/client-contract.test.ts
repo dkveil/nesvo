@@ -49,6 +49,68 @@ test('readiness is independent from legacy agent state and validates at the wire
   );
 });
 
+test('process, agent and turn lifecycles cannot invent task success or revive exited agents', () => {
+  const lifecycle = {
+    process: { running: true, pid: 7 },
+    agent: {
+      current: { state: 'idle', source: 'hook', updatedAt: 1 },
+      lastKnown: null,
+      blockReason: null,
+      freshness: 'observed',
+    },
+    turn: {
+      id: 'launch:2',
+      generation: 1,
+      phase: 'settled',
+      elapsedSeconds: 4,
+      observedAt: 2,
+      outcome: 'response ended; task result not established',
+    },
+  };
+  const snapshot = { type: 'sessions', groups, sessions: [{ ...session, lifecycle }], revision: 0 };
+  assert.equal(decodeServerMessage(snapshot).type, 'sessions');
+  assert.throws(() =>
+    decodeServerMessage({
+      ...snapshot,
+      sessions: [
+        {
+          ...session,
+          running: false,
+          lifecycle: { ...lifecycle, process: { running: false, pid: 7 } },
+        },
+      ],
+    }),
+  );
+  assert.throws(() =>
+    decodeServerMessage({
+      ...snapshot,
+      sessions: [
+        {
+          ...session,
+          lifecycle: { ...lifecycle, turn: { ...lifecycle.turn, phase: 'succeeded' } },
+        },
+      ],
+    }),
+  );
+  assert.throws(() =>
+    decodeServerMessage({
+      ...snapshot,
+      sessions: [
+        {
+          ...session,
+          lifecycle: {
+            ...lifecycle,
+            agent: {
+              ...lifecycle.agent,
+              current: { state: 'done', source: 'process', updatedAt: 2 },
+            },
+          },
+        },
+      ],
+    }),
+  );
+});
+
 test('program status retains legacy wire sources and validates structured provenance', () => {
   const status = { state: 'blocked', source: 'screen', confirmedSource: 'osc7501', updatedAt: 1 };
   const snapshot = { type: 'sessions', groups, sessions: [{ ...session, status }], revision: 0 };

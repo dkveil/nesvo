@@ -16,6 +16,23 @@ export type SessionReadiness = {
   initialized: boolean;
   reason: string;
 };
+export type SessionLifecycle = {
+  process: { running: boolean; pid: number | null };
+  agent: {
+    current: SessionStatus | null;
+    lastKnown: SessionStatus | null;
+    blockReason: 'permission' | 'question' | 'auth' | 'quota' | 'setup' | 'unknown' | null;
+    freshness: 'observed' | 'unknown' | 'processExited';
+  };
+  turn: {
+    id: string;
+    generation: number;
+    phase: 'accepted' | 'started' | 'waiting' | 'settled' | 'interrupted' | 'failed';
+    elapsedSeconds: number;
+    observedAt: number;
+    outcome: string | null;
+  } | null;
+};
 export type AttentionEvent = {
   source?: SessionStatusSource;
   sequence: number;
@@ -48,6 +65,7 @@ export type SessionControl = {
 };
 
 export type TerminalSession = {
+  lifecycle?: SessionLifecycle;
   readiness?: SessionReadiness;
   attention?: AttentionEvent | null;
   muted?: boolean;

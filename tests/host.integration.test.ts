@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
@@ -190,6 +190,156 @@ class Peer {
     await until(() => this.closed || undefined, 'socket closed');
   }
 }
+
+test(
+  'launch-scoped lifecycle reaches real helper, host and late observers without a model',
+  { timeout: 60000 },
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'nesvo-lifecycle-'));
+    const bin = join(fixture, 'bin');
+    await mkdir(bin);
+    const script = String.raw`#!/usr/bin/env node
+const {spawnSync}=require('node:child_process');
+if(process.argv.includes('--version')) { console.log('2.1.303-fixture'); process.exit(0); }
+const settings=JSON.parse(process.argv[process.argv.indexOf('--settings')+1]);
+function hook(name, extra={}) {
+  const command=settings.hooks[name][0].hooks[0];
+  const result=spawnSync(command.command,command.args,{windowsHide:true,input:JSON.stringify({hook_event_name:name,session_id:'fixture-conversation',agent_id:'',...extra}),stdio:['pipe','ignore','ignore']});
+  if(result.status!==0) throw new Error('Fixture hook failed');
+}
+hook('SessionStart',{source:'startup'});
+console.log('FIXTURE_READY');
+process.stdin.on('data', bytes=>{
+  const input=bytes.toString();
+  if(input.includes('fast-exit')) { hook('UserPromptSubmit');hook('Stop');process.exit(0); }
+  else if(input.includes('fast-turn')) { hook('UserPromptSubmit');hook('Stop'); }
+  else if(input.includes('question')) { hook('UserPromptSubmit');hook('PreToolUse',{tool_name:'AskUserQuestion'}); }
+  else if(input.includes('child-stop')) hook('Stop',{agent_id:'native-child'});
+  else if(input.includes('foreign-stop')) hook('Stop',{session_id:'foreign-conversation'});
+});process.stdin.resume();`;
+    if (process.platform === 'win32') {
+      await link(process.execPath, join(bin, 'node.exe')).catch(() =>
+        copyFile(process.execPath, join(bin, 'node.exe')),
+      );
+      const pkg = join(bin, 'node_modules', '@anthropic-ai', 'claude-code');
+      await mkdir(pkg, { recursive: true });
+      await writeFile(join(pkg, 'package.json'), JSON.stringify({ bin: { claude: 'main.js' } }));
+      await writeFile(join(pkg, 'main.js'), script);
+      await writeFile(join(bin, 'claude.cmd'), '@echo off\r\necho SHIM_MUST_NOT_EXECUTE\r\n');
+    } else {
+      await link(process.execPath, join(bin, 'node')).catch(() =>
+        copyFile(process.execPath, join(bin, 'node')),
+      );
+      await chmod(join(bin, 'node'), 0o755);
+      await writeFile(join(bin, 'claude'), script);
+      await chmod(join(bin, 'claude'), 0o755);
+    }
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'path'),
+    );
+    env.PATH = [bin, dirname(process.execPath)].join(delimiter);
+    const host = spawn(
+      hostBinary(),
+      [
+        '--port',
+        '0',
+        '--pairing-dir',
+        join(fixture, 'pairing'),
+        '--workspace',
+        fixture,
+        '--exit-on-stdin-close',
+      ],
+      { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    host.stdout?.resume();
+    host.stderr?.resume();
+    let peer: Peer | undefined;
+    try {
+      const pairing = await until(async () => {
+        try {
+          return parsePairing(await readFile(join(fixture, 'pairing', 'pairing.json'), 'utf8'));
+        } catch {
+          return undefined;
+        }
+      }, 'lifecycle pairing');
+      peer = new Peer(pairing);
+      await peer.authenticate();
+      await peer.next('sessions');
+      peer.send({
+        type: 'create',
+        name: 'Lifecycle fixture',
+        program: 'claude',
+        requestId: 'lifecycle-create',
+      });
+      const id = (await peer.next('created', e => e.requestId === 'lifecycle-create')).sessionId!;
+      peer.send({ type: 'attach', sessionId: id, cols: 100, rows: 32 });
+      await peer.next('attached');
+      await peer.output(id, 'FIXTURE_READY');
+      await peer.next(
+        'sessions',
+        e =>
+          e.sessions?.some(
+            s => s.id === id && s.status?.evidence === 'hook' && s.status.state === 'idle',
+          ) ?? false,
+      );
+      peer.send({ type: 'input', sessionId: id, data: 'question\r' });
+      const question = await peer.next(
+        'sessions',
+        e => e.sessions?.some(s => s.id === id && s.lifecycle?.turn?.phase === 'waiting') ?? false,
+      );
+      const waiting = question.sessions!.find(s => s.id === id)!;
+      assert.equal(waiting.lifecycle?.agent.blockReason, 'question');
+      const oldTurn = waiting.lifecycle!.turn!.id;
+      peer.send({ type: 'input', sessionId: id, data: 'child-stop\r' });
+      peer.send({ type: 'input', sessionId: id, data: 'foreign-stop\r' });
+      await delay(600);
+      peer.send({ type: 'list' });
+      const stillWaiting = await peer.next(
+        'sessions',
+        e => e.sessions?.some(s => s.id === id && s.lifecycle?.turn?.id === oldTurn) ?? false,
+      );
+      assert.equal(
+        stillWaiting.sessions!.find(s => s.id === id)!.lifecycle?.turn?.phase,
+        'waiting',
+      );
+      peer.send({ type: 'input', sessionId: id, data: 'fast-turn\r' });
+      const settled = await peer.next(
+        'sessions',
+        e => e.sessions?.some(s => s.id === id && s.lifecycle?.turn?.phase === 'settled') ?? false,
+      );
+      const turn = settled.sessions!.find(s => s.id === id)!.lifecycle!.turn!;
+      assert.notEqual(turn.id, oldTurn);
+      assert.match(turn.outcome!, /task result not established/);
+      const observer = new Peer(pairing);
+      try {
+        await observer.authenticate();
+        const snapshot = await observer.next('sessions');
+        const observed = snapshot.sessions!.find(s => s.id === id)!;
+        assert.equal(observed.lifecycle?.turn?.id, turn.id);
+        assert.equal(observed.lifecycle?.process.running, true);
+        peer.send({ type: 'input', sessionId: id, data: 'fast-exit\r' });
+        const ended = await observer.next(
+          'sessions',
+          e =>
+            e.sessions?.some(
+              s =>
+                s.id === id &&
+                !s.running &&
+                s.lifecycle?.turn?.phase === 'settled' &&
+                s.lifecycle.turn.id !== turn.id,
+            ) ?? false,
+        );
+        assert.equal(ended.sessions!.find(s => s.id === id)!.lifecycle?.agent.current, null);
+      } finally {
+        await observer.disconnect();
+      }
+    } finally {
+      peer?.socket.terminate();
+      await stopFixtureHost(host);
+      await rm(fixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  },
+);
 
 test(
   'Rust host interoperates with TweetNaCl and preserves real PTYs securely',

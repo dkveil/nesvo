@@ -56,6 +56,8 @@ pub struct StatusTracker {
     exited: bool,
     exit_code: Option<u32>,
     status: SessionStatus,
+    last_semantic: Option<SessionStatus>,
+    hook_reason: &'static str,
 }
 
 pub fn now_millis() -> u64 {
@@ -90,12 +92,14 @@ impl StatusTracker {
                 source: StatusSource::Activity,
                 updated_at: now,
             },
+            last_semantic: None,
+            hook_reason: "unknown",
         }
     }
 
-    pub fn lifecycle(&mut self, report: crate::agent_context::LifecycleReport, now: u64) {
+    pub fn lifecycle(&mut self, report: crate::agent_context::LifecycleReport, now: u64) -> bool {
         if self.exited || report.sequence <= self.lifecycle_sequence {
-            return;
+            return false;
         }
         self.lifecycle_sequence = report.sequence;
         self.observation_order = self.observation_order.saturating_add(1);
@@ -107,10 +111,24 @@ impl StatusTracker {
         self.screen_hint = None;
         self.screen_rule = None;
         self.screen_dirty = false;
+        true
     }
-    pub fn lifecycle_ordered(&mut self, report: crate::agent_context::LifecycleReport, now: u64) {
-        self.lifecycle(report, now);
+    pub fn lifecycle_ordered(
+        &mut self,
+        report: crate::agent_context::LifecycleReport,
+        now: u64,
+    ) -> bool {
+        let changed = self.lifecycle(report, now);
         self.lifecycle_ordering = "launch-sequence";
+        changed
+    }
+    pub fn record_hook_reason(&mut self, event: &str, state: StatusState) {
+        self.hook_reason = match (event, state) {
+            (_, StatusState::Question) => "question",
+            ("PermissionRequest" | "Notification", StatusState::Blocked) => "permission",
+            ("StopFailure", StatusState::Blocked) => "quota",
+            _ => "unknown",
+        };
     }
 
     pub fn rate_limited(&self) -> bool {
@@ -137,6 +155,33 @@ impl StatusTracker {
 
     pub fn status(&self) -> SessionStatus {
         self.status
+    }
+    pub fn agent_projection(&self) -> serde_json::Value {
+        let current =
+            (!self.exited && self.status.source != StatusSource::Activity).then_some(self.status);
+        let reason = if self.status.state == StatusState::Question {
+            Some("question")
+        } else if self.status.state != StatusState::Blocked {
+            None
+        } else {
+            Some(match self.status.source {
+                StatusSource::Hook => self.hook_reason,
+                StatusSource::Program => match self.program_status.as_ref().and_then(|r| r.kind) {
+                    Some(crate::program_status::Kind::Permission) => "permission",
+                    Some(crate::program_status::Kind::Question) => "question",
+                    Some(crate::program_status::Kind::Auth) => "auth",
+                    None => "unknown",
+                },
+                StatusSource::Screen => match self.rule_reason() {
+                    Some("folder trust" | "MCP consent") => "setup",
+                    Some("quota") => "quota",
+                    Some("permission") => "permission",
+                    _ => "unknown",
+                },
+                _ => "unknown",
+            })
+        };
+        serde_json::json!({"current":current,"lastKnown":self.last_semantic,"blockReason":reason,"freshness":if self.exited{"processExited"}else if current.is_some(){"observed"}else{"unknown"}})
     }
     pub fn rule_reason(&self) -> Option<&'static str> {
         (self.status.source == StatusSource::Screen)
@@ -294,6 +339,9 @@ impl StatusTracker {
             source,
             updated_at: now,
         };
+        if !matches!(source, StatusSource::Activity | StatusSource::Process) {
+            self.last_semantic = Some(self.status);
+        }
         true
     }
 }

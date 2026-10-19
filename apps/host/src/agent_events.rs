@@ -115,6 +115,7 @@ pub struct Identity {
     pub rejected: u64,
 }
 pub struct Event {
+    pub name: String,
     pub sequence: u64,
     pub generation: u64,
     pub state: StatusState,
@@ -159,18 +160,20 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
     let gap = first.is_some_and(|first| first as u64 > after.saturating_add(1));
     let mut events = Vec::new();
     {
-        let mut statement=transaction.prepare("SELECT sequence,generation,state FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?;
+        let mut statement=transaction.prepare("SELECT sequence,generation,state,event FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?;
         let rows = statement.query_map(params![after as i64, BATCH as i64], |row| {
             Ok((
                 unsigned(row, 0)?,
                 unsigned(row, 1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
             ))
         })?;
         for row in rows {
-            let (sequence, generation, state) = row?;
+            let (sequence, generation, state, name) = row?;
             ensure!(state.len() <= 32, "Invalid lifecycle state");
             events.push(Event {
+                name,
                 sequence,
                 generation,
                 state: serde_json::from_str(&state)?,

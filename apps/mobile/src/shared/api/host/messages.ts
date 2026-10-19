@@ -33,9 +33,49 @@ function sessionStatus(value: unknown): boolean {
   if (value.source === 'process')
     return value.state === 'done' || value.state === 'failed' || value.state === 'unknown';
   return (
-    (value.source === 'screen' || value.source === 'hook') &&
+    (value.source === 'screen' || value.source === 'hook' || value.source === 'program') &&
     typeof value.state === 'string' &&
     ['working', 'idle', 'done', 'blocked', 'question', 'failed', 'unknown'].includes(value.state)
+  );
+}
+function lifecycle(value: unknown, running: boolean): boolean {
+  if (!record(value) || !record(value.process) || !record(value.agent)) return false;
+  const { process, agent, turn } = value;
+  if (process.running !== running || !(process.pid === null || integer(process.pid, 1)))
+    return false;
+  const semantic = (status: unknown) =>
+    record(status) &&
+    typeof status.source === 'string' &&
+    !['activity', 'process'].includes(status.source) &&
+    sessionStatus(status);
+  if (!(agent.current === null || (running && semantic(agent.current)))) return false;
+  if (!(agent.lastKnown === null || semantic(agent.lastKnown))) return false;
+  if (!(
+    agent.blockReason === null ||
+    (typeof agent.blockReason === 'string' &&
+      ['permission', 'question', 'auth', 'quota', 'setup', 'unknown'].includes(agent.blockReason))
+  ))
+    return false;
+  if (
+    typeof agent.freshness !== 'string' ||
+    !['observed', 'unknown', 'processExited'].includes(agent.freshness)
+  )
+    return false;
+  if (
+    (!running && agent.freshness !== 'processExited') ||
+    (agent.freshness === 'observed' && agent.current === null)
+  )
+    return false;
+  return (
+    turn === null ||
+    (record(turn) &&
+      text(turn.id) &&
+      integer(turn.generation, 1) &&
+      typeof turn.phase === 'string' &&
+      ['accepted', 'started', 'waiting', 'settled', 'interrupted', 'failed'].includes(turn.phase) &&
+      integer(turn.elapsedSeconds) &&
+      integer(turn.observedAt) &&
+      (turn.outcome === null || text(turn.outcome, 128)))
   );
 }
 function capabilities(value: RecordValue): boolean {
@@ -96,6 +136,7 @@ function session(value: unknown): value is RecordValue {
     text(value.cwd, 32768) &&
     text(value.createdAt) &&
     typeof value.running === 'boolean' &&
+    (value.lifecycle === undefined || lifecycle(value.lifecycle, value.running)) &&
     dimensions(value) &&
     (value.program === undefined || program(value.program)) &&
     (value.status === undefined || sessionStatus(value.status)) &&

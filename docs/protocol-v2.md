@@ -98,3 +98,20 @@ wait indefinitely, and clearing consent starts a new window. Late readiness can
 recover from timeout. Initialized does not authorize sending into a busy or
 blocked session. Older clients ignore this field; updated clients show starting
 and startup failure while preserving the legacy unknown agent state underneath.
+
+`lifecycle` is optional additive metadata with separate `process`, `agent` and
+`turn` projections. `agent.current` is null without semantic evidence or after
+process exit; `lastKnown` is explicitly historical. Block reasons are permission,
+question, auth, quota, setup or unknown. A turn has a launch/sequence ID,
+generation, accepted/started/waiting/settled/interrupted/failed phase and observed
+elapsed seconds. Settled means the response ended, not that a task succeeded.
+UserPromptSubmit starts a turn; an old idle state does not. Hook samples are
+observed at host receipt, so sub-poll durations can be zero. Process age remains
+independent. Task association is currently null until the orchestration model.
+
+The host briefly drains final lifecycle events after process exit. A pending
+Stop can establish response settlement while the process remains exited; it
+never revives the agent or supplies a task result. Cursor gaps interrupt pending
+turn correlation until a new submitted prompt. Diagnostic turn history is bounded
+to 16 entries and retained only while the host session exists; it is not durable
+workflow history.

@@ -73,6 +73,7 @@ struct Session {
     info: SessionInfo,
     status: StatusTracker,
     readiness: crate::readiness::Tracker,
+    turn: crate::turns::Tracker,
     terminal_protocol: crate::terminal_protocol::Decoder,
     program_status: crate::program_status::Records,
     program_status_dirty: bool,
@@ -259,6 +260,8 @@ impl State {
                 );
                 info["status"] = json!(session.status.status());
                 info["readiness"] = json!(session.readiness.snapshot());
+                info["lifecycle"] = json!({"process":{"running":session.info.running,"pid":session.pty.process_id()},
+                    "agent":session.status.agent_projection(),"turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())),"task":null});
                 // Legacy v2 clients accept screen evidence and ignore extra fields.
                 if session.status.status().source == crate::status::StatusSource::Hook {
                     info["status"]["source"] = json!("screen");
@@ -369,6 +372,9 @@ impl State {
         let mut alerts = Vec::new();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
+            changed |= session
+                .turn
+                .observe_idle(session.status.status().state, session.started.elapsed());
             changed |= session.readiness.observe(
                 session.status.status(),
                 session.status.rule_reason(),
@@ -732,7 +738,7 @@ impl State {
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
             "conversationIdentity":session.conversation_identity,
-            "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "terminalProtocol":session.terminal_protocol.diagnostics(),
+            "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())), "turnHistory":session.turn.history(), "terminalProtocol":session.terminal_protocol.diagnostics(),
         })).collect();
         Ok(
             json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
@@ -1098,6 +1104,7 @@ impl State {
                     session.status.input(now_millis());
                     if interrupt {
                         session.status.interrupted(now_millis());
+                        session.turn.interrupt();
                     }
                 }
             }
@@ -1268,6 +1275,7 @@ fn spawn_session(
         lifecycle_gap: false,
         status: StatusTracker::new(program, 24, 80, now_millis()),
         readiness: crate::readiness::Tracker::new(program),
+        turn: Default::default(),
         terminal_protocol: Default::default(),
         program_status: Default::default(),
         program_status_dirty: false,
@@ -1308,7 +1316,12 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 .unwrap()
                 .sessions
                 .iter()
-                .filter(|(_, session)| session.info.running)
+                .filter(|(_, session)| {
+                    session.info.running
+                        || session.elapsed_at_exit.is_some_and(|at| {
+                            session.started.elapsed().saturating_sub(at) < Duration::from_secs(2)
+                        })
+                })
                 .filter_map(|(id, session)| {
                     session
                         .agent_context
@@ -1329,6 +1342,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     match batch {
                         Ok(Ok(batch)) => {
                             session.lifecycle_gap |= batch.gap;
+                            if batch.gap {
+                                session.turn.gap(session.started.elapsed());
+                            }
                             if !batch.observed {
                                 session.integration_delivery.outcome = "missing";
                             } else {
@@ -1338,13 +1354,26 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                             for event in batch.events {
                                 session.lifecycle_cursor = event.sequence;
                                 if event.generation == batch.identity.generation {
-                                    session.status.lifecycle_ordered(
+                                    session.program_status_dirty |= session.turn.event(
+                                        crate::turns::Signal {
+                                            launch: &batch.identity.launch_id,
+                                            generation: event.generation,
+                                            sequence: event.sequence,
+                                            event: &event.name,
+                                            state: event.state,
+                                        },
+                                        session.started.elapsed(),
+                                        now_millis(),
+                                    );
+                                    if session.status.lifecycle_ordered(
                                         crate::agent_context::LifecycleReport {
                                             state: event.state,
                                             sequence: event.sequence,
                                         },
                                         now_millis(),
-                                    );
+                                    ) {
+                                        session.status.record_hook_reason(&event.name, event.state);
+                                    }
                                 }
                             }
                             session.conversation_identity = Some(batch.identity);
@@ -1435,6 +1464,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     session.info.running = false;
                     session.elapsed_at_exit = Some(session.started.elapsed());
                     session.status.exited(code);
+                    session.turn.process_exit(session.started.elapsed());
                     session.program_status.end_program();
                     let data = match code {
                         Some(code) => format!("\r\n[Process exited with code {code}]\r\n"),

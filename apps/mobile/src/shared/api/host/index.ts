@@ -10,6 +10,7 @@ export type {
   SessionControl,
   SessionGroup,
   SessionLaunchOptions,
+  SessionLifecycle,
   SessionProgram,
   SessionReadiness,
   SessionStatus,
