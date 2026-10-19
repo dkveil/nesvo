@@ -2,7 +2,38 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
+
+const INSTRUCTIONS: &str = include_str!("../../../skills/nesvo-harness/SKILL.md");
+
+// Explicit owner configuration wins. An invalid override never falls through to PATH.
+fn resolve_client(explicit: Option<OsString>, host: &Path) -> Option<PathBuf> {
+    let candidate = explicit
+        .map(PathBuf::from)
+        .unwrap_or_else(|| host.with_file_name(if cfg!(windows) { "nesvo.exe" } else { "nesvo" }));
+    if !candidate.is_absolute() || !candidate.is_file() {
+        return None;
+    }
+    #[cfg(windows)]
+    if !candidate
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(&candidate).ok()?.permissions().mode() & 0o111 == 0 {
+            return None;
+        }
+    }
+    candidate.canonicalize().ok()
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +88,7 @@ pub struct Context {
     pub scope_id: String,
     pub key: [u8; 32],
     directory: PathBuf,
+    client: Option<PathBuf>,
 }
 impl Context {
     pub fn new(url: &str, session_id: &str, role: Role) -> Result<Self> {
@@ -67,6 +99,10 @@ impl Context {
                 "nesvo-caller-{}",
                 hex::encode(crate::wire::random::<16>())
             )),
+            client: resolve_client(
+                std::env::var_os("NESVO_CLIENT_BINARY"),
+                &std::env::current_exe()?,
+            ),
         };
         std::fs::create_dir(&context.directory)?;
         #[cfg(unix)]
@@ -74,16 +110,28 @@ impl Context {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&context.directory, std::fs::Permissions::from_mode(0o700))?;
         }
+        crate::private_write(&context.skill(), INSTRUCTIONS.as_bytes())?;
         crate::private_write(
             &context.path(),
             &serde_json::to_vec(
-                &json!({"version":1,"url":url,"key":hex::encode(context.key),"scopeId":context.scope_id,"sessionId":session_id,"authority":"session","role":role}),
+                &json!({"version":1,"url":url,"key":hex::encode(context.key),"scopeId":context.scope_id,"sessionId":session_id,"authority":"session","role":role,"cli":context.client,"instructions":{"version":1,"path":context.skill()}}),
             )?,
         )?;
         Ok(context)
     }
     pub fn path(&self) -> PathBuf {
         self.directory.join("context.json")
+    }
+    pub fn skill(&self) -> PathBuf {
+        self.directory.join("SKILL.md")
+    }
+    pub fn bind(&self, command: &mut portable_pty::CommandBuilder) {
+        command.env("NESVO_AGENT_CONTEXT", self.path());
+        command.env("NESVO_AGENT_SKILL", self.skill());
+        command.env_remove("NESVO_CLI");
+        if let Some(path) = &self.client {
+            command.env("NESVO_CLI", path);
+        }
     }
 }
 impl Drop for Context {
@@ -97,6 +145,7 @@ impl Drop for Context {
         };
         if let Some(directory) = safe() {
             let _ = std::fs::remove_file(directory.join("context.json"));
+            let _ = std::fs::remove_file(directory.join("SKILL.md"));
             // Never recursively delete caller-controlled contents.
             let _ = std::fs::remove_dir(directory);
         }
@@ -144,6 +193,20 @@ mod tests {
             serde_json::from_slice(&std::fs::read(first.path()).unwrap()).unwrap();
         assert_eq!(value["sessionId"], "s");
         assert_eq!(value["authority"], "session");
+        assert_eq!(value["instructions"]["version"], 1);
+        assert_eq!(
+            std::fs::read_to_string(first.skill()).unwrap(),
+            INSTRUCTIONS
+        );
+        let mut command = portable_pty::CommandBuilder::new("unused-test-program");
+        command.env("NESVO_CLI", "do-not-inherit-a-foreign-client");
+        first.bind(&mut command);
+        assert!(
+            command
+                .iter_extra_env_as_str()
+                .any(|(key, value)| key == "NESVO_AGENT_SKILL"
+                    && value == first.skill().to_str().unwrap())
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -161,11 +224,40 @@ mod tests {
         std::fs::write(directory.join("unowned.txt"), b"preserve").unwrap();
         drop(first);
         assert!(!path.exists());
+        assert!(!directory.join("SKILL.md").exists());
         assert!(directory.join("unowned.txt").exists());
         std::fs::remove_file(directory.join("unowned.txt")).unwrap();
         std::fs::remove_dir(directory).unwrap();
         let path = second.path();
         drop(second);
         assert!(!path.exists());
+    }
+    #[test]
+    fn client_discovery_is_absolute_explicit_and_never_uses_a_shell_shim() {
+        let root = std::env::temp_dir().join(format!(
+            "nesvo-cli-discovery-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let host = root.join("host");
+        let executable = root.join(if cfg!(windows) { "nesvo.exe" } else { "nesvo" });
+        std::fs::write(&executable, b"owned fixture only").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        assert_eq!(
+            resolve_client(None, &host),
+            Some(executable.canonicalize().unwrap())
+        );
+        assert_eq!(resolve_client(Some("relative-client".into()), &host), None);
+        assert_eq!(
+            resolve_client(Some(root.join("missing").into()), &host),
+            None
+        );
+        assert_eq!(resolve_client(Some(root.clone().into()), &host), None);
+        std::fs::remove_file(executable).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 }

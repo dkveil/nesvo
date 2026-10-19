@@ -57,6 +57,27 @@ they do not provide an OS sandbox against code running as the same account with
 filesystem access to other private files. Tokens are launch-local, use no global
 provider configuration and are never included in snapshots/diagnostics.
 
+## Launch-local agent instructions
+
+Each managed launch receives `NESVO_AGENT_SKILL`, an owned private copy of the
+versioned [Nesvo harness skill](../skills/nesvo-harness/SKILL.md). Its version/path
+are recorded only in the private context file. Setting an environment path alone
+does not prove that a provider loaded the instruction; per-provider injection and
+actual model-to-child verification remain separate gates.
+
+`NESVO_CLI` points to the native executable selected by the host. Discovery uses
+an explicit absolute `NESVO_CLIENT_BINARY` host environment override, or a sibling
+`nesvo(.exe)` beside the running host. An invalid override does not fall back to
+PATH, owner pairing or a shell shim. Missing discovery leaves `NESVO_CLI` unset;
+the agent must report setup failure. PowerShell agents invoke `& $env:NESVO_CLI`;
+POSIX agents invoke `"$NESVO_CLI"`. No global skill/MCP configuration is installed.
+
+`nesvo-dev` now copies a matching host/CLI pair into a unique runtime directory
+for that host lifetime. Closing the temporary TUI or compiling another build
+does not remove/overwrite the agent's executable. An already-running host is
+preserved and retains its original runtime pair; restart it deliberately after
+saving work to adopt new host features. Runtime disk cleanup/pooling is F39/F42.
+
 ## Version 1 query output
 
 The machine-readable schema is `docs/harness-cli.schema.json` (JSON Schema draft 7).

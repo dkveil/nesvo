@@ -31,6 +31,7 @@ fn main() {
         "../../Cargo.toml",
         "../../Cargo.lock",
         "../../crates/nesvo-wire",
+        "../../skills/nesvo-harness/SKILL.md",
     ] {
         hash_tree(Path::new(path), &mut hash);
     }

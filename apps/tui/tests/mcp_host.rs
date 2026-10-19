@@ -147,7 +147,7 @@ async fn install_agent_fixture(directory: &Path, host: &mut Command) -> Result<(
     ));
     host.env("PATH", std::env::join_paths(paths)?)
         .env("NESVO_TEST_CALLERS", callers)
-        .env("NESVO_TEST_CLIENT_BINARY", env!("CARGO_BIN_EXE_nesvo"));
+        .env("NESVO_CLIENT_BINARY", env!("CARGO_BIN_EXE_nesvo"));
     Ok(())
 }
 async fn scoped_client(context: &Path, id: &str) -> Result<RunningService<RoleClient, ()>> {

@@ -10,6 +10,10 @@ if (process.argv.includes('--version')) {
 const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
+if (
+  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V1')
+)
+  throw new Error('Missing versioned launch-local harness instructions');
 fs.writeFileSync(path.join(directory, `${id}.txt`), process.env.NESVO_AGENT_CONTEXT);
 const settings = JSON.parse(process.argv[process.argv.indexOf('--settings') + 1]);
 function hook(name, extra = {}) {
@@ -36,7 +40,7 @@ function submit(prompt) {
   if (prompt === 'spawn-child') {
     // Inherit only this managed process's scoped context. No owner pairing flag.
     const result = spawnSync(
-      process.env.NESVO_TEST_CLIENT_BINARY,
+      process.env.NESVO_CLI,
       [
         'session',
         'create',

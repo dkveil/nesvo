@@ -79,7 +79,7 @@ pub enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Read NESVO_SESSION_ID from this process context, never the UI selection.
+    /// Read the authenticated process binding, never the UI selection.
     Current {
         #[arg(long)]
         json: bool,

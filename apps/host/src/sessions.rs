@@ -2101,7 +2101,7 @@ fn spawn_session(
         .map(|url| crate::caller::Context::new(url, &id, identity.role))
         .transpose()?;
     if let Some(context) = &caller_context {
-        command.env("NESVO_AGENT_CONTEXT", context.path());
+        context.bind(&mut command);
     }
     let agent_context = if program == Program::Claude {
         Some(crate::agent_context::Tracker::install_for(

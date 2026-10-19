@@ -40,6 +40,17 @@ function Test-CompatibleHost {
     }
 }
 
+function New-HostRuntime([string]$RuntimeRoot, [string]$HostBinary, [string]$ClientBinary) {
+    # One immutable pair per host lifetime. Building again never overwrites a live MCP client.
+    $runtimeScope = Join-Path $RuntimeRoot ([Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $runtimeScope | Out-Null
+    $hostTarget = Join-Path $runtimeScope 'nesvo-host.exe'
+    $clientTarget = Join-Path $runtimeScope 'nesvo.exe'
+    Copy-Item -LiteralPath $HostBinary -Destination $hostTarget
+    Copy-Item -LiteralPath $ClientBinary -Destination $clientTarget
+    return @{ Host = $hostTarget; Client = $clientTarget }
+}
+
 if (Test-CompatibleHost) {
     $expectedBuild = & $HostExe --build-id
     if ($hostCapabilities.buildId -ne $expectedBuild) {
@@ -78,12 +89,18 @@ if (Test-Path -LiteralPath $pairingFile) {
 New-Item -ItemType Directory -Force -Path $pairingDirectory | Out-Null
 $runtimeDirectory = Join-Path $workspaceRoot 'target\nesvo-dev\host-runtime'
 New-Item -ItemType Directory -Force -Path $runtimeDirectory | Out-Null
-$runtimeHost = Join-Path $runtimeDirectory ("nesvo-host-{0}.exe" -f [Guid]::NewGuid().ToString('N'))
-Copy-Item -LiteralPath $HostExe -Destination $runtimeHost
+$runtime = New-HostRuntime $runtimeDirectory $HostExe $ClientExe
+$runtimeHost = $runtime.Host
 $hostLog = Join-Path $runtimeDirectory 'host.stdout.log'
 $hostErrorLog = Join-Path $runtimeDirectory 'host.stderr.log'
 Write-Host "Starting development host on port $port..."
-$process = Start-Process -FilePath $runtimeHost -ArgumentList @('--port', [string]$port, '--pairing-dir', ('"' + $pairingDirectory + '"'), '--workspace', ('"' + $workspaceRoot + '"'), '--lan') -WorkingDirectory $workspaceRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $hostLog -RedirectStandardError $hostErrorLog
+$previousClientBinary = $env:NESVO_CLIENT_BINARY
+try {
+    $env:NESVO_CLIENT_BINARY = $runtime.Client
+    $process = Start-Process -FilePath $runtimeHost -ArgumentList @('--port', [string]$port, '--pairing-dir', ('"' + $pairingDirectory + '"'), '--workspace', ('"' + $workspaceRoot + '"'), '--lan') -WorkingDirectory $workspaceRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $hostLog -RedirectStandardError $hostErrorLog
+} finally {
+    $env:NESVO_CLIENT_BINARY = $previousClientBinary
+}
 
 for ($attempt = 0; $attempt -lt 40; $attempt++) {
     Start-Sleep -Milliseconds 250

@@ -586,3 +586,27 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   both explicit SDK/native tests and all 25 host/sync/CLI integration checks pass.
   Mobile typecheck/lint, 23 client and 4 architecture checks pass. Controlled
   status publication p95: 251.973 ms (26 batches; provider latency excluded).
+
+### F12 versioned instruction and CLI discovery
+
+- Embedded `skills/nesvo-harness/SKILL.md` version 1 is copied to each private
+  process context and exposed through `NESVO_AGENT_SKILL`. Guidance covers actual
+  supported commands, authoritative identity, receipt recovery, human priority,
+  bounded reads, and response settlement versus verified task success. No global
+  skill files, provider login/configuration or user sessions are changed.
+- Native CLI discovery selects an absolute owner-provided host override or the
+  running host's sibling executable. Invalid overrides never use PATH fallback.
+  Launchers clear inherited foreign caller hints before binding the new context.
+  The controlled managed process now creates its child through production
+  `NESVO_CLI` discovery rather than a fixture-specific client path.
+- Development hosts retain immutable matching host/CLI runtime pairs, independent
+  of the temporary TUI executable and later builds. PowerShell fixtures verify
+  this and are included in Windows CI alongside the native host probe regression.
+- Two bounded offline instruction scenarios were evaluated with/without the
+  skill. With the skill, original-key recovery syntax and role/completion rules
+  were correct in all six assertions; the baseline lacked recovery grammar and
+  also made an adjacent recursive-coordinator claim. This is instruction review,
+  not actual provider execution or a statistical quality/performance guarantee.
+- Windows fmt/Clippy, all 214 Rust unit checks, both native SDK tests and isolated
+  PowerShell runtime/probe checks pass. Provider loading and real model-to-child
+  launch remain open until per-session configuration is wired and verified.

@@ -82,6 +82,10 @@ impl Launcher {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("NESVO_SESSION", "1");
+        // Each native process receives its own caller binding later at spawn.
+        for key in ["NESVO_AGENT_CONTEXT", "NESVO_AGENT_SKILL", "NESVO_CLI"] {
+            command.env_remove(key);
+        }
         // Codex and CI commonly run the host with NO_COLOR=1. That setting
         // belongs to the host's own output, not to the interactive PTY viewed
         // on another terminal or phone. Let each CLI emit its native colors.
