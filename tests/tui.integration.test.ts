@@ -1,5 +1,7 @@
+import Ajv from 'ajv';
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -16,6 +18,15 @@ import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Snapshot = Extract<HostEvent, { type: 'sessions' }>;
 type CommandResult = { code: number | null; stdout: string; stderr: string };
+// Ajv is a test-only dependency; the native CLI has no JSON-schema runtime.
+const cliSchema = new Ajv().compile(
+  JSON.parse(readFileSync(resolve('docs/harness-cli.schema.json'), 'utf8')),
+);
+function queryOutput(text: string): unknown {
+  const value: unknown = JSON.parse(text);
+  assert.equal(cliSchema(value), true, JSON.stringify(cliSchema.errors));
+  return value;
+}
 
 async function until<T>(
   read: () => T | undefined | Promise<T | undefined>,
@@ -45,11 +56,13 @@ function runTui(
   pairingPath: string,
   running: Set<ChildProcess>,
   command = ['--list'],
+  environment: NodeJS.ProcessEnv = {},
 ): Promise<CommandResult> {
   return new Promise((resolveResult, reject) => {
     const child = spawn(binary, ['--pairing', pairingPath, ...command], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...environment },
     });
     running.add(child);
     let stdout = '';
@@ -95,7 +108,9 @@ function stableSnapshot(snapshot: Snapshot) {
   assert.equal(decodeServerMessage(snapshot)?.type, 'sessions');
   return {
     ...snapshot,
-    sessions: snapshot.sessions.map(({ status: _status, ...session }) => session),
+    sessions: snapshot.sessions.map(
+      ({ status: _status, uptimeSeconds: _uptime, ...session }) => session,
+    ),
   };
 }
 
@@ -197,6 +212,7 @@ test(
             assertNoSecret(result, [pairing.key]);
             assert.equal(result.code, 0, result.stderr);
             const report = JSON.parse(result.stdout);
+            queryOutput(result.stdout);
             assert.equal(report.schemaVersion, 1);
             assert.match(report.host.buildId, /^[a-f0-9]{16}$/);
             assert.equal(report.sessions.length, 1);
@@ -227,6 +243,92 @@ test(
           const decoded = decodeServerMessage(JSON.parse(result.stdout) as unknown);
           assert.ok(decoded?.type === 'sessions', 'TUI output must be a valid protocol snapshot');
           assert.deepEqual(stableSnapshot(decoded), stableSnapshot(expected));
+        },
+      );
+
+      await suite.test(
+        'read-only session CLI has stable JSON, cursor bounds and process context without control',
+        async () => {
+          for (const command of [
+            ['session', 'list', '--json'],
+            ['session', 'get', created.sessionId, '--json'],
+            ['session', 'current', '--json'],
+          ]) {
+            const result = await runTui(tuiBinary, pairingPath, runningTuis, command, {
+              NESVO_SESSION_ID: created.sessionId,
+            });
+            assertNoSecret(result, [pairing.key]);
+            assert.equal(result.code, 0, result.stderr);
+            const body = JSON.parse(result.stdout);
+            queryOutput(result.stdout);
+            assert.equal(body.schemaVersion, 1);
+            assert.equal(body.ok, true);
+            if (command[1] === 'list') assert.equal(body.data.sessions[0].id, created.sessionId);
+            else assert.equal(body.data.session.id, created.sessionId);
+          }
+          const first = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'session',
+            'read',
+            created.sessionId,
+            '--max-bytes',
+            '128',
+            '--json',
+          ]);
+          assert.equal(first.code, 0, first.stderr);
+          const page = JSON.parse(first.stdout).data.page;
+          queryOutput(first.stdout);
+          assert.equal(page.format, 'terminalReplay');
+          assert.ok(Buffer.byteLength(page.data) <= 128);
+          const next = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'session',
+            'read',
+            created.sessionId,
+            '--after',
+            String(page.nextCursor),
+            '--json',
+          ]);
+          assert.equal(next.code, 0, next.stderr);
+          assert.equal(JSON.parse(next.stdout).data.page.fromCursor, page.nextCursor);
+          for (const [command, code, kind] of [
+            [['session', 'get', 'absent', '--json'], 5, 'session_not_found'],
+            [['session', 'current', '--json'], 2, 'no_current_session'],
+            [
+              ['session', 'read', created.sessionId, '--max-bytes', '8193', '--json'],
+              2,
+              'invalid_argument',
+            ],
+            [
+              ['session', 'read', created.sessionId, '--after', '9007199254740991', '--json'],
+              6,
+              'invalid_cursor',
+            ],
+            [['session', 'diff', created.sessionId, '--json'], 6, 'git_unavailable'],
+          ] as const) {
+            const result = await runTui(tuiBinary, pairingPath, runningTuis, [...command], {
+              NESVO_SESSION_ID: undefined,
+            });
+            assert.equal(result.code, code, result.stderr);
+            assert.equal(result.stderr, '');
+            const failure = JSON.parse(result.stdout);
+            queryOutput(result.stdout);
+            assert.equal(failure.ok, false);
+            assert.equal(failure.error.code, kind);
+            assertNoSecret(result, [pairing.key]);
+          }
+          const help = await runTui(tuiBinary, join(fixture, 'missing.json'), runningTuis, [
+            'session',
+            'read',
+            '--help',
+          ]);
+          assert.equal(help.code, 0);
+          assert.match(help.stdout, /max-bytes/);
+          const after = await snapshot();
+          assert.equal(
+            after.sessions[0]?.controllerId,
+            null,
+            'reads cannot acquire a control lease',
+          );
+          assert.equal(after.sessions[0]?.id, created.sessionId);
         },
       );
 

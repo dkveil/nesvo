@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:nesvo:cli-query:v1",
+  "title": "Nesvo headless query output v1",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "properties": { "schemaVersion": { "const": 1 } },
+  "oneOf": [
+    {
+      "required": ["ok", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "error": {
+          "type": "object",
+          "required": ["code", "message", "retryable"],
+          "properties": {
+            "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+            "message": { "type": "string" },
+            "retryable": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    {
+      "required": ["ok", "data"],
+      "properties": {
+        "ok": { "const": true },
+        "data": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["type", "session"],
+              "properties": {
+                "type": { "const": "session" },
+                "session": { "$ref": "#/definitions/session" }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "sessions", "groups", "revision"],
+              "properties": {
+                "type": { "const": "sessions" },
+                "sessions": { "type": "array", "items": { "$ref": "#/definitions/session" } },
+                "groups": { "type": "array" },
+                "revision": { "$ref": "#/definitions/cursor" }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "sessionId", "cols", "rows", "page"],
+              "properties": {
+                "type": { "const": "sessionRead" },
+                "sessionId": { "$ref": "#/definitions/id" },
+                "cols": { "type": "integer", "minimum": 10, "maximum": 300 },
+                "rows": { "type": "integer", "minimum": 2, "maximum": 150 },
+                "page": { "$ref": "#/definitions/page" }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "sessionId", "review"],
+              "properties": {
+                "type": { "const": "diff" },
+                "sessionId": { "$ref": "#/definitions/id" },
+                "review": {
+                  "type": "object",
+                  "required": ["directory", "scope", "files", "truncated"],
+                  "properties": {
+                    "directory": { "type": "string" },
+                    "scope": { "enum": ["staged", "unstaged", "untracked"] },
+                    "files": { "type": "array" },
+                    "truncated": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "required": ["host", "programs", "providerVersions", "sessions"],
+      "properties": {
+        "host": {
+          "type": "object",
+          "required": ["id", "buildId", "version", "protocolVersion"],
+          "properties": {
+            "id": { "$ref": "#/definitions/id" },
+            "buildId": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+            "version": { "type": "string" },
+            "protocolVersion": { "const": 2 }
+          }
+        },
+        "programs": { "type": "array" },
+        "providerVersions": { "type": "array" },
+        "sessions": { "type": "array" }
+      }
+    }
+  ],
+  "definitions": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "cursor": { "type": "integer", "minimum": 0 },
+    "session": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "cwd",
+        "createdAt",
+        "cols",
+        "rows",
+        "running",
+        "groupId",
+        "controllerId"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "cwd": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "cols": { "type": "integer", "minimum": 10, "maximum": 300 },
+        "rows": { "type": "integer", "minimum": 2, "maximum": 150 },
+        "running": { "type": "boolean" },
+        "program": { "enum": ["shell", "claude", "codex", "gemini"] },
+        "groupId": { "type": ["string", "null"] },
+        "controllerId": { "type": ["integer", "null"] },
+        "uptimeSeconds": { "$ref": "#/definitions/cursor" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "required": [
+        "format",
+        "data",
+        "fromCursor",
+        "nextCursor",
+        "floorCursor",
+        "headCursor",
+        "gap",
+        "more"
+      ],
+      "properties": {
+        "format": { "const": "terminalReplay" },
+        "data": { "type": "string", "maxLength": 8192 },
+        "fromCursor": { "$ref": "#/definitions/cursor" },
+        "nextCursor": { "$ref": "#/definitions/cursor" },
+        "floorCursor": { "$ref": "#/definitions/cursor" },
+        "headCursor": { "$ref": "#/definitions/cursor" },
+        "gap": { "type": "boolean" },
+        "more": { "type": "boolean" }
+      }
+    }
+  }
+}

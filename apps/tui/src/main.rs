@@ -55,7 +55,23 @@ struct Arguments {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let arguments = Arguments::parse();
+    let arguments = Arguments::try_parse().unwrap_or_else(|error| {
+        if error.use_stderr() && std::env::args_os().any(|arg| arg == "--json") {
+            std::process::exit(cli::emit_failure(
+                true,
+                "invalid_argument",
+                "Invalid CLI arguments; use --help",
+            ));
+        }
+        error.exit()
+    });
+    if let Some(command) = arguments.command {
+        let code = cli::execute(command, &arguments.pairing, arguments.url.as_deref()).await;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
     if arguments.command.is_none() && !arguments.list && !arguments.check_host {
         ensure!(
             std::env::var_os("NESVO_SESSION").is_none(),
@@ -75,9 +91,6 @@ async fn main() -> Result<()> {
         )
     })?;
     let mut connection = Connection::open(pairing).await?;
-    if let Some(command) = arguments.command {
-        return cli::run(command, &mut connection).await;
-    }
     if arguments.check_host {
         connection.send(serde_json::json!({"type":"getCapabilities"}))?;
         tokio::time::timeout(Duration::from_secs(5), async {
