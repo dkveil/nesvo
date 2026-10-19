@@ -7,6 +7,8 @@ use std::{io::Write, path::Path, time::Duration};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Serve scoped host tools over MCP stdio. No global provider setup is changed.
+    Mcp,
     /// Inspect a durable operation by ID, or find the caller's idempotency key.
     Operation {
         #[arg(required_unless_present = "key", conflicts_with = "key")]
@@ -137,7 +139,7 @@ impl std::fmt::Display for Failure {
     }
 }
 impl std::error::Error for Failure {}
-fn failure(code: &str, message: &str) -> anyhow::Error {
+pub(crate) fn failure(code: &str, message: &str) -> anyhow::Error {
     Failure {
         code: code.into(),
         message: message.into(),
@@ -171,6 +173,7 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
 impl Command {
     fn machine(&self) -> bool {
         match self {
+            Self::Mcp => false,
             Self::Doctor { json } | Self::Events { json, .. } | Self::Operation { json, .. } => {
                 *json
             }
@@ -187,6 +190,15 @@ impl Command {
     }
 }
 pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -> i32 {
+    if matches!(command, Command::Mcp) {
+        return match crate::mcp::serve(pairing_path.to_owned(), url.map(str::to_owned)).await {
+            Ok(()) => 0,
+            Err(_) => {
+                eprintln!("MCP transport stopped; no operation was retried");
+                6
+            }
+        };
+    }
     let machine = command.machine();
     let result = async {
         let pairing = Pairing::load(pairing_path, url).map_err(|_| {
@@ -219,7 +231,11 @@ pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -
     }
 }
 
-async fn request(connection: &mut Connection, mut command: Value, kind: &str) -> Result<Value> {
+pub(crate) async fn request(
+    connection: &mut Connection,
+    mut command: Value,
+    kind: &str,
+) -> Result<Value> {
     let id = format!("cli-{}", hex::encode(nesvo_wire::random::<8>()));
     command["requestId"] = json!(id);
     connection
@@ -262,7 +278,7 @@ async fn request(connection: &mut Connection, mut command: Value, kind: &str) ->
     })?
 }
 
-fn valid_id(id: &str) -> Result<()> {
+pub(crate) fn valid_id(id: &str) -> Result<()> {
     if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
         return Err(failure("invalid_argument", "Invalid session ID"));
     }
@@ -427,7 +443,7 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
     print_data(machine, response)
 }
 
-async fn operation_capability(connection: &mut Connection) -> Result<()> {
+pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<()> {
     let caps = request(
         connection,
         json!({"type":"getCapabilities"}),
@@ -468,6 +484,11 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
     }
     operation_capability(connection).await?;
     let response=request(connection,json!({"type":"createOperation","key":options.key,"spec":{"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt}}),"operation").await?;
+    check_receipt(&response)?;
+    print_data(options.json, response)
+}
+
+pub(crate) fn check_receipt(response: &Value) -> Result<()> {
     if matches!(
         response["receipt"]["phase"].as_str(),
         Some("failed" | "unknown")
@@ -482,11 +503,31 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
         }
         .into());
     }
-    print_data(options.json, response)
+    Ok(())
+}
+pub(crate) fn error_value(error: &anyhow::Error) -> Value {
+    match error.downcast_ref::<Failure>() {
+        Some(error) => {
+            let mut value = json!({"schemaVersion":1,"ok":false,"error":{"code":error.code,"message":error.message,"retryable":matches!(error.code.as_str(),"host_unavailable"|"disconnected"|"timeout")}});
+            if let Some(receipt) = &error.receipt {
+                value["error"]["receipt"] = receipt.clone();
+            }
+            value
+        }
+        None => {
+            json!({"schemaVersion":1,"ok":false,"error":{"code":"operation_unconfirmed","message":"Look up the same idempotency key before retrying","retryable":false}})
+        }
+    }
 }
 
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let (session, machine) = match command {
+        Command::Mcp => {
+            return Err(failure(
+                "invalid_argument",
+                "MCP uses its own stdio entrypoint",
+            ));
+        }
         Command::Operation { id, key, json } => {
             operation_capability(connection).await?;
             return print_data(

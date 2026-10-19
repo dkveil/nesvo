@@ -42,6 +42,7 @@ jobs:
       - run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --locked
+      - run: cargo test --package nesvo --test mcp_host --locked -- --ignored
       - run: node --import tsx --test tests/host.integration.test.ts
       - run: npm run test:sync
       - run: cargo run --package nesvo --locked -- --help

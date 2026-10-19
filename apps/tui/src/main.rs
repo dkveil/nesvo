@@ -3,6 +3,7 @@ mod cli;
 mod controller;
 mod input;
 mod launch;
+mod mcp;
 mod model;
 mod network;
 mod output;

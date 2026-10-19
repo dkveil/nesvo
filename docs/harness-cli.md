@@ -15,6 +15,7 @@ nesvo --pairing C:\private\pairing.json session diff SESSION_ID --scope unstaged
 nesvo --pairing C:\private\pairing.json session current --json
 nesvo --pairing C:\private\pairing.json session create "Review" --key review-1 --program claude --prompt-file C:\private\prompt.txt --json
 nesvo --pairing C:\private\pairing.json operation --key review-1 --json
+nesvo mcp
 ```
 
 `current` reads `NESVO_SESSION_ID` injected into the managed process environment.
@@ -146,6 +147,8 @@ exit 0 does not claim agent readiness. Failed/unknown launch outcomes return exi
 6 with `error.receipt` in version 1 JSON. `idempotency_conflict` means the key was
 used for a different request. See [durable operations](harness-operations.md).
 
-Send/wait/interrupt/stop, prompt/job receipts, coordinator grants and MCP remain
+`nesvo mcp` exposes current shared operations over native stdio; see the
+[MCP adapter](harness-mcp.md) for scope and SDK integration tests.
+Send/wait/interrupt/stop, prompt/job receipts and coordinator grants remain
 subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.

@@ -35,7 +35,7 @@ not evidence that the expanded acceptance criteria pass.
 | F07 | Starting, readiness and timeout                 | Missing                                                       | Implemented: readiness/timeout; platform/device matrix pending                              |
 | F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                  |
 | F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: queries plus durable create/operation lookup; send/wait/interrupt/stop pending     |
-| F10 | MCP over host operations                        | Missing                                                       | Pending                                                                                     |
+| F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending          |
 | F11 | Visible child sessions                          | Missing                                                       | Pending                                                                                     |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: launch-local passive capabilities; coordinator grants/skill pending                |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                     |
@@ -415,3 +415,27 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   turn-correlated wait, job deduplication and MCP remain open delivery gates.
 - Publication target is now the existing `origin/main`, explicitly confirmed by
   the user after `origin/master` was found not to exist. No force push or PR.
+
+### F10 native MCP adapter checkpoint
+
+- Added `nesvo mcp`, a stdio adapter over the shared authenticated host request
+  and receipt path. Nine tools cover passive session/current/read/explain/diff/
+  event queries plus durable create/lookup. Per-call authority remains host-owned;
+  the catalog confers no permissions. No global provider configuration is written.
+- Official `rmcp 3.5.1` handles modern metadata and legacy initialization. Defaults
+  are disabled; only native server/I/O is enabled at runtime. Test-only client
+  features exercise separate executable processes. `tokio-util` is direct solely
+  to cap the SDK codec at 64 KiB rather than use its unbounded default reader.
+- The official client/native test passes locally on Windows: modern and
+  2025-11-25 clients, shared CLI/MCP idempotency key, real shell without a control
+  lease, passive reads, errors, false scope, malformed/oversized frames, host loss,
+  EOF and host PTY cleanup. CI runs this test explicitly after building binaries.
+- F10 remains partial: subscription bridging, complete effects/task interface,
+  cancellation audit and model-driven evaluations await their foundations.
+  Coordinator/child creation still requires F11/F12, not a copied owner key.
+- Prior `2ba79dc` on main passed every CI job in run `39326234140`.
+- New Windows checks: fmt/Clippy, all 126 TUI + 73 host + 3 wire unit tests,
+  the explicit native SDK integration and all 24 existing native host/sync/CLI
+  checks pass. Controlled status publication p95 was 259.783 ms over 27 batches.
+  Real ConPTY smoke also passes, including UI/input/menu/review, three dimensions
+  (150×44, 100×32, 80×24), resize and clean terminal restoration.
