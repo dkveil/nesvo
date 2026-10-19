@@ -49,6 +49,7 @@ pub struct StatusTracker {
     program_order: u64,
     lifecycle_ordering: &'static str,
     interrupt_received: Option<u64>,
+    interrupt_settled: bool,
     program_status: Option<crate::program_status::Report>,
     program_received: u64,
     last_activity: Option<u64>,
@@ -78,6 +79,7 @@ impl StatusTracker {
             program_order: 0,
             lifecycle_ordering: "legacy-wall-clock",
             interrupt_received: None,
+            interrupt_settled: false,
             program_status: None,
             program_received: 0,
             last_activity: None,
@@ -100,6 +102,7 @@ impl StatusTracker {
         self.lifecycle_order = self.observation_order;
         self.lifecycle_received = now;
         self.interrupt_received = None;
+        self.interrupt_settled = false;
         self.lifecycle = Some(report.state);
         self.screen_hint = None;
         self.screen_rule = None;
@@ -123,6 +126,10 @@ impl StatusTracker {
             return;
         }
         self.program_status = report.cloned();
+        self.interrupt_settled = false;
+        if report.is_some() {
+            self.interrupt_received = None;
+        }
         self.observation_order = self.observation_order.saturating_add(1);
         self.program_order = self.observation_order;
         self.program_received = now;
@@ -182,6 +189,7 @@ impl StatusTracker {
     pub fn interrupted(&mut self, now: u64) {
         if !self.exited {
             self.interrupt_received = Some(now);
+            self.interrupt_settled = false;
         }
     }
 
@@ -223,30 +231,35 @@ impl StatusTracker {
                 });
                 self.screen_dirty = false;
             }
+            let recent_interrupt = self.interrupt_received.is_some_and(|at| {
+                at >= self.lifecycle_received
+                    && now.saturating_sub(at) <= 5000
+                    && self.last_activity.is_some_and(|last| last > at)
+            });
+            if self.screen_hint == Some(StatusState::Idle) && recent_interrupt {
+                self.interrupt_settled = true;
+            }
             let screen = self.screen_hint.filter(|hint| {
                 if self.lifecycle.is_none() {
                     return true;
                 }
                 // A prompt can remain visible during a real turn. New output or
                 // elapsed time alone cannot turn confirmed work into idle.
-                let interrupted_work = self.interrupt_received.is_some_and(|at| {
-                    at >= self.lifecycle_received
-                        && now.saturating_sub(at) <= 5000
-                        && self.last_activity.is_some_and(|last| last > at)
-                });
                 self.lifecycle != Some(*hint)
                     && !(*hint == StatusState::Idle
                         && self.lifecycle == Some(StatusState::Working)
-                        && !interrupted_work)
+                        && !self.interrupt_settled)
                     && (now.saturating_sub(self.lifecycle_received) >= 750
                         && self
                             .last_activity
                             .is_some_and(|at| at > self.lifecycle_received))
             });
-            let program = self
-                .program_status
-                .as_ref()
-                .filter(|_| self.lifecycle.is_none() || self.program_order >= self.lifecycle_order);
+            let program = self.program_status.as_ref().filter(|report| {
+                (self.lifecycle.is_none() || self.program_order >= self.lifecycle_order)
+                    && !(self.interrupt_settled
+                        && report.state == crate::program_status::State::Working
+                        && self.screen_hint == Some(StatusState::Idle))
+            });
             if let Some(report) = program {
                 use crate::program_status::{Kind, State};
                 let state = match report.state {
@@ -521,9 +534,34 @@ mod tests {
             (tracker.status.state, tracker.status.source),
             (StatusState::Idle, StatusSource::Screen)
         );
-        tracker.output("\x1b[2J\x1b[H✻ Thinking… (esc to interrupt)", 120_004);
-        tracker.refresh(120_005);
+        tracker.refresh(180_000);
+        assert_eq!(
+            tracker.status.state,
+            StatusState::Idle,
+            "an old hook cannot revive interrupted work after the grace window"
+        );
+        tracker.output("\x1b[2J\x1b[H✻ Thinking… (esc to interrupt)", 180_004);
+        tracker.refresh(180_005);
         assert_eq!(tracker.status.state, StatusState::Working);
+    }
+    #[test]
+    fn interrupted_protocol_work_stays_settled_until_new_structured_evidence() {
+        let mut tracker = StatusTracker::new(Program::Claude, 24, 100, 0);
+        let work = crate::program_status::parse("state=working").unwrap();
+        tracker.program_report(Some(&work), 1);
+        tracker.interrupted(2);
+        tracker.output(
+            "\x1b[2J\x1b[H❯ \r\naccept edits on (shift+tab to cycle)\x1b[1;3H",
+            3,
+        );
+        tracker.refresh(4);
+        assert_eq!(tracker.status.state, StatusState::Idle);
+        tracker.refresh(60_000);
+        assert_eq!(tracker.status.state, StatusState::Idle);
+        tracker.program_report(Some(&work), 60_001);
+        tracker.refresh(60_002);
+        assert_eq!(tracker.status.state, StatusState::Working);
+        assert_eq!(tracker.status.source, StatusSource::Program);
     }
 
     #[test]

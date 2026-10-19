@@ -116,3 +116,8 @@ consumption is tracked separately. Diagnostics expose identities, cursor, gap,
 rejections and shadow sequence. Old launch scopes without a journal retain their
 legacy JSON helper contract. Cleanup validates ownership of the resolved private
 temporary directory and briefly retries Windows read-handle races.
+
+An interrupt plus a newly visible idle prompt settles the prior work observation.
+That settlement persists after the short prompt-detection window; an old working
+hook or protocol record cannot revive it on a later timer tick. New structured
+evidence takes authority again. Silence alone never establishes that settlement.
