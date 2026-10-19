@@ -550,3 +550,13 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   SDK test, all 25 native host/sync/CLI checks, mobile typecheck/lint, 22 client
   checks, 4 architecture checks and formatter pass. No new dependencies or UI
   layout change. Actual device/provider orchestration remains an open gate.
+
+### MCP fixture observation ordering
+
+- Windows CI `39334491119` passed the native stop/no-op paths but caught a test
+  assuming flushed PTY input meant PowerShell had already produced output.
+  Ctrl+C could arrive during shell startup, before the expected retained marker.
+- The native SDK test now waits for the isolated Windows shell prompt before
+  sending, then observes the marker before interrupting. It reads retained output
+  with an explicit bounded byte cursor. No production delivery/receipt semantics
+  were weakened or replaced by a sleep; observed output is separate evidence.

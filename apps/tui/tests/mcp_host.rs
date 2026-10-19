@@ -124,6 +124,35 @@ fn data(result: CallToolResult) -> Result<Value> {
         .context("Missing structured result")
 }
 
+async fn observed_output(
+    client: &RunningService<RoleClient, ()>,
+    id: &str,
+    marker: &str,
+) -> Result<()> {
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let page = data(
+                call(
+                    client,
+                    "nesvo_read_session",
+                    json!({"sessionId":id,"maxBytes":8192}),
+                )
+                .await?,
+            )?;
+            if page["data"]["page"]["data"]
+                .as_str()
+                .is_some_and(|text| text.contains(marker))
+            {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("The isolated shell did not produce the expected output before interruption")??;
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires cargo build --workspace and an isolated native PTY host"]
 async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() -> Result<()> {
@@ -199,6 +228,10 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         assert_eq!(child_view["data"]["session"]["controllerId"],Value::Null);
         assert_eq!(receipt["data"]["receipt"], created["data"]["receipt"]);
         assert!(receipt["data"]["cursor"].as_u64().context("cursor")? >= 3);
+        // NoLogo/NoProfile PowerShell can still initialize after process creation.
+        // Wait for this fixture's prompt, rather than equate PTY creation with readiness.
+        #[cfg(windows)]
+        observed_output(&mcp,id,"PS ").await?;
         let sent = data(call(&mcp,"nesvo_send_prompt",json!({"sessionId":id,"key":"sdk-send","prompt":"echo NESVO_MCP_SEND"})).await?)?;
         assert_eq!(sent["data"]["receipt"]["phase"],"delivered");
         assert_eq!(sent["data"]["receipt"]["result"]["nativeWriteFlushed"],true);
@@ -213,6 +246,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let unsupported=call(&mcp,"nesvo_wait_prompt",json!({"key":"sdk-send","until":"settled","timeoutMs":100})).await?;
         assert_eq!(unsupported.is_error,Some(true));
         assert_eq!(unsupported.structured_content.context("wait error")?["error"]["code"],"unsupported","a shell write never claims an agent response");
+        observed_output(&mcp,id,"NESVO_MCP_SEND").await?;
         let read = data(
             call(
                 &mcp,
@@ -281,7 +315,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         assert_eq!(already_stopped["data"]["receipt"]["phase"],"stopped");
         assert_eq!(already_stopped["data"]["receipt"]["result"]["processExited"],true);
         assert_eq!(already_stopped["data"]["receipt"]["result"]["nativeStopRequested"],false);
-        let retained=data(call(&mcp,"nesvo_read_session",json!({"sessionId":id})).await?)?;
+        let retained=data(call(&mcp,"nesvo_read_session",json!({"sessionId":id,"after":0,"maxBytes":8192})).await?)?;
         assert!(retained["data"]["page"]["data"].as_str().context("retained output")?.contains("NESVO_MCP_SEND"));
         mcp.cancel().await?;
 
