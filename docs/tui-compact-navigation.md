@@ -1,6 +1,6 @@
 # Compact navigation
 
-The Calm workspace uses a 30-column sidebar (reduced on narrow terminals), a 19-column static pixel wordmark, and single-row sessions. Provider marks are drawn from ordinary Unicode: Claude `✳`, Codex `◈`, Gemini `✦`, terminal `>`. These are portable identifiers, not vendor logo fonts. A separate right-aligned status symbol preserves state without relying on color.
+The Calm workspace uses a 30-column sidebar (reduced on narrow terminals), a single-line plain `nesvo` heading, and single-row sessions. Provider marks are drawn from ordinary Unicode: Claude `✳`, Codex `◈`, Gemini `✦`, terminal `>`. These are portable identifiers, not vendor logo fonts. A separate right-aligned status symbol preserves state without relying on color.
 
 Set `NESVO_ASCII_ICONS=1` before starting the client to use `C`, `O`, `G`, and `>` when the terminal font lacks these marks. The choice survives reconnects. Full provider names remain in session tabs and palette preview metadata.
 

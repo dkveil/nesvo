@@ -104,6 +104,7 @@ impl Widget for Logo {
 }
 
 /// Compact solid pixels retain the wordmark's top, counters and crossbars.
+#[allow(dead_code)] // Retained for the design concept exporter.
 pub struct CompactLogo(pub Theme);
 impl Widget for CompactLogo {
     fn render(self, area: Rect, buffer: &mut Buffer) {

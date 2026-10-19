@@ -104,7 +104,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         tree.x,
         area.y,
         tree.width,
-        (tree.height + header.height).min(3),
+        (tree.height + header.height).min(1),
     );
     let inset = sidebar_header
         .height
@@ -439,7 +439,10 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
             Block::default().style(Style::default().bg(SURFACE)),
             layout.sidebar_header,
         );
-        frame.render_widget(brand::CompactLogo(app.theme), layout.sidebar_header);
+        frame.render_widget(
+            Paragraph::new(" nesvo").style(Style::default().fg(MUTED).bg(SURFACE)),
+            layout.sidebar_header,
+        );
         let tab_strip = Rect::new(
             layout.tree.right(),
             layout.header.y,
@@ -1432,14 +1435,14 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn tall_brand_header_only_uses_sidebar_space() {
+    fn compact_text_header_only_uses_one_sidebar_row() {
         let app = App::new(1);
         for (width, height) in [(80, 24), (100, 32), (150, 44)] {
             let layout = geometry(Rect::new(0, 0, width, height), &app);
             assert_eq!(layout.header.height, 1);
             assert_eq!(layout.panes[0].y, 1);
-            assert_eq!(layout.sidebar_header.height, 3);
-            assert_eq!(layout.tree.y, 3);
+            assert_eq!(layout.sidebar_header.height, 1);
+            assert_eq!(layout.tree.y, 1);
             assert_eq!(layout.sidebar_header.right(), layout.panes[0].x);
         }
     }
