@@ -124,6 +124,9 @@ pub struct CreateOptions {
     /// Lineage only: this does not grant access to the parent or its children.
     #[arg(long)]
     parent: Option<String>,
+    /// Only owner access can grant coordinator capabilities at launch.
+    #[arg(long,default_value="worker",value_parser=["worker","coordinator"])]
+    role: String,
     #[arg(long)]
     worktree: bool,
     #[arg(long,conflicts_with_all=["prompt_file","stdin"])]
@@ -463,8 +466,7 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
             (json!({"type":"getSession","sessionId":id}), "session", json)
         }
         SessionCommand::Current { json } => {
-            let id=std::env::var("NESVO_SESSION_ID").map_err(|_|failure("no_current_session","No Nesvo session context; run inside a managed session or supply an explicit ID"))?;
-            valid_id(&id)?;
+            let id = current_session(&caps)?;
             (json!({"type":"getSession","sessionId":id}), "session", json)
         }
         SessionCommand::Read {
@@ -523,6 +525,21 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
     print_data(machine, response)
 }
 
+pub(crate) fn current_session(capabilities: &Value) -> Result<String> {
+    let id = capabilities["caller"]["sessionId"]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| std::env::var("NESVO_SESSION_ID").ok())
+        .ok_or_else(|| {
+            failure(
+                "no_current_session",
+                "No bound process context; run inside a managed session or supply an explicit ID",
+            )
+        })?;
+    valid_id(&id)?;
+    Ok(id)
+}
+
 pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<Value> {
     let caps = request(
         connection,
@@ -572,6 +589,15 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
     let prompt = read_prompt(options.prompt, options.prompt_file, options.stdin)?;
     let caps = operation_capability(connection).await?;
     let mut spec = json!({"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt});
+    if options.role == "coordinator" {
+        if caps["coordinatorScopes"] != true {
+            return Err(failure(
+                "unsupported",
+                "Host cannot enforce coordinator scopes; update nesvo-host",
+            ));
+        }
+        spec["role"] = options.role.into();
+    }
     if let Some(parent) = options.parent {
         valid_id(&parent)?;
         if caps["sessionLineage"] != true {

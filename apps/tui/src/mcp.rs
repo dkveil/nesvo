@@ -22,6 +22,24 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 const MAX_MESSAGE: usize = 64 * 1024;
 
+fn launch_schema() -> Value {
+    json!({
+        "type":"object", "required":["name"], "additionalProperties":false,
+        "properties": {
+            "name":{"type":"string","minLength":1,"maxLength":80},
+            "program":{"enum":["shell","claude","codex","gemini"],"default":"shell"},
+            "role":{"enum":["worker","coordinator"],"default":"worker","description":"Only owner access may grant coordinator at launch; a coordinator cannot create coordinators"},
+            "cwd":{"type":"string"}, "groupId":{"type":["string","null"]},
+            "parentSessionId":{"type":["string","null"],"description":"Lineage only; scoped creation binds the authenticated parent automatically"},
+            "prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},
+            "worktree":{"type":"boolean","default":false},
+            "autoTitle":{"type":"boolean","default":false},
+            "muted":{"type":"boolean","default":false},
+            "resumePicker":{"type":"boolean","default":false}
+        }
+    })
+}
+
 fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
     let mut schema = serde_json::Map::new();
     schema.insert("type".into(), json!("object"));
@@ -89,7 +107,7 @@ fn catalog() -> Vec<Tool> {
             "nesvo_create_session",
             "Create one background process for a stable idempotency key. Reuse the same key/spec after timeout, never invent another key to retry. Created is not agent readiness or task success. Host authorization still applies.",
             object(
-                json!({"key":{"type":"string","minLength":1,"maxLength":128},"spec":{"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"program":{"enum":["shell","claude","codex","gemini"],"default":"shell"},"cwd":{"type":"string"},"groupId":{"type":["string","null"]},"parentSessionId":{"type":["string","null"],"description":"Live process parent ID: lineage only, never an authorization grant"},"prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},"worktree":{"type":"boolean","default":false},"autoTitle":{"type":"boolean","default":false},"muted":{"type":"boolean","default":false},"resumePicker":{"type":"boolean","default":false}}}}),
+                json!({"key":{"type":"string","minLength":1,"maxLength":128},"spec":launch_schema()}),
                 &["key", "spec"],
             ),
             false,
@@ -226,14 +244,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 ));
             }
             if name == "nesvo_get_current_session" {
-                let id = std::env::var("NESVO_SESSION_ID").map_err(|_| {
-                    cli::failure(
-                        "no_current_session",
-                        "This MCP launch has no managed-process session context",
-                    )
-                })?;
-                cli::valid_id(&id)?;
-                (json!({"type":"getSession","sessionId":id}), "session")
+                (json!({"type":"getSession"}), "session")
             } else {
                 (json!({"type":"list"}), "sessions")
             }
@@ -299,6 +310,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                             .as_str()
                             .is_some_and(|v| matches!(v, "shell" | "claude" | "codex" | "gemini")),
                         "groupId" | "parentSessionId" => value.is_null() || value.is_string(),
+                        "role" => value
+                            .as_str()
+                            .is_some_and(|role| matches!(role, "worker" | "coordinator")),
                         "worktree" | "autoTitle" | "muted" | "resumePicker" => value.is_boolean(),
                         _ => false,
                     })
@@ -393,7 +407,7 @@ struct HostTools {
 }
 impl HostTools {
     async fn invoke(&self, name: &str, arguments: Value) -> Result<Value> {
-        let (command, kind) = command(name, arguments)?;
+        let (mut command, kind) = command(name, arguments)?;
         let _permit = self.slots.try_acquire().map_err(|_| {
             cli::failure(
                 "busy",
@@ -407,12 +421,30 @@ impl HostTools {
                 "Cannot authenticate with the paired host",
             )
         })?;
+        if name == "nesvo_get_current_session" {
+            let caps = cli::request(
+                &mut connection,
+                json!({"type":"getCapabilities"}),
+                "capabilities",
+            )
+            .await?;
+            command["sessionId"] = cli::current_session(&caps)?.into();
+        }
         if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
             cli::control_capability(&mut connection).await?;
         } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
             cli::prompt_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
+            if name == "nesvo_create_session"
+                && command["spec"]["role"] == "coordinator"
+                && caps["coordinatorScopes"] != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host cannot enforce coordinator scopes; update nesvo-host",
+                ));
+            }
             if name == "nesvo_create_session"
                 && command["spec"]["parentSessionId"].is_string()
                 && caps["sessionLineage"] != true

@@ -29,10 +29,15 @@ context is selected automatically; invalid context fails closed. Catalog/help
 work without a host. Each tool call authenticates afresh, so revocation is not
 bypassed by an authorization cache.
 
-Host policy always wins. The initial passive worker capability reads its own
-session but cannot create children or inspect owner receipts. Advertising a tool
-is not permission. Coordinator grants remain F11/F12 work. Current session uses
-the process-injected ID, never UI focus; changing that hint cannot grant access.
+Host policy always wins. The default passive worker reads its own session but
+cannot create children or inspect owner receipts. An owner may launch a session
+with `spec.role:"coordinator"` when `coordinatorScopes` is advertised. Its private
+capability permits worker-child creation and child reads/send/interrupt/stop only
+for host-granted child IDs. Workspace/group boundaries, human priority and
+process-exit revocation apply as described in the [CLI guide](harness-cli.md).
+Advertising a tool is not permission. Current session uses the authenticated
+host binding; an owner/legacy context can use the injected ID as a hint. Neither
+path uses UI focus, and changing the hint or private-file role cannot grant access.
 
 ## Current tools
 
@@ -46,7 +51,7 @@ uses the same normalized intent/key, so cross-adapter replay cannot duplicate it
 | ------------------------- | -------------------------------------------------- |
 | nesvo_list_sessions       | list visible sessions/groups/lifecycle             |
 | nesvo_get_session         | inspect one stable process identity                |
-| nesvo_get_current_session | get the injected process session                   |
+| nesvo_get_current_session | get the authenticated process session              |
 | nesvo_read_session        | bounded terminal replay with byte cursors          |
 | nesvo_explain_session     | status/readiness/provider diagnostics              |
 | nesvo_read_diff           | host-side read-only diff with an explicit scope    |
@@ -79,11 +84,12 @@ ownership/drafts and unready/busy agents remain host-side refusals. Full safety
 and phase semantics are in [durable operations](harness-operations.md).
 
 Interrupt/stop require `sessionId` and stable `key`. Both declare destructive
-hints, remain owner-authorized and refuse an active human controller. Interrupt
+hints, require owner or explicit coordinator-child authority and refuse an active
+human controller. Interrupt
 delivery is not proof the agent stopped; `stopRequested` is not observed process
 exit. The session and output remain available. Repeating a key through CLI/MCP
 does not signal twice, including after the process exits. Run-level cancel/drain
-and coordinator child permissions are separate policy boundaries.
+and durable run permissions remain separate policy boundaries.
 
 ## Protocol, bounds and dependencies
 
@@ -129,7 +135,12 @@ legacy initialization, host loss, bad/oversized stdio and clean PTY cleanup.
 Native prompt tests cover MCP send, CLI same-key replay, delivered wait and
 unsupported shell response correlation. A separate controlled Claude helper/PTY
 fixture exercises CLI Unicode/multiline send and timeout without false idle.
-No model calls or changes to user sessions/provider configuration.
+The coordinator fixture is an explicitly controlled CLI process, not a model. It
+creates a child using its own inherited context through the real CLI, then an SDK
+client verifies matching receipts across MCP/CLI, child-only visibility, literal
+send/correlated wait, human control refusal, reconnect and process-exit revocation.
+Owner-supplied lineage, forged role/authority/current hints and workspace escape
+cannot grant access. No model calls or changes to user sessions/provider settings.
 
 Actual provider prompt-correlation coverage, MCP event streaming,
 durable task/results and actual provider-to-child orchestration remain F10/F17

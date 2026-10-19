@@ -56,6 +56,7 @@ pub async fn control(
     key: String,
     session_id: String,
     action: ControlAction,
+    authority: crate::caller::Authority,
 ) -> Result<Receipt> {
     let accepted = log
         .accept_operation(
@@ -72,7 +73,10 @@ pub async fn control(
         .claim(issuer.clone(), accepted.receipt.id)
         .await?
         .ok_or_else(|| anyhow!("Control operation claim is unavailable"))?;
-    let dispatched = state.lock().unwrap().dispatch_control(&session_id, action);
+    let dispatched = state
+        .lock()
+        .unwrap()
+        .dispatch_control(&session_id, action, &authority);
     let result = async {
         let outcome=match dispatched? {
             ControlDispatch::Write(answer) => {
@@ -276,6 +280,7 @@ pub async fn send(
     key: String,
     session_id: String,
     prompt: String,
+    authority: crate::caller::Authority,
 ) -> Result<Receipt> {
     let accepted = log
         .accept_send(
@@ -302,7 +307,7 @@ pub async fn send(
             state
                 .lock()
                 .unwrap()
-                .begin_submission(&session_id, reference, &prompt)?;
+                .begin_submission(&session_id, reference, &prompt, &authority)?;
         let (answer, _) = enqueue_fenced(
             &state,
             &log,
@@ -374,7 +379,12 @@ pub async fn create(
     issuer: String,
     key: String,
     mut spec: LaunchSpec,
+    authority: crate::caller::Authority,
 ) -> Result<Receipt> {
+    state
+        .lock()
+        .unwrap()
+        .normalize_launch_intent(&authority, &mut spec)?;
     let accepted = log
         .accept(issuer.clone(), key, serde_json::to_value(&spec)?)
         .await?;
@@ -385,11 +395,11 @@ pub async fn create(
         .claim(issuer.clone(), accepted.receipt.id.clone())
         .await?
         .ok_or_else(|| anyhow!("Operation is no longer available for dispatch"))?;
-    let validation = state.lock().unwrap().validate_launch(&spec);
+    let validation = state.lock().unwrap().resolve_launch(&authority, &mut spec);
     let (phase, result) = match validation {
         Err(error) => (
             "failed",
-            json!({"code":"invalid_launch","message":error.to_string().chars().take(240).collect::<String>(),"effectStarted":false}),
+            json!({"code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("invalid_launch"),"message":error.to_string().chars().take(240).collect::<String>(),"effectStarted":false}),
         ),
         Ok(directory) => {
             let setup = if spec.worktree {
@@ -406,16 +416,14 @@ pub async fn create(
                     json!({"code":"worktree_unconfirmed","message":"Inspect the repository before creating another worktree"}),
                 ),
                 Ok(()) => {
-                    let launched = state.lock().unwrap().launch_reserved(
+                    let launched = state.lock().unwrap().launch_authorized(
+                        &authority,
                         &spec,
                         &events,
                         &claim.receipt.session_id,
                     );
                     match launched {
-                        Ok(id) => {
-                            state.lock().unwrap().broadcast_list();
-                            ("created", json!({"sessionId":id,"taskResult":null}))
-                        }
+                        Ok(id) => ("created", json!({"sessionId":id,"taskResult":null})),
                         Err(_) => (
                             "unknown",
                             json!({"code":"launch_unconfirmed","message":"Inspect sessions and recovery before creating a new operation","reservedSessionId":claim.receipt.session_id,"directory":spec.cwd}),

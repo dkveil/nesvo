@@ -165,6 +165,7 @@ function session(value: unknown): value is RecordValue {
     text(value.id) &&
     text(value.name, 320) &&
     (value.parentSessionId === undefined || nullableId(value.parentSessionId)) &&
+    (value.role === undefined || value.role === 'worker' || value.role === 'coordinator') &&
     (value.uptimeSeconds === undefined || integer(value.uptimeSeconds)) &&
     text(value.cwd, 32768) &&
     text(value.createdAt) &&

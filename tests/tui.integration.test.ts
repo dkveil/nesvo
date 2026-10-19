@@ -409,8 +409,12 @@ test(
             ['session', 'current', '--json'],
             { NESVO_AGENT_CONTEXT: contextPath, NESVO_SESSION_ID: 'someone-else' },
           );
-          assert.equal(forbidden.code, 6);
-          assert.equal(JSON.parse(forbidden.stdout).error.code, 'forbidden');
+          assert.equal(forbidden.code, 0);
+          assert.equal(
+            JSON.parse(forbidden.stdout).data.session.id,
+            created.sessionId,
+            'authenticated process identity overrides a forged environment hint',
+          );
           const forged = join(fixture, 'forged-context.json');
           await writeFile(forged, JSON.stringify({ ...capability, scopeId: '0'.repeat(32) }));
           const rejected = await runTui(tuiBinary, forged, runningTuis, [

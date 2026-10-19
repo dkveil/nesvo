@@ -410,3 +410,22 @@ test('optional process lineage is validated independently from groups and author
     );
   }
 });
+
+test('launch roles are optional validated metadata rather than authority claims', () => {
+  for (const role of [undefined, 'worker', 'coordinator']) {
+    const snapshot = { type: 'sessions', groups, sessions: [{ ...session, role }], revision: 4 };
+    assert.deepEqual(decodeServerMessage(snapshot), snapshot);
+  }
+  for (const role of [null, 'owner', true, {}]) {
+    assert.throws(
+      () =>
+        decodeServerMessage({
+          type: 'sessions',
+          groups,
+          sessions: [{ ...session, role }],
+          revision: 4,
+        }),
+      /Invalid host message/,
+    );
+  }
+});

@@ -28,6 +28,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn start() -> Result<Self> {
+        Self::start_variant(false).await
+    }
+    async fn start_variant(agent: bool) -> Result<Self> {
         let directory = std::env::temp_dir().join(format!(
             "nesvo-mcp-{}",
             hex::encode(nesvo_wire::random::<8>())
@@ -43,6 +46,9 @@ impl Fixture {
                 })
             });
         let mut command = Command::new(binary);
+        if agent {
+            install_agent_fixture(&directory, &mut command).await?;
+        }
         command
             .args(["--port", "0", "--exit-on-stdin-close", "--pairing-dir"])
             .arg(&directory)
@@ -93,6 +99,106 @@ impl Fixture {
         std::fs::remove_dir_all(canonical)?;
         Ok(())
     }
+}
+async fn install_agent_fixture(directory: &Path, host: &mut Command) -> Result<()> {
+    let bin = directory.join("bin");
+    let callers = directory.join("callers");
+    std::fs::create_dir(&bin)?;
+    std::fs::create_dir(&callers)?;
+    let mut probe = Command::new("node");
+    probe.args(["-p", "process.execPath"]);
+    #[cfg(windows)]
+    probe.creation_flags(0x08000000);
+    let output = probe.output().await?;
+    ensure!(
+        output.status.success(),
+        "Node is required for the controlled provider fixture"
+    );
+    let node = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+    let linked = bin.join(if cfg!(windows) { "node.exe" } else { "node" });
+    if std::fs::hard_link(&node, &linked).is_err() {
+        std::fs::copy(&node, &linked)?;
+    }
+    let source = include_str!("../../../tests/fixtures/scoped-agent.cjs");
+    if cfg!(windows) {
+        let package = bin.join("node_modules/@anthropic-ai/claude-code");
+        std::fs::create_dir_all(&package)?;
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"bin":{"claude":"main.js"}}"#,
+        )?;
+        std::fs::write(package.join("main.js"), source)?;
+        std::fs::write(
+            bin.join("claude.cmd"),
+            "@echo off\r\necho NEVER_EXECUTE_FIXTURE_SHIM\r\n",
+        )?;
+    } else {
+        let script = bin.join("claude");
+        std::fs::write(&script, source)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755))?;
+        }
+    }
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    host.env("PATH", std::env::join_paths(paths)?)
+        .env("NESVO_TEST_CALLERS", callers)
+        .env("NESVO_TEST_CLIENT_BINARY", env!("CARGO_BIN_EXE_nesvo"));
+    Ok(())
+}
+async fn scoped_client(context: &Path, id: &str) -> Result<RunningService<RoleClient, ()>> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
+    command
+        .arg("mcp")
+        .env("NESVO_AGENT_CONTEXT", context)
+        .env("NESVO_SESSION_ID", id);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    Ok(().serve(TokioChildProcess::new(command)?).await?)
+}
+async fn session_ready(client: &RunningService<RoleClient, ()>, id: &str) -> Result<()> {
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let current = data(call(client, "nesvo_get_session", json!({"sessionId":id})).await?)?;
+            if current["data"]["session"]["readiness"]["phase"] == "ready"
+                && current["data"]["session"]["status"]["state"] == "idle"
+            {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("Controlled provider readiness")??;
+    Ok(())
+}
+async fn human_control(pairing: &Path, id: &str) -> Result<Child> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut command = Command::new("node");
+    command
+        .current_dir(&root)
+        .args(["--import", "tsx"])
+        .arg(root.join("tests/fixtures/human-control.ts"))
+        .arg(pairing)
+        .arg(id)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let mut process = command.spawn()?;
+    let mut output = BufReader::new(process.stdout.take().context("human fixture stdout")?).lines();
+    let ready = timeout(Duration::from_secs(10), output.next_line()).await??;
+    ensure!(
+        ready.as_deref() == Some("HUMAN_CONTROL_READY"),
+        "Human fixture did not acquire its lease"
+    );
+    Ok(process)
 }
 async fn client(pairing: &Path) -> Result<RunningService<RoleClient, ()>> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
@@ -415,6 +521,125 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
     })
     .catch_unwind()
     .await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            cleanup?;
+        }
+        Err(panic) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires native binaries and Node; controlled CLI fixture, no model calls"]
+async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_children() -> Result<()>
+{
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome=std::panic::AssertUnwindSafe(async {
+        let workspace=fixture.directory.join("workspace");
+        std::fs::create_dir(&workspace)?;
+        let owner=client(&fixture.pairing()).await?;
+        let root=data(call(&owner,"nesvo_create_session",json!({"key":"coordinator","spec":{"name":"Coordinator fixture","program":"claude","role":"coordinator","cwd":workspace}})).await?)?;
+        let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator ID")?;
+        session_ready(&owner,root_id).await?;
+        let root_view=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
+        assert_eq!(root_view["data"]["session"]["role"],"coordinator");
+        data(call(&owner,"nesvo_send_prompt",json!({"sessionId":root_id,"key":"spawn-child","prompt":"spawn-child"})).await?)?;
+        let result_path=fixture.directory.join("callers").join(format!("{root_id}.child.json"));
+        let spawned=timeout(Duration::from_secs(10),async {
+            loop {
+                if let Ok(contents)=std::fs::read(&result_path)
+                    && let Ok(value)=serde_json::from_slice::<Value>(&contents) {return value;}
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await.context("Managed process did not create its child through the CLI")?;
+        let child_id=spawned["data"]["receipt"]["sessionId"].as_str().context("managed child")?;
+        assert_eq!(spawned["data"]["receipt"]["phase"],"created");
+        session_ready(&owner,child_id).await?;
+        let context_for=|id:&str|->Result<PathBuf>{Ok(PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{id}.txt")))?))};
+        let context=context_for(root_id)?;
+        let coordinator=scoped_client(&context,root_id).await?;
+        let listed=data(call(&coordinator,"nesvo_list_sessions",json!({})).await?)?;
+        assert_eq!(listed["data"]["sessions"].as_array().context("scoped list")?.len(),2);
+        let child=data(call(&coordinator,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
+        assert_eq!(child["data"]["session"]["parentSessionId"],root_id);
+        assert_eq!(child["data"]["session"]["role"],"worker");
+        assert_eq!(child["data"]["session"]["controllerId"],Value::Null);
+        assert_eq!(std::fs::canonicalize(child["data"]["session"]["cwd"].as_str().context("child cwd")?)?,workspace.canonicalize()?);
+        let replay=data(call(&coordinator,"nesvo_create_session",json!({"key":"agent-child-once","spec":{"name":"Scoped child","program":"claude"}})).await?)?;
+        assert_eq!(replay["data"]["receipt"],spawned["data"]["receipt"]);
+        let metadata=data(call(&owner,"nesvo_create_session",json!({"key":"metadata-only","spec":{"name":"Not shared","program":"claude","cwd":workspace,"parentSessionId":root_id}})).await?)?;
+        let foreign_id=metadata["data"]["receipt"]["sessionId"].as_str().context("metadata-only ID")?;
+        let forbidden=call(&coordinator,"nesvo_get_session",json!({"sessionId":foreign_id})).await?;
+        assert_eq!(forbidden.structured_content.context("foreign refusal")?["error"]["code"],"forbidden","parent metadata alone does not grant access");
+        let visible=data(call(&coordinator,"nesvo_list_sessions",json!({})).await?)?;
+        assert_eq!(visible["data"]["sessions"].as_array().context("filtered list")?.len(),2,"metadata-only child must not appear in coordinator snapshots");
+        for spec in [json!({"name":"recursive","role":"coordinator"}),json!({"name":"forged-parent","parentSessionId":foreign_id})] {
+            let rejected=call(&coordinator,"nesvo_create_session",json!({"key":"rejected-create","spec":spec})).await?;
+            assert_eq!(rejected.structured_content.context("create refusal")?["error"]["code"],"forbidden");
+        }
+        let outside=call(&coordinator,"nesvo_create_session",json!({"key":"outside","spec":{"name":"outside","cwd":fixture.directory}})).await?;
+        let error=outside.structured_content.context("outside failure")?;
+        assert_eq!(error["error"]["receipt"]["phase"],"failed");
+        assert_eq!(error["error"]["receipt"]["result"]["code"],"forbidden");
+        assert_eq!(error["error"]["receipt"]["result"]["effectStarted"],false);
+        let mut human=human_control(&fixture.pairing(),child_id).await?;
+        let refused=call(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"human-busy","prompt":"do not type"})).await?;
+        let refused=refused.structured_content.context("human refusal")?;
+        assert_eq!(refused["error"]["receipt"]["result"]["code"],"control_busy");
+        assert_eq!(refused["error"]["receipt"]["result"]["effectStarted"],false);
+        drop(human.stdin.take());
+        ensure!(timeout(Duration::from_secs(5),human.wait()).await??.success(),"Human fixture shutdown");
+        timeout(Duration::from_secs(5),async {
+            loop {
+                let view=data(call(&owner,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
+                if view["data"]["session"]["controllerId"].is_null() {return Ok::<_,anyhow::Error>(());}
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await??;
+        let sent=data(call(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"child-turn","prompt":"literal child prompt"})).await?)?;
+        let completed=data(call(&coordinator,"nesvo_wait_prompt",json!({"id":sent["data"]["receipt"]["id"],"sessionId":child_id,"timeoutMs":5000})).await?)?;
+        assert_eq!(completed["data"]["receipt"]["phase"],"settled");
+        let events=data(call(&coordinator,"nesvo_read_events",json!({"sessionId":child_id,"after":0})).await?)?;
+        assert!(events["data"]["events"].as_array().context("child events")?.iter().all(|event|event["sessionId"]==child_id));
+        let child_context=context_for(child_id)?;
+        let mut forged:Value=serde_json::from_slice(&std::fs::read(&child_context)?)?;
+        forged["role"]=json!("coordinator");
+        forged["authority"]=json!("owner");
+        std::fs::write(&child_context,serde_json::to_vec(&forged)?)?;
+        let worker=scoped_client(&child_context,root_id).await?;
+        let bound=data(call(&worker,"nesvo_get_current_session",json!({})).await?)?;
+        assert_eq!(bound["data"]["session"]["id"],child_id,"server binding wins over forged current-session hints");
+        let rejected=call(&worker,"nesvo_create_session",json!({"key":"worker-cannot-fork","spec":{"name":"forbidden"}})).await?;
+        assert_eq!(rejected.structured_content.context("worker refusal")?["error"]["code"],"forbidden");
+        let parent=call(&worker,"nesvo_get_session",json!({"sessionId":root_id})).await?;
+        assert_eq!(parent.structured_content.context("parent refusal")?["error"]["code"],"forbidden");
+        worker.cancel().await?;
+        coordinator.cancel().await?;
+        let reconnected=scoped_client(&context,root_id).await?;
+        let replay=data(call(&reconnected,"nesvo_get_operation",json!({"key":"agent-child-once"})).await?)?;
+        assert_eq!(replay["data"]["receipt"],spawned["data"]["receipt"]);
+        data(call(&owner,"nesvo_stop_session",json!({"sessionId":root_id,"key":"stop-coordinator"})).await?)?;
+        timeout(Duration::from_secs(5),async {
+            loop {
+                let view=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
+                if view["data"]["session"]["running"]==false {return Ok::<_,anyhow::Error>(());}
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await??;
+        let revoked=call(&reconnected,"nesvo_get_session",json!({"sessionId":child_id})).await?;
+        assert_eq!(revoked.is_error,Some(true));
+        let surviving=data(call(&owner,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
+        assert_eq!(surviving["data"]["session"]["running"],true,"coordinator exit does not kill child sessions");
+        reconnected.cancel().await?;
+        owner.cancel().await?;
+        Ok::<_,anyhow::Error>(())
+    }).catch_unwind().await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {

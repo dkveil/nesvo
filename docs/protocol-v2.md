@@ -13,19 +13,24 @@ session ID alone grants no access. Authorization precedes both synchronous and
 asynchronous host dispatch. Scoped snapshots and background control events are
 filtered at publication; group rollups are recomputed for the visible set.
 
-The initial session capability is read-only and expires at process exit. Its
-capabilities response includes `caller:{sessionId,permissions:["session:read"],
-expires:"processExit"}`. Mutations, global diagnostics and pinned review folders
-are denied with `forbidden`; existing connections after exit get `scope_revoked`.
-Future run/child grants will extend this policy explicitly. Context credentials
-are never sent in application snapshots. This is API authorization, not an OS
-process sandbox.
+The default worker capability is read-only and expires at process exit. Its
+capabilities response includes `caller:{sessionId,role:"worker",
+permissions:["session:read"],expires:"processExit"}`. Owner-only advanced launch
+may request `role:"coordinator"` when `coordinatorScopes:true` is advertised.
+Coordinators additionally receive `child:create/read/send/interrupt/stop` for
+explicitly granted children created by that launch. The host validates the role,
+parent, workspace/group and live actor again before native effects; untrusted
+file claims or parent metadata cannot add grants. Global diagnostics, direct
+input/leases, arbitrary review directories and unrelated subjects stay forbidden.
+Existing connections after observed process exit get `scope_revoked`. Context
+credentials never appear in snapshots. This is API authorization, not an OS sandbox.
 
 - `auth { clientNonce }` → `connected { clientNonce, clientId, protocolVersion: 2 }`; `clientId` is a JSON number, scoped to this connection.
 - Then `sessions { sessions, groups, revision }`. `list` requests the same snapshot. Snapshots are broadcast when session metadata, groups or observed status changes.
 - Session: existing `id,name,cwd,createdAt,cols,rows,running`, optional `uptimeSeconds` (non-negative integer, monotonic process age frozen at exit), plus `program: "shell" | "claude" | "gemini" | "codex"`, `groupId: string|null`, `controllerId: number|null`. Lease secrets are never in snapshots. Current hosts always supply `program`; clients can treat a missing value in an older snapshot as `shell`.
 - Group: `{ id, parentId: string|null, name, order: number }`. Root is `null`, not a synthetic group.
 - Additive `parentSessionId:string|null` describes immutable process lineage, independent of groups. Missing/null means no parent. A child is a normal visible process with its own ID, output and control lease; opening it never starts another process. This metadata confers no authority. `sessionLineage:true` advertises advanced launch support; a requested parent must be a live process when launching. Historical recovery metadata retains lineage, without claiming processes survived host restart.
+- Additive `role:"worker"|"coordinator"` is host-owned launch metadata. Absence on an older host means no advertised coordinator support. Editing a context file's role does not change it. Recovery retains the requested role but does not resurrect private grants or an old process identity.
 - Additive `currentAttention` on each session is the host's current actionable projection: `priority:0..3`, `reason:null|permission|question|auth|quota|setup|unknown|startup|failure|child`, `status:SessionStatus|null`, and `blockedChildren:0..256`. Priority zero has no reason/indicator. This is separate from historical unread `attention` and never changes the root agent state. For example, a working parent with blocked protocol children has a blocked aggregate indicator and reason `child`.
 - Each group and the snapshot root carry `attentionSummary:{sessions,needsYou,highest}`. Counts include descendant sessions once, independently of client collapse/filter state. `highest` is the highest-priority current projection or null. These derived values do not increment metadata revision. New clients consume them; legacy hosts retain client-side fallback behavior. Startup failure and process failure need attention; successful process exit or a settled response do not imply task success.
 - A settled lifecycle response can create an unread attention event with legacy `kind:"done"`, additive `subject:"response"` and `turnId`. This means the response ended, not that a task succeeded. Duplicate Stop reports for the same turn do not repeat the notification. New work preserves historical unread data while current attention follows the new state; an ordinary successful process exit alone no longer creates a response notification.

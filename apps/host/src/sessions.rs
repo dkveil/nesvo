@@ -65,6 +65,7 @@ impl ControlLease {
 }
 
 struct Session {
+    policy: crate::caller::Policy,
     caller_context: Option<crate::caller::Context>,
     started: std::time::Instant,
     elapsed_at_exit: Option<Duration>,
@@ -196,6 +197,22 @@ impl State {
             None => ("owner".into(), true),
         })
     }
+    pub fn operation_authority(&self, client_id: u64) -> Result<crate::caller::Authority> {
+        self.caller_session(client_id)?;
+        Ok(self
+            .clients
+            .get(&client_id)
+            .ok_or_else(|| {
+                crate::api_error::Error::new("forbidden", "Caller is not authenticated")
+            })?
+            .authority
+            .clone())
+    }
+    fn can_read(&self, caller: &str, target: &str) -> bool {
+        self.sessions
+            .get(caller)
+            .is_some_and(|session| session.policy.can_read(caller, target))
+    }
     pub fn event_subject(
         &self,
         client_id: u64,
@@ -210,14 +227,17 @@ impl State {
             );
         }
         if let Some(id) = self.caller_session(client_id)? {
-            if requested.as_ref().is_some_and(|target| target != id) {
+            if requested
+                .as_ref()
+                .is_some_and(|target| !self.can_read(id, target))
+            {
                 return Err(crate::api_error::Error::new(
                     "forbidden",
                     "Caller cannot observe this event subject",
                 )
                 .into());
             }
-            return Ok(Some(id.into()));
+            return Ok(requested.or_else(|| Some(id.into())));
         }
         Ok(requested)
     }
@@ -257,7 +277,12 @@ impl State {
         let client = self.clients.get(&client_id).ok_or_else(|| {
             crate::api_error::Error::new("forbidden", "Caller is not authenticated")
         })?;
-        match &client.authority {
+        Ok(self
+            .actor_session(&client.authority)?
+            .map(|session| session.info.id.as_str()))
+    }
+    fn actor_session(&self, authority: &crate::caller::Authority) -> Result<Option<&Session>> {
+        match authority {
             crate::caller::Authority::Owner => Ok(None),
             crate::caller::Authority::Session { id, scope_id } => {
                 let active = self.sessions.get(id).is_some_and(|s| {
@@ -273,20 +298,138 @@ impl State {
                     )
                     .into());
                 }
-                Ok(Some(id))
+                Ok(self.sessions.get(id))
             }
         }
+    }
+    pub fn authorize_automation(
+        &self,
+        authority: &crate::caller::Authority,
+        target: &str,
+    ) -> Result<()> {
+        let Some(session) = self.actor_session(authority)? else {
+            return Ok(());
+        };
+        if !session.policy.can_control(target) {
+            return Err(crate::api_error::Error::new(
+                "forbidden",
+                "Automation requires an explicit child capability",
+            )
+            .into());
+        }
+        Ok(())
+    }
+    pub fn normalize_launch_intent(
+        &self,
+        authority: &crate::caller::Authority,
+        spec: &mut crate::jobs::LaunchSpec,
+    ) -> Result<()> {
+        let Some(session) = self.actor_session(authority)? else {
+            return Ok(());
+        };
+        if session.policy.role != crate::caller::Role::Coordinator
+            || spec.role != crate::caller::Role::Worker
+            || spec
+                .parent_session_id
+                .as_ref()
+                .is_some_and(|id| id != &session.info.id)
+        {
+            return Err(crate::api_error::Error::new(
+                "forbidden",
+                "Coordinator may create worker children only under its own identity",
+            )
+            .into());
+        }
+        spec.parent_session_id = Some(session.info.id.clone());
+        Ok(())
+    }
+    pub fn resolve_launch(
+        &self,
+        authority: &crate::caller::Authority,
+        spec: &mut crate::jobs::LaunchSpec,
+    ) -> Result<PathBuf> {
+        self.normalize_launch_intent(authority, spec)?;
+        if let Some(session) = self.actor_session(authority)? {
+            if !session.policy.can_spawn() {
+                return Err(crate::api_error::Error::new(
+                    "busy",
+                    "Coordinator child capability capacity is exhausted",
+                )
+                .into());
+            }
+            let root = working_directory(&self.workspace, Some(&session.info.cwd))?;
+            let target = working_directory(&root, spec.cwd.as_deref())?;
+            if !target.starts_with(&root)
+                || spec
+                    .group_id
+                    .as_ref()
+                    .is_some_and(|id| Some(id) != session.info.group_id.as_ref())
+            {
+                return Err(crate::api_error::Error::new(
+                    "forbidden",
+                    "Child launch must stay within the coordinator workspace and group",
+                )
+                .into());
+            }
+            spec.cwd = Some(crate::process::display_path(&target));
+            spec.group_id = session.info.group_id.clone();
+        }
+        self.validate_launch(spec)
+    }
+    pub fn launch_authorized(
+        &mut self,
+        authority: &crate::caller::Authority,
+        spec: &crate::jobs::LaunchSpec,
+        events: &mpsc::Sender<PtyEvent>,
+        reserved: &str,
+    ) -> Result<String> {
+        let mut check = spec.clone();
+        self.normalize_launch_intent(authority, &mut check)?;
+        let parent = self
+            .actor_session(authority)?
+            .map(|session| session.info.id.clone());
+        if let Some(parent) = &parent
+            && !self.sessions[parent].policy.can_spawn()
+        {
+            return Err(crate::api_error::Error::new(
+                "busy",
+                "Coordinator child capability capacity is exhausted",
+            )
+            .into());
+        }
+        let id = self.launch_reserved(spec, events, reserved)?;
+        if let Some(parent) = parent
+            && let Some(session) = self.sessions.get_mut(&parent)
+        {
+            session.policy.grant_created_child(id.clone());
+        }
+        self.broadcast_list();
+        Ok(id)
     }
     pub fn authorize(&self, client_id: u64, command: &Command) -> Result<()> {
         let Some(caller) = self.caller_session(client_id)? else {
             return Ok(());
         };
         let target = match command {
+            Command::CreateOperation { spec, .. } => {
+                let mut spec = spec.clone();
+                return self
+                    .normalize_launch_intent(&self.operation_authority(client_id)?, &mut spec);
+            }
+            Command::SendOperation { session_id, .. }
+            | Command::InterruptOperation { session_id, .. }
+            | Command::StopOperation { session_id, .. } => {
+                return self
+                    .authorize_automation(&self.operation_authority(client_id)?, session_id);
+            }
             Command::GetOperation { .. } | Command::WaitOperation { .. } => return Ok(()),
             Command::UnsubscribeEvents => return Ok(()),
             Command::ReadEvents { session_id, .. }
             | Command::SubscribeEvents { session_id, .. } => {
-                if session_id.as_ref().is_none_or(|id| id == caller) {
+                if session_id
+                    .as_ref()
+                    .is_none_or(|id| self.can_read(caller, id))
+                {
                     return Ok(());
                 }
                 None
@@ -305,7 +448,7 @@ impl State {
             } => Some(session_id.as_str()),
             _ => None,
         };
-        if target != Some(caller) {
+        if target.is_none_or(|target| !self.can_read(caller, target)) {
             return Err(crate::api_error::Error::new(
                 "forbidden",
                 "Caller capability does not permit this operation or target",
@@ -359,6 +502,7 @@ impl State {
         event["promptReceipts"] = self.event_log.is_some().into();
         event["controlReceipts"] = self.event_log.is_some().into();
         event["sessionLineage"] = true.into();
+        event["coordinatorScopes"] = true.into();
         event
     }
 
@@ -388,6 +532,7 @@ impl State {
                 cwd: Some(session.info.cwd.clone()),
                 group_id: session.info.group_id.clone(),
                 parent_session_id: session.info.parent_session_id.clone(),
+                role: session.policy.role,
                 program: session.info.program,
                 auto_title: session.auto_title,
                 muted: session.attention.muted,
@@ -428,7 +573,7 @@ impl State {
     }
     fn list_scoped(&self, caller: Option<&str>) -> Value {
         let mut sessions: Vec<&Session> = self.sessions.values().collect();
-        sessions.retain(|s| caller.is_none_or(|id| s.info.id == id));
+        sessions.retain(|s| caller.is_none_or(|id| self.can_read(id, &s.info.id)));
         sessions.sort_by(|left, right| left.info.created_at.cmp(&right.info.created_at));
         let projections: Vec<_> = sessions
             .iter()
@@ -475,6 +620,7 @@ impl State {
             .map(|session| {
                 let mut info =
                     serde_json::to_value(&session.info).expect("Session metadata serializes");
+                info["role"]=json!(session.policy.role);
                 info["attention"] = json!(session.attention.event);
                 info["currentAttention"] = json!(session.current_attention());
                 info["muted"] = json!(session.attention.muted);
@@ -561,7 +707,7 @@ impl State {
         if event
             .get("sessionId")
             .and_then(Value::as_str)
-            .is_some_and(|target| target != id)
+            .is_some_and(|target| !self.can_read(id, target))
         {
             return None;
         }
@@ -574,8 +720,8 @@ impl State {
         }
         if event["type"] == "capabilities" {
             let mut event = event;
-            event["caller"] =
-                json!({"sessionId":id,"permissions":["session:read"],"expires":"processExit"});
+            let role = self.sessions.get(id)?.policy.role;
+            event["caller"] = json!({"sessionId":id,"role":role,"permissions":if role==crate::caller::Role::Coordinator{vec!["session:read","child:create","child:read","child:send","child:interrupt","child:stop"]}else{vec!["session:read"]},"expires":"processExit"});
             if let Some(session) = self.sessions.get(id) {
                 event["workspace"] = session.info.cwd.clone().into();
             }
@@ -923,11 +1069,13 @@ impl State {
         &mut self,
         id: &str,
         action: crate::operations::ControlAction,
+        authority: &crate::caller::Authority,
     ) -> Result<crate::operations::ControlDispatch> {
         use crate::{
             api_error::Error,
             operations::{ControlAction, ControlDispatch},
         };
+        self.authorize_automation(authority, id)?;
         if self.shutting_down {
             return Err(Error::new(
                 "host_stopping",
@@ -983,8 +1131,10 @@ impl State {
         id: &str,
         claim: crate::submission::Claim,
         prompt: &str,
+        authority: &crate::caller::Authority,
     ) -> Result<(Option<PathBuf>, watch::Receiver<bool>)> {
         use crate::api_error::Error;
+        self.authorize_automation(authority, id)?;
         if self.shutting_down {
             return Err(Error::new(
                 "host_stopping",
@@ -1049,6 +1199,7 @@ impl State {
         }
         let (canceled, cancellation) = watch::channel(false);
         session.pending_input = Some(crate::submission::Pending {
+            authority: authority.clone(),
             claim,
             canceled,
             correlation: None,
@@ -1073,6 +1224,13 @@ impl State {
         fence: Option<&crate::agent_events::Batch>,
     ) -> Result<tokio::sync::oneshot::Receiver<bool>> {
         use crate::api_error::Error;
+        let authority = self
+            .sessions
+            .get(id)
+            .and_then(|s| s.pending_input.as_ref())
+            .map(|pending| pending.authority.clone())
+            .ok_or_else(|| Error::new("submission_preempted", "Submission is no longer active"))?;
+        self.authorize_automation(&authority, id)?;
         let session = self
             .sessions
             .get_mut(id)
@@ -1231,7 +1389,10 @@ impl State {
             command,
             events.clone(),
             self.caller_url.as_deref(),
-            reserved,
+            SpawnIdentity {
+                id: reserved,
+                role: spec.role,
+            },
         )?;
         session.info.group_id = spec.group_id.clone();
         session.info.parent_session_id = spec.parent_session_id.clone();
@@ -1260,7 +1421,10 @@ impl State {
             "session.created",
             json!({"program":spec.program,"parentSessionId":spec.parent_session_id}),
         );
-        self.broadcast_list();
+        // Durable launches publish once the authenticated child's grant is installed.
+        if reserved.is_none() {
+            self.broadcast_list();
+        }
         Ok(id)
     }
 
@@ -1659,7 +1823,10 @@ impl State {
                     command,
                     pty_events.clone(),
                     self.caller_url.as_deref(),
-                    None,
+                    SpawnIdentity {
+                        id: None,
+                        role: crate::caller::Role::Worker,
+                    },
                 )?;
                 session.info.group_id = group_id;
                 let session_id = session.info.id.clone();
@@ -1912,6 +2079,10 @@ impl State {
     }
 }
 
+struct SpawnIdentity<'a> {
+    id: Option<&'a str>,
+    role: crate::caller::Role,
+}
 fn spawn_session(
     name: &str,
     cwd: &Path,
@@ -1919,14 +2090,15 @@ fn spawn_session(
     mut command: CommandBuilder,
     events: mpsc::Sender<PtyEvent>,
     caller_url: Option<&str>,
-    reserved: Option<&str>,
+    identity: SpawnIdentity<'_>,
 ) -> Result<Session> {
-    let id = reserved
+    let id = identity
+        .id
         .map(str::to_owned)
         .unwrap_or_else(|| hex::encode(crate::wire::random::<16>()));
     command.env("NESVO_SESSION_ID", &id);
     let caller_context = caller_url
-        .map(|url| crate::caller::Context::new(url, &id))
+        .map(|url| crate::caller::Context::new(url, &id, identity.role))
         .transpose()?;
     if let Some(context) = &caller_context {
         command.env("NESVO_AGENT_CONTEXT", context.path());
@@ -1941,6 +2113,7 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        policy: crate::caller::Policy::new(identity.role),
         caller_context,
         started: std::time::Instant::now(),
         elapsed_at_exit: None,

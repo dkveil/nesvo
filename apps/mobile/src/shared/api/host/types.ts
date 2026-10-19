@@ -94,6 +94,7 @@ export type SessionControl = {
 };
 
 export type TerminalSession = {
+  role?: 'worker' | 'coordinator';
   parentSessionId?: string | null;
   currentAttention?: CurrentAttention;
   lifecycle?: SessionLifecycle;

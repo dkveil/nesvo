@@ -18,6 +18,7 @@ pub struct Transition {
     pub result: Value,
 }
 pub struct Pending {
+    pub authority: crate::caller::Authority,
     pub claim: Claim,
     pub canceled: watch::Sender<bool>,
     pub correlation: Option<Correlation>,

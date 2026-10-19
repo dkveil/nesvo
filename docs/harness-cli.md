@@ -22,7 +22,8 @@ nesvo --pairing C:\private\pairing.json session stop SESSION_ID --key review-sto
 nesvo mcp
 ```
 
-`current` reads `NESVO_SESSION_ID` injected into the managed process environment.
+`current` uses the authenticated host caller binding. For explicit owner/legacy
+connections without that binding it uses the injected `NESVO_SESSION_ID` hint.
 It never guesses from the TUI's selection. This identifier is context, not an
 authorization credential. The host also injects `NESVO_AGENT_CONTEXT`, a private
 file containing an independent per-process key. Headless commands prefer that
@@ -30,13 +31,25 @@ capability when no explicit `--pairing` is supplied. Missing/invalid context fai
 closed; it never falls back to the owner's pairing. For an agent running inside
 a managed session, `nesvo session current --json` needs no pairing argument.
 
-The initial session capability can list/get/read/explain only its own session and
+The default worker capability can list/get/read/explain only its own session and
 inspect its automatic repository diff. It cannot send input, acquire control,
 launch/stop processes, choose arbitrary review directories, inspect global doctor
 data or see unrelated sessions/groups/control notifications. It expires when the
 managed process exits. Permissions are host-owned; editing `sessionId` or an
-`authority` hint in a context file grants nothing. Coordinator/run/child grants
-are a subsequent F11/F12 gate before automated child creation/send is exposed.
+`authority`/`role` hint in a context file grants nothing.
+
+An owner can create a coordinator with `session create "Coordinator" --key KEY
+--program claude --role coordinator --json`. This requires `coordinatorScopes`.
+That managed process can create worker children and read/send/interrupt/stop only
+the children it created through its own authenticated capability. The host binds
+their parent, defaults their workspace/group to the coordinator's, and rejects
+workspace escapes, foreign groups/parents and recursive coordinator roles.
+Owner-created parent metadata alone grants no access. Reconnecting preserves
+the grants while the coordinator process lives; its observed exit revokes them
+without stopping its children. A fixed 256 lifetime child capability bound and
+the existing live-process cap apply; configurable run budgets remain F20 work.
+Human control/drafts still prevent automation. These are process capabilities,
+not durable run/recovery handover permissions.
 
 The owner can explicitly supply the private owner pairing for full human access.
 Do not give that pairing to workers. Capabilities constrain the authenticated API;
@@ -157,12 +170,13 @@ support; an old host is refused instead of silently creating a root session.
 The optional `parentSessionId` is returned in session queries and persisted in
 recovery metadata. Parent input ownership remains unchanged, including when
 the child has the same display name. A late observer sees the same relation.
-Lineage is not permission: a passive process still cannot create children or
-read its parent. Coordinator grants are a distinct F12 boundary.
+Lineage is not permission: a worker still cannot create children or read its
+parent. Coordinator grants come from authenticated child creation, never this
+optional owner-supplied metadata.
 
 `nesvo mcp` exposes current shared operations over native stdio; see the
 [MCP adapter](harness-mcp.md) for scope and SDK integration tests.
-Job receipts and coordinator grants remain
+Job receipts, agent instruction installation and durable run grants remain
 subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.
 
