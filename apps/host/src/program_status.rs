@@ -190,6 +190,12 @@ impl Records {
         self.records
             .retain(|_, (_, report)| matches!(report.state, State::Done | State::Error));
     }
+    pub fn blocked_children(&self) -> usize {
+        self.records
+            .values()
+            .filter(|(_, r)| r.id.is_some() && r.state == State::Blocked)
+            .count()
+    }
     pub fn summary(&self) -> serde_json::Value {
         // Child text is not broadcast in aggregate: 256 full messages could
         // exceed a wire frame. Explain/read endpoints can paginate later.
@@ -201,7 +207,7 @@ impl Records {
             .take(32)
             .collect();
         serde_json::json!({"root":self.root(), "childCount":self.records.keys().filter(|id| !id.is_empty()).count(),
-            "blockedChildren":self.records.values().filter(|(_, r)| r.id.is_some() && r.state == State::Blocked).count(),
+            "blockedChildren":self.blocked_children(),
             "blockedChildApps":blocked_apps})
     }
     fn effective_app(&self, id: &str) -> Option<&str> {

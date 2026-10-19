@@ -40,6 +40,27 @@ export type AttentionEvent = {
   at: number;
   unread: boolean;
 };
+export type CurrentAttention = {
+  priority: number;
+  reason:
+    | 'permission'
+    | 'question'
+    | 'auth'
+    | 'quota'
+    | 'setup'
+    | 'unknown'
+    | 'startup'
+    | 'failure'
+    | 'child'
+    | null;
+  status: SessionStatus | null;
+  blockedChildren: number;
+};
+export type AttentionSummary = {
+  sessions: number;
+  needsYou: number;
+  highest: CurrentAttention | null;
+};
 export type HostCapabilities = {
   hostId?: string;
   pushNotifications?: boolean;
@@ -55,7 +76,13 @@ export type ProviderLimit = {
 };
 export type SessionLaunchOptions = { cwd?: string; program?: SessionProgram };
 
-export type SessionGroup = { id: string; parentId: string | null; name: string; order: number };
+export type SessionGroup = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  order: number;
+  attentionSummary?: AttentionSummary;
+};
 export type SessionControl = {
   sessionId: string;
   controllerId: number | null;
@@ -65,6 +92,7 @@ export type SessionControl = {
 };
 
 export type TerminalSession = {
+  currentAttention?: CurrentAttention;
   lifecycle?: SessionLifecycle;
   readiness?: SessionReadiness;
   attention?: AttentionEvent | null;

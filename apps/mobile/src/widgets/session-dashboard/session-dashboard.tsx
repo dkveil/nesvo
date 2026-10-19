@@ -113,7 +113,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         (selectedGroup === null
           ? !session.groupId
           : !!session.groupId && groupIds?.has(session.groupId))) &&
-      (filter === 'all' || statusNeedsAttention(session.status)) &&
+      (filter === 'all' || statusNeedsAttention(session.status, session.currentAttention)) &&
       `${session.name} ${session.project} ${session.agent}`
         .toLocaleLowerCase()
         .includes(query.toLocaleLowerCase()),
@@ -123,7 +123,9 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
     name: groupPath(groups, id),
     sessions: visible.filter(session => (session.groupId ?? null) === id),
   }));
-  const attentionCount = sessions.filter(session => statusNeedsAttention(session.status)).length;
+  const attentionCount = sessions.filter(session =>
+    statusNeedsAttention(session.status, session.currentAttention),
+  ).length;
   const providerLimits = hostCapabilities?.providerLimits ?? [];
 
   return (
@@ -388,6 +390,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                           <SessionStatusBadge
                             variant="plain"
                             readiness={session.readiness}
+                            currentAttention={session.currentAttention}
                             status={session.status}
                             source={session.statusSource}
                             demo={!session.live}
@@ -615,6 +618,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                         <SessionStatusBadge
                           variant="plain"
                           readiness={session.readiness}
+                          currentAttention={session.currentAttention}
                           status={session.status}
                           source={session.statusSource}
                           demo={!session.live}

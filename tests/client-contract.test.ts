@@ -7,7 +7,10 @@ import {
   groupPath,
   validGroupName,
 } from '../apps/mobile/src/entities/group/model/groups';
-import { sessionReadinessLabel } from '../apps/mobile/src/entities/session/model/status-presentation';
+import {
+  sessionReadinessLabel,
+  statusNeedsAttention,
+} from '../apps/mobile/src/entities/session/model/status-presentation';
 import { decodeServerMessage } from '../apps/mobile/src/shared/api/host/messages';
 import type { SessionGroup } from '../apps/mobile/src/shared/api/host/types';
 import { parseTarget } from '../apps/mobile/src/shared/notifications/target';
@@ -29,6 +32,53 @@ const session = {
   groupId: 'child',
   controllerId: null,
 };
+
+test('canonical current attention drives filtering and validates group rollups separately from history', () => {
+  const status = { state: 'working', source: 'hook', updatedAt: 1 } as const;
+  const currentAttention = {
+    priority: 2,
+    reason: 'child',
+    blockedChildren: 3,
+    status: { ...status, state: 'blocked' },
+  } as const;
+  const attentionSummary = { sessions: 1, needsYou: 1, highest: currentAttention };
+  const snapshot = {
+    type: 'sessions',
+    revision: 0,
+    groups: groups.map(g => ({ ...g, attentionSummary })),
+    sessions: [
+      {
+        ...session,
+        status,
+        currentAttention,
+        attention: { sequence: 1, kind: 'permission', at: 1, unread: true },
+      },
+    ],
+  };
+  assert.equal(decodeServerMessage(snapshot).type, 'sessions');
+  assert.equal(statusNeedsAttention('working', currentAttention), true);
+  const cleared = { priority: 0, reason: null, status: null, blockedChildren: 0 } as const;
+  assert.equal(
+    statusNeedsAttention('blocked', cleared),
+    false,
+    'canonical host projection overrides legacy inference',
+  );
+  for (const bad of [
+    { ...currentAttention, priority: 9 },
+    { ...currentAttention, reason: 'succeeded' },
+    { ...cleared, reason: 'permission' },
+  ]) {
+    assert.throws(() =>
+      decodeServerMessage({ ...snapshot, sessions: [{ ...session, currentAttention: bad }] }),
+    );
+  }
+  assert.throws(() =>
+    decodeServerMessage({
+      ...snapshot,
+      groups: [{ ...groups[0], attentionSummary: { ...attentionSummary, needsYou: 2 } }],
+    }),
+  );
+});
 
 test('readiness is independent from legacy agent state and validates at the wire boundary', () => {
   const readiness = {

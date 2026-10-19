@@ -295,20 +295,28 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
             .and_then(|id| app.session(id))
             .and_then(|session| {
                 session
-                    .attention
+                    .current_attention
                     .as_ref()
-                    .filter(|a| a.unread && !session.muted)
-            })
-            .map(|a| {
-                format!(
-                    "New {}{}",
-                    if a.source == Some(crate::status::Source::Screen) {
-                        "~"
-                    } else {
-                        ""
-                    },
-                    a.kind
-                )
+                    .filter(|a| a.priority > 0)
+                    .and_then(|a| a.reason.as_ref())
+                    .map(|reason| format!("Needs you · {reason}"))
+                    .or_else(|| {
+                        session
+                            .attention
+                            .as_ref()
+                            .filter(|a| a.unread && !session.muted)
+                            .map(|a| {
+                                format!(
+                                    "New {}{}",
+                                    if a.source == Some(crate::status::Source::Screen) {
+                                        "~"
+                                    } else {
+                                        ""
+                                    },
+                                    a.kind
+                                )
+                            })
+                    })
             })
             .unwrap_or_default();
         frame.render_widget(

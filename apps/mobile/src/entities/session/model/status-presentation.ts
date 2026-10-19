@@ -6,7 +6,11 @@ export function sessionReadinessLabel(readiness: Session['readiness']): string |
   return undefined;
 }
 
-export function statusNeedsAttention(status: SessionStatus): boolean {
+export function statusNeedsAttention(
+  status: SessionStatus,
+  projection?: Session['currentAttention'],
+): boolean {
+  if (projection) return projection.priority > 0;
   return status === 'question' || status === 'blocked' || status === 'failed';
 }
 

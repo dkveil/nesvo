@@ -1,5 +1,6 @@
 import type {
   AttentionEvent,
+  CurrentAttention,
   SessionStatusSource as HostSessionStatusSource,
   SessionProgram,
   SessionReadiness,
@@ -25,6 +26,7 @@ export const programAgents = {
 
 /** Presentation metadata derived from a host snapshot, or explicit demo data. */
 export type Session = {
+  currentAttention?: CurrentAttention;
   readiness?: SessionReadiness;
   attention?: AttentionEvent | null;
   muted?: boolean;

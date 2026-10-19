@@ -35,6 +35,18 @@ pub struct Status {
 pub struct Readiness {
     pub phase: ReadinessPhase,
 }
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentAttention {
+    pub priority: u8,
+    pub reason: Option<String>,
+    pub status: Option<Status>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct AttentionSummary {
+    pub sessions: usize,
+    pub highest: Option<CurrentAttention>,
+}
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ReadinessPhase {

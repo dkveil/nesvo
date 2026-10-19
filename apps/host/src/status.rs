@@ -159,7 +159,11 @@ impl StatusTracker {
     pub fn agent_projection(&self) -> serde_json::Value {
         let current =
             (!self.exited && self.status.source != StatusSource::Activity).then_some(self.status);
-        let reason = if self.status.state == StatusState::Question {
+        let reason = self.block_reason();
+        serde_json::json!({"current":current,"lastKnown":self.last_semantic,"blockReason":reason,"freshness":if self.exited{"processExited"}else if current.is_some(){"observed"}else{"unknown"}})
+    }
+    pub fn block_reason(&self) -> Option<&'static str> {
+        if self.status.state == StatusState::Question {
             Some("question")
         } else if self.status.state != StatusState::Blocked {
             None
@@ -180,8 +184,7 @@ impl StatusTracker {
                 },
                 _ => "unknown",
             })
-        };
-        serde_json::json!({"current":current,"lastKnown":self.last_semantic,"blockReason":reason,"freshness":if self.exited{"processExited"}else if current.is_some(){"observed"}else{"unknown"}})
+        }
     }
     pub fn rule_reason(&self) -> Option<&'static str> {
         (self.status.source == StatusSource::Screen)

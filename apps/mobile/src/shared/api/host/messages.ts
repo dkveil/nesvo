@@ -127,6 +127,38 @@ function capabilities(value: RecordValue): boolean {
         )))
   );
 }
+function currentAttention(value: unknown): boolean {
+  if (!record(value) || !integer(value.priority, 0, 3) || !integer(value.blockedChildren, 0, 256))
+    return false;
+  if (value.priority === 0) return value.reason === null && value.status === null;
+  return (
+    typeof value.reason === 'string' &&
+    [
+      'permission',
+      'question',
+      'auth',
+      'quota',
+      'setup',
+      'unknown',
+      'startup',
+      'failure',
+      'child',
+    ].includes(value.reason) &&
+    sessionStatus(value.status)
+  );
+}
+function attentionSummary(value: unknown): boolean {
+  return (
+    record(value) &&
+    integer(value.sessions) &&
+    integer(value.needsYou, 0, value.sessions) &&
+    (value.needsYou === 0
+      ? value.highest === null
+      : record(value.highest) &&
+        currentAttention(value.highest) &&
+        Number(value.highest.priority) > 0)
+  );
+}
 function session(value: unknown): value is RecordValue {
   return (
     record(value) &&
@@ -136,6 +168,7 @@ function session(value: unknown): value is RecordValue {
     text(value.cwd, 32768) &&
     text(value.createdAt) &&
     typeof value.running === 'boolean' &&
+    (value.currentAttention === undefined || currentAttention(value.currentAttention)) &&
     (value.lifecycle === undefined || lifecycle(value.lifecycle, value.running)) &&
     dimensions(value) &&
     (value.program === undefined || program(value.program)) &&
@@ -166,6 +199,7 @@ function session(value: unknown): value is RecordValue {
 function group(value: unknown): value is RecordValue {
   return (
     record(value) &&
+    (value.attentionSummary === undefined || attentionSummary(value.attentionSummary)) &&
     text(value.id) &&
     text(value.name, 320) &&
     nullableId(value.parentId) &&

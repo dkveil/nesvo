@@ -846,6 +846,14 @@ pub(crate) fn truncate_cells(text: &str, max_width: usize) -> String {
 }
 
 fn group_session_count(app: &App, id: &str) -> usize {
+    if let Some(summary) = app
+        .groups
+        .iter()
+        .find(|g| g.id == id)
+        .and_then(|g| g.attention_summary.as_ref())
+    {
+        return summary.sessions;
+    }
     app.sessions
         .iter()
         .filter(|session| {

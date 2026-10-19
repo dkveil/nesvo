@@ -37,6 +37,29 @@ pub fn status_label(session: &Session, program: Program) -> StatusLabel {
             _ => {}
         }
     }
+    if let Some(attention) = &session.current_attention
+        && attention.priority > 0
+    {
+        return label(
+            match attention.reason.as_deref() {
+                Some("startup") => "start fail",
+                Some("failure") => "failed",
+                _ if attention
+                    .status
+                    .as_ref()
+                    .is_some_and(|s| s.source == Source::Screen) =>
+                {
+                    "~needs you"
+                }
+                _ => "needs you",
+            },
+            if attention.priority == 1 {
+                DANGER
+            } else {
+                WARNING
+            },
+        );
+    }
     if session.rate_limited {
         return label("needs you", WARNING);
     }

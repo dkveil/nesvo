@@ -36,6 +36,15 @@ pub const FILTERS: [&str; 8] = [
 ];
 
 pub fn status_index(session: &Session) -> usize {
+    if let Some(attention) = &session.current_attention
+        && attention.priority > 0
+    {
+        return match attention.reason.as_deref() {
+            Some("startup" | "failure") => 5,
+            Some("question") => 4,
+            _ => 3,
+        };
+    }
     let Some(status) = &session.status else {
         return 7;
     };

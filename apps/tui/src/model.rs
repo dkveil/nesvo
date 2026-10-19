@@ -47,9 +47,17 @@ pub struct Session {
     pub status: Option<Status>,
     #[serde(default)]
     pub readiness: Option<crate::status::Readiness>,
+    #[serde(default)]
+    pub current_attention: Option<crate::status::CurrentAttention>,
 }
 
 impl Session {
+    pub fn attention_priority(&self) -> u8 {
+        self.current_attention.as_ref().map_or_else(
+            || self.status.as_ref().map_or(0, Status::attention_priority),
+            |a| a.priority,
+        )
+    }
     fn refresh_time(&mut self, now: std::time::Instant) -> bool {
         let label = self
             .uptime_seconds
@@ -120,6 +128,8 @@ pub struct Group {
     pub parent_id: Option<String>,
     pub name: String,
     pub order: u32,
+    #[serde(default)]
+    pub attention_summary: Option<crate::status::AttentionSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -436,11 +446,7 @@ impl App {
                 let program = self.effective_program(session);
                 if (scope == SearchScope::Agents && program == Program::Shell)
                     || (scope == SearchScope::Terminals && program != Program::Shell)
-                    || (scope == SearchScope::Attention
-                        && !session
-                            .status
-                            .as_ref()
-                            .is_some_and(|status| status.attention_priority() > 0))
+                    || (scope == SearchScope::Attention && session.attention_priority() == 0)
                 {
                     return None;
                 }
@@ -476,30 +482,28 @@ impl App {
                         return None;
                     }
                 }
-                score += u32::from(
-                    session
-                        .status
-                        .as_ref()
-                        .is_some_and(|status| status.attention_priority() > 0),
-                );
+                score += u32::from(session.attention_priority() > 0);
                 Some((session, score))
             })
             .collect();
         matches.sort_by(|(a, a_score), (b, b_score)| {
             b_score
                 .cmp(a_score)
-                .then_with(|| {
-                    b.status
-                        .as_ref()
-                        .map_or(0, Status::attention_priority)
-                        .cmp(&a.status.as_ref().map_or(0, Status::attention_priority))
-                })
+                .then_with(|| b.attention_priority().cmp(&a.attention_priority()))
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         matches.into_iter().map(|(session, _)| session).collect()
     }
 
     pub fn group_attention(&self, group_id: &str) -> Option<&Status> {
+        if let Some(summary) = self
+            .groups
+            .iter()
+            .find(|g| g.id == group_id)
+            .and_then(|g| g.attention_summary.as_ref())
+        {
+            return summary.highest.as_ref().and_then(|p| p.status.as_ref());
+        }
         self.sessions
             .iter()
             .filter_map(|session| {
@@ -1469,6 +1473,41 @@ mod tests {
             crate::status::State::Question
         );
         assert!(app.group_attention("unrelated").is_none());
+    }
+
+    #[test]
+    fn canonical_attention_covers_child_blockers_without_replacing_the_running_agent() {
+        let mut app = App::new(1);
+        let mut value = snapshot();
+        value["sessions"][0]["status"] =
+            json!({"state":"working","source":"screen","evidence":"hook","updatedAt":2});
+        let issue = json!({"priority":2,"reason":"child","status":{"state":"blocked","source":"program","updatedAt":2},"blockedChildren":2});
+        value["sessions"][0]["currentAttention"] = issue.clone();
+        value["groups"][0]["attentionSummary"] = json!({"sessions":1,"needsYou":1,"highest":issue});
+        app.event(value.clone()).unwrap();
+        let id = app.sessions[0].id.clone();
+        assert_eq!(app.quick_switch_results("!")[0].id, id);
+        assert_eq!(
+            crate::session_row::status_label(&app.sessions[0], Program::Claude).text,
+            "needs you"
+        );
+        assert_eq!(
+            app.group_attention(app.groups[0].id.as_str())
+                .unwrap()
+                .state,
+            crate::status::State::Blocked
+        );
+        let collapsed = app.collapsed.clone();
+        let panes = app.panes.clone();
+        let focused = app.focused;
+        value["sessions"][0]["currentAttention"] =
+            json!({"priority":0,"reason":null,"status":null,"blockedChildren":0});
+        value["groups"][0]["attentionSummary"] = json!({"sessions":1,"needsYou":0,"highest":null});
+        app.event(value).unwrap();
+        assert!(app.quick_switch_results("!").is_empty());
+        assert_eq!(app.panes, panes);
+        assert_eq!(app.focused, focused);
+        assert_eq!(app.collapsed, collapsed);
     }
 
     #[test]

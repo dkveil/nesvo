@@ -88,6 +88,17 @@ struct Session {
     auto_title: bool,
 }
 
+impl Session {
+    fn current_attention(&self) -> crate::attention_projection::Projection {
+        crate::attention_projection::Projection::current(
+            self.status.status(),
+            self.readiness.snapshot().phase,
+            self.status.block_reason(),
+            self.program_status.blocked_children(),
+        )
+    }
+}
+
 pub struct State {
     workspace: PathBuf,
     sessions: HashMap<String, Session>,
@@ -242,12 +253,28 @@ impl State {
     pub fn list(&self) -> Value {
         let mut sessions: Vec<&Session> = self.sessions.values().collect();
         sessions.sort_by(|left, right| left.info.created_at.cmp(&right.info.created_at));
+        let projections: Vec<_> = sessions
+            .iter()
+            .map(|s| (s.info.group_id.as_deref(), s.current_attention()))
+            .collect();
+        let groups = self.metadata.groups();
+        let (summary, by_group) =
+            crate::attention_projection::rollup(groups, projections.iter().map(|(id, p)| (*id, p)));
+        let groups: Vec<_> = groups
+            .iter()
+            .map(|g| {
+                let mut value = json!(g);
+                value["attentionSummary"] = json!(by_group.get(&g.id));
+                value
+            })
+            .collect();
         let sessions: Vec<Value> = sessions
             .into_iter()
             .map(|session| {
                 let mut info =
                     serde_json::to_value(&session.info).expect("Session metadata serializes");
                 info["attention"] = json!(session.attention.event);
+                info["currentAttention"] = json!(session.current_attention());
                 info["muted"] = json!(session.attention.muted);
                 info["autoTitle"] = json!(session.auto_title);
                 info["controllerId"] =
@@ -283,7 +310,7 @@ impl State {
                 info
             })
             .collect();
-        json!({"type":"sessions", "sessions":sessions, "groups":self.metadata.groups(), "revision":self.metadata.revision()})
+        json!({"type":"sessions", "sessions":sessions, "groups":groups, "attentionSummary":summary,"revision":self.metadata.revision()})
     }
 
     pub fn broadcast_list(&self) {

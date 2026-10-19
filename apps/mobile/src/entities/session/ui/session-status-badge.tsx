@@ -85,26 +85,46 @@ export function SessionStatusBadge({
   status,
   source,
   readiness,
+  currentAttention,
   demo = false,
   variant = 'badge',
 }: {
   status: SessionStatus;
   source?: SessionStatusSource;
   readiness?: Session['readiness'];
+  currentAttention?: Session['currentAttention'];
   demo?: boolean;
   variant?: 'badge' | 'plain';
 }) {
   const startup = sessionReadinessLabel(readiness);
-  const label = startup ?? sessionStatusLabel(status, source);
-  const tone = readiness?.phase === 'timedOut' ? colors.danger : statusColor(status, source);
+  const issue = currentAttention && currentAttention.priority > 0 ? currentAttention.reason : null;
+  const reasons = {
+    permission: 'Zgoda',
+    question: 'Pytanie',
+    auth: 'Logowanie',
+    quota: 'Limit',
+    setup: 'Konfiguracja',
+    unknown: 'Wymaga uwagi',
+    startup: 'Błąd startu',
+    failure: 'Błąd',
+    child: 'Podagent czeka',
+  };
+  const label = startup ?? (issue ? reasons[issue] : sessionStatusLabel(status, source));
+  const indicator = currentAttention?.status;
+  const tone =
+    readiness?.phase === 'timedOut'
+      ? colors.danger
+      : statusColor(indicator?.state ?? status, indicator?.source ?? source);
   return (
     <View
-      accessibilityLabel={`${label}. ${demo ? 'Stan przykładowy' : startup ? readiness?.reason : sessionStatusDetail(status, source)}`}
+      accessibilityLabel={`${label}. ${demo ? 'Stan przykładowy' : startup ? readiness?.reason : sessionStatusDetail(indicator?.state ?? status, indicator?.source ?? source)}`}
       style={variant === 'plain' ? styles.plain : [styles.badge, { borderColor: `${tone}55` }]}
     >
       {variant === 'badge' && (
         <Text style={[styles.symbol, { color: tone }]}>
-          {source === 'activity' && status === 'working' ? '○' : symbols[status]}
+          {source === 'activity' && !indicator && status === 'working'
+            ? '○'
+            : symbols[indicator?.state ?? status]}
         </Text>
       )}
       <Text style={[styles.label, { color: tone }]}>

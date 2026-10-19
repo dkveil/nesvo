@@ -1,6 +1,7 @@
 mod agent_context;
 mod agent_events;
 mod attention;
+mod attention_projection;
 mod git;
 mod groups;
 mod jobs;

@@ -289,6 +289,8 @@ process.stdin.on('data', bytes=>{
       );
       const waiting = question.sessions!.find(s => s.id === id)!;
       assert.equal(waiting.lifecycle?.agent.blockReason, 'question');
+      assert.equal(waiting.currentAttention?.reason, 'question');
+      assert.equal(waiting.currentAttention?.priority, 3);
       const oldTurn = waiting.lifecycle!.turn!.id;
       peer.send({ type: 'input', sessionId: id, data: 'child-stop\r' });
       peer.send({ type: 'input', sessionId: id, data: 'foreign-stop\r' });
@@ -308,6 +310,7 @@ process.stdin.on('data', bytes=>{
         e => e.sessions?.some(s => s.id === id && s.lifecycle?.turn?.phase === 'settled') ?? false,
       );
       const turn = settled.sessions!.find(s => s.id === id)!.lifecycle!.turn!;
+      assert.equal(settled.sessions!.find(s => s.id === id)!.currentAttention?.priority, 0);
       assert.notEqual(turn.id, oldTurn);
       assert.match(turn.outcome!, /task result not established/);
       const observer = new Peer(pairing);
