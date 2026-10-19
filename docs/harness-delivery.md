@@ -134,3 +134,26 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   acquisition, unknown-session failure and no credential disclosure.
 - F03 still needs provider-version caching, matched-rule IDs (F04), and migrated
   conversation/ordering identity (F05) before its full acceptance criteria pass.
+
+### F04 implementation checkpoint
+
+- Embedded, schema-validated literal rules have stable IDs and revision
+  `2026-10-19.1`. Eleven rules cover startup trust/MCP consent, quota and existing
+  provider prompt/permission/work shapes. `session explain` includes the matched
+  rule. The build identity hashes the catalog too. No dynamic code is executed.
+- Current-visible-screen tests cover startup consent and cleared history; legacy
+  Codex question detection remains a separately tested fallback. Login/model
+  selection/transcript-viewer corpus and wider provider-version coverage remain
+  open. A fixture does not certify every version/language.
+- Real Claude 2.1.303 now reported blocked on startup consent instead of returning
+  to unknown. After consent, an explicitly bracketed-pasted short prompt showed
+  confirmed working → confirmed idle, with no intermediate idle. Expected reply
+  text did not appear contiguously in the input. Graceful cleanup passed. Earlier
+  probe failures were retained as failures: a CR in the same fast input packet
+  was treated as pasted text, not submission; the fixture now separates paste
+  and Enter. No change to production PTY key encoding was needed.
+- Native diagnostics observed one OSC probe and zero program reports for this
+  Claude/Windows combination. Live negotiation remains unverified; do not claim
+  that this provider uses the new protocol merely because fixture reports work.
+- Current tests: 54 host unit checks and 18 native host/sync/CLI checks passed,
+  plus 18 client contract checks. Existing mobile typecheck/lint remain green.

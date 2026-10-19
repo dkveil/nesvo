@@ -77,3 +77,18 @@ successful helper call clears that marker. A missing report does not claim that
 the provider loaded its settings. Sequence ordering still identifies the legacy
 wall-clock implementation until the F05 identity migration. Provider-version
 probes and matched-rule IDs remain separate status-stage gates.
+
+## Versioned screen rules (F04)
+
+`apps/host/status-rules/v1.json` is an embedded literal catalog with schema,
+revision, provider, source region and named match conditions. It is validated
+and included in the host build identity. It cannot run scripts or read files.
+Startup folder trust and MCP consent are explicit blockers. Matching only sees
+the current screen; narrow tail/footer/cursor checks constrain the ordinary
+provider rules. Screen-derived evidence remains inference and never authorizes
+actions. `session explain` exposes the matched rule/revision/reason.
+
+The corpus includes sanitized shapes observed with Claude 2.1.303 and existing
+synthetic Codex/Gemini layouts. The Codex multi-question predicate remains a
+tested code fallback pending catalog migration. Login/model-selection/viewer
+screens and other provider versions are not certified by this initial catalog.

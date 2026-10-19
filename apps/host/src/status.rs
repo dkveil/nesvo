@@ -39,6 +39,7 @@ pub struct StatusTracker {
     program: Program,
     parser: Option<vt100::Parser>,
     screen_hint: Option<StatusState>,
+    screen_rule: Option<crate::status_rules::Match>,
     screen_dirty: bool,
     lifecycle: Option<StatusState>,
     lifecycle_sequence: u64,
@@ -63,6 +64,7 @@ impl StatusTracker {
             // No scrollback: inference must only see the current visible screen.
             parser: (program != Program::Shell).then(|| vt100::Parser::new(rows, cols, 0)),
             screen_hint: None,
+            screen_rule: None,
             screen_dirty: false,
             lifecycle: None,
             lifecycle_sequence: 0,
@@ -90,6 +92,7 @@ impl StatusTracker {
         self.interrupt_received = None;
         self.lifecycle = Some(report.state);
         self.screen_hint = None;
+        self.screen_rule = None;
         self.screen_dirty = false;
     }
 
@@ -124,7 +127,7 @@ impl StatusTracker {
             }
             StatusSource::Activity => "terminal I/O only; no task outcome inferred",
         };
-        serde_json::json!({"selected":self.status, "reason":reason, "screenHint":self.screen_hint,
+        serde_json::json!({"selected":self.status, "reason":reason, "screenHint":self.screen_hint, "matchedRule":self.screen_rule,
             "hook":{"state":self.lifecycle,"sequence":self.lifecycle_sequence,
                 "receivedAt":if self.lifecycle.is_some(){Some(self.lifecycle_received)}else{None},
                 "ageMs":self.lifecycle.map(|_|now.saturating_sub(self.lifecycle_received)), "ordering":"legacy-wall-clock"},
@@ -149,6 +152,7 @@ impl StatusTracker {
             // A key may answer the visible prompt. Do not retain that inference
             // until the program produces new screen output.
             self.screen_hint = None;
+            self.screen_rule = None;
             self.screen_dirty = false;
         }
     }
@@ -163,6 +167,7 @@ impl StatusTracker {
         if let Some(parser) = &mut self.parser {
             parser.screen_mut().set_size(rows, cols);
             self.screen_hint = None;
+            self.screen_rule = None;
             self.screen_dirty = false;
         }
     }
@@ -185,10 +190,15 @@ impl StatusTracker {
             )
         } else {
             if self.screen_dirty {
-                self.screen_hint = self
+                self.screen_rule = self
                     .parser
                     .as_ref()
-                    .and_then(|parser| infer_screen(self.program, parser.screen()));
+                    .and_then(|parser| crate::status_rules::detect(self.program, parser.screen()));
+                self.screen_hint = self.parser.as_ref().and_then(|parser| {
+                    self.screen_rule
+                        .map(|e| e.state)
+                        .or_else(|| infer_screen(self.program, parser.screen()))
+                });
                 self.screen_dirty = false;
             }
             let screen = self.screen_hint.filter(|hint| {

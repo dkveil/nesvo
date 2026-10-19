@@ -26,6 +26,7 @@ fn main() {
     let mut hash = DefaultHasher::new();
     for path in [
         "src",
+        "status-rules",
         "Cargo.toml",
         "../../Cargo.toml",
         "../../Cargo.lock",

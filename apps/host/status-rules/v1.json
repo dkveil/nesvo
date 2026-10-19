@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "revision": "2026-10-19.1",
+  "rules": [
+    {
+      "id": "claude_trust_v1",
+      "program": "claude",
+      "state": "blocked",
+      "reason": "folder trust",
+      "scope": "visible",
+      "all": ["accessing workspace:", "quick safety check:", "enter to confirm", "esc to cancel"],
+      "choicesAll": ["no, exit", "yes, i trust this folder"]
+    },
+    {
+      "id": "claude_mcp_consent_v1",
+      "program": "claude",
+      "state": "blocked",
+      "reason": "MCP consent",
+      "scope": "visible",
+      "all": ["new mcp server found", "mcp servers may execute code", "enter to confirm"],
+      "choicesAll": ["use this mcp server", "continue without using this mcp server"]
+    },
+    {
+      "id": "quota_v1",
+      "program": null,
+      "state": "blocked",
+      "reason": "quota",
+      "scope": "tail",
+      "prefixAny": [
+        "you've hit your usage limit",
+        "you’ve hit your usage limit",
+        "you've hit your limit",
+        "usage limit reached"
+      ]
+    },
+    {
+      "id": "claude_permission_v1",
+      "program": "claude",
+      "state": "blocked",
+      "reason": "permission",
+      "scope": "tail",
+      "all": ["do you want to proceed?"],
+      "choicesAll": ["yes", "no, and tell claude what to do differently (esc)"]
+    },
+    {
+      "id": "claude_permission_v2",
+      "program": "claude",
+      "state": "blocked",
+      "reason": "permission",
+      "scope": "tail",
+      "all": ["do you want to proceed?"],
+      "choicesAll": ["yes", "no"],
+      "footerAll": ["esc to cancel", "enter to confirm"]
+    },
+    {
+      "id": "claude_work_v1",
+      "program": "claude",
+      "state": "working",
+      "reason": "interrupt footer",
+      "scope": "tail",
+      "footerAll": ["esc to interrupt"]
+    },
+    {
+      "id": "claude_prompt_v1",
+      "program": "claude",
+      "state": "idle",
+      "reason": "current prompt",
+      "scope": "tail",
+      "footerAny": ["? for shortcuts", "shift+tab to cycle"],
+      "cursorPrompt": "❯"
+    },
+    {
+      "id": "codex_permission_v1",
+      "program": "codex",
+      "state": "blocked",
+      "reason": "permission",
+      "scope": "tail",
+      "any": [
+        "would you like to run the following command?",
+        "would you like to make the following edits?"
+      ],
+      "choicesAll": ["yes, proceed (y)", "no, and tell codex what to do differently (esc)"],
+      "footerAll": ["enter to confirm", "esc to cancel"]
+    },
+    {
+      "id": "codex_work_v1",
+      "program": "codex",
+      "state": "working",
+      "reason": "interrupt footer",
+      "scope": "tail",
+      "prefixAny": ["working (", "thinking ("],
+      "footerAll": ["esc to interrupt"]
+    },
+    {
+      "id": "codex_prompt_v1",
+      "program": "codex",
+      "state": "idle",
+      "reason": "current prompt",
+      "scope": "tail",
+      "footerAll": ["? for shortcuts"],
+      "cursorPrompt": "›"
+    },
+    {
+      "id": "gemini_permission_v1",
+      "program": "gemini",
+      "state": "blocked",
+      "reason": "permission",
+      "scope": "tail",
+      "all": ["allow execution of"],
+      "choicesAny": ["allow once", "yes, allow once"],
+      "footerAll": ["no, suggest changes (esc)"]
+    }
+  ]
+}

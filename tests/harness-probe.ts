@@ -257,8 +257,10 @@ async function main(): Promise<void> {
         send({
           type: 'input',
           sessionId: created[0],
-          data: 'Join NESVO_ and PROBE_OK into one word and reply only with that word. Do not use tools.\r',
+          data: '\x1b[200~Join NESVO_ and PROBE_OK into one word and reply only with that word. Do not use tools.\x1b[201~',
         });
+        await delay(300);
+        send({ type: 'input', sessionId: created[0], data: '\r' });
         await until(
           () =>
             transitions

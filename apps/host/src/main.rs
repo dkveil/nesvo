@@ -13,6 +13,7 @@ mod recipes;
 mod replay;
 mod sessions;
 mod status;
+mod status_rules;
 mod storage;
 mod terminal_protocol;
 mod titles;
