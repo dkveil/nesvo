@@ -172,3 +172,20 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   startup, timeout, recovery and exit; clients validate optional readiness and
   preserve old snapshots. Rust: 123 TUI, 55 host, 3 wire passed; mobile typecheck,
   lint, 19 client and architecture checks pass. Native-device UI remains untested.
+
+### F02 helper-cost checkpoint
+
+- Lifecycle helper and `--build-id` now return before constructing a Tokio
+  multi-thread runtime. Only the actual host constructs that runtime. This
+  removes avoidable thread initialization on every tool-boundary hook.
+- Windows debug-build sample: 20 measured helper processes after three warmups,
+  no model requests; median wall time 16.71 → 14.59 ms, p95 23.12 → 15.15 ms.
+  These include process creation, are local diagnostic samples, and do not explain
+  or certify a fix for the user's historical CPU spike. Reproduce using
+  `python tests/hook-helper-benchmark.py target/verification/debug/nesvo-host.exe`.
+- Actual Windows ConPTY smoke passed on isolated data: onboarding, shell input,
+  focus/menu, palette, filters, live/expanded diff, launch settings, recovery,
+  150×44 / 100×32 / 80×24 resize and clean terminal exit. Captures are ignored
+  artifacts under `artifacts/harness-conpty-20261019/current-previews`.
+- F02 remains partial: Claude lifecycle has real delivery evidence; Codex/Gemini
+  adapter/version coverage and disabled-hook scenarios still need work.

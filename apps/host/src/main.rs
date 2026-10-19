@@ -122,8 +122,7 @@ fn stdin_close_signal() -> oneshot::Receiver<()> {
     receiver
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(report) = args.agent_context_hook {
         // Tracking must never prevent an agent tool from completing.
@@ -138,6 +137,16 @@ async fn main() -> Result<()> {
         println!("{}", env!("NESVO_BUILD_ID"));
         return Ok(());
     }
+    // High-frequency hook invocations do only synchronous bounded file work.
+    // Construct the multi-thread runtime exclusively for the actual host.
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Cannot start host runtime")?
+        .block_on(run(args))
+}
+
+async fn run(args: Args) -> Result<()> {
     let workspace = fs::canonicalize(&args.workspace).context("Workspace does not exist")?;
     ensure!(workspace.is_dir(), "Workspace must be a directory");
     let bind = args.bind.unwrap_or(IpAddr::V4(if args.lan {
