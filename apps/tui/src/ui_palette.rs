@@ -2,7 +2,7 @@
 use crate::{
     model::App,
     terminal::TerminalWidget,
-    theme::{MUTED, SURFACE, TEXT},
+    theme::{BORDER, MUTED, SURFACE, TEXT},
     ui::truncate_cells,
 };
 use ratatui::{
@@ -10,7 +10,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 pub struct Geometry {
@@ -22,11 +22,11 @@ pub struct Geometry {
 }
 
 pub fn geometry(size: Rect, session_count: usize) -> Geometry {
-    let width = size.width.saturating_sub(4).min(132);
+    let width = size.width.saturating_sub(4).min(116);
     let height = size
         .height
         .saturating_sub(4)
-        .min(session_count.saturating_add(6).clamp(14, 26) as u16);
+        .min(session_count.saturating_add(8).clamp(16, 28) as u16);
     let panel = Rect::new(
         size.x + (size.width - width) / 2,
         size.y + (size.height - height) / 2,
@@ -75,7 +75,7 @@ pub fn geometry(size: Rect, session_count: usize) -> Geometry {
 }
 
 pub fn row_height(_app: &App, _size: Rect) -> u16 {
-    2
+    1
 }
 
 pub fn offset(selected: usize, rows: u16) -> usize {
@@ -137,8 +137,7 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     );
     frame.render_widget(
         Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(app.theme.accent()))
+            .border_style(Style::default().fg(if inline { app.theme.accent() } else { BORDER }))
             .style(Style::default().bg(SURFACE).fg(TEXT)),
         if inline {
             Rect::new(
@@ -224,56 +223,84 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
                 row_height,
             ),
         );
-        let metadata_width = 0;
-        let name_width = layout.results.width.saturating_sub(metadata_width + 3) as usize;
-        let name = elide(&result.title, name_width);
-        let kind = match &result.target {
-            crate::palette::Target::Session(_) => "●",
-            crate::palette::Target::Group(_) => "/",
-            crate::palette::Target::Command(_) => ">",
+        let row_y = layout.results.y + (index - start) as u16 * row_height;
+        let session = result.target.session_id().and_then(|id| app.session(id));
+        let status = session.map(crate::ui::display_status).unwrap_or("");
+        let status_width = if !inline && session.is_some() && layout.results.width >= 42 {
+            12
+        } else {
+            0
         };
-        let line = Line::from(vec![
-            Span::styled(
-                format!("{kind} {name}"),
-                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        let project_width = if !inline && session.is_some() && layout.results.width >= 60 {
+            14
+        } else {
+            0
+        };
+        let name_width = layout
+            .results
+            .width
+            .saturating_sub(status_width + project_width + 5) as usize;
+        let name = elide(&result.title, name_width);
+        let (kind, color) = match &result.target {
+            crate::palette::Target::Session(_) => (
+                session.map_or("·", |s| app.effective_program(s).icon(app.ascii_icons)),
+                session.map_or(MUTED, |s| {
+                    crate::ui::program_color(app.effective_program(s))
+                }),
             ),
-            Span::styled(
-                if metadata_width > 0 {
-                    format!("  {}", elide(&result.context, metadata_width as usize - 2))
-                } else {
-                    String::new()
-                },
-                Style::default().fg(MUTED),
-            ),
-        ]);
+            crate::palette::Target::Group(_) => ("/", MUTED),
+            crate::palette::Target::Command(_) => (">", MUTED),
+        };
+        let mut spans = vec![Span::styled(
+            format!(" {kind} "),
+            Style::default().fg(color),
+        )];
+        spans.extend(matched_name(&name, query, app.theme.accent()));
         frame.render_widget(
-            Paragraph::new(line).style(Style::default().bg(if active {
-                app.theme.selection()
-            } else {
-                SURFACE
-            })),
+            Paragraph::new(Line::from(spans)),
             Rect::new(
                 layout.results.x,
-                layout.results.y + (index - start) as u16 * row_height,
-                layout.results.width,
+                row_y,
+                layout
+                    .results
+                    .width
+                    .saturating_sub(status_width + project_width + 1),
                 1,
             ),
         );
-        if row_height == 2 {
+        if status_width > 0 {
             frame.render_widget(
-                Paragraph::new(elide(
-                    &result.context,
-                    layout.results.width.saturating_sub(2) as usize,
-                ))
-                .style(Style::default().fg(MUTED).bg(if active {
-                    app.theme.selection()
-                } else {
-                    SURFACE
-                })),
+                Paragraph::new(elide(status, status_width as usize))
+                    .right_aligned()
+                    .style(Style::default().fg(crate::ui::status_color(
+                        session.and_then(|s| s.status.as_ref()),
+                        app.theme,
+                    ))),
                 Rect::new(
-                    layout.results.x + 2,
-                    layout.results.y + (index - start) as u16 * row_height + 1,
-                    layout.results.width.saturating_sub(2),
+                    layout.results.right() - status_width - 1,
+                    row_y,
+                    status_width,
+                    1,
+                ),
+            );
+        }
+        if project_width > 0
+            && let Some(session) = session
+        {
+            let project = session
+                .cwd
+                .trim_end_matches(['/', '\\'])
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&session.cwd);
+            frame.render_widget(
+                Paragraph::new(elide(project, project_width as usize - 2))
+                    .right_aligned()
+                    .style(Style::default().fg(MUTED)),
+                Rect::new(
+                    layout.results.right() - status_width - project_width - 2,
+                    row_y,
+                    project_width,
                     1,
                 ),
             );
@@ -290,9 +317,52 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
         && let Some(result) = matches.get(selected)
     {
         frame.render_widget(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_style(Style::default().fg(BORDER)),
+            Rect::new(
+                layout.preview.x.saturating_sub(1),
+                layout.preview.y,
+                1,
+                layout.preview.height,
+            ),
+        );
+        let attention = result
+            .target
+            .session_id()
+            .and_then(|id| app.session(id))
+            .and_then(|session| {
+                session
+                    .attention
+                    .as_ref()
+                    .filter(|a| a.unread && !session.muted)
+            })
+            .map(|a| {
+                format!(
+                    "New {}{}",
+                    if a.source == Some(crate::status::Source::Screen) {
+                        "~"
+                    } else {
+                        ""
+                    },
+                    a.kind
+                )
+            })
+            .unwrap_or_default();
+        frame.render_widget(
             Paragraph::new(vec![
-                Line::from(result.title.as_str()),
-                Line::from(result.context.as_str()),
+                Line::styled(
+                    elide(&result.title, layout.preview.width as usize),
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                ),
+                Line::styled(
+                    elide(&result.context, layout.preview.width as usize),
+                    Style::default().fg(MUTED),
+                ),
+                Line::styled(
+                    elide(&attention, layout.preview.width as usize),
+                    Style::default().fg(crate::theme::WARNING),
+                ),
             ]),
             layout.preview,
         );
@@ -334,6 +404,31 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     }
 }
 
+fn matched_name(name: &str, query: &str, accent: ratatui::style::Color) -> Vec<Span<'static>> {
+    let mut wanted = crate::model::search_scope(query)
+        .1
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .peekable();
+    name.chars()
+        .map(|c| {
+            let matched = wanted
+                .peek()
+                .is_some_and(|next| c.to_lowercase().any(|lower| lower == *next));
+            if matched {
+                wanted.next();
+            }
+            Span::styled(
+                c.to_string(),
+                Style::default()
+                    .fg(if matched { accent } else { TEXT })
+                    .add_modifier(Modifier::BOLD),
+            )
+        })
+        .collect()
+}
+
 fn elide(text: &str, width: usize) -> String {
     if Line::from(text).width() <= width {
         text.to_owned()
@@ -351,13 +446,13 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn selection_covers_both_rows_including_detail_indent() {
+    fn selection_covers_the_complete_result_row() {
         let mut app = App::new(1);
         app.palette_expanded = true;
         let mut terminal = Terminal::new(TestBackend::new(100, 32)).unwrap();
         terminal.draw(|f| render(f, &app, "", 0)).unwrap();
         let layout = for_app(Rect::new(0, 0, 100, 32), &app);
-        for y in layout.results.y..layout.results.y + 2 {
+        for y in layout.results.y..layout.results.y + 1 {
             for x in layout.results.x..layout.results.right() {
                 assert_eq!(
                     terminal.backend().buffer()[(x, y)].bg,
@@ -403,5 +498,35 @@ mod tests {
                 assert_eq!(layout.preview.width, 0);
             }
         }
+    }
+    #[test]
+    fn single_line_provider_project_and_status_do_not_overlap() {
+        let mut app = App::new(1);
+        app.palette_expanded = true;
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"one","name":"工程 very long session title that must be clipped","cwd":"C:/dev/project","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null,"status":{"state":"question","source":"screen","updatedAt":1}}
+        ]})).unwrap();
+        let size = Rect::new(0, 0, 150, 44);
+        let layout = for_app(size, &app);
+        let mut terminal = Terminal::new(TestBackend::new(150, 44)).unwrap();
+        terminal
+            .draw(|frame| render(frame, &app, "工程", 0))
+            .unwrap();
+        let line: String = (layout.results.x..layout.results.right())
+            .map(|x| terminal.backend().buffer()[(x, layout.results.y)].symbol())
+            .collect();
+        assert!(
+            line.contains("✳") && line.contains("project") && line.contains("~question"),
+            "{line}"
+        );
+        assert_eq!(row_height(&app, size), 1);
+        app.ascii_icons = true;
+        terminal
+            .draw(|frame| render(frame, &app, "工程", 0))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(layout.results.x + 1, layout.results.y)].symbol(),
+            "C"
+        );
     }
 }

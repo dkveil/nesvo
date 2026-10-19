@@ -193,6 +193,7 @@ pub(crate) fn folder_choices<'a>(
 }
 
 pub struct App {
+    pub ascii_icons: bool,
     pub selection: Option<crate::selection::Selection>,
     pub menu_phase: u8,
     pub toast: Option<(String, std::time::Instant)>,
@@ -245,6 +246,7 @@ pub struct App {
 impl App {
     pub fn new(client_id: u64) -> Self {
         Self {
+            ascii_icons: false,
             selection: None,
             menu_phase: 0,
             toast: None,

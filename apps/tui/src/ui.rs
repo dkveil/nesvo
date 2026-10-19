@@ -90,7 +90,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     let sidebar = if immersive || area.width < 65 {
         0
     } else {
-        27.min(area.width / 3)
+        30.min(area.width / 3)
     };
     let [tree, content] =
         Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)]).areas(body);
@@ -151,7 +151,7 @@ pub fn pane_content(area: Rect, fullscreen: bool) -> Rect {
     // The tab is the title. Keep only side borders and the ownership row;
     // controller resize and mouse geometry use this same content rectangle.
     Block::default()
-        .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+        .borders(Borders::RIGHT | Borders::BOTTOM)
         .inner(area)
 }
 
@@ -162,8 +162,6 @@ pub fn tree_content(area: Rect) -> Rect {
 fn row_height(row: &crate::model::TreeRow) -> u16 {
     if matches!(row.kind, RowKind::Root) {
         3
-    } else if matches!(row.kind, RowKind::Session(_)) {
-        2
     } else {
         1
     }
@@ -597,6 +595,10 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(BORDER)),
         area,
     );
+    frame.render_widget(
+        Block::default().style(Style::default().bg(SURFACE)),
+        tree_content(area),
+    );
     let content = tree_content(area);
     let rows = app.tree();
     for (entry, index) in sidebar_entries(app, content) {
@@ -604,10 +606,8 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
         let selected = index == app.selected;
         let background = if selected && matches!(row.kind, RowKind::Session(_)) {
             app.theme.selection()
-        } else if matches!(row.kind, RowKind::Root | RowKind::Group(_)) {
-            SURFACE
         } else {
-            BACKGROUND
+            SURFACE
         };
         frame.render_widget(
             Block::default().style(Style::default().bg(background)),
@@ -692,12 +692,15 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                         _ => "○",
                     }
                 };
-                let available = usize::from(entry.width).saturating_sub(4 + indent.len());
+                let available = usize::from(entry.width).saturating_sub(6 + indent.len());
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled(" ", Style::default().fg(app.theme.accent())),
                         Span::raw(indent.clone()),
-                        Span::styled(marker, Style::default().fg(status_color(status, app.theme))),
+                        Span::styled(
+                            app.effective_program(session).icon(app.ascii_icons),
+                            Style::default().fg(program_color(app.effective_program(session))),
+                        ),
                         Span::raw(" "),
                         Span::styled(
                             truncate_cells(&row.label, available),
@@ -707,45 +710,20 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                     .style(Style::default().bg(background)),
                     Rect::new(entry.x, entry.y, entry.width, 1),
                 );
-                if entry.height > 1 {
+                if entry.width >= 2 {
                     frame.render_widget(
-                        Paragraph::new(Line::from(vec![
-                            Span::raw(format!("  {indent}  ")),
-                            Span::styled(
-                                session
-                                    .attention
-                                    .as_ref()
-                                    .filter(|a| a.unread && !session.muted)
-                                    .map_or_else(
-                                        || display_status(session).to_owned(),
-                                        |a| {
-                                            format!(
-                                                "new {}{}",
-                                                if a.source == Some(crate::status::Source::Screen) {
-                                                    "~"
-                                                } else {
-                                                    ""
-                                                },
-                                                a.kind
-                                            )
-                                        },
-                                    ),
-                                Style::default().fg(status_color(status, app.theme)),
-                            ),
-                            Span::styled(" · ", Style::default().fg(MUTED)),
-                            Span::styled(
-                                app.effective_program(session).label(),
-                                Style::default().fg(program_color(app.effective_program(session))),
-                            ),
-                        ]))
-                        .style(Style::default().bg(background)),
-                        Rect::new(entry.x, entry.y + 1, entry.width, 1),
+                        Paragraph::new(marker).style(
+                            Style::default()
+                                .fg(status_color(status, app.theme))
+                                .bg(background),
+                        ),
+                        Rect::new(entry.right() - 2, entry.y, 1, 1),
                     );
                 }
             }
         }
         if selected && app.mode == Mode::Navigate && app.dialog.is_none() && app.overlay.is_none() {
-            // A session is one selectable item spanning both terminal rows.
+            // Highlight the entire selectable row, including provider and status.
             let highlight_start = entry.x;
             for y in entry.y..entry.bottom() {
                 for x in highlight_start..entry.right() {
@@ -794,7 +772,7 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
     if !immersive(app) {
         frame.render_widget(
             Block::default()
-                .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+                .borders(Borders::RIGHT | Borders::BOTTOM)
                 .border_style(Style::default().fg(if controlling {
                     app.theme.accent()
                 } else {
@@ -1733,9 +1711,9 @@ mod tests {
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let buffer = terminal.backend().buffer();
         let line: String = (layout.tree.x..layout.tree.right())
-            .map(|x| buffer[(x, layout.tree.y + 4)].symbol())
+            .map(|x| buffer[(x, layout.tree.y + 3)].symbol())
             .collect();
-        assert!(line.contains("open"), "{line}");
+        assert!(line.contains("Claude task") && line.contains("○"), "{line}");
         assert!(!line.contains("unknown"), "{line}");
     }
 
@@ -1845,7 +1823,7 @@ mod tests {
         );
         assert!(agent.y > group.y);
         assert_eq!(group.height, 1);
-        assert_eq!(agent.height, 2);
+        assert_eq!(agent.height, 1);
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let buffer = terminal.backend().buffer();
@@ -1857,8 +1835,8 @@ mod tests {
         assert!(line(tree.y + 1).contains("sessions"));
         assert!(line(group.y).contains("Workspace"));
         assert!(!line(group.y).contains('▣'));
-        assert!(line(agent.y + 1).contains("~question"));
-        assert!(line(agent.y + 1).contains("Claude"));
+        assert!(line(agent.y).contains("?"));
+        assert!(line(agent.y).contains("✳"));
         app.selected = agent_index;
         app.mode = Mode::Navigate;
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();

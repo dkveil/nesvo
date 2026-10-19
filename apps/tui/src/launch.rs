@@ -20,6 +20,18 @@ pub enum Program {
 impl Program {
     pub const ALL: [Self; 4] = [Self::Shell, Self::Claude, Self::Gemini, Self::Codex];
 
+    /// Portable marks, not private-use font glyphs. ASCII is an explicit fallback.
+    pub fn icon(self, ascii: bool) -> &'static str {
+        match (self, ascii) {
+            (Self::Claude, false) => "✳",
+            (Self::Codex, false) => "◈",
+            (Self::Gemini, false) => "✦",
+            (Self::Shell, _) => ">",
+            (Self::Claude, true) => "C",
+            (Self::Codex, true) => "O",
+            (Self::Gemini, true) => "G",
+        }
+    }
     pub fn label(self) -> &'static str {
         match self {
             Self::Shell => "Terminal",

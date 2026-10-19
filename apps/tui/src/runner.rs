@@ -89,6 +89,7 @@ pub fn run(
     )?;
     terminal.clear()?;
     let mut app = App::new(connection.client_id);
+    app.ascii_icons = std::env::var_os("NESVO_ASCII_ICONS").is_some();
     app.dialog = Some(Dialog::Menu);
     let preferences_path = match preferences::default_path() {
         Ok(path) => Some(path),
@@ -248,6 +249,7 @@ pub fn run(
                             Some(crate::workspace_layout::WorkspaceLayout::capture(&app));
                         layout_loaded = false;
                         let mut next_app = App::new(connection.client_id);
+                        next_app.ascii_icons = app.ascii_icons;
                         next_app.shortcuts = app.shortcuts;
                         next_app.theme = app.theme;
                         next_app.onboarded = app.onboarded;
