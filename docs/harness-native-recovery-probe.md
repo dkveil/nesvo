@@ -142,4 +142,51 @@ be used to make startup work. Any unexpected native boundary ends this probe.
 The corrected controller must pass its catalog, lifecycle-projection and native
 call/result identity checks before launch. The new Windows session-job cleanup
 must also pass its native PTY and host/MCP regression tests first. Revision 2 is
-prepared only; no original model has been launched under it yet.
+prepared before separate approval; its later result is recorded below.
+
+## Revision 2 result and shared preflight
+
+With separate owner approval, original Claude 2.1.304 on Windows completed the
+implementer portion across coordinator replacement: actual native MCP launch and
+delivery, an attempt-bound owner question, the preconsented literal owner answer,
+the original worker's exact result, recovered context and replacement-coordinator
+validation. Three exact owned provider conversations were correlated with native
+tool-use/result IDs. Every observed assistant tool belonged to the approved
+Nesvo policy or Nesvo-only discovery. This is partial metadata-only evidence,
+not source implementation or a completed run.
+
+The review task's first launch was refused with `budget_exhausted` and
+`effectStarted:false`. The controller mistakenly set `maxSessions:3`, which
+counts retained records, including stopped processes. Old coordinator, old
+worker and replacement consumed those slots even with fewer live processes.
+The host correctly enforced its documented policy. No new key/attempt or policy
+relaxation retried that launch. The run timed out, host exit was zero and all 89
+observed owned descendants were gone. Original reports and partial native
+evidence are preserved; this is not a passing whole-workflow result.
+
+The versioned [shared fixture profile](../tests/fixtures/native-recovery-profile.json)
+now distinguishes four retained slots for four lifetime session identities from
+three live provider processes, two running workers and one parallel task. The
+17/6 tool names and 180-second run budget remain the same.
+
+A full official MCP SDK/CLI preflight uses that exact profile and real PTYs,
+without original models. It delivers the first task, preserves/answers a pending
+question across replacement, rejects native adoption of the old worker, reports
+and validates its exact attempt, sends/ACKs addressed reviewer context, delivers
+the review task and validates its distinct result. Both child inline native
+permission lists and policy origins are inspected. A deliberate three-slot
+refusal leaves the review task planned; four slots then admit its first attempt.
+The targeted scenario and all 27 serial native SDK scenarios pass. Fixtures do
+not prove model behavior.
+
+## Revision 3 proposal (requires a new owner decision)
+
+One new original-model attempt may use the MCP-tested shared profile directly,
+with no copied hard-coded retention limit. Native process/tool/parallel/time
+bounds and existing trusted cwd remain as in revision 2. Four retained records
+support the already proposed two coordinator/two worker starts; this does not
+raise the three-live-process ceiling. Unexpected native permissions, unknown
+effects or a known failed task launch stop the probe; no policy change or retry
+is permitted. The controller retains original conversation pointers before
+cleanup even if later validation fails. No revision 3 original-model launch is
+implied by the passing SDK preflight or by this preparation.

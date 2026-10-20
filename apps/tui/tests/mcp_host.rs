@@ -40,6 +40,8 @@ mod model_profiles;
 mod native_tool_permissions;
 #[path = "support/recovery_hooks.rs"]
 mod recovery_hooks;
+#[path = "support/recovery_profile.rs"]
+mod recovery_profile;
 #[path = "support/run_budgets.rs"]
 mod run_budgets;
 #[path = "support/run_checkpoints.rs"]

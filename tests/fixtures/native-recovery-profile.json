@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "maxCoordinatorStarts": 2,
+  "maxWorkerStarts": 2,
+  "maxConcurrentSessions": 3,
+  "hostLimits": {
+    "maxSessions": 4,
+    "maxWorkers": 2,
+    "providers": { "shell": 0, "claude": 3, "codex": 0, "gemini": 0 }
+  },
+  "runLimits": { "maxParallel": 1, "maxAttemptsPerTask": 1, "maxElapsedMs": 180000 },
+  "workerProfile": {
+    "program": "claude",
+    "workspace": "shared",
+    "harness": true,
+    "model": "opus",
+    "effort": "low"
+  },
+  "coordinatorTools": [
+    "nesvo_get_current_session",
+    "nesvo_recover_run_context",
+    "nesvo_read_run_context",
+    "nesvo_get_run",
+    "nesvo_get_run_budget",
+    "nesvo_get_run_mutation",
+    "nesvo_get_run_wake_batch",
+    "nesvo_get_task_attempts",
+    "nesvo_read_inbox",
+    "nesvo_ack_messages",
+    "nesvo_send_message",
+    "nesvo_launch_task",
+    "nesvo_deliver_task",
+    "nesvo_validate_task_result",
+    "nesvo_stop_session",
+    "nesvo_get_session",
+    "nesvo_get_operation"
+  ],
+  "childTools": [
+    "nesvo_get_current_task",
+    "nesvo_report_task_result",
+    "nesvo_ask_decision",
+    "nesvo_get_decision",
+    "nesvo_read_inbox",
+    "nesvo_ack_messages"
+  ],
+  "ownerQuestion": "May I submit the fixed metadata-only probe report, without files or commands?",
+  "ownerAnswer": "Yes. Submit only the fixed metadata-only report; do not read, edit or execute files."
+}

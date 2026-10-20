@@ -1793,3 +1793,29 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   scenarios pass. Final local checks pass fmt, warnings-denied Clippy, production
   build, 332 unit tests, all 26 official native SDK scenarios and 30 host/sync/CLI
   checks. Cross-platform CI remains separate evidence.
+
+### Shared native recovery profile and partial original-model result
+
+- Windows process-ownership head aba7480 passed all five CI jobs (39403223036),
+  including the native Windows job lifetime tests. Unix paths remained unchanged.
+- Original Claude 2.1.304 revision-two probe verified native MCP implementer launch,
+  question, owner decision, exact result and replacement-coordinator validation
+  through three correlated owned provider conversations. No tool outside the
+  approved native set was selected. These were metadata markers, not source work.
+- The reviewer launch correctly failed with `budget_exhausted/effectStarted:false`:
+  the private test confused three retained slots with three concurrent processes.
+  Stopped coordinator/worker records still occupied slots. No retry relaxed this
+  policy. The run timed out, host exit was zero and all 89 observed descendants
+  were gone. This partial result does not complete the stage-three provider gate.
+- A shared versioned fixture profile now supplies four lifetime retained slots,
+  three live provider slots, two worker slots, one parallel attempt and the exact
+  same 17/6 tool lists. An official SDK/CLI scenario executes the whole metadata
+  DAG across coordinator replacement, question/result/inbox/ACK, exact validation
+  and fresh reviewer authority. It separately reproduces retention refusal before
+  admitting the review's sole attempt. The targeted real-PTY scenario passes;
+  full suite and any new original-model authorization are separate checks.
+- Final local verification passes fmt, warnings-denied Clippy, 332 units and all
+  27 serial native SDK scenarios, including the complete shared-profile case.
+  Production binaries build after the SDK processes finish. An intermediate
+  concurrent rebuild was refused by Windows's executable lock; the subsequent
+  sequential build/test succeeds. No original model was retried by these checks.
