@@ -328,6 +328,45 @@ pub(crate) fn execute_at(
     request: Request,
     now: u64,
 ) -> Result<Value> {
+    execute_inner(connection, actor, request, now, None)
+}
+/// Internal job preparation proof is never accepted from a public request.
+pub fn execute_for_job(
+    connection: &mut Connection,
+    actor: &Actor,
+    request: Request,
+    dispatch: &crate::job_attempts::Dispatch,
+) -> Result<Value> {
+    if !matches!(actor.scope, Scope::Owner)
+        || !matches!(
+            request,
+            Request::Create { .. }
+                | Request::SetPlan { .. }
+                | Request::Activate { .. }
+                | Request::RunBudget {
+                    request: crate::workflow_budget::Request::Set { .. }
+                }
+        )
+    {
+        return Err(invalid(
+            "Internal job preparation requires owner create/plan/budget/activation",
+        ));
+    }
+    execute_inner(
+        connection,
+        actor.clone(),
+        request,
+        now_millis(),
+        Some(dispatch),
+    )
+}
+fn execute_inner(
+    connection: &mut Connection,
+    actor: Actor,
+    request: Request,
+    now: u64,
+    job_dispatch: Option<&crate::job_attempts::Dispatch>,
+) -> Result<Value> {
     if matches!(request, Request::Coordinator { .. }) {
         return Err(Error::new(
             "unsupported",
@@ -359,6 +398,11 @@ pub(crate) fn execute_at(
         .into());
     }
     if let Request::RunBudget { request } = request {
+        if let Some(dispatch) = job_dispatch {
+            return crate::workflow_budget::execute_for_job(
+                connection, &actor, request, now, dispatch,
+            );
+        }
         return crate::workflow_budget::execute(connection, actor, request, now);
     }
     if let Request::HostBudget { request } = request {
@@ -481,6 +525,17 @@ pub(crate) fn execute_at(
     );
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if let Some(dispatch) = job_dispatch {
+        match &request {
+            Request::SetPlan { run_id, .. } | Request::Activate { run_id, .. } => {
+                crate::job_attempts::guard_bound_run(&transaction, dispatch, run_id)?;
+            }
+            Request::Create { .. } => {
+                crate::job_attempts::guard(&transaction, dispatch, &["dispatching"])?;
+            }
+            _ => unreachable!(),
+        }
+    }
     // Recheck the run boundary even when recovering a historical mutation.
     if let Request::Drain { run_id, .. }
     | Request::Resume { run_id, .. }

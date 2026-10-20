@@ -39,16 +39,13 @@ fn approve(store: &mut Store, key: &str) -> Value {
 fn job(store: &mut Store, approval: &Value, key: &str) -> Value {
     job_definitions::execute(&mut store.0,owner(),serde_json::from_value(json!({"action":"create","key":key,"spec":{"title":"Checked job","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"precheckId":approval["id"],"schedule":{"kind":"once","at":chrono::DateTime::from_timestamp_millis((NOW+1000)as i64).unwrap().to_rfc3339()}}})).unwrap(),NOW).unwrap()["job"].clone()
 }
-fn claim(store: &mut Store, job: &Value) -> String {
+fn claim(store: &mut Store, job: &Value) -> (String, crate::job_attempts::Dispatch) {
     let reply = job_definitions::work(&mut store.0, Work::Poll { slots: 4 }, NOW + 1000).unwrap();
     let Reply::Claims(claims) = reply else {
         panic!("claims")
     };
-    claims
-        .into_iter()
-        .find(|c| c.job_id == job["id"])
-        .unwrap()
-        .id
+    let claim = claims.into_iter().find(|c| c.job_id == job["id"]).unwrap();
+    (claim.id, claim.dispatch)
 }
 fn occurrence(store: &mut Store, job: &Value, id: &str) -> Value {
     job_definitions::execute(
@@ -201,12 +198,12 @@ fn skipped_or_failed_precheck_never_has_a_run_and_cannot_be_reexecuted() {
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let approval = approve(&mut store, "check");
         let job = job(&mut store, &approval, "job");
-        let id = claim(&mut store, &job);
+        let (id, dispatch) = claim(&mut store, &job);
         assert!(
             job_definitions::work(
                 &mut store.0,
                 Work::BindRun {
-                    occurrence: id.clone(),
+                    dispatch: dispatch.clone(),
                     run: "not-started".into()
                 },
                 NOW + 1000
@@ -220,7 +217,7 @@ fn skipped_or_failed_precheck_never_has_a_run_and_cannot_be_reexecuted() {
             job_definitions::work(
                 &mut store.0,
                 Work::BeginPrecheck {
-                    occurrence: id.clone()
+                    dispatch: dispatch.clone()
                 },
                 NOW + 1000
             )
@@ -231,7 +228,7 @@ fn skipped_or_failed_precheck_never_has_a_run_and_cannot_be_reexecuted() {
             job_definitions::work(
                 &mut store.0,
                 Work::BeginPrecheck {
-                    occurrence: id.clone()
+                    dispatch: dispatch.clone()
                 },
                 NOW + 1001
             )
@@ -240,7 +237,7 @@ fn skipped_or_failed_precheck_never_has_a_run_and_cannot_be_reexecuted() {
         let reply = job_definitions::work(
             &mut store.0,
             Work::FinishPrecheck {
-                occurrence: id.clone(),
+                dispatch: dispatch.clone(),
                 result: outcome(state),
             },
             NOW + 1025,
@@ -258,7 +255,7 @@ fn skipped_or_failed_precheck_never_has_a_run_and_cannot_be_reexecuted() {
             job_definitions::work(
                 &mut store.0,
                 Work::FinishPrecheck {
-                    occurrence: id.clone(),
+                    dispatch: dispatch.clone(),
                     result: outcome(OutcomeState::Passed)
                 },
                 NOW + 1026
@@ -298,11 +295,23 @@ fn revoked_approval_refuses_queued_use_but_authorized_checks_keep_their_snapshot
         .unwrap()
         .id
         .clone();
+    let a_dispatch = claims
+        .iter()
+        .find(|c| c.id == a_id)
+        .unwrap()
+        .dispatch
+        .clone();
+    let b_dispatch = claims
+        .iter()
+        .find(|c| c.id == b_id)
+        .unwrap()
+        .dispatch
+        .clone();
     assert!(matches!(
         job_definitions::work(
             &mut store.0,
             Work::BeginPrecheck {
-                occurrence: a_id.clone()
+                dispatch: a_dispatch.clone()
             },
             NOW + 1000
         )
@@ -318,7 +327,7 @@ fn revoked_approval_refuses_queued_use_but_authorized_checks_keep_their_snapshot
         job_definitions::work(
             &mut store.0,
             Work::BeginPrecheck {
-                occurrence: b_id.clone()
+                dispatch: b_dispatch.clone()
             },
             NOW + 1001
         )
@@ -333,7 +342,7 @@ fn revoked_approval_refuses_queued_use_but_authorized_checks_keep_their_snapshot
         job_definitions::work(
             &mut store.0,
             Work::FinishPrecheck {
-                occurrence: a_id.clone(),
+                dispatch: a_dispatch.clone(),
                 result: outcome(OutcomeState::Passed)
             },
             NOW + 1002
@@ -351,11 +360,11 @@ fn unconfirmed_cleanup_or_restart_requires_explicit_abandonment_never_resume() {
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let approval = approve(&mut store, "check");
         let job = job(&mut store, &approval, "job");
-        let id = claim(&mut store, &job);
+        let (id, dispatch) = claim(&mut store, &job);
         job_definitions::work(
             &mut store.0,
             Work::BeginPrecheck {
-                occurrence: id.clone(),
+                dispatch: dispatch.clone(),
             },
             NOW + 1000,
         )
@@ -368,7 +377,7 @@ fn unconfirmed_cleanup_or_restart_requires_explicit_abandonment_never_resume() {
             job_definitions::work(
                 &mut store.0,
                 Work::FinishPrecheck {
-                    occurrence: id.clone(),
+                    dispatch: dispatch.clone(),
                     result,
                 },
                 NOW + 1001,
@@ -384,7 +393,7 @@ fn unconfirmed_cleanup_or_restart_requires_explicit_abandonment_never_resume() {
             job_definitions::work(
                 &mut store.0,
                 Work::BeginPrecheck {
-                    occurrence: id.clone()
+                    dispatch: dispatch.clone()
                 },
                 NOW + 1002
             )
@@ -434,7 +443,7 @@ fn no_dispatch_slots_still_materializes_due_intent_and_unchecked_jobs_keep_old_f
         panic!("claims")
     };
     assert!(claims.is_empty());
-    let id = claim(&mut store, &job);
+    let (id, _) = claim(&mut store, &job);
     assert!(occurrence(&mut store, &job, &id)["precheck"].is_null());
     let spec:job_definitions::Spec=serde_json::from_value(json!({"title":"Legacy job","instruction":"x","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"}})).unwrap();
     assert!(
@@ -451,11 +460,11 @@ fn passed_metadata_without_observed_command_start_cannot_permit_model_dispatch()
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let approval = approve(&mut store, "check");
     let job = job(&mut store, &approval, "job");
-    let id = claim(&mut store, &job);
+    let (id, dispatch) = claim(&mut store, &job);
     job_definitions::work(
         &mut store.0,
         Work::BeginPrecheck {
-            occurrence: id.clone(),
+            dispatch: dispatch.clone(),
         },
         NOW + 1000,
     )
@@ -466,7 +475,7 @@ fn passed_metadata_without_observed_command_start_cannot_permit_model_dispatch()
         job_definitions::work(
             &mut store.0,
             Work::FinishPrecheck {
-                occurrence: id.clone(),
+                dispatch: dispatch.clone(),
                 result
             },
             NOW + 1001

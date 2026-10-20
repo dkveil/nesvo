@@ -31,7 +31,7 @@ pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
         )
         .into());
     }
-    Ok(())
+    crate::job_attempts::guard_run(connection, run)
 }
 pub fn accept(
     tx: &Transaction<'_>,

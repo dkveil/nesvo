@@ -2216,3 +2216,37 @@ including the corrected revision refusal, unchanged eight-second fairness gate
 and actual first-generation restart history. The earlier failed sources and
 their logs remain recorded above; this is fresh verification of changed source,
 not an unchanged rerun. Other F28 and full-goal acceptance gates remain open.
+
+### F28 exact dispatch preparation fences
+
+New scheduler claims persist a private random preparation token and exact current
+generation pointer before returning work. Every asynchronous producer checks that
+tuple, token and synchronized phase before changing metadata; completed/retired
+claims cannot obtain another token. Restart clears tokens and migration gives
+existing journal rows a current pointer without inventing dispatch authority.
+Run creation, plan, budget and activation now check preparation inside the same
+writer transaction before immutable-key replay. Plan/budget/activation also check
+the exact bound Run. Public owner mutation recovery retains its existing contract.
+
+Ordinary native admission separately requires the current generation's Run; it
+does not depend on the already retired preparation token. Historical evidence
+remains inspectable. Cancellation and human control guards remain in force.
+Unavailable approvals retire preparation; in-flight canceled prechecks still
+retain their actual outcome before token retirement. This adds no provider grant,
+public request field, dependency, UI change or generation-2 dispatch.
+
+Five additional metadata tests exercise all stale producer variants, all four
+guarded preparation actions, zero writes/events on refusal, valid preparation,
+wrong-Run refusal, token retirement/replay, historical Run admission and migration
+of the previously published journal. A future-shaped second generation is only a
+database test fixture. Local Windows warnings-denied Clippy and all 400 unit tests
+passed (142 TUI, 255 host, 3 wire; three ordinary helpers ignored). Native SDK,
+public CLI/host regressions and final platform results are recorded separately.
+Per-generation precheck storage, retry/backoff and the other F28 gates remain open.
+
+Final local dispatch-fence verification: production build and fmt passed; all
+37 serial native MCP SDK scenarios passed in 185.80 seconds, including canceled
+prechecks, exact bound-worker stop, fairness and first-generation restart history.
+All 30 Node host/sync/CLI regression cases passed in 34.05 seconds. Review found
+no additional production defect. No original model or device was invoked for
+these checks; exact published platform evidence follows separately.

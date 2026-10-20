@@ -95,17 +95,26 @@ fn pure_job_supervision_and_calendar_reads_do_not_request_the_writer_lock() {
     // must still succeed while a different connection owns the writer.
     store.0.busy_timeout(Duration::ZERO).unwrap();
     let before = store.0.total_changes();
-    assert!(matches!(
-        crate::job_definitions::work(
-            &mut store.0,
-            crate::job_definitions::Work::CancelRequested {
-                occurrence: "missing".into()
+    let error = crate::job_definitions::work(
+        &mut store.0,
+        crate::job_definitions::Work::CancelRequested {
+            dispatch: crate::job_attempts::Dispatch {
+                occurrence: "missing".into(),
+                attempt: "unclaimed".into(),
+                token: "never-issued".into(),
             },
-            0
-        )
-        .unwrap(),
-        crate::job_definitions::Reply::CancelRequested(false)
-    ));
+        },
+        0,
+    )
+    .err()
+    .expect("An unissued dispatch proof must fail without requesting the writer lock");
+    assert_eq!(
+        error
+            .downcast_ref::<crate::api_error::Error>()
+            .unwrap()
+            .code,
+        "job_attempt_conflict"
+    );
     assert!(
         matches!(crate::job_definitions::work(&mut store.0,crate::job_definitions::Work::CalendarDue,0).unwrap(),crate::job_definitions::Reply::Calendars(rows) if rows.is_empty())
     );

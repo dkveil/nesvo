@@ -82,6 +82,11 @@ fn poll(store: &mut Store, now: u64) -> Vec<Claim> {
     };
     claims
 }
+fn single_dispatch(store: &mut Store, now: u64) -> crate::job_attempts::Dispatch {
+    let mut claims = poll(store, now);
+    assert_eq!(claims.len(), 1);
+    claims.pop().unwrap().dispatch
+}
 fn cancellations(store: &mut Store, now: u64) -> Vec<job_cancellations::Claim> {
     let Reply::Cancellations(claims) =
         job_definitions::work(&mut store.0, Work::CancelPoll { slots: 2 }, now).unwrap()
@@ -114,7 +119,7 @@ fn workflow(store: &mut Store, value: Value) -> Value {
     )
     .unwrap()
 }
-fn bind(store: &mut Store, occurrence: &Value, count: usize) -> Value {
+fn bind(store: &mut Store, dispatch: &crate::job_attempts::Dispatch, count: usize) -> Value {
     let created = workflow(
         store,
         json!({"action":"create","key":"run","spec":{"title":"Bound run","goal":"Metadata-only lifecycle fixture"}}),
@@ -139,7 +144,7 @@ fn bind(store: &mut Store, occurrence: &Value, count: usize) -> Value {
     job_definitions::work(
         &mut store.0,
         Work::BindRun {
-            occurrence: occurrence["id"].as_str().unwrap().into(),
+            dispatch: dispatch.clone(),
             run: id.as_str().unwrap().into(),
         },
         NOW,
@@ -147,30 +152,32 @@ fn bind(store: &mut Store, occurrence: &Value, count: usize) -> Value {
     .unwrap();
     assigned
 }
-fn late_messages(store: &mut Store, occurrence: &Value) {
-    let id = occurrence["id"].as_str().unwrap();
+fn late_messages(store: &mut Store, dispatch: &crate::job_attempts::Dispatch) {
     for work in [
         Work::Started {
-            occurrence: id.into(),
+            dispatch: dispatch.clone(),
         },
         Work::Refused {
-            occurrence: id.into(),
+            dispatch: dispatch.clone(),
             uncertain: false,
         },
         Work::Refused {
-            occurrence: id.into(),
+            dispatch: dispatch.clone(),
             uncertain: true,
         },
     ] {
-        job_definitions::work(&mut store.0, work, NOW + 900).unwrap();
+        code(
+            job_definitions::work(&mut store.0, work, NOW + 900),
+            "job_attempt_conflict",
+        );
     }
 }
-fn assert_unbindable(store: &mut Store, occurrence: &Value, expected: &str) {
+fn assert_unbindable(store: &mut Store, dispatch: &crate::job_attempts::Dispatch, expected: &str) {
     code(
         job_definitions::work(
             &mut store.0,
             Work::BindRun {
-                occurrence: occurrence["id"].as_str().unwrap().into(),
+                dispatch: dispatch.clone(),
                 run: "never-created-run".into(),
             },
             NOW + 500,
@@ -193,12 +200,12 @@ fn approval(store: &mut Store) -> Value {
     .unwrap()["precheckApproval"]
         .clone()
 }
-fn begin_precheck(store: &mut Store, occurrence: &Value) {
+fn begin_precheck(store: &mut Store, dispatch: &crate::job_attempts::Dispatch) {
     assert!(matches!(
         job_definitions::work(
             &mut store.0,
             Work::BeginPrecheck {
-                occurrence: occurrence["id"].as_str().unwrap().into(),
+                dispatch: dispatch.clone(),
             },
             NOW + 50,
         )
@@ -327,25 +334,33 @@ fn queued_and_claimed_cancellation_fences_binding_and_replays_original_acceptanc
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let job = create(&mut store, None);
         let occurrence = manual(&mut store, &job, "first");
-        if claimed {
-            assert_eq!(poll(&mut store, NOW).len(), 1);
-        }
+        let dispatch = if claimed {
+            let mut claims = poll(&mut store, NOW);
+            assert_eq!(claims.len(), 1);
+            claims.pop().unwrap().dispatch
+        } else {
+            crate::job_attempts::Dispatch {
+                occurrence: occurrence["id"].as_str().unwrap().into(),
+                attempt: "unclaimed".into(),
+                token: "no-dispatch-proof".into(),
+            }
+        };
         let accepted = cancel(&mut store, &job, &occurrence);
         assert_eq!(accepted["occurrence"]["state"], "canceled");
         assert_eq!(accepted["occurrence"]["cancellation"]["state"], "completed");
         assert_eq!(accepted["occurrence"]["finishedAt"], NOW + 100);
-        assert_unbindable(&mut store, &occurrence, "occurrence_conflict");
+        assert_unbindable(&mut store, &dispatch, "job_attempt_conflict");
         code(
             job_definitions::work(
                 &mut store.0,
                 Work::BeginPrecheck {
-                    occurrence: occurrence["id"].as_str().unwrap().into(),
+                    dispatch: dispatch.clone(),
                 },
                 NOW + 200,
             ),
-            "occurrence_conflict",
+            "job_attempt_conflict",
         );
-        late_messages(&mut store, &occurrence);
+        late_messages(&mut store, &dispatch);
         assert_eq!(
             current(&mut store, &job, &occurrence),
             accepted["occurrence"]
@@ -384,8 +399,8 @@ fn actual_pass_after_owner_cancel_is_retained_without_any_run_admission() {
     let approval = approval(&mut store);
     let job = create(&mut store, Some(&approval));
     let occurrence = manual(&mut store, &job, "first");
-    assert_eq!(poll(&mut store, NOW).len(), 1);
-    begin_precheck(&mut store, &occurrence);
+    let dispatch = single_dispatch(&mut store, NOW);
+    begin_precheck(&mut store, &dispatch);
     let accepted = cancel(&mut store, &job, &occurrence);
     assert_eq!(accepted["occurrence"]["state"], "canceling");
     assert_eq!(
@@ -397,7 +412,7 @@ fn actual_pass_after_owner_cancel_is_retained_without_any_run_admission() {
         job_definitions::work(
             &mut store.0,
             Work::CancelRequested {
-                occurrence: occurrence["id"].as_str().unwrap().into()
+                dispatch: dispatch.clone()
             },
             NOW + 150
         )
@@ -408,7 +423,7 @@ fn actual_pass_after_owner_cancel_is_retained_without_any_run_admission() {
         job_definitions::work(
             &mut store.0,
             Work::FinishPrecheck {
-                occurrence: occurrence["id"].as_str().unwrap().into(),
+                dispatch: dispatch.clone(),
                 result: passed(true)
             },
             NOW + 200
@@ -427,7 +442,7 @@ fn actual_pass_after_owner_cancel_is_retained_without_any_run_admission() {
         "Actual check result\n"
     );
     assert!(finished["runId"].is_null());
-    assert_unbindable(&mut store, &occurrence, "occurrence_conflict");
+    assert_unbindable(&mut store, &dispatch, "job_attempt_conflict");
     assert_eq!(
         store
             .0
@@ -445,7 +460,7 @@ fn actual_pass_after_owner_cancel_is_retained_without_any_run_admission() {
         .unwrap(),
         accepted
     );
-    late_messages(&mut store, &occurrence);
+    late_messages(&mut store, &dispatch);
     assert_eq!(current(&mut store, &job, &occurrence), finished);
 }
 
@@ -455,15 +470,15 @@ fn canceled_precheck_with_unconfirmed_cleanup_stays_unfinished_and_blocks_siblin
     let approval = approval(&mut store);
     let job = create(&mut store, Some(&approval));
     let occurrence = manual(&mut store, &job, "first");
-    assert_eq!(poll(&mut store, NOW).len(), 1);
-    begin_precheck(&mut store, &occurrence);
+    let dispatch = single_dispatch(&mut store, NOW);
+    begin_precheck(&mut store, &dispatch);
     cancel(&mut store, &job, &occurrence);
     let sibling = manual(&mut store, &job, "second");
     assert!(matches!(
         job_definitions::work(
             &mut store.0,
             Work::FinishPrecheck {
-                occurrence: occurrence["id"].as_str().unwrap().into(),
+                dispatch: dispatch.clone(),
                 result: passed(false)
             },
             NOW + 200
@@ -485,7 +500,7 @@ fn canceled_precheck_with_unconfirmed_cleanup_stays_unfinished_and_blocks_siblin
     assert!(poll(&mut store, NOW + 500).is_empty());
     assert!(cancellations(&mut store, NOW + 500).is_empty());
     assert_eq!(current(&mut store, &job, &sibling)["state"], "queued");
-    late_messages(&mut store, &occurrence);
+    late_messages(&mut store, &dispatch);
     assert_eq!(current(&mut store, &job, &occurrence), uncertain);
     let abandon = json!({"action":"abandonPrecheck","key":"abandon","jobId":job["id"],"occurrenceId":occurrence["id"],"expectedDigest":approval["digest"],"acknowledgeUnknownEffects":true});
     let accepted = request(&mut store, abandon.clone(), NOW + 1000).unwrap();
@@ -518,8 +533,8 @@ fn bound_cancellation_fences_attempt_input_and_executor_admission_immediately() 
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let job = create(&mut store, None);
     let occurrence = manual(&mut store, &job, "first");
-    assert_eq!(poll(&mut store, NOW).len(), 1);
-    let run = bind(&mut store, &occurrence, 2);
+    let dispatch = single_dispatch(&mut store, NOW);
+    let run = bind(&mut store, &dispatch, 2);
     let id = run["run"]["id"].as_str().unwrap();
     crate::workflow_budget::admit_attempt(&store.0, id, 1).unwrap();
     crate::workflow_budget::guard_dispatch(&mut store.0, "worker", NOW).unwrap();
@@ -552,7 +567,7 @@ fn bound_cancellation_fences_attempt_input_and_executor_admission_immediately() 
         0
     );
     let before = current(&mut store, &job, &occurrence);
-    late_messages(&mut store, &occurrence);
+    late_messages(&mut store, &dispatch);
     assert_eq!(current(&mut store, &job, &occurrence), before);
 }
 
@@ -562,8 +577,8 @@ fn cancellation_fences_pending_validation_without_breaking_an_earlier_acceptance
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let job = create(&mut store, None);
         let occurrence = manual(&mut store, &job, "first");
-        assert_eq!(poll(&mut store, NOW).len(), 1);
-        let run = bind(&mut store, &occurrence, 2);
+        let dispatch = single_dispatch(&mut store, NOW);
+        let run = bind(&mut store, &dispatch, 2);
         orchestration::execute_at(
             &mut store.0,
             Actor { issuer: "worker".into(), scope: Scope::Worker("worker".into()) },
@@ -616,8 +631,8 @@ fn cancellation_claim_survives_native_projection_and_queue_waits_for_exit_proof(
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let job = create(&mut store, None);
     let occurrence = manual(&mut store, &job, "first");
-    assert_eq!(poll(&mut store, NOW).len(), 1);
-    let run = bind(&mut store, &occurrence, 1);
+    let dispatch = single_dispatch(&mut store, NOW);
+    let run = bind(&mut store, &dispatch, 1);
     let sibling = manual(&mut store, &job, "second");
     let accepted = cancel(&mut store, &job, &occurrence);
     assert!(accepted["occurrence"]["finishedAt"].is_null());
@@ -725,8 +740,8 @@ fn an_unconfirmed_cancel_dispatch_is_not_exit_proof_or_permission_to_repeat() {
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let job = create(&mut store, None);
     let occurrence = manual(&mut store, &job, "first");
-    assert_eq!(poll(&mut store, NOW).len(), 1);
-    let run = bind(&mut store, &occurrence, 1);
+    let dispatch = single_dispatch(&mut store, NOW);
+    let run = bind(&mut store, &dispatch, 1);
     let accepted = cancel(&mut store, &job, &occurrence);
     let sibling = manual(&mut store, &job, "second");
     let claim = cancellations(&mut store, NOW + 150).pop().unwrap();
@@ -780,7 +795,7 @@ fn an_unconfirmed_cancel_dispatch_is_not_exit_proof_or_permission_to_repeat() {
         job_cancellations::guard_run(&store.0, run["run"]["id"].as_str().unwrap()),
         "job_canceled",
     );
-    late_messages(&mut store, &occurrence);
+    late_messages(&mut store, &dispatch);
     assert_eq!(current(&mut store, &job, &occurrence), uncertain);
     assert_eq!(
         job_events(&store),
@@ -795,8 +810,8 @@ fn restart_invalidates_native_claims_without_reclaiming_or_reopening_the_queue()
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let job = create(&mut store, None);
         let occurrence = manual(&mut store, &job, "first");
-        assert_eq!(poll(&mut store, NOW).len(), 1);
-        let run = bind(&mut store, &occurrence, 1);
+        let dispatch = single_dispatch(&mut store, NOW);
+        let run = bind(&mut store, &dispatch, 1);
         let accepted = cancel(&mut store, &job, &occurrence);
         let sibling = manual(&mut store, &job, "second");
         let old = if claimed {
@@ -859,8 +874,8 @@ fn a_new_cancellation_cannot_rewrite_a_terminal_bound_run() {
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let job = create(&mut store, None);
         let occurrence = manual(&mut store, &job, "first");
-        assert_eq!(poll(&mut store, NOW).len(), 1);
-        let run = bind(&mut store, &occurrence, 1);
+        let dispatch = single_dispatch(&mut store, NOW);
+        let run = bind(&mut store, &dispatch, 1);
         if terminal == "succeeded" {
             orchestration::execute_at(&mut store.0, Actor { issuer: "worker".into(), scope: Scope::Worker("worker".into()) }, serde_json::from_value(json!({"action":"report","key":"result","attemptId":run["tasks"][0]["currentAttempt"]["id"],"result":super::orchestration_tests::report()})).unwrap(), NOW + 100).unwrap();
             let reported = workflow(&mut store, json!({"action":"get","runId":run["run"]["id"]}));
@@ -902,8 +917,8 @@ fn existing_owner_control_can_reconcile_cancellation_only_after_exact_exit_proof
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let job = create(&mut store, None);
         let occurrence = manual(&mut store, &job, "first");
-        assert_eq!(poll(&mut store, NOW).len(), 1);
-        let run = bind(&mut store, &occurrence, 1);
+        let dispatch = single_dispatch(&mut store, NOW);
+        let run = bind(&mut store, &dispatch, 1);
         let accepted = cancel(&mut store, &job, &occurrence);
         let claim = cancellations(&mut store, NOW + 150).pop().unwrap();
         job_definitions::work(

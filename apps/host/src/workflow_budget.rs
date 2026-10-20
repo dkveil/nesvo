@@ -278,11 +278,39 @@ pub fn execute(
     request: Request,
     now: u64,
 ) -> Result<Value> {
+    execute_inner(connection, actor, request, now, None)
+}
+/// Job setup uses the same budget mutation with its proof inside the writer.
+pub fn execute_for_job(
+    connection: &mut Connection,
+    actor: &Actor,
+    request: Request,
+    now: u64,
+    dispatch: &crate::job_attempts::Dispatch,
+) -> Result<Value> {
+    if !matches!(actor.scope, Scope::Owner) || !matches!(request, Request::Set { .. }) {
+        return Err(Error::new(
+            "invalid_argument",
+            "Internal job preparation requires an owner budget set",
+        )
+        .into());
+    }
+    execute_inner(connection, actor.clone(), request, now, Some(dispatch))
+}
+fn execute_inner(
+    connection: &mut Connection,
+    actor: Actor,
+    request: Request,
+    now: u64,
+    job_dispatch: Option<&crate::job_attempts::Dispatch>,
+) -> Result<Value> {
     let run_id = match &request {
         Request::Get { run_id } | Request::Set { run_id, .. } => run_id,
     };
-    orchestration::run(connection, &actor, run_id)?;
-    refresh(connection, run_id, now)?;
+    if job_dispatch.is_none() {
+        orchestration::run(connection, &actor, run_id)?;
+        refresh(connection, run_id, now)?;
+    }
     if matches!(request, Request::Get { .. }) {
         return policy_view(connection, &actor, run_id);
     }
@@ -306,6 +334,9 @@ pub fn execute(
     );
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if let Some(dispatch) = job_dispatch {
+        crate::job_attempts::guard_bound_run(&transaction, dispatch, run_id)?;
+    }
     if let Some(previous) = orchestration::replay(&transaction, &actor, key, &digest)? {
         return Ok(previous);
     }

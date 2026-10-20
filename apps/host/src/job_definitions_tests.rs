@@ -244,7 +244,7 @@ fn once_admission_is_durable_atomic_and_distinct_from_success_or_idle() {
     job_definitions::work(
         &mut store.0,
         Work::Started {
-            occurrence: claims[0].id.clone(),
+            dispatch: claims[0].dispatch.clone(),
         },
         NOW + 10_002,
     )
@@ -512,7 +512,7 @@ fn running_blocker_changes_and_resolution_publish_once_without_heartbeat_events(
     job_definitions::work(
         &mut store.0,
         Work::BindRun {
-            occurrence: claim.id.clone(),
+            dispatch: claim.dispatch.clone(),
             run: run.into(),
         },
         NOW,
@@ -521,7 +521,7 @@ fn running_blocker_changes_and_resolution_publish_once_without_heartbeat_events(
     job_definitions::work(
         &mut store.0,
         Work::Started {
-            occurrence: claim.id,
+            dispatch: claim.dispatch.clone(),
         },
         NOW,
     )

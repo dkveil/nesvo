@@ -124,6 +124,22 @@ generation pointers in older records. Read the current occurrence and exact
 generation for later observations. Restart retains the same journal identity and
 does not allocate a retry or repeat an unknown native effect.
 
+Each new dispatch also has a private host-only preparation token tied to its
+exact current generation. Precheck supervision/completion, Run binding and
+scheduler completion messages must present the same generation and token. Run
+creation, plan, budget and activation check it inside their writer transaction,
+before recovering even an existing mutation response; non-creation operations
+also require the exact bound Run. A delayed producer cannot prepare a different
+Run or overwrite a newer assignment. Tokens are retired when preparation ends
+and cleared on recovery; historical rows never acquire replacement tokens.
+They are not CLI/MCP authority and are never returned in public history.
+
+Historical Runs stay inspectable, while automated native admissions reject a
+Run whose job generation is no longer current. A retired preparation token does
+not stop already admitted native work. Human direct terminal input retains its
+existing control contract. Prechecks remain occurrence-keyed and dispatch stays
+generation 1 only; these fences alone do not enable retries or repeated commands.
+
 ## Cancel one occurrence
 
 Hosts advertising `jobCancellation:true` accept stable occurrence cancellation

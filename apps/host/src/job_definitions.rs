@@ -133,13 +133,18 @@ pub struct Claim {
     pub id: String,
     pub job_id: String,
     pub spec: Spec,
+    pub dispatch: crate::job_attempts::Dispatch,
 }
 pub enum Work {
+    Prepare {
+        dispatch: crate::job_attempts::Dispatch,
+        request: Box<orchestration::Request>,
+    },
     CancelPoll {
         slots: u8,
     },
     CancelRequested {
-        occurrence: String,
+        dispatch: crate::job_attempts::Dispatch,
     },
     CancelFinished {
         claim: crate::job_cancellations::Claim,
@@ -149,14 +154,14 @@ pub enum Work {
         slots: u8,
     },
     BeginPrecheck {
-        occurrence: String,
+        dispatch: crate::job_attempts::Dispatch,
     },
     FinishPrecheck {
-        occurrence: String,
+        dispatch: crate::job_attempts::Dispatch,
         result: crate::job_prechecks::Outcome,
     },
     Interrupted {
-        occurrence: String,
+        dispatch: crate::job_attempts::Dispatch,
     },
     CalendarDue,
     AdvanceCalendar {
@@ -167,18 +172,19 @@ pub enum Work {
         answer: crate::job_calendar::Answer,
     },
     BindRun {
-        occurrence: String,
+        dispatch: crate::job_attempts::Dispatch,
         run: String,
     },
     Started {
-        occurrence: String,
+        dispatch: crate::job_attempts::Dispatch,
     },
     Refused {
-        occurrence: String,
+        dispatch: crate::job_attempts::Dispatch,
         uncertain: bool,
     },
 }
 pub enum Reply {
+    Prepared(Value),
     Cancellations(Vec<crate::job_cancellations::Claim>),
     CancelRequested(bool),
     Claims(Vec<Claim>),
@@ -236,6 +242,11 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     crate::job_attempts::backfill(&transaction)?;
+    // A recovered row is historical evidence, never a new producer capability.
+    transaction.execute(
+        "UPDATE harness_job_attempts SET dispatch_token=NULL WHERE dispatch_token IS NOT NULL",
+        [],
+    )?;
     let ids = {
         let mut q=transaction.prepare("SELECT id FROM harness_job_occurrences WHERE state IN ('dispatching','prechecking','running','needsValidation','canceling')")?;
         q.query_map([], |r| r.get::<_, String>(0))?
@@ -403,7 +414,7 @@ pub(crate) fn occurrence(
         .into();
     view["precheck"] = crate::job_precheck_records::view(connection, id, detail)?;
     view["cancellation"] = crate::job_cancellations::view(connection, id)?;
-    let generation: Option<(String,i64)> = connection.query_row("SELECT id,ordinal FROM harness_job_attempts WHERE occurrence_id=?1 ORDER BY ordinal DESC LIMIT 1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let generation: Option<(String,i64)> = connection.query_row("SELECT a.id,a.ordinal FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     view["jobAttemptId"] = generation.as_ref().map(|r| r.0.as_str()).into();
     view["jobAttemptOrdinal"] = generation.as_ref().map(|r| r.1).into();
     let binding = if let Some(run) = view["runId"].as_str() {
@@ -843,6 +854,21 @@ fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
     Ok(())
 }
 pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
+    let work = match work {
+        Work::Prepare { dispatch, request } => {
+            return orchestration::execute_for_job(
+                connection,
+                &Actor {
+                    issuer: "owner".into(),
+                    scope: Scope::Owner,
+                },
+                *request,
+                &dispatch,
+            )
+            .map(Reply::Prepared);
+        }
+        other => other,
+    };
     let slots = match &work {
         Work::Poll { slots } => i64::from((*slots).min(4)),
         _ => 4,
@@ -856,9 +882,18 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
     };
     let transaction = connection.transaction_with_behavior(behavior)?;
     let reply = match work {
-        Work::CancelRequested { occurrence } => Reply::CancelRequested(
-            crate::job_cancellations::requested(&transaction, &occurrence)?,
-        ),
+        Work::Prepare { .. } => return Err(invalid("Nested job preparation is unsupported")),
+        Work::CancelRequested { dispatch } => {
+            crate::job_attempts::guard(
+                &transaction,
+                &dispatch,
+                &["dispatching", "prechecking", "canceling"],
+            )?;
+            Reply::CancelRequested(crate::job_cancellations::requested(
+                &transaction,
+                &dispatch.occurrence,
+            )?)
+        }
         Work::CancelPoll { slots } => {
             crate::job_cancellations::refresh(&transaction, now)?;
             Reply::Cancellations(crate::job_cancellations::claims(&transaction, slots, now)?)
@@ -867,7 +902,13 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             crate::job_cancellations::finish(&transaction, &claim, result, now)?;
             Reply::Done
         }
-        Work::Interrupted { occurrence } => {
+        Work::Interrupted { dispatch } => {
+            crate::job_attempts::guard(
+                &transaction,
+                &dispatch,
+                &["dispatching", "prechecking", "canceling"],
+            )?;
+            let occurrence = dispatch.occurrence.clone();
             let phase: Option<String> = transaction
                 .query_row(
                     "SELECT state FROM harness_job_occurrences WHERE id=?1",
@@ -900,12 +941,21 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                     now,
                 )?;
             }
+            crate::job_attempts::retire(&transaction, &dispatch)?;
             Reply::Done
         }
-        Work::BeginPrecheck { occurrence } => {
-            crate::job_precheck_records::begin(&transaction, &occurrence, now)?
+        Work::BeginPrecheck { dispatch } => {
+            crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
+            let reply =
+                crate::job_precheck_records::begin(&transaction, &dispatch.occurrence, now)?;
+            if matches!(&reply, Reply::PrecheckPassed(false)) {
+                crate::job_attempts::retire(&transaction, &dispatch)?;
+            }
+            reply
         }
-        Work::FinishPrecheck { occurrence, result } => {
+        Work::FinishPrecheck { dispatch, result } => {
+            crate::job_attempts::guard(&transaction, &dispatch, &["prechecking", "canceling"])?;
+            let occurrence = dispatch.occurrence.clone();
             let (passed, state, reason) =
                 crate::job_precheck_records::finish(&transaction, &occurrence, result, now)?;
             transition(
@@ -916,6 +966,9 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                 !passed && state != "reconcile",
                 now,
             )?;
+            if !passed {
+                crate::job_attempts::retire(&transaction, &dispatch)?;
+            }
             Reply::PrecheckPassed(passed)
         }
         Work::CalendarDue => {
@@ -1069,16 +1122,19 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                     "UPDATE harness_job_occurrences SET started_at=?2 WHERE id=?1",
                     params![id, now as i64],
                 )?;
-                crate::job_attempts::begin(&transaction, &id, now)?;
+                let dispatch = crate::job_attempts::claim(&transaction, &id, now)?;
                 claims.push(Claim {
                     id,
                     job_id,
                     spec: serde_json::from_str(&spec)?,
+                    dispatch,
                 });
             }
             Reply::Claims(claims)
         }
-        Work::BindRun { occurrence, run } => {
+        Work::BindRun { dispatch, run } => {
+            crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
+            let occurrence = dispatch.occurrence.clone();
             let spec: String = transaction.query_row(
                 "SELECT spec FROM harness_job_occurrences WHERE id=?1",
                 [&occurrence],
@@ -1106,17 +1162,22 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             crate::job_attempts::bind(&transaction, &occurrence, &run)?;
             Reply::Done
         }
-        Work::Started { occurrence } => {
+        Work::Started { dispatch } => {
+            crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
+            let occurrence = dispatch.occurrence.clone();
             let pending:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND state='dispatching')",[&occurrence],|r|r.get(0))?;
             if pending {
                 transition(&transaction, &occurrence, "running", None, false, now)?;
             }
+            crate::job_attempts::retire(&transaction, &dispatch)?;
             Reply::Done
         }
         Work::Refused {
-            occurrence,
+            dispatch,
             uncertain,
         } => {
+            crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
+            let occurrence = dispatch.occurrence.clone();
             let pending:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND state IN ('dispatching','running'))",[&occurrence],|r|r.get(0))?;
             if pending {
                 transition(
@@ -1132,6 +1193,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                     now,
                 )?;
             }
+            crate::job_attempts::retire(&transaction, &dispatch)?;
             Reply::Done
         }
     };

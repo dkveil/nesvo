@@ -3,7 +3,7 @@ use crate::{
     caller::Authority,
     event_log::Service,
     job_definitions::{Claim, Reply, Work},
-    orchestration::{Actor, Request, Scope},
+    orchestration::{Actor, Scope},
     sessions::{PtyEvent, State},
 };
 use anyhow::{Result, anyhow};
@@ -58,16 +58,28 @@ fn owner() -> Actor {
     }
 }
 impl Runner {
-    async fn workflow(&self, request: Value) -> Result<Value> {
-        self.log
-            .workflow(owner(), serde_json::from_value::<Request>(request)?)
-            .await
+    async fn workflow(
+        &self,
+        dispatch: &crate::job_attempts::Dispatch,
+        request: Value,
+    ) -> Result<Value> {
+        match self
+            .log
+            .jobs(Work::Prepare {
+                dispatch: dispatch.clone(),
+                request: serde_json::from_value(request)?,
+            })
+            .await?
+        {
+            Reply::Prepared(view) => Ok(view),
+            _ => Err(anyhow!("Job metadata preparation was not confirmed")),
+        }
     }
     async fn dispatch(&self, claim: Claim) -> Result<()> {
         match self
             .log
             .jobs(Work::BeginPrecheck {
-                occurrence: claim.id.clone(),
+                dispatch: claim.dispatch.clone(),
             })
             .await?
         {
@@ -76,14 +88,14 @@ impl Runner {
                 let check = crate::job_precheck_adapter::run(*command, stop_rx);
                 let result = supervise_precheck(check, stop_tx, || {
                     self.log.jobs(Work::CancelRequested {
-                        occurrence: claim.id.clone(),
+                        dispatch: claim.dispatch.clone(),
                     })
                 })
                 .await;
                 if !matches!(
                     self.log
                         .jobs(Work::FinishPrecheck {
-                            occurrence: claim.id.clone(),
+                            dispatch: claim.dispatch.clone(),
                             result
                         })
                         .await?,
@@ -99,16 +111,16 @@ impl Runner {
         let mut native_requested = false;
         let prefix = format!("job:{}:{}", claim.job_id, claim.id);
         let result=async {
-            let run=self.workflow(json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
+            let run=self.workflow(&claim.dispatch,json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
             let run_id=run["run"]["id"].as_str().ok_or_else(||anyhow!("Job run identity was not confirmed"))?;
-            self.log.jobs(Work::BindRun{occurrence:claim.id.clone(),run:run_id.into()}).await?;
-            let plan=self.workflow(json!({"action":"setPlan","key":format!("{prefix}:plan"),"runId":run_id,"expectedRevision":run["run"]["revision"],"tasks":[{"key":"job","title":claim.spec.title,"instruction":claim.spec.instruction}]})).await?;
-            let limits=self.workflow(json!({"action":"runBudget","request":{"action":"set","key":format!("{prefix}:budget"),"runId":run_id,"expectedRevision":plan["run"]["revision"],"limits":{"maxParallel":1,"maxAttemptsPerTask":1,"maxElapsedMs":claim.spec.max_elapsed_ms}}})).await?;
-            let active=self.workflow(json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run_id,"expectedRevision":limits["run"]["revision"]})).await?;
+            self.log.jobs(Work::BindRun{dispatch:claim.dispatch.clone(),run:run_id.into()}).await?;
+            let plan=self.workflow(&claim.dispatch,json!({"action":"setPlan","key":format!("{prefix}:plan"),"runId":run_id,"expectedRevision":run["run"]["revision"],"tasks":[{"key":"job","title":claim.spec.title,"instruction":claim.spec.instruction}]})).await?;
+            let limits=self.workflow(&claim.dispatch,json!({"action":"runBudget","request":{"action":"set","key":format!("{prefix}:budget"),"runId":run_id,"expectedRevision":plan["run"]["revision"],"limits":{"maxParallel":1,"maxAttemptsPerTask":1,"maxElapsedMs":claim.spec.max_elapsed_ms}}})).await?;
+            let active=self.workflow(&claim.dispatch,json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run_id,"expectedRevision":limits["run"]["revision"]})).await?;
             let request=serde_json::from_value(json!({"action":"start","key":format!("{prefix}:executor"),"runId":run_id,"expectedRevision":active["run"]["revision"],"spec":{"tasks":[{"taskId":plan["tasks"][0]["id"],"profile":claim.spec.profile}],"retryFailed":false}}))?;
             native_requested=true;
             crate::workflow_executor_runtime::execute(self.state.clone(),self.events.clone(),self.log.clone(),owner(),Authority::Owner,request).await?;
-            self.log.jobs(Work::Started{occurrence:claim.id.clone()}).await?;
+            self.log.jobs(Work::Started{dispatch:claim.dispatch.clone()}).await?;
             Ok::<_,anyhow::Error>(())
         }.await;
         if result.is_err() {
@@ -116,7 +128,7 @@ impl Runner {
             // The occurrence prefix recovers each immutable metadata acceptance.
             self.log
                 .jobs(Work::Refused {
-                    occurrence: claim.id,
+                    dispatch: claim.dispatch.clone(),
                     uncertain: native_requested,
                 })
                 .await?;
@@ -239,12 +251,12 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>, log: 
                     // bounded provider readiness/input; no model heartbeat.
                     let runner = runner.clone();
                     dispatches.spawn(async move {
-                        let occurrence = claim.id.clone();
+                        let dispatch = claim.dispatch.clone();
                         let result = std::panic::AssertUnwindSafe(runner.dispatch(claim))
                             .catch_unwind()
                             .await;
                         if !matches!(result, Ok(Ok(()))) {
-                            let _ = runner.log.jobs(Work::Interrupted { occurrence }).await;
+                            let _ = runner.log.jobs(Work::Interrupted { dispatch }).await;
                         }
                     });
                 }

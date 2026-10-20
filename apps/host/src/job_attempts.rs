@@ -5,6 +5,13 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 const CAPACITY: i64 = 32768;
+#[derive(Clone)]
+pub struct Dispatch {
+    pub occurrence: String,
+    pub attempt: String,
+    pub token: String,
+}
+
 const STATES: &[&str] = &[
     "dispatching",
     "prechecking",
@@ -21,13 +28,35 @@ const STATES: &[&str] = &[
 fn conflict() -> anyhow::Error {
     Error::new(
         "job_attempt_conflict",
-        "Inspect the original job generation; its run identity cannot be replaced",
+        "Inspect the original job generation; its identity, phase or dispatch claim changed",
     )
     .into()
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
-    connection.execute_batch("CREATE TABLE IF NOT EXISTS harness_job_attempts(id TEXT PRIMARY KEY,occurrence_id TEXT NOT NULL REFERENCES harness_job_occurrences(id),ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 4096),run_id TEXT UNIQUE REFERENCES workflow_runs(id),created_at INTEGER NOT NULL CHECK(created_at>=0),claimed_at INTEGER CHECK(claimed_at>=0),finished_at INTEGER CHECK(finished_at>=0),state TEXT NOT NULL,reason TEXT,UNIQUE(occurrence_id,ordinal));
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS harness_job_attempts(id TEXT PRIMARY KEY,occurrence_id TEXT NOT NULL REFERENCES harness_job_occurrences(id),ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 4096),run_id TEXT UNIQUE REFERENCES workflow_runs(id),created_at INTEGER NOT NULL CHECK(created_at>=0),claimed_at INTEGER CHECK(claimed_at>=0),finished_at INTEGER CHECK(finished_at>=0),state TEXT NOT NULL,reason TEXT,dispatch_token TEXT,UNIQUE(occurrence_id,ordinal));
         CREATE INDEX IF NOT EXISTS harness_job_attempts_history ON harness_job_attempts(occurrence_id,ordinal);")?;
+    let attempt_columns = {
+        let mut query = connection.prepare("PRAGMA table_info(harness_job_attempts)")?;
+        query
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if !attempt_columns.iter().any(|name| name == "dispatch_token") {
+        connection
+            .execute_batch("ALTER TABLE harness_job_attempts ADD COLUMN dispatch_token TEXT;")?;
+    }
+    let occurrence_columns = {
+        let mut query = connection.prepare("PRAGMA table_info(harness_job_occurrences)")?;
+        query
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if !occurrence_columns
+        .iter()
+        .any(|name| name == "current_job_attempt_id")
+    {
+        connection.execute_batch("ALTER TABLE harness_job_occurrences ADD COLUMN current_job_attempt_id TEXT REFERENCES harness_job_attempts(id);")?;
+    }
     Ok(())
 }
 fn capacity(connection: &Connection, additional: usize) -> Result<()> {
@@ -56,7 +85,27 @@ pub fn backfill(tx: &Transaction<'_>) -> Result<()> {
         let id = hex::encode(crate::wire::random::<16>());
         tx.execute("INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,run_id,created_at,claimed_at,finished_at,state,reason) SELECT ?2,id,1,run_id,created_at,started_at,finished_at,state,reason FROM harness_job_occurrences WHERE id=?1",params![occurrence,id])?;
     }
+    // Already published generation rows acquire a pointer, never a new dispatch
+    // capability. Never rewind a later explicit generation pointer.
+    tx.execute("UPDATE harness_job_occurrences SET current_job_attempt_id=(SELECT a.id FROM harness_job_attempts a WHERE a.occurrence_id=harness_job_occurrences.id AND a.ordinal=1) WHERE current_job_attempt_id IS NULL AND EXISTS(SELECT 1 FROM harness_job_attempts a WHERE a.occurrence_id=harness_job_occurrences.id AND a.ordinal=1)",[])?;
     Ok(())
+}
+fn point_first(tx: &Transaction<'_>, occurrence: &str, attempt: &str) -> Result<()> {
+    let pointer: Option<Option<String>> = tx
+        .query_row(
+            "SELECT current_job_attempt_id FROM harness_job_occurrences WHERE id=?1",
+            [occurrence],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match pointer {
+        Some(Some(current)) if current == attempt => Ok(()),
+        Some(None) => {
+            if tx.execute("UPDATE harness_job_occurrences SET current_job_attempt_id=?2 WHERE id=?1 AND current_job_attempt_id IS NULL",params![occurrence,attempt])? != 1 { return Err(conflict()); }
+            Ok(())
+        }
+        _ => Err(conflict()),
+    }
 }
 /// Admission already persisted started_at. It is not proof of process creation.
 pub fn begin(tx: &Transaction<'_>, occurrence: &str, _now: u64) -> Result<String> {
@@ -64,25 +113,83 @@ pub fn begin(tx: &Transaction<'_>, occurrence: &str, _now: u64) -> Result<String
         .query_row(
             "SELECT id FROM harness_job_attempts WHERE occurrence_id=?1 AND ordinal=1",
             [occurrence],
-            |r| r.get(0),
+            |r| r.get::<_, String>(0),
         )
         .optional()?
     {
+        point_first(tx, occurrence, &id)?;
         return Ok(id);
     }
-    let claimed: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND started_at IS NOT NULL AND state!='queued')",[occurrence],|r|r.get(0))?;
+    let claimed: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND started_at IS NOT NULL AND state!='queued' AND current_job_attempt_id IS NULL AND NOT EXISTS(SELECT 1 FROM harness_job_attempts WHERE occurrence_id=?1))",[occurrence],|r|r.get(0))?;
     if !claimed {
         return Err(conflict());
     }
     capacity(tx, 1)?;
     let id = hex::encode(crate::wire::random::<16>());
     tx.execute("INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,run_id,created_at,claimed_at,finished_at,state,reason) SELECT ?2,id,1,run_id,created_at,started_at,finished_at,state,reason FROM harness_job_occurrences WHERE id=?1",params![occurrence,id])?;
+    point_first(tx, occurrence, &id)?;
     Ok(id)
+}
+/// Used only by fresh scheduler admission. Even a retired generation cannot
+/// obtain another token: original work is inspected, never implicitly rearmed.
+pub fn claim(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<Dispatch> {
+    let fresh: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND state='dispatching' AND started_at IS NOT NULL AND run_id IS NULL AND current_job_attempt_id IS NULL AND NOT EXISTS(SELECT 1 FROM harness_job_attempts WHERE occurrence_id=?1))",[occurrence],|r|r.get(0))?;
+    if !fresh {
+        return Err(conflict());
+    }
+    let attempt = begin(tx, occurrence, now)?;
+    let token = hex::encode(crate::wire::random::<32>());
+    if tx.execute(
+        "UPDATE harness_job_attempts SET dispatch_token=?2 WHERE id=?1 AND dispatch_token IS NULL",
+        params![attempt, token],
+    )? != 1
+    {
+        return Err(conflict());
+    }
+    Ok(Dispatch {
+        occurrence: occurrence.into(),
+        attempt,
+        token,
+    })
+}
+/// A pure read fence. Native dispatch checks it in the same writer transaction
+/// as its admission; it neither refreshes state nor creates a replacement claim.
+pub fn guard(connection: &Connection, dispatch: &Dispatch, allowed: &[&str]) -> Result<()> {
+    let phases: Option<(String,String)> = connection.query_row("SELECT o.state,a.state FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1 AND a.id=?2 AND a.dispatch_token=?3",params![dispatch.occurrence,dispatch.attempt,dispatch.token],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    if !phases.is_some_and(|(occurrence, attempt)| {
+        occurrence == attempt && allowed.contains(&occurrence.as_str())
+    }) {
+        return Err(conflict());
+    }
+    Ok(())
+}
+/// Preparation after binding must target this generation's exact run. Callers
+/// keep this read and their metadata mutation in the same writer transaction.
+pub fn guard_bound_run(connection: &Connection, dispatch: &Dispatch, run: &str) -> Result<()> {
+    guard(connection, dispatch, &["dispatching"])?;
+    let bound: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1 AND a.id=?2 AND a.dispatch_token=?3 AND o.run_id=?4 AND a.run_id=?4)",params![dispatch.occurrence,dispatch.attempt,dispatch.token,run],|r|r.get(0))?;
+    if !bound {
+        return Err(conflict());
+    }
+    Ok(())
+}
+pub fn retire(tx: &Transaction<'_>, dispatch: &Dispatch) -> Result<()> {
+    if tx.execute("UPDATE harness_job_attempts SET dispatch_token=NULL WHERE id=?1 AND occurrence_id=?2 AND dispatch_token=?3",params![dispatch.attempt,dispatch.occurrence,dispatch.token])? != 1 { return Err(conflict()); }
+    Ok(())
+}
+/// Ongoing native work needs current run assignment, not the already retired
+/// preparation token. Historical runs remain readable but cannot admit effects.
+pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
+    let retired: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.id=a.occurrence_id WHERE a.run_id=?1 AND (o.current_job_attempt_id IS NULL OR o.current_job_attempt_id<>a.id))",[run],|r|r.get(0))?;
+    if retired {
+        return Err(Error::new("job_generation_retired","This run belongs to a historical job generation; inspect its evidence instead of admitting new effects").into());
+    }
+    Ok(())
 }
 pub fn bind(tx: &Transaction<'_>, occurrence: &str, run: &str) -> Result<()> {
     let row: Option<(String, Option<String>)> = tx
         .query_row(
-            "SELECT id,run_id FROM harness_job_attempts WHERE occurrence_id=?1 AND ordinal=1",
+            "SELECT a.id,a.run_id FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.current_job_attempt_id=a.id AND o.id=a.occurrence_id WHERE o.id=?1",
             [occurrence],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -122,7 +229,7 @@ pub fn sync(
         return Err(Error::new("invalid_argument", "Unknown claimed job generation phase").into());
     }
     let finished = finished_at.map(i64::try_from).transpose()?;
-    tx.execute("UPDATE harness_job_attempts SET state=?2,reason=?3,finished_at=COALESCE(finished_at,?4) WHERE occurrence_id=?1 AND ordinal=1 AND (state<>?2 OR reason IS NOT ?3 OR (finished_at IS NULL AND ?4 IS NOT NULL))",params![occurrence,state,reason,finished])?;
+    tx.execute("UPDATE harness_job_attempts SET state=?2,reason=?3,finished_at=COALESCE(finished_at,?4) WHERE occurrence_id=?1 AND id=(SELECT current_job_attempt_id FROM harness_job_occurrences WHERE id=?1) AND (state<>?2 OR reason IS NOT ?3 OR (finished_at IS NULL AND ?4 IS NOT NULL))",params![occurrence,state,reason,finished])?;
     Ok(())
 }
 fn record(
