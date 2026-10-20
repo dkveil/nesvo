@@ -48,12 +48,23 @@ with distinct omission/empty/subset semantics. Native grants remain internal;
 task history records requested `launch.profile` (null on legacy rows).
 See [task tool profiles](harness-task-tool-profiles.md) for scope and migration.
 
-`durableJobs` and `jobScheduleKinds:["once"]` add owner-only authenticated
+`durableJobs` and `jobScheduleKinds:["once","cron","rrule"]` add owner-only authenticated
 `{action:"jobs",request:{action:"create"|"get"|"list"|"update"|"setEnabled"|
 "runNow"|"history"|"occurrence"|"mutation",...}}` workflow requests. Definitions,
 immutable occurrences and their workflow/native receipt pointers are separate.
 See [job contract](harness-jobs.md) for bounded dispatch, misfires, overlap,
 validation, crash non-replay, CLI/MCP parity and current limitations.
+
+Optional job capabilities extend this request family: `jobPrechecks` adds owner
+approvals and prechecks, `jobCancellation` adds `cancelOccurrence`, and
+`jobAttempts` adds the read-only `attempts`/`attempt` generation journal. Creation
+or update with an explicit `spec.retry` additionally requires `jobRetries:true`
+and a well-typed `jobRetryKinds` array containing `launchNoEffect`. Policies are
+default-off, bounded and supported only for proven no-effect native launch
+refusals. Occurrences may expose `retryWaiting`; occurrences and generation
+views may expose nullable immutable `retry` decision facts. Older accepted
+responses may omit those fields. These additive capabilities do not change
+protocol framing, agent tool grants or automatic replay rules.
 
 `runLaunch` adds `{action:"launch",request:{key,runId,taskId,expectedRevision,profile}}`
 inside authenticated workflow requests. It reserves the attempt, run capacity,

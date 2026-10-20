@@ -53,7 +53,7 @@ not evidence that the expanded acceptance criteria pass.
 | F25 | Bounded precheck                                | Missing                                                       | Partial: explicit owner command approval, bounded scopes, retained skip/failure/uncertainty and CLI/MCP; job UI/native-provider matrix pending |
 | F26 | Delta-only coordinator wakeups                  | Missing                                                       | Partial: opt-in durable coalescing/native receipt and human/budget fences; original-model/checkpoint/UI gates pending                          |
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                                                        |
-| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: generation-1 journal, skip/queue and owner cancellation; retry, hard timeout and cleanup policy pending                               |
+| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: history, no-effect retry/backoff, overlap and cancellation; broader retry, timeout and cleanup pending                                |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                               |
 | F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                                                        |
 | F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                        |
@@ -2259,3 +2259,104 @@ seconds. This includes guarded preparation, existing process/control boundaries,
 job/precheck cancellation, fairness and restart history together with the full
 workspace checks and public CLI regressions. This closes the dispatch-fence
 slice's platform gate; retry/backoff and all remaining goal gates stay open.
+
+### F28 bounded retry after a proven no-effect launch refusal
+
+An optional frozen occurrence policy selects `on:launchNoEffect`, 1–8 total
+generations and capped exponential backoff. It defaults off. Only an exact
+terminal `create` receipt with the JSON boolean `effectStarted:false`, its
+matching reserved session/native attempt and no result, delivery, exit or other
+native receipt can qualify. A launch label alone is insufficient. Actual
+launcher/PTY errors and uncertain worktree effects remain reconciliation cases.
+No model permission or global provider configuration changes are introduced.
+
+The decision, original deadline and failed generation are persisted together,
+before releasing overlap. `retryWaiting` remains active for the logical
+occurrence; its source generation remains failed with its first completion
+evidence. Public optional `retry` facts are immutable, including in old history
+details. Ordinary automated admission on the old Run is fenced immediately.
+At the deadline a transaction rechecks evidence, cancellation, authority and
+limits, then allocates a fresh generation token, Run namespace and native
+attempt/receipt/session. Every Run still permits exactly one native attempt;
+executor retry multiplication is disabled. Queue and retry candidates share a
+bounded eligibility-time order. Disabling future definition terms does not
+revoke already admitted occurrence intent; cancellation explicitly does.
+The source executor is paused transactionally with a new generation fence and
+its ordinary Run event, releasing executor capacity. New owner constraints,
+coordinator changes, explicit pauses and changed Run admission limits block the
+new generation instead of being silently discarded by a fresh Run.
+
+Canceling a proven no-effect waiting retry completes without fabricating a
+native stop. A restart retains the same pending deadline and rechecks it before
+claim; an interrupted claimed generation has no recovered dispatch authority.
+CLI/MCP creation or update requires both `jobRetries:true` and
+`jobRetryKinds:["launchNoEffect"]`. Existing no-policy acceptance bodies and
+first-generation mutation keys retain their serialization/replay contract. No
+tool or native grant is added to the 80-tool catalog.
+
+Retry combined with `precheckId` is explicitly refused until command evidence
+and approvals can be stored per generation. Failed worker reports, hard process
+timeouts, cleanup policies and broader retry classes remain unimplemented. This
+slice does not complete F28 or the full goal.
+
+Local Windows fmt, warnings-denied workspace Clippy, production build and all
+421 unit tests passed (145 TUI, 273 host, 3 wire; three ordinary helpers ignored).
+Seventeen retry-storage tests cover exact typed evidence, immutable history,
+backoff/caps, rollback, competing writers, owner context/budget changes, executor
+retirement, fair overlap admission, capacity and disk recovery. Host policy
+validation and three CLI/MCP/capability tests also passed. An independent review
+caught the owner-context bypass before publication; new constraints, coordinator
+bindings and changed admission limits now block retry.
+
+All three new native SDK scenarios passed individually in 33.98 seconds. The
+full serial suite then passed all 40 scenarios in 218.21 seconds, including the
+existing precheck/cancellation/fairness cases. The new scenarios use actual
+failed/false native validation receipts followed by a controlled Node worker,
+fresh Run/attempt/receipt/session IDs, unchanged mutation replay, retained
+generation bodies and real CLI/MCP/schema parity. They also exercise default-off,
+total-attempt bounds, actual unknown worktree effects, waiting cancellation
+without a native stop, and restart using the original persisted deadline. No
+original model, new production dependency, UI change or device test was involved.
+All 30 Node host/synchronization/public CLI regressions passed in 35.67 seconds.
+The implementation is published as `a743533` (host), `f6cbf1f` (CLI/MCP contract)
+and `e41b33d` (native acceptance). Exact published platform results follow
+separately; local Windows verification does not certify Linux or macOS.
+
+Separate prior-run observation: docs-only CI
+[`39455698230`](https://github.com/dkveil/nesvo/actions/runs/39455698230), exact
+`a9b0f39` with the previously verified `4b3fe2e` Rust source, passed Linux,
+macOS, app and browser but Windows timed out waiting for the disconnected
+calendar worker report (36/37 SDK scenarios, 370.79 seconds total). That log
+retained no occurrence/receipt phase, so no production cause or connection to
+the new retry slice is established. The calendar test's original 22-second
+acceptance deadline is unchanged. A diagnostic-only follow-up reads the owned
+host, job/history, provider status and linked Run/receipt/PTY after failure,
+within a bounded diagnostic window. It admits no effects or fallback success.
+Local fmt/Clippy and the unchanged passing calendar scenario passed in 13.61
+seconds; that pass does not reproduce or explain the earlier Windows failure.
+
+Retry source CI
+[`39459087624`](https://github.com/dkveil/nesvo/actions/runs/39459087624), exact
+`e41b33d`, passed app/browser and all host checks on Linux/macOS, including all
+40 serial SDK scenarios (208.79 and 211.32 seconds). Windows passed fmt, Clippy,
+units and build, but the SDK suite passed 38/40 in 305.63 seconds: the waiting
+retry/restart case reached generation 2 with `worker_result_pending` without a
+report by its deadline, and the existing disconnected once-job report also
+timed out. The calendar case passed in that run. This does not pass the Windows
+reliability gate, and retry is not claimed accepted on all three platforms.
+
+The last retry occurrence view does not establish that input was delivered:
+`worker_result_pending` also covers queued/dispatching delivery. A follow-up
+preserves bounded job/history, task-attempt delivery, session/PTY, Run/receipt,
+provider and journal diagnostics after the unchanged acceptance deadline.
+Controlled subprocess errors now retain stage/status/signal/error/stdout/stderr
+within fixed output bounds. These observations add no native admission and do
+not change deadlines, PTY timing, parsing or report semantics. No production
+cause is proven by the original logs; fresh diagnostic-source results must be
+recorded separately rather than rerunning unchanged source or claiming a fix.
+
+The follow-up diagnostic source passed local Windows all-target warnings-denied
+Clippy, formatting and all 40 serial SDK scenarios in 220.44 seconds. Its three
+retry scenarios also passed in 33.36 seconds. The successful run exercises the
+same unchanged acceptance gates; it does not reproduce the earlier Windows
+failure or establish a production fix. Published diagnostic CI remains pending.
