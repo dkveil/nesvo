@@ -37,6 +37,27 @@
               },
               "oneOf": [
                 {
+                  "required": [
+                    "run",
+                    "executor"
+                  ],
+                  "properties": {
+                    "run": {
+                      "type": "object"
+                    },
+                    "executor": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/definitions/workflowExecutor"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
                   "required": ["runs", "nextOffset"],
                   "properties": {
                     "runs": {
@@ -659,6 +680,147 @@
         "code": { "type": ["string", "null"] },
         "effectStarted": { "type": ["boolean", "null"] },
         "directory": { "type": ["string", "null"] }
+      }
+    },
+    "workflowExecutor": {
+      "type": "object",
+      "required": [
+        "id",
+        "runId",
+        "spec",
+        "issuer",
+        "enabled",
+        "generation",
+        "phase",
+        "reason",
+        "taskId",
+        "createdAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "spec": {
+          "type": "object",
+          "required": [
+            "tasks",
+            "retryFailed",
+            "retryDelayMs",
+            "readinessTimeoutMs"
+          ],
+          "properties": {
+            "tasks": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "required": [
+                  "taskId",
+                  "profile"
+                ],
+                "properties": {
+                  "taskId": {
+                    "type": "string"
+                  },
+                  "profile": {
+                    "type": "object",
+                    "required": [
+                      "program",
+                      "workspace"
+                    ],
+                    "properties": {
+                      "program": {
+                        "enum": [
+                          "claude",
+                          "codex",
+                          "gemini"
+                        ]
+                      },
+                      "workspace": {
+                        "enum": [
+                          "shared",
+                          "worktree"
+                        ]
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "cwd": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "harness": {
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "retryFailed": {
+              "type": "boolean"
+            },
+            "retryDelayMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 60000
+            },
+            "readinessTimeoutMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300000
+            }
+          }
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase": {
+          "enum": [
+            "enabled",
+            "waiting",
+            "blocked",
+            "disabled",
+            "paused",
+            "completed",
+            "scheduling"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "taskId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        }
       }
     },
     "workflowDelivery": {

@@ -4,6 +4,11 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+`runExecutor` adds opt-in deterministic scheduling inside authenticated workflow
+requests: `{action:"executor",request:{action:"start"|"get"|"disable"|"enable",...}}`.
+See [executor contract](harness-executor.md) for immutable profiles, authority,
+generation fences, native provenance, budgets and non-replay after restart.
+
 `runDelivery` adds explicit queued task instruction and pre-claim cancellation
 inside authenticated workflow requests. See [task delivery](harness-task-delivery.md)
 for receipt correlation, readiness, human priority and restart behavior.

@@ -122,6 +122,9 @@ mod workflow_decisions_tests;
 #[path = "workflow_delivery_tests.rs"]
 mod workflow_delivery_tests;
 #[cfg(test)]
+#[path = "workflow_executor_tests.rs"]
+mod workflow_executor_tests;
+#[cfg(test)]
 #[path = "workflow_inbox_tests.rs"]
 mod workflow_inbox_tests;
 #[cfg(test)]
@@ -140,6 +143,7 @@ impl Store {
         crate::orchestration::initialize(&connection)?;
         crate::workflow_launches::recover(&mut connection)?;
         crate::workflow_delivery::recover(&mut connection)?;
+        crate::workflow_executor::recover(&mut connection)?;
         crate::workflow_controls::recover(&mut connection)?;
         Ok(Self(connection))
     }
@@ -248,6 +252,10 @@ impl Store {
 }
 
 enum Work {
+    Executor {
+        work: crate::workflow_executor::Work,
+        reply: oneshot::Sender<Result<crate::workflow_executor::Reply>>,
+    },
     Delivery {
         work: crate::workflow_delivery::Work,
         reply: oneshot::Sender<Result<crate::workflow_delivery::Reply>>,
@@ -336,6 +344,21 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub async fn executor(
+        &self,
+        work: crate::workflow_executor::Work,
+    ) -> Result<crate::workflow_executor::Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::Executor { work, reply })
+            .await
+            .map_err(|_| anyhow!("Run executor journal is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!(
+                "Executor outcome unconfirmed; inspect the original workflow key and current run"
+            )
+        })?
+    }
     pub async fn delivery(
         &self,
         work: crate::workflow_delivery::Work,
@@ -550,6 +573,16 @@ impl Service {
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
+                        Work::Executor { work, reply } => {
+                            let result = crate::workflow_executor::execute(
+                                &mut store.0,
+                                work,
+                                crate::status::now_millis(),
+                            );
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
                         Work::Delivery { work, reply } => {
                             let result = crate::workflow_delivery::execute(
                                 &mut store.0,

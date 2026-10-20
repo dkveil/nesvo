@@ -77,7 +77,7 @@ enum Program {
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Profile {
+pub struct Profile {
     name: Option<String>,
     cwd: Option<String>,
     program: Program,

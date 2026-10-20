@@ -81,10 +81,11 @@ known no-effect evidence and make a deliberate guarded input decision, or choose
 a fresh task attempt where appropriate. Unknown effects never permit fresh-key
 workarounds. Explicit rearm with retained history and process adoption remain work.
 
-No autonomous DAG planner/launcher is implied: an owner/coordinator selects the
-task, launches/assigns it, then queues its instruction. Automatic DAG dispatch,
-delta-only coordinator wakes, job queues and full provider recovery remain harness
-gates. Explicit worker reports still require independent validation.
+This API registers one explicit instruction. [Opt-in host execution](harness-executor.md)
+can select dependency-ready tasks and queue instructions only for its own admitted
+native attempts. It never invents/edits a plan or adopts manual workers. Delta-only
+coordinator wakes, job queues and full provider recovery remain harness gates.
+Explicit worker reports still require independent validation.
 
 ## MCP and authenticated wire
 

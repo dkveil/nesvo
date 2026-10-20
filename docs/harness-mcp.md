@@ -61,12 +61,20 @@ See [native run controls](harness-run-controls.md).
 `runLaunch` adds `nesvo_launch_task`, reserving dependency-ready task/attempt,
 run capacity and native create identity atomically before startup. It requires
 explicit shared/worktree mode and never sends an initial prompt. Acceptance,
-native creation and provider readiness remain distinct. Instruction V8 teaches
-launch and queued delivery recovery, uncertain-slot retention and known no-effect startup failure; older
+native creation and provider readiness remain distinct. The host supports
+launch, queued delivery and executor recovery, uncertain-slot retention and known no-effect startup failure; older
 live snapshots remain unchanged. See [task launch](harness-task-launch.md).
-The catalog contains 44 tools. Task instruction intents use
+The catalog contains 48 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
+
+`runExecutor` adds `nesvo_start_run_executor`, `nesvo_get_run_executor`,
+`nesvo_disable_run_executor` and `nesvo_enable_run_executor`. Immutable explicit
+task profiles opt into host selection, guarded native launch and queued input.
+Manual workers remain untouched; retries default off, and unknown effects retain
+slots. Independent result validation still gates review. Disable stops new
+admissions; restart pauses scheduling without adoption/replay. See
+[executor contract](harness-executor.md).
 
 `hostBudgets` adds owner-only `nesvo_get_host_budget` and `nesvo_set_host_budget`.
 Both use the shared host admission policy and workflow recovery namespace;

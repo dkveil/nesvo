@@ -19,6 +19,17 @@ pub async fn execute(
     authority: Authority,
     request: Request,
 ) -> Result<Value> {
+    execute_guarded(state, events, log, actor, authority, request, None).await
+}
+pub async fn execute_guarded(
+    state: Arc<Mutex<State>>,
+    events: mpsc::Sender<PtyEvent>,
+    log: Service,
+    actor: Actor,
+    authority: Authority,
+    request: Request,
+    guard: Option<crate::workflow_executor::Guard>,
+) -> Result<Value> {
     log.workflow(
         actor.clone(),
         crate::orchestration::Request::Get {
@@ -28,9 +39,16 @@ pub async fn execute(
     .await?;
     let _permit = state.lock().unwrap().native_run_permit(&request.run_id)?;
     let Reply::Prepared { view, dispatch } = log
-        .launch(Work::Prepare {
-            actor: actor.clone(),
-            request,
+        .launch(match guard {
+            Some(guard) => Work::PrepareForExecutor {
+                actor: actor.clone(),
+                request,
+                guard,
+            },
+            None => Work::Prepare {
+                actor: actor.clone(),
+                request,
+            },
         })
         .await?
     else {

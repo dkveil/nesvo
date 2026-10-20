@@ -123,8 +123,8 @@ check that owner delegation cannot revive an exited coordinator capability.
 CLI output is checked against the versioned JSON schema. Git test settings affect only the
 temporary owned repository; user/global configuration is preserved.
 
-No background DAG executor, model wake loop or UI redesign is implied. Explicit
-task delivery can wait safely after launch. Automatic DAG selection,
-file ownership presentation, worktree
+This API performs one explicit launch. [Opt-in host execution](harness-executor.md)
+can select tasks and queue instructions automatically using immutable profiles.
+It does not imply a model wake loop or UI redesign. File ownership presentation, worktree
 setup/archive and process adoption remain separate required harness work. No
 new dependency was needed.

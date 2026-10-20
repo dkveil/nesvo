@@ -63,13 +63,58 @@ function hook(name, extra = {}) {
 process.stdin.setEncoding('utf8');
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdout.write('\x1b[?2004hSCOPE_FIXTURE_READY\r\n');
-hook('SessionStart', { source: 'startup' });
-if (!codex) hook('Stop');
-if (editorRedraw) drawEditor();
+const announceReady = () => {
+  hook('SessionStart', { source: 'startup' });
+  if (!codex) hook('Stop');
+  if (editorRedraw) drawEditor();
+};
 function drawEditor() {
   process.stdout.write('\x1b[2J\x1b[H❯ draft\r\n? for shortcuts\x1b[1;8H');
 }
-
+if (fs.existsSync(path.join(process.cwd(), '.fixture-defer-ready')))
+  setTimeout(announceReady, 2500);
+else announceReady();
+function fixtureCli(args) {
+  const result = spawnSync(process.env.NESVO_CLI, args, {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+  if (result.status !== 0) throw new Error(`Managed task CLI failed: ${result.stdout}`);
+  return JSON.parse(result.stdout);
+}
+function reportTask(outcome = 'succeeded') {
+  const context = fixtureCli(['run', 'context', '--json']);
+  const file = path.join(directory, `${id}.report-input.json`);
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      outcome,
+      summary: 'Controlled fixture result',
+      files: [],
+      artifacts: [],
+      checks: [
+        {
+          name: 'fixture',
+          outcome: outcome === 'succeeded' ? 'passed' : 'skipped',
+          details: 'Controlled result path exercised',
+        },
+      ],
+      limitations: ['Controlled fixture only; no model or code validation'],
+    }),
+  );
+  const report = fixtureCli([
+    'run',
+    'report',
+    context.data.attempt.id,
+    '--key',
+    'fixture-result',
+    '--file',
+    file,
+    '--json',
+  ]);
+  fs.writeFileSync(path.join(directory, `${id}.result.json`), JSON.stringify(report));
+}
 function submit(prompt) {
   turn++;
   hook('UserPromptSubmit', { prompt });
@@ -97,43 +142,57 @@ function submit(prompt) {
     if (result.status !== 0) throw new Error('Managed CLI child creation failed');
     fs.writeFileSync(path.join(directory, `${id}.child.json`), result.stdout);
   }
-  if (prompt === 'report-task') {
-    const cli = args => {
-      const result = spawnSync(process.env.NESVO_CLI, args, {
-        windowsHide: true,
-        encoding: 'utf8',
-        timeout: 10000,
-      });
-      if (result.status !== 0) throw new Error(`Managed task CLI failed: ${result.stdout}`);
-      return JSON.parse(result.stdout);
-    };
-    const context = cli(['run', 'context', '--json']);
-    const file = path.join(directory, `${id}.report-input.json`);
+  if (prompt === 'question-task') {
+    const context = fixtureCli(['run', 'context', '--json']);
+    const question = path.join(directory, `${id}.question.txt`);
     fs.writeFileSync(
-      file,
-      JSON.stringify({
-        outcome: 'succeeded',
-        summary: 'Controlled fixture result',
-        files: [],
-        artifacts: [],
-        checks: [
-          { name: 'fixture', outcome: 'passed', details: 'Controlled result path exercised' },
-        ],
-        limitations: ['Controlled fixture only; no model or code validation'],
-      }),
+      question,
+      'Continue the controlled fixture result? This is task data, not a native permission request.',
     );
-    const report = cli([
+    const asked = fixtureCli([
       'run',
-      'report',
+      'decision',
+      'ask',
       context.data.attempt.id,
       '--key',
-      'fixture-result',
-      '--file',
-      file,
+      'fixture-question',
+      '--audience',
+      'owner',
+      '--question-file',
+      question,
+      '--timeout-ms',
+      '60000',
       '--json',
     ]);
-    fs.writeFileSync(path.join(directory, `${id}.result.json`), JSON.stringify(report));
+    const questionResult = path.join(directory, `${id}.question.json`);
+    fs.writeFileSync(`${questionResult}.tmp`, JSON.stringify(asked));
+    fs.renameSync(`${questionResult}.tmp`, questionResult);
+    process.stdout.write('FIXTURE_AWAITING_DECISION\r\n');
+    hook('PreToolUse', { tool_name: 'AskUserQuestion' });
+    const until = Date.now() + 60000;
+    const inspectDecision = () => {
+      const decision = fixtureCli([
+        'run',
+        'decision',
+        'get',
+        context.data.run.id,
+        asked.data.decision.id,
+        '--json',
+      ]).data.decision;
+      if (
+        decision.state === 'answered' ||
+        ['expired', 'canceled'].includes(decision.state) ||
+        Date.now() >= until
+      ) {
+        reportTask(decision.state === 'answered' ? 'succeeded' : 'blocked');
+        process.stdout.write('FIXTURE_RESPONSE question-task\r\n');
+        hook('Stop');
+      } else setTimeout(inspectDecision, 500);
+    };
+    setTimeout(inspectDecision, 500);
+    return;
   }
+  if (prompt === 'report-task') reportTask();
   process.stdout.write(`FIXTURE_RESPONSE ${prompt}\r\n`);
   hook('Stop');
 }

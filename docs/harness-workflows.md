@@ -193,5 +193,7 @@ edits, malformed-file rejection and unchanged native sessions. These tests make
 no model calls. Controlled native workers also discover/report their own task
 through the actual CLI; independent coordinator validation releases a reviewer
 task. Reopen/late-result/history tests cover retry fences. This does not pass
-the full stage-3 gate: actual provider escalation, decision UI, coordinator adoption,
-automatic dispatch and unknown-process recovery remain open.
+the full stage-3 gate: actual provider escalation, decision UI, coordinator adoption
+and unknown-process recovery remain open. [Opt-in host execution](harness-executor.md)
+now supplies automatic DAG selection with explicit native profiles and retained
+result/validation gates; these manual metadata APIs do not enable it implicitly.

@@ -1161,13 +1161,77 @@ test(
           }, 'plain task text is never executed by a shell');
           assert.equal(rejectedDelivery.attempts[0].delivery.blocker, 'unsupported');
           assert.equal(rejectedDelivery.attempts[0].delivery.receiptId, null);
+          assert.equal((await invoke(['executor', 'get', id])).executor, null);
+          const executorFile = join(fixture, 'executor profiles łódź.json');
+          await writeFile(
+            executorFile,
+            JSON.stringify({
+              tasks: [
+                {
+                  taskId: plan.tasks[0].id,
+                  profile: { program: 'claude', workspace: 'shared', harness: false },
+                },
+              ],
+            }),
+          );
+          const startExecutor = [
+            'executor',
+            'start',
+            id,
+            '--key',
+            'cli-executor-start',
+            '--revision',
+            String(rejectedDelivery.run.revision),
+            '--file',
+            executorFile,
+          ];
+          const engine = await invoke(startExecutor);
+          assert.equal(engine.executor.enabled, true);
+          assert.deepEqual(await invoke(startExecutor), engine);
+          assert.deepEqual(await invoke(['mutation', '--key', 'cli-executor-start']), engine);
+          await until(async () => {
+            const current = await invoke(['executor', 'get', id]);
+            return current.executor.reason === 'manual_attempt' ? current : undefined;
+          }, 'executor never adopts a manually assigned worker');
+          let currentEngine = await invoke(['executor', 'get', id]);
+          const disabled = await invoke([
+            'executor',
+            'disable',
+            id,
+            '--key',
+            'cli-executor-disable',
+            '--revision',
+            String(currentEngine.run.revision),
+          ]);
+          assert.equal(disabled.executor.enabled, false);
+          const enabled = await invoke([
+            'executor',
+            'enable',
+            id,
+            '--key',
+            'cli-executor-enable',
+            '--revision',
+            String(disabled.run.revision),
+          ]);
+          assert.equal(enabled.executor.generation, disabled.executor.generation + 1);
+          currentEngine = await invoke(['executor', 'get', id]);
+          const finalEngine = await invoke([
+            'executor',
+            'disable',
+            id,
+            '--key',
+            'cli-executor-stop',
+            '--revision',
+            String(currentEngine.run.revision),
+          ]);
+          assert.equal((await invoke(['task', id, plan.tasks[0].id])).attempts.length, 1);
           const control = await invoke([
             'stop',
             id,
             '--key',
             'stop-cli-launch',
             '--revision',
-            String(rejectedDelivery.run.revision),
+            String(finalEngine.run.revision),
           ]);
           await until(async () => {
             const current = await invoke(['control', id, control.control.id]);

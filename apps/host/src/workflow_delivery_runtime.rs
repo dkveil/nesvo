@@ -17,6 +17,16 @@ pub async fn execute(
     authority: Authority,
     request: Request,
 ) -> Result<Value> {
+    execute_guarded(state, log, actor, authority, request, None).await
+}
+pub async fn execute_guarded(
+    state: Arc<Mutex<State>>,
+    log: Service,
+    actor: Actor,
+    authority: Authority,
+    request: Request,
+    executor: Option<(crate::workflow_executor::Guard, u64)>,
+) -> Result<Value> {
     let (before, controlled) = {
         let state = state.lock().unwrap();
         (
@@ -24,10 +34,20 @@ pub async fn execute(
             state.human_controlled_sessions(),
         )
     };
+    let before = executor
+        .as_ref()
+        .map_or(before, |(_, epoch)| before.min(*epoch));
     let Reply::Prepared { view, pending } = log
-        .delivery(Work::Prepare {
-            actor: actor.clone(),
-            request,
+        .delivery(match executor {
+            Some((guard, _)) => Work::PrepareForExecutor {
+                actor: actor.clone(),
+                request,
+                guard,
+            },
+            None => Work::Prepare {
+                actor: actor.clone(),
+                request,
+            },
         })
         .await?
     else {

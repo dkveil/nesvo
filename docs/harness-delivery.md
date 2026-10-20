@@ -39,7 +39,7 @@ not evidence that the expanded acceptance criteria pass.
 | F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                                   |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending                   |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Partial: task launch with explicit shared/worktree mode, dirty-source preservation; ownership UI/setup/archive pending        |
-| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: atomic worker admission and queued instructions; automatic DAG selection pending                                     |
+| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: opt-in deterministic host executor; full provider orchestration/adoption gates remain                                |
 | F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: scoped messages, atomic result notices, exact ACK and replay/reopen; dispatch/UI pending                    |
 | F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                                     |
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending                      |
@@ -1151,3 +1151,47 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   SDK scenarios pass. The fixture verifies the injected V8 snapshot; it does not
   prove an original model read or used these new commands. The preceding original
   Claude prompt/response evidence used V7. No dependency or visual change.
+
+### F14 opt-in deterministic native executor
+
+- Added explicit `run executor start|get|disable|enable`, four MCP tools (48
+  total) and `runExecutor` capability. Immutable agent profiles cover every task
+  ID and deliberately choose shared checkout or worktree. Original providers
+  keep native login/permission behavior; no host model client or dependency.
+- Host journal/timers select dependency-ready tasks through atomic launch and
+  queued-input adapters. Executor generation/provenance commit with native
+  reservation. Only executor-admitted attempts receive automatic instructions;
+  manual workers remain untouched. Independent accepted results still gate review.
+- Retries default off. Explicit known-failure retry preserves attempt, parallel
+  and elapsed budgets. Durable cooldown starts at first observed eligible failure,
+  not old process creation; reads, clock regression and restart do not reset it.
+  Unknown launches/input retain capacity/history and never receive a fresh key.
+- Disable prevents new admissions; already committed startup/input may finish.
+  Restart disables scheduling and invalidates generations, without adoption or
+  replay. Human takeover/release, decisions, authority loss and run limits remain
+  dispatch fences. Enable cannot rearm an existing delivery or revive a coordinator.
+- Nine storage regressions cover scope/revision/policy, replay, transactional
+  provenance rollback, generations, coalescing, admission/retention, corrupted
+  storage, restart and failure-based cooldown. Twelve controlled official-SDK
+  scenarios pass on Windows with real isolated PTYs; four added cases cover DAG
+  escalation/validation, human pause, known/unknown retries and input redraw.
+  They do not make model calls. CLI schema integration additionally checks exact
+  executor replay, current state, disable/enable and no manual-worker adoption.
+- An early original-Claude probe retained unknown partial input when Enter was
+  refused; it was not resent. Admission now refreshes received PTY evidence before
+  each write and briefly waits for fresh idle evidence after screen-only paste.
+  A regression demonstrated that relying on the last status timer tick admitted
+  Enter too early. The corrected native test waits for delayed redraw, sends once
+  and refuses semantic working evidence even if idle returns later. Human and
+  conversation/run guards remain in place throughout the bounded wait.
+- Fresh original Claude Code 2.1.304 on an isolated host answered the literal
+  prompt and its injected V8 instruction marker; a correlated native receipt
+  settled. Its task result stayed null and dependent review stayed planned.
+  Native run stop observed process exit; host exited zero and all 21 observed
+  owned descendants ended within the bounded shutdown observation. This proves
+  original prompt/response and instruction consumption, not model-driven tool use.
+- Windows fmt, warnings-denied Clippy, all 280 unit checks and all 12 controlled
+  native SDK scenarios pass after the final runtime changes. No visual/config
+  change. Actual multi-provider model-to-MCP orchestration, delta-only coordinator
+  wakes, manual checkpoints, job scheduling and complete recovery/mobile gates
+  remain required. This checkpoint does not complete stage 3 or F01–F44.

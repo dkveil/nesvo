@@ -58,6 +58,39 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_start_run_executor",
+            "Opt in to automatic dependency-ready task launch and immutable instruction delivery for an active run. Explicit profile for every task; agents only, shared/worktree required. No model heartbeat, self-validation or permission approval. Human/decision/time/retry/native guards still apply. Stable workflow key recovers acceptance; inspect current executor/task/native receipts. Restart disables scheduling without replay. Already admitted work may finish after disabling.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision,"spec":{"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["taskId","profile"],"properties":{"taskId":id,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"program":{"enum":["claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"harness":{"type":"boolean"}}}}}},"retryFailed":{"type":"boolean","default":false},"retryDelayMs":{"type":"integer","minimum":1000,"maximum":60000,"default":1000},"readinessTimeoutMs":{"type":"integer","minimum":1,"maximum":300000,"default":60000}}}}),
+                &["key", "runId", "expectedRevision", "spec"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_run_executor",
+            "Inspect current executor policy/state. Never dispatches or acknowledges success.",
+            object(json!({"runId":id}), &["runId"]),
+            true,
+        ),
+        (
+            "nesvo_disable_run_executor",
+            "Disable new executor scheduling admissions at the exact run revision. Already admitted startup/instruction may finish. Does not kill processes, undo bytes or clear uncertainty; native run stop/cancel is separate.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_enable_run_executor",
+            "Explicitly enable a fresh authenticated generation for an active run. Does not rearm paused deliveries or repeat existing native effects; startup after restart remains gated by actual process/authority evidence.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
             "nesvo_deliver_task",
             "Queue the immutable instruction of a current assigned task once. Host waits up to timeoutMs (default 60000, max 300000) for idle and ready, with no human control/draft or decision gate. No prompt is accepted from the caller. Acceptance is not delivery or task success. Inspect task attempt.delivery and its native receipt; unknown effects are never retried. Client disconnect keeps this intent, host restart pauses it without replay. Agent sessions only.",
             object(
@@ -513,6 +546,34 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_start_run_executor"
+        | "nesvo_get_run_executor"
+        | "nesvo_disable_run_executor"
+        | "nesvo_enable_run_executor" => {
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Executor arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Executor action is selected by the tool name",
+                ));
+            }
+            let action = match name {
+                "nesvo_start_run_executor" => "start",
+                "nesvo_get_run_executor" => "get",
+                "nesvo_disable_run_executor" => "disable",
+                _ => "enable",
+            };
+            fields.insert("action".into(), action.into());
+            (
+                crate::workflow::tool("executor", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_deliver_task" | "nesvo_cancel_task_delivery" => {
             let mut fields = arguments
                 .as_object()
@@ -1030,7 +1091,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 44);
+        assert_eq!(catalog().len(), 48);
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(

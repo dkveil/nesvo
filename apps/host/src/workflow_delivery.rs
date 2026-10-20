@@ -44,6 +44,11 @@ pub struct Dispatch {
     pub prompt: String,
 }
 pub enum Work {
+    PrepareForExecutor {
+        actor: Actor,
+        request: Request,
+        guard: crate::workflow_executor::Guard,
+    },
     Prepare {
         actor: Actor,
         request: Request,
@@ -169,7 +174,13 @@ pub fn recover(connection: &mut Connection) -> Result<()> {
     transaction.commit()?;
     Ok(())
 }
-fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64) -> Result<Reply> {
+fn prepare(
+    connection: &mut Connection,
+    actor: Actor,
+    request: Request,
+    now: u64,
+    executor: Option<crate::workflow_executor::Guard>,
+) -> Result<Reply> {
     let (key, run, revision) = match &request {
         Request::Queue {
             key,
@@ -202,6 +213,9 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
             view,
             pending: None,
         });
+    }
+    if let Some(guard) = &executor {
+        crate::workflow_executor::guard_run(&transaction, guard, &actor.issuer, run)?;
     }
     orchestration::mutation_capacity(&transaction)?;
     if current["revision"] != revision {
@@ -303,7 +317,12 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
 }
 pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
     match work {
-        Work::Prepare { actor, request } => prepare(connection, actor, request, now),
+        Work::Prepare { actor, request } => prepare(connection, actor, request, now, None),
+        Work::PrepareForExecutor {
+            actor,
+            request,
+            guard,
+        } => prepare(connection, actor, request, now, Some(guard)),
         Work::Inspect { id } => Ok(Reply::Current {
             queued: connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM workflow_deliveries WHERE id=?1 AND phase='queued')",

@@ -37,6 +37,11 @@ pub struct Request {
     pub profile: Profile,
 }
 pub enum Work {
+    PrepareForExecutor {
+        actor: Actor,
+        request: Request,
+        guard: crate::workflow_executor::Guard,
+    },
     Prepare {
         actor: Actor,
         request: Request,
@@ -132,7 +137,13 @@ pub fn recover(connection: &mut Connection) -> Result<()> {
     transaction.commit()?;
     Ok(())
 }
-fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64) -> Result<Reply> {
+fn prepare(
+    connection: &mut Connection,
+    actor: Actor,
+    request: Request,
+    now: u64,
+    executor: Option<crate::workflow_executor::Guard>,
+) -> Result<Reply> {
     orchestration::validate_key(&request.key)?;
     // Refresh independently so a rejected reservation still latches exhaustion.
     orchestration::run(connection, &actor, &request.run_id)?;
@@ -152,6 +163,9 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
             view,
             dispatch: None,
         });
+    }
+    if let Some(guard) = &executor {
+        crate::workflow_executor::guard_run(&transaction, guard, &actor.issuer, &request.run_id)?;
     }
     orchestration::mutation_capacity(&transaction)?;
     if current["revision"] != request.expected_revision {
@@ -239,6 +253,15 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
     }
     transaction.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES(?1,?2,?3,?4,'launching')",params![attempt,request.task_id,ordinal,accepted.receipt.session_id])?;
     transaction.execute("INSERT INTO workflow_launches(attempt_id,operation_id,operation_key,workspace,created_at) VALUES(?1,?2,?3,?4,?5)",params![attempt,accepted.receipt.id,native_key,if spec.worktree {"worktree"} else {"shared"},now as i64])?;
+    if let Some(guard) = &executor {
+        crate::workflow_executor::record_launch(
+            &transaction,
+            guard,
+            &actor.issuer,
+            &request.key,
+            &attempt,
+        )?;
+    }
     transaction.execute(
         "UPDATE workflow_runs SET revision=revision+1 WHERE id=?1",
         [&request.run_id],
@@ -267,7 +290,12 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
 }
 pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
     match work {
-        Work::Prepare { actor, request } => prepare(connection, actor, request, now),
+        Work::Prepare { actor, request } => prepare(connection, actor, request, now, None),
+        Work::PrepareForExecutor {
+            actor,
+            request,
+            guard,
+        } => prepare(connection, actor, request, now, Some(guard)),
         Work::Finish {
             attempt_id,
             receipt_id,

@@ -8,6 +8,11 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Configure and inspect explicit automatic DAG scheduling on the host.
+    Executor {
+        #[command(subcommand)]
+        command: crate::workflow_executor::Command,
+    },
     /// Queue the current task instruction once; host waits for safe readiness.
     Deliver(crate::workflow_delivery::Deliver),
     /// Cancel a queued instruction before its native input claim. Never interrupts.
@@ -183,6 +188,7 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Executor { command } => command.machine(),
             Self::Deliver(args) => args.json,
             Self::CancelDelivery(args) => args.json,
             Self::Launch(launch) => launch.json,
@@ -208,6 +214,9 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Executor { command } => Request::Executor {
+                request: command.request()?,
+            },
             Self::Deliver(args) => Request::Delivery {
                 request: args.request(),
             },
@@ -445,6 +454,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Executor {
+        request: crate::workflow_executor::Request,
+    },
     Delivery {
         request: crate::workflow_delivery::Request,
     },
@@ -602,6 +614,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
     let capability = match request["request"]["action"].as_str() {
         Some("launch") => Some("runLaunch"),
         Some("delivery") => Some("runDelivery"),
+        Some("executor") => Some("runExecutor"),
         Some("control") => Some("runControls"),
         Some("runBudget") => Some("runBudgets"),
         Some("drain" | "resume") => Some("runDrain"),
