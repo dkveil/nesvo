@@ -722,6 +722,48 @@
                 },
                 {
                   "$ref": "#/definitions/workflowRecoveryContext"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "required": ["job"]
+                    },
+                    {
+                      "required": ["jobs"]
+                    },
+                    {
+                      "required": ["occurrence"]
+                    },
+                    {
+                      "required": ["occurrences"]
+                    }
+                  ],
+                  "properties": {
+                    "job": {
+                      "$ref": "#/definitions/jobDefinition"
+                    },
+                    "jobs": {
+                      "type": "array",
+                      "maxItems": 16,
+                      "items": {
+                        "$ref": "#/definitions/jobDefinition"
+                      }
+                    },
+                    "occurrence": {
+                      "$ref": "#/definitions/jobOccurrence"
+                    },
+                    "occurrences": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/jobOccurrence"
+                      }
+                    },
+                    "nextOffset": {
+                      "type": ["integer", "null"],
+                      "minimum": 0
+                    }
+                  }
                 }
               ]
             },
@@ -948,7 +990,9 @@
         },
         "launchProfileSupport": {
           "type": "array",
-          "items": { "$ref": "#/definitions/launchProfileSupport" }
+          "items": {
+            "$ref": "#/definitions/launchProfileSupport"
+          }
         },
         "sessions": {
           "type": "array"
@@ -1174,7 +1218,9 @@
           "properties": {
             "allowedNesvoTools": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             }
           }
         },
@@ -1467,8 +1513,16 @@
                       "harness": {
                         "type": ["boolean", "null"]
                       },
-                      "model": { "type": "string", "minLength": 1, "maxLength": 256 },
-                      "effort": { "type": "string", "minLength": 1, "maxLength": 32 }
+                      "model": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "effort": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 32
+                      }
                     }
                   }
                 }
@@ -1733,7 +1787,14 @@
           "$ref": "#/definitions/launchProfile"
         },
         "harness": {
-          "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/harnessConfiguration" }]
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/harnessConfiguration"
+            }
+          ]
         }
       }
     },
@@ -2870,13 +2931,29 @@
             "restrictsOtherTools"
           ],
           "properties": {
-            "allow": { "$ref": "#/definitions/nativeToolNames" },
-            "scope": { "const": "process" },
-            "inheritedByChildren": { "const": false },
-            "source": { "enum": ["none", "ownerLaunch", "ownerChildPolicy"] },
-            "originSessionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
-            "providerRulesStillApply": { "const": true },
-            "restrictsOtherTools": { "const": false }
+            "allow": {
+              "$ref": "#/definitions/nativeToolNames"
+            },
+            "scope": {
+              "const": "process"
+            },
+            "inheritedByChildren": {
+              "const": false
+            },
+            "source": {
+              "enum": ["none", "ownerLaunch", "ownerChildPolicy"]
+            },
+            "originSessionId": {
+              "type": ["string", "null"],
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "providerRulesStillApply": {
+              "const": true
+            },
+            "restrictsOtherTools": {
+              "const": false
+            }
           }
         },
         "childToolPolicy": {
@@ -2884,10 +2961,18 @@
           "additionalProperties": false,
           "required": ["allow", "scope", "recursive", "source"],
           "properties": {
-            "allow": { "$ref": "#/definitions/nativeToolNames" },
-            "scope": { "const": "authenticatedClaudeChildren" },
-            "recursive": { "const": false },
-            "source": { "enum": ["none", "ownerLaunch"] }
+            "allow": {
+              "$ref": "#/definitions/nativeToolNames"
+            },
+            "scope": {
+              "const": "authenticatedClaudeChildren"
+            },
+            "recursive": {
+              "const": false
+            },
+            "source": {
+              "enum": ["none", "ownerLaunch"]
+            }
           }
         }
       }
@@ -2913,14 +2998,30 @@
           "additionalProperties": false,
           "required": ["model", "effort"],
           "properties": {
-            "model": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
-            "effort": { "type": ["string", "null"], "minLength": 1, "maxLength": 32 }
+            "model": {
+              "type": ["string", "null"],
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "effort": {
+              "type": ["string", "null"],
+              "minLength": 1,
+              "maxLength": 32
+            }
           }
         },
-        "resolved": { "const": null },
-        "source": { "enum": ["launch", "providerDefaults"] },
-        "scope": { "const": "process" },
-        "inheritedByChildren": { "const": false }
+        "resolved": {
+          "const": null
+        },
+        "source": {
+          "enum": ["launch", "providerDefaults"]
+        },
+        "scope": {
+          "const": "process"
+        },
+        "inheritedByChildren": {
+          "const": false
+        }
       }
     },
     "launchProfileSupport": {
@@ -2937,14 +3038,33 @@
         "explicitModelRequiredForEffort"
       ],
       "properties": {
-        "program": { "enum": ["claude", "codex", "gemini"] },
-        "version": { "type": ["string", "null"] },
-        "probeStatus": { "type": "string" },
-        "supported": { "type": "boolean" },
-        "modelFlag": { "enum": ["--model", null] },
-        "effortValues": { "type": ["array", "null"], "items": { "type": "string" } },
-        "effortSource": { "enum": ["cli", "modelAdvertised", null] },
-        "explicitModelRequiredForEffort": { "const": true }
+        "program": {
+          "enum": ["claude", "codex", "gemini"]
+        },
+        "version": {
+          "type": ["string", "null"]
+        },
+        "probeStatus": {
+          "type": "string"
+        },
+        "supported": {
+          "type": "boolean"
+        },
+        "modelFlag": {
+          "enum": ["--model", null]
+        },
+        "effortValues": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "effortSource": {
+          "enum": ["cli", "modelAdvertised", null]
+        },
+        "explicitModelRequiredForEffort": {
+          "const": true
+        }
       }
     },
     "workflowCoordinatorBinding": {
@@ -2995,6 +3115,171 @@
         },
         "workerAuthorityRestored": {
           "const": false
+        }
+      }
+    },
+    "jobDefinition": {
+      "type": "object",
+      "required": ["id", "title", "revision", "enabled", "nextDueAt", "createdAt", "schedule"],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "title": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "nextDueAt": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/cursor"
+            }
+          ]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "schedule": {
+          "type": "object",
+          "required": ["kind", "at"],
+          "properties": {
+            "kind": {
+              "const": "once"
+            },
+            "at": {
+              "type": "string"
+            }
+          }
+        },
+        "spec": {
+          "type": "object",
+          "required": ["title", "instruction", "profile", "schedule"]
+        }
+      }
+    },
+    "jobOccurrence": {
+      "type": "object",
+      "required": [
+        "id",
+        "jobId",
+        "jobRevision",
+        "trigger",
+        "dueAt",
+        "createdAt",
+        "state",
+        "reason",
+        "runId",
+        "startedAt",
+        "finishedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "jobRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trigger": {
+          "enum": ["schedule", "manual"]
+        },
+        "dueAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "dispatching",
+            "running",
+            "needsValidation",
+            "reconcile",
+            "skipped",
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/cursor"
+            }
+          ]
+        },
+        "finishedAt": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/cursor"
+            }
+          ]
+        },
+        "spec": {
+          "type": "object",
+          "required": ["title", "instruction", "profile", "schedule"]
+        },
+        "attemptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "launchReceiptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
         }
       }
     }

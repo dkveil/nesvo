@@ -46,14 +46,14 @@ not evidence that the expanded acceptance criteria pass.
 | F18 | Attempt-bound worker result                     | Missing                                                       | Partial: native Claude attempt results/validation verified; source checks and provider/UI matrix pending                                    |
 | F19 | Questions and decision gates                    | Missing                                                       | Partial: native Claude owner decision/recovery verified; timeout/cancel core tested; permission UI pending                                  |
 | F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Partial: retained/live/provider/run budgets and native control verified; scheduled dispatch/queue UI pending                                |
-| F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Pending                                                                                                                                     |
-| F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Pending                                                                                                                                     |
-| F23 | Missed-run policy and grace window              | Missing                                                       | Pending                                                                                                                                     |
-| F24 | Safe fresh/reuse session dispatch               | Partial: fresh launch with prompt                             | Pending                                                                                                                                     |
+| F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Partial: durable once definitions/occurrences and CLI/MCP executor dispatch; recurrence, UI and legacy migration pending                    |
+| F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Partial: explicit-offset RFC3339/UTC instants; IANA default, cron/RRULE and DST calendar rules pending                                      |
+| F23 | Missed-run policy and grace window              | Missing                                                       | Partial: bounded once catch-up/skip, startup discovery gate and restart tested; recurring backlog pending                                   |
+| F24 | Safe fresh/reuse session dispatch               | Partial: fresh launch with prompt                             | Partial: guarded fresh task workers and immutable profiles; safe reuse pending                                                              |
 | F25 | Bounded precheck                                | Missing                                                       | Pending                                                                                                                                     |
 | F26 | Delta-only coordinator wakeups                  | Missing                                                       | Partial: opt-in durable coalescing/native receipt and human/budget fences; original-model/checkpoint/UI gates pending                       |
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                                                     |
-| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Pending                                                                                                                                     |
+| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: occurrence/run/attempt/native receipt history and bounded skip/queue; retry, hard timeout and cleanup pending                      |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                            |
 | F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                                                     |
 | F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                     |
@@ -1885,3 +1885,66 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   external MCP/skills, controlled resume or all F37/F38 requirements.
 - Parent db85e62 and e8f623d each passed all five CI jobs (39407190711 and
   39406487557). New cross-platform CI evidence is recorded after this feature push.
+
+### F21/F23/F24/F28 durable once jobs
+
+- Added owner-only persisted job definitions, immutable occurrences, exact-revision
+  edits/toggles, explicit run-now, bounded history and original mutation lookup.
+  CLI and nine MCP operations use one authenticated Rust host implementation.
+  Attempts, reserved session identities and native launch receipts are exposed
+  alongside each occurrence's run pointer. No global provider config is changed.
+- The host dispatcher reuses existing Run/Task/Attempt admission and executor
+  readiness/input guards. An explicit worker result still awaits matching passed
+  validation; idle/start never means succeeded. Past-due skip/catch-up and overlap
+  skip/one-deep queue are bounded. Claimed uncertainty becomes reconciliation on
+  restart and never a duplicate native launch. Quiet ticks write/publish nothing.
+- A controlled native SDK/CLI test closed owner clients before due, observed its
+  worker report without a TUI, validated that exact result, exercised distinct
+  queued/manual intent, edits/toggles, actual inline tool settings and retained
+  history after restart without a process retry. Real envelopes pass the schema.
+- A separate native restart regression first failed: catch-up attempted a harness
+  while provider version discovery was still running. The scheduler now waits for
+  the existing bounded probes. The identical controlled delayed-version scenario
+  then passed with one native attempt/result, without retry or policy relaxation.
+- This slice preserves legacy once APIs/storage pending a tested migration.
+  Recurrence/IANA calendars, reuse, prechecks/triggers, retry/hard timeout/cleanup,
+  quota queues and job UI remain open. See [job contract](harness-jobs.md).
+- No new production package was added. A dev-only Chrono reference reuses the
+  already locked host package to format exact integration-test future instants.
+  Native model, physical-device and interactive job-UI coverage are not claimed.
+
+### Verification environment and previous feature CI
+
+- Feature 3e89fd8 passed Linux/macOS host, app and browser CI. Its initial Windows
+  job failed six native SDK deadlines, starting with a wake submission that stayed
+  pending. One diagnostic rerun of the unchanged Windows job passed; all five jobs
+  are now green (39410085254). The first failure is retained; no root-cause fix or
+  absence of intermittent Windows behavior is claimed by that rerun.
+- Local verification hit a full C: disk during compilation, before native tests.
+  Official Cargo clean for only nesvo/nesvo-host in the owned target/verification
+  removed 26.7 GiB of generated package artifacts, preserving sources, host data,
+  private evidence and logs. Subsequent checks use CARGO_INCREMENTAL=0 locally to
+  avoid rebuilding an unbounded incremental cache; product profiles are unchanged.
+- The once-job scheduler baseline (before the small startup-discovery gate):
+  eight real idle PowerShell PTYs, no clients, 60.36 seconds; host CPU 0.181% of
+  one logical core, working set 19.13 to 19.07 MiB, threads 50 to 45, immediate
+  children 17 to 17. Cleanup passed. Host build 047be01d6913b82a. This is a single
+  quantized host-only observation, not total-tree or statistical regression proof,
+  and does not reproduce historical 100% CPU. Original reports stay outside Git.
+
+### Durable once-job local acceptance
+
+- Final native Windows checks passed: fmt, warnings-denied workspace Clippy,
+  345 unit tests (136 TUI, 206 host, 3 wire), production build, all 30 serial
+  official MCP SDK scenarios and all 30 Node host/sync/CLI cases. Three host
+  helper tests remain intentionally ignored in the ordinary unit selection.
+- The complete native suite includes the delayed-version restart regression and
+  exact job occurrence/run/attempt/reserved-session/native receipt correlation.
+  Blocker changes and resolution publish one job delta; unchanged timer ticks
+  add no job events. Actual CLI/MCP envelopes pass the versioned schema.
+- Catalog tests now compare the actual 70-tool transport catalog to its versioned
+  exact-name contract (with uniqueness), including older SDK negotiation and
+  invalid pairing/catalog-without-effects checks. The intermediate stale manual
+  count failure is preserved in local verification logs, not hidden as a pass.
+- No original model was invoked by these new tests. This local acceptance does
+  not finish the remaining scheduled-job, provider, UI or full-goal gates.

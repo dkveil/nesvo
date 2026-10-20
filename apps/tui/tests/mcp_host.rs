@@ -26,6 +26,11 @@ struct Fixture {
     directory: PathBuf,
     host: Child,
 }
+fn published_tool_count() -> usize {
+    serde_json::from_str::<Vec<String>>(include_str!("../../../docs/harness-mcp-tools.json"))
+        .expect("Bundled tool contract")
+        .len()
+}
 #[path = "support/budgets.rs"]
 mod budgets;
 #[path = "support/host_ownership.rs"]
@@ -34,6 +39,8 @@ mod host_ownership;
 mod inbox;
 #[path = "support/input_redraw.rs"]
 mod input_redraw;
+#[path = "support/jobs.rs"]
+mod jobs;
 #[path = "support/model_profiles.rs"]
 mod model_profiles;
 #[path = "support/native_tool_permissions.rs"]
@@ -422,7 +429,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
     let outcome = std::panic::AssertUnwindSafe(async {
         let mcp = client(&fixture.pairing()).await?;
         let tools = mcp.list_all_tools().await?;
-        assert_eq!(tools.len(), 61);
+        assert_eq!(tools.len(), published_tool_count());
         assert!(tools.iter().all(|tool| tool.output_schema.is_some()));
         let run=data(call(&mcp,"nesvo_create_run",json!({"key":"sdk-run","spec":{"title":"SDK plan","goal":"A literal private goal"}})).await?)?;
         assert_eq!(run["data"]["run"]["state"],"draft");
@@ -609,7 +616,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         .with_protocol_version(ProtocolVersion::V_2025_11_25)
         .serve(TokioChildProcess::new(legacy_command)?)
         .await?;
-        assert_eq!(legacy.list_all_tools().await?.len(), 61);
+        assert_eq!(legacy.list_all_tools().await?.len(), published_tool_count());
         let legacy_result = legacy
             .call_tool(
                 CallToolRequestParams::new("nesvo_get_session")
@@ -634,7 +641,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let scoped = client(&context).await?;
         assert_eq!(
             scoped.list_all_tools().await?.len(),
-            61,
+            published_tool_count(),
             "catalog/help need no host effects"
         );
         let refused = call(&scoped, "nesvo_list_sessions", json!({})).await?;

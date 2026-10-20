@@ -48,6 +48,13 @@ with distinct omission/empty/subset semantics. Native grants remain internal;
 task history records requested `launch.profile` (null on legacy rows).
 See [task tool profiles](harness-task-tool-profiles.md) for scope and migration.
 
+`durableJobs` and `jobScheduleKinds:["once"]` add owner-only authenticated
+`{action:"jobs",request:{action:"create"|"get"|"list"|"update"|"setEnabled"|
+"runNow"|"history"|"occurrence"|"mutation",...}}` workflow requests. Definitions,
+immutable occurrences and their workflow/native receipt pointers are separate.
+See [job contract](harness-jobs.md) for bounded dispatch, misfires, overlap,
+validation, crash non-replay, CLI/MCP parity and current limitations.
+
 `runLaunch` adds `{action:"launch",request:{key,runId,taskId,expectedRevision,profile}}`
 inside authenticated workflow requests. It reserves the attempt, run capacity,
 native receipt and session identity atomically before physical startup. New

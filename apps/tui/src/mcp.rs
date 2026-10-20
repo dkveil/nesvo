@@ -64,6 +64,16 @@ fn launch_schema() -> Value {
     })
 }
 
+fn task_profile_schema(include_shell: bool) -> Value {
+    let mut schema = json!({"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"program":{"enum":["claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"harness":{"type":"boolean"},"model":{"type":"string","minLength":1,"maxLength":256},"effort":{"type":"string","minLength":1,"maxLength":32},"allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Exact task-native additions: coordinator policy subset or explicit owner coordinatorless intent; [] chooses none. Does not grant host authority or bypass provider policy."}}});
+    if include_shell {
+        schema["properties"]["program"]["enum"] = json!(["shell", "claude", "codex", "gemini"]);
+    }
+    schema
+}
+fn job_spec_schema() -> Value {
+    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":{"type":"object","additionalProperties":false,"required":["kind","at"],"properties":{"kind":{"const":"once"},"at":{"type":"string","maxLength":64,"description":"Future RFC3339 instant with an explicit UTC offset, at most 366 days ahead"}}},"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000}}})
+}
 fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
     let mut schema = serde_json::Map::new();
     schema.insert("type".into(), json!("object"));
@@ -80,6 +90,81 @@ fn catalog() -> Vec<Tool> {
     let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
+        (
+            "nesvo_create_job",
+            "Owner-only durable once-job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
+            object(
+                json!({"key":key,"spec":job_spec_schema()}),
+                &["key", "spec"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_job",
+            "Owner-only read of a persisted definition and requested profile, without dispatch.",
+            object(json!({"jobId":id}), &["jobId"]),
+            true,
+        ),
+        (
+            "nesvo_list_jobs",
+            "Owner-only bounded job definition summaries. No prompts, dispatch or input ownership.",
+            object(
+                json!({"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
+                &[],
+            ),
+            true,
+        ),
+        (
+            "nesvo_update_job",
+            "Owner-only exact-revision replacement of future job intent. Existing occurrences keep their immutable spec; does not change running processes.",
+            object(
+                json!({"key":key,"jobId":id,"expectedRevision":revision,"spec":job_spec_schema()}),
+                &["key", "jobId", "expectedRevision", "spec"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_set_job_enabled",
+            "Owner-only enable/disable of future automatic admissions. Already admitted work may finish; no terminal input or native resume. Exact revision/key required.",
+            object(
+                json!({"key":key,"jobId":id,"expectedRevision":revision,"enabled":{"type":"boolean"}}),
+                &["key", "jobId", "expectedRevision", "enabled"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_run_job_now",
+            "Owner-only deliberate new occurrence, including a disabled definition. Distinct key is a distinct intent, subject to overlap skip/one-deep queue; not a retry of an uncertain effect.",
+            object(
+                json!({"key":key,"jobId":id,"expectedRevision":revision}),
+                &["key", "jobId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_job_history",
+            "Owner-only bounded occurrence history with state, reason and workflow run pointer. Started/idle is not succeeded; reported results need explicit validation.",
+            object(
+                json!({"jobId":id,"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
+                &["jobId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_get_job_occurrence",
+            "Owner-only immutable occurrence profile and run pointer for reconciliation. No dispatch or process adoption.",
+            object(
+                json!({"jobId":id,"occurrenceId":id}),
+                &["jobId", "occurrenceId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_get_job_mutation",
+            "Owner-only recovery of an original job mutation acceptance. Does not reapply its effects or reflect later state.",
+            object(json!({"key":key}), &["key"]),
+            true,
+        ),
         (
             "nesvo_rebind_run_coordinator",
             "Owner-only binding of retained run context to a different live native coordinator after the previous process is unavailable. Exact source ID (null for unbound), revision and mutation key required. Preserves inbox/results/constraints/budgets; pauses executor/wakes and queued input, fences earlier native input. No native worker authority, process/conversation adoption, ACK, validation, prompt or policy enable is restored. Target must match retained workspace/group. Recover the original workflow mutation key.",
@@ -192,7 +277,7 @@ fn catalog() -> Vec<Tool> {
             "nesvo_start_run_executor",
             "Opt in to automatic dependency-ready task launch and immutable instruction delivery for an active run. Explicit profile for every task; agents only, shared/worktree required. No model heartbeat, self-validation or permission approval. Human/decision/time/retry/native guards still apply. Stable workflow key recovers acceptance; inspect current executor/task/native receipts. Restart disables scheduling without replay. Already admitted work may finish after disabling.",
             object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"spec":{"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["taskId","profile"],"properties":{"taskId":id,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"program":{"enum":["claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"harness":{"type":"boolean"},"model":{"type":"string","minLength":1,"maxLength":256},"effort":{"type":"string","minLength":1,"maxLength":32},"allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Optional task-local native additions. A bound coordinator may select only a subset of its immutable owner child policy; [] disables additions. Omission preserves inherited defaults. An owner coordinatorless run may select exact catalog tools. Does not add host authority or bypass native deny/ask rules."}}}}}},"retryFailed":{"type":"boolean","default":false},"retryDelayMs":{"type":"integer","minimum":1000,"maximum":60000,"default":1000},"readinessTimeoutMs":{"type":"integer","minimum":1,"maximum":300000,"default":60000}}}}),
+                json!({"key":key,"runId":id,"expectedRevision":revision,"spec":{"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["taskId","profile"],"properties":{"taskId":id,"profile":task_profile_schema(false)}}},"retryFailed":{"type":"boolean","default":false},"retryDelayMs":{"type":"integer","minimum":1000,"maximum":60000,"default":1000},"readinessTimeoutMs":{"type":"integer","minimum":1,"maximum":300000,"default":60000}}}}),
                 &["key", "runId", "expectedRevision", "spec"],
             ),
             false,
@@ -243,7 +328,7 @@ fn catalog() -> Vec<Tool> {
             "nesvo_launch_task",
             "Reserve a dependency-ready task, run parallel/retry capacity and a native create identity atomically, then launch its visible worker once. Explicitly choose shared checkout or isolated worktree. No initial prompt is sent. Reply is immutable acceptance; inspect run/task history and the returned native receipt before sending work. Unknown launches keep capacity and cannot be retried with a fresh key. Does not take human focus/control or grant coordinator roles.",
             object(
-                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"program":{"enum":["shell","claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"harness":{"type":"boolean"},"model":{"type":"string","minLength":1,"maxLength":256},"effort":{"type":"string","minLength":1,"maxLength":32},"allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Optional task-local native additions. A bound coordinator may select only a subset of its immutable owner child policy; [] disables additions. Omission preserves inherited defaults. An owner coordinatorless run may select exact catalog tools. Does not add host authority or bypass native deny/ask rules."}}}}),
+                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"profile":task_profile_schema(true)}),
                 &["key", "runId", "taskId", "expectedRevision", "profile"],
             ),
             false,
@@ -924,6 +1009,42 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "workflow",
             )
         }
+        "nesvo_create_job"
+        | "nesvo_get_job"
+        | "nesvo_list_jobs"
+        | "nesvo_update_job"
+        | "nesvo_set_job_enabled"
+        | "nesvo_run_job_now"
+        | "nesvo_get_job_history"
+        | "nesvo_get_job_occurrence"
+        | "nesvo_get_job_mutation" => {
+            let action = match name {
+                "nesvo_create_job" => "create",
+                "nesvo_get_job" => "get",
+                "nesvo_list_jobs" => "list",
+                "nesvo_update_job" => "update",
+                "nesvo_set_job_enabled" => "setEnabled",
+                "nesvo_run_job_now" => "runNow",
+                "nesvo_get_job_history" => "history",
+                "nesvo_get_job_occurrence" => "occurrence",
+                _ => "mutation",
+            };
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| cli::failure("invalid_argument", "Job arguments must be an object"))?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Job action is selected by the tool name",
+                ));
+            }
+            fields.insert("action".into(), action.into());
+            (
+                crate::workflow::tool("jobs", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_read_inbox" | "nesvo_send_message" | "nesvo_ack_messages" => {
             let action = match name {
                 "nesvo_read_inbox" => "read",
@@ -1330,7 +1451,6 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 61);
         let published: Vec<String> =
             serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json")).unwrap();
         let mut names = catalog()
@@ -1338,6 +1458,10 @@ mod tests {
             .map(|t| t.name.to_string())
             .collect::<Vec<_>>();
         names.sort();
+        assert!(
+            names.windows(2).all(|pair| pair[0] < pair[1]),
+            "Published MCP names must be unique"
+        );
         assert_eq!(
             names, published,
             "Host permission validation and actual MCP tools must share one exact catalog contract"

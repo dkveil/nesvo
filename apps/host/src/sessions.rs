@@ -819,6 +819,11 @@ impl State {
             *current = version;
         }
     }
+    pub fn provider_probes_pending(&self) -> bool {
+        self.provider_versions
+            .iter()
+            .any(|version| version.status == "checking")
+    }
     fn codex_hooks_available(&self) -> bool {
         self.provider_versions.iter().any(|version| {
             version.program == Program::Codex
@@ -886,6 +891,8 @@ impl State {
         event["childToolPolicy"] = true.into();
         event["sessionModelProfiles"] = true.into();
         event["taskNativeToolProfiles"] = true.into();
+        event["durableJobs"] = true.into();
+        event["jobScheduleKinds"] = json!(["once"]);
         event["launchProfileSupport"] =
             crate::launch_profile::capabilities(&self.provider_versions);
         event["workflowPlans"] = true.into();

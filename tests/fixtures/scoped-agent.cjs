@@ -5,6 +5,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const codex = path.basename(process.argv[1]).startsWith('codex');
 if (process.argv.includes('--version')) {
+  if (
+    process.env.NESVO_TEST_CALLERS &&
+    fs.existsSync(path.join(process.env.NESVO_TEST_CALLERS, '.fixture-slow-version'))
+  )
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1100);
   console.log(codex ? '0.156.0' : '2.1.303-scoped-fixture');
   process.exit(0);
 }

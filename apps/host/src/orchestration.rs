@@ -68,6 +68,9 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Jobs {
+        request: crate::job_definitions::Request,
+    },
     Coordinator {
         request: crate::workflow_coordinator::Request,
     },
@@ -186,6 +189,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::workflow_context::initialize(connection)?;
     crate::workflow_checkpoints::initialize(connection)?;
     crate::budgets::initialize(connection)?;
+    crate::job_definitions::initialize(connection)?;
     Ok(())
 }
 fn invalid(message: &'static str) -> anyhow::Error {
@@ -330,6 +334,9 @@ pub(crate) fn execute_at(
             "Coordinator replacement requires the native recovery adapter",
         )
         .into());
+    }
+    if let Request::Jobs { request } = request {
+        return crate::job_definitions::execute(connection, actor, request, now);
     }
     if let Request::Checkpoints { request } = request {
         return crate::workflow_checkpoints::execute(connection, actor, request, now);

@@ -104,6 +104,9 @@ struct Store(Connection);
 #[path = "budget_tests.rs"]
 mod budget_tests;
 #[cfg(test)]
+#[path = "job_definitions_tests.rs"]
+mod job_definitions_tests;
+#[cfg(test)]
 #[path = "journal_concurrency_tests.rs"]
 mod journal_concurrency_tests;
 #[cfg(test)]
@@ -158,6 +161,7 @@ impl Store {
         crate::workflow_executor::recover(&mut connection)?;
         crate::workflow_wakes::recover(&mut connection)?;
         crate::workflow_controls::recover(&mut connection)?;
+        crate::job_definitions::recover(&mut connection, crate::status::now_millis())?;
         Ok(Self(connection))
     }
     fn cursors(&self) -> Result<(u64, u64)> {
@@ -279,6 +283,10 @@ impl Store {
 }
 
 enum Work {
+    Jobs {
+        work: crate::job_definitions::Work,
+        reply: oneshot::Sender<Result<crate::job_definitions::Reply>>,
+    },
     Wakes {
         work: crate::workflow_wakes::Work,
         reply: oneshot::Sender<Result<crate::workflow_wakes::Reply>>,
@@ -498,6 +506,19 @@ impl Service {
         answer.await.map_err(|_| {
             anyhow!("Workflow outcome was not confirmed; recover the same mutation key")
         })?
+    }
+    pub async fn jobs(
+        &self,
+        work: crate::job_definitions::Work,
+    ) -> Result<crate::job_definitions::Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::Jobs { work, reply })
+            .await
+            .map_err(|_| anyhow!("Job store is closed"))?;
+        answer
+            .await
+            .map_err(|_| anyhow!("Job outcome is unconfirmed; inspect the original occurrence"))?
     }
     pub fn wait_slot(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
         self.wait_slots
@@ -735,6 +756,16 @@ impl Service {
                         }
                         Work::Coordinator { work, reply } => {
                             let result = crate::workflow_coordinator::execute(
+                                &mut store.0,
+                                work,
+                                crate::status::now_millis(),
+                            );
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
+                        Work::Jobs { work, reply } => {
+                            let result = crate::job_definitions::work(
                                 &mut store.0,
                                 work,
                                 crate::status::now_millis(),

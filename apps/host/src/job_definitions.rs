@@ -1,0 +1,687 @@
+//! Durable job definitions and occurrence admission; no process or clock I/O.
+use crate::{
+    api_error::Error,
+    event_log::{Observation, append_transaction},
+    orchestration::{self, Actor, Scope},
+    workflow_launches::Profile,
+};
+use anyhow::Result;
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+const ACTIVE: &str = "'dispatching','running','needsValidation','reconcile'";
+fn grace() -> u64 {
+    60_000
+}
+fn budget() -> u64 {
+    300_000
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum Schedule {
+    Once { at: String },
+}
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Misfire {
+    Skip,
+    #[default]
+    CatchUp,
+}
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Overlap {
+    #[default]
+    Skip,
+    Queue,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Spec {
+    pub title: String,
+    pub instruction: String,
+    pub profile: Profile,
+    pub schedule: Schedule,
+    #[serde(default)]
+    pub misfire: Misfire,
+    #[serde(default = "grace")]
+    pub grace_ms: u64,
+    #[serde(default)]
+    pub overlap: Overlap,
+    #[serde(default = "budget")]
+    pub max_elapsed_ms: u64,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "action",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum Request {
+    Create {
+        key: String,
+        spec: Spec,
+    },
+    Get {
+        job_id: String,
+    },
+    List {
+        #[serde(default)]
+        offset: u16,
+    },
+    Update {
+        key: String,
+        job_id: String,
+        expected_revision: u64,
+        spec: Spec,
+    },
+    SetEnabled {
+        key: String,
+        job_id: String,
+        expected_revision: u64,
+        enabled: bool,
+    },
+    RunNow {
+        key: String,
+        job_id: String,
+        expected_revision: u64,
+    },
+    History {
+        job_id: String,
+        #[serde(default)]
+        offset: u16,
+    },
+    Occurrence {
+        job_id: String,
+        occurrence_id: String,
+    },
+    Mutation {
+        key: String,
+    },
+}
+pub struct Claim {
+    pub id: String,
+    pub job_id: String,
+    pub spec: Spec,
+}
+pub enum Work {
+    Tick,
+    BindRun { occurrence: String, run: String },
+    Started { occurrence: String },
+    Refused { occurrence: String, uncertain: bool },
+}
+pub enum Reply {
+    Claims(Vec<Claim>),
+    Done,
+}
+fn invalid(message: &'static str) -> anyhow::Error {
+    Error::new("invalid_argument", message).into()
+}
+pub fn initialize(connection: &Connection) -> Result<()> {
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS harness_jobs(id TEXT PRIMARY KEY,spec TEXT NOT NULL,revision INTEGER NOT NULL,enabled INTEGER NOT NULL,next_due INTEGER,created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS harness_job_mutations(issuer TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,view TEXT NOT NULL,PRIMARY KEY(issuer,key));
+      CREATE INDEX IF NOT EXISTS harness_jobs_due ON harness_jobs(enabled,next_due);
+      CREATE TABLE IF NOT EXISTS harness_job_occurrences(id TEXT PRIMARY KEY,job_id TEXT NOT NULL REFERENCES harness_jobs(id),job_revision INTEGER NOT NULL,spec TEXT NOT NULL,trigger_key TEXT NOT NULL,trigger_kind TEXT NOT NULL,due_at INTEGER NOT NULL,created_at INTEGER NOT NULL,state TEXT NOT NULL,reason TEXT,run_id TEXT REFERENCES workflow_runs(id),started_at INTEGER,finished_at INTEGER,UNIQUE(job_id,trigger_key));
+      CREATE INDEX IF NOT EXISTS harness_job_occurrences_active ON harness_job_occurrences(state,job_id);
+      CREATE INDEX IF NOT EXISTS harness_job_occurrences_history ON harness_job_occurrences(job_id,created_at);")?;
+    Ok(())
+}
+pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let ids = {
+        let mut q=transaction.prepare("SELECT id FROM harness_job_occurrences WHERE state IN ('dispatching','running','needsValidation')")?;
+        q.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for id in ids {
+        transition(
+            &transaction,
+            &id,
+            "reconcile",
+            Some("host_restarted"),
+            false,
+            now,
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+fn due(spec: &Spec) -> Result<u64> {
+    let Schedule::Once { at } = &spec.schedule;
+    if at.len() > 64 {
+        return Err(invalid(
+            "Once time must be RFC3339 with an explicit UTC offset",
+        ));
+    }
+    let instant = chrono::DateTime::parse_from_rfc3339(at)
+        .map_err(|_| invalid("Once time must be RFC3339 with an explicit UTC offset"))?
+        .timestamp_millis();
+    u64::try_from(instant).map_err(|_| invalid("Once time must be after the Unix epoch"))
+}
+fn validate(spec: &Spec, now: u64) -> Result<u64> {
+    crate::groups::valid_name(&spec.title)?;
+    if spec.instruction.trim().is_empty()
+        || spec.instruction.len() > 8192
+        || spec.instruction.contains('\0')
+        || serde_json::to_vec(spec)?.len() > 16 * 1024
+        || !(1000..=604_800_000).contains(&spec.max_elapsed_ms)
+        || spec.grace_ms > 86_400_000
+        || spec.profile.program == crate::launchers::Program::Shell
+    {
+        return Err(invalid(
+            "Jobs need an agent, a nonempty instruction within 8192 bytes, a 16 KiB profile, 1 second–7 day elapsed budget and at most 24 hour grace",
+        ));
+    }
+    orchestration::validate_plan(&[orchestration::TaskSpec {
+        key: "job".into(),
+        title: spec.title.clone(),
+        instruction: spec.instruction.clone(),
+        dependencies: vec![],
+    }])?;
+    if let Some(tools) = &spec.profile.allowed_nesvo_tools {
+        crate::tool_permissions::validate(tools)?;
+    }
+    let at = due(spec)?;
+    if at <= now || at.saturating_sub(now) > 366 * 86_400_000 {
+        return Err(invalid(
+            "Choose an explicit future instant up to 366 days ahead",
+        ));
+    }
+    Ok(at)
+}
+fn job(connection: &Connection, id: &str, detail: bool) -> Result<Value> {
+    let row = connection
+        .query_row(
+            "SELECT spec,revision,enabled,next_due,created_at FROM harness_jobs WHERE id=?1",
+            [id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, bool>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((spec, revision, enabled, next_due, created)) = row else {
+        return Err(Error::new("job_not_found", "Job does not exist").into());
+    };
+    let spec: Spec = serde_json::from_str(&spec)?;
+    let mut view = json!({"id":id,"title":spec.title,"revision":revision,"enabled":enabled,"nextDueAt":next_due,"createdAt":created,"schedule":spec.schedule});
+    if detail {
+        view["spec"] = serde_json::to_value(spec)?;
+    }
+    Ok(view)
+}
+fn occurrence(connection: &Connection, job_id: &str, id: &str, detail: bool) -> Result<Value> {
+    let row=connection.query_row("SELECT job_revision,trigger_kind,due_at,created_at,state,reason,run_id,started_at,finished_at,spec FROM harness_job_occurrences WHERE id=?1 AND job_id=?2",params![id,job_id],|r|Ok((json!({"id":id,"jobId":job_id,"jobRevision":r.get::<_,i64>(0)?,"trigger":r.get::<_,String>(1)?,"dueAt":r.get::<_,i64>(2)?,"createdAt":r.get::<_,i64>(3)?,"state":r.get::<_,String>(4)?,"reason":r.get::<_,Option<String>>(5)?,"runId":r.get::<_,Option<String>>(6)?,"startedAt":r.get::<_,Option<i64>>(7)?,"finishedAt":r.get::<_,Option<i64>>(8)?}),r.get::<_,String>(9)?))).optional()?;
+    let Some((mut view, spec)) = row else {
+        return Err(Error::new(
+            "occurrence_not_found",
+            "Occurrence does not belong to this job",
+        )
+        .into());
+    };
+    let binding = if let Some(run) = view["runId"].as_str() {
+        connection.query_row("SELECT a.id,a.session_id,l.operation_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id LEFT JOIN workflow_launches l ON l.attempt_id=a.id WHERE t.run_id=?1 ORDER BY a.ordinal DESC,a.rowid DESC LIMIT 1",[run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional()?
+    } else {
+        None
+    };
+    view["attemptId"] = binding.as_ref().map(|b| b.0.as_str()).into();
+    view["sessionId"] = binding.as_ref().map(|b| b.1.as_str()).into();
+    view["launchReceiptId"] = binding.as_ref().and_then(|b| b.2.as_deref()).into();
+    if detail {
+        view["spec"] = serde_json::from_str(&spec)?;
+    }
+    Ok(view)
+}
+fn observe(
+    transaction: &Transaction<'_>,
+    job: &str,
+    occurrence: Option<&str>,
+    phase: &str,
+    now: u64,
+) -> Result<()> {
+    append_transaction(
+        transaction,
+        vec![Observation {
+            session_id: None,
+            kind: "job.changed",
+            at: now,
+            payload: json!({"jobId":job,"occurrenceId":occurrence,"phase":phase}),
+        }],
+    )?;
+    Ok(())
+}
+fn transition(
+    transaction: &Transaction<'_>,
+    id: &str,
+    state: &str,
+    reason: Option<&str>,
+    finished: bool,
+    now: u64,
+) -> Result<()> {
+    let job: String = transaction.query_row(
+        "SELECT job_id FROM harness_job_occurrences WHERE id=?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    let changed=transaction.execute("UPDATE harness_job_occurrences SET state=?2,reason=?3,finished_at=CASE WHEN ?4 THEN ?5 ELSE finished_at END WHERE id=?1 AND (state<>?2 OR reason IS NOT ?3)",params![id,state,reason,finished,now as i64])?;
+    if changed > 0 {
+        observe(transaction, &job, Some(id), state, now)?;
+    }
+    Ok(())
+}
+fn insert_occurrence(
+    transaction: &Transaction<'_>,
+    record: &Value,
+    trigger: &str,
+    kind: &str,
+    at: u64,
+    now: u64,
+) -> Result<String> {
+    let count: i64 =
+        transaction.query_row("SELECT count(*) FROM harness_job_occurrences", [], |r| {
+            r.get(0)
+        })?;
+    if count >= 4096 {
+        return Err(Error::new(
+            "busy",
+            "Job history retention is full; no history was discarded",
+        )
+        .into());
+    }
+    let spec: Spec = serde_json::from_value(record["spec"].clone())?;
+    let job = record["id"]
+        .as_str()
+        .ok_or_else(|| invalid("Invalid stored job identity"))?;
+    let active:bool=transaction.query_row(&format!("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE job_id=?1 AND state IN ({ACTIVE},'queued'))"),[job],|r|r.get(0))?;
+    let queued: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE job_id=?1 AND state='queued')",
+        [job],
+        |r| r.get(0),
+    )?;
+    let late = kind == "schedule"
+        && now.saturating_sub(at)
+            > match spec.misfire {
+                Misfire::Skip => 5000,
+                Misfire::CatchUp => spec.grace_ms,
+            };
+    let reason = if late {
+        Some("missed_window")
+    } else if active && matches!(spec.overlap, Overlap::Skip) {
+        Some("overlap")
+    } else if queued {
+        Some("queue_full")
+    } else {
+        None
+    };
+    let id = hex::encode(crate::wire::random::<16>());
+    let state = if reason.is_some() {
+        "skipped"
+    } else {
+        "queued"
+    };
+    transaction.execute("INSERT INTO harness_job_occurrences(id,job_id,job_revision,spec,trigger_key,trigger_kind,due_at,created_at,state,reason,finished_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![id,job,record["revision"].as_i64(),serde_json::to_string(&spec)?,trigger,kind,at as i64,now as i64,state,reason,reason.map(|_|now as i64)])?;
+    observe(transaction, job, Some(&id), state, now)?;
+    Ok(id)
+}
+pub fn execute(
+    connection: &mut Connection,
+    actor: Actor,
+    request: Request,
+    now: u64,
+) -> Result<Value> {
+    if !matches!(actor.scope, Scope::Owner) {
+        return Err(Error::new(
+            "forbidden",
+            "Only the owner may configure or inspect scheduled jobs",
+        )
+        .into());
+    }
+    match &request {
+        Request::Mutation { key } => {
+            orchestration::validate_key(key)?;
+            let saved: Option<String> = connection
+                .query_row(
+                    "SELECT view FROM harness_job_mutations WHERE issuer=?1 AND key=?2",
+                    params![actor.issuer, key],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            return saved
+                .map(|view| serde_json::from_str(&view).map_err(Into::into))
+                .unwrap_or_else(|| {
+                    Err(
+                        Error::new("mutation_not_found", "Job mutation key was not accepted")
+                            .into(),
+                    )
+                });
+        }
+        Request::Get { job_id } => return Ok(json!({"job":job(connection,job_id,true)?})),
+        Request::Occurrence {
+            job_id,
+            occurrence_id,
+        } => return Ok(json!({"occurrence":occurrence(connection,job_id,occurrence_id,true)?})),
+        Request::List { offset } => {
+            if *offset > 4096 {
+                return Err(invalid("Invalid job page offset"));
+            }
+            let mut q = connection
+                .prepare("SELECT id FROM harness_jobs ORDER BY created_at,id LIMIT 17 OFFSET ?1")?;
+            let ids = q
+                .query_map([offset], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let rows = ids
+                .iter()
+                .take(16)
+                .map(|id| job(connection, id, false))
+                .collect::<Result<Vec<_>>>()?;
+            return Ok(
+                json!({"jobs":rows,"nextOffset":if ids.len()>16{Some(*offset+16)}else{None}}),
+            );
+        }
+        Request::History { job_id, offset } => {
+            job(connection, job_id, false)?;
+            if *offset > 4096 {
+                return Err(invalid("Invalid occurrence page offset"));
+            }
+            let mut q=connection.prepare("SELECT id FROM harness_job_occurrences WHERE job_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT 9 OFFSET ?2")?;
+            let ids = q
+                .query_map(params![job_id, offset], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let rows = ids
+                .iter()
+                .take(8)
+                .map(|id| occurrence(connection, job_id, id, false))
+                .collect::<Result<Vec<_>>>()?;
+            return Ok(
+                json!({"occurrences":rows,"nextOffset":if ids.len()>8{Some(*offset+8)}else{None}}),
+            );
+        }
+        _ => {}
+    }
+    let key = match &request {
+        Request::Create { key, .. }
+        | Request::Update { key, .. }
+        | Request::SetEnabled { key, .. }
+        | Request::RunNow { key, .. } => key,
+        _ => unreachable!(),
+    };
+    orchestration::validate_key(key)?;
+    let digest = hex::encode(
+        ring::digest::digest(
+            &ring::digest::SHA256,
+            &serde_json::to_vec(&json!({"action":"jobs","request":request}))?,
+        )
+        .as_ref(),
+    );
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let saved: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT digest,view FROM harness_job_mutations WHERE issuer=?1 AND key=?2",
+            params![actor.issuer, key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if let Some((old, view)) = saved {
+        if old != digest {
+            return Err(Error::new(
+                "idempotency_conflict",
+                "Job mutation key belongs to a different intent",
+            )
+            .into());
+        }
+        return Ok(serde_json::from_str(&view)?);
+    }
+    let retained: i64 =
+        transaction.query_row("SELECT count(*) FROM harness_job_mutations", [], |r| {
+            r.get(0)
+        })?;
+    if retained >= 4096 {
+        return Err(Error::new(
+            "busy",
+            "Job mutation retention is full; no accepted keys were discarded",
+        )
+        .into());
+    }
+    let view = match &request {
+        Request::Create { spec, .. } => {
+            let at = validate(spec, now)?;
+            let count: i64 =
+                transaction.query_row("SELECT count(*) FROM harness_jobs", [], |r| r.get(0))?;
+            if count >= 64 {
+                return Err(Error::new("busy", "Job definition retention is full").into());
+            }
+            let id = hex::encode(crate::wire::random::<16>());
+            transaction.execute("INSERT INTO harness_jobs(id,spec,revision,enabled,next_due,created_at) VALUES(?1,?2,1,1,?3,?4)",params![id,serde_json::to_string(spec)?,at as i64,now as i64])?;
+            observe(&transaction, &id, None, "created", now)?;
+            json!({"job":job(&transaction,&id,true)?})
+        }
+        Request::Update {
+            job_id,
+            expected_revision,
+            ..
+        }
+        | Request::SetEnabled {
+            job_id,
+            expected_revision,
+            ..
+        }
+        | Request::RunNow {
+            job_id,
+            expected_revision,
+            ..
+        } => {
+            let current = job(&transaction, job_id, true)?;
+            if current["revision"] != *expected_revision {
+                return Err(Error::new(
+                    "revision_conflict",
+                    "Job configuration changed; inspect before mutating",
+                )
+                .into());
+            }
+            match &request {
+                Request::Update { spec, .. } => {
+                    let at = validate(spec, now)?;
+                    transaction.execute("UPDATE harness_jobs SET spec=?2,next_due=?3,revision=revision+1 WHERE id=?1",params![job_id,serde_json::to_string(spec)?,at as i64])?;
+                    observe(&transaction, job_id, None, "updated", now)?;
+                    json!({"job":job(&transaction,job_id,true)?})
+                }
+                Request::SetEnabled { enabled, .. } => {
+                    transaction.execute(
+                        "UPDATE harness_jobs SET enabled=?2,revision=revision+1 WHERE id=?1",
+                        params![job_id, enabled],
+                    )?;
+                    observe(
+                        &transaction,
+                        job_id,
+                        None,
+                        if *enabled { "enabled" } else { "disabled" },
+                        now,
+                    )?;
+                    json!({"job":job(&transaction,job_id,true)?})
+                }
+                Request::RunNow { .. } => {
+                    let id = insert_occurrence(
+                        &transaction,
+                        &current,
+                        &format!("manual:{key}"),
+                        "manual",
+                        now,
+                        now,
+                    )?;
+                    json!({"job":current,"occurrence":occurrence(&transaction,job_id,&id,true)?})
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
+    };
+    transaction.execute(
+        "INSERT INTO harness_job_mutations(issuer,key,digest,view) VALUES(?1,?2,?3,?4)",
+        params![actor.issuer, key, digest, serde_json::to_string(&view)?],
+    )?;
+    transaction.commit()?;
+    Ok(view)
+}
+fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
+    let rows = {
+        let mut q=transaction.prepare(&format!("SELECT o.id,r.state,(SELECT a.state FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=r.id ORDER BY a.ordinal DESC LIMIT 1),e.reason,o.state FROM harness_job_occurrences o JOIN workflow_runs r ON r.id=o.run_id LEFT JOIN workflow_executors e ON e.run_id=r.id WHERE o.state IN ({ACTIVE})"))?;
+        q.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (id, run, attempt, reason, current) in rows {
+        match (run.as_str(), attempt.as_deref()) {
+            ("succeeded", _) => transition(transaction, &id, "succeeded", None, true, now)?,
+            ("canceled" | "stopped", _) => {
+                transition(transaction, &id, "canceled", None, true, now)?
+            }
+            (_, Some("failed" | "launchFailed")) => transition(
+                transaction,
+                &id,
+                "failed",
+                Some("attempt_failed"),
+                true,
+                now,
+            )?,
+            (_, Some("launchUnknown")) => transition(
+                transaction,
+                &id,
+                "reconcile",
+                Some("launch_unconfirmed"),
+                false,
+                now,
+            )?,
+            (_, Some("reported")) => transition(
+                transaction,
+                &id,
+                "needsValidation",
+                Some("validation_pending"),
+                false,
+                now,
+            )?,
+            _ => {
+                if matches!(current.as_str(), "dispatching" | "running") {
+                    transition(transaction, &id, &current, reason.as_deref(), false, now)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let reply = match work {
+        Work::Tick => {
+            refresh(&transaction, now)?;
+            let retained: i64 =
+                transaction.query_row("SELECT count(*) FROM harness_job_occurrences", [], |r| {
+                    r.get(0)
+                })?;
+            let due = {
+                let mut q=transaction.prepare("SELECT id FROM harness_jobs WHERE enabled=1 AND next_due<=?1 ORDER BY next_due,id LIMIT ?2")?;
+                q.query_map(params![now as i64, (4096 - retained).clamp(0, 8)], |r| {
+                    r.get::<_, String>(0)
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for id in due {
+                let record = job(&transaction, &id, true)?;
+                let at = record["nextDueAt"]
+                    .as_u64()
+                    .ok_or_else(|| invalid("Invalid stored due instant"))?;
+                insert_occurrence(
+                    &transaction,
+                    &record,
+                    &format!("schedule:{}:{at}", record["revision"]),
+                    "schedule",
+                    at,
+                    now,
+                )?;
+                transaction.execute("UPDATE harness_jobs SET next_due=NULL WHERE id=?1", [&id])?;
+            }
+            let candidates = {
+                let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id WHERE o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual') AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.state IN ({ACTIVE})) ORDER BY o.created_at,o.rowid LIMIT 4"))?;
+                q.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut claims = Vec::new();
+            for (id, job_id, spec) in candidates {
+                transition(&transaction, &id, "dispatching", None, false, now)?;
+                transaction.execute(
+                    "UPDATE harness_job_occurrences SET started_at=?2 WHERE id=?1",
+                    params![id, now as i64],
+                )?;
+                claims.push(Claim {
+                    id,
+                    job_id,
+                    spec: serde_json::from_str(&spec)?,
+                });
+            }
+            Reply::Claims(claims)
+        }
+        Work::BindRun { occurrence, run } => {
+            let changed=transaction.execute("UPDATE harness_job_occurrences SET run_id=?2 WHERE id=?1 AND state='dispatching' AND run_id IS NULL",params![occurrence,run])?;
+            if changed != 1 {
+                return Err(Error::new(
+                    "occurrence_conflict",
+                    "Job dispatch is no longer bindable",
+                )
+                .into());
+            }
+            Reply::Done
+        }
+        Work::Started { occurrence } => {
+            let pending:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND state='dispatching')",[&occurrence],|r|r.get(0))?;
+            if pending {
+                transition(&transaction, &occurrence, "running", None, false, now)?;
+            }
+            Reply::Done
+        }
+        Work::Refused {
+            occurrence,
+            uncertain,
+        } => {
+            let pending:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND state IN ('dispatching','running'))",[&occurrence],|r|r.get(0))?;
+            if pending {
+                transition(
+                    &transaction,
+                    &occurrence,
+                    if uncertain { "reconcile" } else { "failed" },
+                    Some(if uncertain {
+                        "dispatch_unconfirmed"
+                    } else {
+                        "dispatch_refused"
+                    }),
+                    !uncertain,
+                    now,
+                )?;
+            }
+            Reply::Done
+        }
+    };
+    transaction.commit()?;
+    Ok(reply)
+}

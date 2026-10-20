@@ -554,6 +554,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Jobs {
+        request: crate::job_commands::Request,
+    },
     Coordinator {
         request: CoordinatorRequest,
     },
@@ -692,6 +695,7 @@ fn task_profile_requested(request: &Value, selected: impl Fn(&Value) -> bool) ->
     let action = &request["request"];
     match action["action"].as_str() {
         Some("launch") => selected(&action["request"]["profile"]),
+        Some("jobs") => selected(&action["request"]["spec"]["profile"]),
         Some("executor") => action["request"]["spec"]["tasks"]
             .as_array()
             .is_some_and(|tasks| tasks.iter().any(|task| selected(&task["profile"]))),
@@ -745,6 +749,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
     }
     let capability = match request["request"]["action"].as_str() {
         Some("coordinator") => Some("runCoordinatorRecovery"),
+        Some("jobs") => Some("durableJobs"),
         Some("recover") => Some("runRecovery"),
         Some("checkpoints") => Some("runCheckpoints"),
         Some("constraints") => Some("runConstraints"),

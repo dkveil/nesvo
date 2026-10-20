@@ -10,6 +10,8 @@ mod event_log;
 mod git;
 mod groups;
 mod host_lock;
+mod job_definitions;
+mod job_runtime;
 mod jobs;
 mod launch_profile;
 mod launchers;
@@ -335,6 +337,11 @@ async fn run(args: Args) -> Result<()> {
     }
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
     tokio::spawn(jobs::run(state.clone(), event_tx.clone()));
+    tokio::spawn(job_runtime::run(
+        state.clone(),
+        event_tx.clone(),
+        event_log.clone(),
+    ));
     tokio::spawn(notifications::run(state.clone()));
     if claude_installed {
         let state = state.clone();

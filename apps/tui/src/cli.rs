@@ -7,6 +7,11 @@ use std::{io::Write, path::Path, time::Duration};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Durable host-owned jobs and immutable occurrence history.
+    Job {
+        #[command(subcommand)]
+        command: crate::job_commands::Command,
+    },
     /// Inspect or replace the owner's persisted host admission budgets.
     Budget {
         #[command(subcommand)]
@@ -275,6 +280,7 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
         | "decision_not_found"
         | "control_not_found"
         | "attempt_not_found" => 5,
+        "job_not_found" | "occurrence_not_found" => 5,
         "timeout" => 7,
         "unsupported" => 8,
         _ => 6,
@@ -285,6 +291,7 @@ impl Command {
         match self {
             Self::Mcp => false,
             Self::Run { command } => command.machine(),
+            Self::Job { command } => command.machine(),
             Self::Budget { command } => command.machine(),
             Self::Doctor { json } | Self::Events { json, .. } | Self::Operation { json, .. } => {
                 *json
@@ -825,6 +832,7 @@ pub(crate) fn error_value(error: &anyhow::Error) -> Value {
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let (session, machine) = match command {
         Command::Run { command } => return crate::workflow::run(command, connection).await,
+        Command::Job { command } => return crate::job_commands::run(command, connection).await,
         Command::Budget { command } => {
             return crate::workflow::run(
                 crate::workflow::Command::HostBudget { command },
