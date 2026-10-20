@@ -370,7 +370,11 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             }
             crate::workflow_budget::guard_dispatch_transaction(&transaction, &session, now)?;
             let (run,task):(String,String)=transaction.query_row("SELECT t.run_id,t.id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.id=?1",[&attempt],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            let prompt = crate::workflow_attempts::task(&transaction, &run, &task)?.instruction;
+            let prompt = crate::workflow_context::task_prompt(
+                &transaction,
+                &run,
+                crate::workflow_attempts::task(&transaction, &run, &task)?.instruction,
+            )?;
             let accepted = crate::receipts::accept_transaction(
                 &transaction,
                 &issuer,
@@ -381,6 +385,7 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             if !accepted.is_new {
                 return Err(anyhow!("New delivery unexpectedly reused native receipt"));
             }
+            crate::workflow_context::freeze(&transaction, &run, &accepted.receipt.id)?;
             transaction.execute("UPDATE workflow_deliveries SET phase='dispatching',blocker=NULL,operation_id=?2 WHERE id=?1",params![id,accepted.receipt.id])?;
             changed(&transaction, &id, now)?;
             transaction.commit()?;

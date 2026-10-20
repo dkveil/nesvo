@@ -16,6 +16,12 @@ adds an explicit bounded readiness wait after assignment. The opt-in
 no automatic action until explicitly enabled.
 Idle never means success.
 
+The [checkpoint/constraint contract](harness-checkpoints.md) preserves goal,
+plan and evidence pointers for context reconstruction. Manually added owner
+constraints pause future automation; acknowledging their exact revision does
+not rearm old input or validate work. Current context always uses latest owner
+text, even when an older checkpoint is supplied as a baseline.
+
 ## CLI and MCP
 
 ```powershell

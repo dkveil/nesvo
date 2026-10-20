@@ -25,6 +25,8 @@ mod ui_launch;
 mod ui_palette;
 mod workflow;
 mod workflow_budget;
+mod workflow_checkpoints;
+mod workflow_constraints;
 mod workflow_controls;
 mod workflow_decisions;
 mod workflow_delivery;

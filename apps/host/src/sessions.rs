@@ -776,6 +776,8 @@ impl State {
         event["runDelivery"] = self.event_log.is_some().into();
         event["runExecutor"] = self.event_log.is_some().into();
         event["runWakes"] = self.event_log.is_some().into();
+        event["runCheckpoints"] = self.event_log.is_some().into();
+        event["runConstraints"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event

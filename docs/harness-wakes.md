@@ -104,6 +104,11 @@ elapsed exhaustion, authority loss or a retained draft prevents new input.
 Drain permits coordinator handling while still blocking new task assignment.
 Host/provider process budgets still govern any later worker launch.
 
+[Owner constraint changes](harness-checkpoints.md) also pause the generation.
+Native wake receipts retain their admitted constraint revision; acknowledging
+new context does not replay an earlier batch or reenable the policy. Explicit
+new scheduling intent and normal human/draft guards remain required.
+
 Notice bindings, native receipt reservation and batch provenance commit
 atomically before bytes. Partial writes remain `unknown`; no new key, budget
 extension or policy enable repastes or submits an existing uncertain batch.

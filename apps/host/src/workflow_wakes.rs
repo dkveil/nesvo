@@ -165,6 +165,7 @@ pub fn changed(transaction: &Transaction<'_>, policy: &str, now: u64) -> Result<
     )
 }
 pub fn run_guard(connection: &Connection, run: &str, now: u64) -> Result<()> {
+    crate::workflow_context::guard(connection, run)?;
     let state: String = connection.query_row(
         "SELECT state FROM workflow_runs WHERE id=?1",
         [run],

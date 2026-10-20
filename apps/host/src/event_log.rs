@@ -113,6 +113,9 @@ mod orchestration_tests;
 #[path = "workflow_budget_tests.rs"]
 mod workflow_budget_tests;
 #[cfg(test)]
+#[path = "workflow_checkpoints_tests.rs"]
+mod workflow_checkpoints_tests;
+#[cfg(test)]
 #[path = "workflow_controls_tests.rs"]
 mod workflow_controls_tests;
 #[cfg(test)]
@@ -671,6 +674,13 @@ impl Service {
                                 crate::status::now_millis(),
                             )
                             .and_then(|_| {
+                                crate::workflow_context::guard_native(
+                                    &store.0,
+                                    &session_id,
+                                    &operation_id,
+                                )
+                            })
+                            .and_then(|_| {
                                 crate::workflow_wake_batches::guard_dispatch(
                                     &store.0,
                                     &session_id,
@@ -713,7 +723,7 @@ impl Service {
                             request,
                             reply,
                         } => {
-                            let result = crate::receipts::accept(
+                            let result = crate::workflow_context::accept_native(
                                 &mut store.0,
                                 &issuer,
                                 &key,

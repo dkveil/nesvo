@@ -58,6 +58,69 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_add_run_constraint",
+            "Owner-only append of literal manual constraints at the current run revision. Pauses executor/wakes and queued task input; earlier native input cannot rearm after acknowledgement. No user text is discarded or treated as task success/native permission. Existing model work may finish. Recover immutable acceptance with the original workflow mutation key.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision,"text":{"type":"string","minLength":1,"maxLength":1024}}),
+                &["key", "runId", "expectedRevision", "text"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_list_run_constraints",
+            "Read eight append-only owner constraints and current acknowledgement revision. after is a constraint revision, not an event/inbox cursor. Read does not acknowledge, clear drafts, enable scheduling or grant native authority. Workers receive own constraints in their current task context.",
+            object(
+                json!({"runId":id,"after":{"type":"integer","minimum":0,"maximum":16}}),
+                &["runId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_acknowledge_run_constraints",
+            "Deliberately attest reading the exact current constraint revision, using the current run revision. Only owner or this run's coordinator. No policy auto-enable, old delivery replay, native permission, inbox ACK or task validation. Earlier/pre-ACK native receipts remain fenced even after this acknowledgement.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision,"constraintRevision":{"type":"integer","minimum":1,"maximum":16}}),
+                &["key", "runId", "expectedRevision", "constraintRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_save_run_checkpoint",
+            "Capture an immutable bounded run metadata manifest once at the exact source revision. Includes goal, owner constraints, plan, attempt/validation and decision/native-uncertainty pointers. A caller summary is an attestation, not verified progress. Does not send input, ACK, launch/adopt processes or replay effects. Recover with the original workflow mutation key.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision,"summary":{"type":"string","minLength":1,"maxLength":2048}}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_list_run_checkpoints",
+            "Read eight immutable checkpoint headers in a visible run. Source run revision and journal cursor describe capture, not current process authority. No native effects or implicit restoration.",
+            object(
+                json!({"runId":id,"offset":{"type":"integer","minimum":0,"maximum":32}}),
+                &["runId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_get_run_checkpoint",
+            "Read an immutable historical checkpoint page, at most eight parts / 24 KiB. Current constraint revision is reported separately; history never replaces it. Receipt pointers retain issuer scope. Persisted attempt state is not current process evidence and no native effect is restored.",
+            object(
+                json!({"runId":id,"checkpointId":id,"offset":{"type":"integer","minimum":0,"maximum":16384}}),
+                &["runId", "checkpointId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_read_run_context",
+            "Read current authoritative context for resume/compaction without input, process adoption, effect replay, inbox ACK or task validation. An optional checkpoint is a comparison baseline only; parts always reflect current constraints/state. Continue with returned nextOffset and the same expectedDigest; context_changed requires starting at zero, never mixing pages.",
+            object(
+                json!({"runId":id,"checkpointId":id,"offset":{"type":"integer","minimum":0,"maximum":16384},"expectedDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"}}),
+                &["runId"],
+            ),
+            true,
+        ),
+        (
             "nesvo_enable_run_wakes",
             "Opt in to coalesced notices for the run's live coordinator. Only new result/question/error/decision/blocker deltas produce native input; no unchanged-state model heartbeat. Pending messages remain durable, never auto-ACKed or validated. Human takeover pauses the policy. Restart disables it; explicit enable never replays old batches or grants native permission.",
             object(
@@ -576,6 +639,40 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_add_run_constraint"
+        | "nesvo_list_run_constraints"
+        | "nesvo_acknowledge_run_constraints"
+        | "nesvo_save_run_checkpoint"
+        | "nesvo_list_run_checkpoints"
+        | "nesvo_get_run_checkpoint"
+        | "nesvo_read_run_context" => {
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Context arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Context action is selected by the tool name",
+                ));
+            }
+            let (group, action) = match name {
+                "nesvo_add_run_constraint" => ("constraints", "add"),
+                "nesvo_list_run_constraints" => ("constraints", "list"),
+                "nesvo_acknowledge_run_constraints" => ("constraints", "acknowledge"),
+                "nesvo_save_run_checkpoint" => ("checkpoints", "save"),
+                "nesvo_list_run_checkpoints" => ("checkpoints", "list"),
+                "nesvo_get_run_checkpoint" => ("checkpoints", "get"),
+                _ => ("checkpoints", "context"),
+            };
+            fields.insert("action".into(), action.into());
+            (
+                crate::workflow::tool(group, json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_enable_run_wakes"
         | "nesvo_get_run_wakes"
         | "nesvo_disable_run_wakes"
@@ -1149,7 +1246,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 52);
+        assert_eq!(catalog().len(), 59);
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(

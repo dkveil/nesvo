@@ -45,6 +45,14 @@ path uses UI focus, and changing the hint or private-file role cannot grant acce
 
 ## Current tools
 
+`runCheckpoints` adds save/list/get and current-context reconstruction through
+`nesvo_save_run_checkpoint`, `nesvo_list_run_checkpoints`,
+`nesvo_get_run_checkpoint` and `nesvo_read_run_context`. `runConstraints` adds
+owner-only `nesvo_add_run_constraint`, `nesvo_list_run_constraints` and explicit
+`nesvo_acknowledge_run_constraints`. Historical snapshots never replace current
+owner text; no native effect, inbox ACK or validation is restored. See
+[checkpoint/constraint contract](harness-checkpoints.md).
+
 `runBudgets` adds `nesvo_get_run_budget` and `nesvo_set_run_budget`; `runDrain`
 adds `nesvo_drain_run` and `nesvo_resume_run`. Limits count assigned/reported
 attempts, preserve retry history and use an activation-based elapsed clock.
@@ -67,7 +75,7 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control reference without requiring another provider file-read
 permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The catalog contains 52 tools. Task instruction intents use
+The catalog contains 59 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 

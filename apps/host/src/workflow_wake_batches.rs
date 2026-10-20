@@ -185,6 +185,7 @@ pub fn claim(
     if !accepted.is_new {
         return Err(anyhow!("New wake unexpectedly reused native receipt"));
     }
+    crate::workflow_context::freeze(&transaction, &policy.run_id, &accepted.receipt.id)?;
     transaction.execute("INSERT INTO workflow_wake_batches(id,policy_id,generation,issuer,operation_id,phase,created_at) VALUES(?1,?2,?3,?4,?5,'dispatching',?6)",params![id,policy.id,expected.generation as i64,issuer,accepted.receipt.id,now as i64])?;
     for (notice, _, _) in rows {
         transaction.execute(

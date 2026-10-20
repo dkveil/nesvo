@@ -68,6 +68,12 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Checkpoints {
+        request: crate::workflow_checkpoints::Request,
+    },
+    Constraints {
+        request: crate::workflow_constraints::Request,
+    },
     Wakes {
         request: crate::workflow_wakes::Request,
     },
@@ -169,6 +175,8 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::workflow_delivery::initialize(connection)?;
     crate::workflow_executor::initialize(connection)?;
     crate::workflow_wakes::initialize(connection)?;
+    crate::workflow_context::initialize(connection)?;
+    crate::workflow_checkpoints::initialize(connection)?;
     crate::budgets::initialize(connection)?;
     Ok(())
 }
@@ -307,6 +315,12 @@ pub(crate) fn execute_at(
     request: Request,
     now: u64,
 ) -> Result<Value> {
+    if let Request::Checkpoints { request } = request {
+        return crate::workflow_checkpoints::execute(connection, actor, request, now);
+    }
+    if let Request::Constraints { request } = request {
+        return crate::workflow_constraints::execute(connection, actor, request, now);
+    }
     if matches!(
         request,
         Request::Control { .. }

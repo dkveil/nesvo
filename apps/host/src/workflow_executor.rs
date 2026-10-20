@@ -316,6 +316,9 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
         .into());
     }
     let previous = read(&transaction, run)?;
+    if !matches!(request, Request::Disable { .. }) {
+        crate::workflow_context::guard(&transaction, run)?;
+    }
     let (id, enabled) = match &request {
         Request::Start { spec, .. } => {
             if previous.is_some() {

@@ -4,6 +4,13 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+`runCheckpoints` and `runConstraints` add authenticated workflow actions
+`{action:"checkpoints",request:{action:"save"|"list"|"get"|"context",...}}` and
+`{action:"constraints",request:{action:"add"|"list"|"acknowledge",...}}`.
+They preserve literal manual owner text, historical/current context separation,
+bounded digest-checked pages and native input revision fences. Context reads
+never restore effects or adopt a process. See [contract](harness-checkpoints.md).
+
 `runWakes` adds explicit delta-only coordinator notices inside authenticated
 workflow requests: `{action:"wakes",request:{action:"enable"|"disable"|"get"|"batch",...}}`.
 See [wake contract](harness-wakes.md) for current-attempt attention sources,

@@ -6,6 +6,12 @@ current task's immutable plan instruction to its bound **agent** worker. It neve
 treats instructions as shell commands, creates a process, selects by UI focus or
 accepts replacement text from the caller.
 
+When [owner constraints](harness-checkpoints.md) exist, a fresh delivery prepends
+their acknowledged current text. The combined prompt retains the native 8192-byte
+bound; no constraint is silently omitted. Adding a constraint pauses unclaimed
+intents and fences already reserved input before both paste and Enter. Reading
+or acknowledging context never rearms an old delivery or clears its draft.
+
 ```powershell
 nesvo run get RUN_ID --json
 nesvo run deliver RUN_ID --task TASK_ID --key instruction-1 --revision RUN_REV --timeout-ms 60000 --json

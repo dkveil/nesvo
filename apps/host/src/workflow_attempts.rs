@@ -156,7 +156,7 @@ pub fn context(
         run["state"].as_str().unwrap_or("unknown"),
     )?;
     Ok(
-        json!({"run":run,"task":{"id":task_id,"key":spec.key,"title":spec.title,"instruction":spec.instruction},"attempt":a}),
+        json!({"run":run,"task":{"id":task_id,"key":spec.key,"title":spec.title,"instruction":spec.instruction},"attempt":a,"constraints":{"policy":crate::workflow_context::summary(connection,&run_id)?,"records":crate::workflow_context::records(connection,&run_id)?}}),
     )
 }
 pub fn history(

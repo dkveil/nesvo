@@ -4,20 +4,35 @@
   "title": "Nesvo headless query output v1",
   "type": "object",
   "required": ["schemaVersion"],
-  "properties": { "schemaVersion": { "const": 1 } },
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    }
+  },
   "oneOf": [
     {
       "required": ["ok", "error"],
       "properties": {
-        "ok": { "const": false },
+        "ok": {
+          "const": false
+        },
         "error": {
           "type": "object",
           "required": ["code", "message", "retryable"],
           "properties": {
-            "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
-            "message": { "type": "string" },
-            "retryable": { "type": "boolean" },
-            "receipt": { "$ref": "#/definitions/receipt" }
+            "code": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]+$"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "receipt": {
+              "$ref": "#/definitions/receipt"
+            }
           }
         }
       }
@@ -25,17 +40,125 @@
     {
       "required": ["ok", "data"],
       "properties": {
-        "ok": { "const": true },
+        "ok": {
+          "const": true
+        },
         "data": {
           "oneOf": [
             {
               "type": "object",
               "required": ["type"],
               "properties": {
-                "type": { "const": "workflow" },
-                "cursor": { "$ref": "#/definitions/cursor" }
+                "type": {
+                  "const": "workflow"
+                },
+                "cursor": {
+                  "$ref": "#/definitions/cursor"
+                }
               },
               "oneOf": [
+                {
+                  "required": ["run", "constraints", "records", "nextCursor", "hasMore"],
+                  "properties": {
+                    "run": {
+                      "type": "object"
+                    },
+                    "constraints": {
+                      "$ref": "#/definitions/workflowConstraintPolicy"
+                    },
+                    "records": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/workflowConstraint"
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "hasMore": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "required": ["run", "checkpoints", "nextOffset"],
+                  "properties": {
+                    "run": {
+                      "type": "object"
+                    },
+                    "checkpoints": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/workflowCheckpoint"
+                      }
+                    },
+                    "nextOffset": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 32
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "run",
+                    "checkpoint",
+                    "context",
+                    "parts",
+                    "nextOffset",
+                    "currentConstraints"
+                  ],
+                  "properties": {
+                    "run": {
+                      "type": "object"
+                    },
+                    "checkpoint": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/definitions/workflowCheckpoint"
+                        }
+                      ]
+                    },
+                    "context": {
+                      "$ref": "#/definitions/workflowContextMetadata"
+                    },
+                    "parts": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/workflowContextPart"
+                      }
+                    },
+                    "nextOffset": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 16384
+                        }
+                      ]
+                    },
+                    "currentConstraints": {
+                      "$ref": "#/definitions/workflowConstraintPolicy"
+                    }
+                  }
+                },
                 {
                   "required": [
                     "run",
@@ -118,22 +241,37 @@
                         "required": ["id", "title", "revision", "state"]
                       }
                     },
-                    "nextOffset": { "type": ["integer", "null"] }
+                    "nextOffset": {
+                      "type": ["integer", "null"]
+                    }
                   }
                 },
                 {
                   "required": ["run", "tasks"],
                   "properties": {
-                    "launch": { "$ref": "#/definitions/workflowLaunch" },
-                    "delivery": { "$ref": "#/definitions/workflowDelivery" },
+                    "launch": {
+                      "$ref": "#/definitions/workflowLaunch"
+                    },
+                    "delivery": {
+                      "$ref": "#/definitions/workflowDelivery"
+                    },
                     "run": {
                       "type": "object",
                       "required": ["id", "title", "goal", "revision", "state", "taskResult"],
                       "properties": {
-                        "id": { "type": "string" },
-                        "title": { "type": "string" },
-                        "goal": { "type": "string" },
-                        "revision": { "type": "integer", "minimum": 1 },
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "goal": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
                         "state": {
                           "enum": [
                             "draft",
@@ -147,7 +285,9 @@
                             "succeeded"
                           ]
                         },
-                        "taskResult": { "enum": [null, "succeeded"] }
+                        "taskResult": {
+                          "enum": [null, "succeeded"]
+                        }
                       }
                     },
                     "tasks": {
@@ -167,9 +307,18 @@
                           "taskResult"
                         ],
                         "properties": {
-                          "id": { "type": "string" },
-                          "key": { "type": "string" },
-                          "dependencies": { "type": "array", "items": { "type": "string" } },
+                          "id": {
+                            "type": "string"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "dependencies": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
                           "state": {
                             "enum": [
                               "planned",
@@ -183,9 +332,17 @@
                               "stopped"
                             ]
                           },
-                          "dependencyState": { "enum": ["ready", "waiting"] },
-                          "attempts": { "type": "integer", "minimum": 0, "maximum": 16 },
-                          "taskResult": { "enum": [null, "succeeded", "failed"] }
+                          "dependencyState": {
+                            "enum": ["ready", "waiting"]
+                          },
+                          "attempts": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 16
+                          },
+                          "taskResult": {
+                            "enum": [null, "succeeded", "failed"]
+                          }
                         }
                       }
                     }
@@ -194,22 +351,57 @@
                 {
                   "required": ["run", "task", "attempt"],
                   "properties": {
-                    "run": { "type": "object", "required": ["id", "title", "revision", "state"] },
-                    "task": { "type": "object", "required": ["id", "key", "title", "instruction"] },
-                    "attempt": { "$ref": "#/definitions/workflowAttempt" }
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "title", "revision", "state"]
+                    },
+                    "task": {
+                      "type": "object",
+                      "required": ["id", "key", "title", "instruction"]
+                    },
+                    "attempt": {
+                      "$ref": "#/definitions/workflowAttempt"
+                    },
+                    "constraints": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["policy", "records"],
+                      "properties": {
+                        "policy": {
+                          "$ref": "#/definitions/workflowConstraintPolicy"
+                        },
+                        "records": {
+                          "type": "array",
+                          "maxItems": 16,
+                          "items": {
+                            "$ref": "#/definitions/workflowConstraint"
+                          }
+                        }
+                      }
+                    }
                   }
                 },
                 {
                   "required": ["run", "task", "attempts", "nextOffset"],
                   "properties": {
-                    "run": { "type": "object", "required": ["id", "revision", "state"] },
-                    "task": { "type": "object", "required": ["id", "spec"] },
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "revision", "state"]
+                    },
+                    "task": {
+                      "type": "object",
+                      "required": ["id", "spec"]
+                    },
                     "attempts": {
                       "type": "array",
                       "maxItems": 4,
-                      "items": { "$ref": "#/definitions/workflowAttempt" }
+                      "items": {
+                        "$ref": "#/definitions/workflowAttempt"
+                      }
                     },
-                    "nextOffset": { "type": ["integer", "null"] }
+                    "nextOffset": {
+                      "type": ["integer", "null"]
+                    }
                   }
                 },
                 {
@@ -229,6 +421,23 @@
                     },
                     "decision": {
                       "$ref": "#/definitions/workflowDecision"
+                    },
+                    "constraints": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["policy", "records"],
+                      "properties": {
+                        "policy": {
+                          "$ref": "#/definitions/workflowConstraintPolicy"
+                        },
+                        "records": {
+                          "type": "array",
+                          "maxItems": 16,
+                          "items": {
+                            "$ref": "#/definitions/workflowConstraint"
+                          }
+                        }
+                      }
                     }
                   }
                 },
@@ -254,13 +463,20 @@
                 {
                   "required": ["run", "control", "targets", "nextOffset"],
                   "properties": {
-                    "run": { "type": "object", "required": ["id", "revision", "state"] },
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "revision", "state"]
+                    },
                     "control": {
                       "type": "object",
                       "required": ["id", "kind", "state", "createdAt", "counts"],
                       "properties": {
-                        "id": { "$ref": "#/definitions/id" },
-                        "kind": { "enum": ["stop", "cancel"] },
+                        "id": {
+                          "$ref": "#/definitions/id"
+                        },
+                        "kind": {
+                          "enum": ["stop", "cancel"]
+                        },
                         "state": {
                           "enum": [
                             "dispatching",
@@ -270,10 +486,15 @@
                             "completed"
                           ]
                         },
-                        "createdAt": { "$ref": "#/definitions/cursor" },
+                        "createdAt": {
+                          "$ref": "#/definitions/cursor"
+                        },
                         "counts": {
                           "type": "object",
-                          "additionalProperties": { "type": "integer", "minimum": 0 }
+                          "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
                         }
                       }
                     },
@@ -291,9 +512,17 @@
                           "code"
                         ],
                         "properties": {
-                          "sessionId": { "$ref": "#/definitions/id" },
-                          "attemptId": { "$ref": "#/definitions/id" },
-                          "operationKey": { "type": "string", "minLength": 1, "maxLength": 128 },
+                          "sessionId": {
+                            "$ref": "#/definitions/id"
+                          },
+                          "attemptId": {
+                            "$ref": "#/definitions/id"
+                          },
+                          "operationKey": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
                           "phase": {
                             "enum": [
                               "pending",
@@ -305,19 +534,30 @@
                               "exited"
                             ]
                           },
-                          "receiptId": { "type": ["string", "null"] },
-                          "code": { "type": ["string", "null"] }
+                          "receiptId": {
+                            "type": ["string", "null"]
+                          },
+                          "code": {
+                            "type": ["string", "null"]
+                          }
                         }
                       }
                     },
-                    "nextOffset": { "type": ["integer", "null"] }
+                    "nextOffset": {
+                      "type": ["integer", "null"]
+                    }
                   }
                 },
                 {
                   "required": ["run", "policy"],
                   "properties": {
-                    "run": { "type": "object", "required": ["id", "revision", "state"] },
-                    "policy": { "$ref": "#/definitions/runBudget" }
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "revision", "state"]
+                    },
+                    "policy": {
+                      "$ref": "#/definitions/runBudget"
+                    }
                   }
                 },
                 {
@@ -380,13 +620,20 @@
                 {
                   "required": ["run", "mailbox"],
                   "properties": {
-                    "run": { "type": "object", "required": ["id", "title", "revision", "state"] },
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "title", "revision", "state"]
+                    },
                     "mailbox": {
                       "type": "object",
                       "required": ["runId", "recipientAttemptId"],
                       "properties": {
-                        "runId": { "type": "string" },
-                        "recipientAttemptId": { "type": ["string", "null"] }
+                        "runId": {
+                          "type": "string"
+                        },
+                        "recipientAttemptId": {
+                          "type": ["string", "null"]
+                        }
                       }
                     }
                   },
@@ -397,17 +644,32 @@
                         "messages": {
                           "type": "array",
                           "maxItems": 8,
-                          "items": { "$ref": "#/definitions/workflowMessage" }
+                          "items": {
+                            "$ref": "#/definitions/workflowMessage"
+                          }
                         },
-                        "nextCursor": { "$ref": "#/definitions/cursor" },
-                        "headCursor": { "$ref": "#/definitions/cursor" },
-                        "pendingCount": { "type": "integer", "minimum": 0 },
-                        "more": { "type": "boolean" }
+                        "nextCursor": {
+                          "$ref": "#/definitions/cursor"
+                        },
+                        "headCursor": {
+                          "$ref": "#/definitions/cursor"
+                        },
+                        "pendingCount": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "more": {
+                          "type": "boolean"
+                        }
                       }
                     },
                     {
                       "required": ["message", "cursor"],
-                      "properties": { "message": { "$ref": "#/definitions/workflowMessage" } }
+                      "properties": {
+                        "message": {
+                          "$ref": "#/definitions/workflowMessage"
+                        }
+                      }
                     },
                     {
                       "required": ["acknowledged", "cursor"],
@@ -420,9 +682,16 @@
                             "type": "object",
                             "required": ["id", "ackedAt", "ackedBy"],
                             "properties": {
-                              "id": { "type": "string" },
-                              "ackedAt": { "$ref": "#/definitions/cursor" },
-                              "ackedBy": { "type": "object", "required": ["role"] }
+                              "id": {
+                                "type": "string"
+                              },
+                              "ackedAt": {
+                                "$ref": "#/definitions/cursor"
+                              },
+                              "ackedBy": {
+                                "type": "object",
+                                "required": ["role"]
+                              }
                             }
                           }
                         }
@@ -436,18 +705,28 @@
               "type": "object",
               "required": ["type", "receipt"],
               "properties": {
-                "type": { "const": "operation" },
-                "receipt": { "$ref": "#/definitions/receipt" },
-                "cursor": { "$ref": "#/definitions/cursor" },
+                "type": {
+                  "const": "operation"
+                },
+                "receipt": {
+                  "$ref": "#/definitions/receipt"
+                },
+                "cursor": {
+                  "$ref": "#/definitions/cursor"
+                },
                 "wait": {
                   "type": "object",
                   "required": ["until", "outcome", "reached"],
                   "properties": {
-                    "until": { "enum": ["delivered", "received", "started", "settled"] },
+                    "until": {
+                      "enum": ["delivered", "received", "started", "settled"]
+                    },
                     "outcome": {
                       "enum": ["reached", "timeout", "failed", "unknown", "interrupted", "settled"]
                     },
-                    "reached": { "type": "boolean" }
+                    "reached": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }
@@ -465,7 +744,9 @@
                 "health"
               ],
               "properties": {
-                "type": { "const": "events" },
+                "type": {
+                  "const": "events"
+                },
                 "events": {
                   "type": "array",
                   "maxItems": 32,
@@ -473,25 +754,50 @@
                     "type": "object",
                     "required": ["sequence", "sessionId", "kind", "at", "payload"],
                     "properties": {
-                      "sequence": { "type": "integer", "minimum": 1 },
-                      "sessionId": { "type": ["string", "null"] },
-                      "kind": { "type": "string" },
-                      "at": { "$ref": "#/definitions/cursor" },
-                      "payload": { "type": "object" }
+                      "sequence": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "sessionId": {
+                        "type": ["string", "null"]
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "$ref": "#/definitions/cursor"
+                      },
+                      "payload": {
+                        "type": "object"
+                      }
                     }
                   }
                 },
-                "nextCursor": { "$ref": "#/definitions/cursor" },
-                "headCursor": { "$ref": "#/definitions/cursor" },
-                "floorCursor": { "$ref": "#/definitions/cursor" },
-                "gap": { "type": "boolean" },
-                "more": { "type": "boolean" },
+                "nextCursor": {
+                  "$ref": "#/definitions/cursor"
+                },
+                "headCursor": {
+                  "$ref": "#/definitions/cursor"
+                },
+                "floorCursor": {
+                  "$ref": "#/definitions/cursor"
+                },
+                "gap": {
+                  "type": "boolean"
+                },
+                "more": {
+                  "type": "boolean"
+                },
                 "health": {
                   "type": "object",
                   "required": ["observationDrops", "writeFailures"],
                   "properties": {
-                    "observationDrops": { "$ref": "#/definitions/cursor" },
-                    "writeFailures": { "$ref": "#/definitions/cursor" }
+                    "observationDrops": {
+                      "$ref": "#/definitions/cursor"
+                    },
+                    "writeFailures": {
+                      "$ref": "#/definitions/cursor"
+                    }
                   }
                 }
               }
@@ -500,45 +806,86 @@
               "type": "object",
               "required": ["type", "session"],
               "properties": {
-                "type": { "const": "session" },
-                "session": { "$ref": "#/definitions/session" }
+                "type": {
+                  "const": "session"
+                },
+                "session": {
+                  "$ref": "#/definitions/session"
+                }
               }
             },
             {
               "type": "object",
               "required": ["type", "sessions", "groups", "revision"],
               "properties": {
-                "type": { "const": "sessions" },
-                "sessions": { "type": "array", "items": { "$ref": "#/definitions/session" } },
-                "groups": { "type": "array" },
-                "revision": { "$ref": "#/definitions/cursor" }
+                "type": {
+                  "const": "sessions"
+                },
+                "sessions": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/session"
+                  }
+                },
+                "groups": {
+                  "type": "array"
+                },
+                "revision": {
+                  "$ref": "#/definitions/cursor"
+                }
               }
             },
             {
               "type": "object",
               "required": ["type", "sessionId", "cols", "rows", "page"],
               "properties": {
-                "type": { "const": "sessionRead" },
-                "sessionId": { "$ref": "#/definitions/id" },
-                "cols": { "type": "integer", "minimum": 10, "maximum": 300 },
-                "rows": { "type": "integer", "minimum": 2, "maximum": 150 },
-                "page": { "$ref": "#/definitions/page" }
+                "type": {
+                  "const": "sessionRead"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "cols": {
+                  "type": "integer",
+                  "minimum": 10,
+                  "maximum": 300
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 150
+                },
+                "page": {
+                  "$ref": "#/definitions/page"
+                }
               }
             },
             {
               "type": "object",
               "required": ["type", "sessionId", "review"],
               "properties": {
-                "type": { "const": "diff" },
-                "sessionId": { "$ref": "#/definitions/id" },
+                "type": {
+                  "const": "diff"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
                 "review": {
                   "type": "object",
                   "required": ["directory", "scope", "files", "truncated"],
                   "properties": {
-                    "directory": { "type": "string" },
-                    "scope": { "enum": ["staged", "unstaged", "untracked"] },
-                    "files": { "type": "array" },
-                    "truncated": { "type": "boolean" }
+                    "directory": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "enum": ["staged", "unstaged", "untracked"]
+                    },
+                    "files": {
+                      "type": "array"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }
@@ -554,15 +901,30 @@
           "type": "object",
           "required": ["id", "buildId", "version", "protocolVersion"],
           "properties": {
-            "id": { "$ref": "#/definitions/id" },
-            "buildId": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
-            "version": { "type": "string" },
-            "protocolVersion": { "const": 2 }
+            "id": {
+              "$ref": "#/definitions/id"
+            },
+            "buildId": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{16}$"
+            },
+            "version": {
+              "type": "string"
+            },
+            "protocolVersion": {
+              "const": 2
+            }
           }
         },
-        "programs": { "type": "array" },
-        "providerVersions": { "type": "array" },
-        "sessions": { "type": "array" }
+        "programs": {
+          "type": "array"
+        },
+        "providerVersions": {
+          "type": "array"
+        },
+        "sessions": {
+          "type": "array"
+        }
       }
     }
   ],
@@ -585,17 +947,45 @@
           "additionalProperties": false,
           "required": ["maxParallel", "maxAttemptsPerTask", "maxElapsedMs"],
           "properties": {
-            "maxParallel": { "type": "integer", "minimum": 1, "maximum": 16 },
-            "maxAttemptsPerTask": { "type": "integer", "minimum": 1, "maximum": 16 },
-            "maxElapsedMs": { "type": ["integer", "null"], "minimum": 1000, "maximum": 604800000 }
+            "maxParallel": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "maxAttemptsPerTask": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "maxElapsedMs": {
+              "type": ["integer", "null"],
+              "minimum": 1000,
+              "maximum": 604800000
+            }
           }
         },
-        "startedAt": { "type": ["integer", "null"], "minimum": 0 },
-        "deadlineAt": { "type": ["integer", "null"], "minimum": 0 },
-        "exhaustedAt": { "type": ["integer", "null"], "minimum": 0 },
-        "timeState": { "enum": ["notStarted", "untracked", "unlimited", "open", "exhausted"] },
-        "activeAttempts": { "type": "integer", "minimum": 0 },
-        "ownerDrain": { "type": "boolean" }
+        "startedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "deadlineAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "exhaustedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "timeState": {
+          "enum": ["notStarted", "untracked", "unlimited", "open", "exhausted"]
+        },
+        "activeAttempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ownerDrain": {
+          "type": "boolean"
+        }
       }
     },
     "workflowDecision": {
@@ -683,26 +1073,56 @@
         "ackedBy"
       ],
       "properties": {
-        "id": { "type": "string" },
-        "sequence": { "type": "integer", "minimum": 1 },
-        "runId": { "type": "string" },
-        "recipientAttemptId": { "type": ["string", "null"] },
+        "id": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runId": {
+          "type": "string"
+        },
+        "recipientAttemptId": {
+          "type": ["string", "null"]
+        },
         "sender": {
           "type": "object",
           "required": ["role"],
           "properties": {
-            "role": { "enum": ["owner", "coordinator", "worker"] },
-            "sessionId": { "type": "string" },
-            "attemptId": { "type": "string" }
+            "role": {
+              "enum": ["owner", "coordinator", "worker"]
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string"
+            }
           }
         },
-        "correlationId": { "type": "string" },
-        "kind": { "enum": ["note", "question", "error", "result", "decision"] },
-        "body": { "type": "string", "maxLength": 4096 },
-        "payload": { "type": ["object", "null"] },
-        "createdAt": { "$ref": "#/definitions/cursor" },
-        "ackedAt": { "type": ["integer", "null"] },
-        "ackedBy": { "type": ["object", "null"] }
+        "correlationId": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": ["note", "question", "error", "result", "decision"]
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "payload": {
+          "type": ["object", "null"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "ackedAt": {
+          "type": ["integer", "null"]
+        },
+        "ackedBy": {
+          "type": ["object", "null"]
+        }
       }
     },
     "workflowLaunch": {
@@ -720,16 +1140,39 @@
         "directory"
       ],
       "properties": {
-        "attemptId": { "type": "string" },
-        "receiptId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
-        "operationKey": { "type": "string", "maxLength": 128 },
-        "phase": { "enum": ["accepted", "dispatching", "created", "failed", "unknown"] },
-        "sessionId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
-        "workspace": { "enum": ["shared", "worktree"] },
-        "createdAt": { "$ref": "#/definitions/cursor" },
-        "code": { "type": ["string", "null"] },
-        "effectStarted": { "type": ["boolean", "null"] },
-        "directory": { "type": ["string", "null"] }
+        "attemptId": {
+          "type": "string"
+        },
+        "receiptId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "operationKey": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "phase": {
+          "enum": ["accepted", "dispatching", "created", "failed", "unknown"]
+        },
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "workspace": {
+          "enum": ["shared", "worktree"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "code": {
+          "type": ["string", "null"]
+        },
+        "effectStarted": {
+          "type": ["boolean", "null"]
+        },
+        "directory": {
+          "type": ["string", "null"]
+        }
       }
     },
     "workflowWakePolicy": {
@@ -1095,10 +1538,20 @@
       "type": "object",
       "required": ["id", "taskId", "ordinal", "sessionId", "state", "result", "validation"],
       "properties": {
-        "id": { "type": "string" },
-        "taskId": { "type": "string" },
-        "ordinal": { "type": "integer", "minimum": 1, "maximum": 16 },
-        "sessionId": { "type": "string" },
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sessionId": {
+          "type": "string"
+        },
         "state": {
           "enum": [
             "launching",
@@ -1111,18 +1564,45 @@
             "stopped"
           ]
         },
-        "result": { "type": ["object", "null"] },
-        "launch": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/workflowLaunch" }] },
-        "delivery": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/workflowDelivery" }] },
-        "validation": { "type": ["object", "null"] }
+        "result": {
+          "type": ["object", "null"]
+        },
+        "launch": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/workflowLaunch"
+            }
+          ]
+        },
+        "delivery": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/workflowDelivery"
+            }
+          ]
+        },
+        "validation": {
+          "type": ["object", "null"]
+        }
       }
     },
     "receipt": {
       "type": "object",
       "required": ["id", "operation", "phase", "sessionId", "result"],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
-        "operation": { "enum": ["create", "send", "interrupt", "stop"] },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "operation": {
+          "enum": ["create", "send", "interrupt", "stop"]
+        },
         "phase": {
           "enum": [
             "accepted",
@@ -1140,12 +1620,24 @@
             "stopped"
           ]
         },
-        "sessionId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
-        "result": { "type": "object" }
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "result": {
+          "type": "object"
+        }
       }
     },
-    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "cursor": { "type": "integer", "minimum": 0 },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
     "session": {
       "type": "object",
       "required": [
@@ -1160,17 +1652,43 @@
         "controllerId"
       ],
       "properties": {
-        "id": { "$ref": "#/definitions/id" },
-        "name": { "type": "string" },
-        "cwd": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "cols": { "type": "integer", "minimum": 10, "maximum": 300 },
-        "rows": { "type": "integer", "minimum": 2, "maximum": 150 },
-        "running": { "type": "boolean" },
-        "program": { "enum": ["shell", "claude", "codex", "gemini"] },
-        "groupId": { "type": ["string", "null"] },
-        "controllerId": { "type": ["integer", "null"] },
-        "uptimeSeconds": { "$ref": "#/definitions/cursor" }
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 150
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "program": {
+          "enum": ["shell", "claude", "codex", "gemini"]
+        },
+        "groupId": {
+          "type": ["string", "null"]
+        },
+        "controllerId": {
+          "type": ["integer", "null"]
+        },
+        "uptimeSeconds": {
+          "$ref": "#/definitions/cursor"
+        }
       }
     },
     "page": {
@@ -1186,15 +1704,870 @@
         "more"
       ],
       "properties": {
-        "format": { "const": "terminalReplay" },
-        "data": { "type": "string", "maxLength": 8192 },
-        "fromCursor": { "$ref": "#/definitions/cursor" },
-        "nextCursor": { "$ref": "#/definitions/cursor" },
-        "floorCursor": { "$ref": "#/definitions/cursor" },
-        "headCursor": { "$ref": "#/definitions/cursor" },
-        "gap": { "type": "boolean" },
-        "more": { "type": "boolean" }
+        "format": {
+          "const": "terminalReplay"
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "fromCursor": {
+          "$ref": "#/definitions/cursor"
+        },
+        "nextCursor": {
+          "$ref": "#/definitions/cursor"
+        },
+        "floorCursor": {
+          "$ref": "#/definitions/cursor"
+        },
+        "headCursor": {
+          "$ref": "#/definitions/cursor"
+        },
+        "gap": {
+          "type": "boolean"
+        },
+        "more": {
+          "type": "boolean"
+        }
       }
+    },
+    "workflowConstraintPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "acknowledgedRevision", "pending"],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "acknowledgedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "pending": {
+          "type": "boolean"
+        }
+      }
+    },
+    "workflowConstraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "text", "issuer", "createdAt"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "issuer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "workflowCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "ordinal",
+        "issuer",
+        "createdAt",
+        "sourceRunRevision",
+        "sourceCursor",
+        "digest",
+        "summary"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "issuer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceRunRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sourceCursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "maxLength": 2048
+            }
+          ]
+        }
+      }
+    },
+    "workflowContextMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sourceRunRevision",
+        "sourceCursor",
+        "digest",
+        "partCount",
+        "baselineDiffers",
+        "nativeEffectsRestored"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "enum": ["current", "historical"]
+        },
+        "sourceRunRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sourceCursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "partCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "baselineDiffers": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        },
+        "nativeEffectsRestored": {
+          "const": false
+        }
+      }
+    },
+    "workflowContextPart": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "data": {
+              "type": "object",
+              "required": ["id", "title", "goal", "revision", "state", "budget"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "goal": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "state": {
+                  "enum": [
+                    "draft",
+                    "active",
+                    "draining",
+                    "stopping",
+                    "stopped",
+                    "canceling",
+                    "canceled",
+                    "succeeded"
+                  ]
+                },
+                "budget": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "constraintPolicy"
+            },
+            "data": {
+              "$ref": "#/definitions/workflowConstraintPolicy"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "constraint"
+            },
+            "data": {
+              "$ref": "#/definitions/workflowConstraint"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "key",
+                "title",
+                "instruction",
+                "dependencies",
+                "state",
+                "dependencyState",
+                "attempts",
+                "currentAttempt",
+                "taskResult"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "key": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "instruction": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "state": {
+                  "enum": [
+                    "planned",
+                    "launching",
+                    "launchUnknown",
+                    "launchFailed",
+                    "assigned",
+                    "reported",
+                    "stopped",
+                    "succeeded",
+                    "failed",
+                    "canceled"
+                  ]
+                },
+                "dependencyState": {
+                  "enum": ["ready", "waiting"]
+                },
+                "attempts": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 16
+                },
+                "currentAttempt": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "ordinal", "sessionId", "state", "reportedOutcome"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "ordinal": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 16
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "state": {
+                          "enum": [
+                            "planned",
+                            "launching",
+                            "launchUnknown",
+                            "launchFailed",
+                            "assigned",
+                            "reported",
+                            "stopped",
+                            "succeeded",
+                            "failed",
+                            "canceled"
+                          ]
+                        },
+                        "reportedOutcome": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "enum": ["succeeded", "failed", "blocked", "canceled"]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "taskResult": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "enum": ["succeeded", "failed"]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "attempt"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "taskId",
+                "ordinal",
+                "sessionId",
+                "state",
+                "reportedOutcome",
+                "validationPassed",
+                "launchReceiptId",
+                "launchPhase",
+                "deliveryId",
+                "deliveryPhase",
+                "deliveryReceiptId",
+                "deliveryNativePhase"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "taskId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "ordinal": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 16
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "state": {
+                  "enum": [
+                    "planned",
+                    "launching",
+                    "launchUnknown",
+                    "launchFailed",
+                    "assigned",
+                    "reported",
+                    "stopped",
+                    "succeeded",
+                    "failed",
+                    "canceled"
+                  ]
+                },
+                "reportedOutcome": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "enum": ["succeeded", "failed", "blocked", "canceled"]
+                    }
+                  ]
+                },
+                "validationPassed": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "launchReceiptId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "launchPhase": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "deliveryId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "deliveryPhase": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "deliveryReceiptId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "deliveryNativePhase": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "decision"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "attemptId", "revision", "state", "audience", "expiresAt"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "attemptId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "state": {
+                  "enum": ["pending", "answered", "expired", "canceled"]
+                },
+                "audience": {
+                  "enum": ["owner", "coordinator"]
+                },
+                "expiresAt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "control"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "kind",
+                "state",
+                "sessionId",
+                "attemptId",
+                "phase",
+                "receiptId",
+                "operationKey",
+                "code"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "kind": {
+                  "enum": ["stop", "cancel"]
+                },
+                "state": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "sessionId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "attemptId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "receiptId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "operationKey": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "wakeBatch"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "policyId", "phase", "reason", "receiptId", "nativePhase"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "policyId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "phase": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                },
+                "receiptId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "nativePhase": {
+                  "type": "string",
+                  "maxLength": 128
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "nativeOperation"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["receiptId", "sessionId", "operation", "phase"],
+              "properties": {
+                "receiptId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "operation": {
+                  "enum": ["create", "send", "interrupt", "stop"]
+                },
+                "phase": {
+                  "type": "string",
+                  "maxLength": 128
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "automation"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "type", "enabled", "generation", "phase", "reason"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "type": {
+                  "enum": ["executor", "wakes"]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "phase": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "data"],
+          "properties": {
+            "kind": {
+              "const": "inbox"
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pendingCoordinatorMessages", "messageHead"],
+              "properties": {
+                "pendingCoordinatorMessages": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "messageHead": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

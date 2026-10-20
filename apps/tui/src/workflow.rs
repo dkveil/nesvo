@@ -8,6 +8,16 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Preserve owner-written constraints and explicitly acknowledge their revision.
+    Constraints {
+        #[command(subcommand)]
+        command: crate::workflow_constraints::Command,
+    },
+    /// Capture immutable metadata or read current context, without replaying effects.
+    Checkpoint {
+        #[command(subcommand)]
+        command: crate::workflow_checkpoints::Command,
+    },
     /// Configure delta-only host notifications to a managed coordinator.
     Wake {
         #[command(subcommand)]
@@ -193,6 +203,8 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Constraints { command } => command.machine(),
+            Self::Checkpoint { command } => command.machine(),
             Self::Executor { command } => command.machine(),
             Self::Wake { command } => command.machine(),
             Self::Deliver(args) => args.json,
@@ -220,6 +232,12 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Constraints { command } => Request::Constraints {
+                request: command.request()?,
+            },
+            Self::Checkpoint { command } => Request::Checkpoints {
+                request: command.request()?,
+            },
             Self::Wake { command } => Request::Wakes {
                 request: command.request(),
             },
@@ -463,6 +481,12 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Constraints {
+        request: crate::workflow_constraints::Request,
+    },
+    Checkpoints {
+        request: crate::workflow_checkpoints::Request,
+    },
     Wakes {
         request: crate::workflow_wakes::Request,
     },
@@ -624,6 +648,8 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         ));
     }
     let capability = match request["request"]["action"].as_str() {
+        Some("checkpoints") => Some("runCheckpoints"),
+        Some("constraints") => Some("runConstraints"),
         Some("launch") => Some("runLaunch"),
         Some("delivery") => Some("runDelivery"),
         Some("executor") => Some("runExecutor"),

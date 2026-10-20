@@ -143,8 +143,12 @@ disable/owner enable preserve authority and manual workers. Further scenarios
 cover delayed readiness with quick human takeover, no rearm on enable, bounded
 known-failure retries and no retry/capacity release for uncertain worktree effects.
 These controlled providers make no model calls; full original-provider orchestration,
-delta-only coordinator wakes, manual checkpoint constraints, job scheduling and
-complete recovery/mobile gates remain required harness work.
+job scheduling and complete recovery/mobile gates remain required harness work.
+The separate [wake policy](harness-wakes.md) provides delta-only coordinator
+notices; [owner constraints and checkpoints](harness-checkpoints.md) pause enabled
+generations when new manual text arrives. Context acknowledgement never reenables
+scheduling or rearms an existing delivery. Fresh task input includes current
+constraints; native and validation guards remain independent.
 
 Native input admission refreshes already received PTY evidence before each write,
 instead of relying on the last coalesced UI status tick. After an owned paste,
