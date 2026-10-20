@@ -42,6 +42,8 @@ mod provider_quota;
 mod provider_quota_runtime;
 mod pty;
 mod quota_contexts;
+mod quota_wake_runtime;
+mod quota_wakes;
 mod readiness;
 mod receipts;
 mod recipes;
@@ -407,6 +409,7 @@ async fn run(args: Args) -> Result<()> {
     tokio::spawn(job_timeout_runtime::run(state.clone(), event_log.clone()));
     tokio::spawn(notifications::run(state.clone()));
     let quota_runtime = provider_quota_runtime::Runtime::start(state.clone());
+    let quota_wake_runtime = quota_wake_runtime::Runtime::start(state.clone(), event_log.clone());
     let permits = Arc::new(Semaphore::new(16));
     println!("nesvo Rust host listening on {bind}:{actual_port}");
     println!("Workspace: {}", workspace.display());
@@ -439,6 +442,7 @@ async fn run(args: Args) -> Result<()> {
     // producer. Command checks still need the event journal to persist cleanup.
     state.lock().unwrap().begin_shutdown();
     quota_runtime.request_shutdown();
+    quota_wake_runtime.request_shutdown();
     job_runtime.request_shutdown();
     let (job_shutdown, webhook_shutdown) = tokio::join!(job_runtime.shutdown(), async {
         if let Some(listener) = webhooks {
@@ -451,6 +455,9 @@ async fn run(args: Args) -> Result<()> {
     });
     if !quota_runtime.shutdown().await {
         eprintln!("Provider quota observation cleanup is unconfirmed");
+    }
+    if !quota_wake_runtime.shutdown().await {
+        eprintln!("Quota wake dispatch cleanup is unconfirmed");
     }
     // Closed sessions may still be releasing ConPTY resources in background
     // workers. Keep the output dispatcher alive while they finish, without

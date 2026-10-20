@@ -228,6 +228,17 @@ Capabilities contain all four program IDs. Discovery inspects PATH once at start
 
 `providerLimits` retains its compatible installed-provider display array: `{id,status:"checking"|"ready"|"unavailable",windows:[{usedPercent,durationMins,resetsAt}]}`. Current sources are bounded Codex full app-server snapshots and the existing Claude quota-only status-line cache; Gemini explicitly has no implemented structured source. Stale or unavailable values clear from this live panel. Additive `providerQuotaObservations:true` advertises owner-only `{type:"getProviderQuota",program?:"codex"|"claude"|"gemini",refresh?:false}` and the `providerQuota` reply with detailed `providers` and nullable asynchronous `refresh` acceptance. `refresh:true` requires an explicit installed provider with a supported source. Revisions count every attempt; failures do not renew the last successful snapshot. Original cache age and monotonic read freshness remain separate. Metadata, backend usage permission and native-session account binding are distinct. See the [quota observation contract](harness-provider-quota.md) for exact bounds, fields and limitations. Owner diagnostics include `providerQuota`; scoped session diagnostics do not.
 
+Additive `durableQuotaWake:true` advertises owner-only `{type:"getQuotaWake",sessionId}`
+and the durable implementation of `{type:"setWake",sessionId,enabled}`. The getter
+returns `{type:"quotaWake",sessionId,quotaWake:null|view}`; the setter retains
+`{type:"wakeConfigured",sessionId,wakeAt}` and adds nullable `quotaWake`. Its view
+contains `id`, `sessionId`, `launchId`, `generation`, `phase`, nullable `reason`,
+nullable `predecessorId`, opaque `source:{readerId,contextId,accountFingerprint,revision,resetAt}`
+and nullable `operationId`/`operationPhase`. Reset uses Unix seconds, not a local
+elapsed clock. Older `quotaWake:true` alone does not advertise this contract.
+Reading/replaying receipts never dispatches a continuation. Restart pauses every
+retained arm rather than adopting another process. See [one-shot quota wake](harness-quota-wakes.md).
+
 The directory browser starts at the host workspace if `path` is omitted. Each response has the canonical absolute `path`, its optional `parent`, and up to 512 sorted child directories. The TUI sends a new request when the user opens a child or parent and applies only the matching `requestId`. Older hosts omit `directoryBrowser`; the TUI keeps the launch form open and asks for a host update instead of sending an unsupported command. Newly launched PTYs receive `NESVO_SESSION=1`; interactive TUI startup refuses to run inside one of those sessions, while `--list` remains available for scripts.
 
 ## Observed session status

@@ -41,6 +41,17 @@ pub(crate) struct View {
     pub scope: &'static str,
 }
 
+/// Private source evidence for a session-bound resume. Historical display data
+/// never supplies a current read start or renews a failed observation.
+pub(crate) struct ReadProof {
+    pub view: View,
+    pub started_elapsed_ms: Option<u64>,
+    pub effective_now_ms: Option<u64>,
+    pub known_context_id: Option<String>,
+    pub known_account_fingerprint: Option<String>,
+    pub identity_changed_revision: u64,
+}
+
 /// The caller supplies one random secret salt per host epoch. Neither the salt
 /// nor the unhashed account/context values are retained in a serializable view.
 pub(crate) struct Tracker {
@@ -54,12 +65,16 @@ struct Entry {
     latest: Option<Attempt>,
     successful: Option<Snapshot>,
     clock: Option<ClockAnchor>,
+    identity_context: Option<String>,
+    identity_account: Option<String>,
+    identity_changed_revision: u64,
 }
 
 struct Attempt {
     started_at_ms: u64,
     finished_elapsed_ms: u64,
     failure: Option<&'static str>,
+    known_context_id: Option<String>,
 }
 
 struct Snapshot {
@@ -102,6 +117,9 @@ impl Tracker {
                     latest: None,
                     successful: None,
                     clock: None,
+                    identity_context: None,
+                    identity_account: None,
+                    identity_changed_revision: 0,
                 });
             }
         }
@@ -127,25 +145,53 @@ impl Tracker {
         ) else {
             return;
         };
+        let context_id = observation
+            .context
+            .as_ref()
+            .filter(|context| valid_context(context))
+            .map(|context| {
+                fingerprint(
+                    &self.host_epoch_salt,
+                    b"context",
+                    &[&context.context_id, &context.codex_home],
+                )
+            });
+        let known_context_id = observation
+            .context
+            .as_ref()
+            .filter(|context| context.route.verdict != crate::usage::RouteVerdict::Unknown)
+            .and(context_id.clone());
+        if let Some(attempt) = &mut entry.latest {
+            attempt.known_context_id = known_context_id.clone();
+        }
+        if let Some(context) = &known_context_id {
+            if entry
+                .identity_context
+                .as_ref()
+                .is_some_and(|previous| previous != context)
+            {
+                entry.identity_changed_revision = entry.revision;
+            }
+            entry.identity_context = Some(context.clone());
+        }
         match observation.outcome {
             ReadOutcome::Failure(failure) => entry.fail(failure.code()),
             ReadOutcome::Snapshot(snapshot) => {
-                let context_id = observation
-                    .context
-                    .as_ref()
-                    .filter(|context| valid_context(context))
-                    .map(|context| {
-                        fingerprint(
-                            &self.host_epoch_salt,
-                            b"context",
-                            &[&context.context_id, &context.codex_home],
-                        )
-                    });
                 let account_fingerprint = snapshot
                     .account_id
                     .as_deref()
                     .filter(|id| !id.is_empty())
                     .map(|id| fingerprint(&self.host_epoch_salt, b"account", &[id]));
+                if let Some(account) = &account_fingerprint {
+                    if entry
+                        .identity_account
+                        .as_ref()
+                        .is_some_and(|previous| previous != account)
+                    {
+                        entry.identity_changed_revision = entry.revision;
+                    }
+                    entry.identity_account = Some(account.clone());
+                }
                 let complete = snapshot.complete
                     && snapshot.completeness.primary == WindowState::Complete
                     && snapshot.completeness.secondary == WindowState::Complete
@@ -234,6 +280,33 @@ impl Tracker {
             .map(|entry| entry.view(now_ms, elapsed_ms))
             .collect()
     }
+
+    pub fn read_proof(&mut self, now_ms: u64, elapsed_ms: u64) -> Option<ReadProof> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.program == Program::Codex)?;
+        let view = entry.view(now_ms, elapsed_ms);
+        let current = entry.successful.as_ref().filter(|snapshot| {
+            snapshot.revision == entry.revision
+                && entry
+                    .latest
+                    .as_ref()
+                    .is_some_and(|attempt| attempt.failure.is_none())
+        });
+        Some(ReadProof {
+            view,
+            started_elapsed_ms: current.map(|snapshot| snapshot.started_elapsed_ms),
+            effective_now_ms: entry.clock.and_then(|clock| clock.wall_at(elapsed_ms)),
+            known_context_id: entry
+                .latest
+                .as_ref()
+                .and_then(|attempt| attempt.known_context_id.clone()),
+            known_account_fingerprint: current
+                .and_then(|snapshot| snapshot.account_fingerprint.clone()),
+            identity_changed_revision: entry.identity_changed_revision,
+        })
+    }
 }
 
 impl Entry {
@@ -255,6 +328,7 @@ impl Entry {
             started_at_ms,
             finished_elapsed_ms,
             failure: None,
+            known_context_id: None,
         });
         let Some(read_duration) = finished_elapsed_ms.checked_sub(started_elapsed_ms) else {
             self.fail("clock_regressed");

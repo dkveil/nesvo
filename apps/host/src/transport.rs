@@ -327,6 +327,34 @@ pub async fn handle(
                             state.lock().unwrap().send(id,event);
                             continue;
                         }
+                        if matches!(command, Command::SetWake { .. } | Command::GetQuotaWake { .. }) {
+                            let prepared=state.lock().unwrap().event_log();
+                            let permit=event_gate.clone().try_acquire_owned();
+                            let state=state.clone();
+                            tokio::spawn(async move {
+                                let result=async {
+                                    let _permit=permit.map_err(|_|crate::api_error::Error::new("busy","Quota wake service is busy"))?;
+                                    let log=prepared?;
+                                    match command {
+                                        Command::SetWake {session_id,enabled} => crate::quota_wake_runtime::configure(state.clone(),log,id,session_id,enabled).await,
+                                        Command::GetQuotaWake {session_id} => {
+                                            if !matches!(state.lock().unwrap().operation_authority(id)?,crate::caller::Authority::Owner) {
+                                                return Err(crate::api_error::Error::new("forbidden","Only the owner may inspect quota wake bindings").into());
+                                            }
+                                            match log.quota_wakes(crate::quota_wakes::Work::Current(session_id.clone())).await? {
+                                                crate::quota_wakes::Reply::Current(view) => Ok(json!({"type":"quotaWake","sessionId":session_id,"quotaWake":view.map(|v|v.public())})),
+                                                _ => Err(anyhow!("Unexpected quota wake history reply")),
+                                            }
+                                        },
+                                        _=>unreachable!(),
+                                    }
+                                }.await;
+                                let mut event=match result {Ok(event)=>event,Err(error)=>json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("quota_wake_unconfirmed"),"message":if error.downcast_ref::<crate::api_error::Error>().is_some(){error.to_string()}else{"Quota wake outcome is unconfirmed; inspect its original receipt".into()}})};
+                                if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
+                                state.lock().unwrap().send(id,event);
+                            });
+                            continue;
+                        }
                         if let Command::Workflow{mut request}=command {
                             let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.workflow_actor(id,&mut request)?,state.operation_authority(id)?))})();
                             let permit=event_gate.clone().try_acquire_owned();

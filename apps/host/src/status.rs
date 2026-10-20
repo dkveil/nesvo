@@ -138,6 +138,31 @@ impl StatusTracker {
                 .as_ref()
                 .is_some_and(|parser| quota_screen(parser.screen()))
     }
+    pub(crate) fn quota_resume_editor(&self, after_paste: bool) -> bool {
+        if self.program != Program::Codex
+            || self.exited
+            || (self.program_status.is_some() && self.program_order >= self.lifecycle_order)
+        {
+            return false;
+        }
+        self.parser.as_ref().is_some_and(|parser| {
+            let screen = parser.screen();
+            let (row, _) = screen.cursor_position();
+            let (_, cols) = screen.size();
+            quota_screen(screen)
+                && cursor_has_prompt(screen, '›')
+                && screen
+                    .rows(0, cols)
+                    .nth(usize::from(row))
+                    .is_some_and(|line| {
+                        let text = line.trim();
+                        text == "›" || (after_paste && text == "› Continue the previous task.")
+                    })
+        })
+    }
+    pub(crate) fn semantic_revision(&self) -> u64 {
+        self.observation_order
+    }
 
     pub fn program_report(&mut self, report: Option<&crate::program_status::Report>, now: u64) {
         if self.exited {
@@ -636,6 +661,38 @@ mod tests {
         let mut shell = StatusTracker::new(Program::Shell, 24, 80, 0);
         shell.output("You've hit your usage limit", 1);
         assert!(!shell.rate_limited());
+    }
+    #[test]
+    fn quota_continuation_requires_current_empty_editor_not_banner_or_choice_dialog() {
+        let mut tracker = StatusTracker::new(Program::Codex, 24, 100, 0);
+        let draw = |text: &str| format!("\x1b[2J\x1b[HYou've hit your usage limit.\r\n{text}");
+        tracker.output(&draw("› "), 1);
+        assert!(tracker.quota_resume_editor(false));
+        tracker.output(&draw("› private human draft"), 2);
+        assert!(!tracker.quota_resume_editor(false));
+        assert!(!tracker.quota_resume_editor(true));
+        tracker.output(&draw("› Continue the previous task."), 3);
+        assert!(!tracker.quota_resume_editor(false));
+        assert!(tracker.quota_resume_editor(true));
+        tracker.output(&draw("› 1. Buy credits"), 4);
+        assert!(!tracker.quota_resume_editor(true));
+        tracker.output(&draw("› \x1b[?25l"), 5);
+        assert!(!tracker.quota_resume_editor(true));
+        tracker.output("\x1b[?25h\x1b[2J\x1b[H› ", 6);
+        assert!(!tracker.quota_resume_editor(false));
+        tracker.output(&draw("› "), 7);
+        let before = tracker.semantic_revision();
+        for report in [
+            "state=blocked:kind=permission",
+            "state=blocked:kind=question",
+            "state=blocked:kind=auth",
+            "state=working",
+        ] {
+            tracker.program_report(Some(&crate::program_status::parse(report).unwrap()), 8);
+            assert!(tracker.semantic_revision() > before);
+            assert!(!tracker.quota_resume_editor(false));
+            assert!(!tracker.quota_resume_editor(true));
+        }
     }
 
     const APPROVAL: &str = "\x1b[2J\x1b[HWould you like to run the following command?\r\n$ pwd\r\n› 1. Yes, proceed (y)\r\n  2. No, and tell Codex what to do differently (esc)\r\nPress enter to confirm or esc to cancel";

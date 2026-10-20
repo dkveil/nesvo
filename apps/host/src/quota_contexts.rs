@@ -17,7 +17,7 @@ pub(crate) struct ReaderSpec {
     pub home: Option<PathBuf>,
 }
 impl ReaderSpec {
-    fn normalized(mut self) -> Self {
+    pub(crate) fn normalized(mut self) -> Self {
         // Git and native validation use different Windows extended-path forms.
         // Match the exact display form also passed to the spawned CLI's cwd.
         self.directory = PathBuf::from(crate::process::display_path(&self.directory));
@@ -305,6 +305,25 @@ impl Registry {
             .view(now, elapsed)
             .into_iter()
             .next()
+    }
+    pub fn matching_spec(&self, id: &str, spec: &ReaderSpec) -> Option<bool> {
+        let spec = spec.clone().normalized();
+        self.slots
+            .iter()
+            .find(|slot| slot.id == id)
+            .map(|slot| slot.spec == spec)
+    }
+    pub fn read_proof(
+        &mut self,
+        id: &str,
+        now: u64,
+        elapsed: u64,
+    ) -> Option<(
+        crate::provider_quota::ReadProof,
+        Option<usage::RouteObservation>,
+    )> {
+        let slot = self.slots.iter_mut().find(|slot| slot.id == id)?;
+        Some((slot.tracker.read_proof(now, elapsed)?, slot.route.clone()))
     }
     pub fn public_view(&mut self, id: &str, now: u64, elapsed: u64) -> Option<serde_json::Value> {
         let view = self.view(id, now, elapsed)?;

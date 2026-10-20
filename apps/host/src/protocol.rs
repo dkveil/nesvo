@@ -70,6 +70,9 @@ pub enum Command {
         session_id: String,
         enabled: bool,
     },
+    GetQuotaWake {
+        session_id: String,
+    },
     CancelSchedule {
         id: String,
     },

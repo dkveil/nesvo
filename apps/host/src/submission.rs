@@ -18,6 +18,9 @@ pub struct Transition {
     pub result: Value,
 }
 pub struct Pending {
+    pub quota_resume: Option<crate::quota_wakes::Arm>,
+    pub quota_sequence: Option<u64>,
+    pub quota_semantic_revision: Option<u64>,
     pub authority: crate::caller::Authority,
     pub claim: Claim,
     pub canceled: watch::Sender<bool>,
@@ -126,6 +129,14 @@ impl Correlation {
     /// Explain unmatched pickup without exposing either fingerprint or prompt.
     pub fn diagnostic(&self) -> Value {
         json!({"closed":self.closed,"matchedBy":self.matched_by,"lastPromptSequence":self.last_prompt.map(|p|p.0),"lastPromptMatched":self.last_prompt.map(|p|p.1)})
+    }
+    pub(crate) fn can_resume_after_quota(&self, identity: &Identity) -> bool {
+        // Only the caller's current explicit quota/editor proof permits this
+        // supersession. Codex 0.156 has no documented StopFailure hook.
+        !self.closed
+            && self.turn.is_some()
+            && self.launch == identity.launch_id
+            && self.generation == identity.generation
     }
 }
 

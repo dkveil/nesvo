@@ -79,17 +79,27 @@ historically running native session, reserve provider capacity, launch a job or
 authorize continuation. Jobs can still be refused by the original provider.
 The separate explicit [configured-account job policy](harness-quota-jobs.md)
 uses this evidence together with route inspection and final native checks.
-Legacy direct-PTY wake still has its separate receipt-backed acceptance gap.
+The separate [one-shot quota continuation](harness-quota-wakes.md) binds an
+explicit arm to the actual native launch and uses durable send receipts.
 
 Raw account IDs, home directories, argv, paths and provider errors are never in
 this view. `accountFingerprint` and `contextId` are opaque HMAC values scoped to
 one host epoch, not portable identities or credentials. Nothing restores quota
 authority across a host restart.
 
-The existing explicit quota wake now disarms on successful human acquisition,
-known reader account/context changes and host shutdown, including acquire/release without typing. A failed quota read
-cannot refresh its legacy freshness timestamp. Its existing volatile/direct-PTY
-continuation is not the durable receipt-backed quota queue required by full F44.
+Explicit quota wake disarms on human acquisition, known matching-reader identity
+changes and shutdown, including acquire/release without typing. It uses a
+one-shot durable receipt rather than the former volatile direct-PTY write.
+Full F44 still requires the remaining provider integrations and acceptance gates.
+
+Owner session diagnostics additionally expose `nativeQuotaCallback` when the
+launch-owned Claude receiver has been explicitly supplied with statusline data.
+Only the already-bound root conversation/generation can write its bounded
+singleton snapshot. Optional windows remain independent; malformed/missing input
+does not renew prior windows. `backendFreshness:"unknown"`, nullable account and
+permission fields explicitly prevent treating callback receipt time as a fresh
+backend read. No automatic producer installation or global settings mutation is
+performed. The existing global cache remains the compatible display source.
 
 No dependency was added. Controlled native acceptance uses private Node RPC/PTY
 fixtures and the official MCP SDK, not original model calls or user settings.

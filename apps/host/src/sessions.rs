@@ -21,6 +21,10 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, watch};
+#[path = "quota_wake_session.rs"]
+mod quota_wake_session;
+#[path = "session_quota.rs"]
+pub(crate) mod session_quota;
 
 #[derive(Clone)]
 pub struct Client {
@@ -63,6 +67,8 @@ impl ControlLease {
 }
 
 struct Session {
+    quota_binding: Option<session_quota::LaunchBinding>,
+    quota_wake: Option<crate::quota_wakes::Arm>,
     claude_quota: Option<crate::claude_quota::Observation>,
     model_selection: crate::launch_profile::Selection,
     harness_enabled: bool,
@@ -82,6 +88,7 @@ struct Session {
     readiness: crate::readiness::Tracker,
     turn: crate::turns::Tracker,
     pending_input: Option<crate::submission::Pending>,
+    quota_predecessor: Option<crate::submission::Pending>,
     human_input_dirty: bool,
     human_control_epoch: u64,
     terminal_protocol: crate::terminal_protocol::Decoder,
@@ -443,12 +450,6 @@ impl State {
         }
     }
     pub fn observe_codex_quota(&mut self, observation: usage::CodexObservation) {
-        let previous_identity = self
-            .provider_quota
-            .view(now_millis(), crate::event_log::monotonic_millis())
-            .into_iter()
-            .find(|view| view.program == Program::Codex)
-            .map(|view| (view.context_id, view.account_fingerprint));
         self.limits_read_at = match &observation.outcome {
             usage::ReadOutcome::Snapshot(snapshot)
                 if snapshot.complete
@@ -464,25 +465,8 @@ impl State {
             _ => 0,
         };
         self.provider_quota.apply_codex(observation);
-        let identity = self
-            .provider_quota
-            .view(now_millis(), crate::event_log::monotonic_millis())
-            .into_iter()
-            .find(|view| view.program == Program::Codex)
-            .map(|view| (view.context_id, view.account_fingerprint));
-        if identity != previous_identity {
-            let mut changed = false;
-            for session in self
-                .sessions
-                .values_mut()
-                .filter(|session| session.info.program == Program::Codex)
-            {
-                changed |= session.wake_at.take().is_some();
-            }
-            if changed {
-                self.broadcast_list();
-            }
-        }
+        // The ambient display reader is not authority over another session's
+        // configured context. Each armed wake checks its exact pinned reader.
         self.quota_read_finished(Program::Codex);
         self.refresh_quota_projection();
     }
@@ -1321,6 +1305,7 @@ impl State {
         event["providerQuotaObservations"] = true.into();
         event["providerQuotaContexts"] = true.into();
         event["jobQuotaAdmission"] = self.event_log.is_some().into();
+        event["durableQuotaWake"] = self.event_log.is_some().into();
         event["domainEvents"] = self.event_log.is_some().into();
         event["operationReceipts"] = self.event_log.is_some().into();
         event["promptReceipts"] = self.event_log.is_some().into();
@@ -1523,6 +1508,7 @@ impl State {
                 }
                 info["rateLimited"] = json!(session.status.rate_limited());
                 info["wakeAt"] = json!(session.wake_at);
+                info["quotaWakeId"] = json!(session.quota_wake.as_ref().map(|arm| &arm.id));
                 info
             })
             .collect();
@@ -1625,61 +1611,18 @@ impl State {
         Some(event)
     }
 
+    // The status tick never sends input. The durable quota runtime owns wakes.
     fn wake_after_reset(&mut self) -> bool {
-        if self.shutting_down {
-            return false;
-        }
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::event_log::monotonic_millis();
         let mut changed = false;
         for session in self.sessions.values_mut() {
             if session
-                .wake_at
-                .is_some_and(|at| now.saturating_sub(at) > 300)
+                .quota_wake
+                .as_ref()
+                .is_some_and(|arm| now > arm.proof.reset_elapsed_ms.saturating_add(300_000))
             {
                 session.wake_at = None;
                 changed = true;
-            }
-        }
-        if now - self.limits_read_at > 180 {
-            return changed;
-        }
-        let Some(provider) = self
-            .provider_limits
-            .iter()
-            .find(|p| p.id == Program::Codex && p.status == "ready")
-        else {
-            return changed;
-        };
-        let reset_available = provider.windows.iter().any(|w| {
-            w.duration_mins == 300 && w.used_percent < 90 && w.resets_at.is_some_and(|at| at > now)
-        }) && provider.windows.iter().all(|w| w.used_percent < 100);
-        if !reset_available {
-            return changed;
-        }
-        for session in self.sessions.values_mut() {
-            if let Some(at) = session.wake_at
-                && now >= at
-                && self.limits_read_at >= at
-            {
-                // A fresh reading after reset is mandatory. Never type into a busy agent.
-                if session.info.running
-                    && session.info.program == Program::Codex
-                    && session.status.rate_limited()
-                    && session.status.status().state == crate::status::StatusState::Blocked
-                    && session.controller.is_none()
-                    && !session.human_input_dirty
-                    && session.pending_input.is_none()
-                {
-                    session.wake_at = None;
-                    if session
-                        .pty
-                        .send_input("Continue the previous task.\r".into())
-                        .is_ok()
-                    {
-                        session.status.input(now_millis());
-                    }
-                    changed = true;
-                }
             }
         }
         changed
@@ -2272,6 +2215,9 @@ impl State {
         })?;
         let (canceled, cancellation) = watch::channel(false);
         session.pending_input = Some(crate::submission::Pending {
+            quota_resume: None,
+            quota_sequence: None,
+            quota_semantic_revision: None,
             authority: authority.clone(),
             claim,
             canceled,
@@ -2307,6 +2253,7 @@ impl State {
             .map(|pending| pending.authority.clone())
             .ok_or_else(|| Error::new("submission_preempted", "Submission is no longer active"))?;
         self.authorize_automation(&authority, id)?;
+        let quota_resume = self.guard_quota_submission(id, operation)?;
         let session = self
             .sessions
             .get_mut(id)
@@ -2371,7 +2318,8 @@ impl State {
                 ));
             }
         }
-        if session.info.program != Program::Shell
+        if !quota_resume
+            && session.info.program != Program::Shell
             && (!matches!(
                 session.status.status().state,
                 crate::status::StatusState::Idle | crate::status::StatusState::Done
@@ -2414,7 +2362,9 @@ impl State {
                 fence.map(|batch| (batch.identity.launch_id.clone(), batch.identity.generation));
         }
         pending.queued = true;
-        session.wake_at = None;
+        if !quota_resume || text.is_none() {
+            session.wake_at = None;
+        }
         session.status.input(now_millis());
         Ok(answer)
     }
@@ -2438,6 +2388,13 @@ impl State {
                 session.human_input_dirty = true;
             }
             session.pending_input = None;
+            if let Some(original) = session.quota_predecessor.take() {
+                self.submission_updates.push(crate::submission::Transition {
+                    claim: original.claim,
+                    phase: "unknown",
+                    result: json!({"code":"quota_resume_unconfirmed","supersededBy":operation,"taskResult":null}),
+                });
+            }
         }
     }
     pub fn launch(
@@ -2545,6 +2502,16 @@ impl State {
                     .unwrap_or_default(),
             },
         )?;
+        session.quota_binding = if spec.program == Program::Codex {
+            self.launchers
+                .probe_command(Program::Codex)
+                .zip(self.codex_home(&cwd))
+                .and_then(|(command, home)| {
+                    session_quota::LaunchBinding::capture(command, cwd.clone(), home).ok()
+                })
+        } else {
+            None
+        };
         session.info.group_id = spec.group_id.clone();
         session.model_selection = selection;
         session.info.parent_session_id = spec.parent_session_id.clone();
@@ -2769,45 +2736,13 @@ impl State {
                 );
                 self.broadcast_schedules();
             }
-            Command::SetWake {
-                session_id,
-                enabled,
-            } => {
-                let now = chrono::Utc::now().timestamp();
-                let reset = if enabled {
-                    ensure!(
-                        now - self.limits_read_at <= 180,
-                        "Quota reading is stale. Wait for a fresh reading."
-                    );
-                    Some(self.provider_limits.iter().find(|p| p.id == Program::Codex && p.status == "ready")
-                        .and_then(|p| p.windows.iter().find(|w| w.duration_mins == 300 && w.used_percent >= 90))
-                        .and_then(|w| w.resets_at).filter(|at| *at > now)
-                        .ok_or_else(|| anyhow!("Wake is offered at 90% of a known 5-hour limit with a reset time."))?)
-                } else {
-                    None
-                };
-                let session = self
-                    .sessions
-                    .get_mut(&session_id)
-                    .ok_or_else(|| anyhow!("Session no longer exists."))?;
-                ensure!(
-                    session
-                        .controller
-                        .as_ref()
-                        .is_none_or(|lease| lease.client_id == client_id),
-                    "Another client controls this session."
-                );
-                ensure!(
-                    !enabled || (session.info.running && session.info.program == Program::Codex),
-                    "Reliable quota wake is currently supported for native Codex sessions only."
-                );
-                session.wake_at = reset;
-                self.respond(
-                    client_id,
-                    json!({"type":"wakeConfigured", "sessionId":session_id, "wakeAt":reset}),
-                    request_id,
-                );
-                self.broadcast_list();
+            Command::SetWake { .. } => {
+                return Err(anyhow!("Quota wake requires asynchronous durable dispatch"));
+            }
+            Command::GetQuotaWake { .. } => {
+                return Err(anyhow!(
+                    "Quota wake observation requires asynchronous journal access"
+                ));
             }
             Command::ListSchedules => {
                 self.schedule_watchers.insert(client_id);
@@ -3328,6 +3263,8 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        quota_binding: None,
+        quota_wake: None,
         claude_quota: None,
         model_selection: Default::default(),
         harness_enabled: identity.harness,
@@ -3346,6 +3283,7 @@ fn spawn_session(
         readiness: crate::readiness::Tracker::new(program),
         turn: Default::default(),
         pending_input: None,
+        quota_predecessor: None,
         human_input_dirty: false,
         human_control_epoch: 0,
         terminal_protocol: Default::default(),
@@ -3577,6 +3515,25 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         && let Some((phase, result)) =
                                             correlation.observe(&batch.identity, &event)
                                     {
+                                        if phase == "received"
+                                            && let Some(arm) = &pending.quota_resume
+                                            && let Some(mut original) =
+                                                session.quota_predecessor.take()
+                                            && let Some(correlation) = &mut original.correlation
+                                            && let Some(("interrupted", mut result)) =
+                                                correlation.observe(&batch.identity, &event)
+                                        {
+                                            result["code"] = json!("quota_resumed");
+                                            result["quotaWakeId"] = json!(arm.id);
+                                            result["supersededBy"] = json!(pending.claim.id);
+                                            submission_updates.push(
+                                                crate::submission::Transition {
+                                                    claim: original.claim,
+                                                    phase: "interrupted",
+                                                    result,
+                                                },
+                                            );
+                                        }
                                         submission_updates.push(crate::submission::Transition {
                                             claim: pending.claim.clone(),
                                             phase,
@@ -4041,7 +3998,7 @@ mod tests {
     }
 
     #[test]
-    fn wake_requires_fresh_ninety_percent_five_hour_reading() {
+    fn legacy_wake_command_requires_the_durable_async_path() {
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
         let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
         let (client_events, _) = mpsc::channel(16);
@@ -4054,54 +4011,21 @@ mod tests {
                 authority: Default::default(),
             },
         );
-        let now = chrono::Utc::now().timestamp();
-        state.provider_limits = vec![ProviderLimit {
-            id: Program::Codex,
-            status: "ready",
-            windows: vec![LimitWindow {
-                used_percent: 89,
-                duration_mins: 300,
-                resets_at: Some(now + 60),
-            }],
-        }];
-        state.limits_read_at = now;
         let (events, _) = mpsc::channel(1);
-        let command = || Command::SetWake {
-            session_id: "absent".into(),
-            enabled: true,
-        };
-        assert!(
-            state
-                .command(1, command(), None, &events)
-                .unwrap_err()
-                .to_string()
-                .contains("90%")
-        );
-        state.provider_limits[0].windows[0].used_percent = 90;
-        assert!(
-            state
-                .command(1, command(), None, &events)
-                .unwrap_err()
-                .to_string()
-                .contains("Session no longer exists")
-        );
-        state.limits_read_at = now - 181;
-        assert!(
-            state
-                .command(1, command(), None, &events)
-                .unwrap_err()
-                .to_string()
-                .contains("stale")
-        );
-        state.limits_read_at = now;
-        state.provider_limits[0].windows[0].duration_mins = 10080;
-        assert!(
-            state
-                .command(1, command(), None, &events)
-                .unwrap_err()
-                .to_string()
-                .contains("90%")
-        );
+        for enabled in [true, false] {
+            let error = state
+                .command(
+                    1,
+                    Command::SetWake {
+                        session_id: "absent".into(),
+                        enabled,
+                    },
+                    None,
+                    &events,
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("asynchronous durable"));
+        }
     }
     #[test]
     fn quota_wake_never_types_over_a_human_draft_or_unsettled_submission() {
@@ -4160,6 +4084,9 @@ mod tests {
         session.human_input_dirty = false;
         let (canceled, _) = watch::channel(false);
         session.pending_input = Some(crate::submission::Pending {
+            quota_resume: None,
+            quota_sequence: None,
+            quota_semantic_revision: None,
             authority: Default::default(),
             claim: crate::submission::Claim {
                 id: "owned-pending".into(),
@@ -4268,7 +4195,7 @@ mod tests {
     }
 
     #[test]
-    fn quota_wake_known_reader_identity_switch_disarms_before_any_native_write() {
+    fn ambient_reader_identity_cannot_replace_exact_session_wake_evidence() {
         let (mut state, id, trace, _output) = quota_wake_input_fixture();
         state.provider_quota = crate::provider_quota::Tracker::new(&[Program::Codex], [7; 32]);
         let observation = |account: &str| {
@@ -4320,7 +4247,10 @@ mod tests {
             "An unchanged reader does not cancel explicit intent"
         );
         state.observe_codex_quota(observation("owned-reader-B"));
-        assert!(state.sessions[&id].wake_at.is_none());
+        assert_eq!(
+            state.sessions[&id].wake_at, armed,
+            "An unrelated ambient reader cannot authorize or revoke a captured session context"
+        );
         assert!(!state.wake_after_reset());
         assert!(matches!(
             trace.try_recv(),

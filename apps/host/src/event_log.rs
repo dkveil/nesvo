@@ -158,6 +158,9 @@ mod journal_concurrency_tests;
 #[path = "orchestration_tests.rs"]
 mod orchestration_tests;
 #[cfg(test)]
+#[path = "quota_wakes_tests.rs"]
+mod quota_wakes_tests;
+#[cfg(test)]
 #[path = "workflow_budget_tests.rs"]
 mod workflow_budget_tests;
 #[cfg(test)]
@@ -203,6 +206,8 @@ impl Store {
           CREATE TABLE IF NOT EXISTS domain_event_cursor(id INTEGER PRIMARY KEY CHECK(id=1),head INTEGER NOT NULL,floor INTEGER NOT NULL);
           INSERT OR IGNORE INTO domain_event_cursor VALUES(1,0,0);")?;
         crate::receipts::initialize(&mut connection)?;
+        crate::quota_wakes::initialize(&connection)?;
+        crate::quota_wakes::recover(&mut connection)?;
         crate::orchestration::initialize(&connection)?;
         crate::workflow_launches::recover(&mut connection)?;
         crate::workflow_delivery::recover(&mut connection)?;
@@ -331,6 +336,10 @@ impl Store {
 }
 
 enum Work {
+    QuotaWakes {
+        work: crate::quota_wakes::Work,
+        reply: oneshot::Sender<Result<crate::quota_wakes::Reply>>,
+    },
     ExternalTrigger {
         inbound: crate::job_triggers::Inbound,
         reply: oneshot::Sender<Result<crate::job_triggers::Acceptance>>,
@@ -523,6 +532,19 @@ impl Service {
             .map_err(|_| anyhow!("Wake store is closed"))?;
         answer.await.map_err(|_| {
             anyhow!("Wake outcome was not confirmed; recover the original workflow key")
+        })?
+    }
+    pub async fn quota_wakes(
+        &self,
+        work: crate::quota_wakes::Work,
+    ) -> Result<crate::quota_wakes::Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::QuotaWakes { work, reply })
+            .await
+            .map_err(|_| anyhow!("Quota wake journal is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!("Quota wake outcome is unconfirmed; inspect its original receipt")
         })?
     }
     pub async fn guard_run_dispatch(&self, session_id: &str, operation_id: &str) -> Result<()> {
@@ -764,6 +786,12 @@ impl Service {
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
+                        Work::QuotaWakes { work, reply } => {
+                            let result = crate::quota_wakes::handle(&mut store.0, work);
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
                         Work::Wakes { work, reply } => {
                             let result = crate::workflow_wakes::execute(
                                 &mut store.0,
@@ -838,6 +866,14 @@ impl Service {
                                     &operation_id,
                                     crate::status::now_millis(),
                                 )
+                            })
+                            .and_then(|_| {
+                                crate::quota_wakes::guard_dispatch(
+                                    &store.0,
+                                    &session_id,
+                                    &operation_id,
+                                )
+                                .map(|_| ())
                             });
                             record_storage_failure(&result, &worker_failures, &changed_tx);
                             notify_head(&store, &changed_tx);

@@ -434,6 +434,68 @@ pub(crate) async fn dispatch_send(
     authority: crate::caller::Authority,
     task_epoch: Option<u64>,
 ) -> Result<Receipt> {
+    dispatch_send_inner(
+        state,
+        log,
+        issuer,
+        receipt,
+        prompt,
+        authority,
+        SendContext {
+            task_epoch,
+            quota: None,
+        },
+    )
+    .await
+}
+pub(crate) async fn dispatch_quota_resume(
+    state: Arc<Mutex<State>>,
+    log: Service,
+    dispatch: crate::quota_wakes::Dispatch,
+) -> Result<Receipt> {
+    match log
+        .quota_wakes(crate::quota_wakes::Work::Guard {
+            session_id: dispatch.arm.session_id.clone(),
+            operation_id: dispatch.receipt.id.clone(),
+        })
+        .await?
+    {
+        crate::quota_wakes::Reply::Guarded(Some(arm)) if arm.id == dispatch.arm.id => {}
+        _ => {
+            return Err(crate::api_error::Error::new(
+                "quota_wake_paused",
+                "Quota wake dispatch is no longer authorized",
+            )
+            .into());
+        }
+    }
+    dispatch_send_inner(
+        state,
+        log,
+        "quota-wake".into(),
+        dispatch.receipt,
+        "Continue the previous task.".into(),
+        crate::caller::Authority::Owner,
+        SendContext {
+            task_epoch: None,
+            quota: Some(dispatch.arm),
+        },
+    )
+    .await
+}
+struct SendContext {
+    task_epoch: Option<u64>,
+    quota: Option<crate::quota_wakes::Arm>,
+}
+async fn dispatch_send_inner(
+    state: Arc<Mutex<State>>,
+    log: Service,
+    issuer: String,
+    receipt: Receipt,
+    prompt: String,
+    authority: crate::caller::Authority,
+    context: SendContext,
+) -> Result<Receipt> {
     let session_id = receipt.session_id.clone();
     let claim = log
         .claim(issuer.clone(), receipt.id)
@@ -449,10 +511,14 @@ pub(crate) async fn dispatch_send(
     let result = async {
         let (path, mut cancellation) = {
             let mut state = state.lock().unwrap();
-            if let Some(before) = task_epoch {
+            if let Some(before) = context.task_epoch {
                 state.check_task_delivery(&session_id, &authority, before)?;
             }
-            state.begin_submission(&session_id, reference, &prompt, &authority)?
+            if let Some(arm) = &context.quota {
+                state.begin_quota_submission(arm, reference, &prompt)?
+            } else {
+                state.begin_submission(&session_id, reference, &prompt, &authority)?
+            }
         };
         stage = SubmissionStage::PasteFence;
         let (answer, _) = enqueue_fenced(
