@@ -2129,3 +2129,14 @@ the remaining F01–F44, job UI, original-provider or device acceptance gates.
 
 This is the occurrence-cancellation slice. F28 retry/backoff, hard execution timeout,
 history-preserving session cleanup and the other F01–F44/plugin gates remain open.
+
+Cancellation reconciliation follow-up: if dispatch never obtained its own native
+control, an existing explicit stop/cancel can still supply exact termination
+evidence. Only the latest completed control together with a stopped/canceled
+bound run can settle the occurrence; a stop request or stale completed control
+after resume is insufficient. This reads existing proof and never resends a
+signal. The immutable original cancellation/key remains unchanged and current
+history points to the observed control. An additional store test covers both
+stop/cancel, pending exit, queue release and no duplicate control. Windows fmt,
+warnings-denied Clippy, all 385 unit tests and both native cancellation scenarios
+passed (9.28 seconds for the two SDK cases). Final platform CI remains pending.

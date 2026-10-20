@@ -892,3 +892,78 @@ fn a_new_cancellation_cannot_rewrite_a_terminal_bound_run() {
         assert!(current(&mut store, &job, &occurrence)["cancellation"].is_null());
     }
 }
+
+#[test]
+fn existing_owner_control_can_reconcile_cancellation_only_after_exact_exit_proof() {
+    for kind in [
+        workflow_controls::Kind::Stop,
+        workflow_controls::Kind::Cancel,
+    ] {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let job = create(&mut store, None);
+        let occurrence = manual(&mut store, &job, "first");
+        assert_eq!(poll(&mut store, NOW).len(), 1);
+        let run = bind(&mut store, &occurrence, 1);
+        let accepted = cancel(&mut store, &job, &occurrence);
+        let claim = cancellations(&mut store, NOW + 150).pop().unwrap();
+        job_definitions::work(
+            &mut store.0,
+            Work::CancelFinished {
+                claim,
+                result: None,
+            },
+            NOW + 160,
+        )
+        .unwrap();
+        let sibling = manual(&mut store, &job, "second");
+        let (control, native) = native_control(&mut store, &run, "owner-reconciliation", kind);
+        finish_native_target(&mut store, &native, false);
+        assert!(cancellations(&mut store, NOW + 230).is_empty());
+        assert!(poll(&mut store, NOW + 230).is_empty());
+        let pending = current(&mut store, &job, &occurrence);
+        assert_eq!(pending["state"], "reconcile");
+        assert!(pending["finishedAt"].is_null());
+        workflow_controls::execute(
+            &mut store.0,
+            workflow_controls::Work::Observe {
+                actor: owner(),
+                run_id: run["run"]["id"].as_str().unwrap().into(),
+                control_id: native.id,
+                exited: vec!["worker".into()],
+                unavailable: vec![],
+            },
+            NOW + 240,
+        )
+        .unwrap();
+        assert!(cancellations(&mut store, NOW + 250).is_empty());
+        let settled = current(&mut store, &job, &occurrence);
+        assert_eq!(settled["state"], "canceled");
+        assert_eq!(settled["cancellation"]["state"], "completed");
+        assert_eq!(
+            settled["cancellation"]["controlId"],
+            control["control"]["id"]
+        );
+        assert_eq!(settled["reason"], "run_termination_observed");
+        assert!(settled["finishedAt"].is_number());
+        assert_eq!(
+            store
+                .0
+                .query_row("SELECT count(*) FROM workflow_controls", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            request(
+                &mut store,
+                cancel_request(&job, &occurrence, "cancel"),
+                NOW + 300
+            )
+            .unwrap(),
+            accepted
+        );
+        let released = poll(&mut store, NOW + 300);
+        assert_eq!(released.len(), 1);
+        assert_eq!(released[0].id, sibling["id"]);
+    }
+}

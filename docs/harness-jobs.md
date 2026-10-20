@@ -133,6 +133,13 @@ occurrence reads show later observations. Replay and read requests never resend
 native stop effects. After an uncertain outcome, inspect those original records
 instead of issuing a fresh run or cancellation key automatically.
 
+An uncertain cancellation can also settle when a separate explicit owner run
+control provides confirmed termination of the exact bound run. The latest control
+must be completed and the run must be stopped/canceled; `stopRequested` is
+insufficient. Current cancellation then exposes that existing `controlId` and
+`reason:run_termination_observed`, retaining its original requested `controlKey`
+and immutable acceptance. Observation never dispatches an additional stop.
+
 ## Misfires and overlap
 
 - `misfire:skip` accepts normal polling lateness up to five seconds; later due

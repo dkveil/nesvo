@@ -155,6 +155,25 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
         tx.execute("UPDATE harness_job_cancellations SET state=?2,control_id=?3,reason=?4,observed_at=CASE WHEN state<>?2 OR control_id IS NOT ?3 OR reason IS NOT ?4 THEN ?5 ELSE observed_at END WHERE occurrence_id=?1",params![occurrence,state,control,reason,now as i64])?;
         job_definitions::transition(tx, &occurrence, phase, Some(reason), finished, now)?;
     }
+    // Another explicit owner control may have stopped this exact run while our
+    // admission was waiting or uncertain. Its latest completed control and
+    // terminal run state are exit evidence; neither alone is sufficient.
+    let observed = {
+        let mut q=tx.prepare("SELECT c.occurrence_id,w.id FROM harness_job_cancellations c JOIN harness_job_occurrences o ON o.id=c.occurrence_id JOIN workflow_runs r ON r.id=o.run_id JOIN workflow_controls w ON w.id=(SELECT id FROM workflow_controls WHERE run_id=o.run_id ORDER BY rowid DESC LIMIT 1) WHERE c.token IS NULL AND c.state NOT IN ('completed','abandoned','awaitingPrecheck') AND r.state IN ('canceled','stopped') AND w.state='completed'")?;
+        q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (occurrence, control) in observed {
+        tx.execute("UPDATE harness_job_cancellations SET state='completed',control_id=?2,reason='run_termination_observed',observed_at=?3 WHERE occurrence_id=?1",params![occurrence,control,now as i64])?;
+        job_definitions::transition(
+            tx,
+            &occurrence,
+            "canceled",
+            Some("run_termination_observed"),
+            true,
+            now,
+        )?;
+    }
     // A dispatch error before any control acceptance is still not exit proof.
     let unmatched = {
         let mut q = tx.prepare("SELECT o.id FROM harness_job_occurrences o JOIN harness_job_cancellations c ON c.occurrence_id=o.id WHERE c.state='unconfirmed' AND c.control_id IS NULL AND o.state='canceling'")?;
