@@ -3,8 +3,10 @@
 `workflowInbox:true` adds addressed messages to the existing authenticated
 workflow API. Messages belong to a durable run, with one coordinator mailbox
 and one mailbox per worker attempt. These are retained host records, not terminal
-input. Reading, sending and acknowledging never dispatch a prompt, approve a
-permission request, validate a result or wake a model.
+input. Inbox operations alone never dispatch a prompt, approve a permission
+request or validate a result. The separate, explicit [wake policy](harness-wakes.md)
+can notify a live coordinator about relevant new message references; it never
+ACKs them automatically. The policy is disabled by default.
 
 ## CLI and MCP
 
@@ -126,6 +128,7 @@ subprocesses and controlled Claude-compatible PTYs, without model calls. It
 restarts an MCP consumer, leaves a result pending while the coordinator is
 working, checks that inbox delivery does not alter terminal replay, and confirms
 owner access after coordinator exit. These checks do not establish production
-provider/model orchestration or full native-process recovery. Automatic native
-dispatch/wakes (F14/F26), native permission bridging, replacement-process adoption
-(F41) and TUI/mobile inbox views remain separate work.
+provider/model orchestration or full native-process recovery. The separate
+[executor](harness-executor.md) and [wake policy](harness-wakes.md) provide guarded
+native dispatch. Original-provider acceptance, native permission bridging,
+replacement-process adoption (F41) and TUI/mobile inbox views remain open.

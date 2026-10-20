@@ -39,8 +39,58 @@
                 {
                   "required": [
                     "run",
-                    "executor"
+                    "wakePolicy",
+                    "notices",
+                    "pendingCount",
+                    "nextCursor",
+                    "more"
                   ],
+                  "properties": {
+                    "run": {
+                      "type": "object"
+                    },
+                    "wakePolicy": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/definitions/workflowWakePolicy"
+                        }
+                      ]
+                    },
+                    "notices": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/workflowWakeNotice"
+                      }
+                    },
+                    "pendingCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "nextCursor": {
+                      "$ref": "#/definitions/cursor"
+                    },
+                    "more": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "required": ["run", "wakeBatch"],
+                  "properties": {
+                    "run": {
+                      "type": "object"
+                    },
+                    "wakeBatch": {
+                      "$ref": "#/definitions/workflowWakeBatch"
+                    }
+                  }
+                },
+                {
+                  "required": ["run", "executor"],
                   "properties": {
                     "run": {
                       "type": "object"
@@ -682,6 +732,204 @@
         "directory": { "type": ["string", "null"] }
       }
     },
+    "workflowWakePolicy": {
+      "type": "object",
+      "required": [
+        "id",
+        "runId",
+        "coordinator",
+        "issuer",
+        "enabled",
+        "generation",
+        "phase",
+        "reason",
+        "createdAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "runId": {
+          "$ref": "#/definitions/id"
+        },
+        "coordinator": {
+          "$ref": "#/definitions/id"
+        },
+        "issuer": {
+          "$ref": "#/definitions/id"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase": {
+          "enum": ["enabled", "waiting", "paused", "disabled", "completed"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        }
+      }
+    },
+    "workflowWakeNotice": {
+      "type": "object",
+      "required": ["id", "sequence", "kind", "reference"],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "sequence": {
+          "$ref": "#/definitions/cursor"
+        },
+        "kind": {
+          "enum": ["result", "decision", "question", "error", "blocker"]
+        },
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "messageId": {
+              "$ref": "#/definitions/id"
+            },
+            "messageSequence": {
+              "$ref": "#/definitions/cursor"
+            },
+            "taskId": {
+              "type": ["string", "null"]
+            },
+            "attemptId": {
+              "type": ["string", "null"]
+            },
+            "decisionId": {
+              "type": ["string", "null"]
+            },
+            "decisionState": {
+              "type": ["string", "null"]
+            },
+            "sessionId": {
+              "$ref": "#/definitions/id"
+            },
+            "signalRevision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "attention": {
+              "type": "object",
+              "required": ["priority", "reason", "blockedChildren", "processExited", "exitCode"],
+              "additionalProperties": false,
+              "properties": {
+                "priority": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 3
+                },
+                "reason": {
+                  "type": ["string", "null"]
+                },
+                "blockedChildren": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 256
+                },
+                "processExited": {
+                  "type": "boolean"
+                },
+                "exitCode": {
+                  "type": ["integer", "null"],
+                  "minimum": 0,
+                  "maximum": 4294967295
+                }
+              }
+            }
+          },
+          "anyOf": [
+            {
+              "required": ["messageId", "messageSequence"]
+            },
+            {
+              "required": ["attemptId", "sessionId", "attention", "signalRevision"]
+            }
+          ]
+        },
+        "batchId": {
+          "type": ["string", "null"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        }
+      }
+    },
+    "workflowWakeBatch": {
+      "type": "object",
+      "required": [
+        "id",
+        "policyId",
+        "generation",
+        "issuer",
+        "phase",
+        "reason",
+        "createdAt",
+        "notices",
+        "receiptId",
+        "operationKey",
+        "native"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "policyId": {
+          "$ref": "#/definitions/id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "issuer": {
+          "$ref": "#/definitions/id"
+        },
+        "phase": {
+          "enum": ["dispatching", "settled", "failed", "unknown", "interrupted"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "notices": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/definitions/workflowWakeNotice"
+          }
+        },
+        "receiptId": {
+          "$ref": "#/definitions/id"
+        },
+        "operationKey": {
+          "type": "string",
+          "pattern": "^run-wake:[a-f0-9]{32}$"
+        },
+        "native": {
+          "type": "object",
+          "required": ["phase"],
+          "properties": {
+            "phase": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
     "workflowExecutor": {
       "type": "object",
       "required": [
@@ -706,12 +954,7 @@
         },
         "spec": {
           "type": "object",
-          "required": [
-            "tasks",
-            "retryFailed",
-            "retryDelayMs",
-            "readinessTimeoutMs"
-          ],
+          "required": ["tasks", "retryFailed", "retryDelayMs", "readinessTimeoutMs"],
           "properties": {
             "tasks": {
               "type": "array",
@@ -719,51 +962,29 @@
               "maxItems": 64,
               "items": {
                 "type": "object",
-                "required": [
-                  "taskId",
-                  "profile"
-                ],
+                "required": ["taskId", "profile"],
                 "properties": {
                   "taskId": {
                     "type": "string"
                   },
                   "profile": {
                     "type": "object",
-                    "required": [
-                      "program",
-                      "workspace"
-                    ],
+                    "required": ["program", "workspace"],
                     "properties": {
                       "program": {
-                        "enum": [
-                          "claude",
-                          "codex",
-                          "gemini"
-                        ]
+                        "enum": ["claude", "codex", "gemini"]
                       },
                       "workspace": {
-                        "enum": [
-                          "shared",
-                          "worktree"
-                        ]
+                        "enum": ["shared", "worktree"]
                       },
                       "name": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                        "type": ["string", "null"]
                       },
                       "cwd": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                        "type": ["string", "null"]
                       },
                       "harness": {
-                        "type": [
-                          "boolean",
-                          "null"
-                        ]
+                        "type": ["boolean", "null"]
                       }
                     }
                   }
@@ -796,27 +1017,13 @@
           "minimum": 1
         },
         "phase": {
-          "enum": [
-            "enabled",
-            "waiting",
-            "blocked",
-            "disabled",
-            "paused",
-            "completed",
-            "scheduling"
-          ]
+          "enum": ["enabled", "waiting", "blocked", "disabled", "paused", "completed", "scheduling"]
         },
         "reason": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "taskId": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "createdAt": {
           "$ref": "#/definitions/cursor"
@@ -857,22 +1064,13 @@
           ]
         },
         "blocker": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "receiptId": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "operationKey": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "createdAt": {
           "$ref": "#/definitions/cursor"
@@ -881,10 +1079,7 @@
           "$ref": "#/definitions/cursor"
         },
         "native": {
-          "type": [
-            "object",
-            "null"
-          ],
+          "type": ["object", "null"],
           "properties": {
             "phase": {
               "type": "string"

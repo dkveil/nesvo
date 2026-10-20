@@ -200,6 +200,13 @@ fn insert(
         params![id, run_id, recipient, source],
     )?;
     let sequence = transaction.last_insert_rowid();
+    crate::workflow_wake_events::message(
+        transaction,
+        run_id,
+        recipient,
+        &data,
+        crate::status::now_millis(),
+    )?;
     if !(1..=MAX_CURSOR as i64).contains(&sequence) {
         return Err(Error::new("busy", "Inbox sequence capacity exhausted").into());
     }

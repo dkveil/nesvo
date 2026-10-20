@@ -130,6 +130,9 @@ mod workflow_inbox_tests;
 #[cfg(test)]
 #[path = "workflow_launches_tests.rs"]
 mod workflow_launches_tests;
+#[cfg(test)]
+#[path = "workflow_wakes_tests.rs"]
+mod workflow_wakes_tests;
 impl Store {
     fn open(path: &std::path::Path) -> Result<Self> {
         let mut connection = Connection::open(path)?;
@@ -144,6 +147,7 @@ impl Store {
         crate::workflow_launches::recover(&mut connection)?;
         crate::workflow_delivery::recover(&mut connection)?;
         crate::workflow_executor::recover(&mut connection)?;
+        crate::workflow_wakes::recover(&mut connection)?;
         crate::workflow_controls::recover(&mut connection)?;
         Ok(Self(connection))
     }
@@ -161,6 +165,17 @@ impl Store {
         Ok((head, floor))
     }
     fn append(&mut self, observations: Vec<Observation>) -> Result<u64> {
+        let mut attention: Vec<_> = observations
+            .iter()
+            .filter(|observation| observation.kind == "agent.attention")
+            .filter_map(|event| {
+                event
+                    .session_id
+                    .as_ref()
+                    .map(|id| (id.clone(), event.payload.clone(), event.at))
+            })
+            .collect();
+        attention.extend(observations.iter().filter(|event|event.kind=="session.closed").filter_map(|event|event.session_id.as_ref().map(|id|(id.clone(),serde_json::json!({"priority":1,"reason":"session_closed","blockedChildren":0}),event.at))));
         let exits: Vec<_> = observations
             .iter()
             .filter(|observation| observation.kind == "process.exited")
@@ -173,6 +188,9 @@ impl Store {
             .collect();
         let transaction = self.0.transaction()?;
         let mut head = append_transaction(&transaction, observations)?;
+        for (id, payload, at) in attention {
+            crate::workflow_wake_events::canonical(&transaction, &id, &payload, at)?;
+        }
         for (session, now) in &exits {
             crate::workflow_controls::observe_exit(&transaction, session, *now)?;
         }
@@ -252,6 +270,10 @@ impl Store {
 }
 
 enum Work {
+    Wakes {
+        work: crate::workflow_wakes::Work,
+        reply: oneshot::Sender<Result<crate::workflow_wakes::Reply>>,
+    },
     Executor {
         work: crate::workflow_executor::Work,
         reply: oneshot::Sender<Result<crate::workflow_executor::Reply>>,
@@ -270,6 +292,7 @@ enum Work {
     },
     GuardRunDispatch {
         session_id: String,
+        operation_id: String,
         reply: oneshot::Sender<Result<()>>,
     },
     Workflow {
@@ -400,11 +423,25 @@ impl Service {
             anyhow!("Run control outcome was not confirmed; recover the original key")
         })?
     }
-    pub async fn guard_run_dispatch(&self, session_id: &str) -> Result<()> {
+    pub async fn wakes(
+        &self,
+        work: crate::workflow_wakes::Work,
+    ) -> Result<crate::workflow_wakes::Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::Wakes { work, reply })
+            .await
+            .map_err(|_| anyhow!("Wake store is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!("Wake outcome was not confirmed; recover the original workflow key")
+        })?
+    }
+    pub async fn guard_run_dispatch(&self, session_id: &str, operation_id: &str) -> Result<()> {
         let (reply, answer) = oneshot::channel();
         self.sender
             .send(Work::GuardRunDispatch {
                 session_id: session_id.into(),
+                operation_id: operation_id.into(),
                 reply,
             })
             .await
@@ -573,6 +610,16 @@ impl Service {
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
+                        Work::Wakes { work, reply } => {
+                            let result = crate::workflow_wakes::execute(
+                                &mut store.0,
+                                work,
+                                crate::status::now_millis(),
+                            );
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
                         Work::Executor { work, reply } => {
                             let result = crate::workflow_executor::execute(
                                 &mut store.0,
@@ -613,12 +660,24 @@ impl Service {
                             notify_head(&store, &changed_tx);
                             let _ = reply.send(result);
                         }
-                        Work::GuardRunDispatch { session_id, reply } => {
+                        Work::GuardRunDispatch {
+                            session_id,
+                            operation_id,
+                            reply,
+                        } => {
                             let result = crate::workflow_budget::guard_dispatch(
                                 &mut store.0,
                                 &session_id,
                                 crate::status::now_millis(),
-                            );
+                            )
+                            .and_then(|_| {
+                                crate::workflow_wake_batches::guard_dispatch(
+                                    &store.0,
+                                    &session_id,
+                                    &operation_id,
+                                    crate::status::now_millis(),
+                                )
+                            });
                             record_storage_failure(&result, &worker_failures, &changed_tx);
                             notify_head(&store, &changed_tx);
                             let _ = reply.send(result);
@@ -760,6 +819,20 @@ impl Service {
         {
             self.drops.fetch_add(1, Ordering::Relaxed);
             self.health_changed.send_modify(|_| {});
+        }
+    }
+    pub fn observe_confirmed(&self, event: Observation) -> Option<oneshot::Receiver<Result<u64>>> {
+        let (reply, answer) = oneshot::channel();
+        if self
+            .sender
+            .try_send(Work::Append(vec![event], Some(reply)))
+            .is_err()
+        {
+            self.drops.fetch_add(1, Ordering::Relaxed);
+            self.health_changed.send_modify(|_| {});
+            None
+        } else {
+            Some(answer)
         }
     }
     pub async fn append(&self, events: Vec<Observation>) -> Result<u64> {

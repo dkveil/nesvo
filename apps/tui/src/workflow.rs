@@ -8,6 +8,11 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Configure delta-only host notifications to a managed coordinator.
+    Wake {
+        #[command(subcommand)]
+        command: crate::workflow_wakes::Command,
+    },
     /// Configure and inspect explicit automatic DAG scheduling on the host.
     Executor {
         #[command(subcommand)]
@@ -189,6 +194,7 @@ impl Command {
     pub fn machine(&self) -> bool {
         match self {
             Self::Executor { command } => command.machine(),
+            Self::Wake { command } => command.machine(),
             Self::Deliver(args) => args.json,
             Self::CancelDelivery(args) => args.json,
             Self::Launch(launch) => launch.json,
@@ -214,6 +220,9 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Wake { command } => Request::Wakes {
+                request: command.request(),
+            },
             Self::Executor { command } => Request::Executor {
                 request: command.request()?,
             },
@@ -454,6 +463,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Wakes {
+        request: crate::workflow_wakes::Request,
+    },
     Executor {
         request: crate::workflow_executor::Request,
     },
@@ -615,6 +627,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         Some("launch") => Some("runLaunch"),
         Some("delivery") => Some("runDelivery"),
         Some("executor") => Some("runExecutor"),
+        Some("wakes") => Some("runWakes"),
         Some("control") => Some("runControls"),
         Some("runBudget") => Some("runBudgets"),
         Some("drain" | "resume") => Some("runDrain"),

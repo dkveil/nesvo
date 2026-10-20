@@ -4,6 +4,11 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+`runWakes` adds explicit delta-only coordinator notices inside authenticated
+workflow requests: `{action:"wakes",request:{action:"enable"|"disable"|"get"|"batch",...}}`.
+See [wake contract](harness-wakes.md) for current-attempt attention sources,
+coalesced native receipt provenance, human/budget fences and restart non-replay.
+
 `runExecutor` adds opt-in deterministic scheduling inside authenticated workflow
 requests: `{action:"executor",request:{action:"start"|"get"|"disable"|"enable",...}}`.
 See [executor contract](harness-executor.md) for immutable profiles, authority,

@@ -33,6 +33,7 @@ mod titles;
 mod transport;
 mod turns;
 mod usage;
+mod wake_attention;
 mod workflow_attempts;
 mod workflow_budget;
 mod workflow_control_runtime;
@@ -45,6 +46,10 @@ mod workflow_executor_runtime;
 mod workflow_inbox;
 mod workflow_launch_runtime;
 mod workflow_launches;
+mod workflow_wake_batches;
+mod workflow_wake_events;
+mod workflow_wake_runtime;
+mod workflow_wakes;
 use nesvo_host::wire;
 
 use anyhow::{Context, Result, ensure};

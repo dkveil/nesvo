@@ -1,0 +1,427 @@
+//! Explicit coordinator wake policy. Messages, input receipts and ACK stay distinct.
+use crate::{
+    api_error::Error,
+    event_log::{Observation, append_transaction},
+    orchestration::{self, Actor},
+};
+use anyhow::{Result, anyhow};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+type PolicyRow = (
+    String,
+    String,
+    String,
+    bool,
+    i64,
+    String,
+    Option<String>,
+    i64,
+);
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "action",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum Request {
+    Enable {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    Disable {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    Get {
+        run_id: String,
+        after: Option<u64>,
+    },
+    Batch {
+        run_id: String,
+        batch_id: String,
+    },
+}
+#[derive(Clone)]
+pub struct Guard {
+    pub id: String,
+    pub generation: u64,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Policy {
+    pub id: String,
+    pub run_id: String,
+    pub coordinator: String,
+    pub issuer: String,
+    pub enabled: bool,
+    pub generation: u64,
+    pub phase: String,
+    pub reason: Option<String>,
+    pub created_at: u64,
+}
+pub struct Snapshot {
+    pub policy: Policy,
+    pub pending: usize,
+    pub first_at: Option<u64>,
+    pub active_batch: bool,
+    pub run_state: String,
+    pub time_exhausted: bool,
+}
+pub struct Dispatch {
+    pub receipt: crate::receipts::Receipt,
+    pub prompt: String,
+    pub batch_id: String,
+}
+pub enum Work {
+    Manage {
+        actor: Actor,
+        request: Request,
+    },
+    Poll {
+        guard: Guard,
+        issuer: String,
+    },
+    Claim {
+        guard: Guard,
+        issuer: String,
+    },
+    Note {
+        guard: Guard,
+        issuer: String,
+        phase: &'static str,
+        reason: Option<String>,
+        disable: bool,
+    },
+    Finish {
+        batch_id: String,
+    },
+}
+pub enum Reply {
+    Managed { view: Value, pump: Option<Guard> },
+    Snapshot(Option<Box<Snapshot>>),
+    Claimed(Option<Dispatch>),
+    Done,
+}
+pub fn initialize(connection: &Connection) -> Result<()> {
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_wake_policies(id TEXT PRIMARY KEY,run_id TEXT NOT NULL UNIQUE REFERENCES workflow_runs(id),coordinator_id TEXT NOT NULL,issuer TEXT NOT NULL,enabled INTEGER NOT NULL,generation INTEGER NOT NULL,phase TEXT NOT NULL,reason TEXT,created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS workflow_wake_signals(attempt_id TEXT PRIMARY KEY REFERENCES workflow_attempts(id),data TEXT NOT NULL,revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS workflow_wake_batches(id TEXT PRIMARY KEY,policy_id TEXT NOT NULL REFERENCES workflow_wake_policies(id),generation INTEGER NOT NULL,issuer TEXT NOT NULL,operation_id TEXT NOT NULL UNIQUE REFERENCES operation_receipts(id),phase TEXT NOT NULL,reason TEXT,created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS workflow_wake_notices(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,run_id TEXT NOT NULL REFERENCES workflow_runs(id),source_key TEXT NOT NULL UNIQUE,kind TEXT NOT NULL,data TEXT NOT NULL,batch_id TEXT REFERENCES workflow_wake_batches(id),created_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS workflow_wake_pending ON workflow_wake_notices(run_id,batch_id,sequence);")?;
+    Ok(())
+}
+pub fn read(connection: &Connection, run: &str) -> Result<Option<Policy>> {
+    let row:Option<PolicyRow>=connection.query_row("SELECT id,coordinator_id,issuer,enabled,generation,phase,reason,created_at FROM workflow_wake_policies WHERE run_id=?1",[run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional()?;
+    row.map(
+        |(id, coordinator, issuer, enabled, generation, phase, reason, at)| {
+            Ok(Policy {
+                id,
+                run_id: run.into(),
+                coordinator,
+                issuer,
+                enabled,
+                generation: u64::try_from(generation)?,
+                phase,
+                reason,
+                created_at: u64::try_from(at)?,
+            })
+        },
+    )
+    .transpose()
+}
+pub fn guard(connection: &Connection, expected: &Guard, issuer: &str) -> Result<Policy> {
+    let run:Option<String>=connection.query_row("SELECT run_id FROM workflow_wake_policies WHERE id=?1 AND generation=?2 AND issuer=?3 AND enabled=1",params![expected.id,expected.generation as i64,issuer],|row|row.get(0)).optional()?;
+    let run = run.ok_or_else(|| {
+        Error::new(
+            "wake_paused",
+            "Wake policy is disabled or superseded; no new input is admitted",
+        )
+    })?;
+    read(connection, &run)?.ok_or_else(|| anyhow!("Wake policy disappeared"))
+}
+pub fn changed(transaction: &Transaction<'_>, policy: &str, now: u64) -> Result<u64> {
+    let (run, coordinator): (String, String) = transaction.query_row(
+        "SELECT run_id,coordinator_id FROM workflow_wake_policies WHERE id=?1",
+        [policy],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    transaction.execute(
+        "UPDATE workflow_runs SET revision=revision+1 WHERE id=?1",
+        [&run],
+    )?;
+    append_transaction(
+        transaction,
+        vec![Observation {
+            session_id: Some(coordinator),
+            kind: "run.wake_changed",
+            at: now,
+            payload: json!({"runId":run,"policyId":policy}),
+        }],
+    )
+}
+pub fn run_guard(connection: &Connection, run: &str, now: u64) -> Result<()> {
+    let state: String = connection.query_row(
+        "SELECT state FROM workflow_runs WHERE id=?1",
+        [run],
+        |row| row.get(0),
+    )?;
+    if !matches!(state.as_str(), "active" | "draining") {
+        return Err(Error::new(
+            "run_state_conflict",
+            "Run must be active or draining before coordinator input",
+        )
+        .into());
+    }
+    let budget = crate::workflow_budget::snapshot(connection, run, &state)?;
+    if budget["timeState"] == "exhausted"
+        || budget["deadlineAt"]
+            .as_u64()
+            .is_some_and(|deadline| now >= deadline)
+    {
+        return Err(Error::new(
+            "time_budget_exhausted",
+            "Run elapsed budget blocks coordinator input",
+        )
+        .into());
+    }
+    Ok(())
+}
+fn view(connection: &Connection, actor: &Actor, run: &str, after: u64) -> Result<Value> {
+    let run_view = orchestration::run(connection, actor, run)?;
+    let (notices, next, more) = crate::workflow_wake_events::page(connection, run, after)?;
+    let pending: i64 = connection.query_row(
+        "SELECT count(*) FROM workflow_wake_notices WHERE run_id=?1 AND batch_id IS NULL",
+        [run],
+        |row| row.get(0),
+    )?;
+    Ok(
+        json!({"run":run_view,"wakePolicy":read(connection,run)?,"notices":notices,"pendingCount":pending,"nextCursor":next,"more":more}),
+    )
+}
+fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64) -> Result<Reply> {
+    match &request {
+        Request::Get { run_id, after } => {
+            return Ok(Reply::Managed {
+                view: view(connection, &actor, run_id, after.unwrap_or(0))?,
+                pump: None,
+            });
+        }
+        Request::Batch { run_id, batch_id } => {
+            let run = orchestration::run(connection, &actor, run_id)?;
+            return Ok(Reply::Managed {
+                view: json!({"run":run,"wakeBatch":crate::workflow_wake_batches::read(connection,run_id,batch_id)?}),
+                pump: None,
+            });
+        }
+        _ => {}
+    }
+    let (key, run, revision, enable) = match &request {
+        Request::Enable {
+            key,
+            run_id,
+            expected_revision,
+        } => (key, run_id, *expected_revision, true),
+        Request::Disable {
+            key,
+            run_id,
+            expected_revision,
+        } => (key, run_id, *expected_revision, false),
+        _ => return Err(anyhow!("Unexpected wake command")),
+    };
+    orchestration::validate_key(key)?;
+    orchestration::run(connection, &actor, run)?;
+    crate::workflow_budget::refresh(connection, run, now)?;
+    let digest = hex::encode(
+        ring::digest::digest(
+            &ring::digest::SHA256,
+            &serde_json::to_vec(&json!({"action":"wakes","request":request}))?,
+        )
+        .as_ref(),
+    );
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let current = orchestration::run(&transaction, &actor, run)?;
+    if let Some(view) = orchestration::replay(&transaction, &actor, key, &digest)? {
+        return Ok(Reply::Managed { view, pump: None });
+    }
+    orchestration::mutation_capacity(&transaction)?;
+    if current["revision"] != revision {
+        return Err(Error::new(
+            "revision_conflict",
+            "Run changed; inspect before changing coordinator wakes",
+        )
+        .into());
+    }
+    let previous = read(&transaction, run)?;
+    let id = if enable {
+        run_guard(&transaction, run, now)?;
+        let coordinator = current["coordinatorSessionId"].as_str().ok_or_else(|| {
+            Error::new(
+                "coordinator_required",
+                "Bind a live native coordinator before enabling model wakes",
+            )
+        })?;
+        let active: i64 = transaction.query_row(
+            "SELECT count(*) FROM workflow_wake_policies WHERE enabled=1",
+            [],
+            |row| row.get(0),
+        )?;
+        if active >= 16 {
+            return Err(Error::new("busy", "At most 16 wake policies may be enabled").into());
+        }
+        if let Some(previous) = &previous {
+            if previous.enabled {
+                return Err(Error::new(
+                    "wake_state_conflict",
+                    "Wake policy is already enabled; inspect it",
+                )
+                .into());
+            }
+            if previous.coordinator != coordinator {
+                return Err(Error::new(
+                    "scope_revoked",
+                    "Coordinator adoption needs explicit recovery",
+                )
+                .into());
+            }
+            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
+            previous.id.clone()
+        } else {
+            let count: i64 = transaction.query_row(
+                "SELECT count(*) FROM workflow_wake_policies",
+                [],
+                |row| row.get(0),
+            )?;
+            if count >= 1024 {
+                return Err(Error::new(
+                    "busy",
+                    "Wake policy retention is full; no history was discarded",
+                )
+                .into());
+            }
+            let id = hex::encode(crate::wire::random::<16>());
+            transaction.execute("INSERT INTO workflow_wake_policies(id,run_id,coordinator_id,issuer,enabled,generation,phase,created_at) VALUES(?1,?2,?3,?4,1,1,'enabled',?5)",params![id,run,coordinator,actor.issuer,now as i64])?;
+            id
+        }
+    } else {
+        let previous =
+            previous.ok_or_else(|| Error::new("wake_not_found", "Run has no wake policy"))?;
+        transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='disabled',reason='user_disabled' WHERE id=?1",[&previous.id])?;
+        previous.id
+    };
+    if enable {
+        crate::workflow_wake_events::seed(&transaction, run, now)?;
+    }
+    let cursor = changed(&transaction, &id, now)?;
+    let mut result = view(&transaction, &actor, run, 0)?;
+    result["cursor"] = cursor.into();
+    let policy = read(&transaction, run)?.ok_or_else(|| anyhow!("Missing wake policy"))?;
+    let pump = enable.then_some(Guard {
+        id: policy.id,
+        generation: policy.generation,
+    });
+    orchestration::remember(&transaction, &actor, key, &digest, &result)?;
+    transaction.commit()?;
+    Ok(Reply::Managed { view: result, pump })
+}
+pub fn recover(connection: &mut Connection) -> Result<()> {
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let rows = {
+        let mut query =
+            transaction.prepare("SELECT id FROM workflow_wake_policies WHERE enabled=1")?;
+        query
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for id in rows {
+        transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='paused',reason='host_restart' WHERE id=?1",[&id])?;
+        changed(&transaction, &id, crate::status::now_millis())?;
+    }
+    transaction.execute("UPDATE workflow_wake_batches SET phase=CASE WHEN (SELECT phase FROM operation_receipts WHERE id=operation_id) IN ('settled','failed','interrupted') THEN (SELECT phase FROM operation_receipts WHERE id=operation_id) ELSE 'unknown' END,reason='host_restart' WHERE phase='dispatching'",[])?;
+    transaction.commit()?;
+    Ok(())
+}
+pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
+    match work {
+        Work::Manage { actor, request } => manage(connection, actor, request, now),
+        Work::Claim { guard, issuer } => {
+            crate::workflow_wake_batches::claim(connection, guard, issuer, now)
+        }
+        Work::Finish { batch_id } => {
+            crate::workflow_wake_batches::finish(connection, &batch_id, now)?;
+            Ok(Reply::Done)
+        }
+        Work::Poll {
+            guard: expected,
+            issuer,
+        } => {
+            let policy = match guard(connection, &expected, &issuer) {
+                Ok(policy) => policy,
+                Err(error)
+                    if error
+                        .downcast_ref::<Error>()
+                        .is_some_and(|e| e.code == "wake_paused") =>
+                {
+                    return Ok(Reply::Snapshot(None));
+                }
+                Err(error) => return Err(error),
+            };
+            crate::workflow_budget::refresh(connection, &policy.run_id, now)?;
+            let active_batch = crate::workflow_wake_batches::reconcile(connection, &policy, now)?;
+            // Reconciliation can pause this generation; recheck before effects.
+            match guard(connection, &expected, &issuer) {
+                Ok(_) => {}
+                Err(error)
+                    if error
+                        .downcast_ref::<Error>()
+                        .is_some_and(|e| e.code == "wake_paused") =>
+                {
+                    return Ok(Reply::Snapshot(None));
+                }
+                Err(error) => return Err(error),
+            }
+            let (count,first):(i64,Option<i64>)=connection.query_row("SELECT count(*),MIN(created_at) FROM workflow_wake_notices WHERE run_id=?1 AND batch_id IS NULL",[&policy.run_id],|row|Ok((row.get(0)?,row.get(1)?)))?;
+            let run_state: String = connection.query_row(
+                "SELECT state FROM workflow_runs WHERE id=?1",
+                [&policy.run_id],
+                |row| row.get(0),
+            )?;
+            let budget = crate::workflow_budget::snapshot(connection, &policy.run_id, &run_state)?;
+            let time_exhausted = budget["timeState"] == "exhausted"
+                || budget["deadlineAt"].as_u64().is_some_and(|at| now >= at);
+            Ok(Reply::Snapshot(Some(Box::new(Snapshot {
+                policy,
+                pending: usize::try_from(count)?,
+                first_at: first.map(u64::try_from).transpose()?,
+                active_batch,
+                run_state,
+                time_exhausted,
+            }))))
+        }
+        Work::Note {
+            guard: expected,
+            issuer,
+            phase,
+            reason,
+            disable,
+        } => {
+            if !matches!(phase, "waiting" | "paused" | "completed") {
+                return Err(anyhow!("Invalid wake phase"));
+            }
+            let transaction =
+                connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let count=transaction.execute("UPDATE workflow_wake_policies SET phase=?4,reason=?5,enabled=NOT ?6,generation=generation+?6 WHERE id=?1 AND generation=?2 AND issuer=?3 AND enabled=1 AND (phase!=?4 OR reason IS NOT ?5 OR ?6)",params![expected.id,expected.generation as i64,issuer,phase,reason,disable])?;
+            if count > 0 {
+                changed(&transaction, &expected.id, now)?;
+            }
+            transaction.commit()?;
+            Ok(Reply::Done)
+        }
+    }
+}

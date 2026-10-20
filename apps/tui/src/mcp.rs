@@ -58,6 +58,36 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_enable_run_wakes",
+            "Opt in to coalesced notices for the run's live coordinator. Only new result/question/error/decision/blocker deltas produce native input; no unchanged-state model heartbeat. Pending messages remain durable, never auto-ACKed or validated. Human takeover pauses the policy. Restart disables it; explicit enable never replays old batches or grants native permission.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_run_wakes",
+            "Read wake policy and at most eight notice references. after is a wake-notice cursor, not an inbox cursor or ACK. No model/input effects. Inspect a batch by its actual ID for exact inbox message sequences and current native receipt phase.",
+            object(json!({"runId":id,"after":cursor}), &["runId"]),
+            true,
+        ),
+        (
+            "nesvo_disable_run_wakes",
+            "Disable future coordinator wake input using the exact current run revision. Does not undo bytes, stop processes, ACK messages or validate results. Retain/inspect batch and receipt uncertainty.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_run_wake_batch",
+            "Inspect one wake batch, up to eight immutable notice references, and native receipt pointer/current phase. Knowing an owner-issued ID grants no receipt authority. Input settlement is not ACK, task success, validation or native permission approval.",
+            object(json!({"runId":id,"batchId":id}), &["runId", "batchId"]),
+            true,
+        ),
+        (
             "nesvo_start_run_executor",
             "Opt in to automatic dependency-ready task launch and immutable instruction delivery for an active run. Explicit profile for every task; agents only, shared/worktree required. No model heartbeat, self-validation or permission approval. Human/decision/time/retry/native guards still apply. Stable workflow key recovers acceptance; inspect current executor/task/native receipts. Restart disables scheduling without replay. Already admitted work may finish after disabling.",
             object(
@@ -546,6 +576,34 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_enable_run_wakes"
+        | "nesvo_get_run_wakes"
+        | "nesvo_disable_run_wakes"
+        | "nesvo_get_run_wake_batch" => {
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Wake arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Wake action is selected by the tool name",
+                ));
+            }
+            let action = match name {
+                "nesvo_enable_run_wakes" => "enable",
+                "nesvo_get_run_wakes" => "get",
+                "nesvo_disable_run_wakes" => "disable",
+                _ => "batch",
+            };
+            fields.insert("action".into(), action.into());
+            (
+                crate::workflow::tool("wakes", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_start_run_executor"
         | "nesvo_get_run_executor"
         | "nesvo_disable_run_executor"
@@ -1091,7 +1149,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 48);
+        assert_eq!(catalog().len(), 52);
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(

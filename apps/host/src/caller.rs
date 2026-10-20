@@ -97,6 +97,12 @@ pub enum Authority {
         id: String,
         scope_id: String,
     },
+    /// Host-created grant for a fixed coordinator wake, never authenticated from
+    /// client input. General API/launch/control paths reject this authority.
+    RunWake {
+        id: String,
+        scope_id: String,
+    },
 }
 pub struct Context {
     pub scope_id: String,

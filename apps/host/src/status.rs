@@ -259,6 +259,9 @@ impl StatusTracker {
         self.exited = true;
         self.exit_code = code;
     }
+    pub fn observed_exit(&self) -> Option<Option<u32>> {
+        self.exited.then_some(self.exit_code)
+    }
 
     /// Called by the coalesced host timer, never broadcast for each PTY chunk.
     pub fn refresh(&mut self, now: u64) -> bool {

@@ -85,6 +85,7 @@ struct Session {
     terminal_protocol: crate::terminal_protocol::Decoder,
     program_status: crate::program_status::Records,
     status_projection_dirty: bool,
+    wake_attention: crate::wake_attention::Publisher,
     pty: Pty,
     backlog: String,
     output_cursor: u64,
@@ -119,6 +120,11 @@ impl Session {
             self.status.block_reason(),
             self.program_status.blocked_children(),
         )
+    }
+    fn wake_attention_payload(&self) -> Value {
+        let attention = self.current_attention();
+        let exit = self.status.observed_exit();
+        json!({"priority":attention.priority,"reason":attention.reason,"blockedChildren":attention.blocked_children,"processExited":exit.is_some(),"exitCode":exit.flatten()})
     }
 }
 
@@ -442,6 +448,11 @@ impl State {
     fn actor_session(&self, authority: &crate::caller::Authority) -> Result<Option<&Session>> {
         match authority {
             crate::caller::Authority::Owner => Ok(None),
+            crate::caller::Authority::RunWake { .. } => Err(crate::api_error::Error::new(
+                "forbidden",
+                "A wake grant is valid only for its fixed coordinator input",
+            )
+            .into()),
             crate::caller::Authority::Session { id, scope_id } => {
                 let active = self.sessions.get(id).is_some_and(|s| {
                     s.info.running
@@ -465,6 +476,22 @@ impl State {
         authority: &crate::caller::Authority,
         target: &str,
     ) -> Result<()> {
+        if let crate::caller::Authority::RunWake { id, scope_id } = authority {
+            let caller = self.actor_session(&crate::caller::Authority::Session {
+                id: id.clone(),
+                scope_id: scope_id.clone(),
+            })?;
+            if target == id
+                && caller.is_some_and(|s| s.policy.role == crate::caller::Role::Coordinator)
+            {
+                return Ok(());
+            }
+            return Err(crate::api_error::Error::new(
+                "forbidden",
+                "Wake input cannot control another process",
+            )
+            .into());
+        }
         let Some(session) = self.actor_session(authority)? else {
             return Ok(());
         };
@@ -476,6 +503,65 @@ impl State {
             .into());
         }
         Ok(())
+    }
+    pub fn wake_authority(
+        &self,
+        source: &crate::caller::Authority,
+        coordinator: &str,
+    ) -> Result<crate::caller::Authority> {
+        match self.workflow_launch_authority(source, Some(coordinator))? {
+            crate::caller::Authority::Session { id, scope_id } => {
+                Ok(crate::caller::Authority::RunWake { id, scope_id })
+            }
+            _ => Err(crate::api_error::Error::new(
+                "coordinator_required",
+                "Wake requires a live coordinator capability",
+            )
+            .into()),
+        }
+    }
+    pub fn check_wake_priority(
+        &self,
+        source: &crate::caller::Authority,
+        coordinator: &str,
+        before: u64,
+    ) -> Result<()> {
+        self.wake_authority(source, coordinator)?;
+        let session = self.sessions.get(coordinator).ok_or_else(|| {
+            crate::api_error::Error::new("scope_revoked", "Coordinator no longer exists")
+        })?;
+        if self.shutting_down {
+            return Err(
+                crate::api_error::Error::new("host_stopping", "Host is shutting down").into(),
+            );
+        }
+        if session.controller.is_some() || session.human_control_epoch > before {
+            return Err(crate::api_error::Error::new(
+                "control_busy",
+                "Human takeover pauses coordinator wakes until a deliberate enable",
+            )
+            .into());
+        }
+        if session.human_input_dirty {
+            return Err(crate::api_error::Error::new(
+                "unsafe_draft",
+                "Coordinator editor needs deliberate reconciliation",
+            )
+            .into());
+        }
+        Ok(())
+    }
+    pub fn wake_attention_events(&self, sessions: &[String]) -> Vec<crate::event_log::Observation> {
+        sessions
+            .iter()
+            .filter_map(|id| self.sessions.get(id))
+            .map(|s| crate::event_log::Observation {
+                session_id: Some(s.info.id.clone()),
+                kind: "agent.attention",
+                at: now_millis(),
+                payload: s.wake_attention_payload(),
+            })
+            .collect()
     }
     pub fn normalize_launch_intent(
         &self,
@@ -689,6 +775,7 @@ impl State {
         event["runLaunch"] = self.event_log.is_some().into();
         event["runDelivery"] = self.event_log.is_some().into();
         event["runExecutor"] = self.event_log.is_some().into();
+        event["runWakes"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event
@@ -1041,6 +1128,16 @@ impl State {
                 session.status.rule_reason(),
                 session.started.elapsed(),
             );
+            if let Some(log) = &self.event_log {
+                let payload = session.wake_attention_payload();
+                session.wake_attention.offer(
+                    log,
+                    &session.info.id,
+                    payload,
+                    now,
+                    std::time::Instant::now(),
+                );
+            }
             changed |= std::mem::take(&mut session.status_projection_dirty);
             if session.auto_title
                 && let Some(title) = &session.titles.title
@@ -1367,6 +1464,13 @@ impl State {
             api_error::Error,
             operations::{ControlAction, ControlDispatch},
         };
+        if matches!(authority, crate::caller::Authority::RunWake { .. }) {
+            return Err(Error::new(
+                "forbidden",
+                "Wake input does not grant interrupt or stop authority",
+            )
+            .into());
+        }
         self.authorize_automation(authority, id)?;
         if self.shutting_down {
             return Err(Error::new(
@@ -2536,6 +2640,7 @@ fn spawn_session(
         terminal_protocol: Default::default(),
         program_status: Default::default(),
         status_projection_dirty: false,
+        wake_attention: Default::default(),
         info: SessionInfo {
             id,
             name: name.into(),
@@ -2912,6 +3017,68 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn internal_wake_grant_is_self_only_revocable_and_not_general_api_or_control_authority() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            metadata,
+            Launchers::discover(),
+        );
+        state.set_caller_url("ws://127.0.0.1:1".into());
+        let (events, _) = mpsc::channel(128);
+        let id = state
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Owned wake authority fixture".into(),
+                    role: crate::caller::Role::Coordinator,
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        let scope = state.sessions[&id]
+            .caller_context
+            .as_ref()
+            .unwrap()
+            .scope_id
+            .clone();
+        let normal = crate::caller::Authority::Session {
+            id: id.clone(),
+            scope_id: scope,
+        };
+        assert!(
+            state.authorize_automation(&normal, &id).is_err(),
+            "Normal coordinator does not gain self input authority"
+        );
+        let wake = state.wake_authority(&normal, &id).unwrap();
+        assert!(state.authorize_automation(&wake, &id).is_ok());
+        assert!(state.authorize_automation(&wake, "foreign").is_err());
+        assert!(state.actor_session(&wake).is_err());
+        assert!(
+            state
+                .dispatch_control(&id, crate::operations::ControlAction::Stop, &wake)
+                .is_err()
+        );
+        assert!(
+            state
+                .resolve_launch(&wake, &mut crate::jobs::LaunchSpec::default())
+                .is_err()
+        );
+        state
+            .sessions
+            .get_mut(&id)
+            .unwrap()
+            .caller_context
+            .as_mut()
+            .unwrap()
+            .scope_id = "revoked-fixture".into();
+        assert!(state.authorize_automation(&wake, &id).is_err());
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
 
     #[test]
     fn native_run_gates_are_scoped_released_and_do_not_retain_inactive_runs() {

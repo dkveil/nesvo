@@ -51,7 +51,7 @@ not evidence that the expanded acceptance criteria pass.
 | F23 | Missed-run policy and grace window              | Missing                                                       | Pending                                                                                                                       |
 | F24 | Safe fresh/reuse session dispatch               | Partial: fresh launch with prompt                             | Pending                                                                                                                       |
 | F25 | Bounded precheck                                | Missing                                                       | Pending                                                                                                                       |
-| F26 | Delta-only coordinator wakeups                  | Missing                                                       | Pending                                                                                                                       |
+| F26 | Delta-only coordinator wakeups                  | Missing                                                       | Partial: opt-in durable coalescing/native receipt and human/budget fences; original-model/checkpoint/UI gates pending         |
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                                       |
 | F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Pending                                                                                                                       |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                              |
@@ -1259,3 +1259,34 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   controlled providers and do not establish real account/login/model behavior on
   other platforms. Completed model-driven child creation, remaining stage gates
   and F01–F44 delivery remain open; no overall completion is claimed.
+
+### F26 opt-in coalesced coordinator notices
+
+- Added `run wake enable|disable|get|batch`, four equivalent MCP tools (52
+  total), `runWakes` capability and published schema. Wake policy/generation,
+  exact notice bindings and native receipt reservation persist before input.
+  Only coordinator-addressed result/decision/question/error and changed current
+  worker attention produce notices; no body/correlation text enters the fixed
+  native prompt. Quiet polling and identical wait states do not churn revisions.
+- Up to eight references coalesce after 250 ms. Busy coordinators wait; human
+  takeover/release, retained drafts, authority loss, run stop and elapsed budget
+  fence input. The budget is checked again between paste and Enter. A partial
+  write stays unknown and cannot be replayed by enable, a new key or relaxing
+  policy. Reads, receipt settlement and restart never ACK or validate results.
+- Native tests use isolated controlled programs, actual PTYs, the official MCP
+  SDK and inherited scoped CLI. Three new cases prove busy-to-idle batching,
+  unchanged-state silence, exact metadata/no implicit ACK, owner receipt privacy,
+  quick human takeover fencing and time-budget refusal after paste. Six actual
+  CLI/MCP response envelopes pass Ajv against the published contract. No real
+  model behavior is inferred from these fixtures.
+- Twelve dedicated storage cases cover replay/current state, scopes, canonical
+  deduplication, exact batching, rollback, elapsed clock regression, real SQLite
+  reopen, stale generations, clean exit without a result and retention refusal.
+  The attention publisher separately tests ACKed durability and coalesced retry.
+- Local Windows checks passed: fmt, warnings-denied Clippy, 295 unit checks,
+  all 15 native SDK scenarios (serial), 30 host/sync/CLI integration checks,
+  production build and repository formatting. Controlled status publication p95
+  was 253.928 ms across 26 batches, excluding provider/model/network latency.
+  No new dependency or visual change. Original-model wake handling, checkpoint
+  compaction, full recovery and mobile controls remain open acceptance work;
+  existing live V9 instruction snapshots remain unchanged.

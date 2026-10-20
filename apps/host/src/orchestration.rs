@@ -68,6 +68,9 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Wakes {
+        request: crate::workflow_wakes::Request,
+    },
     Executor {
         request: crate::workflow_executor::Request,
     },
@@ -165,6 +168,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::workflow_launches::initialize(connection)?;
     crate::workflow_delivery::initialize(connection)?;
     crate::workflow_executor::initialize(connection)?;
+    crate::workflow_wakes::initialize(connection)?;
     crate::budgets::initialize(connection)?;
     Ok(())
 }
@@ -309,6 +313,7 @@ pub(crate) fn execute_at(
             | Request::Launch { .. }
             | Request::Delivery { .. }
             | Request::Executor { .. }
+            | Request::Wakes { .. }
     ) {
         return Err(Error::new(
             "unsupported",

@@ -118,10 +118,39 @@ function reportTask(outcome = 'succeeded') {
 function submit(prompt) {
   turn++;
   hook('UserPromptSubmit', { prompt });
+  if (prompt.startsWith('Nesvo run update ')) {
+    const run = prompt.match(/Run ([a-f0-9]{32}), wake batch ([a-f0-9]{32})/);
+    if (!run) throw new Error('Missing fixed host wake identities');
+    const batch = fixtureCli(['run', 'wake', 'batch', run[1], run[2], '--json']);
+    const inbox = fixtureCli(['run', 'inbox', 'read', run[1], '--json']);
+    // Model behavior is not simulated: this controlled endpoint reads actual
+    // scoped CLI metadata, records evidence, and deliberately performs no ACK.
+    fs.appendFileSync(
+      path.join(directory, `${id}.wake-inputs.jsonl`),
+      JSON.stringify({ prompt, batch, inbox }) + '\n',
+    );
+    process.stdout.write(`FIXTURE_WAKE_RECEIVED ${run[2]}\r\n`);
+    hook('Stop');
+    return;
+  }
   if (prompt === 'hold-response') {
     hook('PreToolUse', { tool_name: 'controlled_hold' });
     process.stdout.write('FIXTURE_HOLDING_RESPONSE\r\n');
     return; // Remains working until an explicit native Ctrl+C from this test.
+  }
+  if (prompt === 'held-natural-response') {
+    hook('PreToolUse', { tool_name: 'controlled_hold' });
+    process.stdout.write('FIXTURE_HOLDING_NATURAL_RESPONSE\r\n');
+    const release = path.join(directory, `${id}.release`);
+    const deadline = Date.now() + 20000;
+    const finish = () => {
+      if (fs.existsSync(release) || Date.now() >= deadline) {
+        process.stdout.write('FIXTURE_NATURAL_RESPONSE_FINISHED\r\n');
+        hook('Stop');
+      } else setTimeout(finish, 50);
+    };
+    setTimeout(finish, 50);
+    return;
   }
   if (prompt === 'spawn-child') {
     // Inherit only this managed process's scoped context. No owner pairing flag.

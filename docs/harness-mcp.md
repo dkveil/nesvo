@@ -64,7 +64,7 @@ explicit shared/worktree mode and never sends an initial prompt. Acceptance,
 native creation and provider readiness remain distinct. Instruction V9 teaches
 launch, queued delivery and executor recovery, uncertain-slot retention and known no-effect startup failure; older
 live snapshots remain unchanged. See [task launch](harness-task-launch.md).
-The catalog contains 48 tools. Task instruction intents use
+The catalog contains 52 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 
@@ -75,6 +75,13 @@ Manual workers remain untouched; retries default off, and unknown effects retain
 slots. Independent result validation still gates review. Disable stops new
 admissions; restart pauses scheduling without adoption/replay. See
 [executor contract](harness-executor.md).
+
+`runWakes` adds `nesvo_enable_run_wakes`, `nesvo_disable_run_wakes`,
+`nesvo_get_run_wakes` and `nesvo_get_run_wake_batch`. Explicit opt-in groups new
+coordinator inbox/current-worker attention references without periodic model
+calls. Native input retains human, draft, readiness, generation and elapsed
+budget fences. Wake settlement never ACKs or validates work. See
+[wake contract](harness-wakes.md).
 
 `hostBudgets` adds owner-only `nesvo_get_host_budget` and `nesvo_set_host_budget`.
 Both use the shared host admission policy and workflow recovery namespace;

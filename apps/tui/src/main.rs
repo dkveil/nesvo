@@ -31,6 +31,7 @@ mod workflow_delivery;
 mod workflow_executor;
 mod workflow_inbox;
 mod workflow_launches;
+mod workflow_wakes;
 mod workspace_layout;
 
 use anyhow::{Context, Result, ensure};
