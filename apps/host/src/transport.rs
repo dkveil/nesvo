@@ -332,10 +332,11 @@ pub async fn handle(
                             let permit=event_gate.clone().try_acquire_owned();
                             match (prepared,permit) {
                                 (Ok((log,actor,authority)),Ok(permit))=>{
-                                    let state=state.clone();
+                                    let state=state.clone();let events=pty_events.clone();
                                     tokio::spawn(async move {
                                         let _permit=permit;
                                         let result=match request {
+                                            crate::orchestration::Request::Launch {request}=>crate::workflow_launch_runtime::execute(state.clone(),events,log,actor,authority,request).await,
                                             crate::orchestration::Request::Control {request}=>crate::workflow_control_runtime::execute(state.clone(),log,actor,authority,request).await,
                                             request=>log.workflow(actor,request).await,
                                         };

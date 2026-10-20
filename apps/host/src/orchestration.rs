@@ -68,6 +68,9 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Launch {
+        request: crate::workflow_launches::Request,
+    },
     Control {
         request: crate::workflow_controls::Request,
     },
@@ -153,6 +156,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::workflow_decisions::initialize(connection)?;
     crate::workflow_budget::initialize(connection)?;
     crate::workflow_controls::initialize(connection)?;
+    crate::workflow_launches::initialize(connection)?;
     crate::budgets::initialize(connection)?;
     Ok(())
 }
@@ -250,7 +254,7 @@ pub(crate) fn run(connection: &Connection, actor: &Actor, id: &str) -> Result<Va
         json!({"id":id,"title":title,"goal":goal,"coordinatorSessionId":coordinator,"revision":revision,"state":state,"createdAt":created_at,"budget":budget,"taskResult":if state=="succeeded"{Some("succeeded")}else{None}}),
     )
 }
-fn view(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
+pub(crate) fn view(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
     let run = run(connection, actor, id)?;
     let mut statement =
         connection.prepare("SELECT id,spec FROM workflow_tasks WHERE run_id=?1 ORDER BY rowid")?;
@@ -291,7 +295,7 @@ pub(crate) fn execute_at(
     request: Request,
     now: u64,
 ) -> Result<Value> {
-    if matches!(request, Request::Control { .. }) {
+    if matches!(request, Request::Control { .. } | Request::Launch { .. }) {
         return Err(Error::new(
             "unsupported",
             "Run control requires the native dispatch adapter",

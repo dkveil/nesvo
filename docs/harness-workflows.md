@@ -7,7 +7,8 @@ that run. An **attempt** binds exactly one managed worker process to a task.
 coordinator validation. [Attempt-bound decisions](harness-decisions.md) add
 explicit questions without granting native permission approval. [Run admission
 budgets and drain](harness-run-budgets.md) preserve native work and human priority.
-[Native run controls](harness-run-controls.md) add explicit stop/cancel with
+[Atomic task launch](harness-task-launch.md) reserves attempts and native create
+identities before starting a worker. [Native run controls](harness-run-controls.md) add explicit stop/cancel with
 per-target receipts and observed exit. Automatic native dispatch remains F14 work.
 Idle never means success.
 

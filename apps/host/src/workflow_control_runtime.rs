@@ -18,7 +18,15 @@ pub async fn execute(
     request: Request,
 ) -> Result<Value> {
     match request {
-        Request::Start { .. } => {
+        Request::Start { ref run_id, .. } => {
+            log.workflow(
+                actor.clone(),
+                crate::orchestration::Request::Get {
+                    run_id: run_id.clone(),
+                },
+            )
+            .await?;
+            let _permit = state.lock().unwrap().native_run_permit(run_id)?;
             let Reply::Prepared { view, claim } = log
                 .run_control(Work::Prepare {
                     actor: actor.clone(),

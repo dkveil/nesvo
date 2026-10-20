@@ -53,6 +53,7 @@
                 {
                   "required": ["run", "tasks"],
                   "properties": {
+                    "launch": { "$ref": "#/definitions/workflowLaunch" },
                     "run": {
                       "type": "object",
                       "required": ["id", "title", "goal", "revision", "state", "taskResult"],
@@ -100,6 +101,9 @@
                           "state": {
                             "enum": [
                               "planned",
+                              "launching",
+                              "launchFailed",
+                              "launchUnknown",
                               "assigned",
                               "reported",
                               "succeeded",
@@ -629,6 +633,33 @@
         "ackedBy": { "type": ["object", "null"] }
       }
     },
+    "workflowLaunch": {
+      "type": "object",
+      "required": [
+        "attemptId",
+        "receiptId",
+        "operationKey",
+        "phase",
+        "sessionId",
+        "workspace",
+        "createdAt",
+        "code",
+        "effectStarted",
+        "directory"
+      ],
+      "properties": {
+        "attemptId": { "type": "string" },
+        "receiptId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+        "operationKey": { "type": "string", "maxLength": 128 },
+        "phase": { "enum": ["accepted", "dispatching", "created", "failed", "unknown"] },
+        "sessionId": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+        "workspace": { "enum": ["shared", "worktree"] },
+        "createdAt": { "$ref": "#/definitions/cursor" },
+        "code": { "type": ["string", "null"] },
+        "effectStarted": { "type": ["boolean", "null"] },
+        "directory": { "type": ["string", "null"] }
+      }
+    },
     "workflowAttempt": {
       "type": "object",
       "required": ["id", "taskId", "ordinal", "sessionId", "state", "result", "validation"],
@@ -637,8 +668,20 @@
         "taskId": { "type": "string" },
         "ordinal": { "type": "integer", "minimum": 1, "maximum": 16 },
         "sessionId": { "type": "string" },
-        "state": { "enum": ["assigned", "reported", "succeeded", "failed", "stopped"] },
+        "state": {
+          "enum": [
+            "launching",
+            "launchFailed",
+            "launchUnknown",
+            "assigned",
+            "reported",
+            "succeeded",
+            "failed",
+            "stopped"
+          ]
+        },
         "result": { "type": ["object", "null"] },
+        "launch": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/workflowLaunch" }] },
         "validation": { "type": ["object", "null"] }
       }
     },

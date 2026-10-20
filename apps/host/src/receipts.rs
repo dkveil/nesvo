@@ -92,6 +92,21 @@ pub fn accept(
     operation: &str,
     request: Value,
 ) -> Result<Accepted> {
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let accepted = accept_transaction(&transaction, issuer, key, operation, request)?;
+    transaction.commit()?;
+    Ok(accepted)
+}
+/// Reserve a native effect inside the caller's durable admission transaction.
+/// This only allocates a receipt/session identity; it never dispatches effects.
+pub(crate) fn accept_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    issuer: &str,
+    key: &str,
+    operation: &str,
+    request: Value,
+) -> Result<Accepted> {
     valid_key(key)?;
     ensure!(
         matches!(operation, "create" | "send" | "interrupt" | "stop"),
@@ -113,8 +128,6 @@ pub fn accept(
         return Err(Error::new("invalid_argument", "Operation request exceeds 24 KiB").into());
     }
     let digest = hex::encode(ring::digest::digest(&ring::digest::SHA256, &request).as_ref());
-    let transaction =
-        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let existing: Option<(String, String, String)> = transaction
         .query_row(
             "SELECT id,digest,operation FROM operation_receipts WHERE issuer=?1 AND key=?2",
@@ -130,7 +143,7 @@ pub fn accept(
             )
             .into());
         }
-        let receipt = read_record(&transaction, &id, Some(issuer))?
+        let receipt = read_record(transaction, &id, Some(issuer))?
             .ok_or_else(|| Error::new("operation_not_found", "Operation no longer exists"))?;
         return Ok(Accepted {
             receipt,
@@ -153,8 +166,7 @@ pub fn accept(
         result: json!({}),
     };
     transaction.execute("INSERT INTO operation_receipts(id,issuer,key,digest,operation,phase,session_id,result) VALUES(?1,?2,?3,?4,?5,?6,?7,'{}')",params![receipt.id,issuer,key,digest,operation,receipt.phase,receipt.session_id])?;
-    append_transaction(&transaction, vec![event(&receipt)])?;
-    transaction.commit()?;
+    append_transaction(transaction, vec![event(&receipt)])?;
     Ok(Accepted {
         receipt,
         is_new: true,

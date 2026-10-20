@@ -58,6 +58,15 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_launch_task",
+            "Reserve a dependency-ready task, run parallel/retry capacity and a native create identity atomically, then launch its visible worker once. Explicitly choose shared checkout or isolated worktree. No initial prompt is sent. Reply is immutable acceptance; inspect run/task history and the returned native receipt before sending work. Unknown launches keep capacity and cannot be retried with a fresh key. Does not take human focus/control or grant coordinator roles.",
+            object(
+                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"program":{"enum":["shell","claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"harness":{"type":"boolean"}}}}),
+                &["key", "runId", "taskId", "expectedRevision", "profile"],
+            ),
+            false,
+        ),
+        (
             "nesvo_stop_run",
             "Accept a durable stop intent for only this run's bound worker processes. Native stop receipts precede observed exits; reply is immutable acceptance, not proof of termination. Inspect nesvo_get_run_control. Human leases/drafts and owner drain are protected. Same-key replay/reconnect never dispatches again. Stopped runs may resume with fresh attempts, preserving budgets/history; unknown control must be reconciled first.",
             object(
@@ -486,6 +495,10 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_launch_task" => (
+            crate::workflow::tool("launch", json!({"request":arguments}))?,
+            "workflow",
+        ),
         "nesvo_stop_run" | "nesvo_cancel_run" | "nesvo_get_run_control" => {
             let mut fields = arguments
                 .as_object()
@@ -972,7 +985,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 41);
+        assert_eq!(catalog().len(), 42);
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(

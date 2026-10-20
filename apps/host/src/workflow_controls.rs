@@ -270,7 +270,7 @@ fn settle(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<()> {
                     "Run native control completed; no answer or task success inferred",
                 )?;
             }
-            transaction.execute("UPDATE workflow_attempts SET state='stopped' WHERE task_id IN (SELECT id FROM workflow_tasks WHERE run_id=?1) AND (state='assigned' OR (?2='cancel' AND state='reported'))",params![run_id,kind])?;
+            transaction.execute("UPDATE workflow_attempts SET state='stopped' WHERE task_id IN (SELECT id FROM workflow_tasks WHERE run_id=?1) AND (state IN ('assigned','launching','launchUnknown') OR (?2='cancel' AND state='reported'))",params![run_id,kind])?;
             event(transaction, &run_id, id, "run.control_completed", now)?;
         }
     }
@@ -365,7 +365,7 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
         transaction.query_row("SELECT count(*) FROM workflow_control_targets", [], |r| {
             r.get(0)
         })?;
-    let mut statement=transaction.prepare("SELECT a.id,a.session_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND NOT EXISTS(SELECT 1 FROM workflow_process_exits e WHERE e.session_id=a.session_id) ORDER BY a.rowid")?;
+    let mut statement=transaction.prepare("SELECT a.id,a.session_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND NOT EXISTS(SELECT 1 FROM workflow_process_exits e WHERE e.session_id=a.session_id) AND NOT EXISTS(SELECT 1 FROM workflow_launches l JOIN operation_receipts o ON o.id=l.operation_id WHERE l.attempt_id=a.id AND o.phase='failed' AND json_extract(o.result,'$.effectStarted')=0) ORDER BY a.rowid")?;
     let targets = statement
         .query_map([run_id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))

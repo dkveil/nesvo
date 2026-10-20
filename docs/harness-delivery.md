@@ -38,8 +38,8 @@ not evidence that the expanded acceptance criteria pass.
 | F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                                            |
 | F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                                   |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending                   |
-| F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                                                       |
-| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable runs/tasks/attempts, explicit assignment and DAG gates; automatic dispatch pending                           |
+| F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Partial: task launch with explicit shared/worktree mode, dirty-source preservation; ownership UI/setup/archive pending        |
+| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable DAG/results and atomic pre-spawn task/receipt admission; background dispatch pending                         |
 | F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: scoped messages, atomic result notices, exact ACK and replay/reopen; dispatch/UI pending                    |
 | F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                                     |
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending                      |
@@ -1002,3 +1002,78 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   statistical or actual-provider/model evidence. Timing/token metadata was absent
   and omitted. Earlier six cases remain retained inputs, not claimed rerun.
   Evaluation/reviewer artifacts remain outside Git.
+
+### F14/F20 atomic task launch and native identity reservation
+
+- Added CLI `run launch` and MCP `nesvo_launch_task` (`runLaunch`, 42 tools).
+  A dependency-ready task, attempt/retry number, parallel slot, native create
+  receipt and future session ID commit together before native/Git setup. Fault
+  injection proves receipt/attempt/mutation/events rollback together. Separate
+  SQLite writers see reserved capacity before a process exists.
+- Native launch uses the ordinary receipt claim/finish pipeline. Immutable
+  workflow acceptance is recovered separately from current native creation and
+  actual readiness. Same-key replay/read/reconnect cannot create another worker.
+  `launching`/`launchUnknown` retain capacity; only proven no-effect startup failure
+  frees its parallel slot while keeping retry/history. No startup failure is
+  fabricated into a worker result or task success. Restart invalidates unfinished
+  native claims and keeps unknown launches blocked for explicit reconciliation.
+- Physical launch and stop/cancel of one run share an ephemeral permit; conflicts
+  return `busy` without an unbounded queue. Reads/different runs remain separate.
+  Control targets include reserved native identities and exclude proven no-effect
+  startup failures, without confusing those with observed process exit. Worker
+  reporting, human priority, run drain/time policy and explicit validation remain
+  enforced. Global native caps are rechecked at ordinary creation.
+- Shared checkout or isolated worktree must be chosen explicitly. Owner launch
+  into a coordinator's run delegates only the fresh worker through that live
+  coordinator's existing bounded capability. Native receipts retain their real
+  issuer: coordinator child/run access cannot read owner receipts merely by ID.
+  No prompt is typed and no focus/control is acquired by launch.
+- Controlled native SDK coverage: simultaneous same-key requests, matching CLI
+  replay, dependency/parallel refusals, actual worker report and independent
+  validation, owner-delegated review worktree, source-edit preservation, issuer
+  isolation and observed run cancellation without targeting the coordinator.
+  A further owner launch after deliberately stopping that coordinator fails with
+  durable `scope_revoked/effectStarted:false`, freeing its parallel slot without
+  reviving expired authority or starting another process.
+  Windows test Git settings affect only an owned temporary repository; no global
+  configuration is changed. CLI schemas validate reservation, current history,
+  native-ID lookup, required workspace mode and intent conflicts.
+- Windows validation: fmt, Clippy with warnings denied, 128 TUI + 133 host + 3
+  wire unit checks, all seven controlled native SDK scenarios and 30
+  host/sync/CLI checks. No new dependency or visual change was needed. The preceding
+  native-control commit `4d1ddfc` passed all five jobs in CI `39356883349`, including
+  Windows/macOS/Linux. CI `39356651211` exposed a distinct pairing-file/startup
+  race in an authentication fixture; `f00cbaf` waits for actual listening before
+  authentication, retaining the authentication deadline. That commit passed all
+  five jobs in CI `39357940895`. Controlled status publication p95 was 252.557 ms
+  over 26 batches, excluding provider/model/network latency. New task-launch
+  platform CI is not claimed before it runs.
+- An isolated original Claude Code 2.1.304 smoke used actual `run launch`, native
+  receipt inspection and original-key recovery. Reservation was `launching` with
+  native phase `accepted`; current state became `assigned/created`. The provider
+  remained correctly blocked on folder trust, with no prompt/model/trust approval.
+  Native run stop then reached observed exit; the owned host and three observed
+  descendants exited cleanly. This proves startup/binding/control, not agent work,
+  hook readiness or model consumption of the injected instruction.
+- Automatic DAG execution/prompt dispatch, worktree ownership presentation/setup/
+  archive, unknown-process adoption and job policy remain required stage gates.
+  See [atomic task launch](harness-task-launch.md).
+
+### F38 instruction V7: atomic launch and receipt authority
+
+- V7 prefers atomic launch for new task workers, distinguishes legacy manual
+  binding, teaches explicit workspace choice, immutable acceptance/current native
+  evidence, unknown-slot retention, known no-effect startup retry accounting and
+  deliberate input only after assigned/readiness/human gates.
+- Offline case 8 compared one final candidate with the frozen V6 snapshot.
+  Initial evaluation exposed an overly broad cross-caller receipt statement.
+  The candidate now explicitly says receipt IDs are pointers, not grants; only
+  owner may inspect another issuer's native receipt. The expanded prompt and both
+  versions were rerun, with draft outputs archived and not counted twice.
+- Final semantic grading and programmatic command checks: V7 6/6, V6 3/6.
+  Recovery, human/validation safety and receipt authority pass in both; newly
+  implemented grammar and accounting distinguish V7. Initial ungraded reviewer
+  preceded reading/grading final outputs. This targeted single sample is not
+  statistical or provider/model evidence. Timing/token metadata was unavailable
+  and omitted. Earlier seven cases remain retained inputs, not claimed rerun;
+  research/reviewer artifacts stay outside Git.

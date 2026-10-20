@@ -115,7 +115,7 @@ fn deadline(record: &Record) -> Option<u64> {
         .and_then(|(start, duration)| start.checked_add(duration))
 }
 fn active(connection: &Connection, run_id: &str) -> Result<i64> {
-    Ok(connection.query_row("SELECT count(*) FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND a.state IN ('assigned','reported')",[run_id],|r|r.get(0))?)
+    Ok(connection.query_row("SELECT count(*) FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND a.state IN ('launching','launchUnknown','assigned','reported')",[run_id],|r|r.get(0))?)
 }
 pub fn snapshot(connection: &Connection, run_id: &str, state: &str) -> Result<Value> {
     let record = load(connection, run_id)?;

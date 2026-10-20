@@ -64,7 +64,7 @@ fn checks_valid(checks: &[Check]) -> bool {
             .iter()
             .all(|c| plain(&c.name, 128) && plain(&c.details, 1024))
 }
-fn task(connection: &Connection, run_id: &str, task_id: &str) -> Result<TaskSpec> {
+pub(crate) fn task(connection: &Connection, run_id: &str, task_id: &str) -> Result<TaskSpec> {
     let source: Option<String> = connection
         .query_row(
             "SELECT spec FROM workflow_tasks WHERE id=?1 AND run_id=?2",
@@ -107,7 +107,7 @@ fn attempt(connection: &Connection, id: &str) -> Result<Value> {
             .unwrap_or(Value::Null))
     };
     Ok(
-        json!({"id":id,"taskId":task,"ordinal":ordinal,"sessionId":session,"state":state,"result":decode(result)?,"validation":decode(validation)?,"decisionGate":crate::workflow_decisions::summary(connection,&id)?}),
+        json!({"id":id,"taskId":task,"ordinal":ordinal,"sessionId":session,"state":state,"result":decode(result)?,"validation":decode(validation)?,"decisionGate":crate::workflow_decisions::summary(connection,&id)?,"launch":crate::workflow_launches::summary(connection,&id)?}),
     )
 }
 pub fn summaries(connection: &Connection, run_id: &str) -> Result<HashMap<String, Value>> {
@@ -277,7 +277,12 @@ pub fn mutate(
                 }
             }
             let current = summaries.get(task_id);
-            if current.is_some_and(|a| !matches!(a["state"].as_str(), Some("failed" | "stopped"))) {
+            if current.is_some_and(|a| {
+                !matches!(
+                    a["state"].as_str(),
+                    Some("failed" | "stopped" | "launchFailed")
+                )
+            }) {
                 return Err(Error::new(
                     "attempt_state_conflict",
                     "Task already has a current attempt or accepted result",

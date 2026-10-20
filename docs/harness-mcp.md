@@ -56,7 +56,15 @@ do not kill processes, grant native approval or replay input. See
 `nesvo_get_run_control`. The first two declare destructive effects and use exact
 run revisions, stable workflow mutation keys and per-target native receipts.
 Only host-observed exit completes a control; reads/replays do not signal.
-See [native run controls](harness-run-controls.md). The catalog contains 41 tools.
+See [native run controls](harness-run-controls.md).
+
+`runLaunch` adds `nesvo_launch_task`, reserving dependency-ready task/attempt,
+run capacity and native create identity atomically before startup. It requires
+explicit shared/worktree mode and never sends an initial prompt. Acceptance,
+native creation and provider readiness remain distinct. Instruction V7 teaches
+recovery, uncertain-slot retention and known no-effect startup failure; older
+live snapshots remain unchanged. See [task launch](harness-task-launch.md).
+The catalog contains 42 tools.
 
 `hostBudgets` adds owner-only `nesvo_get_host_budget` and `nesvo_set_host_budget`.
 Both use the shared host admission policy and workflow recovery namespace;

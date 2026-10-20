@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 6 (`NESVO_HARNESS_INSTRUCTIONS_V6`).
+Instruction version: 7 (`NESVO_HARNESS_INSTRUCTIONS_V7`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -112,11 +112,11 @@ when editing. Cycles/missing dependencies are refused. Read returned host IDs
 and revisions; titles and array positions are not identities.
 
 Freeze a nonempty draft using `run activate RUN_ID --key KEY --revision REV
---json`. Create a fresh worker with the ordinary session API, **without an
-initial prompt**, and inspect readiness. First inspect the run's current budget
-and drain state; do not create extra workers while admission is blocked. These
-reads are preflight checks, not atomic run-capacity reservations. Bind the ready
-worker before requesting task work:
+--json`. For a new task worker, prefer the atomic launch below when `runLaunch`
+is advertised. The older manual binding path can attach an already controlled
+worker, **without an initial prompt**. Inspect readiness, current budget and
+drain state first. Manual preflight reads do not reserve run capacity and must
+not be presented as atomic fan-out. Bind the existing ready worker before work:
 `run assign RUN_ID --task TASK_ID --session CHILD_ID --key KEY --revision REV
 --json`. The host allows only your granted worker children and dependency-ready
 tasks, refusing human control/drafts/pending input. Assignment does not type
@@ -126,6 +126,52 @@ operation keys recover through `operation`; workflow metadata keys recover
 through `run mutation --key ORIGINAL_KEY --json`. Do not interchange namespaces
 or invent a fresh key after an uncertain effect. No automatic DAG executor is
 supplied; explicit run budget/drain operations are described below.
+
+## Atomically launch a task worker
+
+With `runLaunch`, reserve a dependency-ready task, retry/parallel capacity and
+native create identity together before starting its visible worker:
+
+```powershell
+& $env:NESVO_CLI run launch RUN_ID --task TASK_ID --key task-launch-1 --revision RUN_REV --program claude --shared --harness --json
+```
+
+Explicitly choose **one** of `--shared` (existing checkout, deliberate shared
+files) or `--worktree` (isolated branch/worktree). Optional `--name` and `--cwd`
+stay within host grants. Use `--no-harness` for shell/unsupported providers when
+the coordinator profile would inherit Claude harness settings. There is no
+prompt, role-escalation or foreign-parent option. MCP `nesvo_launch_task` takes
+`{key,runId,taskId,expectedRevision,profile:{program,workspace:"shared"|"worktree",
+name?,cwd?,harness?}}` under the same host rules.
+
+The reply is immutable **reservation acceptance**, not process creation,
+readiness or task success. It includes `launch.attemptId`, `sessionId`,
+`receiptId` and `operationKey`. After timeout/lost reply, recover **the workflow
+key** with `run mutation --key task-launch-1 --json`, inspect `run get` and
+`run task RUN_ID TASK_ID --json`, then `operation --id RECEIPT_ID --json` and
+current session readiness/output. Native keys remain issuer-scoped. Receipt IDs
+are pointers, not access grants: a coordinator cannot inspect owner/foreign
+receipts merely by knowing their IDs. Only the owner may inspect another issuer's
+receipt by ID. A coordinator may still inspect its granted child and run history.
+Never use
+the run-launch key in the native recovery namespace or change keys to force
+an uncertain launch. Same-key replay/read/reconnect never creates another worker.
+
+`launching` and `launchUnknown` attempts occupy parallel capacity; unknown
+native/worktree effects need reconciliation, not another launch or silent slot
+release. Missing processes after restart are not proof of no effect. A proven
+`launchFailed` with `effectStarted:false` frees its parallel slot but retains the
+attempt/retry count and history. Deliberate retry uses current state/revision
+and a fresh worker attempt after the known blocker is resolved. `busy` can mean
+another physical launch/control for this run; inspect existing intents first.
+
+Successful native creation binds the reserved process as `assigned` without
+typing a prompt, taking human control or switching focus. Inspect `assigned`
+and actual readiness before deliberately sending task context through guarded
+`session send`. Do not separately assign the same process again. A reported
+result still occupies its slot until real validation; dependencies require
+accepted results, never created/idle/settled/ACK. No background DAG executor,
+automatic prompt submission or model heartbeat is supplied by this launch API.
 
 As a worker, `run context --json` returns your host-bound task and current
 attempt. It does not use `NESVO_SESSION_ID`/UI hints. If no attempt is assigned,

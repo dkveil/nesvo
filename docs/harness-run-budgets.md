@@ -39,10 +39,13 @@ Global host/provider limits and the prohibition on recursive worker fan-out stil
 apply. Lowering policy does not kill current work, claim a human lease, move
 focus, clear a draft or invalidate an already assigned result.
 
-These limits govern **attempt binding** and subsequent automated input. Native
-sessions created without a run binding remain governed by host policy. This
-version does not label arbitrary child creation as a run reservation; automatic
-DAG launch must reserve run capacity before creating its worker in later F14 work.
+These limits govern **attempt binding**, atomic task launch and subsequent
+automated input. [Task launch](harness-task-launch.md) reserves capacity before
+native setup; `launching` and `launchUnknown` count alongside assigned/reported
+attempts. A proven no-effect startup failure frees its slot but retains retry
+history. Native sessions created outside a run remain governed by host policy;
+ordinary child creation is not a run reservation. Background DAG dispatch remains
+separate F14 work.
 
 ## Clock and observed exhaustion
 

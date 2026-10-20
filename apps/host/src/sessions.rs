@@ -138,6 +138,7 @@ pub struct State {
     provider_limits: Vec<ProviderLimit>,
     limits_read_at: i64,
     schedule_watchers: HashSet<u64>,
+    native_run_gates: HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
 }
 
 fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
@@ -174,6 +175,7 @@ impl State {
             provider_limits,
             limits_read_at: 0,
             schedule_watchers: HashSet::new(),
+            native_run_gates: HashMap::new(),
         }
     }
 
@@ -191,6 +193,73 @@ impl State {
     pub fn event_log(&self) -> Result<crate::event_log::Service> {
         self.event_log.clone().ok_or_else(|| {
             crate::api_error::Error::new("unsupported", "Host event journal is unavailable").into()
+        })
+    }
+    /// Serialize physical launch/control for one run; never hold the State lock
+    /// across native setup. Weak entries retain only currently active effects.
+    pub fn native_run_permit(&mut self, run: &str) -> Result<tokio::sync::OwnedMutexGuard<()>> {
+        if run.is_empty() || run.len() > 128 || run.chars().any(char::is_control) {
+            return Err(
+                crate::api_error::Error::new("invalid_argument", "Invalid run identity").into(),
+            );
+        }
+        self.native_run_gates
+            .retain(|_, gate| gate.strong_count() > 0);
+        let gate = self
+            .native_run_gates
+            .get(run)
+            .and_then(std::sync::Weak::upgrade)
+            .unwrap_or_else(|| {
+                let gate = Arc::new(tokio::sync::Mutex::new(()));
+                self.native_run_gates
+                    .insert(run.into(), Arc::downgrade(&gate));
+                gate
+            });
+        gate.try_lock_owned().map_err(|_|crate::api_error::Error::new("busy","A native run launch/control is in progress; inspect original mutations and receipts before retrying").into())
+    }
+    /// An explicit owner launch into a coordinator's run delegates this fresh
+    /// worker through that coordinator's existing bounded native capability.
+    pub fn workflow_launch_authority(
+        &self,
+        authority: &crate::caller::Authority,
+        coordinator: Option<&str>,
+    ) -> Result<crate::caller::Authority> {
+        if let Some(caller) = self.actor_session(authority)? {
+            if coordinator != Some(caller.info.id.as_str())
+                || caller.policy.role != crate::caller::Role::Coordinator
+            {
+                return Err(crate::api_error::Error::new(
+                    "forbidden",
+                    "Only the bound coordinator can launch this run's workers",
+                )
+                .into());
+            }
+            return Ok(authority.clone());
+        }
+        let Some(id) = coordinator else {
+            return Ok(crate::caller::Authority::Owner);
+        };
+        let coordinator = self
+            .sessions
+            .get(id)
+            .filter(|session| {
+                session.info.running && session.policy.role == crate::caller::Role::Coordinator
+            })
+            .ok_or_else(|| {
+                crate::api_error::Error::new(
+                    "scope_revoked",
+                    "Run coordinator is not a live native coordinator; adoption is required",
+                )
+            })?;
+        let context = coordinator.caller_context.as_ref().ok_or_else(|| {
+            crate::api_error::Error::new(
+                "scope_revoked",
+                "Run coordinator capability is unavailable",
+            )
+        })?;
+        Ok(crate::caller::Authority::Session {
+            id: id.into(),
+            scope_id: context.scope_id.clone(),
         })
     }
     pub fn operation_caller(&self, client_id: u64) -> Result<(String, bool)> {
@@ -614,6 +683,7 @@ impl State {
         event["runBudgets"] = self.event_log.is_some().into();
         event["runDrain"] = self.event_log.is_some().into();
         event["runControls"] = self.event_log.is_some().into();
+        event["runLaunch"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event
@@ -2755,6 +2825,22 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_run_gates_are_scoped_released_and_do_not_retain_inactive_runs() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        let first = state.native_run_permit("first").unwrap();
+        assert!(state.native_run_permit("first").is_err());
+        let second = state.native_run_permit("second").unwrap();
+        drop(first);
+        drop(second);
+        for index in 0..100 {
+            drop(state.native_run_permit(&format!("run-{index}")).unwrap());
+        }
+        assert!(state.native_run_gates.len() <= 1);
+        assert!(state.native_run_permit("").is_err());
+    }
 
     #[test]
     fn schedule_notifications_are_opt_in_for_older_clients() {

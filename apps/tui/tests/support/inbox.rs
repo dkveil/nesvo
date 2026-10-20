@@ -1,6 +1,6 @@
 use super::*;
 
-async fn scoped_cli(context: &Path, args: &[&str]) -> Result<Value> {
+pub(super) async fn scoped_cli(context: &Path, args: &[&str]) -> Result<Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
     command
         .env("NESVO_AGENT_CONTEXT", context)

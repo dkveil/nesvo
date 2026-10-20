@@ -394,8 +394,30 @@ pub async fn create(
     if !accepted.is_new {
         return Ok(accepted.receipt);
     }
+    dispatch_create(
+        state,
+        events,
+        log,
+        issuer,
+        accepted.receipt,
+        spec,
+        authority,
+    )
+    .await
+}
+/// Dispatch an already journaled create once. Workflow admission can reserve
+/// its attempt and this receipt atomically before reaching native setup.
+pub(crate) async fn dispatch_create(
+    state: Arc<Mutex<State>>,
+    events: mpsc::Sender<PtyEvent>,
+    log: Service,
+    issuer: String,
+    receipt: Receipt,
+    mut spec: LaunchSpec,
+    authority: crate::caller::Authority,
+) -> Result<Receipt> {
     let claim = log
-        .claim(issuer.clone(), accepted.receipt.id.clone())
+        .claim(issuer.clone(), receipt.id)
         .await?
         .ok_or_else(|| anyhow!("Operation is no longer available for dispatch"))?;
     let validation = state.lock().unwrap().resolve_launch(&authority, &mut spec);

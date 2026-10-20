@@ -25,7 +25,10 @@ Old hosts fail capability checks instead of falling back to unjournaled signals.
 The target set is frozen from this run's attempt bindings before any signal.
 It includes still-unconfirmed historical attempt processes, which cannot be
 reassigned to another attempt. It excludes the coordinator, unassigned children,
-foreign sessions and processes with persisted host exit proof. Display names,
+foreign sessions, processes with persisted host exit proof and native launch
+receipts proving no effects occurred. Physical task launch
+and control of one run use the same runtime permit, returning `busy` while
+another physical effect is active; reads remain passive. Display names,
 parent metadata and focus do not grant authority. Workers cannot stop/cancel
 their parent run. Coordinators can operate only their own visible run and the
 native children they were granted; native authorization is rechecked per target.

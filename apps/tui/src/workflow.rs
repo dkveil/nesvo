@@ -8,6 +8,8 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Reserve a dependency-ready task and start its worker once. Sends no prompt.
+    Launch(crate::workflow_launches::Launch),
     /// Stop only run-bound workers with durable native receipts. Inspect control.
     Stop(crate::workflow_controls::Start),
     /// Cancel planned work and stop run-bound workers. Never overrides a human.
@@ -177,6 +179,7 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Launch(launch) => launch.json,
             Self::Stop(start) | Self::Cancel(start) => start.json,
             Self::Control { json, .. } => *json,
             Self::Budget { command } => command.machine(),
@@ -199,6 +202,9 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Launch(launch) => Request::Launch {
+                request: launch.request(),
+            },
             Self::Stop(start) => Request::Control {
                 request: start.request(crate::workflow_controls::Kind::Stop),
             },
@@ -427,6 +433,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Launch {
+        request: crate::workflow_launches::Request,
+    },
     Control {
         request: crate::workflow_controls::Request,
     },
@@ -576,6 +585,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         ));
     }
     let capability = match request["request"]["action"].as_str() {
+        Some("launch") => Some("runLaunch"),
         Some("control") => Some("runControls"),
         Some("runBudget") => Some("runBudgets"),
         Some("drain" | "resume") => Some("runDrain"),
@@ -584,7 +594,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
     if capability.is_some_and(|key| caps[key] != true) {
         return Err(cli::failure(
             "unsupported",
-            "Host does not enforce run budgets/drain; update nesvo-host",
+            "Host lacks the required workflow capability; update nesvo-host",
         ));
     }
     Ok(())
@@ -604,6 +614,14 @@ mod tests {
     use super::*;
     #[test]
     fn adapters_reject_malformed_shapes_before_host_dispatch() {
+        for profile in [
+            json!({"program":"claude"}),
+            json!({"program":"unsupported","workspace":"shared"}),
+            json!({"program":"claude","workspace":"shared","role":"coordinator"}),
+            json!({"program":"claude","workspace":"shared","prompt":"type before admission"}),
+        ] {
+            assert!(tool("launch",json!({"request":{"key":"k","runId":"r","taskId":"t","expectedRevision":1,"profile":profile}})).is_err());
+        }
         assert!(tool("context", json!({"sessionId":"foreign"})).is_err());
         assert!(
             tool(

@@ -121,6 +121,9 @@ mod workflow_decisions_tests;
 #[cfg(test)]
 #[path = "workflow_inbox_tests.rs"]
 mod workflow_inbox_tests;
+#[cfg(test)]
+#[path = "workflow_launches_tests.rs"]
+mod workflow_launches_tests;
 impl Store {
     fn open(path: &std::path::Path) -> Result<Self> {
         let mut connection = Connection::open(path)?;
@@ -132,6 +135,7 @@ impl Store {
           INSERT OR IGNORE INTO domain_event_cursor VALUES(1,0,0);")?;
         crate::receipts::initialize(&mut connection)?;
         crate::orchestration::initialize(&connection)?;
+        crate::workflow_launches::recover(&mut connection)?;
         crate::workflow_controls::recover(&mut connection)?;
         Ok(Self(connection))
     }
@@ -240,6 +244,10 @@ impl Store {
 }
 
 enum Work {
+    Launch {
+        work: crate::workflow_launches::Work,
+        reply: oneshot::Sender<Result<crate::workflow_launches::Reply>>,
+    },
     RunControl {
         work: crate::workflow_controls::Work,
         reply: oneshot::Sender<Result<crate::workflow_controls::Reply>>,
@@ -320,6 +328,21 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub async fn launch(
+        &self,
+        work: crate::workflow_launches::Work,
+    ) -> Result<crate::workflow_launches::Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::Launch { work, reply })
+            .await
+            .map_err(|_| anyhow!("Workflow launch journal is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!(
+                "Launch outcome unconfirmed; inspect the original workflow key and native receipt"
+            )
+        })?
+    }
     pub async fn run_control(
         &self,
         work: crate::workflow_controls::Work,
@@ -506,6 +529,16 @@ impl Service {
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
+                        Work::Launch { work, reply } => {
+                            let result = crate::workflow_launches::execute(
+                                &mut store.0,
+                                work,
+                                crate::status::now_millis(),
+                            );
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
                         Work::RunControl { work, reply } => {
                             let result = crate::workflow_controls::execute(
                                 &mut store.0,

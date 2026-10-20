@@ -1039,6 +1039,127 @@ test(
       );
 
       await suite.test(
+        'run launch CLI reserves a worker once and recovers native creation separately',
+        async () => {
+          const invoke = async (args: string[]) => {
+            const output = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'run',
+              ...args,
+              '--json',
+            ]);
+            queryOutput(output.stdout);
+            assert.equal(output.code, 0, output.stdout);
+            return JSON.parse(output.stdout).data;
+          };
+          const created = await invoke([
+            'create',
+            'CLI launch',
+            '--key',
+            'launch-cli-run',
+            '--goal',
+            'No automatic prompt',
+          ]);
+          const id = created.run.id;
+          const planFile = join(fixture, 'launch-plan.json');
+          await writeFile(
+            planFile,
+            JSON.stringify([
+              { key: 'task', title: 'CLI worker', instruction: 'Controlled startup' },
+            ]),
+          );
+          const plan = await invoke([
+            'plan',
+            id,
+            '--key',
+            'launch-cli-plan',
+            '--revision',
+            '1',
+            '--file',
+            planFile,
+          ]);
+          const active = await invoke([
+            'activate',
+            id,
+            '--key',
+            'launch-cli-active',
+            '--revision',
+            String(plan.run.revision),
+          ]);
+          const args = [
+            'launch',
+            id,
+            '--task',
+            plan.tasks[0].id,
+            '--key',
+            'launch-cli-once',
+            '--revision',
+            String(active.run.revision),
+            '--program',
+            'shell',
+            '--no-harness',
+          ];
+          for (const flags of [[], ['--shared', '--worktree']]) {
+            const invalid = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'run',
+              ...args,
+              ...flags,
+              '--json',
+            ]);
+            assert.equal(invalid.code, 2, 'one explicit workspace mode is required');
+          }
+          const accepted = await invoke([...args, '--shared']);
+          assert.equal(accepted.launch.phase, 'accepted');
+          assert.equal(accepted.tasks[0].state, 'launching');
+          assert.deepEqual(await invoke([...args, '--shared']), accepted);
+          assert.deepEqual(await invoke(['mutation', '--key', 'launch-cli-once']), accepted);
+          const history = await invoke(['task', id, plan.tasks[0].id]);
+          assert.equal(history.attempts[0].state, 'assigned');
+          assert.equal(history.attempts[0].launch.phase, 'created');
+          assert.equal(history.attempts[0].launch.receiptId, accepted.launch.receiptId);
+          const native = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'operation',
+            '--id',
+            accepted.launch.receiptId,
+            '--json',
+          ]);
+          queryOutput(native.stdout);
+          assert.equal(native.code, 0, native.stdout);
+          assert.equal(JSON.parse(native.stdout).data.receipt.phase, 'created');
+          const child = (await snapshot()).sessions.find(
+            session => session.id === accepted.launch.sessionId,
+          );
+          assert.ok(child?.running);
+          assert.equal(child.controllerId, null);
+          const conflict = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'run',
+            ...args,
+            '--worktree',
+            '--json',
+          ]);
+          queryOutput(conflict.stdout);
+          assert.equal(JSON.parse(conflict.stdout).error.code, 'idempotency_conflict');
+          const control = await invoke([
+            'stop',
+            id,
+            '--key',
+            'stop-cli-launch',
+            '--revision',
+            String(history.run.revision),
+          ]);
+          await until(async () => {
+            const current = await invoke(['control', id, control.control.id]);
+            return current.control.state === 'completed' ? current : undefined;
+          }, 'launched worker exit evidence');
+          client.closeSession(accepted.launch.sessionId);
+          await next(
+            'sessions',
+            event => !event.sessions.some(session => session.id === accepted.launch.sessionId),
+          );
+          assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
+        },
+      );
+
+      await suite.test(
         'owner budgets reject legacy creation without changing existing sessions',
         async () => {
           const invoke = async (args: string[]) => {

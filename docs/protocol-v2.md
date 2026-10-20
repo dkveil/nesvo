@@ -4,6 +4,15 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+`runLaunch` adds `{action:"launch",request:{key,runId,taskId,expectedRevision,profile}}`
+inside authenticated workflow requests. It reserves the attempt, run capacity,
+native receipt and session identity atomically before physical startup. New
+attempt states `launching`, `launchFailed` and `launchUnknown` distinguish
+reservation, proven no-effect refusal and uncertainty. Current task history
+includes native receipt pointers separately from immutable mutation acceptance.
+See [atomic task launch](harness-task-launch.md) for strict profile fields,
+scope, recovery, same-run control serialization and compatibility.
+
 Hosts advertising `workflowPlans` also accept authenticated `workflow` requests
 with a nested `request` tagged by `action`. The [draft workflow contract](harness-workflows.md)
 and [durable inbox](harness-inbox.md)/[decision contracts](harness-decisions.md)
