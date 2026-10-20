@@ -626,7 +626,7 @@ async fn native_quota_contexts_release_only_matching_jobs_and_cancellation_stays
         let source_b=context_revision(&owner,&directory_b,1).await?;
         let a=row(&source_a)?;
         let b=row(&source_b)?;
-        assert_eq!(a["ordinaryUsageAllowed"],false);
+        assert_eq!(a["ordinaryUsageAllowed"],false,"Initial owned A source metadata: {}",json!({"status":a["status"],"reason":a["reason"],"revision":a["revision"],"freshness":a["freshness"],"complete":a["complete"]}));
         assert_eq!(a["ordinaryUsageEligible"],false);
         assert_eq!(b["ordinaryUsageEligible"],true);
         assert!(fingerprint(&a["contextId"]) && fingerprint(&a["accountFingerprint"]));

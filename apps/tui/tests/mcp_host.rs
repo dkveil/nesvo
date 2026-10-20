@@ -70,6 +70,8 @@ mod prechecks;
 mod provider_quota;
 #[path = "support/quota_native_continuation.rs"]
 mod quota_native_continuation;
+#[path = "support/quota_session_wakes.rs"]
+mod quota_session_wakes;
 #[path = "support/recovery_hooks.rs"]
 mod recovery_hooks;
 #[path = "support/recovery_profile.rs"]

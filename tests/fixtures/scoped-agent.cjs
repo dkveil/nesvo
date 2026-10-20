@@ -27,7 +27,15 @@ if (codex && process.argv.includes('app-server')) {
   let configRead = false;
   let requested = false;
   const normalizedPath = value => {
-    const absolute = path.resolve(value);
+    let absolute = path.resolve(value);
+    // The native host canonicalizes cwd. Existing owned fixture folders may
+    // include macOS /var aliases or filesystem-normalized Unicode names.
+    try {
+      absolute = fs.realpathSync.native(absolute);
+    } catch {
+      /* Future owned path. */
+    }
+    if (process.platform === 'darwin') absolute = absolute.normalize('NFC');
     return process.platform === 'win32' ? path.toNamespacedPath(absolute).toLowerCase() : absolute;
   };
   const samePath = (first, second) => normalizedPath(first) === normalizedPath(second);
@@ -365,6 +373,29 @@ function submit(prompt) {
   if (prompt === 'fixture-compact') {
     hook('SessionStart', { source: 'compact' });
     process.stdout.write('FIXTURE_CONTEXT_COMPACTED\r\n');
+    hook('Stop');
+    return;
+  }
+  if (codex && prompt === 'quota-wait') {
+    fs.writeFileSync(
+      path.join(directory, `${id}.quota-wake-original.json`),
+      JSON.stringify({ prompt, sessionId: id, pid: process.pid }),
+    );
+    // Controlled UI timing lets the host consume the supported prompt hook
+    // before a new quota screen supersedes it. Codex has no StopFailure hook.
+    setTimeout(() => {
+      process.stdout.write(
+        "\x1b[2J\x1b[HYou've hit your usage limit. Try again later.\r\n› \r\n? for shortcuts\x1b[2;3H",
+      );
+    }, 800);
+    return;
+  }
+  if (codex && prompt === 'Continue the previous task.') {
+    fs.appendFileSync(
+      path.join(directory, `${id}.quota-wake-inputs.jsonl`),
+      `${JSON.stringify({ prompt, sessionId: id, pid: process.pid })}\n`,
+    );
+    process.stdout.write('\x1b[2J\x1b[HFIXTURE_QUOTA_WAKE_RECEIVED\r\n');
     hook('Stop');
     return;
   }
