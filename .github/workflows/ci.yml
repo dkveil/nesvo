@@ -48,7 +48,9 @@ jobs:
         run: |
           & ./tests/dev-host-probe.test.ps1
           & ./tests/dev-host-runtime.test.ps1
-      - run: cargo test --package nesvo --test mcp_host --locked -- --ignored
+      # Each scenario owns a native host, provider probes and several PTYs.
+      # Keep scenarios serial on shared runners; scenarios still test concurrent clients.
+      - run: cargo test --package nesvo --test mcp_host --locked -- --ignored --test-threads=1
       - run: node --import tsx --test tests/host.integration.test.ts
       - run: npm run test:sync
       - run: cargo run --package nesvo --locked -- --help
