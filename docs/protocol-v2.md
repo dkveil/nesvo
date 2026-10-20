@@ -4,6 +4,10 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+`runDelivery` adds explicit queued task instruction and pre-claim cancellation
+inside authenticated workflow requests. See [task delivery](harness-task-delivery.md)
+for receipt correlation, readiness, human priority and restart behavior.
+
 `runLaunch` adds `{action:"launch",request:{key,runId,taskId,expectedRevision,profile}}`
 inside authenticated workflow requests. It reserves the attempt, run capacity,
 native receipt and session identity atomically before physical startup. New

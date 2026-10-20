@@ -81,6 +81,7 @@ struct Session {
     turn: crate::turns::Tracker,
     pending_input: Option<crate::submission::Pending>,
     human_input_dirty: bool,
+    human_control_epoch: u64,
     terminal_protocol: crate::terminal_protocol::Decoder,
     program_status: crate::program_status::Records,
     program_status_dirty: bool,
@@ -122,6 +123,7 @@ impl Session {
 }
 
 pub struct State {
+    human_control_epoch: u64,
     budget: crate::budgets::Shared,
     event_log: Option<crate::event_log::Service>,
     submission_updates: Vec<crate::submission::Transition>,
@@ -159,6 +161,7 @@ impl State {
         let provider_limits = usage::installed(&launchers);
         let provider_versions = launchers.pending_versions();
         Self {
+            human_control_epoch: 0,
             budget: crate::budgets::defaults(),
             event_log: None,
             submission_updates: Vec::new(),
@@ -684,6 +687,7 @@ impl State {
         event["runDrain"] = self.event_log.is_some().into();
         event["runControls"] = self.event_log.is_some().into();
         event["runLaunch"] = self.event_log.is_some().into();
+        event["runDelivery"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event
@@ -1231,6 +1235,8 @@ impl State {
             id: hex::encode(crate::wire::random::<16>()),
             legacy,
         });
+        self.human_control_epoch = self.human_control_epoch.saturating_add(1);
+        session.human_control_epoch = self.human_control_epoch;
         let first_controller = !session.has_been_attached;
         session.has_been_attached = true;
         if legacy {
@@ -1417,13 +1423,12 @@ impl State {
         session.turn.interrupt();
         Ok(answer)
     }
-    pub fn begin_submission(
-        &mut self,
+    pub fn check_submission(
+        &self,
         id: &str,
-        claim: crate::submission::Claim,
         prompt: &str,
         authority: &crate::caller::Authority,
-    ) -> Result<(Option<PathBuf>, watch::Receiver<bool>)> {
+    ) -> Result<String> {
         use crate::api_error::Error;
         self.authorize_automation(authority, id)?;
         if self.shutting_down {
@@ -1443,7 +1448,7 @@ impl State {
             })?;
         let session = self
             .sessions
-            .get_mut(id)
+            .get(id)
             .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
         if !session.info.running {
             return Err(Error::new("process_exited", "Process has exited").into());
@@ -1488,6 +1493,60 @@ impl State {
             )
             .into());
         }
+        Ok(digest)
+    }
+    pub fn human_control_epoch(&self) -> u64 {
+        self.human_control_epoch
+    }
+    pub fn human_controlled_sessions(&self) -> HashSet<String> {
+        self.sessions
+            .iter()
+            .filter(|(_, s)| s.controller.is_some())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+    pub fn check_task_delivery(
+        &self,
+        id: &str,
+        authority: &crate::caller::Authority,
+        before: u64,
+    ) -> Result<()> {
+        if self
+            .sessions
+            .get(id)
+            .is_some_and(|s| s.human_control_epoch > before)
+        {
+            return Err(crate::api_error::Error::new(
+                "control_busy",
+                "Human takeover after queuing requires a deliberate new input decision",
+            )
+            .into());
+        }
+        if self
+            .sessions
+            .get(id)
+            .is_some_and(|s| s.info.program == Program::Shell)
+        {
+            return Err(crate::api_error::Error::new(
+                "unsupported",
+                "Task instruction delivery targets agents, not shell command interpreters",
+            )
+            .into());
+        }
+        self.check_submission(id, "Task readiness probe", authority)
+            .map(|_| ())
+    }
+    pub fn begin_submission(
+        &mut self,
+        id: &str,
+        claim: crate::submission::Claim,
+        prompt: &str,
+        authority: &crate::caller::Authority,
+    ) -> Result<(Option<PathBuf>, watch::Receiver<bool>)> {
+        let digest = self.check_submission(id, prompt, authority)?;
+        let session = self.sessions.get_mut(id).ok_or_else(|| {
+            crate::api_error::Error::new("session_not_found", "Session no longer exists")
+        })?;
         let (canceled, cancellation) = watch::channel(false);
         session.pending_input = Some(crate::submission::Pending {
             authority: authority.clone(),
@@ -2446,6 +2505,7 @@ fn spawn_session(
         turn: Default::default(),
         pending_input: None,
         human_input_dirty: false,
+        human_control_epoch: 0,
         terminal_protocol: Default::default(),
         program_status: Default::default(),
         program_status_dirty: false,

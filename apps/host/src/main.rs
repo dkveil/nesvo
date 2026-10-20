@@ -38,6 +38,8 @@ mod workflow_budget;
 mod workflow_control_runtime;
 mod workflow_controls;
 mod workflow_decisions;
+mod workflow_delivery;
+mod workflow_delivery_runtime;
 mod workflow_inbox;
 mod workflow_launch_runtime;
 mod workflow_launches;

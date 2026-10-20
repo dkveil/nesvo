@@ -295,8 +295,30 @@ pub async fn send(
     if !accepted.is_new {
         return Ok(accepted.receipt);
     }
+    dispatch_send(
+        state,
+        log,
+        issuer,
+        accepted.receipt,
+        prompt,
+        authority,
+        None,
+    )
+    .await
+}
+/// Task delivery reserves this receipt atomically with its claim before input.
+pub(crate) async fn dispatch_send(
+    state: Arc<Mutex<State>>,
+    log: Service,
+    issuer: String,
+    receipt: Receipt,
+    prompt: String,
+    authority: crate::caller::Authority,
+    task_epoch: Option<u64>,
+) -> Result<Receipt> {
+    let session_id = receipt.session_id.clone();
     let claim = log
-        .claim(issuer.clone(), accepted.receipt.id.clone())
+        .claim(issuer.clone(), receipt.id)
         .await?
         .ok_or_else(|| anyhow!("Submission claim is unavailable"))?;
     let reference = crate::submission::Claim {
@@ -306,11 +328,13 @@ pub async fn send(
     };
     let mut queued = false;
     let result = async {
-        let (path, mut cancellation) =
-            state
-                .lock()
-                .unwrap()
-                .begin_submission(&session_id, reference, &prompt, &authority)?;
+        let (path, mut cancellation) = {
+            let mut state = state.lock().unwrap();
+            if let Some(before) = task_epoch {
+                state.check_task_delivery(&session_id, &authority, before)?;
+            }
+            state.begin_submission(&session_id, reference, &prompt, &authority)?
+        };
         let (answer, _) = enqueue_fenced(
             &state,
             &log,

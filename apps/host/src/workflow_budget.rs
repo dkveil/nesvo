@@ -386,11 +386,22 @@ pub fn execute(
 /// Automated paste AND submit must pass. This never grants native authority or
 /// affects a human's direct PTY input; native readiness/control guards still apply.
 pub fn guard_dispatch(connection: &mut Connection, session: &str, now: u64) -> Result<()> {
+    let run: Option<String> = connection.query_row("SELECT t.run_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.session_id=?1",[session],|r|r.get(0)).optional()?;
+    if let Some(run) = run {
+        refresh(connection, &run, now)?;
+    }
+    guard_dispatch_transaction(connection, session, now)
+}
+/// Recheck inside the writer transaction without nesting an exhaustion commit.
+pub(crate) fn guard_dispatch_transaction(
+    connection: &Connection,
+    session: &str,
+    now: u64,
+) -> Result<()> {
     let binding:Option<(String,String,String,bool)>=connection.query_row("SELECT t.run_id,a.id,a.state,a.ordinal=(SELECT MAX(b.ordinal) FROM workflow_attempts b WHERE b.task_id=t.id) FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.session_id=?1",[session],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
     let Some((run_id, attempt, state, current)) = binding else {
         return Ok(());
     };
-    refresh(connection, &run_id, now)?;
     let run_state: String = connection.query_row(
         "SELECT state FROM workflow_runs WHERE id=?1",
         [&run_id],
@@ -410,7 +421,8 @@ pub fn guard_dispatch(connection: &mut Connection, session: &str, now: u64) -> R
         )
         .into());
     }
-    if load(connection, &run_id)?.exhausted.is_some() {
+    let budget = load(connection, &run_id)?;
+    if budget.exhausted.is_some() || deadline(&budget).is_some_and(|at| now >= at) {
         return Err(Error::new(
             "time_budget_exhausted",
             "Run elapsed budget blocks further automated input",

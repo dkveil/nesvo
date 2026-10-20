@@ -54,6 +54,7 @@
                   "required": ["run", "tasks"],
                   "properties": {
                     "launch": { "$ref": "#/definitions/workflowLaunch" },
+                    "delivery": { "$ref": "#/definitions/workflowDelivery" },
                     "run": {
                       "type": "object",
                       "required": ["id", "title", "goal", "revision", "state", "taskResult"],
@@ -660,6 +661,79 @@
         "directory": { "type": ["string", "null"] }
       }
     },
+    "workflowDelivery": {
+      "type": "object",
+      "required": [
+        "id",
+        "attemptId",
+        "phase",
+        "blocker",
+        "receiptId",
+        "operationKey",
+        "createdAt",
+        "deadlineAt",
+        "native"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "attemptId": {
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "queued",
+            "dispatching",
+            "sent",
+            "failed",
+            "paused",
+            "expired",
+            "canceled",
+            "unknown"
+          ]
+        },
+        "blocker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "receiptId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operationKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "deadlineAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "native": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "phase": {
+              "type": "string"
+            },
+            "result": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
     "workflowAttempt": {
       "type": "object",
       "required": ["id", "taskId", "ordinal", "sessionId", "state", "result", "validation"],
@@ -682,6 +756,7 @@
         },
         "result": { "type": ["object", "null"] },
         "launch": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/workflowLaunch" }] },
+        "delivery": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/workflowDelivery" }] },
         "validation": { "type": ["object", "null"] }
       }
     },

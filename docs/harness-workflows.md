@@ -9,7 +9,9 @@ explicit questions without granting native permission approval. [Run admission
 budgets and drain](harness-run-budgets.md) preserve native work and human priority.
 [Atomic task launch](harness-task-launch.md) reserves attempts and native create
 identities before starting a worker. [Native run controls](harness-run-controls.md) add explicit stop/cancel with
-per-target receipts and observed exit. Automatic native dispatch remains F14 work.
+per-target receipts and observed exit. [Task instruction delivery](harness-task-delivery.md)
+adds an explicit bounded readiness wait after assignment. Automatic DAG launch
+selection remains F14 work.
 Idle never means success.
 
 ## CLI and MCP

@@ -39,7 +39,7 @@ not evidence that the expanded acceptance criteria pass.
 | F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                                   |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending                   |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Partial: task launch with explicit shared/worktree mode, dirty-source preservation; ownership UI/setup/archive pending        |
-| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable DAG/results and atomic pre-spawn task/receipt admission; background dispatch pending                         |
+| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: atomic worker admission and queued instructions; automatic DAG selection pending                                     |
 | F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: scoped messages, atomic result notices, exact ACK and replay/reopen; dispatch/UI pending                    |
 | F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                                     |
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending                      |
@@ -1077,3 +1077,48 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   statistical or provider/model evidence. Timing/token metadata was unavailable
   and omitted. Earlier seven cases remain retained inputs, not claimed rerun;
   research/reviewer artifacts stay outside Git.
+
+### F14 guarded task instruction intents
+
+- Added CLI `run deliver` / `run cancel-delivery`, two MCP tools (44 total),
+  `runDelivery` capability and versioned queue/native receipt projections.
+  An explicit intent targets only the immutable instruction/current assigned
+  agent worker. It cannot replace text, select by UI focus or execute task prose
+  in a shell. Queue acceptance, native delivery, explicit result and validation
+  are separate facts. Automatic DAG task selection remains pending.
+- A bounded host waiter survives client disconnect, waiting for actual provider
+  readiness and idle with run/decision/elapsed/native authority fences. A native
+  send receipt commits with the exclusive delivery claim before paste/Enter.
+  Unchanged blockers emit no repeated events; no model heartbeat is sent.
+  Same-run native launch/stop/cancel share the existing physical-effect permit.
+- Human control at acceptance or later takeover pauses the intent, including a
+  quick grant/release without a draft. Releasing the lease does not reactivate it.
+  An epoch fence is checked again under the same State lock as native submission.
+  Queued cancellation/expiry has no native receipt. Replay/new keys cannot
+  dispatch twice. Restart pauses unclaimed work and retains claimed uncertainty;
+  automatic rearm and recovered process adoption remain open.
+- Windows verification: fmt, Clippy with warnings denied, 128 TUI + 140 host +
+  3 wire unit checks, seven delivery storage regressions, all eight controlled
+  native SDK scenarios and 30 host/sync/CLI checks. After expanding quick takeover
+  coverage, the delivery SDK scenario passes again. CLI schema checks also cover
+  queue recovery and refusal to execute an instruction in a shell. Status
+  publication p95 was 252.502 ms over 26 controlled batches, measured from host
+  receipt to snapshot enqueue, excluding model/network latency. An initial local
+  integration invocation selected stale default binaries; the recorded passing
+  run explicitly selects rebuilt verification binaries. No production regression
+  or cross-platform result is inferred from that invocation.
+- An isolated original Claude Code 2.1.304 launch used the existing repository
+  cwd, launch-local MCP/instruction configuration and this task delivery API.
+  Observed readiness preceded input; actual hooks correlated prompt reception
+  and `settled`, and the provider emitted the requested literal response marker.
+  Task result correctly remained null. No agent tools, source changes or trust/
+  permission approvals occurred. Native run stop reached observed exit; the owned
+  host exited zero, with all 21 observed descendants gone after a 296 ms bounded
+  cleanup observation. An earlier immediate snapshot briefly saw asynchronous
+  MCP shutdown; those processes subsequently exited too. This proves original
+  Claude prompt/response correlation, not model consumption/use of MCP tools or
+  complete multi-agent orchestration. Other provider/device gates remain open.
+- No dependency, global provider setting or material UI change was added.
+  Previous task-launch commit `a2836fa` passed all five CI jobs in `39359771560`,
+  including Windows, macOS and Linux. New delivery platform CI is not claimed
+  before it runs. See [task delivery contract](harness-task-delivery.md).

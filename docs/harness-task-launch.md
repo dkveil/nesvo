@@ -67,7 +67,8 @@ Read current run/task history and the original native receipt separately:
 - `launching`: a reserved native startup; parallel capacity is occupied.
 - `assigned`: observed native creation bound the preallocated process/attempt.
   It does not prove provider readiness or successful work. Inspect the actual
-  readiness/status and deliberately send context through guarded `session send`.
+  readiness/status and deliberately send context through guarded `session send`,
+  or queue the immutable instruction through [task delivery](harness-task-delivery.md).
   Do not assign the process again or automatically type based on acceptance.
 - `launchFailed`: the native receipt proves `failed` with `effectStarted:false`.
   The parallel slot is free; retry identity/history remain. A new deliberate
@@ -122,7 +123,8 @@ check that owner delegation cannot revive an exited coordinator capability.
 CLI output is checked against the versioned JSON schema. Git test settings affect only the
 temporary owned repository; user/global configuration is preserved.
 
-No background DAG executor, automated prompt delivery, model wake loop or UI
-redesign is implied. Automatic dispatch, file ownership presentation, worktree
+No background DAG executor, model wake loop or UI redesign is implied. Explicit
+task delivery can wait safely after launch. Automatic DAG selection,
+file ownership presentation, worktree
 setup/archive and process adoption remain separate required harness work. No
 new dependency was needed.

@@ -1138,13 +1138,36 @@ test(
           ]);
           queryOutput(conflict.stdout);
           assert.equal(JSON.parse(conflict.stdout).error.code, 'idempotency_conflict');
+          const deliverArgs = [
+            'deliver',
+            id,
+            '--task',
+            plan.tasks[0].id,
+            '--key',
+            'shell-instruction',
+            '--revision',
+            String(history.run.revision),
+            '--timeout-ms',
+            '1000',
+          ];
+          const queued = await invoke(deliverArgs);
+          assert.equal(queued.delivery.phase, 'queued');
+          assert.equal(queued.delivery.receiptId, null);
+          assert.deepEqual(await invoke(deliverArgs), queued);
+          assert.deepEqual(await invoke(['mutation', '--key', 'shell-instruction']), queued);
+          const rejectedDelivery = await until(async () => {
+            const current = await invoke(['task', id, plan.tasks[0].id]);
+            return current.attempts[0].delivery?.phase === 'failed' ? current : undefined;
+          }, 'plain task text is never executed by a shell');
+          assert.equal(rejectedDelivery.attempts[0].delivery.blocker, 'unsupported');
+          assert.equal(rejectedDelivery.attempts[0].delivery.receiptId, null);
           const control = await invoke([
             'stop',
             id,
             '--key',
             'stop-cli-launch',
             '--revision',
-            String(history.run.revision),
+            String(rejectedDelivery.run.revision),
           ]);
           await until(async () => {
             const current = await invoke(['control', id, control.control.id]);

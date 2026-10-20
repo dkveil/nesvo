@@ -64,7 +64,9 @@ explicit shared/worktree mode and never sends an initial prompt. Acceptance,
 native creation and provider readiness remain distinct. Instruction V7 teaches
 recovery, uncertain-slot retention and known no-effect startup failure; older
 live snapshots remain unchanged. See [task launch](harness-task-launch.md).
-The catalog contains 42 tools.
+The catalog contains 44 tools. Task instruction intents use
+`nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
+[guarded task delivery](harness-task-delivery.md).
 
 `hostBudgets` adds owner-only `nesvo_get_host_budget` and `nesvo_set_host_budget`.
 Both use the shared host admission policy and workflow recovery namespace;

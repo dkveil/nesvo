@@ -107,7 +107,7 @@ fn attempt(connection: &Connection, id: &str) -> Result<Value> {
             .unwrap_or(Value::Null))
     };
     Ok(
-        json!({"id":id,"taskId":task,"ordinal":ordinal,"sessionId":session,"state":state,"result":decode(result)?,"validation":decode(validation)?,"decisionGate":crate::workflow_decisions::summary(connection,&id)?,"launch":crate::workflow_launches::summary(connection,&id)?}),
+        json!({"id":id,"taskId":task,"ordinal":ordinal,"sessionId":session,"state":state,"result":decode(result)?,"validation":decode(validation)?,"decisionGate":crate::workflow_decisions::summary(connection,&id)?,"launch":crate::workflow_launches::summary(connection,&id)?,"delivery":crate::workflow_delivery::summary(connection,&id)?}),
     )
 }
 pub fn summaries(connection: &Connection, run_id: &str) -> Result<HashMap<String, Value>> {

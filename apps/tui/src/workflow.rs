@@ -8,6 +8,10 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Queue the current task instruction once; host waits for safe readiness.
+    Deliver(crate::workflow_delivery::Deliver),
+    /// Cancel a queued instruction before its native input claim. Never interrupts.
+    CancelDelivery(crate::workflow_delivery::Cancel),
     /// Reserve a dependency-ready task and start its worker once. Sends no prompt.
     Launch(crate::workflow_launches::Launch),
     /// Stop only run-bound workers with durable native receipts. Inspect control.
@@ -179,6 +183,8 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Deliver(args) => args.json,
+            Self::CancelDelivery(args) => args.json,
             Self::Launch(launch) => launch.json,
             Self::Stop(start) | Self::Cancel(start) => start.json,
             Self::Control { json, .. } => *json,
@@ -202,6 +208,12 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Deliver(args) => Request::Delivery {
+                request: args.request(),
+            },
+            Self::CancelDelivery(args) => Request::Delivery {
+                request: args.request(),
+            },
             Self::Launch(launch) => Request::Launch {
                 request: launch.request(),
             },
@@ -433,6 +445,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Delivery {
+        request: crate::workflow_delivery::Request,
+    },
     Launch {
         request: crate::workflow_launches::Request,
     },
@@ -586,6 +601,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
     }
     let capability = match request["request"]["action"].as_str() {
         Some("launch") => Some("runLaunch"),
+        Some("delivery") => Some("runDelivery"),
         Some("control") => Some("runControls"),
         Some("runBudget") => Some("runBudgets"),
         Some("drain" | "resume") => Some("runDrain"),
@@ -614,6 +630,19 @@ mod tests {
     use super::*;
     #[test]
     fn adapters_reject_malformed_shapes_before_host_dispatch() {
+        for extra in [
+            json!({"prompt":"foreign instruction"}),
+            json!({"sessionId":"foreign"}),
+            json!({"owner":true}),
+        ] {
+            let mut request =
+                json!({"action":"queue","key":"k","runId":"r","taskId":"t","expectedRevision":1});
+            request
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(tool("delivery", json!({"request":request})).is_err());
+        }
         for profile in [
             json!({"program":"claude"}),
             json!({"program":"unsupported","workspace":"shared"}),

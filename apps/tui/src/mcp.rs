@@ -58,6 +58,24 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_deliver_task",
+            "Queue the immutable instruction of a current assigned task once. Host waits up to timeoutMs (default 60000, max 300000) for idle and ready, with no human control/draft or decision gate. No prompt is accepted from the caller. Acceptance is not delivery or task success. Inspect task attempt.delivery and its native receipt; unknown effects are never retried. Client disconnect keeps this intent, host restart pauses it without replay. Agent sessions only.",
+            object(
+                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"timeoutMs":{"type":"integer","minimum":1,"maximum":300000}}),
+                &["key", "runId", "taskId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_cancel_task_delivery",
+            "Cancel an unclaimed task instruction intent in an authorized run. Requires its current run revision. Does not interrupt or replay native input; a claimed/sent/unknown intent must be inspected through its original receipt.",
+            object(
+                json!({"key":key,"runId":id,"deliveryId":id,"expectedRevision":revision}),
+                &["key", "runId", "deliveryId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
             "nesvo_launch_task",
             "Reserve a dependency-ready task, run parallel/retry capacity and a native create identity atomically, then launch its visible worker once. Explicitly choose shared checkout or isolated worktree. No initial prompt is sent. Reply is immutable acceptance; inspect run/task history and the returned native receipt before sending work. Unknown launches keep capacity and cannot be retried with a fresh key. Does not take human focus/control or grant coordinator roles.",
             object(
@@ -495,6 +513,33 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_deliver_task" | "nesvo_cancel_task_delivery" => {
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Delivery arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Delivery action is selected by the tool name",
+                ));
+            }
+            fields.insert(
+                "action".into(),
+                if name == "nesvo_deliver_task" {
+                    "queue"
+                } else {
+                    "cancel"
+                }
+                .into(),
+            );
+            (
+                crate::workflow::tool("delivery", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_launch_task" => (
             crate::workflow::tool("launch", json!({"request":arguments}))?,
             "workflow",
@@ -985,7 +1030,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 42);
+        assert_eq!(catalog().len(), 44);
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(
