@@ -1,10 +1,14 @@
 # Durable host jobs
 
-`durableJobs:true` and `jobScheduleKinds:["once","cron","rrule"]` advertise owner-only durable
+`durableJobs:true` and `jobScheduleKinds:["once","cron","rrule","external"]` advertise owner-only durable
 definitions and separate occurrences. The host runs them without an open TUI or
 phone. Fresh worker admission and instruction delivery use the existing
 Run/Task/Attempt executor, native receipts, readiness, workspace, process budgets
 and human-input guards. No model API keys or direct model calls are added.
+
+[External triggers](harness-job-triggers.md) admit occurrences through the same
+dispatcher. `schedule:{kind:"external"}` provides an external-only definition,
+with no timer due date; other schedule kinds may also attach a trigger.
 
 Once, [recurring IANA calendars](harness-job-calendars.md) and
 [owner-approved command prechecks](harness-job-prechecks.md), bounded no-effect

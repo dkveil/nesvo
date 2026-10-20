@@ -16,6 +16,9 @@ ical = { package = "ical-rs", version = "=0.5.1", default-features = false, feat
 clap = { workspace = true, features = ["env"] }
 futures-util.workspace = true
 hex.workspace = true
+http-body-util = "=0.1.5"
+hyper = { version = "=1.12.0", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
 nesvo-wire.workspace = true
 portable-pty = "0.9.0"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

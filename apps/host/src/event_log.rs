@@ -146,6 +146,9 @@ mod job_timeout_controls_tests;
 #[path = "job_timeouts_tests.rs"]
 mod job_timeouts_tests;
 #[cfg(test)]
+#[path = "job_triggers_tests.rs"]
+mod job_triggers_tests;
+#[cfg(test)]
 #[path = "journal_concurrency_tests.rs"]
 mod journal_concurrency_tests;
 #[cfg(test)]
@@ -322,6 +325,10 @@ impl Store {
 }
 
 enum Work {
+    ExternalTrigger {
+        inbound: crate::job_triggers::Inbound,
+        reply: oneshot::Sender<Result<crate::job_triggers::Acceptance>>,
+    },
     Jobs {
         work: crate::job_definitions::Work,
         reply: oneshot::Sender<Result<crate::job_definitions::Reply>>,
@@ -427,6 +434,18 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub async fn external_trigger(
+        &self,
+        inbound: crate::job_triggers::Inbound,
+    ) -> Result<crate::job_triggers::Acceptance> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .try_send(Work::ExternalTrigger { inbound, reply })
+            .map_err(|_| Error::new("busy", "External trigger journal capacity is unavailable"))?;
+        answer.await.map_err(|_| {
+            anyhow!("External delivery outcome is unconfirmed; retry the same signed event")
+        })?
+    }
     pub(crate) fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
@@ -541,7 +560,11 @@ impl Service {
             && let crate::orchestration::Request::Jobs { request } = &mut request
             && let crate::job_definitions::Request::Create { spec, .. }
             | crate::job_definitions::Request::Update { spec, .. } = request.as_mut()
-            && !matches!(spec.schedule, crate::job_calendar::Schedule::Once { .. })
+            && !matches!(
+                spec.schedule,
+                crate::job_calendar::Schedule::Once { .. }
+                    | crate::job_calendar::Schedule::External
+            )
         {
             // Keep computation off the SQLite worker. Even a failed evaluation
             // is carried through to the domain: immutable key replay must be
@@ -828,6 +851,16 @@ impl Service {
                             let result = crate::job_definitions::work(
                                 &mut store.0,
                                 work,
+                                crate::status::now_millis(),
+                            );
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
+                        Work::ExternalTrigger { inbound, reply } => {
+                            let result = crate::job_triggers::ingest(
+                                &mut store.0,
+                                inbound,
                                 crate::status::now_millis(),
                             );
                             record_storage_failure(&result, &worker_failures, &changed_tx);

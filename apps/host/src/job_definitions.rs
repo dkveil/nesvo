@@ -84,6 +84,9 @@ pub enum Request {
     Prechecks {
         request: crate::job_prechecks::Request,
     },
+    Triggers {
+        request: crate::job_triggers::Request,
+    },
     AbandonPrecheck {
         key: String,
         job_id: String,
@@ -261,6 +264,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::job_timeouts::initialize(connection)?;
     crate::job_precheck_records::initialize(connection)?;
     crate::job_retries::initialize(connection)?;
+    crate::job_triggers::initialize(connection)?;
     Ok(())
 }
 pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
@@ -293,7 +297,10 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
     transaction.commit()?;
     Ok(())
 }
-fn due(spec: &Spec) -> Result<u64> {
+fn due(spec: &Spec) -> Result<Option<u64>> {
+    if matches!(spec.schedule, Schedule::External) {
+        return Ok(None);
+    }
     let Schedule::Once { at } = &spec.schedule else {
         return spec
             .calendar
@@ -312,6 +319,7 @@ fn due(spec: &Spec) -> Result<u64> {
                     .context(failure.message.clone())
             })?
             .next
+            .map(Some)
             .ok_or_else(|| invalid("No future occurrence remains in this recurrence"));
     };
     if at.len() > 64 {
@@ -322,9 +330,11 @@ fn due(spec: &Spec) -> Result<u64> {
     let instant = chrono::DateTime::parse_from_rfc3339(at)
         .map_err(|_| invalid("Once time must be RFC3339 with an explicit UTC offset"))?
         .timestamp_millis();
-    u64::try_from(instant).map_err(|_| invalid("Once time must be after the Unix epoch"))
+    u64::try_from(instant)
+        .map(Some)
+        .map_err(|_| invalid("Once time must be after the Unix epoch"))
 }
-fn validate(spec: &Spec, now: u64) -> Result<u64> {
+fn validate(spec: &Spec, now: u64) -> Result<Option<u64>> {
     if spec
         .execution_timeout_ms
         .is_some_and(|timeout| !(1000..=604_800_000).contains(&timeout))
@@ -364,10 +374,11 @@ fn validate(spec: &Spec, now: u64) -> Result<u64> {
         crate::tool_permissions::validate(tools)?;
     }
     let at = due(spec)?;
-    if at <= now
-        || (matches!(spec.schedule, Schedule::Once { .. })
-            && at.saturating_sub(now) > 366 * 86_400_000)
-    {
+    if at.is_some_and(|at| {
+        at <= now
+            || (matches!(spec.schedule, Schedule::Once { .. })
+                && at.saturating_sub(now) > 366 * 86_400_000)
+    }) {
         return Err(invalid(
             "Choose an explicit future instant up to 366 days ahead",
         ));
@@ -580,6 +591,18 @@ fn insert_occurrence(
     observe(transaction, job, Some(&id), state, now)?;
     Ok(id)
 }
+/// Restricted external admission shares the ordinary occurrence snapshot and
+/// overlap rules. Authentication and delivery dedupe belong to its caller's tx.
+pub(crate) fn insert_external_occurrence(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    trigger_key: &str,
+    now: u64,
+) -> Result<Value> {
+    let record = job(tx, job_id, true)?;
+    let id = insert_occurrence(tx, &record, trigger_key, "external", now, now)?;
+    occurrence(tx, job_id, &id, false)
+}
 pub fn execute(
     connection: &mut Connection,
     actor: Actor,
@@ -595,6 +618,9 @@ pub fn execute(
     }
     if let Request::Prechecks { request } = request {
         return crate::job_prechecks::execute(connection, actor, request, now);
+    }
+    if let Request::Triggers { request } = request {
+        return crate::job_triggers::execute(connection, actor, request, now);
     }
     match &request {
         Request::Attempts {
@@ -797,7 +823,7 @@ pub fn execute(
                 return Err(Error::new("busy", "Job definition retention is full").into());
             }
             let id = hex::encode(crate::wire::random::<16>());
-            transaction.execute("INSERT INTO harness_jobs(id,spec,revision,enabled,next_due,created_at) VALUES(?1,?2,1,1,?3,?4)",params![id,serde_json::to_string(spec)?,at as i64,now as i64])?;
+            transaction.execute("INSERT INTO harness_jobs(id,spec,revision,enabled,next_due,created_at) VALUES(?1,?2,1,1,?3,?4)",params![id,serde_json::to_string(spec)?,at.map(i64::try_from).transpose()?,now as i64])?;
             observe(&transaction, &id, None, "created", now)?;
             json!({"job":job(&transaction,&id,true)?})
         }
@@ -828,7 +854,7 @@ pub fn execute(
                 Request::Update { spec, .. } => {
                     let at = validate(spec, now)?;
                     validate_approval(&transaction, spec)?;
-                    transaction.execute("UPDATE harness_jobs SET spec=?2,next_due=?3,calendar_error=NULL,revision=revision+1 WHERE id=?1",params![job_id,serde_json::to_string(spec)?,at as i64])?;
+                    transaction.execute("UPDATE harness_jobs SET spec=?2,next_due=?3,calendar_error=NULL,revision=revision+1 WHERE id=?1",params![job_id,serde_json::to_string(spec)?,at.map(i64::try_from).transpose()?])?;
                     observe(&transaction, job_id, None, "updated", now)?;
                     json!({"job":job(&transaction,job_id,true)?})
                 }

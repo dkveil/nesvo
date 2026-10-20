@@ -29,8 +29,8 @@ pub fn stdio() -> anyhow::Result<()> {
 }
 
 pub async fn next(schedule: Schedule, after: u64) -> Answer {
-    // No child, file or native CLI is involved for an absolute once time.
-    if matches!(schedule, Schedule::Once { .. }) {
+    // Absolute and externally driven schedules require no helper or native I/O.
+    if matches!(schedule, Schedule::Once { .. } | Schedule::External) {
         return job_calendar::evaluate(Query { schedule, after });
     }
     let _slot = SLOTS.try_acquire().map_err(|_| {

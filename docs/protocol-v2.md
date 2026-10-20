@@ -48,12 +48,22 @@ with distinct omission/empty/subset semantics. Native grants remain internal;
 task history records requested `launch.profile` (null on legacy rows).
 See [task tool profiles](harness-task-tool-profiles.md) for scope and migration.
 
-`durableJobs` and `jobScheduleKinds:["once","cron","rrule"]` add owner-only authenticated
+`durableJobs` and `jobScheduleKinds:["once","cron","rrule","external"]` add owner-only authenticated
 `{action:"jobs",request:{action:"create"|"get"|"list"|"update"|"setEnabled"|
 "runNow"|"history"|"occurrence"|"mutation",...}}` workflow requests. Definitions,
 immutable occurrences and their workflow/native receipt pointers are separate.
 See [job contract](harness-jobs.md) for bounded dispatch, misfires, overlap,
 validation, crash non-replay, CLI/MCP parity and current limitations.
+
+Strict `jobExternalTriggers:true` and `jobTriggerProviders:["webhook","github"]`
+add owner-only `{action:"jobs",request:{action:"triggers",request:{...}}}` for
+registration, revision-checked administration and retained delivery reads.
+`schedule:{kind:"external"}` has no timer due date. The separately opted-in
+loopback HTTP listener uses restricted journal ingress rather than owner commands;
+`jobTriggerListener:{enabled,address}` reports runtime availability in capabilities
+and doctor. Additive tables preserve old job fingerprints. See the
+[external trigger contract](harness-job-triggers.md) for signatures, replay,
+immutable ignored receipts and deployment boundaries.
 
 Optional job capabilities extend this request family: `jobPrechecks` adds owner
 approvals and prechecks, `jobCancellation` adds `cancelOccurrence`, and

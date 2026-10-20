@@ -18,6 +18,7 @@ pub fn default_zone() -> String {
     deny_unknown_fields
 )]
 pub enum Schedule {
+    External,
     Once {
         at: String,
     },
@@ -99,6 +100,10 @@ fn civil(value: IcalRecurDateTime) -> Result<NaiveDateTime, Failure> {
 
 pub fn evaluate(query: Query) -> Answer {
     match query.schedule {
+        Schedule::External => Ok(Window {
+            previous: None,
+            next: None,
+        }),
         Schedule::Once { at } => {
             if at.len() > 64 {
                 return Err(invalid("Once time must be RFC3339 with an explicit offset"));

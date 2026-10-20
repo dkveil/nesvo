@@ -135,6 +135,7 @@ pub struct State {
     event_log: Option<crate::event_log::Service>,
     submission_updates: Vec<crate::submission::Transition>,
     caller_url: Option<String>,
+    job_trigger_address: Option<String>,
     workspace: PathBuf,
     sessions: HashMap<String, Session>,
     cleanup_workers: Vec<thread::JoinHandle<()>>,
@@ -173,6 +174,7 @@ impl State {
             event_log: None,
             submission_updates: Vec::new(),
             caller_url: None,
+            job_trigger_address: None,
             workspace,
             sessions: HashMap::new(),
             cleanup_workers: Vec::new(),
@@ -195,6 +197,12 @@ impl State {
     }
     pub fn set_caller_url(&mut self, url: String) {
         self.caller_url = Some(url);
+    }
+    pub fn set_job_trigger_listener(&mut self, address: Option<String>) {
+        self.job_trigger_address = address;
+    }
+    fn job_trigger_listener(&self) -> Value {
+        json!({"enabled":self.job_trigger_address.is_some(),"address":self.job_trigger_address})
     }
     pub fn set_event_log(&mut self, service: crate::event_log::Service) {
         self.budget = service.budget();
@@ -899,8 +907,11 @@ impl State {
         event["jobRetries"] = true.into();
         event["jobExecutionTimeouts"] = true.into();
         event["jobLaunchReconciliation"] = true.into();
+        event["jobExternalTriggers"] = true.into();
+        event["jobTriggerProviders"] = json!(["webhook", "github"]);
+        event["jobTriggerListener"] = self.job_trigger_listener();
         event["jobRetryKinds"] = json!(["launchNoEffect"]);
-        event["jobScheduleKinds"] = json!(["once", "cron", "rrule"]);
+        event["jobScheduleKinds"] = json!(["once", "cron", "rrule", "external"]);
         event["launchProfileSupport"] =
             crate::launch_profile::capabilities(&self.provider_versions);
         event["workflowPlans"] = true.into();
@@ -2164,7 +2175,7 @@ impl State {
         })).collect();
         Ok(
             json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
-            "programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"launchProfileSupport":crate::launch_profile::capabilities(&self.provider_versions),"eventJournal":self.event_log.as_ref().map(|log|log.health()),"sessions":sessions}),
+            "jobTriggerListener":self.job_trigger_listener(),"programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"launchProfileSupport":crate::launch_profile::capabilities(&self.provider_versions),"eventJournal":self.event_log.as_ref().map(|log|log.health()),"sessions":sessions}),
         )
     }
 
@@ -3220,6 +3231,40 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listener_is_default_off_and_doctor_matches_the_advertised_runtime_address() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        let disabled = json!({"enabled":false,"address":null});
+        assert_eq!(state.capabilities_event()["jobTriggerListener"], disabled);
+        assert_eq!(
+            state.diagnostics(None).unwrap()["jobTriggerListener"],
+            disabled
+        );
+        let capabilities = state.capabilities_event();
+        assert_eq!(capabilities["jobExternalTriggers"], true);
+        assert_eq!(
+            capabilities["jobTriggerProviders"],
+            json!(["webhook", "github"])
+        );
+        assert!(
+            capabilities["jobScheduleKinds"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("external"))
+        );
+
+        state.set_job_trigger_listener(Some("http://127.0.0.1:1234".into()));
+        let enabled = json!({"enabled":true,"address":"http://127.0.0.1:1234"});
+        assert_eq!(state.capabilities_event()["jobTriggerListener"], enabled);
+        assert_eq!(
+            state.diagnostics(None).unwrap()["jobTriggerListener"],
+            enabled
+        );
+        state.set_job_trigger_listener(None);
+        assert_eq!(state.capabilities_event()["jobTriggerListener"], disabled);
+    }
 
     #[test]
     fn internal_wake_grant_is_self_only_revocable_and_not_general_api_or_control_authority() {

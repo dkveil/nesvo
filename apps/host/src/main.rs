@@ -24,6 +24,9 @@ mod job_retries;
 mod job_runtime;
 mod job_timeout_runtime;
 mod job_timeouts;
+mod job_trigger_auth;
+mod job_triggers;
+mod job_webhook_http;
 mod jobs;
 mod launch_profile;
 mod launchers;
@@ -113,6 +116,9 @@ struct Args {
     bind: Option<IpAddr>,
     #[arg(long, default_value_t = 8787, env = "POCKET_HOST_PORT")]
     port: u16,
+    /// Enable authenticated job webhooks on 127.0.0.1; use 0 for an ephemeral port.
+    #[arg(long)]
+    webhook_port: Option<u16>,
     #[arg(long, env = "POCKET_HOST_ADDRESS")]
     advertise: Option<String>,
     #[arg(long, default_value = ".")]
@@ -350,6 +356,29 @@ async fn run(args: Args) -> Result<()> {
     let (event_tx, event_rx) = mpsc::channel(128);
     state.lock().unwrap().set_caller_url(pairing.url.clone());
     state.lock().unwrap().set_event_log(event_log.clone());
+    let webhooks = match args.webhook_port {
+        Some(port) => {
+            let listener = job_webhook_http::Listener::bind(port, event_log.clone()).await?;
+            state
+                .lock()
+                .unwrap()
+                .set_job_trigger_listener(Some(listener.address()));
+            let exited = listener.exit_notification();
+            let listener_state = state.clone();
+            tokio::spawn(async move {
+                let failed = job_webhook_http::wait_for_exit(exited).await;
+                listener_state
+                    .lock()
+                    .unwrap()
+                    .set_job_trigger_listener(None);
+                if failed {
+                    eprintln!("Job webhook listener stopped: webhook_listener_unavailable");
+                }
+            });
+            Some(listener)
+        }
+        None => None,
+    };
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -419,6 +448,13 @@ async fn run(args: Args) -> Result<()> {
             }
         }
     }
+    let webhook_shutdown = if let Some(listener) = webhooks {
+        let result = listener.shutdown().await;
+        state.lock().unwrap().set_job_trigger_listener(None);
+        result
+    } else {
+        Ok(())
+    };
     // Closed sessions may still be releasing ConPTY resources in background
     // workers. Keep the output dispatcher alive while they finish, without
     // holding the state lock that it needs to drain PTY output.
@@ -457,12 +493,24 @@ async fn run(args: Args) -> Result<()> {
     tokio::time::timeout(Duration::from_secs(3), event_log.shutdown())
         .await
         .context("Event journal shutdown timed out")?;
+    webhook_shutdown?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webhook_listener_requires_explicit_port_even_when_lan_mode_is_requested() {
+        let default = Args::try_parse_from(["nesvo-host"]).unwrap();
+        assert_eq!(default.webhook_port, None);
+        let lan = Args::try_parse_from(["nesvo-host", "--lan"]).unwrap();
+        assert_eq!(lan.webhook_port, None);
+        let ephemeral = Args::try_parse_from(["nesvo-host", "--webhook-port", "0"]).unwrap();
+        assert_eq!(ephemeral.webhook_port, Some(0));
+        assert!(Args::try_parse_from(["nesvo-host", "--webhook-port", "65536"]).is_err());
+    }
 
     #[test]
     fn source_layout_migration_preserves_repository_pairing_directory() {
