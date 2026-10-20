@@ -143,6 +143,7 @@ original-key recovery preserved historical acceptance. The isolated host and its
 observed descendants exited cleanly. This covers native startup process control,
 not model work, provider-hook readiness or post-restart process adoption.
 
-Automatic DAG pre-launch reservations/dispatch, coordinator adoption, unknown
-orphan-process recovery, job policy and the actual-provider matrix remain open
-stage gates. These commands do not claim to complete the entire harness goal.
+[Atomic launch reservations](harness-task-launch.md) and the opt-in
+[DAG executor](harness-executor.md) now use this control serialization. Coordinator
+adoption, unknown orphan-process recovery, job policy and the actual-provider
+matrix remain open stage gates. These commands do not complete the entire goal.

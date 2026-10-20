@@ -290,5 +290,6 @@ preempt pending automated input, and never acquire a lease. They can interrupt
 in-memory work and make the editor unavailable for automatic prompt reuse until
 reconciled. Native failures with uncertain effects return an unknown receipt.
 Same-key replay returns the original receipt without sending another signal;
-restart never repeats it. These are single-process controls, separate from the
-future run-level cancel/drain policy. Passive worker scopes cannot use them.
+restart never repeats it. These are single-process controls, separate from
+[native run stop/cancel](harness-run-controls.md) and
+[run budget/drain policy](harness-run-budgets.md). Passive worker scopes cannot use them.

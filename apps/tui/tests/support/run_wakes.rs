@@ -343,6 +343,9 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
         assert!(!fixture.directory.join("callers").join(format!("{root_id}.wake-inputs.jsonl")).exists(),"Working coordinator gets no input");
         // Recover immutable acceptance by its workflow key, not a guessed revision.
         let recovered=inbox::scoped_cli(&context,&["run","mutation","--key","wake-enable","--json"]).await?;assert_eq!(recovered["data"],enabled);
+        let original_revision = (enabled["run"]["revision"].as_u64().context("enable revision")? - 1).to_string();
+        let cli_replay = inbox::scoped_cli(&context, &["run","wake","enable",run,"--key","wake-enable","--revision",&original_revision,"--json"]).await?;
+        assert_eq!(cli_replay["data"], enabled, "CLI/MCP replay shares one accepted policy mutation");
         std::fs::write(fixture.directory.join("callers").join(format!("{root_id}.release")),"")?;
         let received=match waves(&fixture,root_id,1).await {Ok(values)=>values,Err(error)=>{
             let policy=wake_view(&coordinator,run).await?;
@@ -365,10 +368,101 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
         let mail=data(call(&coordinator,"nesvo_read_inbox",json!({"runId":run})).await?)?;assert_eq!(mail["data"]["pendingCount"],4);
         let current = data(call(&coordinator,"nesvo_get_run_wakes",json!({"runId":run})).await?)?;
         let cli_current = inbox::scoped_cli(&context, &["run","wake","get",run,"--json"]).await?;
-        schema(vec![current, cli_current, recovered, received[0]["batch"].clone(), received[1]["batch"].clone(), mail]).await?;
+        schema(vec![current, cli_current, recovered, cli_replay, received[0]["batch"].clone(), received[1]["batch"].clone(), mail]).await?;
         let root=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;assert!(root["data"]["session"]["controllerId"].is_null());
-        mutation(&coordinator,run,"nesvo_disable_run_wakes",json!({"key":"wake-disable"})).await?;
+        let disabled = mutation(&coordinator,run,"nesvo_disable_run_wakes",json!({"key":"wake-disable"})).await?;
+        let original_revision = (disabled["run"]["revision"].as_u64().context("disable revision")? - 1).to_string();
+        let cli_replay = inbox::scoped_cli(&context, &["run","wake","disable",run,"--key","wake-disable","--revision",&original_revision,"--json"]).await?;
+        assert_eq!(cli_replay["data"], disabled);
         coordinator.cancel().await?;owner.cancel().await?;Ok::<_,anyhow::Error>(())
+    }).catch_unwind().await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires native binaries and Node; canonical hook blocker and resolution feed durable wake references"]
+async fn native_worker_question_and_resolution_share_the_canonical_wake_projection() -> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome = std::panic::AssertUnwindSafe(async {
+        let owner = client(&fixture.pairing()).await?;
+        let (id, run) = simple_run(&fixture, &owner).await?;
+        let child = data(call(&owner, "nesvo_create_session", json!({
+            "key":"question-wake-worker","spec":{"name":"Question worker","program":"claude","harness":true}
+        })).await?)?;
+        let child_id = child["data"]["receipt"]["sessionId"].as_str().context("question worker")?;
+        session_ready(&owner, child_id).await?;
+        let task = view(&owner, &run).await?["tasks"][0]["id"].clone();
+        let assigned = mutation(&owner, &run, "nesvo_assign_task", json!({
+            "key":"question-wake-assignment","taskId":task,"sessionId":child_id
+        })).await?;
+        let attempt = assigned["tasks"][0]["currentAttempt"]["id"].clone();
+        data(call(&owner, "nesvo_send_prompt", json!({"sessionId":id,"key":"question-wake-hold","prompt":"held-natural-response"})).await?)?;
+        observed_output(&owner, &id, "FIXTURE_HOLDING_NATURAL_RESPONSE").await?;
+        mutation(&owner, &run, "nesvo_enable_run_wakes", json!({"key":"question-wake-enable"})).await?;
+        data(call(&owner, "nesvo_send_prompt", json!({"sessionId":child_id,"key":"question-wake-input","prompt":"question-task"})).await?)?;
+        observed_output(&owner, child_id, "FIXTURE_AWAITING_DECISION").await?;
+        let blocked = timeout(Duration::from_secs(8), async {
+            loop {
+                let current = wake_view(&owner, &run).await?;
+                if current["notices"].as_array().context("wake notices")?.iter().any(|notice| {
+                    notice["kind"] == "blocker" && notice["reference"]["attention"]["reason"] == "question"
+                }) {
+                    return Ok::<_, anyhow::Error>(current);
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await.context("Native hook did not publish canonical blocker notice")??;
+        let notices = blocked["notices"].as_array().context("blocker notices")?;
+        let blocker = notices.iter().find(|notice| notice["kind"] == "blocker").context("question blocker")?;
+        assert_eq!(blocker["reference"]["attemptId"], attempt);
+        assert_eq!(blocker["reference"]["sessionId"], child_id);
+        assert!(notices.iter().any(|notice| notice["kind"] == "decision"));
+        let session = data(call(&owner, "nesvo_get_session", json!({"sessionId":child_id})).await?)?;
+        assert_eq!(session["data"]["session"]["currentAttention"]["reason"], "question");
+        let decisions = data(call(&owner, "nesvo_list_decisions", json!({"runId":run})).await?)?;
+        let decision = &decisions["data"]["decisions"][0];
+        data(call(&owner, "nesvo_answer_decision", json!({
+            "key":"question-wake-owner-answer","runId":run,"decisionId":decision["id"],
+            "expectedRevision":decision["revision"],"answer":"Finish the controlled transport test; no native permission is implied"
+        })).await?)?;
+        timeout(Duration::from_secs(8), async {
+            loop {
+                let current = wake_view(&owner, &run).await?;
+                let notices = current["notices"].as_array().context("resolved notices")?;
+                if notices.iter().any(|notice| notice["kind"] == "result") && notices.iter().any(|notice| {
+                    notice["kind"] == "blocker" && notice["reference"]["attention"]["priority"] == 0
+                }) { return Ok::<_, anyhow::Error>(()); }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }).await.context("Native blocker resolution and result did not publish")??;
+        assert!(!fixture.directory.join("callers").join(format!("{id}.wake-inputs.jsonl")).exists());
+        let before = data(call(&owner, "nesvo_get_run_wakes", json!({"runId":run})).await?)?;
+        std::fs::write(fixture.directory.join("callers").join(format!("{id}.release")), "")?;
+        let received = waves(&fixture, &id, 1).await?;
+        assert_eq!(received.len(), 1);
+        let notices = received[0]["batch"]["data"]["wakeBatch"]["notices"].as_array().context("native batch")?;
+        for kind in ["decision", "blocker", "result"] {
+            assert!(notices.iter().any(|notice| notice["kind"] == kind));
+        }
+        schema(vec![before, received[0]["batch"].clone(), received[0]["inbox"].clone()]).await?;
+        let current = view(&owner, &run).await?;
+        assert_eq!(current["tasks"][0]["state"], "reported");
+        assert!(current["tasks"][0]["taskResult"].is_null());
+        let mail = data(call(&owner, "nesvo_read_inbox", json!({"runId":run})).await?)?;
+        assert_eq!(mail["data"]["pendingCount"], 2, "Wake and decision answer never ACK coordinator mail");
+        mutation(&owner, &run, "nesvo_disable_run_wakes", json!({"key":"question-wake-disable"})).await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
     }).catch_unwind().await;
     let cleanup = fixture.close().await;
     match outcome {

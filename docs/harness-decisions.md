@@ -77,7 +77,8 @@ attempt summaries expose stored pending/unresolved counts and `blocksSuccess`;
 use decision get/list for current deadlines. There is no background timer, timeout
 model call or repeated native input. Unobserved deadlines depend on the host
 wall clock; scheduler clock/sleep policy is separate F22 work. Automatic timeout
-notifications and coordinator wake batching remain F26 work.
+notifications remain open. The separate opt-in [wake policy](harness-wakes.md)
+can coalesce durable decision notices and current worker blocker changes.
 
 An expired decision remains readable. Expiration stores a terminal state/event
 without requiring inbox capacity, so a full inbox cannot extend its validity.
@@ -126,6 +127,7 @@ the original CLI key and checks unchanged PTY output. It makes no model calls.
 
 These are workflow decisions, with no native permission bridge. The host does
 not suspend a running process, enforce an OS sandbox or interpret answer text as
-instructions. Automatic dispatcher gating and visible decision queues in the
-TUI/mobile remain separate F14/F26/F43 work; their UI needs mockup approval.
+instructions. [Native task delivery](harness-task-delivery.md) applies decision
+gates before input; [wake batching](harness-wakes.md) never answers a decision.
+Visible decision queues in TUI/mobile remain separate work requiring mockup approval.
 Real-provider model-driven escalation remains an explicit stage-3 acceptance gap.

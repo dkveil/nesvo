@@ -1327,3 +1327,26 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   production build and repository formatting. No dependency or visual change;
   full original-provider matrix, checkpoint recovery, mobile controls and remaining
   F01–F44/plugin gates stay open.
+
+### F26 canonical native blocker verification and CLI parity
+
+- A fourth controlled native wake scenario uses the worker's actual inherited
+  CLI to ask an owner-only decision and its lifecycle helper to publish a
+  question. The live session's canonical attention and the durable wake reference
+  agree on the current worker/attempt and question reason. An explicit owner
+  metadata answer leads to a reported result and canonical blocker resolution;
+  these references coalesce while the coordinator is busy. A later wake leaves
+  both coordinator messages pending and the task unvalidated. No provider-native
+  permission is answered and no model is called by this fixture.
+- Actual policy/batch/inbox envelopes containing decision, blocker, resolution
+  and result references pass the published Ajv schema. CLI enable/disable replay
+  now explicitly recovers the same MCP acceptance with original keys/revisions,
+  without another policy generation or native input.
+- Published wake implementation `7bda3ea` passed all five jobs in
+  [CI 39372002388](https://github.com/dkveil/nesvo/actions/runs/39372002388), including
+  the complete controlled native suite on Windows, Linux and macOS. Those checks
+  do not establish original-provider model orchestration on these platforms.
+  Local V10 verification additionally passed all 15 preceding native cases;
+  the four-case wake subset, including the added canonical scenario and CLI
+  parity assertions, passed together. Instruction V10 head `a9c9308` has its own
+  CI run; inspect its actual conclusion before claiming it passed.

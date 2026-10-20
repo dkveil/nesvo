@@ -10,8 +10,10 @@ budgets and drain](harness-run-budgets.md) preserve native work and human priori
 [Atomic task launch](harness-task-launch.md) reserves attempts and native create
 identities before starting a worker. [Native run controls](harness-run-controls.md) add explicit stop/cancel with
 per-target receipts and observed exit. [Task instruction delivery](harness-task-delivery.md)
-adds an explicit bounded readiness wait after assignment. Automatic DAG launch
-selection remains F14 work.
+adds an explicit bounded readiness wait after assignment. The opt-in
+[host executor](harness-executor.md) selects dependency-ready tasks; the separate
+[wake policy](harness-wakes.md) groups new coordinator notices. Both default to
+no automatic action until explicitly enabled.
 Idle never means success.
 
 ## CLI and MCP
