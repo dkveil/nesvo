@@ -140,7 +140,10 @@ async fn bound_job_cancel_stops_the_exact_worker_and_retains_original_pending_ac
             "key":"do-not-rearm-canceled-job","runId":run,
             "expectedRevision":control["data"]["run"]["revision"]
         })).await?.structured_content.context("Canceled job executor refusal")?;
-        assert_eq!(reenable["error"]["code"],"job_canceled");
+        // An executor observation can revise the run after the control snapshot.
+        // Both guards refuse admission; retained native identity/counts below
+        // prove that a version conflict did not accidentally re-enable work.
+        assert!(matches!(reenable["error"]["code"].as_str(),Some("job_canceled"|"revision_conflict")),"Unexpected re-enable outcome: {reenable}");
         let original = budgets::owner_cli(&fixture,&[
             "job","mutation","--key","cancel-bound-worker","--json"
         ]).await?;
