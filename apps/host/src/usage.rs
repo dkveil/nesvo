@@ -9,9 +9,9 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 #[path = "usage_codex.rs"]
 mod codex;
 #[cfg(test)]
-pub use codex::{BucketCompleteness, BucketSource, CodexSnapshot, ReadFailure};
+pub use codex::{BucketCompleteness, BucketSource, CodexSnapshot, ReadFailure, WindowState};
 pub use codex::{
-    CodexObservation, ReadOutcome, ReaderContext, RouteObservation, RouteVerdict, WindowState,
+    CodexObservation, ReadOutcome, ReaderContext, RouteObservation, RouteVerdict,
     read_codex_in_context,
 };
 

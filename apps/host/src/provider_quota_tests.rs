@@ -1,6 +1,7 @@
 use super::*;
 use crate::usage::{
-    BucketCompleteness, BucketSource, CodexSnapshot, ReadFailure, parse_claude_observation,
+    BucketCompleteness, BucketSource, CodexSnapshot, ReadFailure, WindowState,
+    parse_claude_observation,
 };
 use serde_json::json;
 
@@ -237,14 +238,14 @@ fn claude_read_freshness_and_failure_are_independent_of_source_freshness() {
 }
 
 #[test]
-fn partial_or_sparse_full_read_cannot_recover_permission_from_percentages() {
+fn incomplete_advertised_windows_cannot_recover_permission_from_percentages() {
     for permission in [None, Some(true)] {
         let mut tracker = tracker();
         let mut observation = codex();
         let sample = snapshot(&mut observation);
         sample.ordinary_usage_allowed = permission;
         sample.complete = false;
-        sample.completeness.secondary = WindowState::Missing;
+        sample.completeness.secondary = WindowState::Incomplete;
         sample.windows.pop();
         tracker.apply_codex(observation);
         let partial = view(&mut tracker, Program::Codex, WALL + 100, 110);
@@ -264,6 +265,84 @@ fn partial_or_sparse_full_read_cannot_recover_permission_from_percentages() {
     assert_eq!(unknown.ordinary_usage_allowed, None);
     assert_eq!(unknown.eligibility_reason, "backend_permission_unavailable");
     assert!(!unknown.ordinary_usage_eligible);
+}
+
+#[test]
+fn optional_windows_need_explicit_permission_and_never_create_unreported_capacity() {
+    for missing in [WindowState::Missing, WindowState::Null] {
+        for retained in [None, Some(0), Some(1)] {
+            for permission in [None, Some(false), Some(true)] {
+                let mut tracker = tracker();
+                let mut observation = codex();
+                let sample = snapshot(&mut observation);
+                sample.ordinary_usage_allowed = permission;
+                sample.completeness = BucketCompleteness {
+                    primary: if retained == Some(0) {
+                        WindowState::Complete
+                    } else {
+                        missing
+                    },
+                    secondary: if retained == Some(1) {
+                        WindowState::Complete
+                    } else {
+                        missing
+                    },
+                };
+                sample.windows = retained
+                    .map(|index| vec![windows()[index].clone()])
+                    .unwrap_or_default();
+                tracker.apply_codex(observation);
+                let observed = view(&mut tracker, Program::Codex, WALL + 100, 110);
+                assert_eq!(observed.status, "ready");
+                assert!(observed.complete);
+                assert_eq!(observed.windows.len(), usize::from(retained.is_some()));
+                assert_eq!(observed.ordinary_usage_allowed, permission);
+                assert_eq!(observed.ordinary_usage_eligible, permission == Some(true));
+                assert_eq!(
+                    observed.eligibility_reason,
+                    match permission {
+                        None => "backend_permission_unavailable",
+                        Some(false) => "backend_denied",
+                        Some(true) => "observed",
+                    }
+                );
+                assert!(observed.expires_at.unwrap() <= WALL + READ_FRESHNESS_MS);
+            }
+        }
+    }
+}
+
+#[test]
+fn one_window_denials_and_elapsed_resets_hold_and_failed_read_revokes_permission() {
+    for case in 0..5 {
+        let mut tracker = tracker();
+        let mut observation = codex();
+        let sample = snapshot(&mut observation);
+        sample.windows.remove(0);
+        sample.completeness.primary = WindowState::Null;
+        match case {
+            0 => sample.spend_control_reached = Some(true),
+            1 => sample.rate_limit_reached = true,
+            2 => sample.windows[0].used_percent = 100,
+            3 => sample.windows[0].resets_at = Some(999),
+            _ => {}
+        }
+        tracker.apply_codex(observation);
+        let observed = view(&mut tracker, Program::Codex, WALL + 100, 110);
+        assert_eq!(observed.ordinary_usage_eligible, case == 4);
+        let mut failed = codex();
+        failed.started_at_ms += 200;
+        failed.finished_at_ms += 200;
+        failed.started_elapsed_ms += 200;
+        failed.finished_elapsed_ms += 200;
+        failed.outcome = ReadOutcome::Failure(ReadFailure::ProviderError);
+        tracker.apply_codex(failed);
+        let revoked = view(&mut tracker, Program::Codex, WALL + 300, 310);
+        assert!(!revoked.ordinary_usage_eligible);
+        assert_eq!(revoked.ordinary_usage_allowed, None);
+        assert_eq!(revoked.reason, "provider_error");
+        assert_eq!(revoked.windows.len(), 1);
+    }
 }
 
 #[test]

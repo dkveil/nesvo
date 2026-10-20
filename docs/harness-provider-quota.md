@@ -68,10 +68,21 @@ or stale values instead of presenting them as current.
 
 `ordinaryUsageAllowed` is nullable backend evidence from a full Codex response.
 It is never reconstructed from percentages or reset times. Reader eligibility
-additionally requires complete current windows, no exhausted window or explicit
-spend/rate denial, and nonempty account/context metadata. Missing and null
-windows remain distinguishable internally; malformed present windows invalidate
-the result instead of disappearing from the list.
+additionally requires valid current metadata, no exhausted advertised window or
+explicit spend/rate denial, and nonempty account/context metadata. A full Codex
+read may legitimately advertise zero, one or two windows. Missing and null slots
+remain distinguishable internally and add no numeric window; neither means 0%
+usage or unlimited capacity. A supplied window object needs a known duration and
+positive reset for eligibility; malformed present windows invalidate the result
+instead of disappearing from the list. `complete:true` means that every supplied
+Codex window is complete, not that two fixed plan windows exist. With no advertised
+windows, only an explicit backend `ordinaryUsageAllowed:true` can supply positive
+permission; missing/null permission still holds work. The existing Claude cache
+completeness rule is unchanged.
+
+This follows the original CLI schema and the [App Server full-read contract](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt),
+which permits absent windows. Full responses replace their predecessor; a sparse
+notification is still not a full read and cannot renew any permission.
 
 Every public view says `scope:"readerSnapshotOnly"`. `ordinaryUsageEligible`
 describes this snapshot only. It does **not** bind the reader's account to a

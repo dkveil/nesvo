@@ -105,6 +105,20 @@ pub struct BucketCompleteness {
     pub secondary: WindowState,
 }
 
+impl BucketCompleteness {
+    /// A full RPC may legitimately omit either quota window. Absence supplies
+    /// no numeric capacity; every advertised window must still be complete.
+    pub fn complete_window_count(self) -> Option<usize> {
+        let states = [self.primary, self.secondary];
+        (!states.contains(&WindowState::Incomplete)).then(|| {
+            states
+                .iter()
+                .filter(|state| **state == WindowState::Complete)
+                .count()
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodexSnapshot {
     // Opaque reader account/workspace metadata, never a native-process binding.
@@ -293,8 +307,7 @@ pub(super) fn parse_snapshot(response: &Value) -> Result<CodexSnapshot, ReadFail
     }
     let account_id = optional_text(result, "accountId", 512)?;
     let ordinary_usage_allowed = optional_bool(result, "ordinaryUsageAllowed")?;
-    let complete = selected.completeness.primary == WindowState::Complete
-        && selected.completeness.secondary == WindowState::Complete;
+    let complete = selected.completeness.complete_window_count().is_some();
     let reason = if ordinary_usage_allowed == Some(false) {
         "backend_denied"
     } else if !complete {

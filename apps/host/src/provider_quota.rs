@@ -1,9 +1,7 @@
 //! Private quota observations. Reader evidence never grants a native process usage.
 use crate::{
     launchers::Program,
-    usage::{
-        ClaudeObservation, CodexObservation, LimitWindow, ReadOutcome, ReaderContext, WindowState,
-    },
+    usage::{ClaudeObservation, CodexObservation, LimitWindow, ReadOutcome, ReaderContext},
 };
 use serde::Serialize;
 
@@ -193,9 +191,9 @@ impl Tracker {
                     entry.identity_account = Some(account.clone());
                 }
                 let complete = snapshot.complete
-                    && snapshot.completeness.primary == WindowState::Complete
-                    && snapshot.completeness.secondary == WindowState::Complete
-                    && complete_windows(&snapshot.windows);
+                    && snapshot.completeness.complete_window_count()
+                        == Some(snapshot.windows.len())
+                    && valid_windows(&snapshot.windows);
                 entry.successful = Some(Snapshot {
                     revision: entry.revision,
                     observed_at_ms: observation.finished_at_ms,
@@ -548,14 +546,17 @@ impl Snapshot {
 }
 
 fn complete_windows(windows: &[LimitWindow]) -> bool {
-    windows.len() == 2
-        && windows.iter().all(|window| {
-            window.used_percent <= 100
-                && window.duration_mins > 0
-                && window
-                    .resets_at
-                    .is_some_and(|reset| reset_ms(reset).is_some())
-        })
+    windows.len() == 2 && valid_windows(windows)
+}
+
+fn valid_windows(windows: &[LimitWindow]) -> bool {
+    windows.iter().all(|window| {
+        window.used_percent <= 100
+            && window.duration_mins > 0
+            && window
+                .resets_at
+                .is_some_and(|reset| reset_ms(reset).is_some())
+    })
 }
 
 fn reset_ms(reset: i64) -> Option<u64> {

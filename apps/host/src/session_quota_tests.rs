@@ -212,6 +212,58 @@ fn arming_requires_one_fresh_complete_five_hour_window_at_threshold() {
 }
 
 #[test]
+fn weekly_only_or_absent_windows_cannot_arm_or_release_a_five_hour_wake() {
+    for weekly in [false, true] {
+        let (binding, mut registry, proof) = armed();
+        let mut observed = observation(20_001, 20);
+        let sample = snapshot(&mut observed);
+        sample.windows.remove(0);
+        sample.completeness.primary = WindowState::Null;
+        if !weekly {
+            sample.windows.clear();
+            sample.completeness.secondary = WindowState::Missing;
+        }
+        finish(&mut registry, &proof.reader_id, observed);
+        let (evidence, _) = registry
+            .read_proof(&proof.reader_id, WALL + 10_100, 20_100)
+            .unwrap();
+        assert!(evidence.view.ordinary_usage_eligible);
+        assert_eq!(evidence.view.windows.len(), usize::from(weekly));
+        assert!(
+            binding
+                .arm(&mut registry, &proof.reader_id, WALL + 10_100, 20_100)
+                .is_err()
+        );
+        assert_eq!(
+            release(&binding, &mut registry, &proof, 20_100),
+            Release::Hold("five_hour_quota_not_released")
+        );
+    }
+}
+
+#[test]
+fn a_real_five_hour_window_can_arm_and_release_without_a_weekly_window() {
+    let binding = launch_binding("original-cwd");
+    let mut registry = Registry::new([31; 32]);
+    let id = registry.register(binding.reader_spec(), false).unwrap();
+    let mut observed = observation(START, 92);
+    snapshot(&mut observed).windows.pop();
+    snapshot(&mut observed).completeness.secondary = WindowState::Null;
+    finish(&mut registry, &id, observed);
+    let proof = binding
+        .arm(&mut registry, &id, WALL + 100, START + 100)
+        .unwrap();
+    let mut released = observation(20_001, 20);
+    snapshot(&mut released).windows.pop();
+    snapshot(&mut released).completeness.secondary = WindowState::Missing;
+    finish(&mut registry, &id, released);
+    assert!(matches!(
+        release(&binding, &mut registry, &proof, 20_100),
+        Release::Ready { .. }
+    ));
+}
+
+#[test]
 fn finishing_after_reset_does_not_launder_a_read_started_before_or_at_reset() {
     for start in [19_999, 20_000] {
         let (binding, mut registry, proof) = armed();

@@ -195,6 +195,36 @@ fn derived_readers_require_matching_account_and_known_route_without_publishing_j
         5110
     ));
 }
+
+#[test]
+fn weekly_only_admission_still_requires_the_matching_account_and_known_route() {
+    for route in [
+        RouteVerdict::ChatgptConfiguredOpenai,
+        RouteVerdict::Custom,
+        RouteVerdict::Unknown,
+    ] {
+        let mut registry = Registry::new([9; 32]);
+        let id = registry.register(spec("weekly-only"), false).unwrap();
+        registry.next(10).unwrap();
+        let mut observation = observed("context", "account", true);
+        observation.context.as_mut().unwrap().route.verdict = route;
+        let ReadOutcome::Snapshot(sample) = &mut observation.outcome else {
+            panic!("snapshot fixture")
+        };
+        sample.windows.remove(0);
+        sample.completeness.primary = WindowState::Null;
+        registry.finish(&id, observation);
+        let view = registry.view(&id, 1_000_100, 110).unwrap();
+        assert!(view.ordinary_usage_eligible);
+        let account = view.account_fingerprint.as_deref().unwrap();
+        assert_eq!(
+            registry.ready(&id, account, 1_000_100, 110),
+            route == RouteVerdict::ChatgptConfiguredOpenai
+        );
+        assert!(!registry.ready(&id, &"f".repeat(64), 1_000_100, 110));
+        assert!(!registry.ready(&id, account, 1_180_000, 180010));
+    }
+}
 #[test]
 fn writer_deadline_expires_monotonically_and_does_not_extend_after_wall_clock_rollback() {
     let mut registry = Registry::new([9; 32]);

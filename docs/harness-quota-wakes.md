@@ -25,6 +25,11 @@ subscription snapshot: one five-hour window at least 90% used with a future rese
 The first request can return `quota_wait` while that directory's reader starts;
 refresh/query the actual directory and arm again after its observation arrives.
 
+Optional Codex windows do not create a five-hour quota. A weekly-only or zero-window
+full read can support ordinary configured-account job admission when the backend
+explicitly permits it, but cannot arm or release this wake. A real five-hour window
+can support wake without a weekly window; all supplied windows must remain valid.
+
 An arm freezes opaque reader/context/account fingerprints, source revision,
 reset evidence, native launch/conversation generation, human-control epoch and
 the current input receipt when present. It is a deliberate adoption of the

@@ -3012,8 +3012,8 @@ and whitespace checks pass. No original model or physical phone was used.
 One bounded read-only original Codex observation on an isolated host confirms
 working account/context metadata and affirmative ordinary-usage permission,
 but this account currently supplies only the weekly quota window. It remains a
-partial snapshot: no five-hour threshold/reset or complete-window job eligibility
-is invented. The probe created no managed session and issued no model, login or
+partial snapshot under that revision's two-window rule: no five-hour threshold/reset
+was invented. The probe created no managed session and issued no model, login or
 authentication-refresh request. Original Claude's read-only auth status proves
 its configured subscription route/home here, but supplies no individual account
 identity; its statusline receipt is not a cold backend quota reader.
@@ -3033,3 +3033,30 @@ Controlled native session/fixture acceptance is `54c1a84`.
 Claude/Gemini admission, original-provider continuation acceptance, job/mobile
 presentation and the remaining F01–F44/plugin gates remain open. No whole-goal
 completion is claimed.
+
+### F44 optional Codex quota windows
+
+Full Codex quota reads no longer require two fixed plan windows. Missing and null
+slots remain distinct and add no numeric capacity. Every advertised window still
+requires valid duration/reset metadata; malformed or incomplete supplied objects,
+missing backend permission, known denials/exhaustion, elapsed resets and changed
+account/configuration continue to hold opted-in work. Zero/one-window reads need
+the same explicit backend ordinary-use permission and configured route/account
+guards. Claude cache rules are unchanged. Five-hour wake still requires a real
+unique 300-minute window: weekly-only data cannot arm or release it.
+
+Windows verification passed 662 units (184 TUI, 475 host, 3 wire; the explicit
+design exporter and five special host helpers remain ignored), warnings-denied
+all-target Clippy, locked workspace build, formatting and whitespace checks. The
+new official-SDK/private-host regression passed in 29.61 seconds: the same queued
+job stays unallocated through four newer refusals and starts once only after a
+matching affirmative weekly-only full read. It also checks immutable acceptance
+replay, exact retained windows, privacy, schema and cleanup. This is a focused
+native rerun, not a new full 61-scenario cohort.
+
+One bounded original Codex read through an isolated host now reports fresh ready
+metadata with a single weekly window and explicit ordinary-use eligibility. It
+created no managed session and made no model, login or authentication-refresh
+request. This verifies the original metadata route, not an original-provider job
+or quota continuation. Source and acceptance binaries are recorded outside the
+repository. Broader provider, job UI, mobile and full-goal gates remain open.

@@ -423,11 +423,11 @@ fn absent_and_null_capacity_fields_are_unknown_and_denial_has_priority() {
     value["result"]["rateLimits"]["secondary"] = Value::Null;
     let snapshot = parse_snapshot(&value).unwrap();
     assert_eq!(snapshot.reason, "backend_denied");
-    assert!(!snapshot.complete);
+    assert!(snapshot.complete);
 }
 
 #[test]
-fn sparse_windows_remain_distinct_and_never_refresh_a_full_snapshot() {
+fn optional_windows_remain_distinct_and_notifications_never_become_full_reads() {
     let mut value = full();
     value["result"]["rateLimits"]
         .as_object_mut()
@@ -435,7 +435,7 @@ fn sparse_windows_remain_distinct_and_never_refresh_a_full_snapshot() {
         .remove("secondary");
     let missing = parse_snapshot(&value).unwrap();
     assert_eq!(missing.completeness.secondary, WindowState::Missing);
-    assert!(!missing.complete);
+    assert!(missing.complete);
     value["result"]["rateLimits"]["secondary"] = Value::Null;
     assert_eq!(
         parse_snapshot(&value).unwrap().completeness.secondary,
@@ -449,6 +449,53 @@ fn sparse_windows_remain_distinct_and_never_refresh_a_full_snapshot() {
     let notice = json!({"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":1,"windowDurationMins":300,"resetsAt":9000}}}});
     assert_eq!(parse_snapshot(&notice), Err(ReadFailure::InvalidResponse));
     assert_eq!(parse_snapshot(&full()).unwrap().windows[0].used_percent, 10);
+}
+
+#[test]
+fn full_reads_accept_zero_one_or_two_advertised_windows_without_inventing_capacity() {
+    for primary in [
+        WindowState::Missing,
+        WindowState::Null,
+        WindowState::Complete,
+    ] {
+        for secondary in [
+            WindowState::Missing,
+            WindowState::Null,
+            WindowState::Complete,
+        ] {
+            let mut value = full();
+            for (key, state) in [("primary", primary), ("secondary", secondary)] {
+                match state {
+                    WindowState::Missing => {
+                        value["result"]["rateLimits"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove(key);
+                    }
+                    WindowState::Null => value["result"]["rateLimits"][key] = Value::Null,
+                    _ => {}
+                }
+            }
+            let sample = parse_snapshot(&value).unwrap();
+            assert_eq!(
+                sample.completeness,
+                BucketCompleteness { primary, secondary }
+            );
+            assert!(sample.complete);
+            assert_eq!(sample.reason, "observed");
+            assert_eq!(sample.ordinary_usage_allowed, Some(true));
+            assert_eq!(
+                sample.completeness.complete_window_count(),
+                Some(sample.windows.len())
+            );
+            assert!(sample.windows.iter().all(|window| window.used_percent > 0));
+            value["result"]["ordinaryUsageAllowed"] = Value::Null;
+            let unknown = parse_snapshot(&value).unwrap();
+            assert!(unknown.complete);
+            assert_eq!(unknown.ordinary_usage_allowed, None);
+            assert_eq!(unknown.reason, "backend_permission_unavailable");
+        }
+    }
 }
 
 #[test]

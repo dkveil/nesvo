@@ -228,6 +228,13 @@ Capabilities contain all four program IDs. Discovery inspects PATH once at start
 
 `providerLimits` retains its compatible installed-provider display array: `{id,status:"checking"|"ready"|"unavailable",windows:[{usedPercent,durationMins,resetsAt}]}`. Current sources are bounded Codex full app-server snapshots and the existing Claude quota-only status-line cache; Gemini explicitly has no implemented structured source. Stale or unavailable values clear from this live panel. Additive `providerQuotaObservations:true` advertises owner-only `{type:"getProviderQuota",program?:"codex"|"claude"|"gemini",refresh?:false}` and the `providerQuota` reply with detailed `providers` and nullable asynchronous `refresh` acceptance. `refresh:true` requires an explicit installed provider with a supported source. Revisions count every attempt; failures do not renew the last successful snapshot. Original cache age and monotonic read freshness remain separate. Metadata, backend usage permission and native-session account binding are distinct. See the [quota observation contract](harness-provider-quota.md) for exact bounds, fields and limitations. Owner diagnostics include `providerQuota`; scoped session diagnostics do not.
 
+For a full Codex response, `complete:true` validates all supplied window objects;
+it does not require two fixed plan windows. Missing/null slots add no window or
+numeric capacity. Zero/one-window observations still need explicit backend
+ordinary-use permission for eligibility, and every reported denial/reset remains
+a hold. Sparse notifications cannot create or refresh that authority. Five-hour
+wake additionally requires an actual unique 300-minute window.
+
 Additive `durableQuotaWake:true` advertises owner-only `{type:"getQuotaWake",sessionId}`
 and the durable implementation of `{type:"setWake",sessionId,enabled}`. The getter
 returns `{type:"quotaWake",sessionId,quotaWake:null|view}`; the setter retains

@@ -45,8 +45,11 @@ Only the authenticated owner can set or reauthorize this policy.
 The reader resolves the same captured launcher, explicit `CODEX_HOME` and actual
 directory used for native admission. It reads account metadata without refreshing
 tokens, effective config without config layers, and a full quota response. Positive
-admission requires a known ChatGPT/OpenAI route, matching account evidence, both
-valid windows and the backend's ordinary-use permission. API-key, Bedrock, custom,
+admission requires a known ChatGPT/OpenAI route, matching account evidence, valid
+advertised windows and the backend's explicit ordinary-use permission. A legitimate
+weekly-only response can release an opted-in job. An absent five-hour window is
+not synthesized as zero usage, and missing backend permission never releases work.
+API-key, Bedrock, custom,
 unknown or failed routing evidence cannot release a job. Known environment endpoint
 or credential overrides are conservative holds; values are never published.
 

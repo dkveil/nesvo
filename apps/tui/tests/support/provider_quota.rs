@@ -711,3 +711,169 @@ async fn native_quota_contexts_release_only_matching_jobs_and_cancellation_stays
         }
     }
 }
+
+async fn quota_held_for_reason(
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    occurrence: &str,
+    reason: &str,
+) -> Result<Value> {
+    let mut last = Value::Null;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = data(
+                call(
+                    owner,
+                    "nesvo_get_job_occurrence",
+                    json!({"jobId":job,"occurrenceId":occurrence}),
+                )
+                .await?,
+            )?;
+            let current = &envelope["data"]["occurrence"];
+            last = json!({
+                "state":current["state"],"quota":current["quota"],
+                "runId":current["runId"],"jobAttemptId":current["jobAttemptId"],
+                "attemptId":current["attemptId"],"sessionId":current["sessionId"],
+                "launchReceiptId":current["launchReceiptId"]
+            });
+            ensure!(
+                current["state"] == "queued",
+                "Quota refusal allocated work: {last}"
+            );
+            if current["quota"]["reason"] == reason {
+                unclaimed(current);
+                return Ok::<_, anyhow::Error>(envelope);
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("Queued quota refusal {reason} was not published; metadata: {last}"))?
+}
+
+#[tokio::test]
+#[ignore = "native SDK weekly-only quota admission, current refusal authority and one original job launch"]
+async fn native_weekly_only_quota_releases_one_job_after_newer_refusals_without_inventing_windows()
+-> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(60), async {
+        let owner = client(&fixture.pairing()).await?;
+        let ambient = revision(&owner, 1).await?;
+        let directory = fixture.directory.join("weekly quota context łódź");
+        std::fs::create_dir(&directory)?;
+        let mut weekly = snapshot();
+        weekly["rateLimits"].as_object_mut().context("Owned quota bucket")?.remove("primary");
+        let expected_windows = json!([{
+            "usedPercent":weekly["rateLimits"]["secondary"]["usedPercent"],
+            "durationMins":weekly["rateLimits"]["secondary"]["windowDurationMins"],
+            "resetsAt":weekly["rateLimits"]["secondary"]["resetsAt"]
+        }]);
+        let mut initial_unknown = weekly.clone();
+        initial_unknown["rateLimits"]["primary"] = Value::Null;
+        initial_unknown["ordinaryUsageAllowed"] = Value::Null;
+        configure(&fixture, "snapshot", initial_unknown, 0)?;
+        let first = context_query(&owner, &directory, false).await?;
+        let initial = context_revision(&owner, &directory, 1).await?;
+        let binding = row(&initial)?.clone();
+        assert_eq!(binding["source"], "codexAppServer");
+        assert_eq!(binding["scope"], "readerSnapshotOnly");
+        assert_eq!(binding["freshness"], "fresh");
+        assert_eq!(binding["complete"], true, "A null slot must not require an invented window; metadata: {}", json!({"status":binding["status"],"reason":binding["reason"],"revision":binding["revision"],"freshness":binding["freshness"],"eligibilityReason":binding["eligibilityReason"]}));
+        assert_eq!(binding["windows"], expected_windows);
+        assert_eq!(binding["ordinaryUsageAllowed"], Value::Null);
+        assert_eq!(binding["ordinaryUsageEligible"], false);
+        assert!(fingerprint(&binding["contextId"]) && fingerprint(&binding["accountFingerprint"]));
+        no_sessions(&owner).await?;
+
+        let (definition, admitted) = admit_quota_job(&owner, "quota-weekly-release", &directory, &binding).await?;
+        let job = definition["data"]["job"]["id"].as_str().context("Weekly quota job")?;
+        let occurrence = admitted["data"]["occurrence"]["id"].as_str().context("Weekly quota occurrence")?;
+        let held = quota_held_for_reason(&owner, job, occurrence, "backend_permission_unavailable").await?;
+        let mut source_revision = held["data"]["occurrence"]["quota"]["sourceRevision"].as_u64().context("Initial writer quota revision")?;
+        let mut quota_envelopes = vec![ambient, first, initial];
+        let mut envelopes = vec![definition.clone(), admitted.clone(), held];
+
+        let mut denied = weekly.clone();
+        denied["rateLimits"]["primary"] = Value::Null;
+        denied["ordinaryUsageAllowed"] = json!(false);
+        let mut unknown = weekly.clone();
+        unknown.as_object_mut().context("Owned quota response")?.remove("ordinaryUsageAllowed");
+        let mut incomplete = weekly.clone();
+        incomplete["rateLimits"]["secondary"] = json!({"usedPercent":37});
+        for (mode, result, reason, permission) in [
+            ("snapshot", denied, "backend_denied", json!(false)),
+            ("snapshot", unknown, "backend_permission_unavailable", Value::Null),
+            ("snapshot", incomplete, "incomplete_snapshot", json!(true)),
+            ("error", Value::Null, "provider_error", Value::Null),
+        ] {
+            configure(&fixture, mode, result, 0)?;
+            let accepted = context_refresh(&owner, &directory).await?;
+            assert_eq!(accepted["data"]["refresh"]["readerId"], binding["readerId"]);
+            let target = accepted["data"]["refresh"]["revision"].as_u64().context("Newer refusal read revision")?;
+            let observed = context_revision(&owner, &directory, target).await?;
+            let source = row(&observed)?;
+            assert_eq!(source["eligibilityReason"], reason, "New refusal metadata: {}", json!({"status":source["status"],"reason":source["reason"],"revision":source["revision"],"freshness":source["freshness"],"complete":source["complete"]}));
+            assert_eq!(source["readerId"], binding["readerId"]);
+            assert_eq!(source["contextId"], binding["contextId"]);
+            assert_eq!(source["accountFingerprint"], binding["accountFingerprint"]);
+            assert_eq!(source["ordinaryUsageAllowed"], permission);
+            assert_eq!(source["ordinaryUsageEligible"], false);
+            if matches!(reason, "backend_denied" | "backend_permission_unavailable") {
+                assert_eq!(source["complete"], true);
+                assert_eq!(source["windows"], expected_windows, "Absent/null slots must never manufacture 0% windows");
+            }
+            let held = quota_held_for_reason(&owner, job, occurrence, reason).await?;
+            let current_revision = held["data"]["occurrence"]["quota"]["sourceRevision"].as_u64().context("Published refusal revision")?;
+            assert!(current_revision > source_revision, "Each refusal must reach the durable job gate");
+            source_revision = current_revision;
+            let attempts = generations(&owner, job, occurrence).await?;
+            assert!(attempts["data"]["jobAttempts"].as_array().is_some_and(Vec::is_empty), "A current quota refusal must precede every attempt/precheck/Run");
+            no_sessions(&owner).await?;
+            quota_envelopes.extend([accepted, observed]);
+            envelopes.extend([held, attempts]);
+        }
+
+        configure(&fixture, "snapshot", weekly, 0)?;
+        let accepted = context_refresh(&owner, &directory).await?;
+        let target = accepted["data"]["refresh"]["revision"].as_u64().context("Weekly release read revision")?;
+        let recovered = context_revision(&owner, &directory, target).await?;
+        let source = row(&recovered)?;
+        assert_eq!(source["readerId"], binding["readerId"]);
+        assert_eq!(source["contextId"], binding["contextId"]);
+        assert_eq!(source["accountFingerprint"], binding["accountFingerprint"]);
+        assert_eq!(source["complete"], true, "Weekly release metadata: {}", json!({"status":source["status"],"reason":source["reason"],"revision":source["revision"],"freshness":source["freshness"],"eligibilityReason":source["eligibilityReason"]}));
+        assert_eq!(source["freshness"], "fresh");
+        assert_eq!(source["ordinaryUsageAllowed"], true);
+        assert_eq!(source["ordinaryUsageEligible"], true);
+        assert_eq!(source["windows"], expected_windows, "The omitted slot must remain absent after release");
+        let reported = quota_occurrence(&owner, job, occurrence, "needsValidation").await?;
+        assert_eq!(reported["data"]["occurrence"]["id"], admitted["data"]["occurrence"]["id"]);
+        let attempts = generations(&owner, job, occurrence).await?;
+        assert_eq!(attempts["data"]["jobAttempts"].as_array().context("One weekly-quota generation")?.len(), 1);
+        let replay = data(call(&owner, "nesvo_run_job_now", json!({"key":"quota-weekly-release","jobId":job,"expectedRevision":1})).await?)?;
+        assert_eq!(replay["data"], admitted["data"], "Release must retain the original immutable acceptance");
+        let sessions = data(call(&owner, "nesvo_list_sessions", json!({})).await?)?;
+        assert_eq!(sessions["data"]["sessions"].as_array().context("One native weekly-quota worker")?.len(), 1);
+        assert_eq!(read_count(&fixture)?, 7, "One ambient and six exact-context read-only RPC exchanges");
+        quota_envelopes.extend([accepted, recovered]);
+        private(&quota_envelopes, &fixture)?;
+        envelopes.extend(quota_envelopes);
+        envelopes.extend([reported, attempts, replay, sessions]);
+        run_checkpoints::schema(envelopes).await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
+    }))
+    .catch_unwind()
+    .await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result.context("Bounded weekly-only quota/job admission")??;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}
