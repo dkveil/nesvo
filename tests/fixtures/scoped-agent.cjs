@@ -67,6 +67,24 @@ const codexHook = codex
 if (codex && !process.argv.includes('--no-daemon'))
   throw new Error('Codex must own its local executor');
 let turn = 0;
+function subprocessFailure(label, result) {
+  // Only controlled fixture child output is included; keep PTY diagnostics bounded.
+  return new Error(
+    `${label}: ${JSON.stringify({
+      status: result.status ?? null,
+      signal: result.signal ?? null,
+      error: result.error
+        ? {
+            name: result.error.name,
+            code: result.error.code ?? null,
+            message: result.error.message.slice(0, 512),
+          }
+        : null,
+      stdout: String(result.stdout ?? '').slice(0, 1024),
+      stderr: String(result.stderr ?? '').slice(0, 1024),
+    })}`,
+  );
+}
 function hook(name, extra = {}) {
   if (editorRedraw) return; // Explicit screen-only provider, no structured evidence.
   const commands = codex ? [{ command: codexHook, args: [] }] : settings.hooks[name][0].hooks;
@@ -84,7 +102,8 @@ function hook(name, extra = {}) {
       }),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    if (result.status !== 0) throw new Error('Fixture lifecycle helper failed');
+    if (result.status !== 0)
+      throw subprocessFailure(`Fixture lifecycle helper failed (${name})`, result);
     if (result.stdout.length) {
       const output = JSON.parse(result.stdout.toString('utf8'));
       if (name !== 'SessionStart' || output.hookSpecificOutput?.hookEventName !== 'SessionStart')
@@ -116,7 +135,8 @@ function fixtureCli(args) {
     encoding: 'utf8',
     timeout: 10000,
   });
-  if (result.status !== 0) throw new Error(`Managed task CLI failed: ${result.stdout}`);
+  if (result.status !== 0)
+    throw subprocessFailure(`Managed task CLI failed (${args.slice(0, 2).join(' ')})`, result);
   return JSON.parse(result.stdout);
 }
 function reportTask(outcome = 'succeeded') {
