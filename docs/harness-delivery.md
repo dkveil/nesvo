@@ -69,7 +69,7 @@ not evidence that the expanded acceptance criteria pass.
 | F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: native metadata recovery and Windows process ownership verified; conversation/layout/mobile recovery pending                                                                             |
 | F42 | Safe resumable hibernation                      | Missing                                                       | Pending: process ownership/cleanup prerequisite verified; resume eligibility and hibernation not implemented                                                                                      |
 | F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                                                                                                           |
-| F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Pending                                                                                                                                                                                           |
+| F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Partial: typed observations, owner refresh and wake fences; quota job admission/durable wake pending                                                                                              |
 
 ## Verification log
 
@@ -2829,3 +2829,71 @@ native HTTP acceptance is `19535e4`. Stable control assertions are `64e9ee7`;
 cooperative shutdown, late-input fences and native cleanup acceptance are
 `6fa12aa`. Publication CI for this source is a distinct gate; local green results
 do not replace the retained failed evidence for earlier heads.
+
+### Published external-trigger CI and delivery diagnostics
+
+Run `39492826440` for `d7a1ad2` passed app/browser and all native Linux/macOS gates.
+Windows passed units/build/Clippy and 52 of 53 serial native SDK cases. Its bound
+job-cancellation scenario failed before cancellation: the occurrence remained
+running with `instruction_not_sent` rather than reaching `needsValidation`.
+That summary does not identify the delivery blocker and does not prove a
+cancellation defect, quota issue, startup timeout or the older sharing error.
+
+Failure-only bounded diagnostics now retain the exact occurrence/run/attempt,
+delivery blocker, native phase/code/effect/submission stage and session readiness
+metadata. They omit prompt, transcript, paths and raw provider errors. The seven
+second wait and twenty second scenario budget remain unchanged. The focused
+local Windows scenario passes with the expanded diagnostics in 6.68 seconds;
+that local result does not erase the published failure or prove its cause.
+
+### F44 typed provider observations and bounded refresh
+
+Installed providers now have source/revision/freshness diagnostics through owner
+`nesvo quota`, `nesvo_get_provider_quota` and doctor. Codex uses bounded full
+read-only app-server snapshots, preserving account/context and nullable backend
+permission privately. Claude retains the original quota-cache source timestamp;
+regular-file checks and bounded reads reject special-file stalls. Gemini remains
+explicitly unsupported rather than displaying invented usage. There is no new
+dependency, global configuration mutation, auth RPC or model call.
+
+Failures and unchanged reads advance attempt revision separately from last
+success. Monotonic read-start bounds, cache-source age and a projected clock
+high-water prevent rollback from reviving expired data. Incomplete or malformed
+secondary windows cannot disappear into affirmative evidence. Owner refreshes
+coalesce with periodic reads and have a five-second cooldown. Account/context
+fingerprints use an ephemeral host-secret HMAC; raw identity/home/error content
+is excluded from the published view. See the
+[observation contract](harness-provider-quota.md).
+
+Legacy quota wake now disarms on human acquisition, known reader identity/context
+change and shutdown; native queue-trace regressions verify zero wake writes after
+these fences. Failed observations do not refresh the old wake timestamp. The
+public API explicitly describes reader evidence only: configured-account job
+admission and durable receipt-backed quota continuation remain required F44 work.
+
+Local Windows locked build, warnings-denied all-target Clippy and 574 units pass
+(172 TUI, 399 host, 3 wire; five host helpers ignored). Both new native SDK/CLI/
+private-host/controlled-RPC quota cases pass in 35.12 seconds: coalesced refresh,
+cooldown, unchanged revision, failure-after-success freshness, malformed windows,
+sparse notification timeout, privacy and scoped refusal. These do not establish
+original-provider account binding or native-device/platform acceptance. Full
+suite and publication evidence are recorded separately.
+
+All 55 serial official-SDK/private-host/controlled-PTY/RPC cases then passed on
+the same frozen Windows binaries in 469.41 seconds. This includes the previously
+failing cancellation setup, both quota cases, restart/recovery, signed HTTP
+triggers, exact command-scope cleanup and human-input fences. No test or native
+failure path was dropped. The result is local evidence, not a cause determination
+for the older Windows CI failure or acceptance of the new source on other OSes.
+
+Provider observation/host fences are `dfe43d4`; shared CLI/MCP/schema support is
+`23408f6`; native quota/scope acceptance is `003a613`. The separate cancellation
+failure diagnostics are `78679bc`. Full F44/job dispatch and the complete goal
+remain open.
+
+All 30 host/sync/CLI Node cases passed serially against these same binaries in
+89.21 seconds. Both Windows development-host probe and immutable-runtime tests
+pass. Controlled status publication measured p95 251.062 ms, maximum 264.414 ms
+from host receipt to snapshot enqueue; provider delay is excluded. Final fmt,
+changed-file Prettier and whitespace checks pass. No original model or physical
+device was used, and the new source's publication CI remains a distinct gate.
