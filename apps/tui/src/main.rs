@@ -68,7 +68,7 @@ struct Arguments {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let arguments = Arguments::try_parse().unwrap_or_else(|error| {
+    let arguments = parse_arguments(std::env::args_os().collect())?.unwrap_or_else(|error| {
         if error.use_stderr() && std::env::args_os().any(|arg| arg == "--json") {
             std::process::exit(cli::emit_failure(
                 true,
@@ -164,6 +164,53 @@ async fn main() -> Result<()> {
         arguments.url.as_deref(),
         !arguments.no_animation,
     )
+}
+
+fn parse_arguments(args: Vec<std::ffi::OsString>) -> Result<Result<Arguments, clap::Error>> {
+    // Generated Clap augmentation is recursive across command families. The
+    // workflow family alone uses >500 KiB in a Windows debug build; keep that
+    // short-lived construction off the smaller OS main stack. Do not change
+    // global linker/runtime stacks or keep a parser thread after startup.
+    std::thread::Builder::new()
+        .name("nesvo-arguments".into())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(move || Arguments::try_parse_from(args))
+        .context("Cannot start CLI argument parser")?
+        .join()
+        .map_err(|_| anyhow::anyhow!("CLI argument parser failed"))
+}
+
+#[cfg(test)]
+mod argument_stack_tests {
+    #[test]
+    fn full_command_grammar_parses_from_a_small_caller_stack_without_host_io() {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                for args in [
+                    vec!["nesvo", "--help"],
+                    vec!["nesvo", "run", "checkpoint", "context", "--help"],
+                    vec![
+                        "nesvo",
+                        "session",
+                        "wait",
+                        "id",
+                        "--timeout-ms",
+                        "100",
+                        "--json",
+                    ],
+                ] {
+                    let parsed =
+                        super::parse_arguments(args.into_iter().map(Into::into).collect()).unwrap();
+                    if let Err(error) = parsed {
+                        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 #[cfg(test)]

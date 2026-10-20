@@ -1418,3 +1418,21 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   build, all 18 serial native SDK cases and 30 host/sync/CLI checks. Private-bundle
   tests also passed after extending cleanup coverage to both reference names;
   Unix symlink behavior awaits this commit's CI. Repository formatting passed.
+
+### Windows argument parsing boundary
+
+- F09/F17: native `session wait` intermittently exited with Windows stack-overflow
+  code `0xc00000fd` instead of timeout JSON/exit 7. An isolated original-provider
+  probe also received empty CLI output; its owned host exited zero and all 19
+  observed descendants disappeared, so no completion evidence was claimed.
+- Local debug assembly measured the generated workflow command augmentation at
+  518776 stack bytes, before parent/nested grammar frames. Parsing now runs on
+  a joined, short-lived 4 MiB thread before host/terminal activity. Global linker,
+  runtime worker stacks and command/JSON semantics stay unchanged.
+- A 512 KiB caller-stack regression exercises full and nested help plus wait
+  parsing without I/O. The real native timeout/fast-response scenario passed
+  again with expected JSON/exit code; fmt and warnings-denied Clippy passed.
+  This does not claim that every possible stack/resource failure is eliminated.
+- Both preceding commits completed all five CI jobs: 645d7b1 (39376016534),
+  61d1b27 (39376742750). Controlled native tests passed Windows/Linux/macOS;
+  account/model/device coverage is still reported separately.

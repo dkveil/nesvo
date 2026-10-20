@@ -275,6 +275,15 @@ connection. Unsupported provider correlation returns exit 8, including ordinary
 shell writes when waiting beyond delivered. Response settlement is not task
 success. See [operation evidence and safety](harness-operations.md).
 
+Argument parsing builds the complete nested command grammar on a joined,
+short-lived 4 MiB thread. Generated workflow augmentation alone exceeded 500 KiB
+in a measured Windows debug build; recursive construction could overflow the
+smaller OS main stack before any JSON was emitted. No host connection, terminal
+mode or persistent worker starts until parsing completes. This changes neither
+global stack limits nor command semantics. A small-caller-stack regression checks
+top-level/nested help and the native wait grammar; real CLI integration checks
+also cover a timeout retaining its receipt and exit code 7.
+
 ## Interrupt and stop
 
 `session interrupt SESSION_ID --key KEY` writes one Ctrl+C through the confirmed
