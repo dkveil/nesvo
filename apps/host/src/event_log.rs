@@ -113,6 +113,9 @@ mod orchestration_tests;
 #[path = "workflow_budget_tests.rs"]
 mod workflow_budget_tests;
 #[cfg(test)]
+#[path = "workflow_controls_tests.rs"]
+mod workflow_controls_tests;
+#[cfg(test)]
 #[path = "workflow_decisions_tests.rs"]
 mod workflow_decisions_tests;
 #[cfg(test)]
@@ -129,6 +132,7 @@ impl Store {
           INSERT OR IGNORE INTO domain_event_cursor VALUES(1,0,0);")?;
         crate::receipts::initialize(&mut connection)?;
         crate::orchestration::initialize(&connection)?;
+        crate::workflow_controls::recover(&mut connection)?;
         Ok(Self(connection))
     }
     fn cursors(&self) -> Result<(u64, u64)> {
@@ -145,8 +149,28 @@ impl Store {
         Ok((head, floor))
     }
     fn append(&mut self, observations: Vec<Observation>) -> Result<u64> {
+        let exits: Vec<_> = observations
+            .iter()
+            .filter(|observation| observation.kind == "process.exited")
+            .filter_map(|observation| {
+                observation
+                    .session_id
+                    .as_ref()
+                    .map(|id| (id.clone(), observation.at))
+            })
+            .collect();
         let transaction = self.0.transaction()?;
-        let head = append_transaction(&transaction, observations)?;
+        let mut head = append_transaction(&transaction, observations)?;
+        for (session, now) in &exits {
+            crate::workflow_controls::observe_exit(&transaction, session, *now)?;
+        }
+        if !exits.is_empty() {
+            head = u64::try_from(transaction.query_row(
+                "SELECT head FROM domain_event_cursor WHERE id=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)?;
+        }
         transaction.commit()?;
         Ok(head)
     }
@@ -216,6 +240,10 @@ impl Store {
 }
 
 enum Work {
+    RunControl {
+        work: crate::workflow_controls::Work,
+        reply: oneshot::Sender<Result<crate::workflow_controls::Reply>>,
+    },
     GuardRunDispatch {
         session_id: String,
         reply: oneshot::Sender<Result<()>>,
@@ -292,6 +320,19 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub async fn run_control(
+        &self,
+        work: crate::workflow_controls::Work,
+    ) -> Result<crate::workflow_controls::Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::RunControl { work, reply })
+            .await
+            .map_err(|_| anyhow!("Run control journal is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!("Run control outcome was not confirmed; recover the original key")
+        })?
+    }
     pub async fn guard_run_dispatch(&self, session_id: &str) -> Result<()> {
         let (reply, answer) = oneshot::channel();
         self.sender
@@ -465,6 +506,16 @@ impl Service {
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
+                        Work::RunControl { work, reply } => {
+                            let result = crate::workflow_controls::execute(
+                                &mut store.0,
+                                work,
+                                crate::status::now_millis(),
+                            );
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
                         Work::GuardRunDispatch { session_id, reply } => {
                             let result = crate::workflow_budget::guard_dispatch(
                                 &mut store.0,

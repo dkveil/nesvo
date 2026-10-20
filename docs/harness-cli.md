@@ -52,8 +52,9 @@ workspace escapes, foreign groups/parents and recursive coordinator roles.
 Owner-created parent metadata alone grants no access. Reconnecting preserves
 the grants while the coordinator process lives; its observed exit revokes them
 without stopping its children. A fixed 256 lifetime child capability bound and
-the existing live-process cap apply; configurable run budgets remain F20 work.
-The owner can configure the [host/provider admission budget](harness-budgets.md).
+the [host/provider admission budget](harness-budgets.md) apply. Bound attempts
+also use [run budgets](harness-run-budgets.md); native run stop/cancel has a
+separate [control and recovery contract](harness-run-controls.md).
 Human control/drafts still prevent automation. These are process capabilities,
 not durable run/recovery handover permissions.
 
@@ -142,7 +143,7 @@ Runtime and argument failures with `--json` return:
 | 2    | Invalid arguments, or missing current process context             |
 | 3    | Missing/invalid private pairing                                   |
 | 4    | Host unavailable, unauthenticated or disconnected                 |
-| 5    | Session/operation not found or not visible                        |
+| 5    | Session/operation/control not found or not visible                |
 | 6    | Host operation rejected, invalid cursor or unavailable Git review |
 | 7    | Request timed out                                                 |
 | 8    | Host lacks the required capability                                |

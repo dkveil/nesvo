@@ -68,6 +68,9 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Control {
+        request: crate::workflow_controls::Request,
+    },
     RunBudget {
         request: crate::workflow_budget::Request,
     },
@@ -149,6 +152,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::workflow_inbox::initialize(connection)?;
     crate::workflow_decisions::initialize(connection)?;
     crate::workflow_budget::initialize(connection)?;
+    crate::workflow_controls::initialize(connection)?;
     crate::budgets::initialize(connection)?;
     Ok(())
 }
@@ -287,6 +291,13 @@ pub(crate) fn execute_at(
     request: Request,
     now: u64,
 ) -> Result<Value> {
+    if matches!(request, Request::Control { .. }) {
+        return Err(Error::new(
+            "unsupported",
+            "Run control requires the native dispatch adapter",
+        )
+        .into());
+    }
     if let Request::RunBudget { request } = request {
         return crate::workflow_budget::execute(connection, actor, request, now);
     }

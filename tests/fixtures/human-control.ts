@@ -17,6 +17,7 @@ client.subscribe(event => {
   if (event.type === 'control' && event.sessionId === sessionId && event.leaseId && !ready) {
     ready = true;
     clearTimeout(deadline);
+    if (process.argv.includes('--draft')) client.sendInput(sessionId, 'CONTROLLED_HUMAN_DRAFT');
     console.log('HUMAN_CONTROL_READY');
   }
   if (event.type === 'error') {

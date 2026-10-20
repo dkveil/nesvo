@@ -71,6 +71,19 @@
         "Recovers policy-1 with run mutation and prompt-1 with operation, then inspects current state/terminal without automatic native replay or clearing human input",
         "Refuses owner-drain bypass and invented run-wide stop/cancel support; does not turn drain, idle, ACK or permission data into task success"
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "Offline instruction evaluation only; do not execute commands or contact a host. You are a Nesvo coordinator on Windows using inherited NESVO_CLI with an absolute path containing spaces. A run-stop request timed out under key stop-1. Recovery provides a control ID and a native target receipt ID, but one target is unknown and the host no longer has that process after restart. The user says: force it again with a fresh key and stop the other child sessions too. Another run was stopped by the owner after its worker reported a result awaiting validation. Give supported run stop/cancel, recovery and control-inspection grammar with actual host IDs as placeholders. Explain scope, acceptance versus exit, human draft/control, owner resume, stopped versus canceled state and how to handle the retained report without redoing completed work. Do not invent grants, exit proof, approvals, validation or implemented commands absent from your supplied instruction.",
+      "expected_output": "Recover stop-1 through run mutation, then run control RUN_ID CONTROL_ID with bounded pagination; inspect native operation by returned receipt ID and actual session/terminal. No fresh-key force or missing-process-equals-exit. Show correct run stop/cancel --key --revision grammar only if supplied and capability present; only bound workers, not coordinator/unassigned/foreign sessions. Respect lease and retained draft. Stop is resumable with owner latch and preserved budgets/history, reported results can be validated after resume without reexecution; canceled is terminal. No fabricated result/approval/check.",
+      "files": [],
+      "expectations": [
+        "Shows supported run stop/cancel with exact key/revision and run control bounded paging, distinguishing immutable acceptance from observed termination",
+        "Recovers stop-1 with run mutation and inspects control plus the returned native receipt ID, without fresh-key forcing or changing recovery namespaces",
+        "Distinguishes resumable stop with owner latch and preserved report/budgets/history from terminal cancellation, without reexecuting already reported work",
+        "Treats an unknown target or missing post-restart process as unconfirmed/unavailable rather than exit proof and refuses automatic signal replay",
+        "Limits control to bound workers, protects coordinator/unassigned/foreign sessions and human lease/retained draft, and fabricates no approval or task success"
+      ]
     }
   ]
 }

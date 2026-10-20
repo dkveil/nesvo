@@ -25,6 +25,15 @@ starts or terminates a process. Automated native send checks the bound attempt's
 time/decision gates before paste and again before submit. Direct human input
 and existing native interrupt/stop authorization remain separate.
 
+`runControls` adds nested `control` requests with `start` and `get` actions.
+Start durably freezes bound worker targets before native stop dispatch; its
+keyed reply is immutable acceptance, not process exit. Get returns up to eight
+targets and `nextOffset`, including original native receipt IDs and explicit
+unknown/unavailable outcomes. Trusted host exit observations finalize stop/cancel
+even without a client. Same-key replay, reconnect and reads never signal. See
+[native run controls](harness-run-controls.md) for exact wire shape, authority,
+human draft protection, state transitions, bounded retention and recovery.
+
 Session-scoped native callers may send one `x-nesvo-scope` WebSocket handshake
 header with the public random scope ID from their private context file. The host
 selects that launch's independent key before the existing challenge/nonce/sequence

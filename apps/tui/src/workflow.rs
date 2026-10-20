@@ -8,6 +8,19 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Stop only run-bound workers with durable native receipts. Inspect control.
+    Stop(crate::workflow_controls::Start),
+    /// Cancel planned work and stop run-bound workers. Never overrides a human.
+    Cancel(crate::workflow_controls::Start),
+    /// Inspect a bounded page of native run-control outcomes. Never dispatches.
+    Control {
+        id: String,
+        control: String,
+        #[arg(long, default_value_t = 0)]
+        offset: u16,
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect or replace this run's parallel, retry and elapsed budgets.
     Budget {
         #[command(subcommand)]
@@ -23,7 +36,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Reopen a drained run without resetting history or its elapsed clock.
+    /// Reopen a drained/stopped run without resetting history or its elapsed clock.
     Resume {
         id: String,
         #[arg(long)]
@@ -164,6 +177,8 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Stop(start) | Self::Cancel(start) => start.json,
+            Self::Control { json, .. } => *json,
             Self::Budget { command } => command.machine(),
             Self::Drain { json, .. } | Self::Resume { json, .. } => *json,
             Self::Decision { command } => command.machine(),
@@ -184,6 +199,24 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Stop(start) => Request::Control {
+                request: start.request(crate::workflow_controls::Kind::Stop),
+            },
+            Self::Cancel(start) => Request::Control {
+                request: start.request(crate::workflow_controls::Kind::Cancel),
+            },
+            Self::Control {
+                id,
+                control,
+                offset,
+                ..
+            } => Request::Control {
+                request: crate::workflow_controls::Request::Get {
+                    run_id: id,
+                    control_id: control,
+                    offset: Some(offset),
+                },
+            },
             Self::Budget { command } => Request::RunBudget {
                 request: command.request()?,
             },
@@ -394,6 +427,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Control {
+        request: crate::workflow_controls::Request,
+    },
     RunBudget {
         request: crate::workflow_budget::Request,
     },
@@ -540,6 +576,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         ));
     }
     let capability = match request["request"]["action"].as_str() {
+        Some("control") => Some("runControls"),
         Some("runBudget") => Some("runBudgets"),
         Some("drain" | "resume") => Some("runDrain"),
         _ => None,

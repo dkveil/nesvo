@@ -277,7 +277,7 @@ pub fn mutate(
                 }
             }
             let current = summaries.get(task_id);
-            if current.is_some_and(|a| a["state"] != "failed") {
+            if current.is_some_and(|a| !matches!(a["state"].as_str(), Some("failed" | "stopped"))) {
                 return Err(Error::new(
                     "attempt_state_conflict",
                     "Task already has a current attempt or accepted result",
@@ -451,7 +451,7 @@ pub fn mutate(
                 run_id,
                 *expected_revision,
                 if resume {
-                    &["draining", "drained"]
+                    &["draining", "drained", "stopped"]
                 } else {
                     &["active", "draining", "drained"]
                 },

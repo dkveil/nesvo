@@ -537,6 +537,25 @@ test(
           ]);
           queryOutput(lookup.stdout);
           assert.equal(JSON.parse(lookup.stdout).data.receipt.id, receipt.id);
+          for (const selector of [[receipt.id], ['--id', receipt.id]]) {
+            const byId = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'operation',
+              ...selector,
+              '--json',
+            ]);
+            assert.equal(byId.code, 0, byId.stderr);
+            queryOutput(byId.stdout);
+            assert.equal(JSON.parse(byId.stdout).data.receipt.id, receipt.id);
+          }
+          const ambiguous = await runTui(tuiBinary, pairingPath, runningTuis, [
+            'operation',
+            '--id',
+            receipt.id,
+            '--key',
+            'cli-key',
+            '--json',
+          ]);
+          assert.equal(ambiguous.code, 2, 'receipt selectors are mutually exclusive');
           const current = await snapshot();
           assert.equal(current.sessions.filter(s => s.id === receipt.sessionId).length, 1);
           assert.equal(
@@ -956,6 +975,65 @@ test(
             assert.equal(JSON.parse(denied.stdout).error.code, 'invalid_argument');
           }
           assert.equal((await invoke(['budget', 'get', id])).run.revision, 6);
+          assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
+        },
+      );
+
+      await suite.test(
+        'run control CLI accepts cancellation once and inspects without native effects',
+        async () => {
+          const invoke = async (args: string[]) => {
+            const output = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'run',
+              ...args,
+              '--json',
+            ]);
+            queryOutput(output.stdout);
+            assert.equal(output.code, 0, output.stdout);
+            return JSON.parse(output.stdout).data;
+          };
+          const created = await invoke([
+            'create',
+            'Cancel draft CLI',
+            '--key',
+            'control-cli-run',
+            '--goal',
+            'No native workers',
+          ]);
+          const id = created.run.id;
+          const args = ['cancel', id, '--key', 'control-cli-cancel', '--revision', '1'];
+          const accepted = await invoke(args);
+          assert.equal(accepted.run.state, 'canceled');
+          assert.equal(accepted.control.state, 'completed');
+          assert.deepEqual(accepted.targets, []);
+          assert.deepEqual(await invoke(args), accepted);
+          assert.deepEqual(await invoke(['mutation', '--key', 'control-cli-cancel']), accepted);
+          const control = await invoke(['control', id, accepted.control.id]);
+          assert.equal(control.run.state, 'canceled');
+          assert.deepEqual(control.targets, []);
+          for (const [command, code] of [
+            [['control', id, accepted.control.id, '--offset', '4097'], 'invalid_argument'],
+            [['control', id, 'unknown-control'], 'control_not_found'],
+            [
+              [
+                'resume',
+                id,
+                '--key',
+                'revive-control-cli',
+                '--revision',
+                String(control.run.revision),
+              ],
+              'run_state_conflict',
+            ],
+          ] as const) {
+            const denied = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'run',
+              ...command,
+              '--json',
+            ]);
+            queryOutput(denied.stdout);
+            assert.equal(JSON.parse(denied.stdout).error.code, code);
+          }
           assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
         },
       );

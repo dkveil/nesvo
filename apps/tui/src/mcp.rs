@@ -58,6 +58,33 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_stop_run",
+            "Accept a durable stop intent for only this run's bound worker processes. Native stop receipts precede observed exits; reply is immutable acceptance, not proof of termination. Inspect nesvo_get_run_control. Human leases/drafts and owner drain are protected. Same-key replay/reconnect never dispatches again. Stopped runs may resume with fresh attempts, preserving budgets/history; unknown control must be reconciled first.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_cancel_run",
+            "Accept durable run cancellation and native stop of its bound workers only. Does not touch the coordinator, unassigned children or foreign sessions. The run becomes canceled only after exit proof, and cannot resume. Immutable acceptance is not termination; inspect nesvo_get_run_control. Never bypass human input or resubmit uncertain effects under new keys.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_run_control",
+            "Inspect at most eight target receipts/exit observations and aggregate native control state. Refreshes actual host exit/unavailable evidence but never sends signals or replays input. Missing processes after restart are unavailable, not assumed stopped. Page through targets; use original operationKey/receiptId for native recovery. Worker scopes cannot inspect parent control.",
+            object(
+                json!({"runId":id,"controlId":id,"offset":{"type":"integer","minimum":0,"maximum":4096}}),
+                &["runId", "controlId"],
+            ),
+            true,
+        ),
+        (
             "nesvo_get_run_budget",
             "Read a visible run's current policy, active attempts and activation/deadline clock. Workers use their own task context. Reads may persist observed time exhaustion; never start/stop a process.",
             object(json!({"runId":id}), &["runId"]),
@@ -383,7 +410,7 @@ fn catalog() -> Vec<Tool> {
         ),
     ];
     definitions.into_iter().map(|(name,description,schema,read_only)| {
-        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session")).idempotent(true).open_world(!read_only))
+        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run")).idempotent(true).open_world(!read_only))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
     }).collect()
 }
@@ -459,6 +486,41 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_stop_run" | "nesvo_cancel_run" | "nesvo_get_run_control" => {
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure(
+                        "invalid_argument",
+                        "Run control arguments must be an object",
+                    )
+                })?
+                .clone();
+            if fields.contains_key("action") || fields.contains_key("kind") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Control action is selected by the tool name",
+                ));
+            }
+            if name == "nesvo_get_run_control" {
+                fields.insert("action".into(), "get".into());
+            } else {
+                fields.insert("action".into(), "start".into());
+                fields.insert(
+                    "kind".into(),
+                    if name == "nesvo_stop_run" {
+                        "stop"
+                    } else {
+                        "cancel"
+                    }
+                    .into(),
+                );
+            }
+            (
+                crate::workflow::tool("control", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_get_host_budget"
         | "nesvo_set_host_budget"
         | "nesvo_get_run_budget"
@@ -910,7 +972,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 38);
+        assert_eq!(catalog().len(), 41);
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(

@@ -24,52 +24,52 @@ foundations may land earlier, but feature gates still require their full tests.
 Inventory at baseline `0c898c3` (2026-10-19). Existing behavior is a starting point,
 not evidence that the expanded acceptance criteria pass.
 
-| ID  | Feature                                         | Baseline                                                      | Delivery / tests / commits                                                                                        |
-| --- | ----------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| F01 | OSC 7501 parser and host query responder        | Missing                                                       | Partial: 0946401; live Windows negotiation gate open                                                              |
-| F02 | Provider lifecycle adapters                     | Partial: Claude launch hooks; other providers screen hints    | Partial: Claude and Codex 0.156 native adapters; real provider matrix/Gemini pending                              |
-| F03 | Status doctor and session explain               | Missing                                                       | Implemented diagnostics/version/correlation; provider matrix pending                                              |
-| F04 | Versioned detection rules and screen corpus     | Partial: hard-coded current-screen rules                      | Partial: 3e851ba; wider provider corpus pending                                                                   |
-| F05 | Launch, conversation and event identity         | Partial: private launch report directory; wall-clock sequence | Partial: 173162e; Claude scoped journal; attempt identity in F17/F18                                              |
-| F06 | Evidence freshness and last-known state         | Partial: short hook/screen grace                              | Partial: 7445eb3; freshness/disconnect policy pending                                                             |
-| F07 | Starting, readiness and timeout                 | Missing                                                       | Implemented: readiness/timeout; platform/device matrix pending                                                    |
-| F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                                        |
-| F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: all native session commands implemented; coordinator/provider end-to-end gates pending                   |
-| F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                                |
-| F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                       |
-| F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending       |
-| F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                                           |
-| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable runs/tasks/attempts, explicit assignment and DAG gates; automatic dispatch pending               |
-| F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: scoped messages, atomic result notices, exact ACK and replay/reopen; dispatch/UI pending        |
-| F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                         |
-| F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending          |
-| F18 | Attempt-bound worker result                     | Missing                                                       | Partial: scoped explicit results, validation and retry fences; actual provider execution gate pending             |
-| F19 | Questions and decision gates                    | Missing                                                       | Partial: attempt-bound authority, exact revisions, timeout/cancel and inbox notices; native/UI gates pending      |
-| F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Partial: persisted host/provider and run parallel/time/retry limits, drain/resume; native run stop/cancel pending |
-| F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Pending                                                                                                           |
-| F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Pending                                                                                                           |
-| F23 | Missed-run policy and grace window              | Missing                                                       | Pending                                                                                                           |
-| F24 | Safe fresh/reuse session dispatch               | Partial: fresh launch with prompt                             | Pending                                                                                                           |
-| F25 | Bounded precheck                                | Missing                                                       | Pending                                                                                                           |
-| F26 | Delta-only coordinator wakeups                  | Missing                                                       | Pending                                                                                                           |
-| F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                           |
-| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Pending                                                                                                           |
-| F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                  |
-| F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                           |
-| F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                           |
-| F32 | Incremental preview and process/turn times      | Partial: bounded replay and monotonic process age             | Implemented distinct process/turn times and bounded passive read; device matrix pending                           |
-| F33 | Revision-bound diff feedback                    | Missing                                                       | Pending                                                                                                           |
-| F34 | Verified session/turn edit provenance           | Partial: agent edit folder context only                       | Pending                                                                                                           |
-| F35 | Revision-bound checks and review readiness      | Missing                                                       | Pending                                                                                                           |
-| F36 | Trusted worktree setup/run/archive              | Partial: create worktree only                                 | Pending                                                                                                           |
-| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Pending                                                                                                           |
-| F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending         |
-| F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending                                                                                                           |
-| F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: durable goal/plan/result/validation history; compaction/adoption/manual constraint edits pending         |
-| F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Pending                                                                                                           |
-| F42 | Safe resumable hibernation                      | Missing                                                       | Pending                                                                                                           |
-| F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                           |
-| F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Pending                                                                                                           |
+| ID  | Feature                                         | Baseline                                                      | Delivery / tests / commits                                                                                                    |
+| --- | ----------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| F01 | OSC 7501 parser and host query responder        | Missing                                                       | Partial: 0946401; live Windows negotiation gate open                                                                          |
+| F02 | Provider lifecycle adapters                     | Partial: Claude launch hooks; other providers screen hints    | Partial: Claude and Codex 0.156 native adapters; real provider matrix/Gemini pending                                          |
+| F03 | Status doctor and session explain               | Missing                                                       | Implemented diagnostics/version/correlation; provider matrix pending                                                          |
+| F04 | Versioned detection rules and screen corpus     | Partial: hard-coded current-screen rules                      | Partial: 3e851ba; wider provider corpus pending                                                                               |
+| F05 | Launch, conversation and event identity         | Partial: private launch report directory; wall-clock sequence | Partial: 173162e; Claude scoped journal; attempt identity in F17/F18                                                          |
+| F06 | Evidence freshness and last-known state         | Partial: short hook/screen grace                              | Partial: 7445eb3; freshness/disconnect policy pending                                                                         |
+| F07 | Starting, readiness and timeout                 | Missing                                                       | Implemented: readiness/timeout; platform/device matrix pending                                                                |
+| F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                                                    |
+| F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: all native session commands implemented; coordinator/provider end-to-end gates pending                               |
+| F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                                            |
+| F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                                   |
+| F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending                   |
+| F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                                                       |
+| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable runs/tasks/attempts, explicit assignment and DAG gates; automatic dispatch pending                           |
+| F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: scoped messages, atomic result notices, exact ACK and replay/reopen; dispatch/UI pending                    |
+| F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                                     |
+| F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending                      |
+| F18 | Attempt-bound worker result                     | Missing                                                       | Partial: scoped explicit results, validation and retry fences; actual provider execution gate pending                         |
+| F19 | Questions and decision gates                    | Missing                                                       | Partial: attempt-bound authority, exact revisions, timeout/cancel and inbox notices; native/UI gates pending                  |
+| F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Partial: host/provider/run budgets, drain/resume and receipt-backed native stop/cancel; automatic dispatch/job queues pending |
+| F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Pending                                                                                                                       |
+| F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Pending                                                                                                                       |
+| F23 | Missed-run policy and grace window              | Missing                                                       | Pending                                                                                                                       |
+| F24 | Safe fresh/reuse session dispatch               | Partial: fresh launch with prompt                             | Pending                                                                                                                       |
+| F25 | Bounded precheck                                | Missing                                                       | Pending                                                                                                                       |
+| F26 | Delta-only coordinator wakeups                  | Missing                                                       | Pending                                                                                                                       |
+| F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                                       |
+| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Pending                                                                                                                       |
+| F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                              |
+| F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                                       |
+| F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                       |
+| F32 | Incremental preview and process/turn times      | Partial: bounded replay and monotonic process age             | Implemented distinct process/turn times and bounded passive read; device matrix pending                                       |
+| F33 | Revision-bound diff feedback                    | Missing                                                       | Pending                                                                                                                       |
+| F34 | Verified session/turn edit provenance           | Partial: agent edit folder context only                       | Pending                                                                                                                       |
+| F35 | Revision-bound checks and review readiness      | Missing                                                       | Pending                                                                                                                       |
+| F36 | Trusted worktree setup/run/archive              | Partial: create worktree only                                 | Pending                                                                                                                       |
+| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Pending                                                                                                                       |
+| F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending                     |
+| F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending                                                                                                                       |
+| F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: durable goal/plan/result/validation history; compaction/adoption/manual constraint edits pending                     |
+| F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Pending                                                                                                                       |
+| F42 | Safe resumable hibernation                      | Missing                                                       | Pending                                                                                                                       |
+| F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                                       |
+| F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Pending                                                                                                                       |
 
 ## Verification log
 
@@ -911,8 +911,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   escalation remain required. Native sessions without run bindings obey global
   process budgets; they are not silently attributed to a run. See
   [run policy and remaining scope](harness-run-budgets.md). Commit `ce68ead`
-  passed Linux, macOS, browser and app jobs in run `39352987299`; Windows was
-  still running at the last observation and is not yet claimed verified by CI.
+  passed all five jobs in run `39352987299`, including Windows, Linux and macOS.
 
 ### F38 instruction version 5: run policy and human priority
 
@@ -937,3 +936,69 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   snapshot; live user sessions/global provider settings are not rewritten.
   No dependency or visual layout changes. Stage-3 native control/dispatcher and
   actual provider integration gates remain open.
+
+### F20 native run stop/cancel and observed exit
+
+- Added durable run-control intents with a frozen set of bound worker targets,
+  bounded eight-target dispatch/read pages, stable per-target native receipt keys
+  and exact run revisions. Original workflow replies remain immutable acceptance;
+  current control reads distinguish requested stops, known refusals, uncertain or
+  unavailable processes, and proven exits. Reads/replays/reconnect never signal.
+- Trusted host exit observations persist independently of event-log retention
+  and finalize controls even without clients. Restart invalidates dispatch claims
+  without replay. A missing unadopted process remains unavailable, not dead.
+  The original native receipt ID remains recoverable after a lost parent reply.
+  Only the latest control may finalize the run, preventing an older stop from
+  overwriting a newer cancellation.
+- Native authorization is rechecked per target. Coordinators cannot target
+  themselves, unassigned children or foreign sessions. Active human control and
+  retained drafts both block automated run stops. Known no-effect refusals need
+  a resolved blocker and deliberately authorized new intent; uncertain effects
+  refuse a fresh-key workaround.
+- Stop becomes resumable `stopped` only after observed exits, preserving the
+  activation clock, budgets, reported work and owner-only resume latch. Unreported
+  stopped work can retry on a fresh process/attempt. Cancel becomes terminal
+  `canceled`; neither operation invents answers, passing checks or task success.
+  Current workers may ask/answer decisions during graceful drain (`7e471ed`),
+  avoiding a deadlock while finishing admitted work.
+- Added CLI `run stop|cancel|control`, three MCP tools (41 total), `runControls`
+  capability and versioned JSON schemas. Native receipt lookup accepts both
+  positional IDs and explicit `operation --id`; conflicting selectors are rejected.
+  CLI doctor prints the actual injected instruction version. No dependencies,
+  global provider configuration edits or material visual changes were introduced.
+- Windows final validation: fmt, Clippy with warnings denied, 128 TUI + 124 host +
+  3 wire unit checks; seven new control storage regressions; six controlled native
+  SDK scenarios and 29 host/sync/CLI checks. Controlled status publication p95 was
+  251.148 ms over 26 batches, excluding provider/model/network latency.
+- An isolated original Claude Code 2.1.304 startup process was bound then stopped
+  through the actual CLI. Acceptance was `stopping/dispatching`; control later
+  reached `stopped/completed` with target exit proof, while its native receipt
+  still accurately said `stopRequested`. Recovery returned the original acceptance.
+  The process was waiting on folder trust: no prompt, model call or trust approval
+  occurred. The test host exited cleanly and all three observed owned descendants
+  were gone. This proves startup process control, not agent work/hook readiness.
+- Native command growth exposed Windows entrypoint stack overflow even for help.
+  `4c0e9ef` heap-pins the headless dispatcher rather than raising stack limits.
+  The startup and original-provider smoke pass with that boundary. CI `39354638300`
+  separately failed four parallel host startup deadlines on Windows while its
+  other jobs passed. `3dc1744` serializes host-heavy scenarios on shared runners,
+  retaining concurrency inside scenarios. Follow-up CI is still running; local
+  parallel and serial SDK executions pass. No all-platform result is inferred.
+- Automatic pre-launch reservations/dispatch, job admission queues, unknown
+  process adoption and the complete real-provider matrix remain required gates.
+  See [native run control contract](harness-run-controls.md).
+
+### F38 instruction version 6: native control and recovery
+
+- Launch-local V6 explains supported stop/cancel, bounded control inspection,
+  workflow-key versus native receipt-ID recovery, owner stop/resume, preserved
+  reported work and explicit post-restart uncertainty. Existing live launches and
+  provider-global settings are not rewritten.
+- Added targeted offline case 7 against the V5 snapshot. The initial ungraded
+  reviewer preceded reading/grading outputs; final semantic review and executable
+  command checks find V6 satisfies 5/5 expectations, V5 2/5. Both preserve safe
+  authority/recovery behavior; the distinguishing assertions concern newly
+  implemented grammar and stop/cancel semantics. One sample per version is not
+  statistical or actual-provider/model evidence. Timing/token metadata was absent
+  and omitted. Earlier six cases remain retained inputs, not claimed rerun.
+  Evaluation/reviewer artifacts remain outside Git.

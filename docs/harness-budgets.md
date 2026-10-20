@@ -6,7 +6,8 @@ Defaults preserve eight session slots, eight running workers and eight running
 processes per provider. Increasing the policy can admit more than the former
 constant eight; the current unpaged transport/retention safety ceiling is 16.
 The separate [run policy](harness-run-budgets.md) adds parallel/retry/time
-budgets and drain/resume. Native run-wide stop/cancel remains required F20 work.
+budgets and drain/resume. [Native run controls](harness-run-controls.md) add
+explicit stop/cancel without treating acceptance as process exit.
 
 ```powershell
 nesvo budget get --json
@@ -115,6 +116,7 @@ fixture, without model calls or global provider configuration changes.
 The CLI/legacy-client fixture checks versioned JSON output, bounded file reads,
 refusal of old create commands and unchanged existing sessions. No new dependency
 or UI layout is introduced. The run policy implements per-run concurrency,
-elapsed/retry budgets and drain/resume. Native run stop/cancel, scheduler budget
-queues and automatic DAG dispatch remain F20/F14/stage-4 requirements, with native
+elapsed/retry budgets and drain/resume. Native run stop/cancel has a separate
+receipt/exit contract. Scheduler budget queues and automatic DAG dispatch remain
+F20/F14/stage-4 requirements, with native
 ownership, receipts and human priority preserved by this admission foundation.

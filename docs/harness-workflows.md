@@ -7,7 +7,8 @@ that run. An **attempt** binds exactly one managed worker process to a task.
 coordinator validation. [Attempt-bound decisions](harness-decisions.md) add
 explicit questions without granting native permission approval. [Run admission
 budgets and drain](harness-run-budgets.md) preserve native work and human priority.
-Automatic native dispatch and run-wide stop/cancel remain F14/F20 work.
+[Native run controls](harness-run-controls.md) add explicit stop/cancel with
+per-target receipts and observed exit. Automatic native dispatch remains F14 work.
 Idle never means success.
 
 ## CLI and MCP
@@ -190,4 +191,4 @@ no model calls. Controlled native workers also discover/report their own task
 through the actual CLI; independent coordinator validation releases a reviewer
 task. Reopen/late-result/history tests cover retry fences. This does not pass
 the full stage-3 gate: actual provider escalation, decision UI, coordinator adoption,
-automatic dispatch and native run-wide stop/cancel remain open.
+automatic dispatch and unknown-process recovery remain open.

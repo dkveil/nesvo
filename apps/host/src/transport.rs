@@ -328,14 +328,18 @@ pub async fn handle(
                             continue;
                         }
                         if let Command::Workflow{mut request}=command {
-                            let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.workflow_actor(id,&mut request)?))})();
+                            let prepared=(||->Result<_>{let state=state.lock().unwrap();Ok((state.event_log()?,state.workflow_actor(id,&mut request)?,state.operation_authority(id)?))})();
                             let permit=event_gate.clone().try_acquire_owned();
                             match (prepared,permit) {
-                                (Ok((log,actor)),Ok(permit))=>{
+                                (Ok((log,actor,authority)),Ok(permit))=>{
                                     let state=state.clone();
                                     tokio::spawn(async move {
                                         let _permit=permit;
-                                        let mut event=match log.workflow(actor,request).await {
+                                        let result=match request {
+                                            crate::orchestration::Request::Control {request}=>crate::workflow_control_runtime::execute(state.clone(),log,actor,authority,request).await,
+                                            request=>log.workflow(actor,request).await,
+                                        };
+                                        let mut event=match result {
                                             Ok(mut data)=>{data["type"]="workflow".into();data},
                                             Err(error)=>json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map(|e|e.code).unwrap_or("workflow_failed"),"message":error.to_string()}),
                                         };

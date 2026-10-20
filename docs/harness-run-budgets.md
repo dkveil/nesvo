@@ -62,8 +62,8 @@ replaying them cannot restore earlier permissive policy.
 No idle timer, model heartbeat or polling process is introduced. This is an
 admission/input boundary, not a claim that current native work is terminated at
 the deadline. Already assigned workers can still report and parents can validate
-after exhaustion. Automatic scheduler/dispatcher deadlines and run-wide native
-stop/cancel remain separate required work.
+after exhaustion. Explicit [native run controls](harness-run-controls.md) provide
+stop/cancel with observed exit; scheduler/dispatcher deadlines remain required work.
 
 ## Drain and native input
 
@@ -71,7 +71,8 @@ Drain changes `active` to `draining`, rejecting new assignments. Current workers
 may finish/report and parents may validate. With no assigned/reported attempts
 left, the state becomes `drained` when planned work remains; if all tasks are
 accepted it becomes `succeeded`. Neither state is inferred from process silence.
-Resume reopens a draining/drained run without changing clock, history or budgets.
+Resume reopens a draining/drained or explicitly stopped run without changing
+clock, history or budgets. A canceled run cannot resume.
 
 An owner drain latches owner control durably. A coordinator cannot clear it by
 draining again or resuming. The owner may also latch an already drained run.

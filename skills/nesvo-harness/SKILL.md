@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 5 (`NESVO_HARNESS_INSTRUCTIONS_V5`).
+Instruction version: 6 (`NESVO_HARNESS_INSTRUCTIONS_V6`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -267,7 +267,7 @@ even if a coordinator drains again. Only owner can resume it; a coordinator may
 `run resume RUN_ID --key RESUME_KEY --revision RUN_REV --json` for its own drain.
 Resume preserves budgets/history and performs no launch or input replay. A fully
 validated completed run cannot be revived. Do not invent run-wide stop/cancel
-commands; they are not implemented by this drain contract.
+commands from drain; native run control requires the separate capability below.
 
 Policy/drain/resume replies recover with `run mutation --key ORIGINAL_KEY
 --json`, followed by `run get`/`run budget get` for current state. Recovered policy
@@ -276,6 +276,41 @@ revision, distinct from the global budget and decision revisions. After a native
 send returns unknown, inspect `operation --key ORIGINAL_SEND_KEY --json` and the
 terminal before any new intent: paste may exist even if Enter was refused by a
 new decision/deadline. Resolve a blocker without overwriting a human draft.
+
+## Native run control
+
+With `runControls`, `run stop RUN_ID --key KEY --revision RUN_REV --json`
+accepts a durable request to stop only that run's bound worker processes.
+`run cancel RUN_ID --key KEY --revision RUN_REV --json` also closes remaining
+planned work. Neither targets the coordinator, unassigned children or foreign
+sessions. A metadata parent or matching display name grants no native control.
+Do not use these actions merely because a worker is quiet.
+
+The first reply is immutable **acceptance**, not proof of termination. Recover
+it with `run mutation --key ORIGINAL_KEY --json`, then inspect `run control
+RUN_ID CONTROL_ID --json`. Pages contain up to eight targets and `nextOffset`;
+continue with `--offset NEXT_OFFSET` when supplied. Targets identify their
+original native operation key and nullable receipt ID. For an uncertain target,
+inspect `operation --id RECEIPT_ID --json` and current session/terminal evidence.
+An owner inspecting a coordinator's native operation should use its returned
+receipt ID; native keys alone remain caller-scoped.
+
+`stopRequested` is not exit. Only host-observed exit permits completion; missing
+processes after restart are unavailable, not assumed stopped. Pending/unknown
+control rejects another key with `control_unconfirmed`. Reads, reconnect and
+same-key replay never send signals. A new deliberate intent after a known
+no-effect refusal requires resolving the blocker and rereading the run revision.
+Never force uncertain effects, clear a human draft or take over a lease. Run
+control also protects a retained human draft after the lease is released.
+
+A completed stop becomes `stopped` and may be explicitly resumed, preserving
+budgets/history and the owner latch. Unreported stopped work needs a fresh
+worker/attempt; reported results remain for actual validation after resume,
+without automatic reexecution. A completed cancellation becomes `canceled`
+and cannot resume. Both preserve results/history without inventing task success
+or checks. Pending decisions close without inferring answers or permissions.
+Only the owner can resume an owner stop. Coordinator permissions do not expand
+because a control request was accepted or a process disappeared.
 
 ## Interruption
 

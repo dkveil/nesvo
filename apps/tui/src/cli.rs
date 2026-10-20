@@ -21,8 +21,14 @@ pub enum Command {
     },
     /// Inspect a durable operation by ID, or find the caller's idempotency key.
     Operation {
-        #[arg(required_unless_present = "key", conflicts_with = "key")]
+        #[arg(
+            required_unless_present_any = ["key", "receipt_id"],
+            conflicts_with_all = ["key", "receipt_id"]
+        )]
         id: Option<String>,
+        /// Explicit receipt ID; the positional ID spelling remains supported.
+        #[arg(long = "id", conflicts_with = "key")]
+        receipt_id: Option<String>,
         #[arg(long)]
         key: Option<String>,
         #[arg(long)]
@@ -255,6 +261,7 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
         | "task_not_found"
         | "message_not_found"
         | "decision_not_found"
+        | "control_not_found"
         | "attempt_not_found" => 5,
         "timeout" => 7,
         "unsupported" => 8,
@@ -779,13 +786,18 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
                 "MCP uses its own stdio entrypoint",
             ));
         }
-        Command::Operation { id, key, json } => {
+        Command::Operation {
+            id,
+            receipt_id,
+            key,
+            json,
+        } => {
             operation_capability(connection).await?;
             return print_data(
                 json,
                 request(
                     connection,
-                    json!({"type":"getOperation","id":id,"key":key}),
+                    json!({"type":"getOperation","id":id.or(receipt_id),"key":key}),
                     "operation",
                 )
                 .await?,
@@ -900,7 +912,8 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
                 );
                 if session["harness"]["enabled"] == true {
                     println!(
-                        "  Harness: launch-local Nesvo MCP + instruction v1 prepared; provider loading not yet verified"
+                        "  Harness: launch-local Nesvo MCP + instruction v{} prepared; provider loading not yet verified",
+                        session["harness"]["instructionVersion"]
                     );
                 }
                 println!(

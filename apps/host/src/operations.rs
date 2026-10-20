@@ -35,6 +35,8 @@ pub struct WaitRequest {
 pub enum ControlAction {
     Interrupt,
     Stop,
+    /// Run orchestration also protects a retained human draft without a lease.
+    StopRunWorker,
 }
 pub enum ControlDispatch {
     Write(tokio::sync::oneshot::Receiver<bool>),
@@ -45,7 +47,7 @@ impl ControlAction {
     fn operation(self) -> &'static str {
         match self {
             Self::Interrupt => "interrupt",
-            Self::Stop => "stop",
+            Self::Stop | Self::StopRunWorker => "stop",
         }
     }
 }

@@ -62,7 +62,17 @@
                         "goal": { "type": "string" },
                         "revision": { "type": "integer", "minimum": 1 },
                         "state": {
-                          "enum": ["draft", "active", "draining", "drained", "succeeded"]
+                          "enum": [
+                            "draft",
+                            "active",
+                            "draining",
+                            "drained",
+                            "stopping",
+                            "stopped",
+                            "canceling",
+                            "canceled",
+                            "succeeded"
+                          ]
                         },
                         "taskResult": { "enum": [null, "succeeded"] }
                       }
@@ -88,7 +98,14 @@
                           "key": { "type": "string" },
                           "dependencies": { "type": "array", "items": { "type": "string" } },
                           "state": {
-                            "enum": ["planned", "assigned", "reported", "succeeded", "failed"]
+                            "enum": [
+                              "planned",
+                              "assigned",
+                              "reported",
+                              "succeeded",
+                              "failed",
+                              "stopped"
+                            ]
                           },
                           "dependencyState": { "enum": ["ready", "waiting"] },
                           "attempts": { "type": "integer", "minimum": 0, "maximum": 16 },
@@ -156,6 +173,68 @@
                     "nextOffset": {
                       "type": ["integer", "null"]
                     }
+                  }
+                },
+                {
+                  "required": ["run", "control", "targets", "nextOffset"],
+                  "properties": {
+                    "run": { "type": "object", "required": ["id", "revision", "state"] },
+                    "control": {
+                      "type": "object",
+                      "required": ["id", "kind", "state", "createdAt", "counts"],
+                      "properties": {
+                        "id": { "$ref": "#/definitions/id" },
+                        "kind": { "enum": ["stop", "cancel"] },
+                        "state": {
+                          "enum": [
+                            "dispatching",
+                            "awaitingExit",
+                            "blocked",
+                            "unconfirmed",
+                            "completed"
+                          ]
+                        },
+                        "createdAt": { "$ref": "#/definitions/cursor" },
+                        "counts": {
+                          "type": "object",
+                          "additionalProperties": { "type": "integer", "minimum": 0 }
+                        }
+                      }
+                    },
+                    "targets": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "sessionId",
+                          "attemptId",
+                          "operationKey",
+                          "phase",
+                          "receiptId",
+                          "code"
+                        ],
+                        "properties": {
+                          "sessionId": { "$ref": "#/definitions/id" },
+                          "attemptId": { "$ref": "#/definitions/id" },
+                          "operationKey": { "type": "string", "minLength": 1, "maxLength": 128 },
+                          "phase": {
+                            "enum": [
+                              "pending",
+                              "dispatching",
+                              "stopRequested",
+                              "blocked",
+                              "unknown",
+                              "unavailable",
+                              "exited"
+                            ]
+                          },
+                          "receiptId": { "type": ["string", "null"] },
+                          "code": { "type": ["string", "null"] }
+                        }
+                      }
+                    },
+                    "nextOffset": { "type": ["integer", "null"] }
                   }
                 },
                 {
@@ -558,7 +637,7 @@
         "taskId": { "type": "string" },
         "ordinal": { "type": "integer", "minimum": 1, "maximum": 16 },
         "sessionId": { "type": "string" },
-        "state": { "enum": ["assigned", "reported", "succeeded", "failed"] },
+        "state": { "enum": ["assigned", "reported", "succeeded", "failed", "stopped"] },
         "result": { "type": ["object", "null"] },
         "validation": { "type": ["object", "null"] }
       }

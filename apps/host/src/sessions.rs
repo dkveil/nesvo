@@ -613,6 +613,7 @@ impl State {
         event["hostBudgets"] = self.event_log.is_some().into();
         event["runBudgets"] = self.event_log.is_some().into();
         event["runDrain"] = self.event_log.is_some().into();
+        event["runControls"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event
@@ -1276,6 +1277,9 @@ impl State {
         )
     }
 
+    pub fn run_control_process_running(&self, id: &str) -> Option<bool> {
+        self.sessions.get(id).map(|session| session.info.running)
+    }
     pub fn dispatch_control(
         &mut self,
         id: &str,
@@ -1298,7 +1302,11 @@ impl State {
             .sessions
             .get_mut(id)
             .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
-        if session.controller.is_some() {
+        if session.controller.is_some()
+            || (matches!(action, ControlAction::StopRunWorker)
+                && session.info.running
+                && session.human_input_dirty)
+        {
             return Err(Error::new(
                 "control_busy",
                 "Human terminal control must be released before automated interruption or stop",
@@ -1307,7 +1315,9 @@ impl State {
         }
         if !session.info.running {
             return match action {
-                ControlAction::Stop => Ok(ControlDispatch::AlreadyExited),
+                ControlAction::Stop | ControlAction::StopRunWorker => {
+                    Ok(ControlDispatch::AlreadyExited)
+                }
                 ControlAction::Interrupt => {
                     Err(Error::new("process_exited", "Process has already exited").into())
                 }
@@ -1325,7 +1335,7 @@ impl State {
                     )
                 })?)
             }
-            ControlAction::Stop => {
+            ControlAction::Stop | ControlAction::StopRunWorker => {
                 session.kill()?;
                 ControlDispatch::StopRequested
             }

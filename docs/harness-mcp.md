@@ -50,7 +50,13 @@ adds `nesvo_drain_run` and `nesvo_resume_run`. Limits count assigned/reported
 attempts, preserve retry history and use an activation-based elapsed clock.
 Only the owner may relax limits or undo an owner drain. These metadata tools
 do not kill processes, grant native approval or replay input. See
-[run budget contract](harness-run-budgets.md). The catalog now contains 38 tools.
+[run budget contract](harness-run-budgets.md).
+
+`runControls` adds `nesvo_stop_run`, `nesvo_cancel_run` and
+`nesvo_get_run_control`. The first two declare destructive effects and use exact
+run revisions, stable workflow mutation keys and per-target native receipts.
+Only host-observed exit completes a control; reads/replays do not signal.
+See [native run controls](harness-run-controls.md). The catalog contains 41 tools.
 
 `hostBudgets` adds owner-only `nesvo_get_host_budget` and `nesvo_set_host_budget`.
 Both use the shared host admission policy and workflow recovery namespace;
@@ -84,9 +90,12 @@ approval or validates task success. See the [decision contract](harness-decision
 Instruction version 5 adds run policy inspection/edit grammar, parallel slots
 through validation, activation-based time/retry history, owner-only relaxation
 and owner drain/resume boundaries. It distinguishes workflow-key recovery from
-uncertain native-send receipts and does not advertise unimplemented run-wide
-stop/cancel. Each new opted-in launch receives its own versioned snapshot;
-existing sessions/global instructions are not rewritten.
+uncertain native-send receipts. Instruction version 6 adds the implemented
+run stop/cancel and paged control grammar, native receipt-ID recovery, unknown
+process handling, human draft protection and owner-controlled stop/resume.
+Reported work survives stop for explicit validation after resume, while
+cancellation is terminal. Each new opted-in launch receives its own versioned
+snapshot; existing sessions/global instructions are not rewritten.
 
 Create accepts optional `spec.parentSessionId` for a live process parent, gated
 by `sessionLineage`. It creates an ordinary background session without changing
@@ -180,11 +189,13 @@ References verified for this implementation:
 
 ```powershell
 cargo build --workspace --locked
-cargo test --package nesvo --test mcp_host --locked -- --ignored
+cargo test --package nesvo --test mcp_host --locked -- --ignored --test-threads=1
 ```
 
 The test needs built native binaries, so CI explicitly runs it after build on
-Windows/macOS/Linux. An official SDK client connects to a separate native MCP
+Windows/macOS/Linux. Scenarios run serially on shared runners because each owns
+a native host, probes and multiple PTYs; concurrent-client checks within each
+scenario remain concurrent. An official SDK client connects to a separate native MCP
 subprocess and isolated host. It checks catalog, create/replay, the same receipt
 through CLI, passive read/diagnostics/events, Git errors, wrong scope rejection,
 legacy initialization, host loss, bad/oversized stdio and clean PTY cleanup.
