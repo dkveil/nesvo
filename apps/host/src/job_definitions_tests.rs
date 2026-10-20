@@ -87,10 +87,10 @@ fn retry_policy_is_validated_by_host_without_changing_legacy_intent() {
     code(
         request(
             &mut store,
-            json!({"action":"create","key":"no-precheck-reuse","spec":combined}),
+            json!({"action":"create","key":"missing-precheck-approval","spec":combined}),
             NOW,
         ),
-        "invalid_argument",
+        "precheck_not_found",
     );
     let legacy = create(&mut store, "legacy-without-retry", json!({}));
     assert!(legacy["spec"].get("retry").is_none());
@@ -104,6 +104,43 @@ fn retry_policy_is_validated_by_host_without_changing_legacy_intent() {
         count, 2,
         "Rejected policies never persist mutation acceptance"
     );
+}
+#[test]
+fn retry_with_precheck_requires_existing_approval_and_preserves_exact_mutation_intent() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let command: crate::job_prechecks::Command = serde_json::from_value(json!({
+        "title":"Explicit repeated check",
+        "executable":if cfg!(windows){"C:/tools/check.exe"}else{"/usr/bin/check"},
+        "cwd":if cfg!(windows){"C:/workspace"}else{"/workspace"}
+    }))
+    .unwrap();
+    let approved = crate::job_prechecks::execute(
+        &mut store.0,
+        owner(),
+        crate::job_prechecks::Request::Approve {
+            key: "repeat-command".into(),
+            expected_digest: crate::job_prechecks::digest(&command).unwrap(),
+            spec: command,
+        },
+        NOW,
+    )
+    .unwrap();
+    let mut selected = spec(NOW + 60_000);
+    selected["retry"] =
+        json!({"on":"launchNoEffect","maxAttempts":2,"initialDelayMs":1000,"maxDelayMs":1000});
+    selected["precheckId"] = approved["precheckApproval"]["id"].clone();
+    let intent = json!({"action":"create","key":"combined","spec":selected});
+    let accepted = request(&mut store, intent.clone(), NOW).unwrap();
+    assert_eq!(
+        accepted["job"]["spec"]["precheckId"],
+        selected["precheckId"]
+    );
+    assert_eq!(accepted["job"]["spec"]["retry"], selected["retry"]);
+    assert_eq!(
+        request(&mut store, intent, NOW + 120_000).unwrap(),
+        accepted
+    );
+    assert!(tick(&mut store, NOW + 1).is_empty());
 }
 #[test]
 fn pending_calendar_calculation_does_not_hide_a_due_once_job_behind_the_page_limit() {

@@ -15,6 +15,19 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS harness_job_cancellations(occurrence_id TEXT PRIMARY KEY REFERENCES harness_job_occurrences(id),issuer TEXT NOT NULL,state TEXT NOT NULL,requested_at INTEGER NOT NULL,observed_at INTEGER NOT NULL,reason TEXT,control_key TEXT NOT NULL,control_id TEXT,token TEXT);
         CREATE INDEX IF NOT EXISTS harness_job_cancellations_pending ON harness_job_cancellations(state);
         CREATE INDEX IF NOT EXISTS harness_job_occurrences_run ON harness_job_occurrences(run_id) WHERE run_id IS NOT NULL;")?;
+    let has_attempt = {
+        let mut query = connection.prepare("PRAGMA table_info(harness_job_cancellations)")?;
+        query
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name == "precheck_attempt_id")
+    };
+    if !has_attempt {
+        connection.execute_batch(
+            "ALTER TABLE harness_job_cancellations ADD COLUMN precheck_attempt_id TEXT REFERENCES harness_job_attempts(id);",
+        )?;
+    }
     Ok(())
 }
 pub fn view(connection: &Connection, occurrence: &str) -> Result<Value> {
@@ -88,7 +101,10 @@ pub fn accept(
     } else {
         ("completed", "canceled", true, "owner_canceled")
     };
-    tx.execute("INSERT INTO harness_job_cancellations(occurrence_id,issuer,state,requested_at,observed_at,reason,control_key) VALUES(?1,?2,?3,?4,?4,?5,?6)", params![occurrence,actor.issuer,state,now as i64,reason,format!("job-cancel:{occurrence}")])?;
+    let precheck_attempt = (state == "awaitingPrecheck")
+        .then(|| current["jobAttemptId"].as_str())
+        .flatten();
+    tx.execute("INSERT INTO harness_job_cancellations(occurrence_id,issuer,state,requested_at,observed_at,reason,control_key,precheck_attempt_id) VALUES(?1,?2,?3,?4,?4,?5,?6,?7)", params![occurrence,actor.issuer,state,now as i64,reason,format!("job-cancel:{occurrence}"),precheck_attempt])?;
     job_definitions::transition(tx, occurrence, phase, Some(reason), finished, now)?;
     Ok(json!({"occurrence":job_definitions::occurrence(tx,job,occurrence,true)?}))
 }
@@ -207,7 +223,37 @@ pub fn precheck_finished(
     confirmed: bool,
     now: u64,
 ) -> Result<()> {
-    tx.execute("UPDATE harness_job_cancellations SET state=?2,reason=?3,observed_at=?4 WHERE occurrence_id=?1 AND state='awaitingPrecheck'",params![occurrence,if confirmed {"completed"}else{"unconfirmed"},if confirmed {"owner_canceled"}else{"cleanup_unconfirmed"},now as i64])?;
+    let attempt: Option<String> = tx.query_row(
+        "SELECT current_job_attempt_id FROM harness_job_occurrences WHERE id=?1",
+        [occurrence],
+        |row| row.get(0),
+    )?;
+    if let Some(attempt) = attempt {
+        return precheck_finished_attempt(tx, occurrence, &attempt, confirmed, now);
+    }
+    // Old unclaimed metadata can only settle an old, untargeted cancellation.
+    tx.execute("UPDATE harness_job_cancellations SET state=?2,reason=?3,observed_at=?4 WHERE occurrence_id=?1 AND state='awaitingPrecheck' AND precheck_attempt_id IS NULL",params![occurrence,if confirmed {"completed"}else{"unconfirmed"},if confirmed {"owner_canceled"}else{"cleanup_unconfirmed"},now as i64])?;
+    Ok(())
+}
+/// Cleanup evidence can settle only the generation canceled by its owner. A
+/// migrated untargeted record is compatible with generation 1, never a retry.
+pub fn precheck_finished_attempt(
+    tx: &Transaction<'_>,
+    occurrence: &str,
+    attempt: &str,
+    confirmed: bool,
+    now: u64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE harness_job_cancellations
+         SET state=?3,reason=?4,observed_at=?5
+         WHERE occurrence_id=?1 AND state='awaitingPrecheck'
+           AND EXISTS(SELECT 1 FROM harness_job_occurrences o
+                      JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id
+                      WHERE o.id=?1 AND a.id=?2
+                        AND (precheck_attempt_id=a.id OR (precheck_attempt_id IS NULL AND a.ordinal=1)))",
+        params![occurrence,attempt,if confirmed {"completed"}else{"unconfirmed"},if confirmed {"owner_canceled"}else{"cleanup_unconfirmed"},now as i64],
+    )?;
     Ok(())
 }
 pub fn recover(tx: &Transaction<'_>, now: u64) -> Result<()> {

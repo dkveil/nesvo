@@ -86,6 +86,8 @@ pub enum Request {
         key: String,
         job_id: String,
         occurrence_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        job_attempt_id: Option<String>,
         expected_digest: String,
         acknowledge_unknown_effects: bool,
     },
@@ -238,6 +240,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::job_prechecks::initialize(connection)?;
     crate::job_cancellations::initialize(connection)?;
     crate::job_attempts::initialize(connection)?;
+    crate::job_precheck_records::initialize(connection)?;
     crate::job_retries::initialize(connection)?;
     Ok(())
 }
@@ -256,7 +259,7 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for id in ids {
-        transaction.execute("UPDATE harness_job_prechecks SET state='unknown',reason='host_restarted',observed_at=?2,finished_at=NULL WHERE occurrence_id=?1 AND state='running'",params![id,now as i64])?;
+        crate::job_precheck_records::recover_current(&transaction, &id, now)?;
         transition(
             &transaction,
             &id,
@@ -304,11 +307,6 @@ fn due(spec: &Spec) -> Result<u64> {
 fn validate(spec: &Spec, now: u64) -> Result<u64> {
     if let Some(retry) = &spec.retry {
         retry.validate()?;
-        if spec.precheck_id.is_some() {
-            return Err(invalid(
-                "Retry cannot reuse an occurrence precheck approval",
-            ));
-        }
     }
     if spec
         .precheck_id
@@ -423,7 +421,7 @@ pub(crate) fn occurrence(
             |r| r.get::<_, Option<i64>>(0),
         )?
         .into();
-    view["precheck"] = crate::job_precheck_records::view(connection, id, detail)?;
+    view["precheck"] = crate::job_precheck_records::view_current(connection, id, detail)?;
     view["cancellation"] = crate::job_cancellations::view(connection, id)?;
     let generation: Option<(String,i64)> = connection.query_row("SELECT a.id,a.ordinal FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     view["jobAttemptId"] = generation.as_ref().map(|r| r.0.as_str()).into();
@@ -703,6 +701,7 @@ pub fn execute(
         Request::AbandonPrecheck {
             job_id,
             occurrence_id,
+            job_attempt_id,
             expected_digest,
             acknowledge_unknown_effects,
             ..
@@ -719,7 +718,13 @@ pub fn execute(
             {
                 return Err(Error::new("occurrence_conflict","Inspect the unknown precheck and explicitly acknowledge its effects before abandoning this exact command; no process is resumed or undone").into());
             }
-            transaction.execute("UPDATE harness_job_prechecks SET state='abandoned',reason='owner_abandoned',observed_at=?2 WHERE occurrence_id=?1",params![occurrence_id,now as i64])?;
+            crate::job_precheck_records::abandon(
+                &transaction,
+                occurrence_id,
+                job_attempt_id.as_deref(),
+                expected_digest,
+                now,
+            )?;
             transaction.execute("UPDATE harness_job_cancellations SET state='abandoned',reason='owner_acknowledged_unknown_effects',observed_at=?2 WHERE occurrence_id=?1",params![occurrence_id,now as i64])?;
             transition(
                 &transaction,
@@ -937,13 +942,19 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                     |r| r.get(0),
                 )
                 .optional()?;
-            let running_precheck:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_prechecks WHERE occurrence_id=?1 AND state='running')",[&occurrence],|r|r.get(0))?;
+            let running_precheck = crate::job_precheck_records::view_attempt(
+                &transaction,
+                &occurrence,
+                &dispatch.attempt,
+                false,
+            )?["state"]
+                == "running";
             if running_precheck {
                 let result = crate::job_prechecks::Outcome::failed(
                     crate::job_prechecks::OutcomeState::Unknown,
                     "dispatch_interrupted",
                 );
-                crate::job_precheck_records::finish(&transaction, &occurrence, result, now)?;
+                crate::job_precheck_records::finish_attempt(&transaction, &dispatch, result, now)?;
                 transition(
                     &transaction,
                     &occurrence,
@@ -967,8 +978,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
         }
         Work::BeginPrecheck { dispatch } => {
             crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
-            let reply =
-                crate::job_precheck_records::begin(&transaction, &dispatch.occurrence, now)?;
+            let reply = crate::job_precheck_records::begin_attempt(&transaction, &dispatch, now)?;
             if matches!(&reply, Reply::PrecheckPassed(false)) {
                 crate::job_attempts::retire(&transaction, &dispatch)?;
             }
@@ -978,7 +988,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             crate::job_attempts::guard(&transaction, &dispatch, &["prechecking", "canceling"])?;
             let occurrence = dispatch.occurrence.clone();
             let (passed, state, reason) =
-                crate::job_precheck_records::finish(&transaction, &occurrence, result, now)?;
+                crate::job_precheck_records::finish_attempt(&transaction, &dispatch, result, now)?;
             transition(
                 &transaction,
                 &occurrence,
@@ -1172,7 +1182,8 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             )?;
             let spec: Spec = serde_json::from_str(&spec)?;
             if spec.precheck_id.is_some() {
-                let passed:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_prechecks WHERE occurrence_id=?1 AND state='passed')",[&occurrence],|r|r.get(0))?;
+                let passed =
+                    crate::job_precheck_records::passed_current(&transaction, &occurrence)?;
                 if !passed {
                     return Err(Error::new(
                         "precheck_required",

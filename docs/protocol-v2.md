@@ -66,6 +66,18 @@ views may expose nullable immutable `retry` decision facts. Older accepted
 responses may omit those fields. These additive capabilities do not change
 protocol framing, agent tool grants or automatic replay rules.
 
+Combining `spec.retry` with `precheckId` additionally requires the strict boolean
+`jobPrecheckGenerations:true`. Each claimed generation separately authorizes and
+executes the immutable approved command; an older pass cannot release a newer
+worker. Generation-1 precheck bodies retain their legacy shape; later prechecks
+also expose nullable `approvalRevision`. Occurrence views resolve the current
+precheck, while attempt detail/history resolve that exact generation. The existing
+`abandonPrecheck` request accepts optional `jobAttemptId`; omission is compatible
+only with generation 1. Later unknown prechecks require their exact current ID,
+digest and explicit owner acknowledgement. Accepted mutation replay keeps its
+original body and does not repeat effects. Revocation prevents a future command
+admission; it does not erase a previously recorded command result.
+
 `runLaunch` adds `{action:"launch",request:{key,runId,taskId,expectedRevision,profile}}`
 inside authenticated workflow requests. It reserves the attempt, run capacity,
 native receipt and session identity atomically before physical startup. New

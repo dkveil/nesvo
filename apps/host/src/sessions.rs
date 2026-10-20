@@ -893,6 +893,7 @@ impl State {
         event["taskNativeToolProfiles"] = true.into();
         event["durableJobs"] = true.into();
         event["jobPrechecks"] = true.into();
+        event["jobPrecheckGenerations"] = true.into();
         event["jobCancellation"] = true.into();
         event["jobAttempts"] = true.into();
         event["jobRetries"] = true.into();

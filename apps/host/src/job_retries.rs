@@ -131,9 +131,6 @@ fn source(connection: &Connection, occurrence: &str) -> Result<Option<Source>> {
 
 fn policy(source: &Source) -> Option<Policy> {
     let spec: Value = serde_json::from_str(&source.spec).ok()?;
-    if !spec["precheckId"].is_null() {
-        return None;
-    }
     let policy: Policy = serde_json::from_value(spec.get("retry")?.clone()).ok()?;
     policy.validate().ok()?;
     Some(policy)
@@ -147,6 +144,23 @@ struct Evidence {
 /// A label such as launchFailed is not proof. Read the exact bound receipt and
 /// reject every other task admission, result, delivery, exit or native receipt.
 fn evidence(connection: &Connection, source: &Source) -> Result<Option<Evidence>> {
+    let spec: job_definitions::Spec = serde_json::from_str(&source.spec)?;
+    if spec.precheck_id.is_some()
+        && !crate::job_precheck_records::passed_current(connection, &source.occurrence)?
+    {
+        return Ok(None);
+    }
+    if spec.precheck_id.is_none() {
+        let unexpected: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM harness_job_prechecks WHERE occurrence_id=?1)
+                OR EXISTS(SELECT 1 FROM harness_job_generation_prechecks WHERE occurrence_id=?1)",
+            [&source.occurrence],
+            |row| row.get(0),
+        )?;
+        if unexpected {
+            return Ok(None);
+        }
+    }
     let row: Option<(String, String, String)> = connection
         .query_row(
             "SELECT n.id,p.id,p.result
@@ -193,6 +207,11 @@ fn authorized(connection: &Connection, source: &Source) -> Result<bool> {
     // A new Run must not silently undo an owner's edits to the old admission
     // policy. The frozen job profile permits one native attempt per generation.
     let spec: job_definitions::Spec = serde_json::from_str(&source.spec)?;
+    if let Some(id) = &spec.precheck_id
+        && !crate::job_precheck_records::approval_ready(connection, id)?
+    {
+        return Ok(false);
+    }
     let expected = crate::workflow_budget::Limits {
         max_parallel: 1,
         max_attempts_per_task: 1,
@@ -215,7 +234,6 @@ fn authorized(connection: &Connection, source: &Source) -> Result<bool> {
     Ok(connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE id=?1 AND state='active' AND coordinator_id IS NULL)
            AND NOT EXISTS(SELECT 1 FROM harness_job_cancellations WHERE occurrence_id=?2)
-           AND NOT EXISTS(SELECT 1 FROM harness_job_prechecks WHERE occurrence_id=?2)
            AND NOT EXISTS(SELECT 1 FROM workflow_controls WHERE run_id=?1)
            AND NOT EXISTS(SELECT 1 FROM workflow_constraints WHERE run_id=?1)
            AND NOT EXISTS(SELECT 1 FROM workflow_coordinator_bindings WHERE run_id=?1)

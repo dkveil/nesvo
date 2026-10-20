@@ -246,11 +246,8 @@ fn record(
     detail: bool,
 ) -> Result<Value> {
     let mut value = connection.query_row("SELECT ordinal,run_id,created_at,claimed_at,finished_at,state,reason FROM harness_job_attempts WHERE id=?1 AND occurrence_id=?2",params![id,occurrence],|r|Ok(json!({"id":id,"jobId":job,"occurrenceId":occurrence,"ordinal":r.get::<_,i64>(0)?,"runId":r.get::<_,Option<String>>(1)?,"createdAt":r.get::<_,i64>(2)?,"claimedAt":r.get::<_,Option<i64>>(3)?,"finishedAt":r.get::<_,Option<i64>>(4)?,"state":r.get::<_,String>(5)?,"reason":r.get::<_,Option<String>>(6)?}))).optional()?.ok_or_else(||Error::new("job_attempt_not_found","Job generation does not belong to this occurrence"))?;
-    value["precheck"] = if value["ordinal"] == 1 {
-        crate::job_precheck_records::view(connection, occurrence, detail)?
-    } else {
-        Value::Null
-    };
+    value["precheck"] =
+        crate::job_precheck_records::view_attempt(connection, occurrence, id, detail)?;
     value["retry"] = crate::job_retries::view(connection, id)?;
     for field in ["runState", "attemptId", "sessionId", "launchReceiptId"] {
         value[field] = Value::Null;

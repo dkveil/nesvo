@@ -162,6 +162,372 @@ fn occurrence(connection: &Connection, fixture: &Fixture) -> Value {
     job_definitions::occurrence(connection, &fixture.job, &fixture.occurrence, true).unwrap()
 }
 
+fn passed_precheck() -> Value {
+    json!({"state":"passed","reason":"exit_code_passed","exitCode":0,"stdout":"retained command observation","stderr":"","stdoutTruncated":false,"stderrTruncated":false,"durationMs":1,"cleanupConfirmed":true,"commandStarted":true})
+}
+
+/// Retain real-shaped authorization and native refusal evidence without starting
+/// either the approved command or a worker process.
+fn prechecked_source(store: &mut Store, prefix: &str, ordinal: u16) -> (Fixture, String, String) {
+    let fixture = seed(store, prefix, Some(retry(3)), ordinal);
+    let command: crate::job_prechecks::Command = serde_json::from_value(json!({
+        "title":"Explicitly repeatable fixture command",
+        "executable":std::env::current_exe().unwrap(),
+        "cwd":std::env::current_dir().unwrap(),
+        "arguments":[],"environment":{}
+    }))
+    .unwrap();
+    let digest = crate::job_prechecks::digest(&command).unwrap();
+    let snapshot = serde_json::to_string(&command).unwrap();
+    let approval = crate::job_prechecks::execute(
+        &mut store.0,
+        owner(),
+        crate::job_prechecks::Request::Approve {
+            key: format!("{prefix}-approve"),
+            spec: command,
+            expected_digest: digest.clone(),
+        },
+        NOW - 4,
+    )
+    .unwrap()["precheckApproval"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut checked = spec(Some(retry(3)));
+    checked["precheckId"] = json!(approval);
+    store
+        .0
+        .execute(
+            "UPDATE harness_jobs SET spec=?2 WHERE id=?1",
+            params![fixture.job, checked.to_string()],
+        )
+        .unwrap();
+    store
+        .0
+        .execute(
+            "UPDATE harness_job_occurrences SET spec=?2 WHERE id=?1",
+            params![fixture.occurrence, checked.to_string()],
+        )
+        .unwrap();
+    for generation in 1..=ordinal {
+        if generation == 1 {
+            store.0.execute("INSERT INTO harness_job_prechecks(occurrence_id,approval_id,approval_digest,spec,state,reason,started_at,finished_at,result,observed_at) VALUES(?1,?2,?3,?4,'passed','exit_code_passed',?5,?6,?7,?6)",params![fixture.occurrence,approval,digest,snapshot,sql_time(NOW-3),sql_time(NOW-2),passed_precheck().to_string()]).unwrap();
+        } else {
+            store.0.execute("INSERT INTO harness_job_generation_prechecks(job_attempt_id,occurrence_id,ordinal,approval_id,approval_digest,approval_revision,spec,state,reason,started_at,finished_at,result,observed_at) VALUES(?1,?2,?3,?4,?5,1,?6,'passed','exit_code_passed',?7,?8,?9,?8)",params![format!("{prefix}-generation-{generation}"),fixture.occurrence,generation,approval,digest,snapshot,sql_time(NOW-3),sql_time(NOW-2),passed_precheck().to_string()]).unwrap();
+        }
+    }
+    (fixture, approval, digest)
+}
+
+#[test]
+fn checked_retry_requires_its_own_snapshot_and_actual_boolean_command_evidence() {
+    for ordinal in [1, 2] {
+        let mut valid_store = store();
+        let (valid, _, _) = prechecked_source(&mut valid_store, "checked-valid", ordinal);
+        assert!(
+            crate::job_precheck_records::passed_current(&valid_store.0, &valid.occurrence).unwrap()
+        );
+        assert!(consider(&mut valid_store, &valid, NOW + 3));
+        assert_eq!(
+            job_retries::view(&valid_store.0, &valid.source).unwrap()["nextOrdinal"],
+            ordinal + 1
+        );
+        let table = if ordinal == 1 {
+            "harness_job_prechecks"
+        } else {
+            "harness_job_generation_prechecks"
+        };
+        let mut mutations = vec![
+            "spec=NULL",
+            "spec='{}'",
+            "approval_digest=NULL",
+            "approval_digest='another-command-digest'",
+            "approval_id='another-approval'",
+            "state='unknown'",
+            "finished_at=NULL",
+            "result=NULL",
+            "result='{}'",
+            "result=json_set(result,'$.state','failed')",
+        ];
+        if ordinal > 1 {
+            mutations.push("approval_revision=NULL");
+        }
+        for mutation in mutations {
+            let mut store = store();
+            let (fixture, _, _) = prechecked_source(&mut store, "checked-proof", ordinal);
+            store
+                .0
+                .execute(&format!("UPDATE {table} SET {mutation}"), [])
+                .unwrap();
+            let before = changes(&store.0);
+            assert!(
+                !consider(&mut store, &fixture, NOW + 3),
+                "Generation {ordinal}: {mutation}"
+            );
+            assert_eq!(changes(&store.0), before);
+            assert_eq!(count(&store.0, "harness_job_retries"), 0);
+        }
+        for field in ["commandStarted", "cleanupConfirmed"] {
+            for value in [
+                None,
+                Some(Value::Null),
+                Some(json!(false)),
+                Some(json!(1)),
+                Some(json!("true")),
+                Some(json!([])),
+                Some(json!({})),
+            ] {
+                let mut store = store();
+                let (fixture, _, _) = prechecked_source(&mut store, "checked-bools", ordinal);
+                let mut result = passed_precheck();
+                if let Some(value) = value {
+                    result[field] = value;
+                } else {
+                    result.as_object_mut().unwrap().remove(field);
+                }
+                store
+                    .0
+                    .execute(
+                        &format!("UPDATE {table} SET result=?1"),
+                        [result.to_string()],
+                    )
+                    .unwrap();
+                let before = changes(&store.0);
+                assert!(
+                    !consider(&mut store, &fixture, NOW + 3),
+                    "Generation {ordinal}: {result}"
+                );
+                assert_eq!(changes(&store.0), before);
+                assert_eq!(count(&store.0, "harness_job_retries"), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn an_older_generation_pass_cannot_prove_a_retry_for_the_current_generation() {
+    let mut store = store();
+    let (fixture, _, _) = prechecked_source(&mut store, "old-pass", 2);
+    store
+        .0
+        .execute(
+            "DELETE FROM harness_job_generation_prechecks WHERE job_attempt_id=?1",
+            [&fixture.source],
+        )
+        .unwrap();
+    assert_eq!(
+        crate::job_precheck_records::view(&store.0, &fixture.occurrence, true).unwrap()["state"],
+        "passed"
+    );
+    assert!(occurrence(&store.0, &fixture)["precheck"].is_null());
+    let before = changes(&store.0);
+    assert!(!consider(&mut store, &fixture, NOW + 3));
+    assert_eq!(changes(&store.0), before);
+    assert_eq!(count(&store.0, "harness_job_retries"), 0);
+    assert_eq!(count(&store.0, "harness_job_attempts"), 2);
+}
+
+#[test]
+fn checked_retry_claims_a_blank_generation_and_binds_only_after_its_own_command_pass() {
+    let mut store = store();
+    let (fixture, approval, digest) = prechecked_source(&mut store, "fresh-check", 1);
+    assert!(consider(&mut store, &fixture, NOW + 3));
+    let historical = generation(&store.0, &fixture);
+    let (dispatch, ordinal) = claim(&mut store, &fixture, NOW + 1003).unwrap();
+    assert_eq!(ordinal, 2);
+    assert!(occurrence(&store.0, &fixture)["precheck"].is_null());
+    assert!(occurrence(&store.0, &fixture)["runId"].is_null());
+    assert_eq!(count(&store.0, "harness_job_generation_prechecks"), 0);
+    assert!(!crate::job_precheck_records::passed_current(&store.0, &fixture.occurrence).unwrap());
+    let (run, _, _, _) = native(&store.0, "fresh-check-second");
+    let error = match job_definitions::work(
+        &mut store.0,
+        Work::BindRun {
+            dispatch: dispatch.clone(),
+            run: run.clone(),
+        },
+        NOW + 1004,
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("A previous generation's pass cannot release this Run"),
+    };
+    assert_eq!(
+        error
+            .downcast_ref::<crate::api_error::Error>()
+            .unwrap()
+            .code,
+        "precheck_required"
+    );
+    assert!(matches!(
+        job_definitions::work(
+            &mut store.0,
+            Work::BeginPrecheck {
+                dispatch: dispatch.clone()
+            },
+            NOW + 1005
+        )
+        .unwrap(),
+        Reply::Precheck(Some(_))
+    ));
+    let running = occurrence(&store.0, &fixture)["precheck"].clone();
+    assert_eq!(running["approvalId"], approval);
+    assert_eq!(running["approvalDigest"], digest);
+    assert_eq!(running["approvalRevision"], 1);
+    assert_eq!(running["authorizedAt"], NOW + 1005);
+    assert_eq!(running["state"], "running");
+    assert!(running["result"].is_null());
+    assert!(running["finishedAt"].is_null());
+    assert!(!crate::job_precheck_records::passed_current(&store.0, &fixture.occurrence).unwrap());
+    assert!(
+        job_definitions::work(
+            &mut store.0,
+            Work::BindRun {
+                dispatch: dispatch.clone(),
+                run: run.clone()
+            },
+            NOW + 1006
+        )
+        .is_err()
+    );
+    assert!(matches!(
+        job_definitions::work(
+            &mut store.0,
+            Work::FinishPrecheck {
+                dispatch: dispatch.clone(),
+                result: serde_json::from_value(passed_precheck()).unwrap()
+            },
+            NOW + 1007
+        )
+        .unwrap(),
+        Reply::PrecheckPassed(true)
+    ));
+    assert!(crate::job_precheck_records::passed_current(&store.0, &fixture.occurrence).unwrap());
+    assert!(matches!(
+        job_definitions::work(
+            &mut store.0,
+            Work::BindRun {
+                dispatch,
+                run: run.clone()
+            },
+            NOW + 1008
+        )
+        .unwrap(),
+        Reply::Done
+    ));
+    let current = occurrence(&store.0, &fixture);
+    assert_eq!(current["runId"], run);
+    assert_eq!(current["precheck"]["finishedAt"], NOW + 1007);
+    assert_eq!(current["precheck"]["result"]["commandStarted"], true);
+    assert_eq!(current["precheck"]["result"]["cleanupConfirmed"], true);
+    assert_eq!(generation(&store.0, &fixture), historical);
+    assert_eq!(count(&store.0, "harness_job_prechecks"), 1);
+    assert_eq!(count(&store.0, "harness_job_generation_prechecks"), 1);
+    assert!(job_attempts::guard_run(&store.0, &fixture.run).is_err());
+}
+
+#[test]
+fn revoked_waiting_precheck_blocks_claim_but_known_clean_cancellation_still_completes() {
+    let mut store = store();
+    let (fixture, approval, _) = prechecked_source(&mut store, "revoke-waiting", 1);
+    assert!(consider(&mut store, &fixture, NOW + 3));
+    let historical = generation(&store.0, &fixture);
+    let decision = job_retries::view(&store.0, &fixture.source).unwrap();
+    crate::job_prechecks::execute(
+        &mut store.0,
+        owner(),
+        crate::job_prechecks::Request::Revoke {
+            key: "revoke-waiting-command".into(),
+            id: approval,
+            expected_revision: 1,
+        },
+        NOW + 4,
+    )
+    .unwrap();
+    assert!(claim(&mut store, &fixture, NOW + 1003).is_none());
+    assert_eq!(occurrence(&store.0, &fixture)["state"], "reconcile");
+    assert_eq!(
+        occurrence(&store.0, &fixture)["reason"],
+        "retry_authority_changed"
+    );
+    assert_eq!(generation(&store.0, &fixture), historical);
+    assert_eq!(
+        job_retries::view(&store.0, &fixture.source).unwrap(),
+        decision
+    );
+    assert_eq!(count(&store.0, "harness_job_attempts"), 1);
+    let tx = store.0.transaction().unwrap();
+    let canceled =
+        job_cancellations::accept(&tx, &owner(), &fixture.job, &fixture.occurrence, NOW + 1004)
+            .unwrap();
+    assert_eq!(canceled["occurrence"]["state"], "canceled");
+    assert_eq!(canceled["occurrence"]["cancellation"]["state"], "completed");
+    tx.commit().unwrap();
+    assert_eq!(generation(&store.0, &fixture), historical);
+    assert!(claim(&mut store, &fixture, NOW + 5000).is_none());
+    assert_eq!(count(&store.0, "harness_job_attempts"), 1);
+    assert_eq!(count(&store.0, "workflow_controls"), 0);
+    assert_eq!(count(&store.0, "operation_receipts"), 1);
+}
+
+#[test]
+fn malformed_source_cleanup_blocks_both_due_retry_and_known_clean_cancellation() {
+    for ordinal in [1, 2] {
+        for cleanup in [Value::Null, json!(false), json!(1), json!("true")] {
+            let mut store = store();
+            let (fixture, _, _) = prechecked_source(&mut store, "cleanup-proof", ordinal);
+            assert!(consider(&mut store, &fixture, NOW + 3));
+            let mut result = passed_precheck();
+            result["cleanupConfirmed"] = cleanup;
+            let table = if ordinal == 1 {
+                "harness_job_prechecks"
+            } else {
+                "harness_job_generation_prechecks"
+            };
+            store
+                .0
+                .execute(
+                    &format!("UPDATE {table} SET result=?2 WHERE occurrence_id=?1"),
+                    params![fixture.occurrence, result.to_string()],
+                )
+                .unwrap();
+            let due = NOW + 3 + u64::from(ordinal) * 1000;
+            assert!(claim(&mut store, &fixture, due).is_none());
+            assert_eq!(
+                occurrence(&store.0, &fixture)["reason"],
+                "retry_evidence_changed"
+            );
+            let tx = store.0.transaction().unwrap();
+            assert!(!job_retries::cancel_waiting(&tx, &fixture.occurrence, due + 1).unwrap());
+            let canceled = job_cancellations::accept(
+                &tx,
+                &owner(),
+                &fixture.job,
+                &fixture.occurrence,
+                due + 2,
+            )
+            .unwrap();
+            assert_eq!(canceled["occurrence"]["state"], "canceling");
+            assert_eq!(canceled["occurrence"]["cancellation"]["state"], "requested");
+            assert!(canceled["occurrence"]["finishedAt"].is_null());
+            tx.commit().unwrap();
+            assert_eq!(count(&store.0, "harness_job_attempts"), i64::from(ordinal));
+            assert_eq!(count(&store.0, "workflow_controls"), 0);
+            assert_eq!(count(&store.0, "operation_receipts"), 1);
+        }
+    }
+}
+
+#[test]
+fn host_abandon_request_preserves_legacy_bytes_when_generation_is_absent() {
+    let legacy = r#"{"action":"abandonPrecheck","key":"abandon-once","jobId":"j","occurrenceId":"o","expectedDigest":"digest","acknowledgeUnknownEffects":true}"#;
+    let request: job_definitions::Request = serde_json::from_str(legacy).unwrap();
+    assert_eq!(serde_json::to_string(&request).unwrap(), legacy);
+    let mut exact = serde_json::from_str::<Value>(legacy).unwrap();
+    exact["jobAttemptId"] = json!("generation-2");
+    let request: job_definitions::Request = serde_json::from_value(exact.clone()).unwrap();
+    assert_eq!(serde_json::to_value(request).unwrap(), exact);
+}
+
 #[test]
 fn policy_is_explicit_bounded_and_old_specs_keep_retry_absent() {
     let original = spec(None);
