@@ -35,7 +35,7 @@ unbound run. Only the authenticated owner may rebind. Coordinators and workers
 cannot use this operation to acquire another run. The source ID and revision are
 compared atomically. Retrying the original key returns its immutable acceptance,
 even after a later replacement; it never applies an old binding again. Changed
-intent with that key conflicts. After a timeout, inspect `nesvo run mutation KEY --json`
+intent with that key conflicts. After a timeout, inspect `nesvo run mutation --key KEY --json`
 or repeat the exact original request instead of inventing a new key.
 
 ## What changes and what remains uncertain

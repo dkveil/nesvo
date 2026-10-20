@@ -7,6 +7,26 @@ async fn replacement(
     owner: &RunningService<RoleClient, ()>,
     directory: Option<&Path>,
 ) -> Result<(String, PathBuf, RunningService<RoleClient, ()>)> {
+    // Listener readiness is not provider-probe completion, especially after a
+    // fast Unix restart. Observe readiness before creating an immutable intent.
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
+            if doctor["providerVersions"]
+                .as_array()
+                .is_some_and(|versions| {
+                    versions
+                        .iter()
+                        .any(|v| v["program"] == "claude" && v["status"] == "ready")
+                })
+            {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .context("Replacement provider readiness after host restart")??;
     let mut spec = json!({"name":"Replacement coordinator","program":"claude","role":"coordinator","harness":true});
     if let Some(directory) = directory {
         spec["cwd"] = directory.to_string_lossy().as_ref().into();

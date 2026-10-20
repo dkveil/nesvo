@@ -1652,3 +1652,17 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Full conversation resume, deliberate worker adoption, unknown-effect owner
   reconciliation, provider orchestration and UI/mobile gates remain open. This
   metadata operation does not complete F40/F41 or the full 44-feature goal.
+
+### Coordinator restart CI readiness correction
+
+- 782e3b1 CI (39391343352) passed the app/browser jobs and the native OS-lock
+  cases, but macOS/Linux each failed the replacement-coordinator scenario. The
+  test created an immutable harness intent immediately after listener startup,
+  before the asynchronous provider-version probe completed; the host correctly
+  refused unsupported/unconfirmed harness setup without native effects.
+- The replacement helper now observes doctor provider readiness before creating
+  its intent, including after restart. It uses bounded polling of actual state,
+  not a fixed delay or a fresh-key retry of a failed intent. Local targeted checks
+  and successor CI are recorded separately; the failed run remains evidence.
+- Corrected the documented workflow-mutation recovery spelling to `run mutation
+--key KEY --json`.
