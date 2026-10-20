@@ -26,6 +26,29 @@ This document separates automated checks from physical-device testing. Unchecked
 
 CI builds and tests the Rust programs natively on Windows, macOS and Linux. Check the relevant commit's workflow result before claiming a particular platform passed. A native CI build does not verify every interactive terminal emulator or a physical phone.
 
+### Native job execution timeout scenarios
+
+After building the native host/client, the ignored `mcp_host` integration target
+uses the official MCP SDK, actual private hosts and controlled Node PTY workers.
+It does not call a model or change user provider configuration. Run scenarios
+serially; their private fixture teardown owns all created processes.
+
+```powershell
+cargo build --workspace --locked
+cargo test --package nesvo --test mcp_host --locked job_timeouts:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked -- --ignored --test-threads=1
+```
+
+The timeout scenarios cover CLI/MCP create/edit replay parity, approved prechecks
+before arming, immutable deadlines after definition edits, worker exit while the
+owner client is closed, preservation of an independent process, report disarming
+while validation is pending, active human leases/drafts and quick takeover/release.
+They check exact control/native receipts, one generation without retry, actual
+owned process liveness, retained history and the published response schema.
+Failures retain bounded phase/host/job diagnostics before cleanup. They complement
+the injected-clock and restart storage regressions; they are not original-provider
+or native-phone acceptance. See the [timeout contract](harness-job-timeouts.md).
+
 ### Ultraviolet checks
 
 `npm run test:brand` checks the shared palette, exact SVG-to-terminal glyph geometry and six-second motion timeline. `npm run test:brand:web` checks the rendered logo, full violet visor during blinking, session creation from the launchpad, narrow layout, reduced motion and animation suspension when hidden or offscreen. These checks run in CI alongside the existing application and terminal tests.

@@ -1,0 +1,538 @@
+//! Explicit native job execution windows; controlled workers, never model calls.
+use super::*;
+use job_cancellation::{occurrence, process_alive};
+
+type Owner = RunningService<RoleClient, ()>;
+type ScenarioOutcome =
+    std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
+const WINDOW_MS: u64 = 10_000;
+
+fn spec(instruction: &str) -> Value {
+    json!({
+        "title":"Controlled execution timeout","instruction":instruction,
+        "profile":{"program":"claude","workspace":"shared","harness":true,
+            "allowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]},
+        "schedule":{"kind":"once","at":(chrono::Utc::now()+chrono::Duration::hours(1)).to_rfc3339()},
+        "executionTimeoutMs":WINDOW_MS,"maxElapsedMs":300000
+    })
+}
+
+async fn reply(owner: &Owner, name: &'static str, args: Value) -> Result<Value> {
+    data(call(owner, name, args).await?)
+}
+
+async fn read_occurrence(owner: &Owner, job: &str, id: &str) -> Result<Value> {
+    reply(
+        owner,
+        "nesvo_get_job_occurrence",
+        json!({"jobId":job,"occurrenceId":id}),
+    )
+    .await
+}
+
+async fn discovery_ready(fixture: &Fixture) -> Result<()> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
+            if doctor["providerVersions"].as_array().is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
+            }) {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .context("Controlled provider discovery before execution timeout admission")?
+}
+
+async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
+    let mut last = Value::Null;
+    timeout(Duration::from_secs(7), async {
+        loop {
+            let current = read_occurrence(owner, job, id).await?;
+            let row = &current["data"]["occurrence"];
+            if row["executionTimeout"]["state"] == "armed"
+                && let Some(worker) = row["sessionId"].as_str()
+            {
+                let session =
+                    reply(owner, "nesvo_get_session", json!({"sessionId":worker})).await?;
+                if session["data"]["session"]["status"]["state"] == "working" {
+                    return Ok::<_, anyhow::Error>((current, session));
+                }
+            }
+            last = current;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("Timed worker never reached controlled hold; last: {last}"))?
+}
+
+async fn timeout_state(owner: &Owner, job: &str, id: &str, wanted: &str) -> Result<Value> {
+    let mut last = Value::Null;
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let current = read_occurrence(owner, job, id).await?;
+            if current["data"]["occurrence"]["executionTimeout"]["state"] == wanted {
+                return Ok::<_, anyhow::Error>(current);
+            }
+            last = current;
+            tokio::time::sleep(Duration::from_millis(80)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("Timeout did not reach {wanted}; last: {last}"))?
+}
+
+fn frozen_deadline(first: &Value, later: &Value) {
+    for field in [
+        "jobId",
+        "occurrenceId",
+        "jobAttemptId",
+        "runId",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+        "executionTimeoutMs",
+        "armedAt",
+        "deadlineAt",
+        "controlKey",
+    ] {
+        assert_eq!(
+            first[field], later[field],
+            "Frozen timeout field changed: {field}"
+        );
+    }
+    assert_eq!(first["executionTimeoutMs"], WINDOW_MS);
+    assert_eq!(
+        first["deadlineAt"].as_u64().unwrap() - first["armedAt"].as_u64().unwrap(),
+        WINDOW_MS
+    );
+}
+
+async fn past_deadline(timer: &Value) -> Result<()> {
+    let deadline = timer["deadlineAt"]
+        .as_u64()
+        .context("Public native deadline")?;
+    let now = u64::try_from(chrono::Utc::now().timestamp_millis())?;
+    let remaining = deadline.saturating_add(250).saturating_sub(now);
+    ensure!(
+        remaining <= WINDOW_MS + 250,
+        "Unexpected deadline exceeds this scenario's explicit window"
+    );
+    tokio::time::sleep(Duration::from_millis(remaining)).await;
+    Ok(())
+}
+
+async fn release_human(mut human: Child) -> Result<()> {
+    // The existing helper waits for the host's lease-release acknowledgement.
+    drop(human.stdin.take());
+    ensure!(
+        timeout(Duration::from_secs(5), human.wait())
+            .await??
+            .success(),
+        "Owned human control helper did not release its lease"
+    );
+    Ok(())
+}
+
+async fn one_generation(owner: &Owner, current: &Value) -> Result<Vec<Value>> {
+    let row = &current["data"]["occurrence"];
+    let job = row["jobId"].as_str().context("Generation job")?;
+    let id = row["id"].as_str().context("Generation occurrence")?;
+    let run = row["runId"].as_str().context("Generation run")?;
+    let history = reply(owner, "nesvo_get_job_history", json!({"jobId":job})).await?;
+    let occurrences = history["data"]["occurrences"]
+        .as_array()
+        .context("One occurrence history")?;
+    assert_eq!(occurrences.len(), 1);
+    assert_eq!(occurrences[0]["id"], row["id"]);
+    assert_eq!(occurrences[0]["executionTimeout"], row["executionTimeout"]);
+    for field in [
+        "jobId",
+        "jobAttemptId",
+        "runId",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+    ] {
+        assert_eq!(
+            row["executionTimeout"][field], row[field],
+            "Timeout identity differs from its occurrence: {field}"
+        );
+    }
+    assert_eq!(row["executionTimeout"]["occurrenceId"], row["id"]);
+    let listed = reply(
+        owner,
+        "nesvo_get_job_attempts",
+        json!({"jobId":job,"occurrenceId":id}),
+    )
+    .await?;
+    let rows = listed["data"]["jobAttempts"]
+        .as_array()
+        .context("One retained generation")?;
+    assert_eq!(
+        rows.len(),
+        1,
+        "Execution timeout must never create another dispatch generation"
+    );
+    assert_eq!(rows[0]["id"], row["jobAttemptId"]);
+    assert!(rows[0]["retry"].is_null());
+    assert_eq!(rows[0]["executionTimeout"], row["executionTimeout"]);
+    let detail = reply(
+        owner,
+        "nesvo_get_job_attempt",
+        json!({"jobId":job,"occurrenceId":id,"jobAttemptId":row["jobAttemptId"]}),
+    )
+    .await?;
+    assert_eq!(
+        detail["data"]["jobAttempt"]["executionTimeout"],
+        row["executionTimeout"]
+    );
+    let view = reply(owner, "nesvo_get_run", json!({"runId":run})).await?;
+    assert_eq!(view["data"]["tasks"][0]["attempts"], 1);
+    assert_eq!(
+        view["data"]["tasks"][0]["currentAttempt"]["id"],
+        row["attemptId"]
+    );
+    assert_eq!(
+        view["data"]["run"]["budget"]["limits"]["maxElapsedMs"],
+        300000
+    );
+    let native = reply(
+        owner,
+        "nesvo_get_task_attempts",
+        json!({"runId":run,"taskId":view["data"]["tasks"][0]["id"]}),
+    )
+    .await?;
+    let attempts = native["data"]["attempts"]
+        .as_array()
+        .context("One native task attempt")?;
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0]["id"], row["attemptId"]);
+    assert_eq!(attempts[0]["launch"]["receiptId"], row["launchReceiptId"]);
+    Ok(vec![history, listed, detail, view, native])
+}
+
+async fn finish(
+    fixture: &mut Fixture,
+    scenario: &str,
+    phase: &str,
+    job: Option<&str>,
+    outcome: ScenarioOutcome,
+) -> Result<()> {
+    if !matches!(&outcome, Ok(Ok(Ok(())))) {
+        let diagnostics = match job {
+            Some(job) => job_diagnostics::report_timeout_diagnostics(fixture, job).await,
+            None => json!({"jobNotCreated":true}),
+        };
+        eprintln!(
+            "JOB_EXECUTION_TIMEOUT_DIAGNOSTIC {}",
+            json!({"scenario":scenario,"phase":phase,"actual":diagnostics})
+                .to_string()
+                .chars()
+                .take(16384)
+                .collect::<String>()
+        );
+    }
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result.with_context(|| format!("{scenario}; last phase: {phase}"))??;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}
+
+async fn approved_precheck(fixture: &Fixture, owner: &Owner) -> Result<(String, Vec<Value>)> {
+    let script = fixture.directory.join("timeout-precheck.cjs");
+    std::fs::write(
+        &script,
+        include_str!("../../../../tests/fixtures/job-precheck.cjs"),
+    )?;
+    let node = fixture
+        .directory
+        .join("bin")
+        .join(if cfg!(windows) { "node.exe" } else { "node" });
+    let literal = "literal $(x); & łódź \"quoted\"";
+    let command = json!({"title":"Before execution admission","executable":node,"cwd":fixture.directory,
+        "arguments":[script,"pass",fixture.directory.join("timeout-precheck-effects"),"root",literal],
+        "timeoutMs":10000,"environment":{"CHECK_LITERAL":literal}});
+    let described = reply(owner, "nesvo_describe_precheck", json!({"spec":command})).await?;
+    let approved = reply(
+        owner,
+        "nesvo_approve_precheck",
+        json!({"key":"timeout-precheck","spec":command,
+        "expectedDigest":described["data"]["precheckDescription"]["digest"]}),
+    )
+    .await?;
+    let id = approved["data"]["precheckApproval"]["id"]
+        .as_str()
+        .context("Approved precheck")?
+        .to_owned();
+    Ok((id, vec![described, approved]))
+}
+
+#[tokio::test]
+#[ignore = "native host/CLI/MCP and controlled Node; disconnected execution timeout, no models"]
+async fn timeout_without_clients_stops_only_its_worker_and_never_retries_execution() -> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let mut phase = "provider discovery";
+    let mut diagnostic_job = None;
+    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40),async {
+        discovery_ready(&fixture).await?;
+        let owner = client(&fixture.pairing()).await?;
+        let independent = reply(&owner,"nesvo_create_session",json!({"key":"timeout-independent","spec":{"name":"Untimed independent shell","program":"shell"}})).await?;
+        let independent_id = independent["data"]["receipt"]["sessionId"].as_str().context("Independent session")?;
+        let (precheck,mut envelopes) = approved_precheck(&fixture,&owner).await?;
+        phase = "CLI/MCP definition parity";
+        let mut selected = spec("hold-response");
+        selected["precheckId"] = precheck.into();
+        selected["retry"] = json!({"on":"launchNoEffect","maxAttempts":2,"initialDelayMs":1000,"maxDelayMs":1000});
+        let file = fixture.directory.join("execution-timeout-job.json");
+        std::fs::write(&file,serde_json::to_vec(&selected)?)?;
+        let created = budgets::owner_cli(&fixture,&["job","create","--key","timeout-definition","--file",file.to_str().context("Timeout job file")?,"--json"]).await?;
+        let job = created["data"]["job"]["id"].as_str().context("Timeout job")?;
+        diagnostic_job = Some(job.to_owned());
+        let create_replay = reply(&owner,"nesvo_create_job",json!({"key":"timeout-definition","spec":selected})).await?;
+        assert_eq!(create_replay["data"],created["data"]);
+        selected["title"] = "Edited execution timeout".into();
+        std::fs::write(&file,serde_json::to_vec(&selected)?)?;
+        let edited = budgets::owner_cli(&fixture,&["job","edit",job,"--key","timeout-edit","--revision","1","--file",file.to_str().context("Timeout edited file")?,"--json"]).await?;
+        let edit_replay = reply(&owner,"nesvo_update_job",json!({"key":"timeout-edit","jobId":job,"expectedRevision":1,"spec":selected})).await?;
+        assert_eq!(edit_replay["data"],edited["data"]);
+        assert_eq!(edited["data"]["job"]["spec"]["executionTimeoutMs"],WINDOW_MS);
+        phase = "precheck and native hold admission";
+        let arguments = json!({"key":"timeout-run","jobId":job,"expectedRevision":2});
+        let admitted = reply(&owner,"nesvo_run_job_now",arguments.clone()).await?;
+        assert!(admitted["data"]["occurrence"]["executionTimeout"].is_null());
+        let id = admitted["data"]["occurrence"]["id"].as_str().context("Timeout occurrence")?;
+        let (held,session) = working(&owner,job,id).await?;
+        let row = &held["data"]["occurrence"];
+        let timer = row["executionTimeout"].clone();
+        assert_eq!(row["precheck"]["state"],"passed");
+        assert!(timer["armedAt"].as_u64().context("Native arm")? >= row["precheck"]["finishedAt"].as_u64().context("Precheck completion")?);
+        frozen_deadline(&timer,&timer);
+        let pid = session["data"]["session"]["lifecycle"]["process"]["pid"].as_u64().context("Owned timed PID")?;
+        selected["executionTimeoutMs"] = json!(20_000);
+        let future = reply(&owner,"nesvo_update_job",json!({"key":"timeout-future","jobId":job,"expectedRevision":2,"spec":selected})).await?;
+        assert_eq!(future["data"]["job"]["spec"]["executionTimeoutMs"],20_000);
+        phase = "owner disconnected through native deadline";
+        owner.cancel().await?;
+        ensure!(u64::try_from(chrono::Utc::now().timestamp_millis())? < timer["deadlineAt"].as_u64().context("Disconnected native deadline")?,"Owner must disconnect before its worker's execution deadline");
+        ensure!(process_alive(&fixture,pid).await?,"Owned worker must still exist after owner disconnects");
+        past_deadline(&timer).await?;
+        timeout(Duration::from_secs(4),async {
+            while process_alive(&fixture,pid).await? { tokio::time::sleep(Duration::from_millis(150)).await; }
+            Ok::<_,anyhow::Error>(())
+        }).await.context("Owned PID exit while all owner MCP clients remain closed")??;
+        phase = "reconnect and retained timeout evidence";
+        let owner = client(&fixture.pairing()).await?;
+        let failed = occurrence(&owner,job,id,"failed").await?;
+        let current = &failed["data"]["occurrence"];
+        assert_eq!(current["reason"],"execution_timeout");
+        assert_eq!(current["executionTimeout"]["state"],"completed");
+        assert!(current["finishedAt"].is_number());
+        assert!(current["retry"].is_null());
+        frozen_deadline(&timer,&current["executionTimeout"]);
+        let control = reply(&owner,"nesvo_get_run_control",json!({"runId":current["runId"],"controlId":current["executionTimeout"]["controlId"]})).await?;
+        assert_eq!(control["data"]["control"]["kind"],"stop");
+        assert_eq!(control["data"]["control"]["state"],"completed");
+        let targets = control["data"]["targets"].as_array().context("One frozen timeout target")?;
+        assert_eq!(targets.len(),1);
+        assert_eq!(targets[0]["attemptId"],current["attemptId"]);
+        assert_eq!(targets[0]["sessionId"],current["sessionId"]);
+        assert_eq!(targets[0]["phase"],"exited");
+        let stop = reply(&owner,"nesvo_get_operation",json!({"id":targets[0]["receiptId"]})).await?;
+        assert_eq!(stop["data"]["receipt"]["operation"],"stop");
+        assert_eq!(stop["data"]["receipt"]["sessionId"],current["sessionId"]);
+        assert_eq!(stop["data"]["receipt"]["phase"],"stopRequested");
+        assert_eq!(stop["data"]["receipt"]["result"]["nativeStopRequested"],true);
+        let preserved = reply(&owner,"nesvo_get_session",json!({"sessionId":independent_id})).await?;
+        assert_eq!(preserved["data"]["session"]["running"],true);
+        let independent_pid = preserved["data"]["session"]["lifecycle"]["process"]["pid"].as_u64().context("Independent owned PID")?;
+        ensure!(process_alive(&fixture,independent_pid).await?,"Independent untimed process must survive another job's timeout");
+        let original = reply(&owner,"nesvo_get_job_mutation",json!({"key":"timeout-run"})).await?;
+        let replay = reply(&owner,"nesvo_run_job_now",arguments).await?;
+        assert_eq!(original["data"],admitted["data"]);
+        assert_eq!(replay["data"],admitted["data"]);
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let stable = read_occurrence(&owner,job,id).await?;
+        assert_eq!(stable["data"]["occurrence"]["state"],"failed");
+        envelopes.extend(one_generation(&owner,&stable).await?);
+        envelopes.extend([independent,created.clone(),create_replay,edited,edit_replay,admitted.clone(),held,session,future,failed,control,stop,preserved,original,replay,stable]);
+        phase = "published schema validation";
+        run_checkpoints::schema(envelopes).await?;
+        owner.cancel().await?;
+        Ok::<_,anyhow::Error>(())
+    })).catch_unwind().await;
+    finish(
+        &mut fixture,
+        "Disconnected native execution timeout",
+        phase,
+        diagnostic_job.as_deref(),
+        outcome,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "native host/CLI/MCP and controlled Node; accepted report disarms execution timeout, no models"]
+async fn accepted_report_disarms_execution_timeout_while_explicit_validation_stays_pending()
+-> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let mut phase = "provider discovery";
+    let mut diagnostic_job = None;
+    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30),async {
+        discovery_ready(&fixture).await?;
+        let owner = client(&fixture.pairing()).await?;
+        let created = reply(&owner,"nesvo_create_job",json!({"key":"report-disarms-definition","spec":spec("report-task")})).await?;
+        let job = created["data"]["job"]["id"].as_str().context("Reported job")?;
+        diagnostic_job = Some(job.to_owned());
+        let admitted = reply(&owner,"nesvo_run_job_now",json!({"key":"report-disarms-run","jobId":job,"expectedRevision":1})).await?;
+        let id = admitted["data"]["occurrence"]["id"].as_str().context("Reported occurrence")?;
+        phase = "accepted explicit report before native deadline";
+        let reported = occurrence(&owner,job,id,"needsValidation").await?;
+        let current = &reported["data"]["occurrence"];
+        let timer = current["executionTimeout"].clone();
+        frozen_deadline(&timer,&timer);
+        assert_eq!(timer["state"],"disarmed");
+        assert_eq!(timer["reason"],"report_accepted");
+        assert!(timer["observedAt"].as_u64().context("Accepted report time")? < timer["deadlineAt"].as_u64().context("Original deadline")?);
+        assert!(timer["requestedAt"].is_null() && timer["controlId"].is_null());
+        let worker = current["sessionId"].as_str().context("Reported worker")?;
+        let session = reply(&owner,"nesvo_get_session",json!({"sessionId":worker})).await?;
+        let pid = session["data"]["session"]["lifecycle"]["process"]["pid"].as_u64().context("Reported owned PID")?;
+        phase = "original deadline passes while validation remains pending";
+        past_deadline(&timer).await?;
+        let pending = read_occurrence(&owner,job,id).await?;
+        assert_eq!(pending["data"]["occurrence"]["state"],"needsValidation");
+        assert!(pending["data"]["occurrence"]["finishedAt"].is_null());
+        assert_eq!(pending["data"]["occurrence"]["executionTimeout"],timer);
+        ensure!(process_alive(&fixture,pid).await?,"A reported worker must survive its disarmed deadline");
+        phase = "explicit validation after deadline";
+        let run = current["runId"].as_str().context("Reported run")?;
+        run_checkpoints::mutate(&owner,run,"nesvo_validate_task_result",json!({"key":"validate-after-execution-deadline","attemptId":current["attemptId"],
+            "validation":{"passed":true,"summary":"Inspected controlled result before explicit validation","checks":[{"name":"fixture","outcome":"passed","details":"Real scoped report accepted before its native deadline; no model calls"}]}})).await?;
+        let succeeded = occurrence(&owner,job,id,"succeeded").await?;
+        assert_eq!(succeeded["data"]["occurrence"]["executionTimeout"],timer);
+        ensure!(process_alive(&fixture,pid).await?,"Validation must not invent automatic process cleanup");
+        let mut envelopes = one_generation(&owner,&succeeded).await?;
+        envelopes.extend([created.clone(),admitted.clone(),reported,session,pending,succeeded]);
+        phase = "published schema validation";
+        run_checkpoints::schema(envelopes).await?;
+        owner.cancel().await?;
+        Ok::<_,anyhow::Error>(())
+    })).catch_unwind().await;
+    finish(
+        &mut fixture,
+        "Report disarms native execution timeout",
+        phase,
+        diagnostic_job.as_deref(),
+        outcome,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "native host/CLI/MCP and controlled Node; human lease/epoch fences automatic timeout stop, no models"]
+async fn human_lease_and_quick_takeover_release_permanently_block_automatic_timeout_stop()
+-> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let mut phase = "provider discovery";
+    let mut diagnostic_job = None;
+    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40),async {
+        discovery_ready(&fixture).await?;
+        let owner = client(&fixture.pairing()).await?;
+        let mut envelopes = Vec::new();
+        for quick_release in [false,true] {
+            phase = "admit controlled held worker before human takeover";
+            let prefix = if quick_release {"released-takeover"} else {"active-human-lease"};
+            let created = reply(&owner,"nesvo_create_job",json!({"key":format!("{prefix}:definition"),"spec":spec("hold-response")})).await?;
+            let job = created["data"]["job"]["id"].as_str().context("Human-controlled job")?;
+            diagnostic_job = Some(job.to_owned());
+            let admitted = reply(&owner,"nesvo_run_job_now",json!({"key":format!("{prefix}:run"),"jobId":job,"expectedRevision":1})).await?;
+            let id = admitted["data"]["occurrence"]["id"].as_str().context("Human-controlled occurrence")?;
+            let (held,session) = working(&owner,job,id).await?;
+            let current = &held["data"]["occurrence"];
+            let timer = current["executionTimeout"].clone();
+            let worker = current["sessionId"].as_str().context("Human-controlled worker")?;
+            let pid = session["data"]["session"]["lifecycle"]["process"]["pid"].as_u64().context("Human-controlled owned PID")?;
+            phase = "real human control acquisition before timeout";
+            let mut human = Some(human_control_variant(&fixture.pairing(),worker,!quick_release).await?);
+            let leased = reply(&owner,"nesvo_get_session",json!({"sessionId":worker})).await?;
+            assert!(!leased["data"]["session"]["controllerId"].is_null());
+            if quick_release { release_human(human.take().unwrap()).await?; }
+            let prior_deadline = reply(&owner,"nesvo_get_session",json!({"sessionId":worker})).await?;
+            assert_eq!(prior_deadline["data"]["session"]["controllerId"].is_null(),quick_release);
+            ensure!(u64::try_from(chrono::Utc::now().timestamp_millis())? < timer["deadlineAt"].as_u64().context("Human guard deadline")?,"Human takeover/release must complete before the configured deadline");
+            phase = "automatic stop blocked at deadline";
+            let blocked = timeout_state(&owner,job,id,"blocked").await?;
+            let blocked_row = &blocked["data"]["occurrence"];
+            assert_eq!(blocked_row["state"],"canceling");
+            assert_eq!(blocked_row["reason"],"execution_timeout_blocked");
+            assert!(blocked_row["finishedAt"].is_null());
+            frozen_deadline(&timer,&blocked_row["executionTimeout"]);
+            let control = reply(&owner,"nesvo_get_run_control",json!({"runId":current["runId"],"controlId":blocked_row["executionTimeout"]["controlId"]})).await?;
+            assert_eq!(control["data"]["control"]["state"],"blocked");
+            let targets = control["data"]["targets"].as_array().context("One protected timeout target")?;
+            assert_eq!(targets.len(),1);
+            assert_eq!(targets[0]["phase"],"blocked");
+            assert_eq!(targets[0]["code"],"control_busy");
+            assert_eq!(targets[0]["sessionId"],worker);
+            assert_eq!(targets[0]["attemptId"],current["attemptId"]);
+            let refused = reply(&owner,"nesvo_get_operation",json!({"id":targets[0]["receiptId"]})).await?;
+            assert_eq!(refused["data"]["receipt"]["phase"],"failed");
+            assert_eq!(refused["data"]["receipt"]["result"]["code"],"control_busy");
+            assert_eq!(refused["data"]["receipt"]["result"]["effectStarted"],false);
+            ensure!(process_alive(&fixture,pid).await?,"Automatic timeout must preserve human-controlled worker");
+            if let Some(human) = human.take() { release_human(human).await?; }
+            let released = reply(&owner,"nesvo_get_session",json!({"sessionId":worker})).await?;
+            assert!(released["data"]["session"]["controllerId"].is_null());
+            phase = "human release never authorizes deferred automatic stop";
+            tokio::time::sleep(Duration::from_millis(1100)).await;
+            let retained = read_occurrence(&owner,job,id).await?;
+            let retained_timer = &retained["data"]["occurrence"]["executionTimeout"];
+            frozen_deadline(&timer,retained_timer);
+            assert_eq!(retained_timer["state"],"blocked");
+            assert_eq!(retained_timer["controlId"],blocked_row["executionTimeout"]["controlId"]);
+            assert_eq!(retained_timer["requestedAt"],blocked_row["executionTimeout"]["requestedAt"]);
+            let unchanged_control = reply(&owner,"nesvo_get_run_control",json!({"runId":current["runId"],"controlId":blocked_row["executionTimeout"]["controlId"]})).await?;
+            assert_eq!(unchanged_control["data"]["control"]["state"],"blocked");
+            assert_eq!(unchanged_control["data"]["targets"][0]["receiptId"],targets[0]["receiptId"]);
+            ensure!(process_alive(&fixture,pid).await?,"No deferred signal may follow human release");
+            phase = "deliberate owner stop reconciles original blocked timeout";
+            let stopped = reply(&owner,"nesvo_stop_session",json!({"key":format!("{prefix}:owner-stop"),"sessionId":worker})).await?;
+            let completed = occurrence(&owner,job,id,"failed").await?;
+            assert_eq!(completed["data"]["occurrence"]["reason"],"execution_timeout");
+            assert_eq!(completed["data"]["occurrence"]["executionTimeout"]["state"],"completed");
+            assert_eq!(completed["data"]["occurrence"]["executionTimeout"]["controlId"],blocked_row["executionTimeout"]["controlId"]);
+            frozen_deadline(&timer,&completed["data"]["occurrence"]["executionTimeout"]);
+            ensure!(!process_alive(&fixture,pid).await?,"Explicit owner stop must observe actual worker exit");
+            let final_control = reply(&owner,"nesvo_get_run_control",json!({"runId":current["runId"],"controlId":blocked_row["executionTimeout"]["controlId"]})).await?;
+            assert_eq!(final_control["data"]["control"]["state"],"completed");
+            assert_eq!(final_control["data"]["targets"][0]["phase"],"exited");
+            assert_eq!(final_control["data"]["targets"][0]["receiptId"],targets[0]["receiptId"]);
+            envelopes.extend(one_generation(&owner,&completed).await?);
+            envelopes.extend([created.clone(),admitted.clone(),held,session,leased,prior_deadline,blocked,control,refused,released,retained,unchanged_control,stopped,completed,final_control]);
+        }
+        phase = "published schema validation";
+        run_checkpoints::schema(envelopes).await?;
+        owner.cancel().await?;
+        Ok::<_,anyhow::Error>(())
+    })).catch_unwind().await;
+    finish(
+        &mut fixture,
+        "Human priority over automatic job timeout",
+        phase,
+        diagnostic_job.as_deref(),
+        outcome,
+    )
+    .await
+}

@@ -49,6 +49,8 @@ mod job_cancellation;
 mod job_diagnostics;
 #[path = "support/job_retries.rs"]
 mod job_retries;
+#[path = "support/job_timeouts.rs"]
+mod job_timeouts;
 #[path = "support/jobs.rs"]
 mod jobs;
 #[path = "support/mcp_cancellation.rs"]

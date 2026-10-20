@@ -1,7 +1,7 @@
 //! Real bound-worker cancellation through owner CLI/MCP; no model calls.
 use super::*;
 
-async fn occurrence(
+pub(super) async fn occurrence(
     owner: &RunningService<RoleClient, ()>,
     job: &str,
     id: &str,
@@ -29,7 +29,7 @@ async fn occurrence(
     .with_context(|| format!("Bound occurrence did not reach {wanted}; last: {last}"))?
 }
 
-async fn process_alive(fixture: &Fixture, pid: u64) -> Result<bool> {
+pub(super) async fn process_alive(fixture: &Fixture, pid: u64) -> Result<bool> {
     let mut command = Command::new(fixture.directory.join("bin").join(if cfg!(windows) {
         "node.exe"
     } else {
