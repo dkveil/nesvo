@@ -119,6 +119,18 @@ async function until<T>(
   throw new Error(`Timed out: ${label}`);
 }
 
+// Pairing is written before SQLite/native startup finishes. Wait for actual
+// readiness before measuring the authentication or lifecycle contract.
+function hostReadiness(host: ChildProcess): () => Promise<true> {
+  let output = '';
+  let ready = false;
+  host.stdout?.on('data', data => {
+    output = (output + data.toString()).slice(-2048);
+    ready ||= output.includes('Rust host listening');
+  });
+  return () => until(() => (ready ? true : undefined), 'native host listening', 20000);
+}
+
 class Peer {
   socket: WebSocket;
   challenge = '';
@@ -305,10 +317,11 @@ process.stdin.on('data',text=>{
       ],
       { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
     );
-    host.stdout?.resume();
+    const waitForHost = hostReadiness(host);
     host.stderr?.resume();
     let owner: Peer | undefined;
     try {
+      await waitForHost();
       const pairing = await until(async () => {
         try {
           return parsePairing(await readFile(join(fixture, 'pairing', 'pairing.json'), 'utf8'));
@@ -550,10 +563,11 @@ process.stdin.on('data', bytes=>{
       ],
       { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
     );
-    host.stdout?.resume();
+    const waitForHost = hostReadiness(host);
     host.stderr?.resume();
     let peer: Peer | undefined;
     try {
+      await waitForHost();
       const pairing = await until(async () => {
         try {
           return parsePairing(await readFile(join(fixture, 'pairing', 'pairing.json'), 'utf8'));
