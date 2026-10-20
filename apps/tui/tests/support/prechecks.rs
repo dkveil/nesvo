@@ -12,16 +12,32 @@ async fn approve(
     mode: &str,
     timeout_ms: u64,
 ) -> Result<(Value, PathBuf)> {
+    approve_executable(f, owner, mode, timeout_ms, node(f)).await
+}
+async fn approve_executable(
+    f: &Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    mode: &str,
+    timeout_ms: u64,
+    executable: PathBuf,
+) -> Result<(Value, PathBuf)> {
     let script = f.directory.join("precheck łódź.cjs");
     std::fs::write(
         &script,
         include_str!("../../../../tests/fixtures/job-precheck.cjs"),
-    )?;
+    )
+    .with_context(|| format!("Write owned precheck script: {}", script.display()))?;
     let directory = f.directory.join(format!("check-{mode}"));
-    std::fs::create_dir_all(&directory)?;
-    let spec = json!({"title":format!("Check {mode}"),"executable":node(f),"cwd":f.directory,"arguments":[script,mode,directory,"root",LITERAL],"timeoutMs":timeout_ms,"environment":{"CHECK_LITERAL":LITERAL}});
+    std::fs::create_dir_all(&directory).with_context(|| {
+        format!(
+            "Create owned precheck effect directory: {}",
+            directory.display()
+        )
+    })?;
+    let spec = json!({"title":format!("Check {mode}"),"executable":executable,"cwd":f.directory,"arguments":[script,mode,directory,"root",LITERAL],"timeoutMs":timeout_ms,"environment":{"CHECK_LITERAL":LITERAL}});
     let file = f.directory.join(format!("approve-{mode}.json"));
-    std::fs::write(&file, serde_json::to_vec(&spec)?)?;
+    std::fs::write(&file, serde_json::to_vec(&spec)?)
+        .with_context(|| format!("Write owned precheck approval input: {}", file.display()))?;
     let described = budgets::owner_cli(
         f,
         &[
@@ -531,6 +547,7 @@ async fn slow_prechecks_do_not_starve_unrelated_due_jobs_or_free_all_dispatch_ca
     let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&f.pairing()).await?;
         let (approval, directory) = approve(&f, &owner, "hold", 10000).await?;
+        let mut held = Vec::new();
         for n in 0..3 {
             let key = format!("held-{n}");
             let job = create(
@@ -540,7 +557,17 @@ async fn slow_prechecks_do_not_starve_unrelated_due_jobs_or_free_all_dispatch_ca
                 chrono::Utc::now() + chrono::Duration::hours(1),
             )
             .await?;
-            now(&owner, &job, &key).await?;
+            let accepted = now(&owner, &job, &key).await?;
+            held.push((
+                job["id"]
+                    .as_str()
+                    .context("Held precheck job ID")?
+                    .to_owned(),
+                accepted["data"]["occurrence"]["id"]
+                    .as_str()
+                    .context("Held precheck occurrence ID")?
+                    .to_owned(),
+            ));
         }
         let due = chrono::Utc::now() + chrono::Duration::seconds(1);
         let fast = create(&owner, "independent-clock", None, due).await?;
@@ -548,7 +575,55 @@ async fn slow_prechecks_do_not_starve_unrelated_due_jobs_or_free_all_dispatch_ca
             .await
             .context("Slow prechecks must not block an unrelated scheduled job")?;
         assert!(report["data"]["occurrence"]["precheck"].is_null());
-        std::fs::write(directory.join("release"), "explicit fixture release")?;
+        let release = directory.join("release");
+        std::fs::write(&release, "explicit fixture release").with_context(|| {
+            format!(
+                "Release owned held precheck commands: {}",
+                release.display()
+            )
+        })?;
+        // This follows the unchanged eight-second fairness assertion. A release
+        // file is intent, not proof that all three native command scopes exited.
+        // Await exact durable cleanup evidence before deleting their executable
+        // and working directories, especially on Windows.
+        let mut last = Vec::new();
+        timeout(Duration::from_secs(6), async {
+            loop {
+                let mut settled = true;
+                let mut observed = Vec::new();
+                for (job, occurrence) in &held {
+                    let current = data(
+                        call(
+                            &owner,
+                            "nesvo_get_job_occurrence",
+                            json!({"jobId":job,"occurrenceId":occurrence}),
+                        )
+                        .await?,
+                    )?;
+                    let precheck = &current["data"]["occurrence"]["precheck"];
+                    settled &= precheck["finishedAt"].is_number()
+                        && precheck["result"]["cleanupConfirmed"] == true;
+                    observed
+                        .push(json!({"jobId":job,"occurrenceId":occurrence,"precheck":precheck}));
+                }
+                if settled {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                last = observed;
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "Await cleanup of three exact released precheck scopes; last: {}",
+                serde_json::to_string(&last)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(8192)
+                    .collect::<String>()
+            )
+        })??;
         run_checkpoints::schema(vec![report]).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
@@ -759,6 +834,131 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
     match outcome {
         Ok(result) => {
             result?;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "graceful host shutdown drains an owned command tree and persists cleanup before exit"]
+async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_after_restart()
+-> Result<()> {
+    let mut f = Fixture::start_variant(true).await?;
+    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40), async {
+        let owner = client(&f.pairing()).await?;
+        // A distinct executable makes Windows image-handle release observable
+        // without removing the Node used for process probes or the restarted host.
+        let executable = f.directory.join(if cfg!(windows) {
+            "shutdown-command.exe"
+        } else {
+            "shutdown-command"
+        });
+        std::fs::copy(node(&f), &executable).with_context(|| {
+            format!(
+                "Copy owned shutdown command executable: {}",
+                executable.display()
+            )
+        })?;
+        let (approval, directory) =
+            approve_executable(&f, &owner, "tree-shutdown", 10000, executable.clone()).await?;
+        let job = create(
+            &owner,
+            "graceful-shutdown-tree",
+            Some(&approval),
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await?;
+        let admitted = now(&owner, &job, "graceful-shutdown-tree").await?;
+        let occurrence = admitted["data"]["occurrence"]["id"]
+            .as_str()
+            .context("Shutdown occurrence identity")?;
+        tree_ready(&directory).await?;
+        let running = data(
+            call(
+                &owner,
+                "nesvo_get_job_occurrence",
+                json!({"jobId":job["id"],"occurrenceId":occurrence}),
+            )
+            .await?,
+        )?;
+        assert_eq!(
+            running["data"]["occurrence"]["precheck"]["state"],
+            "running"
+        );
+        no_model(&owner).await?;
+        owner.cancel().await?;
+
+        // The same graceful stdin-close path used by the fixture is the action
+        // under test. No release file, cancellation API or process kill is used.
+        drop(f.host.stdin.take());
+        let status = timeout(Duration::from_secs(10), f.host.wait())
+            .await
+            .context("Graceful owned host exit while precheck descendants are active")?
+            .context("Reap gracefully stopped native host")?;
+        ensure!(
+            status.success(),
+            "Native host did not confirm its runtime shutdown: {status}"
+        );
+        tree_gone(&f, &directory).await?;
+        std::fs::remove_file(&executable).with_context(|| {
+            format!(
+                "Remove owned command image after graceful host cleanup: {}",
+                executable.display()
+            )
+        })?;
+
+        f.restart(false).await?;
+        let owner = client(&f.pairing()).await?;
+        let retained = data(
+            call(
+                &owner,
+                "nesvo_get_job_occurrence",
+                json!({"jobId":job["id"],"occurrenceId":occurrence}),
+            )
+            .await?,
+        )?;
+        let current = &retained["data"]["occurrence"];
+        assert_eq!(current["state"], "failed");
+        assert_eq!(current["reason"], "precheck_refused");
+        assert!(current["runId"].is_null());
+        assert!(current["finishedAt"].is_number());
+        let precheck = &current["precheck"];
+        assert_eq!(precheck["state"], "refused");
+        assert_eq!(precheck["reason"], "host_shutdown");
+        assert!(precheck["finishedAt"].is_number());
+        assert_eq!(precheck["result"]["reason"], "host_shutdown");
+        assert_eq!(precheck["result"]["cleanupConfirmed"], true);
+        assert!(precheck["result"]["commandStarted"].is_null());
+        assert!(precheck["result"]["exitCode"].is_null());
+        let replay = now(&owner, &job, "graceful-shutdown-tree").await?;
+        assert_eq!(replay["data"], admitted["data"]);
+        no_model(&owner).await?;
+        tree_gone(&f, &directory).await?;
+        let effects = directory.join("effects.log");
+        assert_eq!(
+            std::fs::read_to_string(&effects)
+                .with_context(|| format!(
+                    "Read retained owned command effects: {}",
+                    effects.display()
+                ))?
+                .lines()
+                .count(),
+            1
+        );
+        run_checkpoints::schema(vec![admitted, running, retained, replay]).await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
+    }))
+    .catch_unwind()
+    .await;
+    let cleanup = f.close().await;
+    match outcome {
+        Ok(result) => {
+            result.context("Bounded graceful command shutdown acceptance")??;
             cleanup
         }
         Err(panic) => {

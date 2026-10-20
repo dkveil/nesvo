@@ -390,11 +390,8 @@ async fn run(args: Args) -> Result<()> {
     }
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
     tokio::spawn(jobs::run(state.clone(), event_tx.clone()));
-    tokio::spawn(job_runtime::run(
-        state.clone(),
-        event_tx.clone(),
-        event_log.clone(),
-    ));
+    let job_runtime =
+        job_runtime::Runtime::start(state.clone(), event_tx.clone(), event_log.clone());
     tokio::spawn(job_timeout_runtime::run(state.clone(), event_log.clone()));
     tokio::spawn(notifications::run(state.clone()));
     if claude_installed {
@@ -448,13 +445,19 @@ async fn run(args: Args) -> Result<()> {
             }
         }
     }
-    let webhook_shutdown = if let Some(listener) = webhooks {
-        let result = listener.shutdown().await;
-        state.lock().unwrap().set_job_trigger_listener(None);
-        result
-    } else {
-        Ok(())
-    };
+    // Fence final native spawn/input under the same lock before stopping either
+    // producer. Command checks still need the event journal to persist cleanup.
+    state.lock().unwrap().begin_shutdown();
+    job_runtime.request_shutdown();
+    let (job_shutdown, webhook_shutdown) = tokio::join!(job_runtime.shutdown(), async {
+        if let Some(listener) = webhooks {
+            let result = listener.shutdown().await;
+            state.lock().unwrap().set_job_trigger_listener(None);
+            result
+        } else {
+            Ok(())
+        }
+    });
     // Closed sessions may still be releasing ConPTY resources in background
     // workers. Keep the output dispatcher alive while they finish, without
     // holding the state lock that it needs to drain PTY output.
@@ -494,6 +497,7 @@ async fn run(args: Args) -> Result<()> {
         .await
         .context("Event journal shutdown timed out")?;
     webhook_shutdown?;
+    job_shutdown?;
     Ok(())
 }
 

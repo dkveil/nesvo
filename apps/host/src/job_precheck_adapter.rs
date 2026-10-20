@@ -16,6 +16,13 @@ static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 pub enum Stop {
     OwnerCancel,
     GuardUnavailable,
+    HostShutdown,
+}
+
+/// Includes observers retaining a slot after an unconfirmed termination. A
+/// returned adapter future alone is not proof that its native scope is empty.
+pub fn scopes_settled() -> bool {
+    SLOTS.available_permits() == 2
 }
 
 fn stop_now(stop: &mut tokio::sync::watch::Receiver<Option<Stop>>) -> Option<Stop> {
@@ -41,6 +48,7 @@ async fn stopping(stop: &mut tokio::sync::watch::Receiver<Option<Stop>>) -> Stop
 fn stopped(reason: Stop, input_released: bool) -> Outcome {
     let (state, reason) = match (reason, input_released) {
         (Stop::OwnerCancel, _) => (OutcomeState::Refused, "owner_canceled"),
+        (Stop::HostShutdown, _) => (OutcomeState::Refused, "host_shutdown"),
         (Stop::GuardUnavailable, false) => (OutcomeState::Refused, "guard_unavailable"),
         (Stop::GuardUnavailable, true) => (OutcomeState::Unknown, "guard_unavailable"),
     };
@@ -396,5 +404,20 @@ mod tests {
         assert_eq!(guard.reason, "guard_unavailable");
         assert!(guard.command_started.is_none());
         assert!(!guard.cleanup_confirmed);
+    }
+
+    #[test]
+    fn host_shutdown_keeps_command_and_cleanup_uncertainty_after_frame_release() {
+        let before = stopped(Stop::HostShutdown, false);
+        assert_eq!(before.state, OutcomeState::Refused);
+        assert_eq!(before.reason, "host_shutdown");
+        assert_eq!(before.command_started, Some(false));
+        assert!(before.cleanup_confirmed);
+        let after = stopped(Stop::HostShutdown, true);
+        assert_eq!(after.state, OutcomeState::Refused);
+        assert_eq!(after.reason, "host_shutdown");
+        assert!(after.command_started.is_none());
+        assert!(after.exit_code.is_none());
+        assert!(!after.cleanup_confirmed);
     }
 }

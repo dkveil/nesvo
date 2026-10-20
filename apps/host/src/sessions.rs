@@ -1842,6 +1842,9 @@ impl State {
         fence: Option<&crate::agent_events::Batch>,
     ) -> Result<tokio::sync::oneshot::Receiver<bool>> {
         use crate::api_error::Error;
+        if self.shutting_down {
+            return Err(Error::new("host_stopping", "Host is shutting down").into());
+        }
         let authority = self
             .sessions
             .get(id)
@@ -2741,8 +2744,14 @@ impl State {
         Ok(())
     }
 
-    pub fn shutdown(&mut self) -> Vec<thread::JoinHandle<()>> {
+    /// Fence new native launches and input while owned command scopes drain.
+    /// Existing PTYs stay available until the final resource shutdown below.
+    pub fn begin_shutdown(&mut self) {
         self.shutting_down = true;
+    }
+
+    pub fn shutdown(&mut self) -> Vec<thread::JoinHandle<()>> {
+        self.begin_shutdown();
         for client in self.clients.values() {
             let _ = client.cancelled.send(true);
         }
@@ -3231,6 +3240,55 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_admission_fence_preserves_sessions_but_refuses_late_paste_and_enter() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            metadata,
+            Launchers::discover(),
+        );
+        let (events, _output) = mpsc::channel(128);
+        let spec = crate::jobs::LaunchSpec {
+            name: "Owned shutdown input fence".into(),
+            ..Default::default()
+        };
+        let id = state.launch(&spec, &events).unwrap();
+        let operation = "shutdown-input-fixture";
+        let _pending = state
+            .begin_submission(
+                &id,
+                crate::submission::Claim {
+                    id: operation.into(),
+                    issuer: "owner".into(),
+                    token: "owned-fixture-only".into(),
+                },
+                "literal fixture text",
+                &crate::caller::Authority::Owner,
+            )
+            .unwrap();
+        state.begin_shutdown();
+        assert!(state.sessions[&id].info.running);
+        assert_eq!(state.sessions.len(), 1);
+        assert!(state.launch(&spec, &events).is_err());
+        for text in [Some("literal fixture text"), None] {
+            let error = state
+                .enqueue_submission(&id, operation, text, None)
+                .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<crate::api_error::Error>()
+                    .unwrap()
+                    .code,
+                "host_stopping"
+            );
+        }
+        assert!(!state.sessions[&id].pending_input.as_ref().unwrap().queued);
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
 
     #[test]
     fn listener_is_default_off_and_doctor_matches_the_advertised_runtime_address() {

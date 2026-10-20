@@ -224,9 +224,9 @@ never counts as passed. Checks allow two concurrent scopes, up to 15 seconds of
 slot wait, 100–10000 ms command budget (default 2000), 1000 ms helper protocol
 allowance and 2000 ms cleanup observation. These are separate from the later run's
 admission/input `maxElapsedMs`, which is not a hard process kill budget. The
-command's `timeoutMs` does not limit the worker's model execution. A durable model
-execution timeout with native stop/exit evidence remains a later implementation
-gate.
+command's `timeoutMs` does not limit the worker's model execution. Optional
+[execution timeouts](harness-job-timeouts.md) have their own native stop/exit
+evidence and uncertainty rules.
 
 Command specs are at most 16 KiB, 32 literal arguments (2048 bytes each), 16
 environment additions and eight codes per exit list. Approval/mutation retention
@@ -239,6 +239,30 @@ Four dispatch preparations and two calendar calculations can be in flight; neith
 awaits inside SQLite or holds a session-state mutex. Pending calendars are tracked
 by exact ID/revision/due cursor. Calendar/once pages are separate, so a page of
 pending recurrence calculations cannot hide an independently due once job.
+
+## Graceful host shutdown
+
+On graceful host exit, final spawn/input admission is fenced under the session
+mutex before producers stop. The retained job runtime requests `host_shutdown`
+from active and waiting precheck adapters, keeps polling native termination/reap/
+scope-empty observation, and persists the exact result while the journal is alive.
+Command input already released remains `commandStarted:null`, never invented
+`false`. `cleanupConfirmed` still requires the actual owned scope observation.
+This is a shutdown refusal, not an owner cancellation or a successful command.
+
+The runtime has a five-second drain deadline; an unconfirmed drain fails shutdown
+instead of certifying cleanup. Deferred cleanup observers retaining command slots
+also count as pending. Existing PTY and journal shutdown follow the drain. This
+does not establish completion of separately detached worktree/executor operations;
+their native receipts retain uncertainty and restart does not replay them.
+
+The native graceful-exit case starts a real controlled command tree, closes host
+stdin, checks process disappearance and executable release, then restarts and
+verifies retained refusal without a Run or model launch. The held-check fairness
+case separately waits for all three exact cleanup records after its unchanged
+eight-second fairness assertion. Windows termination requests alone are not exit
+proof, as documented by
+[TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess).
 
 ## CLI/MCP parity and verification
 
