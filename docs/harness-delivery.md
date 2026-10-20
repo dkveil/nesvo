@@ -2072,6 +2072,12 @@ regression test retains a zombie before its parent wait; SDK failure diagnostics
 also retain the last occurrence history without increasing deadlines. Actual
 platform results for this correction are recorded separately.
 
+CI `39439527256` passed the macOS unreaped-zombie regression, but its inherited
+runner-group test encountered a protected member (`EPERM`). Observation correctly
+refused to claim cleanup. The live-group regression now enrolls its own bounded
+child group, matching production ownership instead of querying unrelated runner
+processes. The production permission/error policy remains conservative.
+
 An isolated native Windows idle observation on source `1cd6af3`: eight real
 PowerShell PTYs, no clients, 60.40 seconds; host CPU 0.310% of one logical core,
 working set 19.51 to 19.46 MiB, threads 50 to 45 and immediate children 17 to 17.

@@ -165,12 +165,31 @@ fn macos_group_terminated(group: i32) -> Result<bool> {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn a_live_group_is_not_assumed_empty() {
         // SAFETY: queries the test process's group; empty uses signal zero only.
         let group = unsafe { libc::getpgrp() };
         let observer = Scope { group };
         assert!(!observer.empty().unwrap());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_live_owned_group_is_not_assumed_empty() -> Result<()> {
+        // The CI runner's inherited group may include protected foreign
+        // members. Observe only this test's own separately enrolled group.
+        let mut command = Command::new("/bin/sleep");
+        command.arg("30").kill_on_drop(true);
+        configure(&mut command);
+        let mut child = command.spawn()?;
+        let scope = Scope::enroll(&child)?;
+        let observed = scope.empty();
+        let stopped = scope.terminate();
+        child.wait().await?;
+        stopped?;
+        assert!(!observed?);
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
