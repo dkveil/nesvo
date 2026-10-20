@@ -3094,3 +3094,24 @@ existing eight-second acceptance and eighteen-second outer bounds are unchanged.
 The focused Windows case passed locally in 3.83 seconds on the capture candidate;
 the updated diagnostics compile under warnings-denied all-target Clippy. This
 does not prove the earlier CI timeout cannot recur or substitute for new CI.
+
+### Controlled eight-Claude idle observation
+
+`node --import tsx tests/harness-probe.ts controlled-claude-idle` adds a Windows
+benchmark using eight owned Node substitutes for Claude. Its private PATH and
+provider homes exclude original providers. Each root reaches hook-bound idle and
+receives one actual scoped quota-helper callback; no model, login or original
+provider call is made. All WebSockets close before the measured interval. Seven
+samples verify the same eight process/birth identities and stable direct-child
+count. Cleanup uncertainty retains the owned temporary state instead of deleting
+it before process cleanup is confirmed.
+
+The native Windows capture candidate completed 62.035 seconds with host CPU
+2.191% of one logical core, working set 22.50 to 22.71 MiB (sampled maximum
+22.71 MiB), threads 48 to 46 and direct children 17 to 17. Fixture cleanup passed.
+This precedes the named-root predicate correction; exact binaries and the report
+remain outside Git. The earlier eight-PowerShell observation was 0.310% of one
+core, but it lacks Claude lifecycle/quota observation. This is not a matched
+regression comparison, total-tree measurement, memory-leak verdict or explanation
+of historical 100% CPU. A matched instrumented observer comparison remains open,
+alongside pooling and hibernation.

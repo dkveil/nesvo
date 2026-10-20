@@ -15,22 +15,53 @@ import {
   keyBytes,
   parsePairing,
 } from '../apps/mobile/src/shared/api/host/wire';
+import { ControlledClaudeIdle, type HostSample, removeOwnedProbe } from './controlled-claude-idle';
 import { stopFixtureHost } from './host-fixture-shutdown';
+
+type ControlledSession = {
+  sessionId: string;
+  program: string;
+  running: boolean;
+  readiness: { phase: string };
+  status: { selected: { source: string; state: string } };
+  processIdentity: { pid: number };
+  conversationIdentity?: { providerSessionId: string; generation: number };
+  nativeQuotaCallback?: {
+    source: string;
+    sequence: number;
+    generation: number;
+    snapshot: { reason: string };
+    backendFreshness: string;
+    ordinaryUsageAllowed: boolean | null;
+    accountFingerprint: string | null;
+  };
+};
 
 async function main(): Promise<void> {
   const exec = promisify(execFile);
   const mode = process.argv[2] ?? 'baseline';
-  assert.ok(['baseline', 'claude-start'].includes(mode), 'Use baseline or claude-start');
+  assert.ok(
+    ['baseline', 'claude-start', 'controlled-claude-idle'].includes(mode),
+    'Use baseline, claude-start or controlled-claude-idle',
+  );
+  const controlled = mode === 'controlled-claude-idle';
   const root = await mkdtemp(join(tmpdir(), 'nesvo-harness-probe-'));
   const workspace = join(root, 'isolated workspace');
   await mkdir(workspace);
   const binary = resolve(
     process.env.NESVO_HOST_BINARY ?? 'target/verification/debug/nesvo-host.exe',
   );
+  let controlledFixture: ControlledClaudeIdle | undefined;
+  try {
+    if (controlled) controlledFixture = await ControlledClaudeIdle.install(root, binary);
+  } catch (error) {
+    await removeOwnedProbe(root);
+    throw error;
+  }
   const host = spawn(
     binary,
     ['--port', '0', '--pairing-dir', root, '--workspace', workspace, '--exit-on-stdin-close'],
-    { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
+    { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'], env: controlledFixture?.env },
   );
   let stderr = '';
   host.stderr.on('data', bytes => {
@@ -46,7 +77,11 @@ async function main(): Promise<void> {
   const created: string[] = [];
   const attached = new Set<string>();
   let wireError: unknown;
+  host.on('error', error => {
+    wireError = controlled ? new Error('Owned fixture host failed to start') : error;
+  });
   let stopAgent: (() => Promise<void>) | undefined;
+  let diagnosticSequence = 0;
   const started = performance.now();
   async function until<T>(
     read: () => T | undefined | Promise<T | undefined>,
@@ -132,7 +167,7 @@ async function main(): Promise<void> {
     await until(() => challenge || undefined, 'challenge');
     send({ type: 'auth', clientNonce: randomBytes(32).toString('hex') });
     await until(() => events.find(e => e.type === 'connected'), 'authenticated connection');
-    for (let i = 0; i < (mode === 'baseline' ? 8 : 1); i++) {
+    for (let i = 0; i < (mode === 'claude-start' ? 1 : 8); i++) {
       const requestId = `probe-${i}`;
       send({
         type: 'create',
@@ -146,13 +181,77 @@ async function main(): Promise<void> {
       );
       const id = String(event.sessionId);
       created.push(id);
-      attached.add(id);
-      send({ type: 'attach', sessionId: id, cols: 100, rows: 32 });
-      await until(() => events.find(e => e.type === 'attached' && e.sessionId === id), 'attached');
+      if (!controlled) {
+        attached.add(id);
+        send({ type: 'attach', sessionId: id, cols: 100, rows: 32 });
+        await until(
+          () => events.find(e => e.type === 'attached' && e.sessionId === id),
+          'attached',
+        );
+      }
       if (mode === 'baseline')
         await until(() => (output.get(id)?.includes('PS ') ? true : undefined), 'PowerShell ready');
     }
-    if (mode === 'baseline') {
+    const controlledRoots: number[] = [];
+    if (controlledFixture) {
+      const diagnose = async (quota: boolean): Promise<ControlledSession[]> =>
+        until(
+          async () => {
+            const requestId = `controlled-diagnostics-${++diagnosticSequence}`;
+            send({ type: 'getDiagnostics', requestId });
+            const event = await until(
+              () => events.find(e => e.type === 'diagnostics' && e.requestId === requestId),
+              'controlled diagnostics response',
+            );
+            const report = event.report as {
+              sessions: ControlledSession[];
+              programs: { id: string; available: boolean }[];
+            };
+            assert.ok(
+              report.programs.some(program => program.id === 'claude' && program.available),
+            );
+            assert.ok(
+              report.programs
+                .filter(program => program.available && program.id !== 'shell')
+                .every(program => program.id === 'claude'),
+              'No original provider may be available to the fixture host',
+            );
+            const sessions = report.sessions;
+            if (
+              sessions.length !== 8 ||
+              !sessions.every(
+                session =>
+                  created.includes(session.sessionId) &&
+                  session.program === 'claude' &&
+                  session.running &&
+                  session.readiness.phase === 'ready' &&
+                  session.status.selected.source === 'hook' &&
+                  session.status.selected.state === 'idle' &&
+                  session.conversationIdentity?.providerSessionId ===
+                    `fixture-${session.sessionId}` &&
+                  (!quota ||
+                    (session.nativeQuotaCallback?.source === 'claudeStatusLine' &&
+                      session.nativeQuotaCallback.sequence === 1 &&
+                      session.nativeQuotaCallback.generation ===
+                        session.conversationIdentity.generation &&
+                      session.nativeQuotaCallback.snapshot.reason === 'observed' &&
+                      session.nativeQuotaCallback.backendFreshness === 'unknown' &&
+                      session.nativeQuotaCallback.ordinaryUsageAllowed === null &&
+                      session.nativeQuotaCallback.accountFingerprint === null)),
+              )
+            )
+              return undefined;
+            return sessions;
+          },
+          quota ? 'eight current root quota callbacks' : 'eight bound idle Claude roots',
+        );
+      const roots = await diagnose(false);
+      controlledRoots.push(...roots.map(session => Number(session.processIdentity.pid)));
+      assert.equal(new Set(controlledRoots).size, 8);
+      for (const id of created) await controlledFixture.seed(id);
+      await diagnose(true);
+    }
+    if (mode === 'baseline' || controlledFixture) {
       await delay(3000);
       // Disconnect releases the probe's legacy control lease.
       socket.close();
@@ -172,26 +271,52 @@ async function main(): Promise<void> {
             .stdout,
         );
       }
-      const before = await sample();
+      const before = controlledFixture
+        ? await controlledFixture.sample(host.pid!, controlledRoots)
+        : await sample();
+      const samples: HostSample[] = controlledFixture ? [before as HostSample] : [];
       const at = performance.now();
       for (let i = 0; i < 6; i++) {
         await delay(10000);
-        console.log(`Baseline: ${(i + 1) * 10}/60 seconds, no clients`);
+        assert.equal(host.exitCode, null, 'Owned host remains alive during the idle interval');
+        if (controlledFixture) {
+          const current = await controlledFixture.sample(host.pid!, controlledRoots);
+          assert.equal(current.children, before.children, 'Owned direct-child count stays stable');
+          samples.push(current);
+        }
+        console.log(`${mode}: ${(i + 1) * 10}/60 seconds, no clients`);
       }
-      const after = await sample();
+      const after = controlledFixture ? samples.at(-1)! : await sample();
       const elapsedSeconds = (performance.now() - at) / 1000;
+      assert.ok(elapsedSeconds >= 60);
       const report = {
         mode,
-        binary,
+        ...(controlledFixture
+          ? {
+              provider: 'controlledClaude',
+              originalProviderCalls: 0,
+              modelCalls: 0,
+              quotaCallbacksPerRoot: 1,
+            }
+          : { binary }),
         sessions: created.length,
         noClients: true,
         elapsedSeconds,
         before,
         after,
         cpuPercentOfOneCore: (100 * (after.cpuSeconds - before.cpuSeconds)) / elapsedSeconds,
+        ...(controlledFixture
+          ? {
+              samples,
+              sampledPeakMemoryBytes: Math.max(...samples.map(sample => sample.memoryBytes)),
+            }
+          : {}),
       };
       await mkdir('artifacts/harness', { recursive: true });
-      await writeFile('artifacts/harness/baseline.json', JSON.stringify(report, null, 2));
+      await writeFile(
+        `artifacts/harness/${controlledFixture ? 'controlled-claude-idle' : 'baseline'}.json`,
+        JSON.stringify(report, null, 2),
+      );
       console.log(JSON.stringify(report));
     } else {
       await delay(15000);
@@ -325,9 +450,15 @@ async function main(): Promise<void> {
     await mkdir('artifacts/harness', { recursive: true });
     await writeFile(
       'artifacts/harness/probe-failure.json',
-      JSON.stringify({ transitions, error: String(error) }, null, 2),
+      JSON.stringify(
+        controlled
+          ? { mode, sessions: created.length, error: 'Controlled Claude idle probe failed' }
+          : { transitions, error: String(error) },
+        null,
+        2,
+      ),
     );
-    if (process.env.NESVO_PROBE_CAPTURE_SCREEN === '1')
+    if (!controlled && process.env.NESVO_PROBE_CAPTURE_SCREEN === '1')
       await writeFile(
         'artifacts/harness/claude-start-private-screen.txt',
         output.get(created[0]!) ?? '',
@@ -338,8 +469,25 @@ async function main(): Promise<void> {
       await stopAgent?.();
     } finally {
       socket?.close();
-      await stopFixtureHost(host);
-      await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 200 });
+      if (controlledFixture) {
+        const cleanupErrors: unknown[] = [];
+        try {
+          await stopFixtureHost(host);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          await controlledFixture.cleanup();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        if (cleanupErrors.length)
+          throw new AggregateError(cleanupErrors, 'Controlled probe cleanup was not confirmed');
+        await removeOwnedProbe(root);
+      } else {
+        await stopFixtureHost(host);
+        await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 200 });
+      }
     }
   }
 }
