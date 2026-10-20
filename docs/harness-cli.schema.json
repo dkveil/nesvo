@@ -3149,16 +3149,43 @@
           "$ref": "#/definitions/cursor"
         },
         "schedule": {
-          "type": "object",
-          "required": ["kind", "at"],
-          "properties": {
-            "kind": {
-              "const": "once"
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "at"],
+              "properties": { "kind": { "const": "once" }, "at": { "type": "string" } }
             },
-            "at": {
-              "type": "string"
+            {
+              "type": "object",
+              "required": ["kind", "expression", "timeZone"],
+              "properties": {
+                "kind": { "const": "cron" },
+                "expression": { "type": "string" },
+                "timeZone": { "type": "string" }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["kind", "rule", "start", "timeZone"],
+              "properties": {
+                "kind": { "const": "rrule" },
+                "rule": { "type": "string" },
+                "start": { "type": "string" },
+                "timeZone": { "type": "string" }
+              }
             }
-          }
+          ]
+        },
+        "calendarState": { "enum": ["ready", "exhausted", "blocked"] },
+        "calendarError": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+            }
+          ]
         },
         "spec": {
           "type": "object",
@@ -3197,6 +3224,9 @@
         },
         "dueAt": {
           "$ref": "#/definitions/cursor"
+        },
+        "coalescedFromAt": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/cursor" }]
         },
         "createdAt": {
           "$ref": "#/definitions/cursor"

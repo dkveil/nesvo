@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Save an enabled host-owned once job; does not start a model immediately.
+    /// Save an enabled host-owned job; does not start a model immediately.
     Create {
         #[arg(long)]
         key: String,
@@ -166,14 +166,35 @@ fn read_spec(path: &std::path::Path) -> Result<Spec> {
     serde_json::from_str(&crate::workflow::read_file(path, 16 * 1024)?).map_err(|_| {
         cli::failure(
             "invalid_argument",
-            "Job file must match the advertised once-job schema",
+            "Job file must match the advertised job schema",
         )
     })
 }
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 enum Schedule {
-    Once { at: String },
+    Once {
+        at: String,
+    },
+    Cron {
+        expression: String,
+        #[serde(default = "default_zone")]
+        time_zone: String,
+    },
+    Rrule {
+        rule: String,
+        start: String,
+        #[serde(default = "default_zone")]
+        time_zone: String,
+    },
+}
+fn default_zone() -> String {
+    "Europe/Warsaw".into()
 }
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

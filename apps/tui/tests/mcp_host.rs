@@ -33,6 +33,8 @@ fn published_tool_count() -> usize {
 }
 #[path = "support/budgets.rs"]
 mod budgets;
+#[path = "support/calendars.rs"]
+mod calendars;
 #[path = "support/host_ownership.rs"]
 mod host_ownership;
 #[path = "support/inbox.rs"]

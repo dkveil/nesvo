@@ -702,6 +702,18 @@ fn task_profile_requested(request: &Value, selected: impl Fn(&Value) -> bool) ->
         _ => false,
     }
 }
+fn job_calendar_supported(caps: &Value, request: &Value) -> bool {
+    if request["request"]["action"] != "jobs" {
+        return true;
+    }
+    let Some(kind) = request["request"]["request"]["spec"]["schedule"]["kind"].as_str() else {
+        return true;
+    };
+    kind == "once"
+        || caps["jobScheduleKinds"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|k| k == kind))
+}
 pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
         connection,
@@ -762,6 +774,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         Some("drain" | "resume") => Some("runDrain"),
         _ => None,
     };
+    if !job_calendar_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host does not support this job calendar; update nesvo-host",
+        ));
+    }
     if model_profile_requested(request) && caps["sessionModelProfiles"] != true {
         return Err(cli::failure(
             "unsupported",
@@ -797,6 +815,28 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recurrence_requires_its_own_capability_and_preserves_legacy_once_requests() {
+        let request = |schedule: Value| {
+            tool("jobs",json!({"request":{"action":"create","key":"calendar","spec":{"title":"Calendar","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"schedule":schedule}}})).unwrap()
+        };
+        let cron = request(json!({"kind":"cron","expression":"0 9 * * *"}));
+        assert!(!job_calendar_supported(&json!({"durableJobs":true}), &cron));
+        assert!(!job_calendar_supported(
+            &json!({"jobScheduleKinds":["once"]}),
+            &cron
+        ));
+        assert!(job_calendar_supported(
+            &json!({"jobScheduleKinds":["once","cron","rrule"]}),
+            &cron
+        ));
+        let once = request(json!({"kind":"once","at":"2026-12-01T00:00:00Z"}));
+        assert!(job_calendar_supported(&json!({"durableJobs":true}), &once));
+        assert!(job_calendar_supported(
+            &json!({}),
+            &tool("jobs", json!({"request":{"action":"list"}})).unwrap()
+        ));
+    }
     #[test]
     fn task_native_tool_profiles_preserve_empty_selection_and_require_their_own_capability() {
         let selected =

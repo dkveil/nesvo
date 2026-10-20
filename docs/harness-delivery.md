@@ -46,9 +46,9 @@ not evidence that the expanded acceptance criteria pass.
 | F18 | Attempt-bound worker result                     | Missing                                                       | Partial: native Claude attempt results/validation verified; source checks and provider/UI matrix pending                                    |
 | F19 | Questions and decision gates                    | Missing                                                       | Partial: native Claude owner decision/recovery verified; timeout/cancel core tested; permission UI pending                                  |
 | F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Partial: retained/live/provider/run budgets and native control verified; scheduled dispatch/queue UI pending                                |
-| F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Partial: durable once definitions/occurrences and CLI/MCP executor dispatch; recurrence, UI and legacy migration pending                    |
-| F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Partial: explicit-offset RFC3339/UTC instants; IANA default, cron/RRULE and DST calendar rules pending                                      |
-| F23 | Missed-run policy and grace window              | Missing                                                       | Partial: bounded once catch-up/skip, startup discovery gate and restart tested; recurring backlog pending                                   |
+| F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Partial: durable once/cron/RRULE definitions, occurrences and CLI/MCP executor dispatch; UI and legacy migration pending                    |
+| F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Partial: IANA calendars (Warsaw default), gap skip/first fold, UTC COUNT/UNTIL and bounded helper; general dense RRULE seek and UI pending  |
+| F23 | Missed-run policy and grace window              | Missing                                                       | Partial: skip/catch-up with grace and latest-slot recurring coalescing; original-model and interactive job UI acceptance pending            |
 | F24 | Safe fresh/reuse session dispatch               | Partial: fresh launch with prompt                             | Partial: guarded fresh task workers and immutable profiles; safe reuse pending                                                              |
 | F25 | Bounded precheck                                | Missing                                                       | Pending                                                                                                                                     |
 | F26 | Delta-only coordinator wakeups                  | Missing                                                       | Partial: opt-in durable coalescing/native receipt and human/budget fences; original-model/checkpoint/UI gates pending                       |
@@ -1948,3 +1948,46 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   count failure is preserved in local verification logs, not hidden as a pass.
 - No original model was invoked by these new tests. This local acceptance does
   not finish the remaining scheduled-job, provider, UI or full-goal gates.
+
+### F21/F22/F23 host recurring calendars
+
+- Added cron and Gregorian RRULE schedules to persisted jobs and the shared
+  owner CLI/MCP API, with an explicit stored IANA zone (Europe/Warsaw default).
+  Generated gaps are omitted before COUNT; a fold uses only its first UTC
+  instant. UNTIL is inclusive UTC. Next due and deduplication use persisted UTC
+  instants, without an open client or OS timezone dependence.
+- Calendar work uses a private pure mode of the same executable, entered before
+  host/provider/pairing/storage startup. Two bounded slots, 750 ms, limited pipes
+  and candidate/period limits prevent a difficult rule from blocking SQLite or
+  the server. Failed children are killed/reaped. Quiet ticks start no helpers.
+  Unsupported/overlong searches fail explicitly, never as false rule exhaustion.
+- Timer application checks revision/enabled/original cursor atomically. Sleep
+  coalesces to the latest slot, exposing coalescedFromAt for audit. Snapshot specs,
+  overlap, misfire/grace, immutable key replay and native recovery remain guarded.
+  A durable blocked calendar requires an explicit repair; temporary slot pressure
+  leaves pending intent for the next ordinary tick. Completion of a calendar is
+  separate from success of its last attempt.
+- Local DST/count/month-day/ordinal tests and differential interval-seek tests
+  cover Warsaw spring/fall transitions and expired UNTIL windows. SQLite tests
+  cover latest-slot coalescing, stale edit/disable results, durable failure,
+  original-key replay after helper failure and finite exhaustion without extras.
+  New CLI/MCP capability gating preserves once-only host compatibility.
+- A real helper/SDK/CLI test dispatched a finite recurrence with owner clients
+  closed, retained its explicit worker report, replayed the original acceptance
+  after calendar exhaustion, and reopened without creating a replacement native
+  process. Expensive and invalid calendars were refused before model effects.
+  Initial native execution passed behavior but exposed the stale once-only JSON
+  schema; that contract was extended and the same actual envelopes then passed.
+- The source-reviewed pinned chrono-tz, croner and ical-rs dependencies and precise
+  input/DST/work bounds are documented in [calendar contract](harness-job-calendars.md).
+  General old dense RRULE seeking, recurrence UI, legacy schedule migration and
+  remaining stage-four gates are still open; this does not finish F01–F44.
+
+Local native Windows acceptance for the calendar slice: fmt, warnings-denied
+workspace Clippy, 357 unit tests (137 TUI, 217 host, 3 wire; three ordinary host
+helpers ignored), all 31 serial official native MCP SDK scenarios, all 30 Node
+host/sync/CLI cases and real JSON schema envelopes passed. No original model was
+invoked by these calendar tests. Previous once-job feature 43f771d passed all five
+CI jobs on its first attempt (39416507971). Cross-platform acceptance for this
+calendar feature is recorded after publication; native-device and job UI coverage
+are not claimed by these controlled host tests.

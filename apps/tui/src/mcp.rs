@@ -72,7 +72,13 @@ fn task_profile_schema(include_shell: bool) -> Value {
     schema
 }
 fn job_spec_schema() -> Value {
-    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":{"type":"object","additionalProperties":false,"required":["kind","at"],"properties":{"kind":{"const":"once"},"at":{"type":"string","maxLength":64,"description":"Future RFC3339 instant with an explicit UTC offset, at most 366 days ahead"}}},"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000}}})
+    let zone = json!({"type":"string","maxLength":64,"default":"Europe/Warsaw","description":"IANA time zone. Gaps are skipped; folds use the first instant only."});
+    let schedule = json!({"oneOf":[
+        object(json!({"kind":{"const":"once"},"at":{"type":"string","maxLength":64,"description":"Future RFC3339 instant with an explicit UTC offset, at most 366 days ahead"}}), &["kind","at"]),
+        object(json!({"kind":{"const":"cron"},"expression":{"type":"string","minLength":1,"maxLength":256,"description":"Five fields: minute hour day month weekday"},"timeZone":zone}), &["kind","expression"]),
+        object(json!({"kind":{"const":"rrule"},"rule":{"type":"string","minLength":1,"maxLength":1024,"description":"Uppercase Gregorian RFC5545 RRULE; MINUTELY or coarser, COUNT<=10000, UTC UNTIL. Bounded search can explicitly refuse complex/old dense rules."},"start":{"type":"string","minLength":19,"maxLength":19,"description":"Existing local DTSTART as YYYY-MM-DDTHH:MM:SS"},"timeZone":zone}), &["kind","rule","start"])
+    ]});
+    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000}}})
 }
 fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
     let mut schema = serde_json::Map::new();
@@ -92,7 +98,7 @@ fn catalog() -> Vec<Tool> {
     let definitions = [
         (
             "nesvo_create_job",
-            "Owner-only durable once-job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
+            "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
             object(
                 json!({"key":key,"spec":job_spec_schema()}),
                 &["key", "spec"],
