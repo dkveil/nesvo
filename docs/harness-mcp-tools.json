@@ -42,6 +42,7 @@
   "nesvo_get_operation",
   "nesvo_get_precheck",
   "nesvo_get_precheck_mutation",
+  "nesvo_get_provider_quota",
   "nesvo_get_run",
   "nesvo_get_run_budget",
   "nesvo_get_run_checkpoint",

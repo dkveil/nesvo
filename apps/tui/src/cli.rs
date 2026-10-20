@@ -57,6 +57,15 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect owner quota observations; refresh queues one bounded provider read.
+    Quota {
+        #[arg(long, value_parser = ["codex", "claude", "gemini"])]
+        program: Option<String>,
+        #[arg(long, requires = "program")]
+        refresh: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect a session by its stable identifier.
     Session {
         #[command(subcommand)]
@@ -293,9 +302,10 @@ impl Command {
             Self::Run { command } => command.machine(),
             Self::Job { command } => command.machine(),
             Self::Budget { command } => command.machine(),
-            Self::Doctor { json } | Self::Events { json, .. } | Self::Operation { json, .. } => {
-                *json
-            }
+            Self::Doctor { json }
+            | Self::Quota { json, .. }
+            | Self::Events { json, .. }
+            | Self::Operation { json, .. } => *json,
             Self::Session { command } => match command {
                 SessionCommand::Create(options) => options.json,
                 SessionCommand::Send(options) => options.json,
@@ -435,6 +445,131 @@ pub(crate) fn print_data(machine: bool, mut value: Value) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&value)?);
     }
     Ok(())
+}
+
+pub(crate) fn provider_quota_query(program: Option<&str>, refresh: bool) -> Result<Value> {
+    if program.is_some_and(|program| !matches!(program, "codex" | "claude" | "gemini")) {
+        return Err(failure(
+            "invalid_argument",
+            "Quota program must be codex, claude or gemini",
+        ));
+    }
+    if refresh && program.is_none() {
+        return Err(failure(
+            "invalid_argument",
+            "A quota refresh requires an explicit program",
+        ));
+    }
+    let mut query = json!({"type":"getProviderQuota","refresh":refresh});
+    if let Some(program) = program {
+        query["program"] = program.into();
+    }
+    Ok(query)
+}
+
+pub(crate) fn check_provider_quota_capability(capabilities: &Value) -> Result<()> {
+    if capabilities["providerQuotaObservations"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support quota observations; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn provider_quota_capability(connection: &mut Connection) -> Result<()> {
+    let capabilities = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    check_provider_quota_capability(&capabilities)
+}
+
+fn provider_quota_text(value: &Value) -> String {
+    let mut lines = Vec::new();
+    if let Some(refresh) = value.get("refresh").filter(|refresh| refresh.is_object()) {
+        let program = refresh["program"].as_str().unwrap_or("provider");
+        let state = refresh["state"].as_str().unwrap_or("unknown");
+        let revision = refresh["revision"].as_u64().unwrap_or(0);
+        let detail = match state {
+            "queued" => "accepted; inspect a later revision".to_owned(),
+            "pending" => "already in progress; inspect a later revision".to_owned(),
+            "cooldown" => format!(
+                "retry after {} ms",
+                refresh["retryAfterMs"].as_u64().unwrap_or(0)
+            ),
+            _ => "inspect the observation".to_owned(),
+        };
+        lines.push(format!(
+            "Refresh: {program} {state} · revision {revision} · {detail}"
+        ));
+    }
+    if let Some(providers) = value["providers"].as_array() {
+        for provider in providers {
+            let program = provider["program"].as_str().unwrap_or("provider");
+            let freshness = provider["freshness"].as_str().unwrap_or("unknown");
+            let freshness = if freshness == "fresh" {
+                "fresh".to_owned()
+            } else if provider["observedAt"].is_null() {
+                format!("no observation ({freshness})")
+            } else {
+                format!("last-known ({freshness})")
+            };
+            let completeness = if provider["complete"] == true {
+                "complete"
+            } else {
+                "partial"
+            };
+            let status = provider["status"].as_str().unwrap_or("unavailable");
+            let reason = provider["reason"].as_str().unwrap_or("unavailable");
+            lines.push(format!(
+                "{program}: {freshness}, {completeness} · {status} · {reason}"
+            ));
+            lines.push(format!(
+                "  Source: {} · revision {} · age {}",
+                provider["source"].as_str().unwrap_or("unsupported"),
+                provider["revision"].as_u64().unwrap_or(0),
+                provider["ageMs"]
+                    .as_u64()
+                    .map_or_else(|| "unknown".to_owned(), |age| format!("{age} ms"))
+            ));
+            let permission = match provider["ordinaryUsageAllowed"].as_bool() {
+                Some(false) => "backend denied ordinary usage",
+                Some(true) => "reader permission observed; native account binding is unverified",
+                None => "backend permission unavailable",
+            };
+            lines.push(format!("  {permission}"));
+            lines.push(format!(
+                "  Reader eligibility: {} · {}",
+                if provider["ordinaryUsageEligible"] == true {
+                    "eligible"
+                } else {
+                    "held"
+                },
+                provider["eligibilityReason"]
+                    .as_str()
+                    .unwrap_or("unavailable")
+            ));
+            if let Some(windows) = provider["windows"].as_array() {
+                for window in windows {
+                    lines.push(format!(
+                        "  {} min: {}% used · reset {}",
+                        window["durationMins"].as_u64().unwrap_or(0),
+                        window["usedPercent"].as_u64().unwrap_or(0),
+                        window["resetsAt"]
+                            .as_i64()
+                            .map_or_else(|| "unavailable".to_owned(), |at| at.to_string())
+                    ));
+                }
+            }
+        }
+        if providers.is_empty() {
+            lines.push("No installed provider observations available.".into());
+        }
+    }
+    lines.join("\n")
 }
 async fn events(
     after: u64,
@@ -834,6 +969,21 @@ pub(crate) fn error_value(error: &anyhow::Error) -> Value {
 
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let (session, machine) = match command {
+        Command::Quota {
+            program,
+            refresh,
+            json,
+        } => {
+            let query = provider_quota_query(program.as_deref(), refresh)?;
+            provider_quota_capability(connection).await?;
+            let response = request(connection, query, "providerQuota").await?;
+            if json {
+                return print_data(true, response);
+            }
+            println!("{}", provider_quota_text(&response));
+            std::io::stdout().flush()?;
+            return Ok(());
+        }
         Command::Run { command } => return crate::workflow::run(command, connection).await,
         Command::Job { command } => return crate::job_commands::run(command, connection).await,
         Command::Budget { command } => {
@@ -1007,3 +1157,7 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "quota_cli_tests.rs"]
+mod quota_tests;

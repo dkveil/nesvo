@@ -5,6 +5,10 @@ transport and the same command/error/receipt path as the CLI. It never embeds a
 model client, starts another host, writes global provider configuration or adds
 an HTTP listener. Running `nesvo` normally retains the TUI.
 
+`nesvo_get_provider_quota` is an owner-only installed-provider query with optional
+bounded asynchronous refresh. Reader metadata is distinct from native-session
+account binding and job admission. See the [quota contract](harness-provider-quota.md).
+
 Ten owner-only `nesvo_*_job_trigger*` tools administer generic/GitHub trigger
 definitions and read immutable delivery receipts through the shared host API.
 They do not enable the separate listener or register an external account. See
@@ -98,7 +102,7 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The current [catalog](harness-mcp-tools.json) contains 91 tools. Task instruction intents use
+The current [catalog](harness-mcp-tools.json) contains 92 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 

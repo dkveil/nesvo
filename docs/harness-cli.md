@@ -4,6 +4,11 @@ Headless commands use the same paired, authenticated native host as the TUI.
 Running `nesvo` without a subcommand still opens the existing TUI. Help never
 loads pairing or contacts a host.
 
+Owner `nesvo quota [--program codex|claude|gemini] [--refresh] [--json]` inspects
+installed-provider observations through the shared host observer. Refresh is
+bounded and asynchronous; it requires an explicit provider and returns a target
+revision or cooldown. See [quota freshness and authority](harness-provider-quota.md).
+
 Owner `nesvo job trigger` manages signed generic/GitHub triggers with secret files,
 exact revisions and immutable delivery lookups. See the
 [external trigger contract and commands](harness-job-triggers.md). A trigger only

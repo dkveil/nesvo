@@ -116,6 +116,14 @@ fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value
     schema.insert("additionalProperties".into(), false.into());
     schema
 }
+fn provider_quota_schema() -> serde_json::Map<String, Value> {
+    let mut schema = object(
+        json!({"program":{"enum":["codex","claude","gemini"]},"refresh":{"type":"boolean","default":false}}),
+        &[],
+    );
+    schema.insert("allOf".into(), json!([{"if":{"required":["refresh"],"properties":{"refresh":{"const":true}}},"then":{"required":["program"]}}]));
+    schema
+}
 fn catalog() -> Vec<Tool> {
     let id = json!({"type":"string","minLength":1,"maxLength":128,"description":"Stable host-issued ID for the named field; run/task/attempt/session IDs are distinct, never names or UI focus"});
     let cursor = json!({"type":"integer","minimum":0,"maximum":9_007_199_254_740_991_u64});
@@ -124,6 +132,12 @@ fn catalog() -> Vec<Tool> {
     let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
+        (
+            "nesvo_get_provider_quota",
+            "Owner-only provider quota observations with source, freshness and completeness evidence. Optional refresh requires an installed explicit program and asynchronously queues or coalesces one bounded original-provider read; queued/pending/cooldown does not mean refreshed. Inspect a later revision. Does not request models, login, switch accounts or release queued jobs. Reader account evidence does not bind a native process account.",
+            provider_quota_schema(),
+            true,
+        ),
         (
             "nesvo_describe_precheck",
             "Owner-only normalization/digest of a proposed command. Does not approve or execute it. Review literal executable/cwd/argv/environment; file contents and called code remain mutable, not sandboxed.",
@@ -832,15 +846,26 @@ fn catalog() -> Vec<Tool> {
         ),
     ];
     definitions.into_iter().map(|(name,description,schema,read_only)| {
-        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only))
+        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only || name == "nesvo_get_provider_quota"))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
     }).chain(crate::job_trigger_tools::catalog()).collect()
 }
+
+#[cfg(test)]
+#[path = "quota_mcp_tests.rs"]
+mod quota_tests;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Session {
     session_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderQuota {
+    program: Option<String>,
+    #[serde(default)]
+    refresh: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -911,6 +936,22 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         return request.map(|request| (request, "workflow"));
     }
     Ok(match name {
+        "nesvo_get_provider_quota" => {
+            if arguments
+                .get("program")
+                .is_some_and(|value| !value.is_string())
+            {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Quota program must be a provider name",
+                ));
+            }
+            let query: ProviderQuota = parse(arguments)?;
+            (
+                cli::provider_quota_query(query.program.as_deref(), query.refresh)?,
+                "providerQuota",
+            )
+        }
         "nesvo_rebind_run_coordinator" => (
             crate::workflow::tool("coordinator", json!({"request":arguments}))?,
             "workflow",
@@ -1500,7 +1541,9 @@ impl HostTools {
             .await?;
             command["sessionId"] = cli::current_session(&caps)?.into();
         }
-        if kind == "workflow" {
+        if kind == "providerQuota" {
+            cli::provider_quota_capability(&mut connection).await?;
+        } else if kind == "workflow" {
             crate::workflow::capability(&mut connection, &command).await?;
         } else if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
             cli::control_capability(&mut connection).await?;
@@ -2134,7 +2177,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 91);
+        assert_eq!(catalog().len(), 92);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

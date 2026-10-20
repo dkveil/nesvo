@@ -911,6 +911,35 @@
             },
             {
               "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "providers", "refresh"],
+              "properties": {
+                "type": { "const": "providerQuota" },
+                "providers": {
+                  "type": "array",
+                  "maxItems": 3,
+                  "items": { "$ref": "#/definitions/providerQuotaObservation" }
+                },
+                "refresh": {
+                  "anyOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["program", "state", "revision", "retryAfterMs"],
+                      "properties": {
+                        "program": { "enum": ["codex", "claude", "gemini"] },
+                        "state": { "enum": ["queued", "pending", "cooldown"] },
+                        "revision": { "$ref": "#/definitions/cursor" },
+                        "retryAfterMs": { "$ref": "#/definitions/cursor" }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
               "required": ["type", "receipt"],
               "properties": {
                 "type": {
@@ -4346,6 +4375,66 @@
         "stderrTruncated": {
           "type": "boolean"
         }
+      }
+    },
+    "providerQuotaWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usedPercent", "durationMins", "resetsAt"],
+      "properties": {
+        "usedPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "durationMins": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "resetsAt": { "type": ["integer", "null"] }
+      }
+    },
+    "providerQuotaObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "program",
+        "source",
+        "revision",
+        "status",
+        "reason",
+        "attemptedAt",
+        "observedAt",
+        "sourceAt",
+        "expiresAt",
+        "ageMs",
+        "freshness",
+        "complete",
+        "ordinaryUsageAllowed",
+        "windows",
+        "contextId",
+        "accountFingerprint",
+        "ordinaryUsageEligible",
+        "eligibilityReason",
+        "scope"
+      ],
+      "properties": {
+        "program": { "enum": ["codex", "claude", "gemini"] },
+        "source": { "enum": ["codexAppServer", "claudeStatusCache", "unsupported"] },
+        "revision": { "$ref": "#/definitions/cursor" },
+        "status": { "enum": ["checking", "ready", "partial", "unavailable", "stale"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "attemptedAt": { "type": ["integer", "null"], "minimum": 0 },
+        "observedAt": { "type": ["integer", "null"], "minimum": 0 },
+        "sourceAt": { "type": ["integer", "null"], "minimum": 0 },
+        "expiresAt": { "type": ["integer", "null"], "minimum": 0 },
+        "ageMs": { "type": ["integer", "null"], "minimum": 0 },
+        "freshness": { "enum": ["fresh", "stale", "unavailable"] },
+        "complete": { "type": "boolean" },
+        "ordinaryUsageAllowed": { "type": ["boolean", "null"] },
+        "windows": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "$ref": "#/definitions/providerQuotaWindow" }
+        },
+        "contextId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "accountFingerprint": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "ordinaryUsageEligible": { "type": "boolean" },
+        "eligibilityReason": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "scope": { "const": "readerSnapshotOnly" }
       }
     },
     "jobTriggerSpec": {
