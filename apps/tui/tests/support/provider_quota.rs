@@ -2,9 +2,10 @@
 use super::*;
 
 const ACCOUNT: &str = "PRIVATE_QUOTA_ACCOUNT_DO_NOT_EXPOSE";
+const ACCOUNT_B: &str = "PRIVATE_QUOTA_ACCOUNT_B_DO_NOT_EXPOSE";
 const PRIVATE_ERROR: &str = "PRIVATE_QUOTA_PROVIDER_ERROR_DO_NOT_EXPOSE";
 
-fn snapshot() -> Value {
+pub(super) fn snapshot() -> Value {
     let now = chrono::Utc::now().timestamp();
     json!({
         "accountId": ACCOUNT,
@@ -17,15 +18,16 @@ fn snapshot() -> Value {
 }
 
 fn configure(f: &Fixture, mode: &str, result: Value, delay_ms: u64) -> Result<()> {
-    let path = f.directory.join("callers/.fixture-quota.json");
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&json!({"mode":mode,"result":result,"delayMs":delay_ms}))?,
-    )
-    .with_context(|| format!("Write owned quota RPC fixture: {}", path.display()))
+    configure_source(f, json!({"mode":mode,"result":result,"delayMs":delay_ms}))
 }
 
-fn row(envelope: &Value) -> Result<&Value> {
+pub(super) fn configure_source(f: &Fixture, configuration: Value) -> Result<()> {
+    let path = f.directory.join("callers/.fixture-quota.json");
+    std::fs::write(&path, serde_json::to_vec(&configuration)?)
+        .with_context(|| format!("Write owned quota RPC fixture: {}", path.display()))
+}
+
+pub(super) fn row(envelope: &Value) -> Result<&Value> {
     envelope["data"]["providers"]
         .as_array()
         .and_then(|providers| {
@@ -45,6 +47,67 @@ async fn query(owner: &RunningService<RoleClient, ()>, refresh: bool) -> Result<
         )
         .await?,
     )
+}
+
+pub(super) async fn context_query(
+    owner: &RunningService<RoleClient, ()>,
+    directory: &Path,
+    refresh: bool,
+) -> Result<Value> {
+    data(
+        call(
+            owner,
+            "nesvo_get_provider_quota",
+            json!({"program":"codex","directory":directory,"refresh":refresh}),
+        )
+        .await?,
+    )
+}
+
+pub(super) async fn context_revision(
+    owner: &RunningService<RoleClient, ()>,
+    directory: &Path,
+    expected: u64,
+) -> Result<Value> {
+    let mut last = Value::Null;
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let current = context_query(owner, directory, false).await?;
+            if row(&current)?["revision"]
+                .as_u64()
+                .is_some_and(|revision| revision >= expected)
+            {
+                return Ok::<_, anyhow::Error>(current);
+            }
+            last = current;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("Context quota revision {expected} not observed; last: {last}"))?
+}
+
+pub(super) async fn context_refresh(
+    owner: &RunningService<RoleClient, ()>,
+    directory: &Path,
+) -> Result<Value> {
+    timeout(Duration::from_secs(8), async {
+        loop {
+            let accepted = context_query(owner, directory, true).await?;
+            match accepted["data"]["refresh"]["state"].as_str() {
+                Some("queued" | "pending") => return Ok::<_, anyhow::Error>(accepted),
+                Some("cooldown") => {
+                    let delay = accepted["data"]["refresh"]["retryAfterMs"]
+                        .as_u64()
+                        .context("Context cooldown")?;
+                    tokio::time::sleep(Duration::from_millis(delay.clamp(1, 5000))).await;
+                }
+                _ => anyhow::bail!("Unknown context refresh: {accepted}"),
+            }
+        }
+    })
+    .await
+    .context("Bounded contextual owner refresh")?
 }
 
 async fn revision(owner: &RunningService<RoleClient, ()>, expected: u64) -> Result<Value> {
@@ -95,13 +158,57 @@ fn read_count(f: &Fixture) -> Result<usize> {
         .lines()
         .map(serde_json::from_str::<Value>)
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    ensure!(
-        records
-            .iter()
-            .all(|record| record["method"] == "account/rateLimits/read"),
-        "Only read-only quota RPCs may be recorded"
-    );
-    Ok(records.len())
+    let mut per_process = std::collections::BTreeMap::<u64, usize>::new();
+    let expected = [
+        ("initialize", json!(1)),
+        ("initialized", Value::Null),
+        ("account/read", json!(2)),
+        ("config/read", json!(3)),
+        ("account/rateLimits/read", json!(4)),
+    ];
+    let mut quota_reads = 0;
+    for record in records {
+        let pid = record["pid"]
+            .as_u64()
+            .context("Owned quota reader process")?;
+        let next = per_process.entry(pid).or_default();
+        let (method, id) = expected
+            .get(*next)
+            .context("Only one bounded read per original process")?;
+        ensure!(
+            record["method"] == *method && record["id"] == *id,
+            "Only the frozen read-only account/config/quota RPC sequence is allowed"
+        );
+        match *method {
+            "account/read" => assert_eq!(record["params"], json!({"refreshToken":false})),
+            "config/read" => {
+                assert_eq!(record["params"]["includeLayers"], false);
+                ensure!(
+                    record["params"]["cwd"]
+                        .as_str()
+                        .is_some_and(|cwd| Path::new(cwd).is_absolute()),
+                    "Config read must name the actual absolute directory"
+                );
+                assert_eq!(
+                    record["params"].as_object().map(|params| params.len()),
+                    Some(2)
+                );
+            }
+            "account/rateLimits/read" => {
+                assert_eq!(record["params"], json!({}));
+                quota_reads += 1;
+            }
+            _ => {}
+        }
+        ensure!(
+            record["home"]
+                .as_str()
+                .is_some_and(|home| Path::new(home).is_absolute()),
+            "Reader must receive explicit owned CODEX_HOME"
+        );
+        *next += 1;
+    }
+    Ok(quota_reads)
 }
 
 fn private(envelopes: &[Value], f: &Fixture) -> Result<()> {
@@ -115,11 +222,13 @@ fn private(envelopes: &[Value], f: &Fixture) -> Result<()> {
     }
     for secret in [
         ACCOUNT.to_owned(),
+        ACCOUNT_B.to_owned(),
         PRIVATE_ERROR.to_owned(),
+        "PRIVATE_QUOTA_EMAIL_DO_NOT_EXPOSE".into(),
         "PRIVATE_MALFORMED_QUOTA_VALUE".into(),
         f.directory.to_string_lossy().into_owned(),
         f.directory
-            .join("callers/.codex")
+            .join("codex-home")
             .to_string_lossy()
             .into_owned(),
     ] {
@@ -380,6 +489,220 @@ async fn native_quota_rejects_malformed_secondary_and_sparse_notifications_witho
     match outcome {
         Ok(result) => {
             result.context("Bounded native quota negative acceptance")??;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}
+
+fn configure_context_pair(
+    fixture: &Fixture,
+    directory_a: &Path,
+    quota_a: Value,
+    directory_b: &Path,
+    quota_b: Value,
+) -> Result<()> {
+    let mut contexts = serde_json::Map::new();
+    for (directory, result) in [(directory_a, quota_a), (directory_b, quota_b)] {
+        contexts.insert(
+            directory.to_str().context("Owned quota directory")?.into(),
+            json!({"mode":"snapshot","result":result}),
+        );
+    }
+    configure_source(fixture, json!({"mode":"error","contexts":contexts}))
+}
+
+async fn admit_quota_job(
+    owner: &RunningService<RoleClient, ()>,
+    key: &str,
+    directory: &Path,
+    binding: &Value,
+) -> Result<(Value, Value)> {
+    // Controlled Codex PTY reports through its session-bound CLI context.
+    // This does not assert original Codex MCP injection support.
+    let created=data(call(owner,"nesvo_create_job",json!({"key":format!("{key}:definition"),"spec":{
+        "title":"Controlled configured-account quota job","instruction":"report-task",
+        "profile":{"program":"codex","workspace":"shared","cwd":directory},
+        "schedule":{"kind":"once","at":(chrono::Utc::now()+chrono::Duration::hours(1)).to_rfc3339()},
+        "quotaPolicy":{"mode":"wait","contextId":binding["contextId"],"accountFingerprint":binding["accountFingerprint"]}
+    }})).await?)?;
+    let job = created["data"]["job"]["id"]
+        .as_str()
+        .context("Quota job ID")?;
+    let admitted = data(
+        call(
+            owner,
+            "nesvo_run_job_now",
+            json!({"key":key,"jobId":job,"expectedRevision":1}),
+        )
+        .await?,
+    )?;
+    Ok((created, admitted))
+}
+
+async fn quota_occurrence(
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    occurrence: &str,
+    state: &str,
+) -> Result<Value> {
+    let mut last = Value::Null;
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let view = data(
+                call(
+                    owner,
+                    "nesvo_get_job_occurrence",
+                    json!({"jobId":job,"occurrenceId":occurrence}),
+                )
+                .await?,
+            )?;
+            if view["data"]["occurrence"]["state"] == state {
+                return Ok::<_, anyhow::Error>(view);
+            }
+            last = view;
+            tokio::time::sleep(Duration::from_millis(60)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("Quota occurrence did not reach {state}; last: {last}"))?
+}
+
+fn unclaimed(occurrence: &Value) {
+    assert_eq!(occurrence["state"], "queued");
+    assert_eq!(occurrence["quota"]["state"], "waiting");
+    for field in [
+        "runId",
+        "jobAttemptId",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+    ] {
+        assert!(
+            occurrence[field].is_null(),
+            "Waiting quota must not allocate {field}"
+        );
+    }
+}
+
+async fn generations(
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    occurrence: &str,
+) -> Result<Value> {
+    data(
+        call(
+            owner,
+            "nesvo_get_job_attempts",
+            json!({"jobId":job,"occurrenceId":occurrence}),
+        )
+        .await?,
+    )
+}
+
+#[tokio::test]
+#[ignore = "native SDK contextual quota readers, held queue fairness, cancellation, release and immutable replay"]
+async fn native_quota_contexts_release_only_matching_jobs_and_cancellation_stays_terminal()
+-> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome=std::panic::AssertUnwindSafe(timeout(Duration::from_secs(65),async {
+        let owner=client(&fixture.pairing()).await?;
+        revision(&owner,1).await?;
+        let directory_a=fixture.directory.join("quota context a łódź");
+        let directory_b=fixture.directory.join("quota context b");
+        std::fs::create_dir(&directory_a)?;
+        std::fs::create_dir(&directory_b)?;
+        let mut denied=snapshot();
+        denied["ordinaryUsageAllowed"]=json!(false);
+        let mut allowed=snapshot();
+        allowed["accountId"]=json!(ACCOUNT_B);
+        configure_context_pair(&fixture,&directory_a,denied,&directory_b,allowed.clone())?;
+
+        let first=context_query(&owner,&directory_a,false).await?;
+        let source_a=context_revision(&owner,&directory_a,1).await?;
+        let source_b=context_revision(&owner,&directory_b,1).await?;
+        let a=row(&source_a)?;
+        let b=row(&source_b)?;
+        assert_eq!(a["ordinaryUsageAllowed"],false);
+        assert_eq!(a["ordinaryUsageEligible"],false);
+        assert_eq!(b["ordinaryUsageEligible"],true);
+        assert!(fingerprint(&a["contextId"]) && fingerprint(&a["accountFingerprint"]));
+        assert!(fingerprint(&b["contextId"]) && fingerprint(&b["accountFingerprint"]));
+        assert_ne!(a["readerId"],b["readerId"]);
+        assert_ne!(a["contextId"],b["contextId"]);
+        assert_ne!(a["accountFingerprint"],b["accountFingerprint"]);
+        let repeated=context_query(&owner,&directory_a,false).await?;
+        assert_eq!(row(&repeated)?["readerId"],a["readerId"],"Same canonical directory must coalesce its pinned reader");
+        let cli=budgets::owner_cli(&fixture,&["quota","--program","codex","--directory",directory_b.to_str().context("Context CLI directory")?,"--json"]).await?;
+        assert_eq!(row(&cli)?["readerId"],b["readerId"]);
+        assert_eq!(row(&cli)?["contextId"],b["contextId"]);
+        assert_eq!(read_count(&fixture)?,3,"One ambient and one original reader for each actual directory");
+        no_sessions(&owner).await?;
+
+        let (definition_a,admitted_a)=admit_quota_job(&owner,"quota-held-a",&directory_a,a).await?;
+        let (definition_cancel,admitted_cancel)=admit_quota_job(&owner,"quota-cancel-a",&directory_a,a).await?;
+        let (definition_b,admitted_b)=admit_quota_job(&owner,"quota-eligible-b",&directory_b,b).await?;
+        let job_a=definition_a["data"]["job"]["id"].as_str().context("Held job")?;
+        let occurrence_a=admitted_a["data"]["occurrence"]["id"].as_str().context("Held occurrence")?;
+        let job_cancel=definition_cancel["data"]["job"]["id"].as_str().context("Canceled job")?;
+        let occurrence_cancel=admitted_cancel["data"]["occurrence"]["id"].as_str().context("Canceled occurrence")?;
+        let job_b=definition_b["data"]["job"]["id"].as_str().context("Eligible job")?;
+        let occurrence_b=admitted_b["data"]["occurrence"]["id"].as_str().context("Eligible occurrence")?;
+
+        // A real eligible worker/result proves the scheduler ran while older
+        // denied-context work stayed out of its four dispatch slots.
+        let reported_b=quota_occurrence(&owner,job_b,occurrence_b,"needsValidation").await?;
+        let held_a=quota_occurrence(&owner,job_a,occurrence_a,"queued").await?;
+        let held_cancel=quota_occurrence(&owner,job_cancel,occurrence_cancel,"queued").await?;
+        unclaimed(&held_a["data"]["occurrence"]);
+        unclaimed(&held_cancel["data"]["occurrence"]);
+        let before_a=generations(&owner,job_a,occurrence_a).await?;
+        let before_cancel=generations(&owner,job_cancel,occurrence_cancel).await?;
+        assert!(before_a["data"]["jobAttempts"].as_array().is_some_and(Vec::is_empty));
+        assert!(before_cancel["data"]["jobAttempts"].as_array().is_some_and(Vec::is_empty));
+        let canceled=data(call(&owner,"nesvo_cancel_job_occurrence",json!({"key":"quota-cancel-before-release","jobId":job_cancel,"occurrenceId":occurrence_cancel})).await?)?;
+        let terminal=quota_occurrence(&owner,job_cancel,occurrence_cancel,"canceled").await?;
+
+        configure_context_pair(&fixture,&directory_a,snapshot(),&directory_b,allowed)?;
+        let refresh=context_refresh(&owner,&directory_a).await?;
+        assert_eq!(refresh["data"]["refresh"]["readerId"],a["readerId"]);
+        let target=refresh["data"]["refresh"]["revision"].as_u64().context("Matching-context refresh revision")?;
+        let recovered=context_revision(&owner,&directory_a,target).await?;
+        assert_eq!(row(&recovered)?["contextId"],a["contextId"]);
+        assert_eq!(row(&recovered)?["accountFingerprint"],a["accountFingerprint"]);
+        assert_eq!(row(&recovered)?["ordinaryUsageEligible"],true);
+        let reported_a=quota_occurrence(&owner,job_a,occurrence_a,"needsValidation").await?;
+        let replay=data(call(&owner,"nesvo_run_job_now",json!({"key":"quota-held-a","jobId":job_a,"expectedRevision":1})).await?)?;
+        assert_eq!(replay["data"],admitted_a["data"],"Lost-response replay preserves original queued acceptance after real launch");
+        let cancel_replay=data(call(&owner,"nesvo_cancel_job_occurrence",json!({"key":"quota-cancel-before-release","jobId":job_cancel,"occurrenceId":occurrence_cancel})).await?)?;
+        assert_eq!(cancel_replay["data"],canceled["data"]);
+        let after_cancel=quota_occurrence(&owner,job_cancel,occurrence_cancel,"canceled").await?;
+        for field in ["runId","jobAttemptId","attemptId","sessionId","launchReceiptId"] {assert!(after_cancel["data"]["occurrence"][field].is_null());}
+        let after_a=generations(&owner,job_a,occurrence_a).await?;
+        let after_b=generations(&owner,job_b,occurrence_b).await?;
+        let canceled_generations=generations(&owner,job_cancel,occurrence_cancel).await?;
+        assert_eq!(after_a["data"]["jobAttempts"].as_array().context("One recovered generation")?.len(),1);
+        assert_eq!(after_b["data"]["jobAttempts"].as_array().context("One independent generation")?.len(),1);
+        assert!(canceled_generations["data"]["jobAttempts"].as_array().is_some_and(Vec::is_empty));
+        let sessions=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;
+        assert_eq!(sessions["data"]["sessions"].as_array().context("Exactly two native quota workers")?.len(),2);
+        assert_eq!(read_count(&fixture)?,4,"Refresh reads only the selected actual context");
+
+        let quota_envelopes=vec![first,source_a,source_b,repeated,cli,refresh,recovered];
+        private(&quota_envelopes,&fixture)?;
+        let mut envelopes=quota_envelopes;
+        envelopes.extend([definition_a,admitted_a,definition_cancel,admitted_cancel,definition_b,admitted_b,reported_b,held_a,held_cancel,before_a,before_cancel,canceled,terminal,reported_a,replay,cancel_replay,after_cancel,after_a,after_b,canceled_generations,sessions]);
+        run_checkpoints::schema(envelopes).await?;
+        owner.cancel().await?;
+        Ok::<_,anyhow::Error>(())
+    })).catch_unwind().await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result.context("Bounded contextual quota/job acceptance")??;
             cleanup
         }
         Err(panic) => {

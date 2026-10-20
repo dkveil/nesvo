@@ -68,6 +68,8 @@ mod native_tool_permissions;
 mod prechecks;
 #[path = "support/provider_quota.rs"]
 mod provider_quota;
+#[path = "support/quota_native_continuation.rs"]
+mod quota_native_continuation;
 #[path = "support/recovery_hooks.rs"]
 mod recovery_hooks;
 #[path = "support/recovery_profile.rs"]
@@ -137,6 +139,9 @@ impl Fixture {
     async fn spawn_host(directory: &Path, mut command: Command) -> Result<Child> {
         command
             .env("CODEX_HOME", directory.join("codex-home"))
+            .env_remove("OPENAI_BASE_URL")
+            .env_remove("OPENAI_API_KEY")
+            .env_remove("CODEX_API_KEY")
             .env("CLAUDE_CONFIG_DIR", directory.join("claude-config"))
             .args(["--port", "0", "--exit-on-stdin-close", "--pairing-dir"])
             .arg(directory)

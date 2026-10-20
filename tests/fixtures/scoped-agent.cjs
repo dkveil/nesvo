@@ -14,7 +14,7 @@ if (process.argv.includes('--version')) {
   process.exit(0);
 }
 if (codex && process.argv.includes('app-server')) {
-  // Private JSON-lines quota endpoint. It supports no auth, turn or model RPC.
+  // Owned JSON-lines account/config/quota fixture. No login, turn or model RPC.
   const directory = process.env.NESVO_TEST_CALLERS;
   if (!directory || !path.isAbsolute(directory)) process.exit(2);
   const source = path.join(directory, '.fixture-quota.json');
@@ -23,7 +23,24 @@ if (codex && process.argv.includes('app-server')) {
   const lifetime = setTimeout(() => process.exit(0), 12000);
   let initialized = false;
   let notified = false;
+  let accountRead = false;
+  let configRead = false;
   let requested = false;
+  const normalizedPath = value => {
+    const absolute = path.resolve(value);
+    return process.platform === 'win32' ? path.toNamespacedPath(absolute).toLowerCase() : absolute;
+  };
+  const samePath = (first, second) => normalizedPath(first) === normalizedPath(second);
+  let configuration;
+  try {
+    if (fs.statSync(source).size > 65536) throw new Error('Oversized owned fixture');
+    const root = JSON.parse(fs.readFileSync(source, 'utf8'));
+    configuration =
+      Object.entries(root.contexts ?? {}).find(([cwd]) => samePath(cwd, process.cwd()))?.[1] ??
+      root;
+  } catch {
+    configuration = null;
+  }
   const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
   const error = id =>
     send({
@@ -38,18 +55,96 @@ if (codex && process.argv.includes('app-server')) {
     } catch {
       return process.exit(2);
     }
-    if (request.method === 'initialize' && !initialized) {
+    const params = request.params;
+    const record = () =>
+      fs.appendFileSync(
+        records,
+        `${JSON.stringify({
+          pid: process.pid,
+          method: request.method,
+          id: request.id ?? null,
+          cwd: process.cwd(),
+          home: process.env.CODEX_HOME ?? null,
+          params,
+        })}\n`,
+      );
+    if (request.method === 'initialize' && request.id === 1 && !initialized) {
       initialized = true;
-      send({ id: request.id, result: { codexHome: path.join(directory, '.codex') } });
+      record();
+      const result = {
+        codexHome: configuration?.reportedHome ?? process.env.CODEX_HOME,
+        platformFamily: process.platform === 'win32' ? 'windows' : 'unix',
+        platformOs: process.platform,
+      };
+      if (configuration?.readerVersion !== null)
+        result.userAgent = configuration?.readerVersion ?? 'codex/0.156.0-owned-fixture';
+      send({ id: request.id, result });
       return;
     }
     if (request.method === 'initialized' && initialized && request.id === undefined) {
       notified = true;
+      record();
+      return;
+    }
+    if (
+      request.method === 'account/read' &&
+      request.id === 2 &&
+      notified &&
+      !accountRead &&
+      params &&
+      Object.keys(params).length === 1 &&
+      params.refreshToken === false
+    ) {
+      accountRead = true;
+      record();
+      if (!configuration || configuration.accountMode === 'error') error(request.id);
+      else if (configuration.accountMode !== 'hang')
+        send({
+          id: request.id,
+          result: configuration.accountResult ?? {
+            requiresOpenaiAuth: true,
+            account: {
+              type: 'chatgpt',
+              email: 'PRIVATE_QUOTA_EMAIL_DO_NOT_EXPOSE@example.invalid',
+              planType: 'plus',
+            },
+          },
+        });
+      return;
+    }
+    if (
+      request.method === 'config/read' &&
+      request.id === 3 &&
+      accountRead &&
+      !configRead &&
+      params &&
+      Object.keys(params).length === 2 &&
+      typeof params.cwd === 'string' &&
+      samePath(params.cwd, process.cwd()) &&
+      params.includeLayers === false
+    ) {
+      configRead = true;
+      record();
+      if (!configuration || configuration.configMode === 'error') error(request.id);
+      else if (configuration.configMode !== 'hang')
+        send({
+          id: request.id,
+          result: configuration.configResult ?? {
+            config: { model_provider: 'openai', forced_login_method: 'chatgpt' },
+            origins: {
+              model_provider: {
+                name: { type: 'user', file: path.join(process.env.CODEX_HOME, 'config.toml') },
+                version: configuration.configVersion ?? 'fixture-route-v1',
+              },
+            },
+          },
+        });
       return;
     }
     if (
       request.method !== 'account/rateLimits/read' ||
-      !notified ||
+      request.id !== 4 ||
+      !configRead ||
       requested ||
       request.params === null ||
       typeof request.params !== 'object' ||
@@ -59,12 +154,8 @@ if (codex && process.argv.includes('app-server')) {
       return;
     }
     requested = true;
-    fs.appendFileSync(records, `${JSON.stringify({ pid: process.pid, method: request.method })}\n`);
-    let configuration;
-    try {
-      if (fs.statSync(source).size > 16384) throw new Error('Oversized owned fixture');
-      configuration = JSON.parse(fs.readFileSync(source, 'utf8'));
-    } catch {
+    record();
+    if (!configuration) {
       error(request.id);
       return;
     }
