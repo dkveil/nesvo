@@ -215,28 +215,42 @@ pub fn guard_result(
         return Err(Error::new("decision_pending","Successful reporting requires all decisions answered; canceled/expired gates require a non-success result and deliberate retry").into());
     }
     if !success {
-        let mut statement = transaction.prepare(
-            "SELECT id,run_id FROM workflow_decisions WHERE attempt_id=?1 AND state='pending'",
+        close_pending(
+            transaction,
+            attempt,
+            now,
+            "Attempt reported a non-success outcome",
         )?;
-        let rows = statement
-            .query_map([attempt], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(statement);
-        for (id, run) in rows {
-            let mut d = load(transaction, &run, &id)?;
-            d["state"] = if d["expiresAt"].as_u64().is_some_and(|at| at <= now) {
-                "expired"
-            } else {
-                "canceled"
-            }
-            .into();
-            d["revision"] = (d["revision"].as_u64().unwrap_or(1) + 1).into();
-            d["resolvedAt"] = now.into();
-            d["reason"] = "Attempt reported a non-success outcome".into();
-            save(transaction, &d)?;
+    }
+    Ok(())
+}
+pub(crate) fn close_pending(
+    transaction: &Transaction<'_>,
+    attempt: &str,
+    now: u64,
+    reason: &str,
+) -> Result<()> {
+    let mut statement = transaction.prepare(
+        "SELECT id,run_id FROM workflow_decisions WHERE attempt_id=?1 AND state='pending'",
+    )?;
+    let rows = statement
+        .query_map([attempt], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    for (id, run) in rows {
+        let mut d = load(transaction, &run, &id)?;
+        d["state"] = if d["expiresAt"].as_u64().is_some_and(|at| at <= now) {
+            "expired"
+        } else {
+            "canceled"
         }
+        .into();
+        d["revision"] = (d["revision"].as_u64().unwrap_or(1) + 1).into();
+        d["resolvedAt"] = now.into();
+        d["reason"] = reason.into();
+        save(transaction, &d)?;
     }
     Ok(())
 }
@@ -353,7 +367,9 @@ pub fn execute(
             ..
         } => {
             let own = workflow_attempts::context(&transaction, &actor, Some(attempt_id))?;
-            if own["run"]["state"] != "active" || own["attempt"]["state"] != "assigned" {
+            if !matches!(own["run"]["state"].as_str(), Some("active" | "draining"))
+                || own["attempt"]["state"] != "assigned"
+            {
                 return Err(Error::new(
                     "attempt_state_conflict",
                     "Only a current assigned worker can ask a decision",
@@ -432,7 +448,9 @@ pub fn execute(
             {
                 return Err(Error::new("forbidden","Only the addressed coordinator or explicit owner can answer; workers may withdraw their own question").into());
             }
-            if run["state"] != "active" || own["state"] != "assigned" {
+            if !matches!(run["state"].as_str(), Some("active" | "draining"))
+                || own["state"] != "assigned"
+            {
                 return Err(Error::new(
                     "attempt_state_conflict",
                     "Decision requires the current assigned attempt",

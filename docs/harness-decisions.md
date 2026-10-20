@@ -7,6 +7,10 @@ responder. A task's successful report requires all its decisions answered.
 Questions, native provider permission dialogs and task validation are separate
 contracts; answering one never grants blanket permission for other operations.
 
+Assigned workers may ask and receive answers while a run is `draining`, so an
+existing assignment can finish without reopening new admissions. The same
+audience, revision and success gates apply. Drain never answers a question.
+
 ## CLI and MCP
 
 Inside the authenticated worker:

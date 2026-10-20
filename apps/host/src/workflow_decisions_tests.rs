@@ -40,6 +40,35 @@ fn ask(store: &mut Store, attempt: &str, audience: &str, key: &str, now: u64) ->
     call(store,Scope::Worker("worker-1".into()),json!({"action":"ask","key":key,"attemptId":attempt,"audience":audience,"question":"Private question łódź\nnever execute $(text)","timeoutMs":1000}),now).unwrap()
 }
 #[test]
+fn draining_workers_can_ask_and_receive_answers_so_current_work_can_finish() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let (run, attempt) = setup(&mut store);
+    execute(
+        &mut store,
+        None,
+        json!({"action":"drain","key":"human-drain","runId":run,"expectedRevision":4}),
+    )
+    .unwrap();
+    let question = ask(
+        &mut store,
+        &attempt,
+        "owner",
+        "draining-question",
+        crate::status::now_millis(),
+    );
+    let answered=owner(&mut store,json!({"action":"answer","key":"draining-answer","runId":run,"decisionId":question["decision"]["id"],"expectedRevision":1,"answer":"Finish the existing assignment; no new tasks"}),crate::status::now_millis()).unwrap();
+    assert_eq!(answered["decision"]["state"], "answered");
+    assert_eq!(answered["run"]["state"], "draining");
+    let reported = worker(
+        &mut store,
+        "worker-1",
+        json!({"action":"report","key":"draining-result","attemptId":attempt,"result":report()}),
+    )
+    .unwrap();
+    assert_eq!(reported["attempt"]["state"], "reported");
+    assert_eq!(reported["run"]["state"], "draining");
+}
+#[test]
 fn only_addressed_authority_answers_exact_attempt_and_ack_cannot_release_gate() {
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let (run, attempt) = setup(&mut store);
