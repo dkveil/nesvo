@@ -1721,6 +1721,9 @@
         },
         "launchProfile": {
           "$ref": "#/definitions/launchProfile"
+        },
+        "harness": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/harnessConfiguration" }]
         }
       }
     },
@@ -2841,6 +2844,54 @@
           }
         }
       ]
+    },
+    "harnessConfiguration": {
+      "type": "object",
+      "properties": {
+        "nativePermissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "allow",
+            "scope",
+            "inheritedByChildren",
+            "source",
+            "providerRulesStillApply",
+            "restrictsOtherTools"
+          ],
+          "properties": {
+            "allow": { "$ref": "#/definitions/nativeToolNames" },
+            "scope": { "const": "process" },
+            "inheritedByChildren": { "const": false },
+            "source": { "enum": ["none", "ownerLaunch", "ownerChildPolicy"] },
+            "originSessionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+            "providerRulesStillApply": { "const": true },
+            "restrictsOtherTools": { "const": false }
+          }
+        },
+        "childToolPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allow", "scope", "recursive", "source"],
+          "properties": {
+            "allow": { "$ref": "#/definitions/nativeToolNames" },
+            "scope": { "const": "authenticatedClaudeChildren" },
+            "recursive": { "const": false },
+            "source": { "enum": ["none", "ownerLaunch"] }
+          }
+        }
+      }
+    },
+    "nativeToolNames": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^nesvo_[a-z0-9_]+$"
+      }
     },
     "launchProfile": {
       "type": "object",

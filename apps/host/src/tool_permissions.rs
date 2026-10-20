@@ -3,6 +3,43 @@ use crate::api_error::Error;
 use anyhow::Result;
 use std::collections::HashSet;
 
+/// Derived only by the native authority adapter, never deserialized from a caller.
+pub struct Grant {
+    tools: Vec<String>,
+    coordinator: Option<String>,
+}
+impl Grant {
+    pub fn owner(tools: &[String]) -> Self {
+        Self {
+            tools: tools.to_vec(),
+            coordinator: None,
+        }
+    }
+    pub fn child(tools: &[String], coordinator: String) -> Self {
+        Self {
+            tools: tools.to_vec(),
+            coordinator: Some(coordinator),
+        }
+    }
+    pub fn tools(&self) -> &[String] {
+        &self.tools
+    }
+    pub fn source(&self) -> &'static str {
+        if self.tools.is_empty() {
+            "none"
+        } else if self.coordinator.is_some() {
+            "ownerChildPolicy"
+        } else {
+            "ownerLaunch"
+        }
+    }
+    pub fn coordinator(&self) -> Option<&str> {
+        self.coordinator
+            .as_deref()
+            .filter(|_| !self.tools.is_empty())
+    }
+}
+
 pub fn validate(tools: &[String]) -> Result<()> {
     if tools.is_empty() {
         return Ok(());
@@ -37,6 +74,20 @@ pub fn rules(tools: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_child_grant_origin_is_separate_from_owner_and_empty_grants_reveal_no_false_source() {
+        let tools = vec!["nesvo_get_current_task".into()];
+        let owner = Grant::owner(&tools);
+        let child = Grant::child(&tools, "trusted-coordinator".into());
+        assert_eq!(owner.source(), "ownerLaunch");
+        assert_eq!(owner.coordinator(), None);
+        assert_eq!(child.source(), "ownerChildPolicy");
+        assert_eq!(child.coordinator(), Some("trusted-coordinator"));
+        assert_eq!(child.tools(), owner.tools());
+        let empty = Grant::child(&[], "trusted-coordinator".into());
+        assert_eq!(empty.source(), "none");
+        assert_eq!(empty.coordinator(), None);
+    }
     #[test]
     fn only_bounded_unique_exact_published_tools_can_add_native_permission() {
         validate(&[]).unwrap();

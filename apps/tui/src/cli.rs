@@ -61,7 +61,7 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum SessionCommand {
     /// Launch once for a stable caller-supplied idempotency key; never acquires control.
-    Create(CreateOptions),
+    Create(Box<CreateOptions>),
     /// Submit one literal prompt with a durable key; never takes human control.
     Send(SendOptions),
     /// Write one Ctrl+C without taking control. Does not claim the agent stopped.
@@ -149,6 +149,9 @@ pub struct CreateOptions {
     /// Owner-only native approval addition for one exact Nesvo MCP tool; repeat as needed.
     #[arg(long = "allow-nesvo-tool", requires = "harness")]
     allowed_nesvo_tools: Vec<String>,
+    /// Owner-only policy for authenticated Claude children; requires coordinator role.
+    #[arg(long = "allow-child-nesvo-tool")]
+    child_allowed_nesvo_tools: Vec<String>,
     /// Launch-local model alias/ID; does not modify provider defaults.
     #[arg(long)]
     model: Option<String>,
@@ -679,6 +682,15 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
         }
         spec["allowedNesvoTools"] = options.allowed_nesvo_tools.into();
     }
+    if !options.child_allowed_nesvo_tools.is_empty() {
+        if caps["childToolPolicy"] != true {
+            return Err(failure(
+                "unsupported",
+                "Host cannot enforce an owner child-tool policy; update nesvo-host",
+            ));
+        }
+        spec["childAllowedNesvoTools"] = options.child_allowed_nesvo_tools.into();
+    }
     if let Some(parent) = options.parent {
         valid_id(&parent)?;
         if caps["sessionLineage"] != true {
@@ -845,7 +857,7 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         }
         Command::Session {
             command: SessionCommand::Create(options),
-        } => return create(options, connection).await,
+        } => return create(*options, connection).await,
         Command::Session {
             command: SessionCommand::Send(options),
         } => return send(options, connection).await,

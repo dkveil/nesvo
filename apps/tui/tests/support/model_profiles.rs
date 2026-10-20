@@ -64,9 +64,13 @@ async fn model_profiles_are_literal_versioned_and_never_inherited_or_claimed_as_
         assert_eq!(changed.structured_content.context("changed model profile")?["error"]["code"],"idempotency_conflict");
         let snapshot=data(call(&owner,"nesvo_get_session",json!({"sessionId":id})).await?)?;
         let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
+        let saved_id=id.to_owned();
         run_checkpoints::schema(vec![created,replay,launched,snapshot,doctor]).await?;
         coordinator.cancel().await?;owner.cancel().await?;
         fixture.restart(false).await?;
+        let saved=recoveries(&fixture.pairing()).await?;
+        let saved=saved.as_array().context("raw recovery profile records")?.iter().find(|record|record["id"]==saved_id).context("saved model selection")?;
+        assert_eq!(saved["spec"]["model"],model);assert_eq!(saved["spec"]["effort"],"low");
         // Profile persistence never automatically restarts historical processes.
         let owner=client(&fixture.pairing()).await?;
         let listed=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;

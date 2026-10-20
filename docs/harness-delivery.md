@@ -1718,3 +1718,37 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   Clippy, 329 unit tests, all 25 serial native SDK scenarios (including the new
   human-ACK helper), 30 host/sync/CLI cases, JSON envelope validation and formatting.
   Cross-platform CI for this head is separate from these local results.
+
+### Owner-declared direct-child native tool policy
+
+- F12/F19/F37/F38: `childToolPolicy`, CLI `--allow-child-nesvo-tool` and owner
+  `spec.childAllowedNesvoTools` declare a separate immutable coordinator policy.
+  Up to 32 unique exact catalog names. Default behavior and parent own-list
+  noninheritance remain unchanged; ordinary children cannot set either field,
+  including empty lists. No new tool, dependency or instruction version.
+- The native authority adapter derives a grant only for authenticated supported
+  Claude harness children and host task dispatch under that coordinator. Parent
+  metadata alone, another coordinator, harness opt-out and other programs cannot
+  select it. Child policy is not recursive and grants no worker host role. The
+  coordinator's own native additions stay separate. Provider deny/ask rules and
+  human/workspace/attempt guards continue to apply.
+- Get/list/explain expose declared child policy, exact native allow/source and
+  originSessionId. Process recovery omits both addition fields; a new owner
+  launch must select policy deliberately. Task-profile subsets, general MCP/skill
+  profiles, broader permission UI/resume and the original-model orchestration
+  gate remain open. See [contract and examples](harness-child-tool-policy.md).
+- Official SDK/CLI coverage inspects actual inline settings, independent
+  coordinators, opt-out/shell behavior, parent-metadata refusal, task dispatch,
+  worker refusal despite native allow and raw authenticated recovery metadata.
+  Model/effort persistence is verified through that same unprojected native read.
+  The first recovery-probe wrapper failed CommonJS top-level await; it now uses
+  an explicit async entrypoint. Both targeted native scenarios pass; no model
+  calls or global configuration changes were used.
+- Published model-profile/helper head 2708c4f passed all five CI jobs
+  (39394840185), including Windows's previously failing human-control scenarios.
+  Earlier failed CI runs remain recorded rather than retroactively called green.
+- Final local Windows checks passed fmt, warnings-denied Clippy, production
+  build, 330 unit tests, all 26 serial native SDK scenarios and 30 host/sync/CLI
+  checks. Raw recovery/model-policy scenarios pass the expanded JSON contract.
+  Formatting and successor CI are checked separately; original-model use of this
+  broader child policy remains unapproved and unrun.

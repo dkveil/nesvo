@@ -302,6 +302,30 @@ async fn client(pairing: &Path) -> Result<RunningService<RoleClient, ()>> {
     command.creation_flags(0x08000000);
     Ok(().serve(TokioChildProcess::new(command)?).await?)
 }
+async fn recoveries(pairing: &Path) -> Result<Value> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut command = Command::new("node");
+    command
+        .current_dir(&root)
+        .args(["--import", "tsx"])
+        .arg(root.join("tests/fixtures/recovery-probe.ts"))
+        .arg(pairing)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let output = timeout(Duration::from_secs(10), command.output())
+        .await
+        .context("Owned native recovery query deadline")??;
+    ensure!(
+        output.status.success(),
+        "Owned recovery query failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
 async fn call(
     client: &RunningService<RoleClient, ()>,
     name: &'static str,

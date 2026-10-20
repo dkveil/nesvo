@@ -23,6 +23,8 @@ pub struct LaunchSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_nesvo_tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_allowed_nesvo_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,

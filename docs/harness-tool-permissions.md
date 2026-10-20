@@ -51,7 +51,9 @@ native permission mode, file permissions, login or MCP registration is changed.
   required. CLI repeats `--allow-nesvo-tool`; it requires `--harness`.
 - Only the owner can configure these additions. A coordinator/worker cannot set
   the field, even to an empty array. A coordinator's ordinary child can inherit
-  the harness but never these native permission additions. Worker host authority
+  the harness but never this own-process allow list. A separate explicit
+  [owner child policy](harness-child-tool-policy.md) can select additions for
+  authenticated supported children. Worker host authority
   still cannot spawn merely because its provider is allowed to call the tool.
 - Existing processes are unchanged. Saved process recovery records omit native
   additions: creating a replacement requires a deliberate new owner launch.
@@ -59,13 +61,14 @@ native permission mode, file permissions, login or MCP registration is changed.
 - Owner launch receipts include the exact requested list in idempotency input.
   Reusing the same key with changed rules conflicts; inspection cannot reapply
   rules to an old process. CLI/MCP check the capability before relying on it.
-- This first policy surface covers session creation. DAG task profiles cannot yet
-  delegate native permission additions to arbitrary child launches. General model,
-  effort, external MCP/skill profile editing and controlled resume remain separate
-  F37/F38 work, not implicitly enabled by this field.
+- This direct field covers owner session creation. Task profiles cannot choose
+  arbitrary native additions; task launches may derive the coordinator's separate
+  owner child policy. Native [model/effort selection](harness-model-profiles.md)
+  is available independently. External MCP/skill editing, per-task permission
+  subsets and controlled resume remain separate F37/F38 work.
 
 `session get`, `session explain` and snapshots show
-`harness.nativePermissions.{allow,scope,source,inheritedByChildren,
+`harness.nativePermissions.{allow,scope,source,originSessionId,inheritedByChildren,
 providerRulesStillApply,restrictsOtherTools}`. These describe Nesvo's configured
 additions only. `loaded:null` still does not claim provider/model consumption.
 `inheritedByChildren` describes Nesvo-managed child sessions; provider-internal

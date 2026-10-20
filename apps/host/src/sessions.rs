@@ -619,7 +619,7 @@ impl State {
         let Some(session) = self.actor_session(authority)? else {
             return Ok(());
         };
-        if spec.allowed_nesvo_tools.is_some() {
+        if spec.allowed_nesvo_tools.is_some() || spec.child_allowed_nesvo_tools.is_some() {
             return Err(crate::api_error::Error::new("forbidden", "Only owner launch may add native tool permissions; children do not inherit these additions").into());
         }
         if session.policy.role != crate::caller::Role::Coordinator
@@ -695,7 +695,17 @@ impl State {
             )
             .into());
         }
-        let id = self.launch_reserved(spec, events, reserved)?;
+        let grant = parent
+            .as_ref()
+            .filter(|_| check.program == Program::Claude && check.harness == Some(true))
+            .map(|parent| {
+                let tools = self.sessions[parent]
+                    .caller_context
+                    .as_ref()
+                    .map_or(&[][..], |context| context.child_tools());
+                crate::tool_permissions::Grant::child(tools, parent.clone())
+            });
+        let id = self.launch_reserved(&check, events, reserved, grant)?;
         if let Some(parent) = parent
             && let Some(session) = self.sessions.get_mut(&parent)
         {
@@ -833,6 +843,7 @@ impl State {
         event["runConstraints"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["sessionToolPermissions"] = true.into();
+        event["childToolPolicy"] = true.into();
         event["sessionModelProfiles"] = true.into();
         event["launchProfileSupport"] =
             crate::launch_profile::capabilities(&self.provider_versions);
@@ -1422,6 +1433,16 @@ impl State {
     pub fn validate_launch(&self, spec: &crate::jobs::LaunchSpec) -> Result<PathBuf> {
         ensure!(!self.shutting_down, "Host is shutting down.");
         valid_name(&spec.name)?;
+        if let Some(tools) = &spec.child_allowed_nesvo_tools {
+            if spec.role != crate::caller::Role::Coordinator {
+                return Err(crate::api_error::Error::new(
+                    "invalid_argument",
+                    "Child native tool policy requires an explicit owner-created coordinator role",
+                )
+                .into());
+            }
+            crate::tool_permissions::validate(tools)?;
+        }
         crate::launch_profile::validate(
             spec.program,
             &self.provider_versions,
@@ -1900,13 +1921,14 @@ impl State {
         spec: &crate::jobs::LaunchSpec,
         events: &mpsc::Sender<PtyEvent>,
     ) -> Result<String> {
-        self.launch_inner(spec, events, None)
+        self.launch_inner(spec, events, None, None)
     }
-    pub fn launch_reserved(
+    fn launch_reserved(
         &mut self,
         spec: &crate::jobs::LaunchSpec,
         events: &mpsc::Sender<PtyEvent>,
         id: &str,
+        grant: Option<crate::tool_permissions::Grant>,
     ) -> Result<String> {
         ensure!(
             id.len() == 32
@@ -1914,15 +1936,21 @@ impl State {
                 && !self.sessions.contains_key(id),
             "Reserved process identity is invalid or already running"
         );
-        self.launch_inner(spec, events, Some(id))
+        self.launch_inner(spec, events, Some(id), grant)
     }
     fn launch_inner(
         &mut self,
         spec: &crate::jobs::LaunchSpec,
         events: &mpsc::Sender<PtyEvent>,
         reserved: Option<&str>,
+        grant: Option<crate::tool_permissions::Grant>,
     ) -> Result<String> {
         let cwd = self.validate_launch(spec)?;
+        let grant = grant.unwrap_or_else(|| {
+            crate::tool_permissions::Grant::owner(
+                spec.allowed_nesvo_tools.as_deref().unwrap_or_default(),
+            )
+        });
         let mut command = self.launchers.command(spec.program, &cwd)?;
         let selection = crate::launch_profile::Selection {
             model: spec.model.clone(),
@@ -1956,7 +1984,11 @@ impl State {
                 role: spec.role,
                 harness: spec.harness == Some(true),
                 codex_hooks: self.codex_hooks_available(),
-                native_tools: spec.allowed_nesvo_tools.as_deref().unwrap_or_default(),
+                native_grant: &grant,
+                child_tools: spec
+                    .child_allowed_nesvo_tools
+                    .as_deref()
+                    .unwrap_or_default(),
             },
         )?;
         session.info.group_id = spec.group_id.clone();
@@ -2398,7 +2430,8 @@ impl State {
                         role: crate::caller::Role::Worker,
                         harness: false,
                         codex_hooks: self.codex_hooks_available(),
-                        native_tools: &[],
+                        native_grant: &crate::tool_permissions::Grant::owner(&[]),
+                        child_tools: &[],
                     },
                 )?;
                 session.info.group_id = group_id;
@@ -2665,7 +2698,8 @@ struct SpawnIdentity<'a> {
     role: crate::caller::Role,
     harness: bool,
     codex_hooks: bool,
-    native_tools: &'a [String],
+    native_grant: &'a crate::tool_permissions::Grant,
+    child_tools: &'a [String],
 }
 fn spawn_session(
     name: &str,
@@ -2685,9 +2719,10 @@ fn spawn_session(
         .map(|url| crate::caller::Context::new(url, &id, identity.role))
         .transpose()?;
     if let Some(context) = &mut caller_context {
+        context.set_child_policy(identity.child_tools)?;
         context.bind(&mut command);
         if identity.harness {
-            context.configure_claude(&mut command, identity.native_tools)?;
+            context.configure_claude(&mut command, identity.native_grant)?;
         }
     }
     let agent_context = if program == Program::Claude {

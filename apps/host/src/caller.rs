@@ -118,6 +118,9 @@ pub struct Context {
     client: Option<PathBuf>,
     pub recovery_status: serde_json::Value,
     native_tools: Vec<String>,
+    native_permission_source: &'static str,
+    native_permission_coordinator: Option<String>,
+    child_tools: Vec<String>,
 }
 impl Context {
     pub fn new(url: &str, session_id: &str, role: Role) -> Result<Self> {
@@ -131,6 +134,9 @@ impl Context {
             client: runtime_client(),
             recovery_status: serde_json::Value::Null,
             native_tools: Vec::new(),
+            native_permission_source: "none",
+            native_permission_coordinator: None,
+            child_tools: Vec::new(),
         };
         std::fs::create_dir(&context.directory)?;
         std::fs::create_dir(context.references())?;
@@ -186,10 +192,12 @@ impl Context {
     pub fn configure_claude(
         &mut self,
         command: &mut portable_pty::CommandBuilder,
-        tools: &[String],
+        grant: &crate::tool_permissions::Grant,
     ) -> Result<()> {
-        crate::tool_permissions::validate(tools)?;
-        self.native_tools = tools.to_vec();
+        crate::tool_permissions::validate(grant.tools())?;
+        self.native_tools = grant.tools().to_vec();
+        self.native_permission_source = grant.source();
+        self.native_permission_coordinator = grant.coordinator().map(str::to_owned);
         let client = self.client.as_ref().ok_or_else(||crate::api_error::Error::new("harness_client_unavailable","Harness needs a discoverable native nesvo executable beside the host or NESVO_CLIENT_BINARY"))?;
         let config = json!({"mcpServers":{"nesvo":{"type":"stdio","command":crate::process::display_path(client),"args":["mcp"],"env":{"NESVO_AGENT_CONTEXT":self.path()}}}});
         crate::private_write(&self.mcp(), &serde_json::to_vec(&config)?)?;
@@ -223,16 +231,19 @@ impl Context {
     pub fn permission_rules(&self) -> Vec<String> {
         crate::tool_permissions::rules(&self.native_tools)
     }
+    pub fn set_child_policy(&mut self, tools: &[String]) -> Result<()> {
+        crate::tool_permissions::validate(tools)?;
+        self.child_tools = tools.to_vec();
+        Ok(())
+    }
+    pub fn child_tools(&self) -> &[String] {
+        &self.child_tools
+    }
     fn mcp(&self) -> PathBuf {
         self.directory.join("mcp.json")
     }
     pub fn configuration(&self, enabled: bool) -> serde_json::Value {
-        let permission_source = if self.native_tools.is_empty() {
-            "none"
-        } else {
-            "ownerLaunch"
-        };
-        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":INSTRUCTION_VERSION,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"recovery":{"configured":enabled,"status":self.recovery_status},"nativePermissions":{"allow":self.native_tools,"scope":"process","inheritedByChildren":false,"source":permission_source,"providerRulesStillApply":true,"restrictsOtherTools":false},"globalConfigChanged":false})
+        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":INSTRUCTION_VERSION,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"recovery":{"configured":enabled,"status":self.recovery_status},"nativePermissions":{"allow":self.native_tools,"scope":"process","inheritedByChildren":false,"source":self.native_permission_source,"originSessionId":self.native_permission_coordinator,"providerRulesStillApply":true,"restrictsOtherTools":false},"childToolPolicy":{"allow":self.child_tools,"scope":"authenticatedClaudeChildren","recursive":false,"source":if self.child_tools.is_empty(){"none"}else{"ownerLaunch"}},"globalConfigChanged":false})
     }
 }
 impl Drop for Context {
@@ -491,7 +502,10 @@ mod tests {
         let mut command = portable_pty::CommandBuilder::new("fixture");
         command.args(["--resume", "--", "literal --mcp-config malicious"]);
         context
-            .configure_claude(&mut command, &["nesvo_create_session".into()])
+            .configure_claude(
+                &mut command,
+                &crate::tool_permissions::Grant::owner(&["nesvo_create_session".into()]),
+            )
             .unwrap();
         assert_eq!(
             context.permission_rules(),

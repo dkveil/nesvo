@@ -13,6 +13,11 @@ Nesvo tool permissions with `--allow-nesvo-tool TOOL_NAME` (repeat as needed).
 This requires `--harness` and `sessionToolPermissions`; children do not inherit
 the additions. See [scope, validation and effective configuration](harness-tool-permissions.md).
 
+An owner can separately set `--allow-child-nesvo-tool TOOL_NAME` for a coordinator.
+The host derives those additions only for its authenticated supported Claude
+harness children, including task launches; a worker role remains a worker.
+See [declaration, origin and lifetime](harness-child-tool-policy.md).
+
 ```powershell
 nesvo --pairing C:\private\pairing.json doctor --json
 nesvo --pairing C:\private\pairing.json session list --json

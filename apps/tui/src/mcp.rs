@@ -50,6 +50,7 @@ fn launch_schema() -> Value {
             "role":{"enum":["worker","coordinator"],"default":"worker","description":"Only owner access may grant coordinator at launch; a coordinator cannot create coordinators"},
             "harness":{"type":"boolean","description":"Launch-local Nesvo MCP/instructions on supported Claude; inherits coordinator setting when omitted"},
             "allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Owner-only exact native permission additions for this explicit harness process, not inherited by children or restored processes. Does not grant host authority or bypass provider deny/ask rules."},
+            "childAllowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Owner-only immutable coordinator policy for authenticated supported Claude harness children. Not copied from the coordinator's own native permissions. Never delegates host roles, allows recursive coordinators or applies merely from parent metadata. Other programs/opt-out children receive no additions."},
             "model":{"type":"string","minLength":1,"maxLength":256,"description":"Explicit launch-local native model alias/ID, not resolved account availability"},
             "effort":{"type":"string","minLength":1,"maxLength":32,"description":"Requires explicit model; provider-specific native reasoning level"},
             "cwd":{"type":"string"}, "groupId":{"type":["string","null"]},
@@ -1056,7 +1057,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                         "harness" | "worktree" | "autoTitle" | "muted" | "resumePicker" => {
                             value.is_boolean()
                         }
-                        "allowedNesvoTools" => valid_permission_additions(value),
+                        "allowedNesvoTools" | "childAllowedNesvoTools" => {
+                            valid_permission_additions(value)
+                        }
                         _ => false,
                     })
             });
@@ -1181,6 +1184,15 @@ impl HostTools {
             cli::prompt_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
+            if name == "nesvo_create_session"
+                && command["spec"].get("childAllowedNesvoTools").is_some()
+                && caps["childToolPolicy"] != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host cannot enforce an owner child-tool policy; update nesvo-host",
+                ));
+            }
             if name == "nesvo_create_session"
                 && (command["spec"].get("model").is_some()
                     || command["spec"].get("effort").is_some())
