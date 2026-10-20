@@ -19,6 +19,7 @@ mod job_definitions;
 mod job_precheck_adapter;
 mod job_precheck_records;
 mod job_prechecks;
+mod job_retries;
 mod job_runtime;
 mod jobs;
 mod launch_profile;

@@ -109,7 +109,14 @@ impl Runner {
             _ => return Err(anyhow!("Precheck admission was not confirmed")),
         }
         let mut native_requested = false;
-        let prefix = format!("job:{}:{}", claim.job_id, claim.id);
+        let prefix = if claim.ordinal == 1 {
+            format!("job:{}:{}", claim.job_id, claim.id)
+        } else {
+            format!(
+                "job:{}:{}:attempt:{}",
+                claim.job_id, claim.id, claim.ordinal
+            )
+        };
         let result=async {
             let run=self.workflow(&claim.dispatch,json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
             let run_id=run["run"]["id"].as_str().ok_or_else(||anyhow!("Job run identity was not confirmed"))?;

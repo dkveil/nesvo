@@ -41,6 +41,71 @@ fn tick(store: &mut Store, now: u64) -> Vec<Claim> {
     }
 }
 #[test]
+fn retry_policy_is_validated_by_host_without_changing_legacy_intent() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let policy =
+        json!({"on":"launchNoEffect","maxAttempts":3,"initialDelayMs":1000,"maxDelayMs":60000});
+    let mut selected = spec(NOW + 60_000);
+    selected["retry"] = policy.clone();
+    let created = request(
+        &mut store,
+        json!({"action":"create","key":"retry-policy","spec":selected}),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(created["job"]["spec"]["retry"], policy);
+    for (index, invalid) in [
+        json!({"maxAttempts":0}),
+        json!({"maxAttempts":9}),
+        json!({"initialDelayMs":999}),
+        json!({"initialDelayMs":3_600_001}),
+        json!({"maxDelayMs":999}),
+        json!({"maxDelayMs":86_400_001}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut selected = spec(NOW + 60_000);
+        let mut changed = policy.clone();
+        changed
+            .as_object_mut()
+            .unwrap()
+            .extend(invalid.as_object().unwrap().clone());
+        selected["retry"] = changed;
+        code(
+            request(
+                &mut store,
+                json!({"action":"create","key":format!("bad-retry-{index}"),"spec":selected}),
+                NOW,
+            ),
+            "invalid_argument",
+        );
+    }
+    let mut combined = spec(NOW + 60_000);
+    combined["retry"] = policy;
+    combined["precheckId"] = "a".repeat(32).into();
+    code(
+        request(
+            &mut store,
+            json!({"action":"create","key":"no-precheck-reuse","spec":combined}),
+            NOW,
+        ),
+        "invalid_argument",
+    );
+    let legacy = create(&mut store, "legacy-without-retry", json!({}));
+    assert!(legacy["spec"].get("retry").is_none());
+    let count: i64 = store
+        .0
+        .query_row("SELECT count(*) FROM harness_job_mutations", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        count, 2,
+        "Rejected policies never persist mutation acceptance"
+    );
+}
+#[test]
 fn pending_calendar_calculation_does_not_hide_a_due_once_job_behind_the_page_limit() {
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let mut due = NOW;

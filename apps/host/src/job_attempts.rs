@@ -1,4 +1,4 @@
-//! Claimed job generations retain metadata evidence; no native effects or retry.
+//! Claimed job generations retain metadata evidence and fence native admission.
 use crate::api_error::Error;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -59,7 +59,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     }
     Ok(())
 }
-fn capacity(connection: &Connection, additional: usize) -> Result<()> {
+pub(crate) fn capacity(connection: &Connection, additional: usize) -> Result<()> {
     let count: i64 =
         connection.query_row("SELECT count(*) FROM harness_job_attempts", [], |r| {
             r.get(0)
@@ -180,7 +180,7 @@ pub fn retire(tx: &Transaction<'_>, dispatch: &Dispatch) -> Result<()> {
 /// Ongoing native work needs current run assignment, not the already retired
 /// preparation token. Historical runs remain readable but cannot admit effects.
 pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
-    let retired: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.id=a.occurrence_id WHERE a.run_id=?1 AND (o.current_job_attempt_id IS NULL OR o.current_job_attempt_id<>a.id))",[run],|r|r.get(0))?;
+    let retired: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.id=a.occurrence_id WHERE a.run_id=?1 AND (o.current_job_attempt_id IS NULL OR o.current_job_attempt_id<>a.id OR EXISTS(SELECT 1 FROM harness_job_retries retry WHERE retry.source_attempt_id=a.id)))",[run],|r|r.get(0))?;
     if retired {
         return Err(Error::new("job_generation_retired","This run belongs to a historical job generation; inspect its evidence instead of admitting new effects").into());
     }
@@ -225,6 +225,12 @@ pub fn sync(
     reason: Option<&str>,
     finished_at: Option<u64>,
 ) -> Result<()> {
+    // Backoff/cancellation belongs to the logical occurrence. Keep the failed
+    // source generation and its first completion evidence immutable.
+    let retry_source: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.current_job_attempt_id=a.id AND o.id=a.occurrence_id JOIN harness_job_retries retry ON retry.source_attempt_id=a.id WHERE o.id=?1 AND a.state='failed')", [occurrence], |r|r.get(0))?;
+    if retry_source {
+        return Ok(());
+    }
     if !STATES.contains(&state) {
         return Err(Error::new("invalid_argument", "Unknown claimed job generation phase").into());
     }
@@ -245,6 +251,7 @@ fn record(
     } else {
         Value::Null
     };
+    value["retry"] = crate::job_retries::view(connection, id)?;
     for field in ["runState", "attemptId", "sessionId", "launchReceiptId"] {
         value[field] = Value::Null;
     }

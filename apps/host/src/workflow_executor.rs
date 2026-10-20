@@ -160,6 +160,21 @@ fn event(transaction: &Transaction<'_>, id: &str, run: &str, now: u64) -> Result
         }],
     )
 }
+/// A job retry retires this generation's pump, not its retained Run evidence.
+/// Share the decision transaction so no stale pump can admit between them.
+pub(crate) fn pause_for_job_retry(
+    transaction: &Transaction<'_>,
+    run: &str,
+    now: u64,
+) -> Result<()> {
+    if let Some(executor) = read(transaction, run)?
+        && executor.enabled
+    {
+        transaction.execute("UPDATE workflow_executors SET enabled=0,generation=generation+1,phase='paused',reason='job_retry_waiting',task_id=NULL WHERE id=?1 AND enabled=1", [&executor.id])?;
+        event(transaction, &executor.id, run, now)?;
+    }
+    Ok(())
+}
 fn capacity(connection: &Connection) -> Result<()> {
     let enabled: i64 = connection.query_row(
         "SELECT count(*) FROM workflow_executors WHERE enabled=1",

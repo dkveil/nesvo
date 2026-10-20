@@ -119,6 +119,9 @@ mod job_dispatch_tests;
 #[path = "job_prechecks_tests.rs"]
 mod job_prechecks_tests;
 #[cfg(test)]
+#[path = "job_retries_tests.rs"]
+mod job_retries_tests;
+#[cfg(test)]
 #[path = "journal_concurrency_tests.rs"]
 mod journal_concurrency_tests;
 #[cfg(test)]

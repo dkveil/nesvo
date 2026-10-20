@@ -895,6 +895,8 @@ impl State {
         event["jobPrechecks"] = true.into();
         event["jobCancellation"] = true.into();
         event["jobAttempts"] = true.into();
+        event["jobRetries"] = true.into();
+        event["jobRetryKinds"] = json!(["launchNoEffect"]);
         event["jobScheduleKinds"] = json!(["once", "cron", "rrule"]);
         event["launchProfileSupport"] =
             crate::launch_profile::capabilities(&self.provider_versions);

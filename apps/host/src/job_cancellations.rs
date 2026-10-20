@@ -47,7 +47,13 @@ pub fn accept(
     if !matches!(
         current["state"].as_str(),
         Some(
-            "queued" | "dispatching" | "prechecking" | "running" | "needsValidation" | "reconcile"
+            "queued"
+                | "dispatching"
+                | "prechecking"
+                | "running"
+                | "needsValidation"
+                | "reconcile"
+                | "retryWaiting"
         )
     ) {
         return Err(Error::new(
@@ -56,8 +62,9 @@ pub fn accept(
         )
         .into());
     }
+    let waiting = crate::job_retries::cancel_waiting(tx, occurrence, now)?;
     let run = current["runId"].as_str();
-    if let Some(run) = run {
+    if let Some(run) = run.filter(|_| !waiting) {
         let state: String =
             tx.query_row("SELECT state FROM workflow_runs WHERE id=?1", [run], |r| {
                 r.get(0)
@@ -70,7 +77,9 @@ pub fn accept(
             .into());
         }
     }
-    let (state, phase, finished, reason) = if run.is_some() {
+    let (state, phase, finished, reason) = if waiting {
+        ("completed", "canceled", true, "owner_canceled")
+    } else if run.is_some() {
         ("requested", "canceling", false, "owner_canceled")
     } else if current["state"] == "prechecking" {
         ("awaitingPrecheck", "canceling", false, "owner_canceled")

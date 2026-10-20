@@ -11,8 +11,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const ACTIVE: &str =
-    "'dispatching','prechecking','running','needsValidation','reconcile','canceling'";
+const ACTIVE: &str = "'dispatching','prechecking','running','needsValidation','reconcile','canceling','retryWaiting'";
 fn grace() -> u64 {
     60_000
 }
@@ -42,6 +41,8 @@ pub struct Spec {
     pub schedule: Schedule,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precheck_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<Box<crate::job_retries::Policy>>,
     #[serde(default)]
     pub misfire: Misfire,
     #[serde(default = "grace")]
@@ -134,6 +135,7 @@ pub struct Claim {
     pub job_id: String,
     pub spec: Spec,
     pub dispatch: crate::job_attempts::Dispatch,
+    pub ordinal: u16,
 }
 pub enum Work {
     Prepare {
@@ -236,6 +238,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::job_prechecks::initialize(connection)?;
     crate::job_cancellations::initialize(connection)?;
     crate::job_attempts::initialize(connection)?;
+    crate::job_retries::initialize(connection)?;
     Ok(())
 }
 pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
@@ -299,6 +302,14 @@ fn due(spec: &Spec) -> Result<u64> {
     u64::try_from(instant).map_err(|_| invalid("Once time must be after the Unix epoch"))
 }
 fn validate(spec: &Spec, now: u64) -> Result<u64> {
+    if let Some(retry) = &spec.retry {
+        retry.validate()?;
+        if spec.precheck_id.is_some() {
+            return Err(invalid(
+                "Retry cannot reuse an occurrence precheck approval",
+            ));
+        }
+    }
     if spec
         .precheck_id
         .as_ref()
@@ -417,6 +428,11 @@ pub(crate) fn occurrence(
     let generation: Option<(String,i64)> = connection.query_row("SELECT a.id,a.ordinal FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     view["jobAttemptId"] = generation.as_ref().map(|r| r.0.as_str()).into();
     view["jobAttemptOrdinal"] = generation.as_ref().map(|r| r.1).into();
+    view["retry"] = generation
+        .as_ref()
+        .map(|r| crate::job_retries::view(connection, &r.0))
+        .transpose()?
+        .unwrap_or(Value::Null);
     let binding = if let Some(run) = view["runId"].as_str() {
         connection.query_row("SELECT a.id,a.session_id,l.operation_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id LEFT JOIN workflow_launches l ON l.attempt_id=a.id WHERE t.run_id=?1 ORDER BY a.ordinal DESC,a.rowid DESC LIMIT 1",[run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional()?
     } else {
@@ -430,7 +446,7 @@ pub(crate) fn occurrence(
     }
     Ok(view)
 }
-fn observe(
+pub(crate) fn observe(
     transaction: &Transaction<'_>,
     job: &str,
     occurrence: Option<&str>,
@@ -812,7 +828,12 @@ fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
         .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (id, run, attempt, reason, current) in rows {
-        if crate::job_cancellations::requested(transaction, &id)? {
+        if current == "retryWaiting" || crate::job_cancellations::requested(transaction, &id)? {
+            continue;
+        }
+        if attempt.as_deref() == Some("launchFailed")
+            && crate::job_retries::consider(transaction, &id, now)?
+        {
             continue;
         }
         match (run.as_str(), attempt.as_deref()) {
@@ -1105,29 +1126,38 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                 transaction.execute("UPDATE harness_jobs SET next_due=NULL WHERE id=?1", [&id])?;
             }
             let candidates = {
-                let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id WHERE o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual') AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.state IN ({ACTIVE})) ORDER BY o.created_at,o.rowid LIMIT ?1"))?;
-                q.query_map([slots], |r| {
+                let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec,o.state FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id LEFT JOIN harness_job_retries retry ON retry.source_attempt_id=o.current_job_attempt_id AND retry.occurrence_id=o.id WHERE ((o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual')) OR (o.state='retryWaiting' AND retry.state='waiting' AND retry.not_before<=?2)) AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.id<>o.id AND a.state IN ({ACTIVE})) ORDER BY CASE WHEN o.state='retryWaiting' THEN retry.not_before ELSE o.created_at END,o.created_at,o.rowid LIMIT ?1"))?;
+                q.query_map(params![slots, now as i64], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?
             };
             let mut claims = Vec::new();
-            for (id, job_id, spec) in candidates {
-                transition(&transaction, &id, "dispatching", None, false, now)?;
-                transaction.execute(
-                    "UPDATE harness_job_occurrences SET started_at=?2 WHERE id=?1",
-                    params![id, now as i64],
-                )?;
-                let dispatch = crate::job_attempts::claim(&transaction, &id, now)?;
+            for (id, job_id, spec, phase) in candidates {
+                let (dispatch, ordinal) = if phase == "retryWaiting" {
+                    let Some(claim) = crate::job_retries::claim(&transaction, &id, now)? else {
+                        continue;
+                    };
+                    claim
+                } else {
+                    transition(&transaction, &id, "dispatching", None, false, now)?;
+                    transaction.execute(
+                        "UPDATE harness_job_occurrences SET started_at=?2 WHERE id=?1",
+                        params![id, now as i64],
+                    )?;
+                    (crate::job_attempts::claim(&transaction, &id, now)?, 1)
+                };
                 claims.push(Claim {
                     id,
                     job_id,
                     spec: serde_json::from_str(&spec)?,
                     dispatch,
+                    ordinal,
                 });
             }
             Reply::Claims(claims)
