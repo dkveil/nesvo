@@ -1666,3 +1666,19 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   and successor CI are recorded separately; the failed run remains evidence.
 - Corrected the documented workflow-mutation recovery spelling to `run mutation
 --key KEY --json`.
+
+### Native human-control helper acknowledgement boundary
+
+- Earlier 782e3b1 Windows CI also failed a quick human-wake case with an unqualified
+  deadline. Successor 2e71036 CI (39392682133) passed app/browser/macOS/Linux, but
+  Windows failed a different human-delivery case with the same unqualified error.
+  Its coordinator-restart scenarios passed. These failures remain recorded; the
+  original timeout phase was not proven.
+- The owned human helper now waits for a host control event confirming release
+  (or an already observed revocation) before exiting. It no longer relies on a
+  Node WebSocket close handshake to end the helper process. Acquisition/release
+  have explicit bounded failure messages; wake mutation/provider/human deadlines
+  gain phase labels. No host policy, native session, lease rule or timeout limit
+  was relaxed, and no fixture error is treated as success.
+- Targeted native wake and queued-delivery cases passed locally. The shared-helper
+  native suite and successor CI remain separate required checks.

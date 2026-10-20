@@ -25,7 +25,8 @@ async fn mutation(
             );
         }
     })
-    .await?
+    .await
+    .with_context(|| format!("Native wake mutation deadline: {tool}"))?
 }
 async fn provider(fixture: &Fixture) -> Result<()> {
     timeout(Duration::from_secs(5), async {
@@ -40,7 +41,8 @@ async fn provider(fixture: &Fixture) -> Result<()> {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
-    .await?
+    .await
+    .context("Native wake provider version probe deadline")?
 }
 async fn wake_view(client: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
     Ok(data(call(client, "nesvo_get_run_wakes", json!({"runId":run})).await?)?["data"].clone())
@@ -169,11 +171,14 @@ async fn quick_human_takeover_pauses_wakes_and_only_explicit_enable_can_deliver_
             json!({"key":"human-wake-enable"}),
         )
         .await?;
-        let mut human = human_control(&fixture.pairing(), &id).await?;
+        let mut human = human_control(&fixture.pairing(), &id)
+            .await
+            .context("Native wake human takeover readiness")?;
         drop(human.stdin.take());
         ensure!(
             timeout(Duration::from_secs(8), human.wait())
-                .await??
+                .await
+                .context("Native wake human release helper deadline")??
                 .success(),
             "Human release helper"
         );
