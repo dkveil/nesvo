@@ -2609,10 +2609,18 @@ fn spawn_session(
         }
     }
     let agent_context = if program == Program::Claude {
-        Some(crate::agent_context::Tracker::install_for(
-            &mut command,
-            &id,
-        )?)
+        Some(if identity.harness {
+            let context = caller_context
+                .as_ref()
+                .ok_or_else(|| anyhow!("Harness caller context is unavailable"))?;
+            crate::agent_context::Tracker::install_harness(
+                &mut command,
+                &id,
+                context.recovery_hook()?,
+            )?
+        } else {
+            crate::agent_context::Tracker::install_for(&mut command, &id)?
+        })
     } else if program == Program::Codex && identity.codex_hooks {
         Some(crate::agent_context::Tracker::install_codex(
             &mut command,
@@ -2795,14 +2803,24 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         })
                 })
                 .filter_map(|(id, session)| {
-                    session
-                        .agent_context
-                        .as_ref()
-                        .map(|tracker| (id.clone(), tracker.report(), session.lifecycle_cursor))
+                    session.agent_context.as_ref().map(|tracker| {
+                        (
+                            id.clone(),
+                            tracker.report(),
+                            session.lifecycle_cursor,
+                            session.caller_context.as_ref().and_then(|context| {
+                                session.harness_enabled.then(|| context.recovery_report())
+                            }),
+                        )
+                    })
                 })
                 .collect();
-            for (id, path, after) in reports {
+            for (id, path, after, recovery_path) in reports {
                 let observation = crate::agent_context::observe(&path).await;
+                let recovery = match recovery_path {
+                    Some(path) => Some(crate::caller::observe_recovery(&path).await),
+                    None => None,
+                };
                 let expected = id.clone();
                 let batch = tokio::task::spawn_blocking(move || {
                     crate::agent_events::read(&path, &expected, after)
@@ -2812,6 +2830,13 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 let event_log = state.event_log.clone();
                 let mut submission_updates = Vec::new();
                 if let Some(session) = state.sessions.get_mut(&id) {
+                    if let Some(recovery) = recovery
+                        && let Some(context) = session.caller_context.as_mut()
+                        && context.recovery_status != recovery
+                    {
+                        context.recovery_status = recovery;
+                        session.status_projection_dirty = true;
+                    }
                     let elapsed = session
                         .elapsed_at_exit
                         .unwrap_or_else(|| session.started.elapsed());

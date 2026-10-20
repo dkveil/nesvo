@@ -293,6 +293,14 @@ impl Command {
     }
 }
 pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -> i32 {
+    if matches!(
+        command,
+        Command::Run {
+            command: crate::workflow::Command::RecoverHook
+        }
+    ) {
+        return crate::recovery_hook::execute(pairing_path, url).await;
+    }
     if matches!(command, Command::Mcp) {
         return match crate::mcp::serve(pairing_path.to_owned(), url.map(str::to_owned)).await {
             Ok(()) => 0,
@@ -928,6 +936,17 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
                     "  OSC 7501: {} probes, {} reports",
                     session["terminalProtocol"]["queries"], session["terminalProtocol"]["reports"]
                 );
+                if session["harness"]["recovery"]["configured"] == true {
+                    println!(
+                        "  Recovery: {} · {}",
+                        session["harness"]["recovery"]["status"]["outcome"]
+                            .as_str()
+                            .unwrap_or("unobserved"),
+                        session["harness"]["recovery"]["status"]["source"]
+                            .as_str()
+                            .unwrap_or("no source")
+                    );
+                }
             }
         }
     }

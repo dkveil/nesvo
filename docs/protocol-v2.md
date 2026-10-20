@@ -10,6 +10,11 @@ run, with explicit selection for ambiguity and owner calls. It shares current
 manifest pagination/digest fences and never adopts or replays native effects.
 See [recovery context](harness-recovery-context.md).
 
+Launch-local Claude harness recovery uses the same read-only `runRecovery` API
+from a bounded native `SessionStart` hook. `harness.recovery.status` reports
+preparation/unavailability metadata only, never model consumption or native effect
+restoration. Older hosts remain capability-gated; there is no terminal-input fallback.
+
 `runCheckpoints` and `runConstraints` add authenticated workflow actions
 `{action:"checkpoints",request:{action:"save"|"list"|"get"|"context",...}}` and
 `{action:"constraints",request:{action:"add"|"list"|"acknowledge",...}}`.

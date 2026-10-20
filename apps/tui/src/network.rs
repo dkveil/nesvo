@@ -25,6 +25,9 @@ pub struct Pairing {
 }
 
 impl Pairing {
+    pub fn is_scoped(&self) -> bool {
+        self.scope_id.is_some()
+    }
     pub fn load(path: &Path, override_url: Option<&str>) -> Result<Self> {
         let bytes = std::fs::read(path)
             .context("Cannot read pairing file; start the host or pass --pairing PATH")?;

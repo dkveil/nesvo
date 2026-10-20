@@ -61,6 +61,48 @@ routine telemetry. The worker sees its own binding, not the coordinator's whole
 manifest. Rendering remains free of I/O. Unsupported hosts are refused through
 capability checking, without a legacy terminal-input fallback.
 
+## Launch-local Claude recovery hook
+
+Opt-in harness launches on supported Claude 2.1.303+ add a second `SessionStart`
+command to the same inline settings as lifecycle collection (`claude-hooks-v4`).
+Plain Claude remains `claude-hooks-v3`; Codex is unchanged. The command uses the
+host-configured native executable and exact private scoped context as literal
+arguments, including on Windows. It never reads owner pairing as a fallback or
+changes global provider settings. Existing live launches keep their configuration.
+
+Root `startup`, `resume`, `clear` and `compact` events perform the authenticated
+read. Child/fork/other events perform no connection or authentication. The hidden
+`run recover-hook` adapter reads at most 2 MiB of stdin with a 2.2 second overall
+deadline beneath the provider's 3 second hook timeout. An unclosed input pipe does
+not hold CLI shutdown. Errors exit zero, emit a fixed diagnostic and return native
+`SessionStart.additionalContext` guidance to explicitly read current context.
+
+The coordinator collects all manifest pages using exact returned offsets/run ID/
+digest, with at most one restart on `context_changed`, 32 pages and 64 KiB. Worker
+recovery reads its complete current task bundle. The final serialized response is
+also bounded to 64 KiB; additional context is limited to 9,500 UTF-16 units. This
+stays below [Claude's documented 10,000-character spill to a file and partial
+preview](https://code.claude.com/docs/en/hooks#add-context-for-claude). If the whole
+context cannot fit, the hook sends only fixed unavailability guidance, never a
+partial goal/plan that silently drops later owner constraints. Explicit paginated
+CLI/MCP reads remain available for larger contexts. Multiple runs return bounded
+choices and selection guidance; no default run is guessed.
+
+Context framing grants no native permissions or new task admission. It does not
+start a model request (`initialUserMessage` is absent), replay input, adopt a
+process, ACK, enable policies or validate results. Persisted task instructions are
+context, not a new request to start/restart work.
+
+`session get`, `session explain` and `doctor` expose
+`harness.recovery.{configured,status}`. Status contains fixed outcome/source,
+optional run/constraint revision and stable file update time, not prompts, keys
+or context bodies. `prepared` proves only that the helper produced the context,
+not that the provider/model consumed it; `loaded` stays null. Missing, unreadable
+and malformed reports stay explicit. The existing lifecycle I/O task observes
+this bounded file outside the state lock/render path, without a model heartbeat.
+Reports live beside the exact private scoped context; the writer does not assume
+the provider hook's `TEMP`/`TMP` is the host's original temporary directory.
+
 ## Verification and remaining integration
 
 Storage cases cover unbound/unique/ambiguous lookup, bounded choices, exact scope,
@@ -68,8 +110,26 @@ current worker constraints, no metadata/effect writes and current-page digest
 fences. Native scoped CLI and the official MCP SDK exercise both roles against
 real host/PTYs; actual envelopes are checked against the published JSON schema.
 
-This is the shared lookup required by a future bounded provider recovery hook.
-It is not automatically injected on compaction/resume yet. Instruction V11 and
-existing live launch snapshots remain unchanged. Actual original-provider
-compaction and replacement-coordinator recovery require separate integration
-and evidence before F40/F41 can be marked complete.
+The real native SDK scenario also executes the actual launch hook from a Unicode
+path containing spaces, collects later owner constraints beyond page one, checks
+worker isolation, ambiguity, oversized context, ignored child events, owner/missing
+authentication refusal and withheld stdin EOF. It verifies no native input or run
+revision/ACK/policy changes, including a different hook temp root. Its provider is
+a controlled executable, not a model.
+
+An isolated Windows run on original Claude 2.1.304 verified native `/compact`:
+a new owner code was written only to host constraints, then appeared in the
+model's answer after recovery. Evidence came from the exact owned provider
+conversation's assistant record, not echoed terminal text. The compact hook
+reported prepared/revision two; the run revision stayed unchanged, its task
+stayed planned and constraints remained pending. No tools, reports, source edits
+or native approval were requested. Native exit was observed; host and owner
+bridge exited zero and all 34 observed owned descendants were gone.
+
+Earlier probes exposed the differing hook temp directory and a human-input
+startup redraw race in the test bridge; their failed evidence is retained.
+Instruction V11 and existing live snapshots remain unchanged. This verifies one
+original-provider compact path, not the full resume/clear matrix, large-context
+model consumption, replacement-coordinator adoption or F40/F41 completion.
+Provider resume does not imply native process adoption, and a prepared hook
+never clears an uncertain operation.

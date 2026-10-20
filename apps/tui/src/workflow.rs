@@ -176,6 +176,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(hide = true)]
+    RecoverHook,
     /// Read current authenticated recovery context; never resumes native effects.
     Recover {
         run_id: Option<String>,
@@ -213,6 +215,7 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::RecoverHook => false,
             Self::Constraints { command } => command.machine(),
             Self::Checkpoint { command } => command.machine(),
             Self::Executor { command } => command.machine(),
@@ -382,6 +385,12 @@ impl Command {
                 offset: Some(offset),
             },
             Self::Context { .. } => Request::Context {},
+            Self::RecoverHook => {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Provider hook uses its own adapter entrypoint",
+                ));
+            }
             Self::Recover {
                 run_id,
                 offset,

@@ -10,16 +10,24 @@ use std::{
 
 enum Adapter {
     Claude,
+    ClaudeHarness,
     Codex,
 }
 pub struct Tracker(PathBuf, Adapter);
 impl Tracker {
     #[cfg(test)]
     pub fn install(command: &mut CommandBuilder) -> Result<Self> {
-        Self::install_inner(command, None)
+        Self::install_inner(command, None, None)
     }
     pub fn install_for(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
-        Self::install_inner(command, Some(session_id))
+        Self::install_inner(command, Some(session_id), None)
+    }
+    pub fn install_harness(
+        command: &mut CommandBuilder,
+        session_id: &str,
+        recovery: Value,
+    ) -> Result<Self> {
+        Self::install_inner(command, Some(session_id), Some(recovery))
     }
     pub fn install_codex(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
         let mut tracker = Self::create(Some(session_id))?;
@@ -31,16 +39,21 @@ impl Tracker {
         match self.1 {
             Adapter::Codex => "codex-hooks-v1",
             Adapter::Claude => "claude-hooks-v3",
+            Adapter::ClaudeHarness => "claude-hooks-v4",
         }
     }
-    fn install_inner(command: &mut CommandBuilder, session_id: Option<&str>) -> Result<Self> {
-        let tracker = Self::create(session_id)?;
+    fn install_inner(
+        command: &mut CommandBuilder,
+        session_id: Option<&str>,
+        recovery: Option<Value>,
+    ) -> Result<Self> {
+        let mut tracker = Self::create(session_id)?;
         if let Some(id) = session_id {
             command.env("NESVO_SESSION_ID", id);
         }
         let hook = json!({"type":"command", "command": std::env::current_exe()?,
             "args":["--agent-context-hook", tracker.report()], "timeout":3});
-        let settings = json!({"hooks": {
+        let mut settings = json!({"hooks": {
             "SessionStart":[{"hooks":[hook.clone()]}],
             "UserPromptSubmit":[{"hooks":[hook.clone()]}],
             "PreToolUse":[{"hooks":[hook.clone()]}],
@@ -51,8 +64,15 @@ impl Tracker {
             "Stop":[{"hooks":[hook.clone()]}],
             "StopFailure":[{"hooks":[hook.clone()]}],
             "CwdChanged":[{"hooks":[hook]}]
-        }})
-        .to_string();
+        }});
+        if let Some(recovery) = recovery {
+            tracker.1 = Adapter::ClaudeHarness;
+            settings["hooks"]["SessionStart"][0]["hooks"]
+                .as_array_mut()
+                .ok_or_else(|| anyhow::anyhow!("Missing startup hook array"))?
+                .push(recovery);
+        }
+        let settings = settings.to_string();
         let argv = command.get_argv_mut();
         let index = argv
             .iter()
@@ -365,6 +385,34 @@ pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn harness_recovery_appends_only_a_launch_local_startup_hook_without_replacing_lifecycle() {
+        let mut command = CommandBuilder::new("fixture");
+        let recovery = json!({"type":"command","command":"literal native client","args":["--pairing","private context.json","run","recover-hook"],"timeout":3});
+        let tracker =
+            Tracker::install_harness(&mut command, "host-session", recovery.clone()).unwrap();
+        assert_eq!(tracker.adapter(), "claude-hooks-v4");
+        let argv = command.get_argv();
+        let index = argv.iter().position(|arg| arg == "--settings").unwrap();
+        assert_eq!(argv.iter().filter(|arg| *arg == "--settings").count(), 1);
+        let settings: Value = serde_json::from_str(argv[index + 1].to_str().unwrap()).unwrap();
+        let startup = settings["hooks"]["SessionStart"][0]["hooks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(startup.len(), 2);
+        assert_eq!(startup[1], recovery);
+        assert_eq!(
+            startup[0],
+            settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+        );
+        assert_eq!(
+            settings["hooks"]["UserPromptSubmit"][0]["hooks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
     #[test]
     fn claude_paste_envelope_is_separate_private_evidence_not_general_prompt_rewriting() {
         let mut command = CommandBuilder::new("claude");

@@ -47,21 +47,32 @@ if (codex && !process.argv.includes('--no-daemon'))
 let turn = 0;
 function hook(name, extra = {}) {
   if (editorRedraw) return; // Explicit screen-only provider, no structured evidence.
-  const command = codex ? { command: codexHook, args: [] } : settings.hooks[name][0].hooks[0];
-  const result = spawnSync(command.command, command.args, {
-    shell: codex, // Trusted host-produced command, payload stays on stdin.
-    windowsHide: true,
-    timeout: 5000,
-    input: JSON.stringify({
-      hook_event_name: name,
-      session_id: `fixture-${id}`,
-      agent_id: '',
-      ...(codex && name !== 'SessionStart' ? { turn_id: `turn-${turn}` } : {}),
-      ...extra,
-    }),
-    stdio: ['pipe', 'ignore', 'ignore'],
-  });
-  if (result.status !== 0) throw new Error('Fixture lifecycle helper failed');
+  const commands = codex ? [{ command: codexHook, args: [] }] : settings.hooks[name][0].hooks;
+  for (const command of commands) {
+    const result = spawnSync(command.command, command.args, {
+      shell: codex, // Trusted host-produced command, payload stays on stdin.
+      windowsHide: true,
+      timeout: 5000,
+      input: JSON.stringify({
+        hook_event_name: name,
+        session_id: `fixture-${id}`,
+        agent_id: '',
+        ...(codex && name !== 'SessionStart' ? { turn_id: `turn-${turn}` } : {}),
+        ...extra,
+      }),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (result.status !== 0) throw new Error('Fixture lifecycle helper failed');
+    if (result.stdout.length) {
+      const output = JSON.parse(result.stdout.toString('utf8'));
+      if (name !== 'SessionStart' || output.hookSpecificOutput?.hookEventName !== 'SessionStart')
+        throw new Error('Unexpected lifecycle output');
+      fs.appendFileSync(
+        path.join(directory, `${id}.recovery.jsonl`),
+        JSON.stringify({ source: extra.source, output }) + '\n',
+      );
+    }
+  }
 }
 process.stdin.setEncoding('utf8');
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -128,6 +139,12 @@ function submit(prompt) {
         ? `\n\n<pasted_content id="f558">\n${prompt}\n</pasted_content id="f558">\n`
         : prompt,
   });
+  if (prompt === 'fixture-compact') {
+    hook('SessionStart', { source: 'compact' });
+    process.stdout.write('FIXTURE_CONTEXT_COMPACTED\r\n');
+    hook('Stop');
+    return;
+  }
   if (prompt.startsWith('Nesvo run update ')) {
     const run = prompt.match(/Run ([a-f0-9]{32}), wake batch ([a-f0-9]{32})/);
     if (!run) throw new Error('Missing fixed host wake identities');

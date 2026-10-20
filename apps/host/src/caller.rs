@@ -116,6 +116,7 @@ pub struct Context {
     pub key: [u8; 32],
     directory: PathBuf,
     client: Option<PathBuf>,
+    pub recovery_status: serde_json::Value,
 }
 impl Context {
     pub fn new(url: &str, session_id: &str, role: Role) -> Result<Self> {
@@ -127,6 +128,7 @@ impl Context {
                 hex::encode(crate::wire::random::<16>())
             )),
             client: runtime_client(),
+            recovery_status: serde_json::Value::Null,
         };
         std::fs::create_dir(&context.directory)?;
         std::fs::create_dir(context.references())?;
@@ -162,6 +164,9 @@ impl Context {
     pub fn skill(&self) -> PathBuf {
         self.directory.join("SKILL.md")
     }
+    pub fn recovery_report(&self) -> PathBuf {
+        self.directory.join("recovery.json")
+    }
     fn references(&self) -> PathBuf {
         self.directory.join("references")
     }
@@ -196,11 +201,22 @@ impl Context {
         );
         Ok(())
     }
+    pub fn recovery_hook(&self) -> Result<serde_json::Value> {
+        let client = self.client.as_ref().ok_or_else(|| {
+            crate::api_error::Error::new(
+                "harness_client_unavailable",
+                "Recovery needs the host-configured native client",
+            )
+        })?;
+        Ok(
+            json!({"type":"command","command":crate::process::display_path(client),"args":["--pairing",self.path(),"run","recover-hook"],"timeout":3}),
+        )
+    }
     fn mcp(&self) -> PathBuf {
         self.directory.join("mcp.json")
     }
     pub fn configuration(&self, enabled: bool) -> serde_json::Value {
-        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":INSTRUCTION_VERSION,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"globalConfigChanged":false})
+        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":INSTRUCTION_VERSION,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"recovery":{"configured":enabled,"status":self.recovery_status},"globalConfigChanged":false})
     }
 }
 impl Drop for Context {
@@ -217,6 +233,7 @@ impl Drop for Context {
             let _ = std::fs::remove_file(directory.join("SKILL.md"));
             let _ = std::fs::remove_file(directory.join("mcp.json"));
             let _ = std::fs::remove_file(directory.join("instructions.md"));
+            let _ = std::fs::remove_file(directory.join("recovery.json"));
             // Remove only our named references, never caller-created contents.
             let reference = directory.join("references");
             if reference
@@ -240,9 +257,89 @@ pub fn valid_scope_id(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveryReport {
+    version: u8,
+    source: Option<String>,
+    outcome: String,
+    native_effects_restored: bool,
+    run_id: Option<String>,
+    constraint_revision: Option<u64>,
+}
+/// Called by the lifecycle I/O task, never by snapshot rendering or under State.
+pub async fn observe_recovery(path: &Path) -> serde_json::Value {
+    use tokio::io::AsyncReadExt;
+    let metadata = match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_file() => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return json!({"outcome":"unobserved"});
+        }
+        _ => return json!({"outcome":"unreadable"}),
+    };
+    let read = async {
+        let mut bytes = Vec::new();
+        tokio::fs::File::open(path)
+            .await?
+            .take(1025)
+            .read_to_end(&mut bytes)
+            .await?;
+        anyhow::ensure!(bytes.len() <= 1024, "Recovery diagnostic exceeds bound");
+        let report: RecoveryReport = serde_json::from_slice(&bytes)?;
+        anyhow::ensure!(
+            report.version == 1
+                && !report.native_effects_restored
+                && matches!(
+                    report.outcome.as_str(),
+                    "prepared" | "unbound" | "selectionRequired" | "unavailable"
+                )
+                && report
+                    .source
+                    .as_deref()
+                    .is_none_or(|s| matches!(s, "startup" | "resume" | "clear" | "compact"))
+                && report
+                    .run_id
+                    .as_ref()
+                    .is_none_or(|id| id.len() <= 128 && !id.chars().any(char::is_control)),
+            "Invalid recovery diagnostic"
+        );
+        let mut value = serde_json::to_value(report)?;
+        value["updatedAt"] = json!(
+            metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|d| u64::try_from(d.as_millis()).ok())
+        );
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    read.unwrap_or_else(|_| json!({"outcome":"malformed"}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn recovery_diagnostics_are_bounded_private_metadata_with_stable_observation_time() {
+        let context = Context::new("ws://127.0.0.1:1", "fixture", Role::Worker).unwrap();
+        let path = context.recovery_report();
+        assert_eq!(observe_recovery(&path).await["outcome"], "unobserved");
+        std::fs::write(&path,r#"{"version":1,"source":"compact","outcome":"prepared","nativeEffectsRestored":false,"runId":"fixture","constraintRevision":2}"#).unwrap();
+        let first = observe_recovery(&path).await;
+        assert_eq!(first["outcome"], "prepared");
+        assert_eq!(first["constraintRevision"], 2);
+        assert!(first["updatedAt"].is_u64());
+        assert_eq!(observe_recovery(&path).await, first);
+        std::fs::write(&path, r#"{"ownerSecret":"never expose this payload"}"#).unwrap();
+        let malformed = observe_recovery(&path).await;
+        assert_eq!(malformed["outcome"], "malformed");
+        assert!(!malformed.to_string().contains("ownerSecret"));
+        std::fs::write(&path, "x".repeat(1025)).unwrap();
+        assert_eq!(observe_recovery(&path).await["outcome"], "malformed");
+        drop(context);
+        assert!(!path.exists());
+    }
     #[test]
     fn only_host_grants_enable_child_access_and_never_recursive_authority() {
         let mut worker = Policy::default();

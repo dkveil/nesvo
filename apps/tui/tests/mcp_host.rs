@@ -32,6 +32,8 @@ mod budgets;
 mod inbox;
 #[path = "support/input_redraw.rs"]
 mod input_redraw;
+#[path = "support/recovery_hooks.rs"]
+mod recovery_hooks;
 #[path = "support/run_budgets.rs"]
 mod run_budgets;
 #[path = "support/run_checkpoints.rs"]
@@ -51,6 +53,9 @@ impl Fixture {
         Self::start_variant(false).await
     }
     async fn start_variant(agent: bool) -> Result<Self> {
+        Self::start_variant_with_client(agent, false).await
+    }
+    async fn start_variant_with_client(agent: bool, spaced_client: bool) -> Result<Self> {
         let directory = std::env::temp_dir().join(format!(
             "nesvo-mcp-{}",
             hex::encode(nesvo_wire::random::<8>())
@@ -68,6 +73,13 @@ impl Fixture {
         let mut command = Command::new(binary);
         if agent {
             install_agent_fixture(&directory, &mut command).await?;
+        }
+        if spaced_client {
+            let client_dir = directory.join("native client łódź");
+            std::fs::create_dir(&client_dir)?;
+            let client = client_dir.join(if cfg!(windows) { "nesvo.exe" } else { "nesvo" });
+            std::fs::copy(env!("CARGO_BIN_EXE_nesvo"), &client)?;
+            command.env("NESVO_CLIENT_BINARY", client);
         }
         command
             .args(["--port", "0", "--exit-on-stdin-close", "--pairing-dir"])

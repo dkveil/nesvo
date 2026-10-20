@@ -1,10 +1,10 @@
 //! Official MCP SDK, scoped native CLI, real host/PTY; no model calls.
 use super::*;
 
-async fn view(client: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
+pub(super) async fn view(client: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
     Ok(data(call(client, "nesvo_get_run", json!({"runId":run})).await?)?["data"].clone())
 }
-async fn mutate(
+pub(super) async fn mutate(
     client: &RunningService<RoleClient, ()>,
     run: &str,
     tool: &'static str,
@@ -29,7 +29,7 @@ async fn mutate(
     })
     .await?
 }
-async fn setup(
+pub(super) async fn setup(
     fixture: &Fixture,
     owner: &RunningService<RoleClient, ()>,
 ) -> Result<(

@@ -1507,3 +1507,46 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   it does not inject context on native compaction/resume yet. Instruction V11 and
   old live snapshots stay unchanged. Actual provider compaction/adoption, the
   model-to-MCP permission gate and all remaining full-goal/plugin work stay open.
+
+### Launch-local native context recovery
+
+- F12/F38/F40: supported opt-in Claude harness launches append a bounded native
+  `SessionStart` recovery hook beside the existing lifecycle hook in one inline
+  settings object (`claude-hooks-v4`). It uses the configured executable and exact
+  private scope as literal arguments. Plain Claude/Codex and global settings stay
+  unchanged; instruction V11 and previous live snapshots are retained.
+- Root startup/resume/clear/compact reads current authenticated context; children,
+  fork and unrelated events do no host I/O. Coordinator manifests collect every
+  current page with digest/offset fences and at most one changed-context restart.
+  Worker context remains isolated. Neither path replays input, ACKs, enables
+  policies, validates reports, adopts processes or requests a model turn.
+- Input is bounded to 2 MiB; a 2.2 second overall deadline also exits when stdin
+  EOF is withheld. Context has 32-page/64-KiB bounds and a 9,500 UTF-16-unit inline
+  ceiling beneath Claude's documented 10,000-character file spill. Oversized or
+  unavailable context returns fixed guidance, never a silently incomplete plan.
+  Explicit selection is required for ambiguous bindings.
+- Bounded launch-private diagnostics distinguish prepared/unbound/selection/
+  unavailable, missing, malformed and unreadable. Prepared never claims model
+  consumption (`loaded:null`). Existing lifecycle I/O observes a stable update
+  time without rendering I/O, repeated state dirties or LLM heartbeats. A real
+  provider probe exposed different host/hook TEMP roots; report writing now uses
+  the exact private context location rather than ambient TEMP equality.
+- Six unit regressions and a real native SDK scenario cover collection, provider
+  framing, role isolation, literal Unicode/spaced executable paths, changed temp
+  roots, absence of PTY/revision/policy effects, ambiguity, oversized context,
+  scoped authentication and unclosed stdin. Controlled fixtures are not models.
+- Original Claude 2.1.304 on Windows returned a fresh host-only owner code after
+  actual `/compact`, verified in the exact owned assistant transcript. The hook
+  reported constraint revision two, while run revision/task planned/pending
+  constraints stayed unchanged. No tools, files, reports or approvals were used.
+  Native exit was observed; host/bridge exited zero and all 34 observed owned
+  descendants were gone. Earlier failed probes (temp-root diagnostics and a test
+  bridge startup redraw) are retained rather than presented as successes.
+- Larger context retrieval by a model, native resume/clear matrix, replacement
+  coordinator recovery and the actual model-to-MCP child permission gate remain
+  open. This is not full F40/F41 completion. No new dependency or material UI
+  change. Previous fcedbc5 CI passed all five jobs (39380036529).
+- Final local Windows verification passed fmt, warnings-denied Clippy, production
+  build, 320 unit checks, all 19 serial native SDK scenarios, 30 host/sync/CLI
+  cases and formatting. The new native scenario passed again with an explicit
+  changed temp root. This commit's cross-platform CI remains separate evidence.

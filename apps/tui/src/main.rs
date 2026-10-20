@@ -10,6 +10,7 @@ mod network;
 mod output;
 mod palette;
 mod preferences;
+mod recovery_hook;
 mod review;
 mod runner;
 mod selection;
