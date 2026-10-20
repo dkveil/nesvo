@@ -217,10 +217,90 @@ async fn fence(
     ))
 }
 async fn flushed(answer: tokio::sync::oneshot::Receiver<bool>) -> Result<()> {
-    match tokio::time::timeout(std::time::Duration::from_secs(5), answer).await {
-        Ok(Ok(true)) => Ok(()),
-        _ => Err(anyhow!("Native terminal write was not confirmed")),
+    // Controls retain their existing conservative untyped failure projection.
+    write_confirmation(answer, std::time::Duration::from_secs(5))
+        .await
+        .map_err(|_| anyhow!("Native terminal write was not confirmed"))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WriteConfirmationFailure {
+    Timeout,
+    Closed,
+    Failed,
+}
+impl WriteConfirmationFailure {
+    fn into_error(self) -> anyhow::Error {
+        let (code, message) = match self {
+            Self::Timeout => (
+                "native_write_timeout",
+                "Native terminal write confirmation timed out; inspect the original receipt and terminal",
+            ),
+            Self::Closed => (
+                "native_write_closed",
+                "Native terminal write confirmation channel closed; inspect the original receipt and terminal",
+            ),
+            Self::Failed => (
+                "native_write_failed",
+                "Native terminal write or flush failed; inspect the original receipt and terminal",
+            ),
+        };
+        crate::api_error::Error::new(code, message).into()
     }
+}
+
+/// Confirmation distinguishes native write failure from missing evidence. A
+/// timeout does not cancel queued bytes or prove that no write took place.
+async fn write_confirmation(
+    answer: tokio::sync::oneshot::Receiver<bool>,
+    timeout: std::time::Duration,
+) -> std::result::Result<(), WriteConfirmationFailure> {
+    match tokio::time::timeout(timeout, answer).await {
+        Ok(Ok(true)) => Ok(()),
+        Ok(Ok(false)) => Err(WriteConfirmationFailure::Failed),
+        Ok(Err(_)) => Err(WriteConfirmationFailure::Closed),
+        Err(_) => Err(WriteConfirmationFailure::Timeout),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SubmissionStage {
+    Prepare,
+    PasteFence,
+    PasteFlush,
+    PasteDelay,
+    SubmitFence,
+    SubmitFlush,
+}
+impl SubmissionStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Prepare => "prepare",
+            Self::PasteFence => "pasteFence",
+            Self::PasteFlush => "pasteFlush",
+            Self::PasteDelay => "pasteDelay",
+            Self::SubmitFence => "submitFence",
+            Self::SubmitFlush => "submitFlush",
+        }
+    }
+}
+
+fn submission_failure(
+    error: anyhow::Error,
+    queued: bool,
+    stage: SubmissionStage,
+) -> (&'static str, serde_json::Value) {
+    let typed = error.downcast_ref::<crate::api_error::Error>();
+    let code = typed.map(|e| e.code).unwrap_or("submission_unconfirmed");
+    let message = if typed.is_some() {
+        error.to_string()
+    } else {
+        "Inspect the original receipt and terminal before another submission".into()
+    };
+    (
+        if queued { "unknown" } else { "failed" },
+        json!({"code":code,"message":message,"effectStarted":queued,"taskResult":null,"submissionStage":stage.label()}),
+    )
 }
 
 /// Retry only rejected admission checks: this queue write accepted no bytes.
@@ -335,6 +415,7 @@ pub(crate) async fn dispatch_send(
         token: claim.token.clone(),
     };
     let mut queued = false;
+    let mut stage = SubmissionStage::Prepare;
     let result = async {
         let (path, mut cancellation) = {
             let mut state = state.lock().unwrap();
@@ -343,6 +424,7 @@ pub(crate) async fn dispatch_send(
             }
             state.begin_submission(&session_id, reference, &prompt, &authority)?
         };
+        stage = SubmissionStage::PasteFence;
         let (answer, _) = enqueue_fenced(
             &state,
             &log,
@@ -354,13 +436,18 @@ pub(crate) async fn dispatch_send(
         )
         .await?;
         queued = true;
-        flushed(answer).await?;
+        stage = SubmissionStage::PasteFlush;
+        write_confirmation(answer, std::time::Duration::from_secs(5))
+            .await
+            .map_err(WriteConfirmationFailure::into_error)?;
         // Keep paste and submit separate. Frameworks may debounce a paste event;
         // a human taking control in this interval cancels the Enter entirely.
+        stage = SubmissionStage::PasteDelay;
         tokio::select! {
             _=tokio::time::sleep(std::time::Duration::from_millis(150))=>{},
-            _=cancellation.changed()=>return Err(anyhow!("Submission was preempted")),
+            _=cancellation.changed()=>return Err(crate::api_error::Error::new("submission_preempted","Submission was preempted before submit queue admission").into()),
         }
+        stage = SubmissionStage::SubmitFence;
         let (answer, correlated) = enqueue_fenced(
             &state,
             &log,
@@ -371,7 +458,10 @@ pub(crate) async fn dispatch_send(
             &mut cancellation,
         )
         .await?;
-        flushed(answer).await?;
+        stage = SubmissionStage::SubmitFlush;
+        write_confirmation(answer, std::time::Duration::from_secs(5))
+            .await
+            .map_err(WriteConfirmationFailure::into_error)?;
         Ok::<_, anyhow::Error>(correlated)
     }
     .await;
@@ -380,22 +470,7 @@ pub(crate) async fn dispatch_send(
             "delivered",
             json!({"nativeWriteFlushed":true,"correlation":if correlated {"launchHook"} else {"unavailable"},"taskResult":null}),
         ),
-        Err(error) => {
-            let code = error
-                .downcast_ref::<crate::api_error::Error>()
-                .map(|e| e.code)
-                .unwrap_or("submission_unconfirmed");
-            let message = error
-                .downcast_ref::<crate::api_error::Error>()
-                .map(|_| error.to_string())
-                .unwrap_or_else(|| {
-                    "Inspect the original receipt and terminal before another submission".into()
-                });
-            (
-                if queued { "unknown" } else { "failed" },
-                json!({"code":code,"message":message,"effectStarted":queued,"taskResult":null}),
-            )
-        }
+        Err(error) => submission_failure(error, queued, stage),
     };
     let receipt = log
         .finish(issuer, claim.receipt.id, claim.token, phase.into(), result)
@@ -519,4 +594,111 @@ pub(crate) async fn dispatch_create(
     };
     log.finish(issuer, claim.receipt.id, claim.token, phase.into(), result)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn native_write_confirmation_distinguishes_true_false_closed_and_timeout() {
+        let short = Duration::from_millis(1);
+        let (sender, answer) = oneshot::channel();
+        sender.send(true).unwrap();
+        assert_eq!(write_confirmation(answer, short).await, Ok(()));
+
+        let (sender, answer) = oneshot::channel();
+        sender.send(false).unwrap();
+        let failed = write_confirmation(answer, short).await.unwrap_err();
+        assert_eq!(failed, WriteConfirmationFailure::Failed);
+
+        let (sender, answer) = oneshot::channel();
+        drop(sender);
+        let closed = write_confirmation(answer, short).await.unwrap_err();
+        assert_eq!(closed, WriteConfirmationFailure::Closed);
+
+        let (sender, answer) = oneshot::channel();
+        let timed_out = write_confirmation(answer, short).await.unwrap_err();
+        drop(sender);
+        assert_eq!(timed_out, WriteConfirmationFailure::Timeout);
+
+        for (failure, code) in [
+            (failed, "native_write_failed"),
+            (closed, "native_write_closed"),
+            (timed_out, "native_write_timeout"),
+        ] {
+            let error = failure.into_error();
+            assert_eq!(
+                error
+                    .downcast_ref::<crate::api_error::Error>()
+                    .unwrap()
+                    .code,
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn write_diagnostics_preserve_unknown_effects_and_identify_paste_or_submit() {
+        for (stage, label) in [
+            (SubmissionStage::PasteFlush, "pasteFlush"),
+            (SubmissionStage::SubmitFlush, "submitFlush"),
+        ] {
+            for failure in [
+                WriteConfirmationFailure::Failed,
+                WriteConfirmationFailure::Closed,
+                WriteConfirmationFailure::Timeout,
+            ] {
+                let (phase, result) = submission_failure(failure.into_error(), true, stage);
+                assert_eq!(phase, "unknown");
+                assert_eq!(result["effectStarted"], true);
+                assert_eq!(result["submissionStage"], label);
+                assert!(result["taskResult"].is_null());
+            }
+        }
+        let (phase, result) = submission_failure(
+            crate::api_error::Error::new(
+                "submission_preempted",
+                "Submission was preempted before submit queue admission",
+            )
+            .into(),
+            true,
+            SubmissionStage::PasteDelay,
+        );
+        assert_eq!(phase, "unknown");
+        assert_eq!(result["code"], "submission_preempted");
+        assert_eq!(result["effectStarted"], true);
+        assert_eq!(result["submissionStage"], "pasteDelay");
+    }
+
+    #[test]
+    fn untyped_failure_retains_only_bounded_stage_and_safe_existing_message() {
+        for (stage, label, queued) in [
+            (SubmissionStage::Prepare, "prepare", false),
+            (SubmissionStage::PasteFence, "pasteFence", false),
+            (SubmissionStage::SubmitFence, "submitFence", true),
+        ] {
+            let (phase, result) = submission_failure(
+                anyhow!("Private prompt or raw OS diagnostic must not be retained"),
+                queued,
+                stage,
+            );
+            assert_eq!(phase, if queued { "unknown" } else { "failed" });
+            assert_eq!(
+                result,
+                json!({"code":"submission_unconfirmed","message":"Inspect the original receipt and terminal before another submission","effectStarted":queued,"taskResult":null,"submissionStage":label})
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn control_write_failure_keeps_its_existing_untyped_unknown_projection() {
+        let (sender, answer) = oneshot::channel();
+        sender.send(false).unwrap();
+        let error = flushed(answer).await.unwrap_err();
+        assert!(error.downcast_ref::<crate::api_error::Error>().is_none());
+        assert_eq!(error.to_string(), "Native terminal write was not confirmed");
+    }
 }

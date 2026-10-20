@@ -119,6 +119,22 @@ just queue admission. The durable send phases add:
 | settled     | Provider Stop for that response; task result remains null               |
 | interrupted | A newer prompt superseded the matched response                          |
 
+Send-producer failures may add `result.submissionStage`:
+`prepare`, `pasteFence`, `pasteFlush`, `pasteDelay`, `submitFence` or `submitFlush`.
+Native writer confirmation distinguishes `native_write_timeout`,
+`native_write_closed` and `native_write_failed` with fixed safe messages. These
+codes identify missing/failed write evidence, not provider pickup. The confirmation
+deadline remains five seconds per write; paste/submit separation remains 150 ms.
+Once the paste entered the queue, every failure remains `unknown` with
+`effectStarted:true`, including timeout or preemption before Enter. It must not be
+retried as a no-effect failure. `submission_preempted` during the separation keeps
+that same conservative outcome. Unclassified adapter errors retain the existing
+redacted `submission_unconfirmed` message plus the stage; no raw prompt or OS error
+is added. The field is optional: old receipts and session/timer-originated first
+outcomes remain unchanged, and a later producer observation does not rewrite an
+already retained terminal send outcome. Interrupt/stop write classification is
+unchanged.
+
 The private Claude hook journal records only SHA-256 prompt fingerprints. The
 `claude-hooks-v3` adapter adds the optional whole-paste fingerprint. Matching
 normalizes line endings and surrounding whitespace; it does not rewrite sent
