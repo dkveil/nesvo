@@ -131,6 +131,9 @@ mod job_dispatch_tests;
 #[path = "job_generation_prechecks_tests.rs"]
 mod job_generation_prechecks_tests;
 #[cfg(test)]
+#[path = "job_launch_resolutions_tests.rs"]
+mod job_launch_resolutions_tests;
+#[cfg(test)]
 #[path = "job_prechecks_tests.rs"]
 mod job_prechecks_tests;
 #[cfg(test)]

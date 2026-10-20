@@ -29,6 +29,24 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Acknowledge exact no-effect launch cleanup; never stop or retry work.
+    AbandonLaunch {
+        id: String,
+        occurrence: String,
+        /// Exact current generation from its available launchReconciliation descriptor.
+        #[arg(long)]
+        job_attempt_id: String,
+        #[arg(long)]
+        key: String,
+        /// Previously inspected launchReconciliation digest for this generation.
+        #[arg(long)]
+        digest: String,
+        /// Release logical overlap; does not prove exit or undo earlier effects.
+        #[arg(long, required = true)]
+        acknowledge_unknown_effects: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Save an enabled host-owned job; does not start a model immediately.
     Create {
         #[arg(long)]
@@ -146,7 +164,7 @@ impl Command {
     pub fn machine(&self) -> bool {
         match self {
             Self::Precheck { command } => command.machine(),
-            Self::AbandonPrecheck { json, .. } => *json,
+            Self::AbandonPrecheck { json, .. } | Self::AbandonLaunch { json, .. } => *json,
             Self::Create { json, .. }
             | Self::Show { json, .. }
             | Self::List { json, .. }
@@ -181,6 +199,22 @@ impl Command {
                 occurrence_id: occurrence,
                 expected_digest: digest,
                 job_attempt_id,
+                acknowledge_unknown_effects,
+            },
+            Self::AbandonLaunch {
+                id,
+                occurrence,
+                job_attempt_id,
+                key,
+                digest,
+                acknowledge_unknown_effects,
+                ..
+            } => Request::AbandonLaunchNoEffect {
+                key,
+                job_id: id,
+                occurrence_id: occurrence,
+                job_attempt_id,
+                expected_digest: digest,
                 acknowledge_unknown_effects,
             },
             Self::Create { key, file, .. } => Request::Create {
@@ -271,6 +305,37 @@ fn read_spec(path: &std::path::Path) -> Result<Spec> {
         )
     })
 }
+fn launch_reconciliation_digest<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let digest = String::deserialize(deserializer)?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(serde::de::Error::custom(
+            "Launch reconciliation requires the inspected 64-character lowercase hexadecimal digest",
+        ));
+    }
+    Ok(digest)
+}
+
+fn launch_reconciliation_acknowledgement<'de, D>(
+    deserializer: D,
+) -> std::result::Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    if !bool::deserialize(deserializer)? {
+        return Err(serde::de::Error::custom(
+            "Launch reconciliation requires explicit acknowledgement of unknown effects",
+        ));
+    }
+    Ok(true)
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(
     tag = "kind",
@@ -413,6 +478,16 @@ pub enum Request {
         expected_digest: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         job_attempt_id: Option<String>,
+        acknowledge_unknown_effects: bool,
+    },
+    AbandonLaunchNoEffect {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
+        job_attempt_id: String,
+        #[serde(deserialize_with = "launch_reconciliation_digest")]
+        expected_digest: String,
+        #[serde(deserialize_with = "launch_reconciliation_acknowledgement")]
         acknowledge_unknown_effects: bool,
     },
     Create {

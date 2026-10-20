@@ -93,6 +93,14 @@ pub enum Request {
         expected_digest: String,
         acknowledge_unknown_effects: bool,
     },
+    AbandonLaunchNoEffect {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
+        job_attempt_id: String,
+        expected_digest: String,
+        acknowledge_unknown_effects: bool,
+    },
     Create {
         key: String,
         spec: Spec,
@@ -442,6 +450,9 @@ pub(crate) fn occurrence(
     view["precheck"] = crate::job_precheck_records::view_current(connection, id, detail)?;
     view["cancellation"] = crate::job_cancellations::view(connection, id)?;
     view["executionTimeout"] = crate::job_timeouts::view_current(connection, id)?;
+    let (reconciliation, resolution) = crate::job_launch_resolutions::view_current(connection, id)?;
+    view["launchReconciliation"] = reconciliation;
+    view["launchResolution"] = resolution;
     let generation: Option<(String,i64)> = connection.query_row("SELECT a.id,a.ordinal FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     view["jobAttemptId"] = generation.as_ref().map(|r| r.0.as_str()).into();
     view["jobAttemptOrdinal"] = generation.as_ref().map(|r| r.1).into();
@@ -489,6 +500,9 @@ pub(crate) fn transition(
     finished: bool,
     now: u64,
 ) -> Result<()> {
+    if crate::job_launch_resolutions::resolved_occurrence(transaction, id)? {
+        return Ok(());
+    }
     let job: String = transaction.query_row(
         "SELECT job_id FROM harness_job_occurrences WHERE id=?1",
         [id],
@@ -670,7 +684,8 @@ pub fn execute(
         | Request::SetEnabled { key, .. }
         | Request::RunNow { key, .. }
         | Request::CancelOccurrence { key, .. }
-        | Request::AbandonPrecheck { key, .. } => key,
+        | Request::AbandonPrecheck { key, .. }
+        | Request::AbandonLaunchNoEffect { key, .. } => key,
         _ => unreachable!(),
     };
     orchestration::validate_key(key)?;
@@ -712,6 +727,24 @@ pub fn execute(
         .into());
     }
     let view = match &request {
+        Request::AbandonLaunchNoEffect {
+            job_id,
+            occurrence_id,
+            job_attempt_id,
+            expected_digest,
+            acknowledge_unknown_effects,
+            ..
+        } => crate::job_launch_resolutions::accept(
+            &transaction,
+            &actor,
+            job_id,
+            occurrence_id,
+            job_attempt_id,
+            expected_digest,
+            *acknowledge_unknown_effects,
+            key,
+            now,
+        )?,
         Request::CancelOccurrence {
             job_id,
             occurrence_id,
@@ -853,7 +886,8 @@ fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
         .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (id, run, attempt, reason, current) in rows {
-        if current == "retryWaiting"
+        if crate::job_launch_resolutions::resolved_occurrence(transaction, &id)?
+            || current == "retryWaiting"
             || crate::job_cancellations::requested(transaction, &id)?
             || crate::job_timeouts::owns_occurrence(transaction, &id)?
         {

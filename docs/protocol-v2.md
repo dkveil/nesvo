@@ -82,6 +82,17 @@ reconciliation, without rearming or replaying effects. See the
 [execution timeout contract](harness-job-timeouts.md) for exact fields, states
 and owner cleanup behavior. This adds no MCP tool, grant or framing version.
 
+Strict `jobLaunchReconciliation:true` adds owner-only job request
+`abandonLaunchNoEffect` with required `jobAttemptId`, `expectedDigest` and
+`acknowledgeUnknownEffects:true`, alongside the job/occurrence IDs and mutation
+key. CLI `job abandon-launch` and MCP `nesvo_abandon_job_launch` share that
+operation. Nullable `launchReconciliation` and `launchResolution` extend current
+occurrence and exact generation views; old accepted envelopes may omit them.
+Acceptance retires only the proven no-effect generation and releases logical
+overlap without rewriting native, precheck or cleanup evidence. Fresh effects
+on that Run remain permanently fenced. See the
+[launch reconciliation contract](harness-job-launch-reconciliation.md).
+
 Combining `spec.retry` with `precheckId` additionally requires the strict boolean
 `jobPrecheckGenerations:true`. Each claimed generation separately authorizes and
 executes the immutable approved command; an older pass cannot release a newer

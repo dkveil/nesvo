@@ -57,6 +57,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     {
         connection.execute_batch("ALTER TABLE harness_job_occurrences ADD COLUMN current_job_attempt_id TEXT REFERENCES harness_job_attempts(id);")?;
     }
+    crate::job_launch_resolutions::initialize(connection)?;
     Ok(())
 }
 pub(crate) fn capacity(connection: &Connection, additional: usize) -> Result<()> {
@@ -180,6 +181,7 @@ pub fn retire(tx: &Transaction<'_>, dispatch: &Dispatch) -> Result<()> {
 /// Ongoing native work needs current run assignment, not the already retired
 /// preparation token. Historical runs remain readable but cannot admit effects.
 pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
+    crate::job_launch_resolutions::guard_run(connection, run)?;
     let retired: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.id=a.occurrence_id WHERE a.run_id=?1 AND (o.current_job_attempt_id IS NULL OR o.current_job_attempt_id<>a.id OR EXISTS(SELECT 1 FROM harness_job_retries retry WHERE retry.source_attempt_id=a.id)))",[run],|r|r.get(0))?;
     if retired {
         return Err(Error::new("job_generation_retired","This run belongs to a historical job generation; inspect its evidence instead of admitting new effects").into());
@@ -225,6 +227,9 @@ pub fn sync(
     reason: Option<&str>,
     finished_at: Option<u64>,
 ) -> Result<()> {
+    if crate::job_launch_resolutions::resolved_occurrence(tx, occurrence)? {
+        return Ok(());
+    }
     // Backoff/cancellation belongs to the logical occurrence. Keep the failed
     // source generation and its first completion evidence immutable.
     let retry_source: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.current_job_attempt_id=a.id AND o.id=a.occurrence_id JOIN harness_job_retries retry ON retry.source_attempt_id=a.id WHERE o.id=?1 AND a.state='failed')", [occurrence], |r|r.get(0))?;
@@ -250,6 +255,9 @@ fn record(
         crate::job_precheck_records::view_attempt(connection, occurrence, id, detail)?;
     value["retry"] = crate::job_retries::view(connection, id)?;
     value["executionTimeout"] = crate::job_timeouts::view_attempt(connection, id)?;
+    let (reconciliation, resolution) = crate::job_launch_resolutions::view_attempt(connection, id)?;
+    value["launchReconciliation"] = reconciliation;
+    value["launchResolution"] = resolution;
     for field in ["runState", "attemptId", "sessionId", "launchReceiptId"] {
         value[field] = Value::Null;
     }

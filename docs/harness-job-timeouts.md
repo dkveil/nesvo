@@ -214,8 +214,10 @@ failed create receipt's JSON boolean `effectStarted:false` and its other approva
 profile and generation guards. While the timer is still armed, such a confirmed
 no-effect launch disarms it with `reason:launch_no_effect`; a qualifying retry
 receives a fresh generation and independent window. Once timeout cleanup has
-been claimed, later no-effect evidence remains available for owner reconciliation;
-it does not authorize automatic retry or invent a process exit. Expired execution, provider failure,
+been claimed, later no-effect evidence remains available for explicit
+[owner reconciliation](harness-job-launch-reconciliation.md), when its stricter
+producer/evidence guards pass. It does not authorize automatic retry or invent a
+process exit. Expired execution, provider failure,
 human blockage, missing/unknown cleanup and elapsed-budget exhaustion do not
 qualify for that retry class. A separate deliberate `run-now` remains a new
 occurrence with its own intent and overlap checks.

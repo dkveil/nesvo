@@ -175,6 +175,7 @@ pub fn arm(
     now: u64,
     elapsed_ms: u64,
 ) -> Result<()> {
+    crate::job_launch_resolutions::guard_run(tx, run)?;
     let binding = tx.query_row("SELECT o.job_id,o.id,j.id,o.spec,a.session_id,l.operation_id,p.issuer
         FROM harness_job_attempts j JOIN harness_job_occurrences o ON o.id=j.occurrence_id
         JOIN workflow_tasks t ON t.run_id=j.run_id JOIN workflow_attempts a ON a.task_id=t.id
@@ -228,6 +229,10 @@ pub fn guard_report(
 }
 
 pub fn report_accepted(tx: &Transaction<'_>, attempt: &str, now: u64) -> Result<()> {
+    let resolved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_launch_resolutions x JOIN workflow_tasks t ON t.run_id=x.run_id JOIN workflow_attempts a ON a.task_id=t.id WHERE a.id=?1)",[attempt],|row|row.get(0))?;
+    if resolved {
+        return Err(stale());
+    }
     tx.execute(
         "UPDATE harness_job_timeouts SET state='disarmed',reason='report_accepted',observed_at=?2
         WHERE attempt_id=?1 AND state='armed'",
@@ -239,7 +244,7 @@ pub fn report_accepted(tx: &Transaction<'_>, attempt: &str, now: u64) -> Result<
 pub fn owns_occurrence(connection: &Connection, occurrence: &str) -> Result<bool> {
     Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_timeouts x
         JOIN harness_job_occurrences o ON o.id=x.occurrence_id AND o.current_job_attempt_id=x.job_attempt_id
-        WHERE o.id=?1 AND x.state NOT IN ('armed','disarmed'))",[occurrence],|row|row.get(0))?)
+        WHERE o.id=?1 AND x.state NOT IN ('armed','disarmed') AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.job_attempt_id=x.job_attempt_id))",[occurrence],|row|row.get(0))?)
 }
 
 pub fn owns_control(connection: &Connection, control: &str) -> Result<bool> {
@@ -251,6 +256,10 @@ pub fn owns_control(connection: &Connection, control: &str) -> Result<bool> {
 }
 
 pub fn guard_claim(connection: &Connection, claim: &Claim) -> Result<()> {
+    if crate::job_launch_resolutions::resolved_attempt(connection, &claim.identity.job_attempt_id)?
+    {
+        return Err(stale());
+    }
     let Some(record) = load(connection, "job_attempt_id", &claim.identity.job_attempt_id)? else {
         return Err(stale());
     };
@@ -313,6 +322,7 @@ pub fn block_claim(
 pub fn claims(tx: &Transaction<'_>, slots: u8, now: u64, elapsed_ms: u64) -> Result<Vec<Claim>> {
     let mut query=tx.prepare(&format!("SELECT {COLUMNS} FROM harness_job_timeouts x WHERE state='armed'
         AND deadline_monotonic_ms<=?1 AND NOT EXISTS(SELECT 1 FROM harness_job_cancellations c WHERE c.occurrence_id=x.occurrence_id)
+        AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.job_attempt_id=x.job_attempt_id)
         ORDER BY deadline_monotonic_ms,job_attempt_id LIMIT ?2"))?;
     let rows = query
         .query_map(params![i64::try_from(elapsed_ms)?, slots.min(2)], record)?
@@ -346,6 +356,9 @@ pub fn claims(tx: &Transaction<'_>, slots: u8, now: u64, elapsed_ms: u64) -> Res
 }
 
 pub fn finish(tx: &Transaction<'_>, claim: &Claim, result: Option<Value>, now: u64) -> Result<()> {
+    if crate::job_launch_resolutions::resolved_attempt(tx, &claim.identity.job_attempt_id)? {
+        return Err(stale());
+    }
     let Some(record) = load(tx, "job_attempt_id", &claim.identity.job_attempt_id)? else {
         return Err(stale());
     };
@@ -384,6 +397,9 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
         .query_map([], record)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for record in rows {
+        if crate::job_launch_resolutions::resolved_attempt(tx, &record.identity.job_attempt_id)? {
+            continue;
+        }
         if record.state == "armed" {
             let native=tx.query_row("SELECT a.result,p.phase,p.result FROM workflow_attempts a JOIN operation_receipts p ON p.id=?2 WHERE a.id=?1",params![record.identity.attempt_id,record.identity.launch_receipt_id],|row|Ok((row.get::<_,Option<String>>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?)))?;
             if native.0.is_some() {
@@ -493,8 +509,8 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
 pub fn schedule(tx: &Transaction<'_>, slots: u8, now: u64, elapsed_ms: u64) -> Result<Schedule> {
     refresh(tx, now)?;
     let claims = claims(tx, slots, now, elapsed_ms)?;
-    let next_deadline_monotonic_ms=tx.query_row("SELECT MIN(deadline_monotonic_ms) FROM harness_job_timeouts WHERE state='armed' AND (?1>0 OR deadline_monotonic_ms>?2)",params![slots,i64::try_from(elapsed_ms)?],|row|optional_millis(row,0))?;
-    let observing=tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_timeouts WHERE state IN ('dispatching','awaitingExit'))",[],|row|row.get(0))?;
+    let next_deadline_monotonic_ms=tx.query_row("SELECT MIN(deadline_monotonic_ms) FROM harness_job_timeouts x WHERE state='armed' AND (?1>0 OR deadline_monotonic_ms>?2) AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.job_attempt_id=x.job_attempt_id)",params![slots,i64::try_from(elapsed_ms)?],|row|optional_millis(row,0))?;
+    let observing=tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_timeouts x WHERE state IN ('dispatching','awaitingExit') AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.job_attempt_id=x.job_attempt_id))",[],|row|row.get(0))?;
     Ok(Schedule {
         claims,
         next_deadline_monotonic_ms,
@@ -507,7 +523,7 @@ pub fn recover(tx: &Transaction<'_>, now: u64) -> Result<()> {
     // or reading the previous host's monotonic clock. Only remaining timers
     // lose authority below; an already proven exit cannot hold overlap forever.
     refresh(tx, now)?;
-    tx.execute("UPDATE harness_job_timeouts SET state='unconfirmed',token=NULL,reason='host_restarted',observed_at=?1 WHERE state NOT IN ('disarmed','completed')",[i64::try_from(now)?])?;
+    tx.execute("UPDATE harness_job_timeouts SET state='unconfirmed',token=NULL,reason='host_restarted',observed_at=?1 WHERE state NOT IN ('disarmed','completed') AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.job_attempt_id=harness_job_timeouts.job_attempt_id)",[i64::try_from(now)?])?;
     Ok(())
 }
 

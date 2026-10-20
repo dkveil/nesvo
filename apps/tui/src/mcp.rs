@@ -184,6 +184,22 @@ fn catalog() -> Vec<Tool> {
             false,
         ),
         (
+            "nesvo_abandon_job_launch",
+            "Owner-only logical abandonment of exact no-effect launch cleanup. Inspect the current generation's launchReconciliation descriptor, require available:true and its digest, and explicitly acknowledge unknown effects. jobAttemptId is always required; needs jobLaunchReconciliation:true. Only the exact native create receipt's JSON boolean effectStarted:false and finished producers qualify. Releases overlap for a separate occurrence without claiming process exit, completing a native stop, retrying, repeating prechecks or granting model/native permissions. Existing precheck effects and original native receipts remain retained. Recover the original job mutation key.",
+            object(
+                json!({"key":key,"jobId":id,"occurrenceId":id,"jobAttemptId":id,"expectedDigest":{"type":"string","minLength":64,"maxLength":64,"pattern":"^[0-9a-f]{64}$"},"acknowledgeUnknownEffects":{"type":"boolean","const":true}}),
+                &[
+                    "key",
+                    "jobId",
+                    "occurrenceId",
+                    "jobAttemptId",
+                    "expectedDigest",
+                    "acknowledgeUnknownEffects",
+                ],
+            ),
+            false,
+        ),
+        (
             "nesvo_create_job",
             "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional executionTimeoutMs requires jobExecutionTimeouts and starts at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Combining with precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution before each fresh generation. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
             object(
@@ -254,7 +270,7 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_get_job_occurrence",
-            "Owner-only immutable occurrence profile and run pointer for reconciliation. No dispatch or process adoption.",
+            "Owner-only immutable occurrence profile and run pointer, including nullable launchReconciliation and retained launchResolution evidence. An available launch descriptor/digest can be inspected before a separate explicit owner acknowledgement. Reads never release overlap, dispatch effects or adopt a process.",
             object(
                 json!({"jobId":id,"occurrenceId":id}),
                 &["jobId", "occurrenceId"],
@@ -263,7 +279,7 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_get_job_attempts",
-            "Owner-only read of eight retained dispatch generations for one exact job occurrence. Ordinal 1 is the first dispatch; queued intent has no generation yet. Summaries omit precheck stdout/stderr. Does not create a retry, repeat a command, launch/adopt a process or change native permissions.",
+            "Owner-only read of eight retained dispatch generations for one exact job occurrence, including nullable launchReconciliation and launchResolution evidence. Ordinal 1 is the first dispatch; queued intent has no generation yet. Summaries omit precheck stdout/stderr. Does not create a retry, release overlap, repeat a command, launch/adopt a process or change native permissions.",
             object(
                 json!({"jobId":id,"occurrenceId":id,"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
                 &["jobId", "occurrenceId"],
@@ -272,7 +288,7 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_get_job_attempt",
-            "Owner-only detail of one retained job dispatch generation, including bounded precheck evidence. jobAttemptId is distinct from a workflow task attempt/session ID. Reads never retry, launch/adopt a process, repeat native effects or infer success from process silence.",
+            "Owner-only detail of one retained job dispatch generation, including bounded precheck evidence and nullable launchReconciliation/launchResolution. jobAttemptId is distinct from a workflow task attempt/session ID. Reads never retry, release overlap, launch/adopt a process, repeat native effects or infer success from process silence.",
             object(
                 json!({"jobId":id,"occurrenceId":id,"jobAttemptId":id}),
                 &["jobId", "occurrenceId", "jobAttemptId"],
@@ -1176,7 +1192,8 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         | "nesvo_get_job_attempts"
         | "nesvo_get_job_attempt"
         | "nesvo_get_job_mutation"
-        | "nesvo_abandon_job_precheck" => {
+        | "nesvo_abandon_job_precheck"
+        | "nesvo_abandon_job_launch" => {
             let action = match name {
                 "nesvo_create_job" => "create",
                 "nesvo_get_job" => "get",
@@ -1190,6 +1207,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "nesvo_get_job_attempts" => "attempts",
                 "nesvo_get_job_attempt" => "attempt",
                 "nesvo_abandon_job_precheck" => "abandonPrecheck",
+                "nesvo_abandon_job_launch" => "abandonLaunchNoEffect",
                 _ => "mutation",
             };
             let mut fields = arguments
@@ -2112,8 +2130,209 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 80);
+        assert_eq!(catalog().len(), 81);
     }
+    #[test]
+    fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {
+        use clap::Parser;
+        let digest = "a".repeat(64);
+        let args = [
+            "nesvo",
+            "job",
+            "abandon-launch",
+            "j",
+            "o",
+            "--job-attempt-id",
+            "generation",
+            "--key",
+            "abandon-launch-once",
+            "--digest",
+            &digest,
+            "--acknowledge-unknown-effects",
+            "--json",
+        ];
+        let parsed = crate::Arguments::try_parse_from(args).unwrap();
+        let Some(cli::Command::Job { command: cli }) = parsed.command else {
+            panic!("Expected exact launch abandonment");
+        };
+        assert!(cli.machine());
+        let cli = crate::workflow::tool("jobs", json!({"request":cli.request().unwrap()})).unwrap();
+        let arguments = json!({"key":"abandon-launch-once","jobId":"j","occurrenceId":"o","jobAttemptId":"generation","expectedDigest":digest,"acknowledgeUnknownEffects":true});
+        let (mcp, kind) = command("nesvo_abandon_job_launch", arguments.clone()).unwrap();
+        assert_eq!(kind, "workflow");
+        assert_eq!(cli, mcp);
+        let mut expected = arguments.clone();
+        expected["action"] = json!("abandonLaunchNoEffect");
+        assert_eq!(mcp["request"]["request"], expected);
+
+        for flag in ["--job-attempt-id", "--acknowledge-unknown-effects"] {
+            let mut omitted = args.to_vec();
+            let position = omitted
+                .iter()
+                .position(|argument| *argument == flag)
+                .unwrap();
+            omitted.remove(position);
+            if flag == "--job-attempt-id" {
+                omitted.remove(position);
+            }
+            assert!(crate::Arguments::try_parse_from(omitted).is_err());
+        }
+        for required in [
+            "key",
+            "jobId",
+            "occurrenceId",
+            "jobAttemptId",
+            "expectedDigest",
+            "acknowledgeUnknownEffects",
+        ] {
+            let mut fields = arguments.clone();
+            fields.as_object_mut().unwrap().remove(required);
+            assert!(command("nesvo_abandon_job_launch", fields).is_err());
+        }
+        for (field, value) in [
+            ("jobAttemptId", Value::Null),
+            ("jobAttemptId", json!(1)),
+            ("expectedDigest", json!("a".repeat(63))),
+            ("expectedDigest", json!("g".repeat(64))),
+            ("expectedDigest", json!("A".repeat(64))),
+            ("expectedDigest", Value::Null),
+            ("acknowledgeUnknownEffects", json!(false)),
+            ("acknowledgeUnknownEffects", json!("true")),
+            ("acknowledgeUnknownEffects", json!(1)),
+            ("action", json!("abandonPrecheck")),
+            ("owner", json!(true)),
+            ("proof", json!({"effectStarted":false})),
+        ] {
+            let mut fields = arguments.clone();
+            fields[field] = value;
+            assert!(command("nesvo_abandon_job_launch", fields).is_err());
+        }
+        let schema = serde_json::to_value(
+            catalog()
+                .into_iter()
+                .find(|tool| tool.name == "nesvo_abandon_job_launch")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(schema["inputSchema"]["additionalProperties"], false);
+        assert_eq!(
+            schema["inputSchema"]["required"],
+            json!([
+                "key",
+                "jobId",
+                "occurrenceId",
+                "jobAttemptId",
+                "expectedDigest",
+                "acknowledgeUnknownEffects"
+            ])
+        );
+        assert_eq!(
+            schema["inputSchema"]["properties"]
+                .as_object()
+                .unwrap()
+                .len(),
+            6
+        );
+        assert_eq!(
+            schema["inputSchema"]["properties"]["acknowledgeUnknownEffects"]["const"],
+            true
+        );
+        assert_eq!(
+            schema["inputSchema"]["properties"]["expectedDigest"]["pattern"],
+            "^[0-9a-f]{64}$"
+        );
+        assert_eq!(schema["annotations"]["readOnlyHint"], false);
+        assert_eq!(schema["annotations"]["idempotentHint"], true);
+    }
+
+    #[test]
+    fn launch_reconciliation_output_schema_is_additive_exact_and_keeps_proof_private() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
+        let definitions = &schema["definitions"];
+        for (name, extra) in [
+            ("jobLaunchReconciliation", ["available", "reason", "digest"]),
+            (
+                "jobLaunchResolution",
+                ["digest", "mutationKey", "acknowledgedAt"],
+            ),
+        ] {
+            let object = &definitions[name];
+            assert_eq!(object["type"], "object");
+            assert_eq!(object["additionalProperties"], false);
+            assert_eq!(object["properties"].as_object().unwrap().len(), 11);
+            let required = object["required"].as_array().unwrap();
+            assert_eq!(required.len(), 11);
+            assert_eq!(object["properties"]["kind"]["const"], "launchNoEffect");
+            for field in [
+                "kind",
+                "jobId",
+                "occurrenceId",
+                "jobAttemptId",
+                "runId",
+                "attemptId",
+                "sessionId",
+                "launchReceiptId",
+            ]
+            .into_iter()
+            .chain(extra)
+            {
+                assert!(required.contains(&json!(field)));
+                assert!(object["properties"].get(field).is_some());
+            }
+            for private in ["token", "proof", "deadlineMonotonicMs", "claimToken"] {
+                assert!(object["properties"].get(private).is_none());
+            }
+            assert_eq!(object["properties"]["digest"]["minLength"], 64);
+            assert_eq!(object["properties"]["digest"]["maxLength"], 64);
+            assert_eq!(object["properties"]["digest"]["pattern"], "^[0-9a-f]{64}$");
+        }
+        assert_eq!(
+            definitions["jobLaunchReconciliation"]["properties"]["available"]["type"],
+            "boolean"
+        );
+        assert_eq!(
+            definitions["jobLaunchReconciliation"]["properties"]["digest"]["type"],
+            json!(["string", "null"])
+        );
+        assert_eq!(
+            definitions["jobLaunchResolution"]["properties"]["digest"]["type"],
+            "string"
+        );
+        for (field, definition) in [
+            ("launchReconciliation", "jobLaunchReconciliation"),
+            ("launchResolution", "jobLaunchResolution"),
+        ] {
+            let occurrence = &definitions["jobOccurrence"];
+            assert!(
+                !occurrence["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(field))
+            );
+            assert_eq!(occurrence["properties"][field]["anyOf"][0]["type"], "null");
+            assert_eq!(
+                occurrence["properties"][field]["anyOf"][1]["$ref"],
+                format!("#/definitions/{definition}")
+            );
+            let summary = &definitions["jobAttemptSummary"];
+            assert!(
+                !summary["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(field))
+            );
+            assert_eq!(
+                summary["properties"][field]["$ref"],
+                format!("#/definitions/jobOccurrence/properties/{field}")
+            );
+        }
+        assert_eq!(
+            definitions["jobAttemptDetail"]["allOf"][0]["$ref"],
+            "#/definitions/jobAttemptSummary"
+        );
+    }
+
     #[test]
     fn occurrence_cancel_cli_and_mcp_share_exact_owner_intent() {
         use clap::Parser;

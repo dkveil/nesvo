@@ -136,6 +136,9 @@ pub fn claims(tx: &Transaction<'_>, slots: u8, now: u64) -> Result<Vec<Claim>> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut claims = Vec::new();
     for (occurrence, issuer, run, key) in rows {
+        if crate::job_launch_resolutions::resolved_occurrence(tx, &occurrence)? {
+            continue;
+        }
         if crate::job_timeouts::owns_occurrence(tx, &occurrence)? {
             tx.execute("UPDATE harness_job_cancellations SET state='unconfirmed',reason='timeout_cleanup_owned',observed_at=?2 WHERE occurrence_id=?1",params![occurrence,now as i64])?;
             continue;
@@ -153,6 +156,13 @@ pub fn claims(tx: &Transaction<'_>, slots: u8, now: u64) -> Result<Vec<Claim>> {
     Ok(claims)
 }
 pub fn finish(tx: &Transaction<'_>, claim: &Claim, result: Option<Value>, now: u64) -> Result<()> {
+    if crate::job_launch_resolutions::resolved_occurrence(tx, &claim.occurrence)? {
+        return Err(Error::new(
+            "stale_cancellation",
+            "Owner resolved this launch; the historical cancellation cannot change its disposition",
+        )
+        .into());
+    }
     let matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_cancellations c JOIN harness_job_occurrences o ON o.id=c.occurrence_id WHERE c.occurrence_id=?1 AND c.token=?2 AND c.state='dispatching' AND o.run_id=?3)",params![claim.occurrence,claim.token,claim.run],|r|r.get(0))?;
     if !matches {
         return Err(Error::new(
@@ -182,6 +192,9 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for (occurrence, control, state) in rows {
+        if crate::job_launch_resolutions::resolved_occurrence(tx, &occurrence)? {
+            continue;
+        }
         let (phase, reason, finished) = match state.as_str() {
             "completed" => ("canceled", "owner_canceled", true),
             "blocked" => ("canceling", "cancel_blocked", false),
@@ -202,6 +215,9 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (occurrence, control) in observed {
+        if crate::job_launch_resolutions::resolved_occurrence(tx, &occurrence)? {
+            continue;
+        }
         tx.execute("UPDATE harness_job_cancellations SET state='completed',control_id=?2,reason='run_termination_observed',observed_at=?3 WHERE occurrence_id=?1",params![occurrence,control,now as i64])?;
         if !crate::job_timeouts::owns_occurrence(tx, &occurrence)? {
             job_definitions::transition(
@@ -221,6 +237,9 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for occurrence in unmatched {
+        if crate::job_launch_resolutions::resolved_occurrence(tx, &occurrence)? {
+            continue;
+        }
         if crate::job_timeouts::owns_occurrence(tx, &occurrence)? {
             continue;
         }
@@ -277,6 +296,6 @@ pub fn precheck_finished_attempt(
 pub fn recover(tx: &Transaction<'_>, now: u64) -> Result<()> {
     // Even an unclaimed accepted native cancellation remains fenced. A restart
     // cannot safely distinguish setup/stop effects from the old host generation.
-    tx.execute("UPDATE harness_job_cancellations SET token=NULL,state='unconfirmed',reason='host_restarted',observed_at=?1 WHERE state NOT IN ('completed','blocked','abandoned')",[now as i64])?;
+    tx.execute("UPDATE harness_job_cancellations SET token=NULL,state='unconfirmed',reason='host_restarted',observed_at=?1 WHERE state NOT IN ('completed','blocked','abandoned') AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.occurrence_id=harness_job_cancellations.occurrence_id)",[now as i64])?;
     Ok(())
 }

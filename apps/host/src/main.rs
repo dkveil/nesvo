@@ -16,6 +16,7 @@ mod job_calendar;
 mod job_calendar_adapter;
 mod job_cancellations;
 mod job_definitions;
+mod job_launch_resolutions;
 mod job_precheck_adapter;
 mod job_precheck_records;
 mod job_prechecks;

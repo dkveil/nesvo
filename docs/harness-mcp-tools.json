@@ -1,4 +1,5 @@
 [
+  "nesvo_abandon_job_launch",
   "nesvo_abandon_job_precheck",
   "nesvo_ack_messages",
   "nesvo_acknowledge_run_constraints",

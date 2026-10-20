@@ -742,6 +742,11 @@ fn job_cancellation_supported(caps: &Value, request: &Value) -> bool {
         || request["request"]["request"]["action"] != "cancelOccurrence"
         || caps["jobCancellation"] == true
 }
+fn job_launch_reconciliation_supported(caps: &Value, request: &Value) -> bool {
+    request["request"]["action"] != "jobs"
+        || request["request"]["request"]["action"] != "abandonLaunchNoEffect"
+        || caps["jobLaunchReconciliation"] == true
+}
 fn job_attempts_supported(caps: &Value, request: &Value) -> bool {
     request["request"]["action"] != "jobs"
         || !matches!(
@@ -864,6 +869,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host cannot enforce occurrence cancellation and cleanup; update nesvo-host",
         ));
     }
+    if !job_launch_reconciliation_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot reconcile exact no-effect job launches; update nesvo-host",
+        ));
+    }
     if !job_attempts_supported(&caps, request) {
         return Err(cli::failure(
             "unsupported",
@@ -917,6 +928,45 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn launch_reconciliation_requires_strict_support_only_for_its_owner_action() {
+        let request = tool(
+            "jobs",
+            json!({"request":{"action":"abandonLaunchNoEffect","key":"abandon","jobId":"j","occurrenceId":"o","jobAttemptId":"generation","expectedDigest":"a".repeat(64),"acknowledgeUnknownEffects":true}}),
+        )
+        .unwrap();
+        for caps in [
+            json!({}),
+            json!({"jobExecutionTimeouts":true,"jobCancellation":true,"jobAttempts":true}),
+            json!({"jobLaunchReconciliation":false}),
+            json!({"jobLaunchReconciliation":null}),
+            json!({"jobLaunchReconciliation":"true"}),
+            json!({"jobLaunchReconciliation":1}),
+            json!({"jobLaunchReconciliation":[]}),
+            json!({"jobLaunchReconciliation":{}}),
+        ] {
+            assert!(!job_launch_reconciliation_supported(&caps, &request));
+        }
+        assert!(job_launch_reconciliation_supported(
+            &json!({"jobLaunchReconciliation":true}),
+            &request
+        ));
+        assert!(!job_precheck_requested(&request));
+        assert!(job_precheck_generations_supported(&json!({}), &request));
+        for fields in [
+            json!({"action":"abandonPrecheck","key":"legacy","jobId":"j","occurrenceId":"o","expectedDigest":"a".repeat(64),"acknowledgeUnknownEffects":true}),
+            json!({"action":"cancelOccurrence","key":"cancel","jobId":"j","occurrenceId":"o"}),
+            json!({"action":"occurrence","jobId":"j","occurrenceId":"o"}),
+            json!({"action":"attempt","jobId":"j","occurrenceId":"o","jobAttemptId":"generation"}),
+        ] {
+            let legacy = tool("jobs", json!({"request":fields})).unwrap();
+            assert!(job_launch_reconciliation_supported(&json!({}), &legacy));
+        }
+        assert!(job_launch_reconciliation_supported(
+            &json!({}),
+            &json!({"request":{"action":"get","runId":"run"}})
+        ));
+    }
     #[test]
     fn job_execution_timeout_requires_typed_support_only_for_effective_create_or_update_intent() {
         for action in ["create", "update"] {

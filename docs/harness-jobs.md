@@ -8,7 +8,9 @@ and human-input guards. No model API keys or direct model calls are added.
 
 Once, [recurring IANA calendars](harness-job-calendars.md) and
 [owner-approved command prechecks](harness-job-prechecks.md), bounded no-effect
-retry and optional [execution timeouts](harness-job-timeouts.md) are available.
+retry, optional [execution timeouts](harness-job-timeouts.md), and explicit
+[owner reconciliation of no-effect launches](harness-job-launch-reconciliation.md)
+are available.
 Safe reuse, authenticated triggers, broader retry classes, cleanup after reported
 results, quota queues and job UI remain separate implementation gates. Existing legacy
 once schedules and their storage/API remain unchanged until a tested migration

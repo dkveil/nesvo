@@ -3437,6 +3437,28 @@
           ],
           "description": "Current generation's retained timeout evidence, or null without a timeout; historical accepted envelopes may omit this field. Cleanup acceptance is not observed native exit."
         },
+        "launchReconciliation": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobLaunchReconciliation"
+            }
+          ],
+          "description": "Inspected exact-generation launch cleanup descriptor. Only available:true with its current digest permits an explicit owner acknowledgement. Historical accepted envelopes may omit this field."
+        },
+        "launchResolution": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobLaunchResolution"
+            }
+          ],
+          "description": "Retained owner acknowledgement releasing logical overlap after an exact no-effect launch. This does not prove exit, complete a native stop, retry work or undo precheck effects. Historical accepted envelopes may omit this field."
+        },
         "jobRevision": {
           "type": "integer",
           "minimum": 1
@@ -3681,6 +3703,12 @@
         },
         "executionTimeout": {
           "$ref": "#/definitions/jobOccurrence/properties/executionTimeout"
+        },
+        "launchReconciliation": {
+          "$ref": "#/definitions/jobOccurrence/properties/launchReconciliation"
+        },
+        "launchResolution": {
+          "$ref": "#/definitions/jobOccurrence/properties/launchResolution"
         },
         "runId": {
           "anyOf": [
@@ -4023,6 +4051,118 @@
               "$ref": "#/definitions/id"
             }
           ]
+        }
+      }
+    },
+    "jobLaunchReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "jobId",
+        "occurrenceId",
+        "jobAttemptId",
+        "runId",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+        "available",
+        "reason",
+        "digest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "launchNoEffect"
+        },
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "occurrenceId": {
+          "$ref": "#/definitions/id"
+        },
+        "jobAttemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "runId": {
+          "$ref": "#/definitions/id"
+        },
+        "attemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/id"
+        },
+        "launchReceiptId": {
+          "$ref": "#/definitions/id"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "digest": {
+          "type": ["string", "null"],
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "jobLaunchResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "jobId",
+        "occurrenceId",
+        "jobAttemptId",
+        "runId",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+        "digest",
+        "mutationKey",
+        "acknowledgedAt"
+      ],
+      "properties": {
+        "kind": {
+          "const": "launchNoEffect"
+        },
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "occurrenceId": {
+          "$ref": "#/definitions/id"
+        },
+        "jobAttemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "runId": {
+          "$ref": "#/definitions/id"
+        },
+        "attemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/id"
+        },
+        "launchReceiptId": {
+          "$ref": "#/definitions/id"
+        },
+        "digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "mutationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "acknowledgedAt": {
+          "$ref": "#/definitions/cursor"
         }
       }
     },

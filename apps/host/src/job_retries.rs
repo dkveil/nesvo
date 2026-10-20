@@ -249,6 +249,11 @@ fn authorized(connection: &Connection, source: &Source) -> Result<bool> {
 /// Called before generic failure projection, in the same writer transaction.
 /// The first accepted decision owns its deadline; subsequent reads are quiet.
 pub fn consider(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<bool> {
+    if crate::job_launch_resolutions::resolved_occurrence(tx, occurrence)?
+        || crate::job_timeouts::owns_occurrence(tx, occurrence)?
+    {
+        return Ok(false);
+    }
     let Some(source) = source(tx, occurrence)? else {
         return Ok(false);
     };
@@ -345,6 +350,11 @@ pub fn claim(
     occurrence: &str,
     now: u64,
 ) -> Result<Option<(job_attempts::Dispatch, u16)>> {
+    if crate::job_launch_resolutions::resolved_occurrence(tx, occurrence)?
+        || crate::job_timeouts::owns_occurrence(tx, occurrence)?
+    {
+        return Ok(None);
+    }
     let Some(source) = source(tx, occurrence)? else {
         return Ok(None);
     };

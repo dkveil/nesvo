@@ -448,6 +448,7 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
     if let Some(view) = orchestration::replay(&transaction, &actor, key, &fingerprint)? {
         return Ok(Reply::Prepared { view, claim: None });
     }
+    crate::job_launch_resolutions::guard_run(&transaction, run_id)?;
     orchestration::mutation_capacity(&transaction)?;
     if run["revision"] != expected_revision {
         return Err(Error::new(

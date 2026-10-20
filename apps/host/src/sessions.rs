@@ -898,6 +898,7 @@ impl State {
         event["jobAttempts"] = true.into();
         event["jobRetries"] = true.into();
         event["jobExecutionTimeouts"] = true.into();
+        event["jobLaunchReconciliation"] = true.into();
         event["jobRetryKinds"] = json!(["launchNoEffect"]);
         event["jobScheduleKinds"] = json!(["once", "cron", "rrule"]);
         event["launchProfileSupport"] =
