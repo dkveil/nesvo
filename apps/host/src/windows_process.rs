@@ -89,6 +89,46 @@ fn enroll(process: BorrowedHandle<'_>) -> Result<OwnedHandle> {
     Ok(job)
 }
 
+/// The helper cannot spawn a configured command until its parent sends input.
+/// Enroll that already-owned waiting helper before releasing the input gate.
+pub fn command_job(child: &tokio::process::Child) -> Result<OwnedHandle> {
+    let raw = child
+        .raw_handle()
+        .context("Command helper handle unavailable")?;
+    // SAFETY: Child retains this handle throughout enrollment.
+    enroll(unsafe { BorrowedHandle::borrow_raw(raw) })
+}
+pub fn terminate_command_job(job: &OwnedHandle) -> io::Result<()> {
+    // SAFETY: the private owned handle pins this exact process job.
+    if unsafe { TerminateJobObject(job.as_raw_handle(), 1) } != 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+pub fn command_job_empty(job: &OwnedHandle) -> io::Result<bool> {
+    use windows_sys::Win32::System::JobObjects::{
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
+        QueryInformationJobObject,
+    };
+    let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+    // SAFETY: owned live job, initialized output and exact structure size.
+    if unsafe {
+        QueryInformationJobObject(
+            job.as_raw_handle(),
+            JobObjectBasicAccountingInformation,
+            std::ptr::from_mut(&mut info).cast(),
+            std::mem::size_of_val(&info) as u32,
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(info.ActiveProcesses == 0)
+    }
+}
+
 #[cfg(test)]
 #[path = "windows_process_tests.rs"]
 mod tests;

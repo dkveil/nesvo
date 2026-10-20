@@ -13,6 +13,8 @@ pub fn killer(child: &dyn Child) -> Result<Box<dyn ChildKiller + Send + Sync>> {
 mod windows;
 #[cfg(windows)]
 pub use windows::killer;
+#[cfg(windows)]
+pub use windows::{command_job, command_job_empty, terminate_command_job};
 
 pub fn display_path(path: &std::path::Path) -> String {
     let value = path.display().to_string();

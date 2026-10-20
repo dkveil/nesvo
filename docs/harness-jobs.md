@@ -6,8 +6,9 @@ phone. Fresh worker admission and instruction delivery use the existing
 Run/Task/Attempt executor, native receipts, readiness, workspace, process budgets
 and human-input guards. No model API keys or direct model calls are added.
 
-Once and [recurring IANA calendars](harness-job-calendars.md) are available. Safe reuse,
-prechecks, authenticated triggers, automatic retries, hard runtime timeout/cleanup,
+Once, [recurring IANA calendars](harness-job-calendars.md) and
+[owner-approved command prechecks](harness-job-prechecks.md) are available. Safe reuse,
+authenticated triggers, automatic retries, hard runtime timeout/cleanup,
 quota queues and job UI remain separate implementation gates. Existing legacy
 once schedules and their storage/API remain unchanged until a tested migration
 can preserve their launch semantics. The new `job` commands list the new records.
@@ -103,7 +104,9 @@ for DST, search bounds and durable calendar errors. `calendarState:exhausted`
 means no more automatic terms; it does not mean the last worker succeeded.
 
 At most eight due definitions are materialized per calendar/once pass and four queued occurrences are
-claimed per host tick. Claims are transactional before native work. Definition,
+claimed per host tick. Claims are transactional before native work. Dispatch
+preparation is bounded to four in-flight tasks; two independent calendar calculations
+and two command scopes have their own bounds, preserving timer progress. Definition,
 occurrence and mutation retention are bounded (64, 4096 and 4096 respectively);
 history is never silently discarded. Full occurrence retention stops new
 admissions, while existing occurrence reconciliation can still proceed. Deletion/

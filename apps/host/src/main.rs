@@ -6,6 +6,7 @@ mod attention_projection;
 mod budgets;
 mod caller;
 mod codex_context;
+mod command_scope;
 mod event_log;
 mod git;
 mod groups;
@@ -13,6 +14,9 @@ mod host_lock;
 mod job_calendar;
 mod job_calendar_adapter;
 mod job_definitions;
+mod job_precheck_adapter;
+mod job_precheck_records;
+mod job_prechecks;
 mod job_runtime;
 mod jobs;
 mod launch_profile;
@@ -169,6 +173,12 @@ fn stdin_close_signal() -> oneshot::Receiver<()> {
 }
 
 fn main() -> Result<()> {
+    if std::env::args_os().len() == 2
+        && std::env::args_os().nth(1).as_deref()
+            == Some(std::ffi::OsStr::new(job_precheck_adapter::FLAG))
+    {
+        return job_precheck_adapter::stdio();
+    }
     if std::env::args_os().len() == 2
         && std::env::args_os().nth(1).as_deref()
             == Some(std::ffi::OsStr::new(job_calendar_adapter::FLAG))

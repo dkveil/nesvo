@@ -35,10 +35,33 @@ fn create(store: &mut Store, key: &str, extra: Value) -> Value {
     request(store, json!({"action":"create","key":key,"spec":spec}), NOW).unwrap()["job"].clone()
 }
 fn tick(store: &mut Store, now: u64) -> Vec<Claim> {
-    match job_definitions::work(&mut store.0, Work::Tick, now).unwrap() {
+    match job_definitions::work(&mut store.0, Work::Poll { slots: 4 }, now).unwrap() {
         Reply::Claims(claims) => claims,
         _ => panic!("Expected claims"),
     }
+}
+#[test]
+fn pending_calendar_calculation_does_not_hide_a_due_once_job_behind_the_page_limit() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let mut due = NOW;
+    for i in 0..8 {
+        let item = create(
+            &mut store,
+            &format!("pending-calendar-{i}"),
+            json!({"schedule":{"kind":"cron","expression":"* * * * *"}}),
+        );
+        due = item["nextDueAt"].as_u64().unwrap();
+    }
+    let at = due + 1000;
+    let once = create(
+        &mut store,
+        "once-behind-calendar",
+        json!({"schedule":{"kind":"once","at":chrono::DateTime::from_timestamp_millis(at as i64).unwrap().to_rfc3339()}}),
+    );
+    let claims = tick(&mut store, at);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].job_id, once["id"]);
+    assert_eq!(calendars(&mut store, at).len(), 8);
 }
 fn history(store: &mut Store, job: &Value) -> Value {
     request(store, json!({"action":"history","jobId":job["id"]}), NOW).unwrap()["occurrences"]

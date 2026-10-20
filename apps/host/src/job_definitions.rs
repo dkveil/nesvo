@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const ACTIVE: &str = "'dispatching','running','needsValidation','reconcile'";
+const ACTIVE: &str = "'dispatching','prechecking','running','needsValidation','reconcile'";
 fn grace() -> u64 {
     60_000
 }
@@ -39,6 +39,8 @@ pub struct Spec {
     pub instruction: String,
     pub profile: Profile,
     pub schedule: Schedule,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precheck_id: Option<String>,
     #[serde(default)]
     pub misfire: Misfire,
     #[serde(default = "grace")]
@@ -59,6 +61,16 @@ pub struct Spec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Prechecks {
+        request: crate::job_prechecks::Request,
+    },
+    AbandonPrecheck {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
+        expected_digest: String,
+        acknowledge_unknown_effects: bool,
+    },
     Create {
         key: String,
         spec: Spec,
@@ -106,7 +118,19 @@ pub struct Claim {
     pub spec: Spec,
 }
 pub enum Work {
-    Tick,
+    Poll {
+        slots: u8,
+    },
+    BeginPrecheck {
+        occurrence: String,
+    },
+    FinishPrecheck {
+        occurrence: String,
+        result: crate::job_prechecks::Outcome,
+    },
+    Interrupted {
+        occurrence: String,
+    },
     CalendarDue,
     AdvanceCalendar {
         id: String,
@@ -130,6 +154,8 @@ pub enum Work {
 pub enum Reply {
     Claims(Vec<Claim>),
     Calendars(Vec<CalendarDue>),
+    Precheck(Option<Box<crate::job_prechecks::Command>>),
+    PrecheckPassed(bool),
     Done,
 }
 pub struct CalendarDue {
@@ -172,17 +198,19 @@ pub fn initialize(connection: &Connection) -> Result<()> {
             "ALTER TABLE harness_job_occurrences ADD COLUMN coalesced_from INTEGER;",
         )?;
     }
+    crate::job_prechecks::initialize(connection)?;
     Ok(())
 }
 pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let ids = {
-        let mut q=transaction.prepare("SELECT id FROM harness_job_occurrences WHERE state IN ('dispatching','running','needsValidation')")?;
+        let mut q=transaction.prepare("SELECT id FROM harness_job_occurrences WHERE state IN ('dispatching','prechecking','running','needsValidation')")?;
         q.query_map([], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for id in ids {
+        transaction.execute("UPDATE harness_job_prechecks SET state='unknown',reason='host_restarted',observed_at=?2,finished_at=NULL WHERE occurrence_id=?1 AND state='running'",params![id,now as i64])?;
         transition(
             &transaction,
             &id,
@@ -227,6 +255,13 @@ fn due(spec: &Spec) -> Result<u64> {
     u64::try_from(instant).map_err(|_| invalid("Once time must be after the Unix epoch"))
 }
 fn validate(spec: &Spec, now: u64) -> Result<u64> {
+    if spec
+        .precheck_id
+        .as_ref()
+        .is_some_and(|id| id.len() != 32 || !id.bytes().all(|c| c.is_ascii_hexdigit()))
+    {
+        return Err(invalid("Select a host-issued precheck approval ID"));
+    }
     crate::groups::valid_name(&spec.title)?;
     if spec.instruction.trim().is_empty()
         || spec.instruction.len() > 8192
@@ -259,6 +294,19 @@ fn validate(spec: &Spec, now: u64) -> Result<u64> {
         ));
     }
     Ok(at)
+}
+fn validate_approval(connection: &Connection, spec: &Spec) -> Result<()> {
+    if let Some(id) = &spec.precheck_id {
+        let approval = crate::job_prechecks::view(connection, id)?;
+        if approval["enabled"] != true {
+            return Err(Error::new(
+                "precheck_revoked",
+                "Select an enabled owner precheck approval",
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 fn job(connection: &Connection, id: &str, detail: bool) -> Result<Value> {
     let row = connection
@@ -315,6 +363,7 @@ fn occurrence(connection: &Connection, job_id: &str, id: &str, detail: bool) -> 
             |r| r.get::<_, Option<i64>>(0),
         )?
         .into();
+    view["precheck"] = crate::job_precheck_records::view(connection, id, detail)?;
     let binding = if let Some(run) = view["runId"].as_str() {
         connection.query_row("SELECT a.id,a.session_id,l.operation_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id LEFT JOIN workflow_launches l ON l.attempt_id=a.id WHERE t.run_id=?1 ORDER BY a.ordinal DESC,a.rowid DESC LIMIT 1",[run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional()?
     } else {
@@ -432,6 +481,9 @@ pub fn execute(
         )
         .into());
     }
+    if let Request::Prechecks { request } = request {
+        return crate::job_prechecks::execute(connection, actor, request, now);
+    }
     match &request {
         Request::Mutation { key } => {
             orchestration::validate_key(key)?;
@@ -498,7 +550,8 @@ pub fn execute(
         Request::Create { key, .. }
         | Request::Update { key, .. }
         | Request::SetEnabled { key, .. }
-        | Request::RunNow { key, .. } => key,
+        | Request::RunNow { key, .. }
+        | Request::AbandonPrecheck { key, .. } => key,
         _ => unreachable!(),
     };
     orchestration::validate_key(key)?;
@@ -540,8 +593,39 @@ pub fn execute(
         .into());
     }
     let view = match &request {
+        Request::AbandonPrecheck {
+            job_id,
+            occurrence_id,
+            expected_digest,
+            acknowledge_unknown_effects,
+            ..
+        } => {
+            let current = occurrence(&transaction, job_id, occurrence_id, true)?;
+            if !acknowledge_unknown_effects
+                || !current["runId"].is_null()
+                || current["state"] != "reconcile"
+                || !matches!(
+                    current["precheck"]["state"].as_str(),
+                    Some("unknown" | "passed")
+                )
+                || current["precheck"]["approvalDigest"] != *expected_digest
+            {
+                return Err(Error::new("occurrence_conflict","Inspect the unknown precheck and explicitly acknowledge its effects before abandoning this exact command; no process is resumed or undone").into());
+            }
+            transaction.execute("UPDATE harness_job_prechecks SET state='abandoned',reason='owner_abandoned',observed_at=?2 WHERE occurrence_id=?1",params![occurrence_id,now as i64])?;
+            transition(
+                &transaction,
+                occurrence_id,
+                "canceled",
+                Some("precheck_owner_abandoned"),
+                true,
+                now,
+            )?;
+            json!({"occurrence":occurrence(&transaction,job_id,occurrence_id,true)?})
+        }
         Request::Create { spec, .. } => {
             let at = validate(spec, now)?;
+            validate_approval(&transaction, spec)?;
             let count: i64 =
                 transaction.query_row("SELECT count(*) FROM harness_jobs", [], |r| r.get(0))?;
             if count >= 64 {
@@ -578,6 +662,7 @@ pub fn execute(
             match &request {
                 Request::Update { spec, .. } => {
                     let at = validate(spec, now)?;
+                    validate_approval(&transaction, spec)?;
                     transaction.execute("UPDATE harness_jobs SET spec=?2,next_due=?3,calendar_error=NULL,revision=revision+1 WHERE id=?1",params![job_id,serde_json::to_string(spec)?,at as i64])?;
                     observe(&transaction, job_id, None, "updated", now)?;
                     json!({"job":job(&transaction,job_id,true)?})
@@ -673,15 +758,69 @@ fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
     Ok(())
 }
 pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
+    let slots = match &work {
+        Work::Poll { slots } => i64::from((*slots).min(4)),
+        _ => 4,
+    };
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let reply = match work {
+        Work::Interrupted { occurrence } => {
+            let phase: Option<String> = transaction
+                .query_row(
+                    "SELECT state FROM harness_job_occurrences WHERE id=?1",
+                    [&occurrence],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if phase.as_deref() == Some("prechecking") {
+                let result = crate::job_prechecks::Outcome::failed(
+                    crate::job_prechecks::OutcomeState::Unknown,
+                    "dispatch_interrupted",
+                );
+                crate::job_precheck_records::finish(&transaction, &occurrence, result, now)?;
+                transition(
+                    &transaction,
+                    &occurrence,
+                    "reconcile",
+                    Some("precheck_unconfirmed"),
+                    false,
+                    now,
+                )?;
+            } else if matches!(phase.as_deref(), Some("dispatching" | "running")) {
+                transition(
+                    &transaction,
+                    &occurrence,
+                    "reconcile",
+                    Some("dispatch_interrupted"),
+                    false,
+                    now,
+                )?;
+            }
+            Reply::Done
+        }
+        Work::BeginPrecheck { occurrence } => {
+            crate::job_precheck_records::begin(&transaction, &occurrence, now)?
+        }
+        Work::FinishPrecheck { occurrence, result } => {
+            let (passed, state, reason) =
+                crate::job_precheck_records::finish(&transaction, &occurrence, result, now)?;
+            transition(
+                &transaction,
+                &occurrence,
+                state,
+                reason,
+                !passed && state != "reconcile",
+                now,
+            )?;
+            Reply::PrecheckPassed(passed)
+        }
         Work::CalendarDue => {
             let retained: i64 =
                 transaction.query_row("SELECT count(*) FROM harness_job_occurrences", [], |r| {
                     r.get(0)
                 })?;
-            let mut q = transaction.prepare("SELECT id,revision,next_due,spec FROM harness_jobs WHERE enabled=1 AND next_due<=?1 ORDER BY next_due,id LIMIT ?2")?;
+            let mut q = transaction.prepare("SELECT id,revision,next_due,spec FROM harness_jobs WHERE enabled=1 AND next_due<=?1 AND json_extract(spec,'$.schedule.kind') IN ('cron','rrule') ORDER BY next_due,id LIMIT ?2")?;
             let records = q
                 .query_map(params![now as i64, (4096 - retained).clamp(0, 8)], |r| {
                     Ok((
@@ -777,14 +916,14 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             }
             Reply::Done
         }
-        Work::Tick => {
+        Work::Poll { .. } => {
             refresh(&transaction, now)?;
             let retained: i64 =
                 transaction.query_row("SELECT count(*) FROM harness_job_occurrences", [], |r| {
                     r.get(0)
                 })?;
             let due = {
-                let mut q=transaction.prepare("SELECT id FROM harness_jobs WHERE enabled=1 AND next_due<=?1 ORDER BY next_due,id LIMIT ?2")?;
+                let mut q=transaction.prepare("SELECT id FROM harness_jobs WHERE enabled=1 AND next_due<=?1 AND json_extract(spec,'$.schedule.kind')='once' ORDER BY next_due,id LIMIT ?2")?;
                 q.query_map(params![now as i64, (4096 - retained).clamp(0, 8)], |r| {
                     r.get::<_, String>(0)
                 })?
@@ -810,8 +949,8 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                 transaction.execute("UPDATE harness_jobs SET next_due=NULL WHERE id=?1", [&id])?;
             }
             let candidates = {
-                let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id WHERE o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual') AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.state IN ({ACTIVE})) ORDER BY o.created_at,o.rowid LIMIT 4"))?;
-                q.query_map([], |r| {
+                let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id WHERE o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual') AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.state IN ({ACTIVE})) ORDER BY o.created_at,o.rowid LIMIT ?1"))?;
+                q.query_map([slots], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
@@ -836,6 +975,22 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             Reply::Claims(claims)
         }
         Work::BindRun { occurrence, run } => {
+            let spec: String = transaction.query_row(
+                "SELECT spec FROM harness_job_occurrences WHERE id=?1",
+                [&occurrence],
+                |r| r.get(0),
+            )?;
+            let spec: Spec = serde_json::from_str(&spec)?;
+            if spec.precheck_id.is_some() {
+                let passed:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_prechecks WHERE occurrence_id=?1 AND state='passed')",[&occurrence],|r|r.get(0))?;
+                if !passed {
+                    return Err(Error::new(
+                        "precheck_required",
+                        "A job run requires a confirmed passed precheck",
+                    )
+                    .into());
+                }
+            }
             let changed=transaction.execute("UPDATE harness_job_occurrences SET run_id=?2 WHERE id=?1 AND state='dispatching' AND run_id IS NULL",params![occurrence,run])?;
             if changed != 1 {
                 return Err(Error::new(
