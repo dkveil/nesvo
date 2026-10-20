@@ -1819,3 +1819,25 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   Production binaries build after the SDK processes finish. An intermediate
   concurrent rebuild was refused by Windows's executable lock; the subsequent
   sequential build/test succeeds. No original model was retried by these checks.
+
+### Original Claude shared-profile recovery acceptance
+
+- With standing owner authorization for needed probes of the checked profile,
+  revision three passed on original Claude 2.1.304/native Windows. Both visible
+  tasks reported explicit metadata results and the replacement coordinator
+  validated their exact attempts. Four owned original provider conversations
+  supplied matching native MCP call/non-error result IDs, not model claims or
+  controller-only API effects. The final reply recovered the host-only goal proof.
+- A separate read-only audit of the same exact conversation IDs confirmed the
+  accepted dependency attempt/summary in the coordinator's reviewer context
+  message, and successful reviewer read/ACK of that exact message. Old/new parent
+  identities remain distinct; replacement did not adopt the old worker terminal.
+- Host exit was zero; all 135 observed owned descendants were gone within the
+  bounded 15-second cleanup check. Earlier failed controller/retention probes
+  and the older five-second cleanup observation remain recorded honestly.
+- This is a passing bounded metadata orchestration/recovery gate. Production
+  coding/worktree/checks, general adoption/resume, broader profiles, UI/mobile and
+  the remaining feature gates still require implementation and verification.
+  The owner authorizes subsequent necessary checked-profile probes without
+  per-run reconfirmation; its exact scope, process/time bounds and unknown-effect
+  reconciliation remain in force. See [scope and evidence](harness-native-recovery-probe.md).

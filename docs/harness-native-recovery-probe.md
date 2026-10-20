@@ -190,3 +190,37 @@ effects or a known failed task launch stop the probe; no policy change or retry
 is permitted. The controller retains original conversation pointers before
 cleanup even if later validation fails. No revision 3 original-model launch is
 implied by the passing SDK preflight or by this preparation.
+
+## Standing owner authorization
+
+After reviewing the passing shared-profile preflight, the owner authorized
+necessary subsequent probes of that checked profile without asking again for
+each run. This supersedes the earlier per-run reconfirmation requirement within
+this profile's existing scope. Preserve its exact tool, task, process and time
+bounds and isolated host configuration. Record each original outcome rather than
+overwriting it. The live-process bound counts managed provider session roots;
+OS/provider helpers are observed separately for cleanup. An unknown native effect
+still requires reconciliation of its original identity, never an automatic retry.
+
+## Revision 3 result
+
+The shared checked profile passed on original Claude 2.1.304, native Windows.
+The host run contains succeeded implement/review tasks with distinct explicit
+results and coordinator attestations of the fixed metadata markers. Four exact
+original provider conversations were correlated with their native MCP call and
+non-error result IDs for both launches/deliveries, the owner question, worker
+reports, replacement recovery and validations. The final replacement reply
+included the fresh proof stored only in host goal data.
+
+A separate read-only audit of those same exact conversation IDs confirmed that
+the replacement's addressed context message contained the accepted dependency
+attempt ID and summary, and that the reviewer read and ACKed that same message
+ID through successful native MCP calls. Parent identities place the implementer
+under the original coordinator and the reviewer under its replacement. No
+undeclared assistant tool or provider-internal subagent was selected.
+
+The host exited zero and all 135 observed owned descendants were gone within the
+15-second cleanup observation. Workflow and cleanup both passed. Earlier failed
+revision 1/2 reports and the older five-second cleanup failure remain preserved.
+This confirms the bounded metadata scenario, not code editing, verified tests,
+general native-worker adoption, arbitrary profiles or full F01–F44 completion.
