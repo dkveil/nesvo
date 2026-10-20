@@ -247,7 +247,7 @@ pub async fn run(spec: Command) -> Outcome {
         let result = owned.child.wait().await;
         #[cfg(unix)]
         {
-            drop(owned.scope.take());
+            let _ = owned.scope.take();
         }
         result.map_err(|_| ())?;
         while !owned
@@ -279,7 +279,7 @@ pub async fn run(spec: Command) -> Outcome {
             {
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
-            drop(owned.scope.take());
+            let _ = owned.scope.take();
             drop(slot);
         });
     }

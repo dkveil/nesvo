@@ -2044,3 +2044,11 @@ and three native precheck scenarios passed again with those assertions. No model
 was invoked and no private user session was used. Cross-platform CI acceptance
 for this slice is recorded after publication; job UI, general cancellation/retry
 and the remaining F01–F44 gates remain open.
+
+Initial CI `39435549446` exposed Unix-only Clippy `drop_non_drop` in the two scope
+release expressions. Unix Scope contains an identity guard without a destructor;
+Windows Scope contains its owned Job handle. Explicit Option take now discards
+the value without an unnecessary drop call, preserving release order on both
+platforms and without suppressing a lint. Windows fmt/Clippy, production rebuild
+and all three native precheck lifecycle/parity scenarios passed after that fix.
+The initial failing log is retained; final platform results follow separately.

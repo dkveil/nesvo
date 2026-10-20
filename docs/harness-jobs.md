@@ -92,7 +92,7 @@ substitute for run cancellation. A dedicated job-cancel adapter remains pending.
 - `misfire:catchUp` accepts lateness within `graceMs` (default 60 seconds, maximum
   24 hours); it records a skip outside that window. There is no unlimited backlog.
 - `overlap:skip` records a skip while an admitted occurrence for the same job is
-  queued, dispatching, running, awaiting validation or awaiting reconciliation.
+  queued, dispatching, prechecking, running, awaiting validation or awaiting reconciliation.
 - `overlap:queue` retains at most one additional queued occurrence. Further
   admissions record `queue_full` skips. Queued intent is not reinterpreted as a
   new clock misfire when the preceding occurrence finishes. Native uncertainty
@@ -114,7 +114,7 @@ archive policies and broader overlap modes remain future work.
 
 ## Outcomes and crash safety
 
-`queued`, `dispatching`, `running`, `needsValidation` and `reconcile` are distinct
+`queued`, `dispatching`, `prechecking`, `running`, `needsValidation` and `reconcile` are distinct
 from terminal `succeeded`, `failed`, `skipped` and `canceled`. Process creation,
 PTY silence and idle are never job success. A succeeded worker report still needs
 an explicit matching result validation; the existing workflow rules require
