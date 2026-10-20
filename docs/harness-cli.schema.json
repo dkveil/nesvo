@@ -698,6 +698,9 @@
                       }
                     }
                   ]
+                },
+                {
+                  "$ref": "#/definitions/workflowRecoveryContext"
                 }
               ]
             },
@@ -2565,6 +2568,246 @@
                 }
               }
             }
+          }
+        }
+      ]
+    },
+    "workflowRecoveryPage": {
+      "required": ["run", "checkpoint", "context", "parts", "nextOffset", "currentConstraints"],
+      "properties": {
+        "run": {
+          "type": "object"
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/workflowCheckpoint"
+            }
+          ]
+        },
+        "context": {
+          "$ref": "#/definitions/workflowContextMetadata"
+        },
+        "parts": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/definitions/workflowContextPart"
+          }
+        },
+        "nextOffset": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            }
+          ]
+        },
+        "currentConstraints": {
+          "$ref": "#/definitions/workflowConstraintPolicy"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false
+    },
+    "workflowRecoveryTask": {
+      "required": ["run", "task", "attempt"],
+      "properties": {
+        "run": {
+          "type": "object",
+          "required": ["id", "title", "revision", "state"]
+        },
+        "task": {
+          "type": "object",
+          "required": ["id", "key", "title", "instruction"]
+        },
+        "attempt": {
+          "$ref": "#/definitions/workflowAttempt"
+        },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policy", "records"],
+          "properties": {
+            "policy": {
+              "$ref": "#/definitions/workflowConstraintPolicy"
+            },
+            "records": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/definitions/workflowConstraint"
+              }
+            }
+          }
+        }
+      },
+      "type": "object",
+      "additionalProperties": false
+    },
+    "workflowRecoveryContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "bound", "selectionRequired", "nativeEffectsRestored"],
+      "properties": {
+        "type": {
+          "const": "workflow"
+        },
+        "cursor": {
+          "$ref": "#/definitions/cursor"
+        },
+        "scope": {
+          "enum": ["owner", "coordinator", "worker"]
+        },
+        "bound": {
+          "type": "boolean"
+        },
+        "selectionRequired": {
+          "type": "boolean"
+        },
+        "nativeEffectsRestored": {
+          "const": false
+        },
+        "page": {
+          "$ref": "#/definitions/workflowRecoveryPage"
+        },
+        "taskContext": {
+          "$ref": "#/definitions/workflowRecoveryTask"
+        },
+        "runs": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "state"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hasMoreRuns": {
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["taskContext"],
+          "properties": {
+            "scope": {
+              "const": "worker"
+            },
+            "bound": {
+              "const": true
+            },
+            "selectionRequired": {
+              "const": false
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": ["page"]
+              },
+              {
+                "required": ["runs"]
+              }
+            ]
+          }
+        },
+        {
+          "required": ["page"],
+          "properties": {
+            "scope": {
+              "enum": ["owner", "coordinator"]
+            },
+            "bound": {
+              "const": true
+            },
+            "selectionRequired": {
+              "const": false
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": ["taskContext"]
+              },
+              {
+                "required": ["runs"]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "scope": {
+              "enum": ["worker", "coordinator"]
+            },
+            "bound": {
+              "const": false
+            },
+            "selectionRequired": {
+              "const": false
+            },
+            "runs": {
+              "maxItems": 0
+            },
+            "hasMoreRuns": {
+              "const": false
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": ["page"]
+              },
+              {
+                "required": ["taskContext"]
+              }
+            ]
+          }
+        },
+        {
+          "required": ["runs", "hasMoreRuns"],
+          "properties": {
+            "scope": {
+              "const": "coordinator"
+            },
+            "bound": {
+              "const": false
+            },
+            "selectionRequired": {
+              "const": true
+            },
+            "runs": {
+              "minItems": 1
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": ["page"]
+              },
+              {
+                "required": ["taskContext"]
+              }
+            ]
           }
         }
       ]

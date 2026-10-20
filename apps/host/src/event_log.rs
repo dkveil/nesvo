@@ -134,6 +134,9 @@ mod workflow_inbox_tests;
 #[path = "workflow_launches_tests.rs"]
 mod workflow_launches_tests;
 #[cfg(test)]
+#[path = "workflow_recovery_tests.rs"]
+mod workflow_recovery_tests;
+#[cfg(test)]
 #[path = "workflow_wakes_tests.rs"]
 mod workflow_wakes_tests;
 impl Store {

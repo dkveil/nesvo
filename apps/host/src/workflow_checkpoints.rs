@@ -161,6 +161,15 @@ fn read(
         json!({"run":run_view,"checkpoint":checkpoint,"context":{"schemaVersion":1,"kind":if current {"current"}else{"historical"},"sourceRunRevision":source_revision,"sourceCursor":source_cursor,"digest":digest,"partCount":total,"baselineDiffers":differs,"nativeEffectsRestored":false},"parts":page,"nextOffset":next,"currentConstraints":crate::workflow_context::summary(connection,run)?}),
     )
 }
+pub fn current(
+    connection: &Connection,
+    actor: &Actor,
+    run: &str,
+    offset: usize,
+    expected_digest: Option<&str>,
+) -> Result<Value> {
+    read(connection, actor, run, None, offset, true, expected_digest)
+}
 pub fn execute(
     connection: &mut Connection,
     actor: Actor,

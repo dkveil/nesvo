@@ -144,6 +144,13 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         assert_eq!(current["data"]["context"]["kind"],"current");assert_eq!(current["data"]["context"]["baselineDiffers"],true);
         assert!(current["data"]["parts"].as_array().context("current context parts")?.iter().any(|p|p["kind"]=="constraint"&&p["data"]["text"]==text));
         assert_eq!(current["data"]["context"]["nativeEffectsRestored"],false);
+        let recovered=inbox::scoped_cli(&path,&["run","recover","--json"]).await?;
+        assert_eq!(recovered["data"]["scope"],"coordinator");assert_eq!(recovered["data"]["page"]["run"]["id"],run);
+        assert_eq!(recovered["data"]["page"]["currentConstraints"]["pending"],true);
+        let recovery_mcp=data(call(&coordinator,"nesvo_recover_run_context",json!({"runId":run})).await?)?;
+        assert_eq!(recovery_mcp["data"]["page"]["context"]["digest"],recovered["data"]["page"]["context"]["digest"]);
+        let owner_default=call(&owner,"nesvo_recover_run_context",json!({})).await?.structured_content.context("owner recovery needs exact selector")?;
+        assert_eq!(owner_default["error"]["code"],"invalid_argument");
         let historical=inbox::scoped_cli(&path,&["run","checkpoint","get",&run,checkpoint,"--json"]).await?;
         assert_eq!(historical["data"]["context"]["digest"],saved["data"]["context"]["digest"]);
         assert_eq!(historical["data"]["currentConstraints"]["pending"],true);
@@ -161,6 +168,11 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         let worker=scoped_client(&worker_path,&child).await?;
         let own=data(call(&worker,"nesvo_get_current_task",json!({})).await?)?;
         assert_eq!(own["data"]["constraints"]["records"][0]["text"],text);
+        let worker_recovered=inbox::scoped_cli(&worker_path,&["run","recover","--json"]).await?;
+        assert_eq!(worker_recovered["data"]["scope"],"worker");assert_eq!(worker_recovered["data"]["taskContext"]["attempt"]["id"],own["data"]["attempt"]["id"]);
+        assert_eq!(worker_recovered["data"]["taskContext"]["constraints"]["records"][0]["text"],text);
+        let worker_selection=call(&worker,"nesvo_recover_run_context",json!({"runId":run})).await?.structured_content.context("worker parent recovery denied")?;
+        assert_eq!(worker_selection["error"]["code"],"forbidden");
         let denied=call(&worker,"nesvo_read_run_context",json!({"runId":run})).await?.structured_content.context("worker cannot inspect the whole run")?;assert_eq!(denied["error"]["code"],"forbidden");
         let pages=data(call(&owner,"nesvo_list_run_checkpoints",json!({"runId":run})).await?)?;assert_eq!(pages["data"]["checkpoints"].as_array().context("single retained checkpoint")?.len(),1);
         data(call(&coordinator,"nesvo_send_prompt",json!({"key":"deliberate-post-context-input","sessionId":child,"prompt":"ONLY_AFTER_ACK"})).await?)?;
@@ -179,11 +191,15 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         let context_text=context_output["data"]["page"]["data"].as_str().context("literal delivered context")?;
         assert!(context_text.contains(text));assert!(context_text.contains("CONTEXT_TASK_ONCE"));
         let state=view(&owner,&run).await?;assert_eq!(state["tasks"][0]["state"],"assigned");assert!(state["tasks"][0]["taskResult"].is_null());assert_eq!(state["tasks"][1]["state"],"planned");
+        data(call(&coordinator,"nesvo_create_run",json!({"key":"ambiguous-recovery-run","spec":{"title":"Second retained goal","goal":"Never infer which run is active from focus"}})).await?)?;
+        let ambiguous=data(call(&coordinator,"nesvo_recover_run_context",json!({})).await?)?;
+        assert_eq!(ambiguous["data"]["bound"],false);assert_eq!(ambiguous["data"]["selectionRequired"],true);assert_eq!(ambiguous["data"]["runs"].as_array().context("explicit recovery choices")?.len(),2);
+        let selected=inbox::scoped_cli(&path,&["run","recover",&run,"--json"]).await?;assert_eq!(selected["data"]["page"]["run"]["id"],run);
         data(call(&owner,"nesvo_stop_session",json!({"key":"owned-coordinator-exit","sessionId":id})).await?)?;
         timeout(Duration::from_secs(6),async{loop{let root=data(call(&owner,"nesvo_get_session",json!({"sessionId":id})).await?)?;if root["data"]["session"]["running"]==false{return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
         let retained=data(call(&owner,"nesvo_read_run_context",json!({"runId":run,"checkpointId":checkpoint})).await?)?;
         assert_eq!(retained["data"]["currentConstraints"]["revision"],1);assert_eq!(retained["data"]["context"]["nativeEffectsRestored"],false);
-        schema(vec![saved,replay,original,added,denied,current,historical,listed,own,pages,retained]).await?;
+        schema(vec![saved,replay,original,added,denied,current,historical,listed,own,pages,retained,recovered,recovery_mcp,owner_default,worker_recovered,worker_selection,ambiguous,selected]).await?;
         worker.cancel().await?;coordinator.cancel().await?;owner.cancel().await?;Ok::<_,anyhow::Error>(())
     }).catch_unwind().await;
     let cleanup = fixture.close().await;

@@ -176,6 +176,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Read current authenticated recovery context; never resumes native effects.
+    Recover {
+        run_id: Option<String>,
+        #[arg(long)]
+        offset: Option<u16>,
+        #[arg(long)]
+        expected_digest: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Report this worker's result from a bounded JSON file; never self-validates.
     Report {
         attempt: String,
@@ -226,6 +236,7 @@ impl Command {
             | Self::Assign { json, .. }
             | Self::Task { json, .. }
             | Self::Context { json }
+            | Self::Recover { json, .. }
             | Self::Report { json, .. }
             | Self::Validate { json, .. } => *json,
         }
@@ -371,6 +382,16 @@ impl Command {
                 offset: Some(offset),
             },
             Self::Context { .. } => Request::Context {},
+            Self::Recover {
+                run_id,
+                offset,
+                expected_digest,
+                ..
+            } => Request::Recover {
+                run_id,
+                offset,
+                expected_digest,
+            },
             Self::Report {
                 attempt, key, file, ..
             } => Request::Report {
@@ -561,6 +582,11 @@ enum Request {
         offset: Option<u16>,
     },
     Context {},
+    Recover {
+        run_id: Option<String>,
+        offset: Option<u16>,
+        expected_digest: Option<String>,
+    },
     Report {
         key: String,
         attempt_id: String,
@@ -648,6 +674,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         ));
     }
     let capability = match request["request"]["action"].as_str() {
+        Some("recover") => Some("runRecovery"),
         Some("checkpoints") => Some("runCheckpoints"),
         Some("constraints") => Some("runConstraints"),
         Some("launch") => Some("runLaunch"),

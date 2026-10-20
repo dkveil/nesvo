@@ -75,9 +75,14 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The catalog contains 59 tools. Task instruction intents use
+The catalog contains 60 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
+
+`runRecovery` adds read-only `nesvo_recover_run_context {runId?,offset?,expectedDigest?}`.
+It resolves the authenticated worker binding or a uniquely bound coordinator run;
+several runs require explicit selection, and owner calls require runId. It never
+adopts processes or replays effects. See [recovery context](harness-recovery-context.md).
 
 `runExecutor` adds `nesvo_start_run_executor`, `nesvo_get_run_executor`,
 `nesvo_disable_run_executor` and `nesvo_enable_run_executor`. Immutable explicit

@@ -487,6 +487,15 @@ fn catalog() -> Vec<Tool> {
             true,
         ),
         (
+            "nesvo_recover_run_context",
+            "Read current recovery metadata for the authenticated worker or uniquely bound coordinator run. Multiple runs require explicit selection; owner needs runId. Follow returned current-page nextOffset/expectedDigest. Never adopts processes, replays input, ACKs constraints/messages or validates results.",
+            object(
+                json!({"runId":id,"offset":{"type":"integer","minimum":0,"maximum":16384},"expectedDigest":{"type":"string","maxLength":128}}),
+                &[],
+            ),
+            true,
+        ),
+        (
             "nesvo_report_task_result",
             "Report this worker's exact current attempt result. Include files/artifacts/checks/limitations, using empty arrays when none. Claims are not verification or validation. Reuse the original key after uncertainty; stale senders/replacement reports are refused. Result bound 4 KiB UTF-8.",
             object(
@@ -906,6 +915,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         | "nesvo_assign_task"
         | "nesvo_get_task_attempts"
         | "nesvo_get_current_task"
+        | "nesvo_recover_run_context"
         | "nesvo_report_task_result"
         | "nesvo_validate_task_result" => {
             let action = match name {
@@ -917,6 +927,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "nesvo_assign_task" => "assign",
                 "nesvo_get_task_attempts" => "task",
                 "nesvo_get_current_task" => "context",
+                "nesvo_recover_run_context" => "recover",
                 "nesvo_report_task_result" => "report",
                 "nesvo_validate_task_result" => "validate",
                 _ => "mutation",
@@ -1246,7 +1257,15 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 59);
+        assert_eq!(catalog().len(), 60);
+        for extra in [
+            json!({"sessionId":"foreign"}),
+            json!({"owner":true}),
+            json!({"key":"rearm"}),
+            json!({"checkpointId":"old"}),
+        ] {
+            assert!(command("nesvo_recover_run_context", extra).is_err());
+        }
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(

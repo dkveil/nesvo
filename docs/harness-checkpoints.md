@@ -10,6 +10,10 @@ acknowledge inbox messages, answer decisions or validate work. Persisted attempt
 state is not proof that its original process still runs. Full conversation
 adoption and native recovery remain F41 work.
 
+For lookup after losing a run ID from conversational context, use
+[authenticated recovery context](harness-recovery-context.md). It resolves only
+the caller's current binding and retains the same current-page digest fences.
+
 ## Snapshot and current context
 
 ```powershell

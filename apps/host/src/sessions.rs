@@ -299,6 +299,7 @@ impl State {
             && !matches!(
                 request,
                 crate::orchestration::Request::Context { .. }
+                    | crate::orchestration::Request::Recover { .. }
                     | crate::orchestration::Request::Report { .. }
                     | crate::orchestration::Request::Mutation { .. }
                     | crate::orchestration::Request::Inbox { .. }
@@ -777,6 +778,7 @@ impl State {
         event["runExecutor"] = self.event_log.is_some().into();
         event["runWakes"] = self.event_log.is_some().into();
         event["runCheckpoints"] = self.event_log.is_some().into();
+        event["runRecovery"] = self.event_log.is_some().into();
         event["runConstraints"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();

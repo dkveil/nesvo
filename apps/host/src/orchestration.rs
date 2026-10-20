@@ -142,6 +142,11 @@ pub enum Request {
         offset: Option<usize>,
     },
     Context {},
+    Recover {
+        run_id: Option<String>,
+        offset: Option<u16>,
+        expected_digest: Option<String>,
+    },
     Report {
         key: String,
         attempt_id: String,
@@ -346,6 +351,20 @@ pub(crate) fn execute_at(
     }
     if let Request::Inbox { request } = request {
         return crate::workflow_inbox::execute(connection, actor, request);
+    }
+    if let Request::Recover {
+        run_id,
+        offset,
+        expected_digest,
+    } = &request
+    {
+        return crate::workflow_recovery::read(
+            connection,
+            &actor,
+            run_id.as_deref(),
+            offset.unwrap_or(0) as usize,
+            expected_digest.as_deref(),
+        );
     }
     if matches!(actor.scope, Scope::Worker(_))
         && !matches!(

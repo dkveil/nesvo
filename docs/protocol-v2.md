@@ -4,6 +4,12 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+`runRecovery` adds read-only workflow `{action:"recover",runId?,offset?,expectedDigest?}`.
+It resolves current authenticated worker context or a uniquely bound coordinator
+run, with explicit selection for ambiguity and owner calls. It shares current
+manifest pagination/digest fences and never adopts or replays native effects.
+See [recovery context](harness-recovery-context.md).
+
 `runCheckpoints` and `runConstraints` add authenticated workflow actions
 `{action:"checkpoints",request:{action:"save"|"list"|"get"|"context",...}}` and
 `{action:"constraints",request:{action:"add"|"list"|"acknowledge",...}}`.

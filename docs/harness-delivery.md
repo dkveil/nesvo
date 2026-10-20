@@ -1475,3 +1475,35 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   a maximum-size wrapped body, helper and native checkpoint/receipt checks passed
   again. No new dependency, global database migration or material UI change.
   CI for dd4e57c was still running when recorded; this commit's CI is separate.
+
+### Authenticated recovery bindings
+
+- F12/F40: `run recover [RUN_ID]` and `nesvo_recover_run_context` use the same
+  scoped host lookup and current manifest. Workers receive only their current
+  attempt/constraints; owner needs an explicit run ID. A coordinator's single
+  retained run resolves without UI hints. Multiple retained runs require selection
+  from bounded authorized choices; completed/canceled history stays discoverable.
+  No title/newest-run guessing, permission escalation or native adoption occurs.
+- Current pages retain exact returned offsets/digest fences. Reads never ACK
+  constraints/messages, validate reports, reenable policies, clear drafts or write
+  operation receipts. Unbound workers are explicit; stale attempts remain refused.
+  `runRecovery` gates the new API and the catalog contains 60 tools. The contract
+  and actual JSON envelope shapes are versioned with the implementation.
+- Four storage cases cover authority, unbound/unique/ambiguous lookup, bounded
+  choices, completed history, current worker constraints, unchanged cursors/effect
+  counts and changed-context pagination. The official native SDK scenario checks
+  inherited CLI/MCP parity, worker isolation, owner selection and ambiguity on real
+  host/PTYs; real response envelopes pass Ajv. Native reads preserve PTY contents.
+- Local Windows checks passed fmt, warnings-denied Clippy, production build,
+  314 unit tests, all 18 serial controlled native SDK cases and 30 host/sync/CLI
+  integration cases. After keeping completed runs in default discovery, storage
+  tests/full units/build and the scoped native scenario passed again. No new
+  dependency, model call, global provider setting or material UI change.
+- CI for a3c5c21 passed all five jobs (39378350943). Earlier dd4e57c CI
+  39377999746 failed a Windows host-challenge timeout in the wrong-secret test;
+  its native CLI timeout case passed. The successor passed the same suite, but
+  that timeout is retained as a coverage/flakiness observation, not erased.
+- This supplies the binding lookup required by bounded provider recovery hooks;
+  it does not inject context on native compaction/resume yet. Instruction V11 and
+  old live snapshots stay unchanged. Actual provider compaction/adoption, the
+  model-to-MCP permission gate and all remaining full-goal/plugin work stay open.
