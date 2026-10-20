@@ -233,6 +233,12 @@ advertised. Read/ACK never send terminal input or validate tasks. See the
 [inbox contract and exact-ID recovery](harness-inbox.md). Launch-local instruction
 version 3 documents these commands; existing processes keep their own snapshot.
 
+`run decision ask|list|get|answer|cancel` adds attempt-bound questions with
+`workflowDecisions`. Owner-only questions cannot be answered by a coordinator.
+Decision revisions/deadlines are separate from execution revisions, and an answer
+does not type a native provider approval. See [decision contract](harness-decisions.md).
+Launch-local instruction version 4 documents this boundary and explicit recovery.
+
 ## Literal send and receipt wait
 
 `session send SESSION_ID --key KEY` requires one of `--prompt TEXT`,

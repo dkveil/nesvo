@@ -787,6 +787,9 @@ test(
           ]);
           assert.equal(activated.run.state, 'active');
           assert.equal(activated.run.revision, 3);
+          const decisions = await invoke(['decision', 'list', created.run.id]);
+          assert.deepEqual(decisions.decisions, []);
+          assert.equal(decisions.nextOffset, null);
           const sendArgs = [
             'inbox',
             'send',

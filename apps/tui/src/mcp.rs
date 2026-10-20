@@ -58,6 +58,51 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_ask_decision",
+            "Ask one durable question for this worker's exact current attempt. Audience owner requires an explicit human answer; coordinator permits that run's coordinator or owner. Answered is data, not native permission approval. Pending/canceled/expired gates prevent successful result reporting. No input or model wake occurs. Recover a lost reply with nesvo_get_run_mutation and the original key.",
+            object(
+                json!({"key":key,"attemptId":id,"audience":{"enum":["owner","coordinator"]},"question":{"type":"string","minLength":1,"maxLength":2048},"timeoutMs":{"type":"integer","minimum":1000,"maximum":604_800_000}}),
+                &["key", "attemptId", "audience", "question", "timeoutMs"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_list_decisions",
+            "Read up to eight retained questions and answers in a run. A worker sees only its own current attempt. Deadline expiration is persisted when observed; pagination does not approve or acknowledge anything.",
+            object(
+                json!({"runId":id,"attemptId":id,"offset":{"type":"integer","minimum":0,"maximum":4096}}),
+                &["runId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_get_decision",
+            "Read the exact decision revision, audience and state before answering. Current-attempt authority is enforced by the host. This does not send input or imply native permission approval.",
+            object(
+                json!({"runId":id,"decisionId":id}),
+                &["runId", "decisionId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_answer_decision",
+            "Record a literal answer at the decision's exact revision. Worker self-answer and coordinator answers to owner-only questions are refused. Answer and worker notice commit together; replay the original key after uncertainty. This does not type an approval, validate work or resume native input.",
+            object(
+                json!({"key":key,"runId":id,"decisionId":id,"expectedRevision":revision,"answer":{"type":"string","minLength":1,"maxLength":2048}}),
+                &["key", "runId", "decisionId", "expectedRevision", "answer"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_cancel_decision",
+            "Withdraw a pending question at its exact revision, retaining a reason. The current worker may withdraw its own question; addressed authority may cancel. Canceled is not approval: report a non-success result and deliberately retry rather than claiming success.",
+            object(
+                json!({"key":key,"runId":id,"decisionId":id,"expectedRevision":revision,"reason":{"type":"string","minLength":1,"maxLength":2048}}),
+                &["key", "runId", "decisionId", "expectedRevision", "reason"],
+            ),
+            false,
+        ),
+        (
             "nesvo_read_inbox",
             "Read up to eight durable messages, without ACK or input. Worker defaults to its own current attempt; owner/coordinator defaults to the run coordinator mailbox. Optional attemptId inspects a worker mailbox. Pending messages repeat until explicit ACK. After consumer restart read from zero; cursors paginate, not acknowledge.",
             object(
@@ -366,6 +411,36 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_ask_decision"
+        | "nesvo_list_decisions"
+        | "nesvo_get_decision"
+        | "nesvo_answer_decision"
+        | "nesvo_cancel_decision" => {
+            let action = match name {
+                "nesvo_ask_decision" => "ask",
+                "nesvo_list_decisions" => "list",
+                "nesvo_get_decision" => "get",
+                "nesvo_answer_decision" => "answer",
+                _ => "cancel",
+            };
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Decision arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Decision action is selected by the tool name",
+                ));
+            }
+            fields.insert("action".into(), action.into());
+            (
+                crate::workflow::tool("decision", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_read_inbox" | "nesvo_send_message" | "nesvo_ack_messages" => {
             let action = match name {
                 "nesvo_read_inbox" => "read",
@@ -739,7 +814,8 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 27);
+        assert_eq!(catalog().len(), 32);
+        assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(
             command(
                 "nesvo_send_message",

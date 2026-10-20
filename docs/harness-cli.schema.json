@@ -118,6 +118,45 @@
                   }
                 },
                 {
+                  "required": ["run", "task", "attempt", "decision"],
+                  "properties": {
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "title", "revision", "state"]
+                    },
+                    "task": {
+                      "type": "object",
+                      "required": ["id"]
+                    },
+                    "attempt": {
+                      "type": "object",
+                      "required": ["id"]
+                    },
+                    "decision": {
+                      "$ref": "#/definitions/workflowDecision"
+                    }
+                  }
+                },
+                {
+                  "required": ["run", "decisions", "nextOffset"],
+                  "properties": {
+                    "run": {
+                      "type": "object",
+                      "required": ["id", "title", "revision", "state"]
+                    },
+                    "decisions": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/workflowDecision"
+                      }
+                    },
+                    "nextOffset": {
+                      "type": ["integer", "null"]
+                    }
+                  }
+                },
+                {
                   "required": ["run", "mailbox"],
                   "properties": {
                     "run": { "type": "object", "required": ["id", "title", "revision", "state"] },
@@ -307,6 +346,74 @@
     }
   ],
   "definitions": {
+    "workflowDecision": {
+      "type": "object",
+      "required": [
+        "id",
+        "runId",
+        "taskId",
+        "attemptId",
+        "question",
+        "revision",
+        "state",
+        "audience",
+        "askedBy",
+        "createdAt",
+        "expiresAt",
+        "answer",
+        "reason",
+        "resolvedBy",
+        "resolvedAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "attemptId": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "state": {
+          "enum": ["pending", "answered", "canceled", "expired"]
+        },
+        "audience": {
+          "enum": ["owner", "coordinator"]
+        },
+        "askedBy": {
+          "type": "object"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "answer": {
+          "type": ["string", "null"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "resolvedBy": {
+          "type": ["object", "null"]
+        },
+        "resolvedAt": {
+          "type": ["integer", "null"]
+        }
+      }
+    },
     "workflowMessage": {
       "type": "object",
       "required": [
@@ -338,7 +445,7 @@
           }
         },
         "correlationId": { "type": "string" },
-        "kind": { "enum": ["note", "question", "error", "result"] },
+        "kind": { "enum": ["note", "question", "error", "result", "decision"] },
         "body": { "type": "string", "maxLength": 4096 },
         "payload": { "type": ["object", "null"] },
         "createdAt": { "$ref": "#/definitions/cursor" },

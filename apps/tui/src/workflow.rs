@@ -8,6 +8,11 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Ask, inspect and resolve attempt-bound questions without native approval.
+    Decision {
+        #[command(subcommand)]
+        command: crate::workflow_decisions::Command,
+    },
     /// Durable addressed messages. ACK is receipt, never task execution.
     Inbox {
         #[command(subcommand)]
@@ -128,6 +133,7 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Decision { command } => command.machine(),
             Self::Inbox { command } => command.machine(),
             Self::Create { json, .. }
             | Self::List { json, .. }
@@ -144,6 +150,9 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Decision { command } => Request::Decision {
+                request: command.request()?,
+            },
             Self::Inbox { command } => Request::Inbox {
                 request: command.request()?,
             },
@@ -331,6 +340,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Decision {
+        request: crate::workflow_decisions::Request,
+    },
     Inbox {
         request: crate::workflow_inbox::Request,
     },
@@ -439,6 +451,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         return Err(cli::failure(
             "unsupported",
             "Host does not support durable inbox/ACK; update nesvo-host",
+        ));
+    }
+    if request["request"]["action"] == "decision" && caps["workflowDecisions"] != true {
+        return Err(cli::failure(
+            "unsupported",
+            "Host does not support attempt-bound decisions; update nesvo-host",
         ));
     }
     Ok(())

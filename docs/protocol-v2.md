@@ -6,7 +6,8 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 Hosts advertising `workflowPlans` also accept authenticated `workflow` requests
 with a nested `request` tagged by `action`. The [draft workflow contract](harness-workflows.md)
-and [durable inbox contract](harness-inbox.md) specify IDs, DAG validation,
+and [durable inbox](harness-inbox.md)/[decision contracts](harness-decisions.md)
+specify IDs, DAG validation,
 atomic revisions, scoped metadata recovery, addressed delivery, exact ACK and
 bounds. These requests have no PTY effects and produce no unsolicited workflow
 packets for legacy clients.

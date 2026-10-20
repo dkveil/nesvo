@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 3 (`NESVO_HARNESS_INSTRUCTIONS_V3`).
+Instruction version: 4 (`NESVO_HARNESS_INSTRUCTIONS_V4`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -97,7 +97,7 @@ state are needed before another deliberate attempt.
 
 Collect worker evidence: changed files/revision, checks actually run, findings,
 remaining risks and the requested result. Distinguish response settlement from
-verified task success. Scheduled-job and decision-gate APIs are not exposed by
+verified task success. Scheduled-job APIs are not exposed by
 this instruction version; do not invent commands or claim those records exist.
 
 ## Durable plans and explicit task results
@@ -189,6 +189,46 @@ history; do not accept it for the current attempt, even if a terminal is idle.
 Explain the stale message and ACK it only once handled. `stale_attempt` for a
 worker is a binding conflict, not permission to choose another identity.
 No automatic inbox-to-prompt dispatcher or wake loop is provided in this version.
+
+## Explicit questions and decisions
+
+With `workflowDecisions`, a worker can ask `run decision ask ATTEMPT_ID --key
+QUESTION_KEY --audience owner --question-file PATH --timeout-ms 300000 --json`.
+Discover the exact attempt through `run context`; use only host-returned IDs.
+Default audience is owner (human); `--audience coordinator` explicitly permits
+the bound coordinator or owner to answer. One pending question per attempt is
+allowed, with a deadline between one second and seven days. Text is literal,
+bounded to 2048 UTF-8 bytes and 3072 encoded bytes. No native approval is typed.
+
+Read `run decision list RUN_ID --json` or `run decision get RUN_ID DECISION_ID
+--json` for the current revision, audience, answer and deadline. Workers see
+only their current attempt. A question/answer also places a durable notice in
+the receiving mailbox. ACKing that notice only confirms handled delivery; it
+does not answer the decision. Answer text is task context, not a new capability
+or blanket permission for arbitrary operations.
+
+Only the addressed authority can use `run decision answer RUN_ID DECISION_ID
+--key ANSWER_KEY --revision DECISION_REV --answer-file PATH --json`. This is the
+decision's revision, not the run revision. Coordinators cannot answer owner-only
+questions, and workers cannot answer themselves. Surface the exact blocker and
+wait for the human; never substitute owner pairing or simulate native permission
+keys. An answered metadata question still does not approve a native provider's
+separate permission request. Human control, drafts and native blockers remain.
+
+Recover ask/answer/cancel uncertainty with `run mutation --key ORIGINAL_KEY
+--json`, then re-read the decision's current state. Historical replay does not
+restore a pending gate or renew its deadline. Revision conflicts require reading
+the current question, without replacing keys to overwrite another answer.
+Deadlines are persisted when observed, not by an LLM polling/wake loop.
+
+`run decision cancel RUN_ID DECISION_ID --key KEY --revision DECISION_REV
+--reason TEXT --json` withdraws a question when authorized. Pending, expired or
+canceled decisions prevent a succeeded report. After cancellation/expiry,
+report an honest non-success outcome and have the owner/coordinator deliberately
+validate/retry on a fresh worker; do not manufacture approval or success. A
+resolved question never validates the task. Superseded attempts cannot answer,
+cancel or recover under a replacement identity. No automatic native dispatcher,
+approval bridge or model wake loop is provided by these decision APIs.
 
 ## Interruption
 

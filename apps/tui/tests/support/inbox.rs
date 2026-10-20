@@ -48,6 +48,39 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
         data(call(&coordinator,"nesvo_activate_run",json!({"key":"inbox-activate","runId":run_id,"expectedRevision":2})).await?)?;
         let assigned=data(call(&coordinator,"nesvo_assign_task",json!({"key":"inbox-assign","runId":run_id,"taskId":task_id,"sessionId":child_id,"expectedRevision":3})).await?)?;
         let attempt=assigned["data"]["tasks"][0]["currentAttempt"]["id"].as_str().context("inbox attempt")?;
+        let gate_terminal=data(call(&owner,"nesvo_read_session",json!({"sessionId":child_id,"maxBytes":8192})).await?)?;
+        let question_file=fixture.directory.join("literal question łódź.txt");
+        std::fs::write(&question_file,"Human decision: literal $(never-execute)\nsecond line")?;
+        let asked=scoped_cli(&child_context,&["run","decision","ask",attempt,"--key","native-question","--question-file",question_file.to_str().context("question path")?,"--timeout-ms","300000","--json"]).await?;
+        let decision=asked["data"]["decision"]["id"].as_str().context("decision ID")?;
+        assert_eq!(asked["data"]["decision"]["audience"],"owner");
+        let observed=data(call(&worker,"nesvo_get_decision",json!({"runId":run_id,"decisionId":decision})).await?)?;
+        assert_eq!(observed["data"]["decision"],asked["data"]["decision"]);
+        let answer_args=json!({"key":"human-answer","runId":run_id,"decisionId":decision,"expectedRevision":1,"answer":"Proceed within the assigned scope"});
+        let denied=call(&coordinator,"nesvo_answer_decision",answer_args.clone()).await?;
+        assert_eq!(denied.structured_content.context("owner-only answer refusal")?["error"]["code"],"forbidden");
+        let denied=call(&worker,"nesvo_answer_decision",answer_args.clone()).await?;
+        assert_eq!(denied.structured_content.context("self-answer refusal")?["error"]["code"],"forbidden");
+        let early=call(&worker,"nesvo_report_task_result",json!({"key":"blocked-success","attemptId":attempt,"result":{"outcome":"succeeded","summary":"Must be blocked, not accepted","files":[],"artifacts":[],"checks":[],"limitations":[]}})).await?;
+        assert_eq!(early.structured_content.context("decision result gate")?["error"]["code"],"decision_pending");
+        let answered=data(call(&owner,"nesvo_answer_decision",answer_args.clone()).await?)?;
+        assert_eq!(answered["data"]["decision"]["resolvedBy"]["role"],"owner");
+        let replay=data(call(&owner,"nesvo_answer_decision",answer_args).await?)?;
+        assert_eq!(replay["data"],answered["data"]);
+        let recovered=scoped_cli(&child_context,&["run","mutation","--key","native-question","--json"]).await?;
+        assert_eq!(recovered["data"],asked["data"],"Question recovery is historical, not current-state replay");
+        let read=scoped_cli(&child_context,&["run","decision","get",run_id,decision,"--json"]).await?;
+        assert_eq!(read["data"]["decision"],answered["data"]["decision"]);
+        let listed=scoped_cli(&child_context,&["run","decision","list",run_id,"--json"]).await?;
+        assert_cli_schema(&[asked.clone(),read.clone(),listed,answered.clone()]).await?;
+        let gate_after=data(call(&owner,"nesvo_read_session",json!({"sessionId":child_id,"maxBytes":8192})).await?)?;
+        assert_eq!(gate_terminal["data"]["page"],gate_after["data"]["page"],"Question/answer never type a native approval or prompt");
+        for receiver in [&coordinator,&worker] {
+            let notices=data(call(receiver,"nesvo_read_inbox",json!({"runId":run_id})).await?)?;
+            assert_eq!(notices["data"]["messages"].as_array().context("decision notices")?.len(),1);
+            assert_eq!(notices["data"]["messages"][0]["payload"]["decisionId"],decision);
+            data(call(receiver,"nesvo_ack_messages",json!({"runId":run_id,"ids":[notices["data"]["messages"][0]["id"]]})).await?)?;
+        }
         let terminal_before=data(call(&owner,"nesvo_read_session",json!({"sessionId":child_id,"maxBytes":8192})).await?)?;
         let body="Literal note łódź $(never-execute)\nline two";
         let sent=data(call(&coordinator,"nesvo_send_message",json!({"key":"context-message","runId":run_id,"attemptId":attempt,"correlationId":"context-1","body":body})).await?)?;
@@ -108,5 +141,32 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
             std::panic::resume_unwind(panic);
         }
     }
+    Ok(())
+}
+
+async fn assert_cli_schema(values: &[Value]) -> Result<()> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()?;
+    let source = "const Ajv=require('ajv'),fs=require('fs');const check=new Ajv().compile(JSON.parse(fs.readFileSync('docs/harness-cli.schema.json','utf8')));for(const value of JSON.parse(fs.readFileSync(0,'utf8'))){if(!check(value)){throw new Error(JSON.stringify(check.errors));}}";
+    let mut command = Command::new("node");
+    command
+        .current_dir(root)
+        .args(["-e", source])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let mut child = command.spawn()?;
+    let mut input = child.stdin.take().context("schema checker stdin")?;
+    input.write_all(&serde_json::to_vec(values)?).await?;
+    drop(input);
+    let output = timeout(Duration::from_secs(5), child.wait_with_output()).await??;
+    ensure!(
+        output.status.success(),
+        "Actual decision CLI output violates versioned schema: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }

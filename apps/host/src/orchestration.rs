@@ -120,6 +120,9 @@ pub enum Request {
     Inbox {
         request: crate::workflow_inbox::Request,
     },
+    Decision {
+        request: crate::workflow_decisions::Request,
+    },
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_runs(id TEXT PRIMARY KEY,title TEXT NOT NULL,goal TEXT NOT NULL,coordinator_id TEXT,revision INTEGER NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL);
@@ -128,6 +131,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
       CREATE TABLE IF NOT EXISTS workflow_mutations(issuer TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,view TEXT NOT NULL,PRIMARY KEY(issuer,key));
       CREATE TABLE IF NOT EXISTS workflow_attempts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES workflow_tasks(id),ordinal INTEGER NOT NULL,session_id TEXT NOT NULL UNIQUE,state TEXT NOT NULL,result TEXT,validation TEXT,UNIQUE(task_id,ordinal));")?;
     crate::workflow_inbox::initialize(connection)?;
+    crate::workflow_decisions::initialize(connection)?;
     Ok(())
 }
 fn invalid(message: &'static str) -> anyhow::Error {
@@ -256,6 +260,9 @@ fn random_id() -> String {
     hex::encode(crate::wire::random::<16>())
 }
 pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> Result<Value> {
+    if let Request::Decision { request } = request {
+        return crate::workflow_decisions::execute(connection, actor, request, now_millis());
+    }
     if let Request::Inbox { request } = request {
         return crate::workflow_inbox::execute(connection, actor, request);
     }

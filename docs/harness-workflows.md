@@ -4,8 +4,10 @@
 a revisioned DAG; a **task** has a stable host ID and a caller-supplied key within
 that run. An **attempt** binds exactly one managed worker process to a task.
 `workflowAttempts:true` adds assignment, explicit worker results and owner/
-coordinator validation. Automatic native dispatch, configurable budgets,
-cancellation and decision gates remain F14/F19/F20 work. Idle never means success.
+coordinator validation. [Attempt-bound decisions](harness-decisions.md) add
+explicit questions without granting native permission approval. Automatic native
+dispatch, configurable budgets and run cancellation remain F14/F20 work.
+Idle never means success.
 
 ## CLI and MCP
 
@@ -136,8 +138,8 @@ Replies have `type:"workflow"` and `{run,tasks}`, `{runs,nextOffset}`,
 mutations add the committed domain `cursor`. `requestId` is not an idempotency key.
 
 Runs begin at revision 1/state `draft`; plan/execution mutations increment the
-revision. Inbox send/ACK have their own message/domain cursors and do not alter
-the execution revision.
+revision. Inbox send/ACK and decision actions have their own message/domain
+cursors and decision revisions; they do not alter the execution revision.
 Activation changes state to `active`. Workers report against their exact current
 attempt, without overwriting concurrent results; coordinator mutations require
 the current revision. Tasks expose dependency state `ready|waiting`, attempt
@@ -185,5 +187,5 @@ edits, malformed-file rejection and unchanged native sessions. These tests make
 no model calls. Controlled native workers also discover/report their own task
 through the actual CLI; independent coordinator validation releases a reviewer
 task. Reopen/late-result/history tests cover retry fences. This does not pass
-the full stage-3 gate: actual provider execution, decisions, coordinator adoption,
+the full stage-3 gate: actual provider escalation, decision UI, coordinator adoption,
 automatic dispatch and budget/cancel policy remain open.

@@ -243,6 +243,32 @@ pub fn notify_result(
     )?;
     Ok(())
 }
+pub fn decision_notice(
+    transaction: &Transaction<'_>,
+    actor: &Actor,
+    base: &Value,
+    to_worker: bool,
+    body: &str,
+) -> Result<()> {
+    let run_id = base["run"]["id"]
+        .as_str()
+        .ok_or_else(|| invalid("Decision has no run identity"))?;
+    let attempt = base["attempt"]["id"]
+        .as_str()
+        .ok_or_else(|| invalid("Decision has no attempt identity"))?;
+    let recipient = if to_worker {
+        format!("attempt:{attempt}")
+    } else {
+        COORDINATOR.into()
+    };
+    insert(
+        transaction,
+        run_id,
+        &recipient,
+        json!({"recipientAttemptId":to_worker.then_some(attempt),"sender":identity(actor,base),"correlationId":base["decision"]["id"],"kind":"decision","body":body,"payload":{"taskId":base["task"]["id"],"attemptId":attempt,"decisionId":base["decision"]["id"],"audience":base["decision"]["audience"],"state":base["decision"]["state"]}}),
+    )?;
+    Ok(())
+}
 fn read(
     connection: &Connection,
     mut mailbox: Mailbox,

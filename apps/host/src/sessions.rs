@@ -223,6 +223,7 @@ impl State {
                     | crate::orchestration::Request::Report { .. }
                     | crate::orchestration::Request::Mutation { .. }
                     | crate::orchestration::Request::Inbox { .. }
+                    | crate::orchestration::Request::Decision { .. }
             )
         {
             return Err(crate::api_error::Error::new(
@@ -607,6 +608,7 @@ impl State {
         event["coordinatorScopes"] = true.into();
         event["workflowAttempts"] = self.event_log.is_some().into();
         event["workflowInbox"] = self.event_log.is_some().into();
+        event["workflowDecisions"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event
@@ -829,7 +831,34 @@ impl State {
         if event["type"] == "capabilities" {
             let mut event = event;
             let role = self.sessions.get(id)?.policy.role;
-            event["caller"] = json!({"sessionId":id,"role":role,"permissions":if role==crate::caller::Role::Coordinator{vec!["session:read","child:create","child:read","child:send","child:interrupt","child:stop","run:plan","run:assign","run:validate","run:inbox"]}else{vec!["session:read","attempt:context","attempt:report","inbox:own","inbox:send-coordinator"]},"expires":"processExit"});
+            let permissions = if role == crate::caller::Role::Coordinator {
+                vec![
+                    "session:read",
+                    "child:create",
+                    "child:read",
+                    "child:send",
+                    "child:interrupt",
+                    "child:stop",
+                    "run:plan",
+                    "run:assign",
+                    "run:validate",
+                    "run:inbox",
+                    "run:decisions",
+                    "decision:answer-coordinator",
+                ]
+            } else {
+                vec![
+                    "session:read",
+                    "attempt:context",
+                    "attempt:report",
+                    "inbox:own",
+                    "inbox:send-coordinator",
+                    "decision:own",
+                    "decision:ask",
+                    "decision:withdraw",
+                ]
+            };
+            event["caller"] = json!({"sessionId":id,"role":role,"permissions":permissions,"expires":"processExit"});
             if let Some(session) = self.sessions.get(id) {
                 event["workspace"] = session.info.cwd.clone().into();
             }

@@ -21,7 +21,9 @@ The MCP equivalents are `nesvo_read_inbox`, `nesvo_send_message` and
 Read accepts `--after CURSOR`, `--include-acked` and `--attempt ATTEMPT_ID`.
 Send requires one literal `--message` or bounded UTF-8 `--message-file`, a stable
 key and a correlation ID. Manual kinds are `note|question|error`; `result` is
-reserved for the host's attempt-result notification. Message text is untrusted
+reserved for the host's attempt-result notification. Host-owned `decision`
+notices reference [explicit questions/answers](harness-decisions.md); an ordinary
+`question` message is still informational. Message text is untrusted
 context and cannot grant API authority or answer a permission gate.
 
 Without `--attempt`, an owner/coordinator reads or ACKs the coordinator mailbox;
@@ -125,5 +127,5 @@ restarts an MCP consumer, leaves a result pending while the coordinator is
 working, checks that inbox delivery does not alter terminal replay, and confirms
 owner access after coordinator exit. These checks do not establish production
 provider/model orchestration or full native-process recovery. Automatic native
-dispatch/wakes (F14/F26), approval decisions (F19), replacement-process adoption
+dispatch/wakes (F14/F26), native permission bridging, replacement-process adoption
 (F41) and TUI/mobile inbox views remain separate work.

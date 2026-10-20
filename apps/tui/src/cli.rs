@@ -249,6 +249,7 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
         | "mutation_not_found"
         | "task_not_found"
         | "message_not_found"
+        | "decision_not_found"
         | "attempt_not_found" => 5,
         "timeout" => 7,
         "unsupported" => 8,

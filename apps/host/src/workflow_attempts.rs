@@ -107,7 +107,7 @@ fn attempt(connection: &Connection, id: &str) -> Result<Value> {
             .unwrap_or(Value::Null))
     };
     Ok(
-        json!({"id":id,"taskId":task,"ordinal":ordinal,"sessionId":session,"state":state,"result":decode(result)?,"validation":decode(validation)?}),
+        json!({"id":id,"taskId":task,"ordinal":ordinal,"sessionId":session,"state":state,"result":decode(result)?,"validation":decode(validation)?,"decisionGate":crate::workflow_decisions::summary(connection,&id)?}),
     )
 }
 pub fn summaries(connection: &Connection, run_id: &str) -> Result<HashMap<String, Value>> {
@@ -331,6 +331,12 @@ pub fn mutate(
             connection.execute(
                 "UPDATE workflow_attempts SET state='reported',result=?2 WHERE id=?1",
                 params![attempt_id, serde_json::to_string(result)?],
+            )?;
+            crate::workflow_decisions::guard_result(
+                connection,
+                attempt_id,
+                matches!(result.outcome, Outcome::Succeeded),
+                crate::status::now_millis(),
             )?;
             crate::workflow_inbox::notify_result(connection, actor, &own, result)?;
             (

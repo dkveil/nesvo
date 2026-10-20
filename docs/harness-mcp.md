@@ -64,6 +64,12 @@ Instruction version 3 covers pending-read recovery and exact-ID ACK, separate
 from native effects and result validation. See the [inbox contract](harness-inbox.md)
 for recipient rules, bounds and restart behavior.
 
+`workflowDecisions` adds `nesvo_ask_decision`, `nesvo_list_decisions`,
+`nesvo_get_decision`, `nesvo_answer_decision` and `nesvo_cancel_decision`.
+Instruction version 4 covers addressed authority, deadlines, exact decision
+revisions, cancellation and metadata recovery. None types a native permission
+approval or validates task success. See the [decision contract](harness-decisions.md).
+
 Create accepts optional `spec.parentSessionId` for a live process parent, gated
 by `sessionLineage`. It creates an ordinary background session without changing
 parent input ownership. The relation appears in session data and survives client

@@ -107,6 +107,9 @@ mod journal_concurrency_tests;
 #[path = "orchestration_tests.rs"]
 mod orchestration_tests;
 #[cfg(test)]
+#[path = "workflow_decisions_tests.rs"]
+mod workflow_decisions_tests;
+#[cfg(test)]
 #[path = "workflow_inbox_tests.rs"]
 mod workflow_inbox_tests;
 impl Store {
