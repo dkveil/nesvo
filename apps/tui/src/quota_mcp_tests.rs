@@ -46,7 +46,7 @@ fn quota_tool_advertises_strict_explicit_refresh_and_no_session_authority() {
     let value = serde_json::to_value(tool).unwrap();
     let schema = &value["inputSchema"];
     assert_eq!(schema["additionalProperties"], false);
-    assert_eq!(schema["properties"].as_object().unwrap().len(), 2);
+    assert_eq!(schema["properties"].as_object().unwrap().len(), 3);
     assert_eq!(
         schema["properties"]["program"]["enum"],
         json!(["codex", "claude", "gemini"])
@@ -56,7 +56,7 @@ fn quota_tool_advertises_strict_explicit_refresh_and_no_session_authority() {
     assert_eq!(value["annotations"]["readOnlyHint"], true);
     assert_eq!(value["annotations"]["destructiveHint"], false);
     assert_eq!(value["annotations"]["openWorldHint"], true);
-    assert_eq!(catalog().len(), 92);
+    assert_eq!(catalog().len(), 93);
     assert_eq!(
         published_tools()
             .iter()
@@ -89,4 +89,21 @@ fn quota_tool_advertises_strict_explicit_refresh_and_no_session_authority() {
         properties["ordinaryUsageAllowed"]["type"],
         json!(["boolean", "null"])
     );
+}
+#[test]
+fn configured_directory_queries_use_shared_validation_and_strict_null_semantics() {
+    let (request, kind) = super::command(
+        "nesvo_get_provider_quota",
+        serde_json::json!({"program":"codex","directory":"C:\\work","refresh":true}),
+    )
+    .unwrap();
+    assert_eq!(kind, "providerQuota");
+    assert_eq!(request["directory"], "C:\\work");
+    for arguments in [
+        serde_json::json!({"program":"claude","directory":"C:\\work"}),
+        serde_json::json!({"directory":"C:\\work"}),
+        serde_json::json!({"program":"codex","directory":null}),
+    ] {
+        assert!(super::command("nesvo_get_provider_quota", arguments).is_err());
+    }
 }

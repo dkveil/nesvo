@@ -61,6 +61,9 @@ pub enum Command {
     Quota {
         #[arg(long, value_parser = ["codex", "claude", "gemini"])]
         program: Option<String>,
+        /// Absolute host folder whose Codex configuration should be observed.
+        #[arg(long, requires = "program")]
+        directory: Option<String>,
         #[arg(long, requires = "program")]
         refresh: bool,
         #[arg(long)]
@@ -463,6 +466,27 @@ pub(crate) fn provider_quota_query(program: Option<&str>, refresh: bool) -> Resu
     let mut query = json!({"type":"getProviderQuota","refresh":refresh});
     if let Some(program) = program {
         query["program"] = program.into();
+    }
+    Ok(query)
+}
+pub(crate) fn provider_quota_context_query(
+    program: Option<&str>,
+    refresh: bool,
+    directory: Option<&str>,
+) -> Result<Value> {
+    let mut query = provider_quota_query(program, refresh)?;
+    if let Some(directory) = directory {
+        if program != Some("codex")
+            || directory.is_empty()
+            || directory.len() > 4096
+            || directory.chars().any(char::is_control)
+        {
+            return Err(failure(
+                "invalid_argument",
+                "Quota directory requires Codex and a valid host folder",
+            ));
+        }
+        query["directory"] = directory.into();
     }
     Ok(query)
 }
@@ -972,10 +996,26 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         Command::Quota {
             program,
             refresh,
+            directory,
             json,
         } => {
-            let query = provider_quota_query(program.as_deref(), refresh)?;
+            let query =
+                provider_quota_context_query(program.as_deref(), refresh, directory.as_deref())?;
             provider_quota_capability(connection).await?;
+            if directory.is_some()
+                && request(
+                    connection,
+                    json!({"type":"getCapabilities"}),
+                    "capabilities",
+                )
+                .await?["providerQuotaContexts"]
+                    != true
+            {
+                return Err(failure(
+                    "unsupported",
+                    "Host does not support configured-directory quota observations",
+                ));
+            }
             let response = request(connection, query, "providerQuota").await?;
             if json {
                 return print_data(true, response);

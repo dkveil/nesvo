@@ -52,6 +52,23 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Reauthorize the reader binding of a quota-waiting occurrence; never retries effects.
+    AuthorizeQuota {
+        id: String,
+        occurrence: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long, value_parser = quota_binding_argument)]
+        expected_context: String,
+        #[arg(long, value_parser = quota_binding_argument)]
+        expected_account: String,
+        #[arg(long, value_parser = quota_binding_argument)]
+        context: String,
+        #[arg(long, value_parser = quota_binding_argument)]
+        account: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Save an enabled host-owned job; does not start a model immediately.
     Create {
         #[arg(long)]
@@ -171,6 +188,7 @@ impl Command {
             Self::Trigger { command } => command.machine(),
             Self::Precheck { command } => command.machine(),
             Self::AbandonPrecheck { json, .. } | Self::AbandonLaunch { json, .. } => *json,
+            Self::AuthorizeQuota { json, .. } => *json,
             Self::Create { json, .. }
             | Self::Show { json, .. }
             | Self::List { json, .. }
@@ -225,6 +243,24 @@ impl Command {
                 job_attempt_id,
                 expected_digest: digest,
                 acknowledge_unknown_effects,
+            },
+            Self::AuthorizeQuota {
+                id,
+                occurrence,
+                key,
+                expected_context,
+                expected_account,
+                context,
+                account,
+                ..
+            } => Request::AuthorizeQuota {
+                key,
+                job_id: id,
+                occurrence_id: occurrence,
+                expected_context_id: expected_context,
+                expected_account_fingerprint: expected_account,
+                context_id: context,
+                account_fingerprint: account,
             },
             Self::Create { key, file, .. } => Request::Create {
                 key,
@@ -345,6 +381,48 @@ where
     Ok(true)
 }
 
+fn quota_binding_argument(value: &str) -> std::result::Result<String, &'static str> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(
+            "Quota binding requires 64 lowercase hexadecimal characters from an inspected observation",
+        );
+    }
+    Ok(value.into())
+}
+fn quota_binding<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    quota_binding_argument(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum QuotaMode {
+    Wait,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct QuotaPolicy {
+    mode: QuotaMode,
+    #[serde(deserialize_with = "quota_binding")]
+    context_id: String,
+    #[serde(deserialize_with = "quota_binding")]
+    account_fingerprint: String,
+}
+fn quota_policy<'de, D>(deserializer: D) -> std::result::Result<Option<QuotaPolicy>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // An explicit field is a policy selection, never a null spelling of omission.
+    QuotaPolicy::deserialize(deserializer).map(Some)
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(
     tag = "kind",
@@ -455,6 +533,12 @@ pub struct Spec {
     precheck_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry: Option<RetryPolicy>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "quota_policy"
+    )]
+    quota_policy: Option<QuotaPolicy>,
     #[serde(default)]
     misfire: Misfire,
     #[serde(default = "grace")]
@@ -502,6 +586,19 @@ pub enum Request {
         expected_digest: String,
         #[serde(deserialize_with = "launch_reconciliation_acknowledgement")]
         acknowledge_unknown_effects: bool,
+    },
+    AuthorizeQuota {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
+        #[serde(deserialize_with = "quota_binding")]
+        expected_context_id: String,
+        #[serde(deserialize_with = "quota_binding")]
+        expected_account_fingerprint: String,
+        #[serde(deserialize_with = "quota_binding")]
+        context_id: String,
+        #[serde(deserialize_with = "quota_binding")]
+        account_fingerprint: String,
     },
     Create {
         key: String,

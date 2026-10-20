@@ -555,7 +555,7 @@ struct TaskSpec {
 )]
 enum Request {
     Jobs {
-        request: crate::job_commands::Request,
+        request: Box<crate::job_commands::Request>,
     },
     Coordinator {
         request: CoordinatorRequest,
@@ -770,6 +770,12 @@ fn job_launch_reconciliation_supported(caps: &Value, request: &Value) -> bool {
         || request["request"]["request"]["action"] != "abandonLaunchNoEffect"
         || caps["jobLaunchReconciliation"] == true
 }
+pub(crate) fn job_quota_supported(caps: &Value, request: &Value) -> bool {
+    let job = &request["request"]["request"];
+    request["request"]["action"] != "jobs"
+        || (job["action"] != "authorizeQuota" && job["spec"].get("quotaPolicy").is_none())
+        || caps["jobQuotaAdmission"] == true
+}
 fn job_attempts_supported(caps: &Value, request: &Value) -> bool {
     request["request"]["action"] != "jobs"
         || !matches!(
@@ -896,6 +902,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         return Err(cli::failure(
             "unsupported",
             "Host cannot reconcile exact no-effect job launches; update nesvo-host",
+        ));
+    }
+    if !job_quota_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot enforce job quota admission or reauthorization; update nesvo-host",
         ));
     }
     if !job_attempts_supported(&caps, request) {

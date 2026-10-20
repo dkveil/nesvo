@@ -9,6 +9,7 @@
   "nesvo_approve_precheck",
   "nesvo_ask_decision",
   "nesvo_assign_task",
+  "nesvo_authorize_job_quota",
   "nesvo_cancel_decision",
   "nesvo_cancel_job_occurrence",
   "nesvo_cancel_run",

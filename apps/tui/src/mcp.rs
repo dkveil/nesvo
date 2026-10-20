@@ -25,6 +25,10 @@ use tokio_util::{
 
 const MAX_MESSAGE: usize = 64 * 1024;
 
+#[cfg(test)]
+#[path = "quota_job_cli_tests.rs"]
+mod quota_job_cli_tests;
+
 fn published_tools() -> Vec<String> {
     // Compile-time bundled contract, never a client-supplied document.
     serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json"))
@@ -106,7 +110,16 @@ fn job_spec_schema() -> Value {
         }),
         &["on", "maxAttempts", "initialDelayMs", "maxDelayMs"],
     );
-    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Combining with retry explicitly authorizes bounded repeated execution before each fresh generation and requires jobPrecheckGenerations:true. Each begin checks current approval and records fresh authorization; prior passes cannot release a new Run."},"retry":retry,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000,"description":"Per-Run admission/input budget, not a hard process timeout"},"executionTimeoutMs":{"type":"integer","minimum":1000,"maximum":604800000,"description":"Optional per-generation execution window from native launch admission, including preparation/readiness and excluding prechecks. An accepted explicit worker report before the deadline disarms it while validation may remain pending. Expiry requests exact bound-worker cleanup subject to human control; acceptance is not observed exit. Requires jobExecutionTimeouts:true. Omission adds no execution timeout; maxElapsedMs remains independent."}}})
+    let mut schema = json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Combining with retry explicitly authorizes bounded repeated execution before each fresh generation and requires jobPrecheckGenerations:true. Each begin checks current approval and records fresh authorization; prior passes cannot release a new Run."},"retry":retry,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000,"description":"Per-Run admission/input budget, not a hard process timeout"},"executionTimeoutMs":{"type":"integer","minimum":1000,"maximum":604800000,"description":"Optional per-generation execution window from native launch admission, including preparation/readiness and excluding prechecks. An accepted explicit worker report before the deadline disarms it while validation may remain pending. Expiry requests exact bound-worker cleanup subject to human control; acceptance is not observed exit. Requires jobExecutionTimeouts:true. Omission adds no execution timeout; maxElapsedMs remains independent."}}});
+    schema["properties"]["quotaPolicy"] = json!({
+        "type":"object","additionalProperties":false,"required":["mode","contextId","accountFingerprint"],
+        "properties":{"mode":{"const":"wait"},"contextId":quota_binding_schema(),"accountFingerprint":quota_binding_schema()},
+        "description":"Explicit owner opt-in to wait for configured-reader quota evidence; currently Codex only. Bind inspected contextId/accountFingerprint, never credentials. Requires jobQuotaAdmission:true; providerQuotaObservations or quotaWake alone is insufficient. Omission preserves legacy intent. This observation is not an immutable native-account lease or a guarantee that the provider will accept work."
+    });
+    schema
+}
+fn quota_binding_schema() -> Value {
+    json!({"type":"string","pattern":"^[0-9a-f]{64}$","minLength":64,"maxLength":64})
 }
 fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
     let mut schema = serde_json::Map::new();
@@ -118,10 +131,10 @@ fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value
 }
 fn provider_quota_schema() -> serde_json::Map<String, Value> {
     let mut schema = object(
-        json!({"program":{"enum":["codex","claude","gemini"]},"refresh":{"type":"boolean","default":false}}),
+        json!({"program":{"enum":["codex","claude","gemini"]},"directory":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host folder to resolve a separate Codex configured-account reader. Does not start a model or alter configuration."},"refresh":{"type":"boolean","default":false}}),
         &[],
     );
-    schema.insert("allOf".into(), json!([{"if":{"required":["refresh"],"properties":{"refresh":{"const":true}}},"then":{"required":["program"]}}]));
+    schema.insert("allOf".into(), json!([{"if":{"required":["refresh"],"properties":{"refresh":{"const":true}}},"then":{"required":["program"]}},{"if":{"required":["directory"]},"then":{"required":["program"],"properties":{"program":{"const":"codex"}}}}]));
     schema
 }
 fn catalog() -> Vec<Tool> {
@@ -220,6 +233,23 @@ fn catalog() -> Vec<Tool> {
             object(
                 json!({"key":key,"spec":job_spec_schema()}),
                 &["key", "spec"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_authorize_job_quota",
+            "Owner-only explicit reader-context/account reauthorization of one queued or retry-waiting quota occurrence. Compare the exact prior binding and select inspected new fingerprints. Requires jobQuotaAdmission:true. Original mutation replay returns its immutable acceptance; this does not retry native effects, change other occurrences, create a model or bypass provider limits.",
+            object(
+                json!({"key":key,"jobId":id,"occurrenceId":id,"expectedContextId":quota_binding_schema(),"expectedAccountFingerprint":quota_binding_schema(),"contextId":quota_binding_schema(),"accountFingerprint":quota_binding_schema()}),
+                &[
+                    "key",
+                    "jobId",
+                    "occurrenceId",
+                    "expectedContextId",
+                    "expectedAccountFingerprint",
+                    "contextId",
+                    "accountFingerprint",
+                ],
             ),
             false,
         ),
@@ -864,6 +894,7 @@ struct Session {
 #[serde(deny_unknown_fields)]
 struct ProviderQuota {
     program: Option<String>,
+    directory: Option<String>,
     #[serde(default)]
     refresh: bool,
 }
@@ -938,6 +969,15 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
     Ok(match name {
         "nesvo_get_provider_quota" => {
             if arguments
+                .get("directory")
+                .is_some_and(|value| !value.is_string())
+            {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Quota directory must be a host folder",
+                ));
+            }
+            if arguments
                 .get("program")
                 .is_some_and(|value| !value.is_string())
             {
@@ -948,7 +988,11 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
             }
             let query: ProviderQuota = parse(arguments)?;
             (
-                cli::provider_quota_query(query.program.as_deref(), query.refresh)?,
+                cli::provider_quota_context_query(
+                    query.program.as_deref(),
+                    query.refresh,
+                    query.directory.as_deref(),
+                )?,
                 "providerQuota",
             )
         }
@@ -1238,7 +1282,8 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         | "nesvo_get_job_attempt"
         | "nesvo_get_job_mutation"
         | "nesvo_abandon_job_precheck"
-        | "nesvo_abandon_job_launch" => {
+        | "nesvo_abandon_job_launch"
+        | "nesvo_authorize_job_quota" => {
             let action = match name {
                 "nesvo_create_job" => "create",
                 "nesvo_get_job" => "get",
@@ -1253,6 +1298,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "nesvo_get_job_attempt" => "attempt",
                 "nesvo_abandon_job_precheck" => "abandonPrecheck",
                 "nesvo_abandon_job_launch" => "abandonLaunchNoEffect",
+                "nesvo_authorize_job_quota" => "authorizeQuota",
                 _ => "mutation",
             };
             let mut fields = arguments
@@ -1543,6 +1589,20 @@ impl HostTools {
         }
         if kind == "providerQuota" {
             cli::provider_quota_capability(&mut connection).await?;
+            if command.get("directory").is_some()
+                && cli::request(
+                    &mut connection,
+                    json!({"type":"getCapabilities"}),
+                    "capabilities",
+                )
+                .await?["providerQuotaContexts"]
+                    != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host does not support configured-directory quota observations",
+                ));
+            }
         } else if kind == "workflow" {
             crate::workflow::capability(&mut connection, &command).await?;
         } else if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
@@ -2177,7 +2237,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 92);
+        assert_eq!(catalog().len(), 93);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

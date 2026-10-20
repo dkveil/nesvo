@@ -2,12 +2,48 @@ use super::*;
 use clap::Parser;
 
 #[test]
+fn quota_directory_selector_is_explicit_codex_intent_and_rejects_invalid_combinations() {
+    let parsed = crate::Arguments::try_parse_from([
+        "nesvo",
+        "quota",
+        "--program",
+        "codex",
+        "--directory",
+        "C:\\work\\project",
+        "--refresh",
+        "--json",
+    ])
+    .unwrap();
+    let Command::Quota {
+        program,
+        directory,
+        refresh,
+        ..
+    } = parsed.command.unwrap()
+    else {
+        panic!("quota command expected");
+    };
+    assert_eq!(
+        provider_quota_context_query(program.as_deref(), refresh, directory.as_deref()).unwrap(),
+        json!({"type":"getProviderQuota","program":"codex","refresh":true,"directory":"C:\\work\\project"})
+    );
+    for program in [None, Some("claude"), Some("gemini")] {
+        assert!(provider_quota_context_query(program, false, Some("C:\\work")).is_err());
+    }
+    assert!(provider_quota_context_query(Some("codex"), false, Some("bad\npath")).is_err());
+    assert!(
+        crate::Arguments::try_parse_from(["nesvo", "quota", "--directory", "C:\\work"]).is_err()
+    );
+}
+
+#[test]
 fn quota_cli_builds_the_shared_observation_and_explicit_refresh_requests() {
     let parsed = crate::Arguments::try_parse_from(["nesvo", "quota", "--json"]).unwrap();
     let Command::Quota {
         program,
         refresh,
         json,
+        ..
     } = parsed.command.unwrap()
     else {
         panic!("quota command expected");
