@@ -13,6 +13,100 @@ if (process.argv.includes('--version')) {
   console.log(codex ? '0.156.0' : '2.1.303-scoped-fixture');
   process.exit(0);
 }
+if (codex && process.argv.includes('app-server')) {
+  // Private JSON-lines quota endpoint. It supports no auth, turn or model RPC.
+  const directory = process.env.NESVO_TEST_CALLERS;
+  if (!directory || !path.isAbsolute(directory)) process.exit(2);
+  const source = path.join(directory, '.fixture-quota.json');
+  const records = path.join(directory, '.fixture-quota-reads.jsonl');
+  const lines = require('node:readline').createInterface({ input: process.stdin });
+  const lifetime = setTimeout(() => process.exit(0), 12000);
+  let initialized = false;
+  let notified = false;
+  let requested = false;
+  const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
+  const error = id =>
+    send({
+      id,
+      error: { code: -32000, message: 'PRIVATE_QUOTA_PROVIDER_ERROR_DO_NOT_EXPOSE' },
+    });
+  lines.on('line', line => {
+    if (Buffer.byteLength(line) > 16384) return process.exit(2);
+    let request;
+    try {
+      request = JSON.parse(line);
+    } catch {
+      return process.exit(2);
+    }
+    if (request.method === 'initialize' && !initialized) {
+      initialized = true;
+      send({ id: request.id, result: { codexHome: path.join(directory, '.codex') } });
+      return;
+    }
+    if (request.method === 'initialized' && initialized && request.id === undefined) {
+      notified = true;
+      return;
+    }
+    if (
+      request.method !== 'account/rateLimits/read' ||
+      !notified ||
+      requested ||
+      request.params === null ||
+      typeof request.params !== 'object' ||
+      Object.keys(request.params).length !== 0
+    ) {
+      error(request.id ?? null);
+      return;
+    }
+    requested = true;
+    fs.appendFileSync(records, `${JSON.stringify({ pid: process.pid, method: request.method })}\n`);
+    let configuration;
+    try {
+      if (fs.statSync(source).size > 16384) throw new Error('Oversized owned fixture');
+      configuration = JSON.parse(fs.readFileSync(source, 'utf8'));
+    } catch {
+      error(request.id);
+      return;
+    }
+    const heldAt = Date.now();
+    const answer = () => {
+      if (
+        configuration.mode === 'heldSnapshot' &&
+        !fs.existsSync(path.join(directory, '.fixture-quota-release'))
+      ) {
+        if (Date.now() - heldAt >= 5000) error(request.id);
+        else setTimeout(answer, 25);
+        return;
+      }
+      if (configuration.mode === 'hang') return;
+      if (configuration.mode === 'oversize') {
+        process.stdout.write(`${'x'.repeat(256 * 1024 + 1)}\n`);
+        return;
+      }
+      if (['sparseOnly', 'sparseThenError'].includes(configuration.mode)) {
+        send({
+          method: 'account/rateLimits/updated',
+          params: { rateLimits: configuration.result?.rateLimits ?? {} },
+        });
+        if (configuration.mode === 'sparseOnly') return;
+      }
+      if (configuration.mode === 'error' || configuration.mode === 'sparseThenError') {
+        error(request.id);
+        return;
+      }
+      send({ id: request.id, result: configuration.result });
+    };
+    const delay = Number.isInteger(configuration.delayMs)
+      ? Math.max(0, Math.min(configuration.delayMs, 3000))
+      : 0;
+    setTimeout(answer, delay);
+  });
+  lines.on('close', () => {
+    clearTimeout(lifetime);
+    process.exit(0);
+  });
+  return;
+}
 const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
