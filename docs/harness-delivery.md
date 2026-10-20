@@ -2617,3 +2617,21 @@ restart; final complete native regression evidence is recorded separately below.
 Broader retry classes, explicit uncertain-cleanup reconciliation, reported-worker
 cleanup, job UI and original-provider acceptance remain open. This is not full
 F28 or full-goal completion.
+
+Final local source (`29d7fda` plus native scenarios `059a844`) passed all 47 serial
+official SDK/native-host/PTY scenarios in 317.08 seconds. This reruns the three
+new timeout paths after both review fixes, alongside prior job reports, retries,
+prechecks, cancellation, ownership, coordinator recovery and human-input gates.
+Existing acceptance deadlines and native effect/retry semantics were retained.
+The host-lock fix is `eafc57f`; its new Unix-only descriptor test still awaits
+native Unix CI. No original model or phone was invoked, and this Windows pass
+does not explain the earlier intermittent submission/connection failures.
+
+All 30 host/sync/CLI integration tests also passed on the same built native
+binaries in 33.22 seconds. Controlled status publication measured p95 261.034 ms
+and maximum 262.383 ms from host receipt to snapshot enqueue; provider latency
+is outside that measurement. Formatting and the changed Markdown/JSON checks
+passed, and the production source passes warnings-denied all-target Clippy,
+477 units and locked workspace builds. No dependency or global configuration
+changed. Three-platform publication CI remains a separate gate; the previous
+macOS failure and earlier Windows submission uncertainty remain retained above.
