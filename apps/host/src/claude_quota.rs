@@ -176,7 +176,7 @@ fn root_matches(value: &Value, ticket: &RootQuotaTicket) -> bool {
             == Some(ticket.provider_session_id.as_str())
         && !crate::agent_context::is_child(value)
         && value.get("task").is_none_or(Value::is_null)
-        && value.get("agent").is_none_or(Value::is_null)
+        && value.get("tasks").is_none_or(Value::is_null)
 }
 
 fn parse_windows(value: &Value, received_wall_ms: u64) -> (Option<Window>, Option<Window>, Reason) {
@@ -306,10 +306,31 @@ mod tests {
             ReceiveOutcome::RejectedScope
         );
         input.as_object_mut().unwrap().remove("task");
-        input["agent"] = json!({"name":"child-agent"});
+        input["tasks"] = json!([]);
         assert_eq!(fixture.receive(input), ReceiveOutcome::RejectedScope);
         assert_eq!(fixture.read().unwrap().scope.sequence, 1);
         assert!(read(&fixture.0, "foreign-host-session").is_err());
+    }
+
+    #[test]
+    fn named_main_agent_is_not_a_subagent_identity() {
+        let fixture = Fixture::new(true);
+        let mut input = payload();
+        // Native statusLine includes agent.name for a configured main agent.
+        // Child IDs and aggregate task scopes remain excluded.
+        input["agent"] = json!({"name":"PRIVATE-AGENT-NOT-STORED"});
+        assert_eq!(fixture.receive(input.clone()), ReceiveOutcome::Recorded);
+        assert_eq!(fixture.read().unwrap().snapshot.reason, Reason::Observed);
+        input["agent_id"] = json!("child-agent");
+        assert_eq!(
+            fixture.receive(input.clone()),
+            ReceiveOutcome::RejectedScope
+        );
+        input.as_object_mut().unwrap().remove("agent_id");
+        input["session_id"] = json!("another-root");
+        assert_eq!(fixture.receive(input), ReceiveOutcome::RejectedScope);
+        let stored = std::fs::read(fixture.0.with_file_name("events.sqlite3")).unwrap();
+        assert!(!String::from_utf8_lossy(&stored).contains("PRIVATE-AGENT-"));
     }
 
     #[test]

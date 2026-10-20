@@ -3060,3 +3060,20 @@ created no managed session and made no model, login or authentication-refresh
 request. This verifies the original metadata route, not an original-provider job
 or quota continuation. Source and acceptance binaries are recorded outside the
 repository. Broader provider, job UI, mobile and full-goal gates remain open.
+
+### F44 named Claude roots
+
+The native statusline's `agent.name` describes a configured main agent as well
+as agent metadata; its presence alone no longer rejects a matching bound root.
+Child IDs, single-task and aggregate-task payloads remain excluded, together with
+foreign conversations and stale generations. The fixed projection still stores
+no agent name or arbitrary payload. This follows the
+[native statusline fields](https://code.claude.com/docs/en/statusline#available-data).
+
+A dedicated unit regression accepts the named root, rejects a child and another
+conversation, and checks that the private agent name was not stored. The combined
+Windows candidate passes 676 workspace units (188 TUI, 485 host, 3 wire), locked
+build and warnings-denied all-target Clippy. The pending explicit-capture native
+SDK fixture also passes its actual generated helper with a named-main payload in
+9.55 seconds. This fixes a documented false rejection; it does not establish the
+cause of any earlier original-provider callback omission.
