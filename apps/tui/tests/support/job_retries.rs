@@ -117,6 +117,30 @@ async fn generations(owner: &RunningService<RoleClient, ()>, job: &str, id: &str
     )
 }
 
+async fn state_with_diagnostics(
+    fixture: &mut Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    id: &str,
+    wanted: &str,
+    ordinal: u64,
+) -> Result<Value> {
+    match state(owner, job, id, wanted, ordinal).await {
+        Ok(view) => Ok(view),
+        Err(error) => {
+            let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
+            Err(error.context(format!(
+                "Bounded actual retry diagnostics: {}",
+                diagnostics
+                    .to_string()
+                    .chars()
+                    .take(16384)
+                    .collect::<String>()
+            )))
+        }
+    }
+}
+
 async fn detail(
     owner: &RunningService<RoleClient, ()>,
     job: &str,
@@ -300,7 +324,8 @@ async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_ge
         let id = admitted["data"]["occurrence"]["id"]
             .as_str()
             .context("Opted retry occurrence")?;
-        let waiting = state(&owner, job, id, "retryWaiting", 1).await?;
+        let waiting =
+            state_with_diagnostics(&mut fixture, &owner, job, id, "retryWaiting", 1).await?;
         let first = &waiting["data"]["occurrence"];
         let due = deadline(first, 4000)?;
         let first_detail = detail(&owner, job, id, &first["jobAttemptId"]).await?;
@@ -350,7 +375,8 @@ async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_ge
             assert_eq!(early["data"]["occurrence"]["retry"], first["retry"]);
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
-        let reported = state(&owner, job, id, "needsValidation", 2).await?;
+        let reported =
+            state_with_diagnostics(&mut fixture, &owner, job, id, "needsValidation", 2).await?;
         let second = &reported["data"]["occurrence"];
         assert!(
             second["retry"].is_null(),
@@ -576,7 +602,9 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
         let bounded_id = bounded_admission["data"]["occurrence"]["id"]
             .as_str()
             .context("Bounded occurrence")?;
-        let first = state(&owner, bounded, bounded_id, "retryWaiting", 1).await?;
+        let first =
+            state_with_diagnostics(&mut fixture, &owner, bounded, bounded_id, "retryWaiting", 1)
+                .await?;
         let due = deadline(&first["data"]["occurrence"], 1000)?;
         let first_detail = detail(
             &owner,
@@ -613,7 +641,8 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
                 .as_str()
                 .context("Negative retry occurrence")?
                 .to_owned();
-            let current = state(&owner, &job, &id, expected, 1).await?;
+            let current =
+                state_with_diagnostics(&mut fixture, &owner, &job, &id, expected, 1).await?;
             assert!(current["data"]["occurrence"]["retry"].is_null());
             envelopes.extend(
                 launch_evidence(
@@ -630,7 +659,8 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
             cases.push((job, id, expected));
             envelopes.extend(vec![created, admitted, current]);
         }
-        let terminal = state(&owner, bounded, bounded_id, "failed", 2).await?;
+        let terminal =
+            state_with_diagnostics(&mut fixture, &owner, bounded, bounded_id, "failed", 2).await?;
         assert!(
             terminal["data"]["occurrence"]["retry"].is_null(),
             "The configured last generation cannot schedule another retry"
@@ -718,7 +748,7 @@ async fn waiting_job_retry_cancels_without_native_stop_and_restart_keeps_the_ori
         let (cancel_job, cancel_admitted) = admit(&fixture, &owner, "cancel-waiting-retry", spec(&canceled_cwd, "shared", Some(retry(3, 6000)))).await?;
         let cancel_job_id = cancel_job["data"]["job"]["id"].as_str().context("Canceled retry job")?;
         let cancel_id = cancel_admitted["data"]["occurrence"]["id"].as_str().context("Canceled retry occurrence")?;
-        let cancel_waiting = state(&owner, cancel_job_id, cancel_id, "retryWaiting", 1).await?;
+        let cancel_waiting = state_with_diagnostics(&mut fixture, &owner, cancel_job_id, cancel_id, "retryWaiting", 1).await?;
         let cancel_due = deadline(&cancel_waiting["data"]["occurrence"], 6000)?;
         let canceled = data(call(&owner, "nesvo_cancel_job_occurrence", json!({"key":"cancel-owned-backoff","jobId":cancel_job_id,"occurrenceId":cancel_id})).await?)?;
         assert_eq!(canceled["data"]["occurrence"]["state"], "canceled");
@@ -734,7 +764,7 @@ async fn waiting_job_retry_cancels_without_native_stop_and_restart_keeps_the_ori
         let (restart_job, restart_admitted) = admit(&fixture, &owner, "restart-waiting-retry", spec(&resumed_cwd, "shared", Some(retry(3, 8000)))).await?;
         let restart_job_id = restart_job["data"]["job"]["id"].as_str().context("Restart retry job")?;
         let restart_id = restart_admitted["data"]["occurrence"]["id"].as_str().context("Restart retry occurrence")?;
-        let waiting = state(&owner, restart_job_id, restart_id, "retryWaiting", 1).await?;
+        let waiting = state_with_diagnostics(&mut fixture, &owner, restart_job_id, restart_id, "retryWaiting", 1).await?;
         let first = &waiting["data"]["occurrence"];
         let due = deadline(first, 8000)?;
         let first_detail = detail(&owner, restart_job_id, restart_id, &first["jobAttemptId"]).await?;
@@ -752,7 +782,7 @@ async fn waiting_job_retry_cancels_without_native_stop_and_restart_keeps_the_ori
         let retained = detail(&owner, restart_job_id, restart_id, &first["jobAttemptId"]).await?;
         assert_eq!(retained["data"], first_detail["data"]);
         std::fs::create_dir(&resumed_cwd)?;
-        let reported = state(&owner, restart_job_id, restart_id, "needsValidation", 2).await?;
+        let reported = state_with_diagnostics(&mut fixture, &owner, restart_job_id, restart_id, "needsValidation", 2).await?;
         let second = &reported["data"]["occurrence"];
         assert!(second["retry"].is_null());
         let second_detail = detail(&owner, restart_job_id, restart_id, &second["jobAttemptId"]).await?;

@@ -45,6 +45,8 @@ mod input_redraw;
 mod job_attempts;
 #[path = "support/job_cancellation.rs"]
 mod job_cancellation;
+#[path = "support/job_diagnostics.rs"]
+mod job_diagnostics;
 #[path = "support/job_retries.rs"]
 mod job_retries;
 #[path = "support/jobs.rs"]

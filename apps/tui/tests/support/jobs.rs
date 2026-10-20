@@ -104,11 +104,16 @@ async fn once_jobs_dispatch_without_clients_retain_results_and_never_turn_restar
         assert_eq!(conflict["error"]["code"],"idempotency_conflict");
         ensure!(chrono::Utc::now()<due,"Owner must disconnect before due instant");
         owner.cancel().await?;
-        timeout(Duration::from_secs(18),async {loop {
+        let reported=timeout(Duration::from_secs(18),async {loop {
             let reported=std::fs::read_dir(fixture.directory.join("callers"))?.filter_map(|e|e.ok()).any(|e|e.file_name().to_string_lossy().ends_with(".result.json"));
             if reported {return Ok::<_,anyhow::Error>(());}
             tokio::time::sleep(Duration::from_millis(80)).await;
-        }}).await.context("Scheduled worker reported without owner clients")??;
+        }}).await;
+        if let Err(error)=reported {
+            let diagnostics=job_diagnostics::report_timeout_diagnostics(&mut fixture,&id).await;
+            return Err(anyhow::Error::new(error).context(format!("Scheduled worker reported without owner clients; bounded actual diagnostics: {}",diagnostics.to_string().chars().take(16384).collect::<String>())));
+        }
+        reported.context("Scheduled worker reported without owner clients")??;
         let owner=client(&fixture.pairing()).await?;
         let pending=occurrence_state(&owner,&id,"needsValidation").await?;
         let first=&pending["data"]["occurrences"][0];
