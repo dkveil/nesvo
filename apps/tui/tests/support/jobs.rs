@@ -4,12 +4,34 @@ use super::*;
 async fn job_history(owner: &RunningService<RoleClient, ()>, job: &str) -> Result<Value> {
     data(call(owner, "nesvo_get_job_history", json!({"jobId":job})).await?)
 }
+async fn report_wait<T>(
+    fixture: &mut Fixture,
+    job: &str,
+    stage: &str,
+    waited: std::result::Result<Result<T>, tokio::time::error::Elapsed>,
+) -> Result<T> {
+    match waited {
+        Ok(result) => result,
+        Err(error) => {
+            let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
+            Err(anyhow::Error::new(error).context(format!(
+                "{stage}; bounded actual diagnostics: {}",
+                diagnostics
+                    .to_string()
+                    .chars()
+                    .take(16384)
+                    .collect::<String>()
+            )))
+        }
+    }
+}
 async fn occurrence_state(
+    fixture: &mut Fixture,
     owner: &RunningService<RoleClient, ()>,
     job: &str,
     state: &str,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(15), async {
+    let waited = timeout(Duration::from_secs(15), async {
         loop {
             let history = job_history(owner, job).await?;
             if history["data"]["occurrences"]
@@ -21,8 +43,14 @@ async fn occurrence_state(
             tokio::time::sleep(Duration::from_millis(80)).await;
         }
     })
+    .await;
+    report_wait(
+        fixture,
+        job,
+        &format!("Job occurrence state ({state})"),
+        waited,
+    )
     .await
-    .context("Job occurrence state")?
 }
 
 #[tokio::test]
@@ -55,7 +83,8 @@ async fn startup_catchup_never_mistakes_pending_version_probe_for_an_unsupported
                 if rows.iter().any(|o|o["state"]=="needsValidation") {return Ok::<_,anyhow::Error>(history);}
             }
             tokio::time::sleep(Duration::from_millis(80)).await;
-        }}).await.context("Startup catch-up report")??;
+        }}).await;
+        let pending=report_wait(&mut fixture,id,"Startup catch-up report",pending).await?;
         assert_eq!(pending["data"]["occurrences"].as_array().context("one startup occurrence")?.len(),1);
         let run=pending["data"]["occurrences"][0]["runId"].as_str().context("startup run")?;
         let tasks=run_checkpoints::view(&owner,run).await?;
@@ -109,13 +138,9 @@ async fn once_jobs_dispatch_without_clients_retain_results_and_never_turn_restar
             if reported {return Ok::<_,anyhow::Error>(());}
             tokio::time::sleep(Duration::from_millis(80)).await;
         }}).await;
-        if let Err(error)=reported {
-            let diagnostics=job_diagnostics::report_timeout_diagnostics(&mut fixture,&id).await;
-            return Err(anyhow::Error::new(error).context(format!("Scheduled worker reported without owner clients; bounded actual diagnostics: {}",diagnostics.to_string().chars().take(16384).collect::<String>())));
-        }
-        reported.context("Scheduled worker reported without owner clients")??;
+        report_wait(&mut fixture,&id,"Scheduled worker reported without owner clients",reported).await?;
         let owner=client(&fixture.pairing()).await?;
-        let pending=occurrence_state(&owner,&id,"needsValidation").await?;
+        let pending=occurrence_state(&mut fixture,&owner,&id,"needsValidation").await?;
         let first=&pending["data"]["occurrences"][0];
         assert!(first["finishedAt"].is_null());assert_eq!(first["trigger"],"schedule");
         let run=first["runId"].as_str().context("job run")?.to_owned();
@@ -151,12 +176,13 @@ async fn once_jobs_dispatch_without_clients_retain_results_and_never_turn_restar
         let selected=data(call(&owner,"nesvo_get_job_occurrence",json!({"jobId":id,"occurrenceId":first["id"]})).await?)?;
         assert_eq!(selected["data"]["occurrence"]["spec"]["profile"]["allowedNesvoTools"],spec["profile"]["allowedNesvoTools"]);
         run_checkpoints::mutate(&owner,&run,"nesvo_validate_task_result",json!({"key":"validate-disconnected-job","attemptId":current["tasks"][0]["currentAttempt"]["id"],"validation":{"passed":true,"summary":"Inspected exact controlled metadata result","checks":[{"name":"fixture","outcome":"passed","details":"Real scoped process reported its own attempt"}]}})).await?;
-        occurrence_state(&owner,&id,"succeeded").await?;
+        occurrence_state(&mut fixture,&owner,&id,"succeeded").await?;
         let second=timeout(Duration::from_secs(15),async {loop {
             let view=data(call(&owner,"nesvo_get_job_occurrence",json!({"jobId":id,"occurrenceId":second_id})).await?)?;
             if view["data"]["occurrence"]["state"]=="needsValidation" {return Ok::<_,anyhow::Error>(view);}
             tokio::time::sleep(Duration::from_millis(80)).await;
-        }}).await.context("Explicit manual queue may run after definition disabled")??;
+        }}).await;
+        let second=report_wait(&mut fixture,&id,"Explicit manual queue may run after definition disabled",second).await?;
         let next_run=second["data"]["occurrence"]["runId"].as_str().context("second run")?;
         let second_run=run_checkpoints::view(&owner,next_run).await?;
         let next_worker=second_run["tasks"][0]["currentAttempt"]["sessionId"].as_str().context("second worker")?;
