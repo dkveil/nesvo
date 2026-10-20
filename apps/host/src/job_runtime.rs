@@ -1,4 +1,4 @@
-//! Once-job dispatch reuses durable workflow admission and native receipt guards.
+//! Job dispatch reuses durable workflow admission and native receipt guards.
 use crate::{
     caller::Authority,
     event_log::Service,
@@ -70,6 +70,31 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>, log: 
             // job must not interpret transient discovery as unsupported CLI.
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             continue;
+        }
+        if let Ok(Reply::Calendars(due)) = runner.log.jobs(Work::CalendarDue).await {
+            for item in due {
+                let evaluated_at = crate::status::now_millis();
+                let answer = crate::job_calendar_adapter::next(item.schedule, evaluated_at).await;
+                if answer
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error.code == "calendar_busy")
+                {
+                    // Owner queries can temporarily occupy both bounded slots.
+                    // Leave due intent intact for the next ordinary tick.
+                    continue;
+                }
+                let _ = runner
+                    .log
+                    .jobs(Work::AdvanceCalendar {
+                        id: item.id,
+                        revision: item.revision,
+                        due: item.due,
+                        evaluated_at,
+                        answer,
+                    })
+                    .await;
+            }
         }
         match runner.log.jobs(Work::Tick).await {
             Ok(Reply::Claims(claims)) => {

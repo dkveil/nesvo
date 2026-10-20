@@ -492,8 +492,25 @@ impl Service {
     pub async fn workflow(
         &self,
         actor: crate::orchestration::Actor,
-        request: crate::orchestration::Request,
+        mut request: crate::orchestration::Request,
     ) -> Result<Value> {
+        if matches!(actor.scope, crate::orchestration::Scope::Owner)
+            && let crate::orchestration::Request::Jobs { request } = &mut request
+            && let crate::job_definitions::Request::Create { spec, .. }
+            | crate::job_definitions::Request::Update { spec, .. } = request
+            && !matches!(spec.schedule, crate::job_calendar::Schedule::Once { .. })
+        {
+            // Keep computation off the SQLite worker. Even a failed evaluation
+            // is carried through to the domain: immutable key replay must be
+            // checked before fresh live-clock validation or helper errors.
+            spec.calendar = Some(
+                crate::job_calendar_adapter::next(
+                    spec.schedule.clone(),
+                    crate::status::now_millis(),
+                )
+                .await,
+            );
+        }
         let (reply, answer) = oneshot::channel();
         self.sender
             .send(Work::Workflow {

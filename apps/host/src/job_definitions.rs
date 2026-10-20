@@ -1,4 +1,5 @@
 //! Durable job definitions and occurrence admission; no process or clock I/O.
+pub use crate::job_calendar::Schedule;
 use crate::{
     api_error::Error,
     event_log::{Observation, append_transaction},
@@ -16,11 +17,6 @@ fn grace() -> u64 {
 }
 fn budget() -> u64 {
     300_000
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
-pub enum Schedule {
-    Once { at: String },
 }
 #[derive(Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +47,9 @@ pub struct Spec {
     pub overlap: Overlap,
     #[serde(default = "budget")]
     pub max_elapsed_ms: u64,
+    // Internal adapter result, neither accepted from the wire nor persisted.
+    #[serde(skip)]
+    pub calendar: Option<crate::job_calendar::Answer>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
@@ -108,13 +107,36 @@ pub struct Claim {
 }
 pub enum Work {
     Tick,
-    BindRun { occurrence: String, run: String },
-    Started { occurrence: String },
-    Refused { occurrence: String, uncertain: bool },
+    CalendarDue,
+    AdvanceCalendar {
+        id: String,
+        revision: u64,
+        due: u64,
+        evaluated_at: u64,
+        answer: crate::job_calendar::Answer,
+    },
+    BindRun {
+        occurrence: String,
+        run: String,
+    },
+    Started {
+        occurrence: String,
+    },
+    Refused {
+        occurrence: String,
+        uncertain: bool,
+    },
 }
 pub enum Reply {
     Claims(Vec<Claim>),
+    Calendars(Vec<CalendarDue>),
     Done,
+}
+pub struct CalendarDue {
+    pub id: String,
+    pub revision: u64,
+    pub due: u64,
+    pub schedule: Schedule,
 }
 fn invalid(message: &'static str) -> anyhow::Error {
     Error::new("invalid_argument", message).into()
@@ -126,6 +148,30 @@ pub fn initialize(connection: &Connection) -> Result<()> {
       CREATE TABLE IF NOT EXISTS harness_job_occurrences(id TEXT PRIMARY KEY,job_id TEXT NOT NULL REFERENCES harness_jobs(id),job_revision INTEGER NOT NULL,spec TEXT NOT NULL,trigger_key TEXT NOT NULL,trigger_kind TEXT NOT NULL,due_at INTEGER NOT NULL,created_at INTEGER NOT NULL,state TEXT NOT NULL,reason TEXT,run_id TEXT REFERENCES workflow_runs(id),started_at INTEGER,finished_at INTEGER,UNIQUE(job_id,trigger_key));
       CREATE INDEX IF NOT EXISTS harness_job_occurrences_active ON harness_job_occurrences(state,job_id);
       CREATE INDEX IF NOT EXISTS harness_job_occurrences_history ON harness_job_occurrences(job_id,created_at);")?;
+    let has_error = {
+        let mut query = connection.prepare("PRAGMA table_info(harness_jobs)")?;
+        query
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name == "calendar_error")
+    };
+    if !has_error {
+        connection.execute_batch("ALTER TABLE harness_jobs ADD COLUMN calendar_error TEXT;")?;
+    }
+    let has_coalesced = {
+        let mut query = connection.prepare("PRAGMA table_info(harness_job_occurrences)")?;
+        query
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name == "coalesced_from")
+    };
+    if !has_coalesced {
+        connection.execute_batch(
+            "ALTER TABLE harness_job_occurrences ADD COLUMN coalesced_from INTEGER;",
+        )?;
+    }
     Ok(())
 }
 pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
@@ -150,7 +196,26 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
     Ok(())
 }
 fn due(spec: &Spec) -> Result<u64> {
-    let Schedule::Once { at } = &spec.schedule;
+    let Schedule::Once { at } = &spec.schedule else {
+        return spec
+            .calendar
+            .as_ref()
+            .ok_or_else(|| invalid("Calendar adapter result is required"))?
+            .as_ref()
+            .map_err(|failure| {
+                let code = match failure.code.as_str() {
+                    "calendar_timeout" => "calendar_timeout",
+                    "calendar_limit" => "calendar_limit",
+                    "calendar_busy" => "calendar_busy",
+                    "calendar_unavailable" => "calendar_unavailable",
+                    _ => "invalid_calendar",
+                };
+                anyhow::Error::from(Error::new(code, "Calendar could not be evaluated"))
+                    .context(failure.message.clone())
+            })?
+            .next
+            .ok_or_else(|| invalid("No future occurrence remains in this recurrence"));
+    };
     if at.len() > 64 {
         return Err(invalid(
             "Once time must be RFC3339 with an explicit UTC offset",
@@ -185,7 +250,10 @@ fn validate(spec: &Spec, now: u64) -> Result<u64> {
         crate::tool_permissions::validate(tools)?;
     }
     let at = due(spec)?;
-    if at <= now || at.saturating_sub(now) > 366 * 86_400_000 {
+    if at <= now
+        || (matches!(spec.schedule, Schedule::Once { .. })
+            && at.saturating_sub(now) > 366 * 86_400_000)
+    {
         return Err(invalid(
             "Choose an explicit future instant up to 366 days ahead",
         ));
@@ -195,7 +263,7 @@ fn validate(spec: &Spec, now: u64) -> Result<u64> {
 fn job(connection: &Connection, id: &str, detail: bool) -> Result<Value> {
     let row = connection
         .query_row(
-            "SELECT spec,revision,enabled,next_due,created_at FROM harness_jobs WHERE id=?1",
+            "SELECT spec,revision,enabled,next_due,created_at,calendar_error FROM harness_jobs WHERE id=?1",
             [id],
             |r| {
                 Ok((
@@ -204,15 +272,28 @@ fn job(connection: &Connection, id: &str, detail: bool) -> Result<Value> {
                     r.get::<_, bool>(2)?,
                     r.get::<_, Option<i64>>(3)?,
                     r.get::<_, i64>(4)?,
+                    r.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()?;
-    let Some((spec, revision, enabled, next_due, created)) = row else {
+    let Some((spec, revision, enabled, next_due, created, calendar_error)) = row else {
         return Err(Error::new("job_not_found", "Job does not exist").into());
     };
     let spec: Spec = serde_json::from_str(&spec)?;
     let mut view = json!({"id":id,"title":spec.title,"revision":revision,"enabled":enabled,"nextDueAt":next_due,"createdAt":created,"schedule":spec.schedule});
+    view["calendarState"] = if calendar_error.is_some() {
+        "blocked"
+    } else if next_due.is_none() {
+        "exhausted"
+    } else {
+        "ready"
+    }
+    .into();
+    view["calendarError"] = calendar_error
+        .map(|text| serde_json::from_str::<Value>(&text))
+        .transpose()?
+        .unwrap_or(Value::Null);
     if detail {
         view["spec"] = serde_json::to_value(spec)?;
     }
@@ -227,6 +308,13 @@ fn occurrence(connection: &Connection, job_id: &str, id: &str, detail: bool) -> 
         )
         .into());
     };
+    view["coalescedFromAt"] = connection
+        .query_row(
+            "SELECT coalesced_from FROM harness_job_occurrences WHERE id=?1",
+            [id],
+            |r| r.get::<_, Option<i64>>(0),
+        )?
+        .into();
     let binding = if let Some(run) = view["runId"].as_str() {
         connection.query_row("SELECT a.id,a.session_id,l.operation_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id LEFT JOIN workflow_launches l ON l.attempt_id=a.id WHERE t.run_id=?1 ORDER BY a.ordinal DESC,a.rowid DESC LIMIT 1",[run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional()?
     } else {
@@ -490,7 +578,7 @@ pub fn execute(
             match &request {
                 Request::Update { spec, .. } => {
                     let at = validate(spec, now)?;
-                    transaction.execute("UPDATE harness_jobs SET spec=?2,next_due=?3,revision=revision+1 WHERE id=?1",params![job_id,serde_json::to_string(spec)?,at as i64])?;
+                    transaction.execute("UPDATE harness_jobs SET spec=?2,next_due=?3,calendar_error=NULL,revision=revision+1 WHERE id=?1",params![job_id,serde_json::to_string(spec)?,at as i64])?;
                     observe(&transaction, job_id, None, "updated", now)?;
                     json!({"job":job(&transaction,job_id,true)?})
                 }
@@ -588,6 +676,107 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let reply = match work {
+        Work::CalendarDue => {
+            let retained: i64 =
+                transaction.query_row("SELECT count(*) FROM harness_job_occurrences", [], |r| {
+                    r.get(0)
+                })?;
+            let mut q = transaction.prepare("SELECT id,revision,next_due,spec FROM harness_jobs WHERE enabled=1 AND next_due<=?1 ORDER BY next_due,id LIMIT ?2")?;
+            let records = q
+                .query_map(params![now as i64, (4096 - retained).clamp(0, 8)], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut due = Vec::new();
+            for (id, revision, at, spec) in records {
+                let spec: Spec = serde_json::from_str(&spec)?;
+                if !matches!(spec.schedule, Schedule::Once { .. }) {
+                    due.push(CalendarDue {
+                        id,
+                        revision: u64::try_from(revision)
+                            .map_err(|_| invalid("Invalid stored job revision"))?,
+                        due: u64::try_from(at)
+                            .map_err(|_| invalid("Invalid stored job due time"))?,
+                        schedule: spec.schedule,
+                    });
+                }
+            }
+            Reply::Calendars(due)
+        }
+        Work::AdvanceCalendar {
+            id,
+            revision,
+            due,
+            evaluated_at,
+            answer,
+        } => {
+            refresh(&transaction, now)?;
+            let record = job(&transaction, &id, true)?;
+            let retained: i64 =
+                transaction.query_row("SELECT count(*) FROM harness_job_occurrences", [], |r| {
+                    r.get(0)
+                })?;
+            // The off-worker result is a proposal, never authority over a
+            // concurrently edited/disabled calendar or another tick's cursor.
+            if record["enabled"] == true
+                && record["revision"] == revision
+                && record["nextDueAt"] == due
+                && due <= evaluated_at
+                && evaluated_at <= now
+                && retained < 4096
+            {
+                let (at, next, failure) = match answer {
+                    Ok(window) if window.next.is_none_or(|at| at > evaluated_at) => {
+                        let at = window
+                            .previous
+                            .filter(|at| *at >= due && *at <= evaluated_at)
+                            .unwrap_or(due);
+                        (at, window.next, None)
+                    }
+                    Ok(_) => return Err(invalid("Invalid calendar successor")),
+                    Err(failure) => (due, None, Some(failure)),
+                };
+                let occurrence = insert_occurrence(
+                    &transaction,
+                    &record,
+                    &format!("schedule:{revision}:{at}"),
+                    "schedule",
+                    at,
+                    now,
+                )?;
+                transaction.execute(
+                    "UPDATE harness_jobs SET next_due=?2,calendar_error=?3 WHERE id=?1",
+                    params![
+                        id,
+                        next.map(|n| n as i64),
+                        failure.as_ref().map(serde_json::to_string).transpose()?
+                    ],
+                )?;
+                // One retained occurrence represents the latest missed slot,
+                // with an explicit start of the coalesced interval for audit.
+                transaction.execute(
+                    "UPDATE harness_job_occurrences SET coalesced_from=?2 WHERE id=?1",
+                    params![occurrence, (at > due).then_some(due as i64)],
+                )?;
+                observe(
+                    &transaction,
+                    &id,
+                    None,
+                    if failure.is_some() {
+                        "calendarBlocked"
+                    } else {
+                        "calendarAdvanced"
+                    },
+                    now,
+                )?;
+            }
+            Reply::Done
+        }
         Work::Tick => {
             refresh(&transaction, now)?;
             let retained: i64 =
@@ -603,6 +792,10 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             };
             for id in due {
                 let record = job(&transaction, &id, true)?;
+                let spec: Spec = serde_json::from_value(record["spec"].clone())?;
+                if !matches!(spec.schedule, Schedule::Once { .. }) {
+                    continue;
+                }
                 let at = record["nextDueAt"]
                     .as_u64()
                     .ok_or_else(|| invalid("Invalid stored due instant"))?;

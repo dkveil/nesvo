@@ -10,6 +10,9 @@ license.workspace = true
 anyhow.workspace = true
 base64 = "0.22.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono-tz = "=0.10.4"
+croner = { version = "=4.0.1", default-features = false, features = ["chrono"] }
+ical = { package = "ical-rs", version = "=0.5.1", default-features = false, features = ["parser"] }
 clap = { workspace = true, features = ["env"] }
 futures-util.workspace = true
 hex.workspace = true

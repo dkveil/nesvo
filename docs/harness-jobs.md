@@ -1,12 +1,12 @@
-# Durable host once jobs
+# Durable host jobs
 
-`durableJobs:true` and `jobScheduleKinds:["once"]` advertise owner-only durable
+`durableJobs:true` and `jobScheduleKinds:["once","cron","rrule"]` advertise owner-only durable
 definitions and separate occurrences. The host runs them without an open TUI or
 phone. Fresh worker admission and instruction delivery use the existing
 Run/Task/Attempt executor, native receipts, readiness, workspace, process budgets
 and human-input guards. No model API keys or direct model calls are added.
 
-This is the first durable job slice. Recurrence/IANA calendars, safe reuse,
+Once and [recurring IANA calendars](harness-job-calendars.md) are available. Safe reuse,
 prechecks, authenticated triggers, automatic retries, hard runtime timeout/cleanup,
 quota queues and job UI remain separate implementation gates. Existing legacy
 once schedules and their storage/API remain unchanged until a tested migration
@@ -97,7 +97,12 @@ substitute for run cancellation. A dedicated job-cancel adapter remains pending.
   new clock misfire when the preceding occurrence finishes. Native uncertainty
   blocks the queued occurrence until the original work is reconciled.
 
-At most eight due definitions are materialized and four queued occurrences are
+Recurring downtime coalesces to the latest eligible clock slot and exposes
+`coalescedFromAt` when intermediate slots were merged. See the calendar contract
+for DST, search bounds and durable calendar errors. `calendarState:exhausted`
+means no more automatic terms; it does not mean the last worker succeeded.
+
+At most eight due definitions are materialized per calendar/once pass and four queued occurrences are
 claimed per host tick. Claims are transactional before native work. Definition,
 occurrence and mutation retention are bounded (64, 4096 and 4096 respectively);
 history is never silently discarded. Full occurrence retention stops new
@@ -155,7 +160,9 @@ A separate restart case reproduced a catch-up refusal while actual version
 discovery was delayed, then passed with exactly one native attempt after the
 startup gate. No automatic retry, relaxed profile or extra permission was used.
 
-There are no new production dependencies. The TUI integration test adds a dev-only
+The once-job implementation added no production dependencies; the later calendar
+adapter's three pinned packages and their purpose are documented in the
+[calendar contract](harness-job-calendars.md). The TUI integration test adds a dev-only
 reference to the already locked `chrono` used by the host, for exact future
 RFC3339 timestamps and a before-disconnect assertion. It adds no new package and
 does not put calendar I/O into rendering. Original-model job execution, interactive

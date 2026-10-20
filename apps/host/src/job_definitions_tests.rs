@@ -16,12 +16,16 @@ fn spec(at: u64) -> Value {
     json!({"title":"Scheduled work","instruction":"Record an explicit result","profile":{"program":"claude","workspace":"shared","harness":true,"allowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]},"schedule":{"kind":"once","at":chrono::DateTime::from_timestamp_millis(at as i64).unwrap().to_rfc3339()}})
 }
 fn request(store: &mut Store, request: Value, now: u64) -> anyhow::Result<Value> {
-    job_definitions::execute(
-        &mut store.0,
-        owner(),
-        serde_json::from_value(request).unwrap(),
-        now,
-    )
+    let mut request: Request = serde_json::from_value(request).unwrap();
+    if let Request::Create { spec, .. } | Request::Update { spec, .. } = &mut request
+        && !matches!(spec.schedule, crate::job_calendar::Schedule::Once { .. })
+    {
+        spec.calendar = Some(crate::job_calendar::evaluate(crate::job_calendar::Query {
+            schedule: spec.schedule.clone(),
+            after: now,
+        }));
+    }
+    job_definitions::execute(&mut store.0, owner(), request, now)
 }
 fn create(store: &mut Store, key: &str, extra: Value) -> Value {
     let mut spec = spec(NOW + 10_000);
@@ -49,6 +53,158 @@ fn code(result: anyhow::Result<Value>, expected: &str) {
             .code,
         expected
     );
+}
+
+fn calendars(store: &mut Store, now: u64) -> Vec<job_definitions::CalendarDue> {
+    let Reply::Calendars(due) =
+        job_definitions::work(&mut store.0, Work::CalendarDue, now).unwrap()
+    else {
+        panic!("Expected calendars")
+    };
+    due
+}
+fn advance(store: &mut Store, item: job_definitions::CalendarDue, now: u64) {
+    let answer = crate::job_calendar::evaluate(crate::job_calendar::Query {
+        schedule: item.schedule,
+        after: now,
+    });
+    job_definitions::work(
+        &mut store.0,
+        Work::AdvanceCalendar {
+            id: item.id,
+            revision: item.revision,
+            due: item.due,
+            evaluated_at: now,
+            answer,
+        },
+        now,
+    )
+    .unwrap();
+}
+#[test]
+fn recurring_sleep_coalesces_to_latest_slot_and_persists_one_unique_utc_cursor() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let job = create(
+        &mut store,
+        "cron",
+        json!({"schedule":{"kind":"cron","expression":"* * * * *"}}),
+    );
+    let first = job["nextDueAt"].as_u64().unwrap();
+    let now = first + 180_000 + 3000;
+    assert!(tick(&mut store, now).is_empty()); // SQLite never evaluates calendars.
+    let due = calendars(&mut store, now).pop().unwrap();
+    assert_eq!(due.due, first);
+    advance(&mut store, due, now);
+    let claim = tick(&mut store, now);
+    assert_eq!(claim.len(), 1);
+    let rows = history(&mut store, &job);
+    assert_eq!(rows[0]["dueAt"], first + 180_000);
+    assert_eq!(rows[0]["coalescedFromAt"], first);
+    let view = request(&mut store, json!({"action":"get","jobId":job["id"]}), now).unwrap();
+    assert_eq!(view["job"]["revision"], 1);
+    assert_eq!(view["job"]["nextDueAt"], first + 240_000);
+    job_definitions::recover(&mut store.0, now + 1).unwrap();
+    assert!(calendars(&mut store, now + 1).is_empty());
+    assert!(tick(&mut store, now + 1).is_empty());
+    assert_eq!(history(&mut store, &job).as_array().unwrap().len(), 1);
+}
+#[test]
+fn stale_calendar_result_cannot_override_edits_disable_or_newer_cursor() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let job = create(
+        &mut store,
+        "edit-race",
+        json!({"schedule":{"kind":"cron","expression":"* * * * *"}}),
+    );
+    let now = job["nextDueAt"].as_u64().unwrap();
+    let stale = calendars(&mut store, now).pop().unwrap();
+    let changed=request(&mut store,json!({"action":"update","key":"edit-race-update","jobId":job["id"],"expectedRevision":1,"spec":spec(now+3_600_000)}),now).unwrap();
+    advance(&mut store, stale, now);
+    assert_eq!(
+        request(&mut store, json!({"action":"get","jobId":job["id"]}), now).unwrap(),
+        changed
+    );
+    assert!(history(&mut store, &job).as_array().unwrap().is_empty());
+    let job = create(
+        &mut store,
+        "disabled-race",
+        json!({"schedule":{"kind":"cron","expression":"* * * * *"}}),
+    );
+    let now = job["nextDueAt"].as_u64().unwrap();
+    let stale = calendars(&mut store, now).pop().unwrap();
+    request(&mut store,json!({"action":"setEnabled","key":"disable-race","jobId":job["id"],"expectedRevision":1,"enabled":false}),now).unwrap();
+    advance(&mut store, stale, now);
+    assert!(history(&mut store, &job).as_array().unwrap().is_empty());
+}
+#[test]
+fn calendar_failure_is_durable_visible_and_never_hot_retried() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let job = create(
+        &mut store,
+        "failed-calendar",
+        json!({"schedule":{"kind":"cron","expression":"* * * * *"}}),
+    );
+    let due = job["nextDueAt"].as_u64().unwrap();
+    job_definitions::work(
+        &mut store.0,
+        Work::AdvanceCalendar {
+            id: job["id"].as_str().unwrap().into(),
+            revision: 1,
+            due,
+            evaluated_at: due,
+            answer: Err(crate::job_calendar::Failure::new(
+                "calendar_timeout",
+                "Owned child was killed",
+            )),
+        },
+        due,
+    )
+    .unwrap();
+    let current = request(&mut store, json!({"action":"get","jobId":job["id"]}), due).unwrap();
+    assert_eq!(current["job"]["calendarState"], "blocked");
+    assert_eq!(current["job"]["calendarError"]["code"], "calendar_timeout");
+    assert!(current["job"]["nextDueAt"].is_null());
+    let before = store.0.total_changes();
+    assert!(calendars(&mut store, due + 3_600_000).is_empty());
+    assert_eq!(store.0.total_changes(), before);
+    let mut replay: Request = serde_json::from_value(
+        json!({"action":"create","key":"failed-calendar","spec":job["spec"]}),
+    )
+    .unwrap();
+    let Request::Create { spec, .. } = &mut replay else {
+        unreachable!()
+    };
+    spec.calendar = Some(Err(crate::job_calendar::Failure::new(
+        "calendar_unavailable",
+        "No fresh helper",
+    )));
+    assert_eq!(
+        job_definitions::execute(&mut store.0, owner(), replay, due + 3_600_000).unwrap()["job"],
+        job
+    );
+}
+#[test]
+fn finite_recurrence_end_does_not_create_an_extra_occurrence_or_change_revision() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let start = chrono::DateTime::from_timestamp_millis((NOW + 120_000) as i64)
+        .unwrap()
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    let job = create(
+        &mut store,
+        "finite",
+        json!({"schedule":{"kind":"rrule","rule":"FREQ=MINUTELY;COUNT=1","start":start,"timeZone":"UTC"}}),
+    );
+    let now = job["nextDueAt"].as_u64().unwrap();
+    let due = calendars(&mut store, now).pop().unwrap();
+    advance(&mut store, due, now);
+    assert_eq!(tick(&mut store, now).len(), 1);
+    assert!(calendars(&mut store, now + 86_400_000).is_empty());
+    let view = request(&mut store, json!({"action":"get","jobId":job["id"]}), now).unwrap();
+    assert_eq!(view["job"]["calendarState"], "exhausted");
+    assert_eq!(view["job"]["revision"], 1);
+    assert_eq!(history(&mut store, &job).as_array().unwrap().len(), 1);
+    assert!(serde_json::from_value::<job_definitions::Spec>(json!({"title":"x","instruction":"x","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"cron","expression":"* * * * *"},"calendar":{"Ok":123}})).is_err());
 }
 
 #[test]
