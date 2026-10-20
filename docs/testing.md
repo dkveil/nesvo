@@ -217,6 +217,28 @@ Host fixtures opt into `--exit-on-stdin-close` and close their piped stdin durin
 
 The README image in `docs/assets/` shows the native TUI in an isolated demonstration workspace. It contains no real project output or pairing credentials. For private mobile review captures, run `node scripts/capture-mobile-demo.mjs` with the web preview running. That script uses fictional data without connecting to a host and writes only to ignored `artifacts/`.
 
+## External trigger boundary
+
+After building both native binaries, run the real HTTP/owner CLI/official MCP SDK
+and controlled-PTY scenarios serially:
+
+```powershell
+cargo test --package nesvo --test mcp_host --locked job_triggers:: -- --ignored --test-threads=1
+```
+
+The private host explicitly enables an ephemeral loopback listener; secrets reach
+the bounded Node HTTP/crypto sender through stdin, never command arguments. Cases
+exercise concurrent delivery replay, restart/rotation/revocation, signed GitHub
+repository/event/branch filters, disabled sticky outcomes, and queue admission
+through the existing job executor with the owner client closed. Actual JSON
+responses are checked against the published output schema. Fixtures do not call
+original models, register external webhooks or change global configuration.
+
+Host units additionally cover raw HTTP framing, connection/body/header limits,
+runtime listener availability, signature provenance, persisted retention/burst
+limits, backward time, secret uniqueness and full-journal revocation. Unit/store
+tests complement the native HTTP/dispatch cases; they do not replace them.
+
 ## Phone setup
 
 1. Install dependencies and rebuild the terminal asset.

@@ -25,6 +25,7 @@ use tokio::{
 struct Fixture {
     directory: PathBuf,
     host: Child,
+    webhook_port: Option<u16>,
 }
 fn published_tool_count() -> usize {
     serde_json::from_str::<Vec<String>>(include_str!("../../../docs/harness-mcp-tools.json"))
@@ -53,6 +54,8 @@ mod job_launch_reconciliation;
 mod job_retries;
 #[path = "support/job_timeouts.rs"]
 mod job_timeouts;
+#[path = "support/job_triggers.rs"]
+mod job_triggers;
 #[path = "support/jobs.rs"]
 mod jobs;
 #[path = "support/mcp_cancellation.rs"]
@@ -93,12 +96,25 @@ impl Fixture {
         Self::start_variant_with_client(agent, false).await
     }
     async fn start_variant_with_client(agent: bool, spaced_client: bool) -> Result<Self> {
+        Self::start_options(agent, spaced_client, None).await
+    }
+    async fn start_with_webhooks() -> Result<Self> {
+        Self::start_options(true, false, Some(0)).await
+    }
+    async fn start_options(
+        agent: bool,
+        spaced_client: bool,
+        webhook_port: Option<u16>,
+    ) -> Result<Self> {
         let directory = std::env::temp_dir().join(format!(
             "nesvo-mcp-{}",
             hex::encode(nesvo_wire::random::<8>())
         ));
         std::fs::create_dir(&directory)?;
         let mut command = Command::new(Self::host_binary());
+        if let Some(port) = webhook_port {
+            command.arg("--webhook-port").arg(port.to_string());
+        }
         if agent {
             install_agent_fixture(&directory, &mut command).await?;
         }
@@ -110,7 +126,11 @@ impl Fixture {
             command.env("NESVO_CLIENT_BINARY", client);
         }
         let host = Self::spawn_host(&directory, command).await?;
-        Ok(Self { directory, host })
+        Ok(Self {
+            directory,
+            host,
+            webhook_port,
+        })
     }
     async fn spawn_host(directory: &Path, mut command: Command) -> Result<Child> {
         command
@@ -240,6 +260,9 @@ impl Fixture {
             "Owned host did not finish graceful shutdown"
         );
         let mut command = Command::new(Self::host_binary());
+        if let Some(port) = self.webhook_port {
+            command.arg("--webhook-port").arg(port.to_string());
+        }
         if self.directory.join("bin").is_dir() {
             agent_fixture_environment(&self.directory, &mut command)?;
         }
@@ -247,21 +270,48 @@ impl Fixture {
         Ok(())
     }
     async fn close(&mut self) -> Result<()> {
+        let host_pid = self.host.id();
         drop(self.host.stdin.take());
-        let status = timeout(Duration::from_secs(10), self.host.wait()).await??;
+        let status = timeout(Duration::from_secs(10), self.host.wait())
+            .await
+            .with_context(|| {
+                format!(
+                    "Wait for owned native host {host_pid:?} shutdown in {}",
+                    self.directory.display()
+                )
+            })?
+            .with_context(|| {
+                format!(
+                    "Reap owned native host {host_pid:?} in {}",
+                    self.directory.display()
+                )
+            })?;
         ensure!(
             status.success(),
             "Isolated host did not finish clean PTY shutdown"
         );
-        let canonical = self.directory.canonicalize()?;
+        let canonical = self.directory.canonicalize().with_context(|| {
+            format!(
+                "Resolve owned native fixture directory before cleanup: {}",
+                self.directory.display()
+            )
+        })?;
+        let temporary = std::env::temp_dir().canonicalize().context(
+            "Resolve the OS temporary directory before validating native fixture cleanup",
+        )?;
         ensure!(
-            canonical.parent() == Some(std::env::temp_dir().canonicalize()?.as_path())
+            canonical.parent() == Some(temporary.as_path())
                 && canonical
                     .file_name()
                     .is_some_and(|n| n.to_string_lossy().starts_with("nesvo-mcp-")),
             "Refusing cleanup outside fixture"
         );
-        std::fs::remove_dir_all(canonical)?;
+        std::fs::remove_dir_all(&canonical).with_context(|| {
+            format!(
+                "Remove owned native fixture tree after host exit: {}",
+                canonical.display()
+            )
+        })?;
         Ok(())
     }
 }
