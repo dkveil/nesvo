@@ -684,14 +684,17 @@ pub fn tool(action: &str, mut arguments: Value) -> Result<Value> {
     })?)
 }
 fn model_profile_requested(request: &Value) -> bool {
-    let explicit_model =
-        |profile: &Value| profile.get("model").is_some() || profile.get("effort").is_some();
+    task_profile_requested(request, |profile: &Value| {
+        profile.get("model").is_some() || profile.get("effort").is_some()
+    })
+}
+fn task_profile_requested(request: &Value, selected: impl Fn(&Value) -> bool) -> bool {
     let action = &request["request"];
     match action["action"].as_str() {
-        Some("launch") => explicit_model(&action["request"]["profile"]),
+        Some("launch") => selected(&action["request"]["profile"]),
         Some("executor") => action["request"]["spec"]["tasks"]
             .as_array()
-            .is_some_and(|tasks| tasks.iter().any(|task| explicit_model(&task["profile"]))),
+            .is_some_and(|tasks| tasks.iter().any(|task| selected(&task["profile"]))),
         _ => false,
     }
 }
@@ -760,6 +763,14 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host lacks launch-local model profile support; update nesvo-host",
         ));
     }
+    if task_profile_requested(request, |p| p.get("allowedNesvoTools").is_some())
+        && caps["taskNativeToolProfiles"] != true
+    {
+        return Err(cli::failure(
+            "unsupported",
+            "Host lacks task-local native tool profiles; update nesvo-host",
+        ));
+    }
     if capability.is_some_and(|key| caps[key] != true) {
         return Err(cli::failure(
             "unsupported",
@@ -781,6 +792,28 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn task_native_tool_profiles_preserve_empty_selection_and_require_their_own_capability() {
+        let selected =
+            json!({"program":"claude","workspace":"shared","harness":true,"allowedNesvoTools":[]});
+        let launch = tool("launch",json!({"request":{"key":"k","runId":"r","taskId":"t","expectedRevision":1,"profile":selected}})).unwrap();
+        assert_eq!(
+            launch["request"]["request"]["profile"]["allowedNesvoTools"],
+            json!([])
+        );
+        assert!(task_profile_requested(&launch, |p| p
+            .get("allowedNesvoTools")
+            .is_some()));
+        assert!(!model_profile_requested(&launch));
+        let executor = tool("executor",json!({"request":{"action":"start","key":"e","runId":"r","expectedRevision":1,"spec":{"tasks":[{"taskId":"t","profile":selected}]}}})).unwrap();
+        assert!(task_profile_requested(&executor, |p| p
+            .get("allowedNesvoTools")
+            .is_some()));
+        assert!(!task_profile_requested(
+            &tool("executor", json!({"request":{"action":"get","runId":"r"}})).unwrap(),
+            |p| p.get("allowedNesvoTools").is_some()
+        ));
+    }
     #[test]
     fn encoded_model_profiles_gate_native_capability_and_preserve_legacy_intent() {
         let plain = json!({"program":"claude","workspace":"shared","harness":true});

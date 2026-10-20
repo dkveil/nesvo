@@ -35,6 +35,12 @@ pub struct Launch {
     harness: bool,
     #[arg(long, conflicts_with = "harness")]
     no_harness: bool,
+    /// Exact native tool additions: an owner selection or a coordinator-policy subset.
+    #[arg(long = "allow-nesvo-tool", conflicts_with = "clear_nesvo_tools")]
+    allowed_nesvo_tools: Vec<String>,
+    /// Select no native additions, overriding the coordinator's child default.
+    #[arg(long, conflicts_with = "allowed_nesvo_tools")]
+    clear_nesvo_tools: bool,
     #[arg(long)]
     pub json: bool,
 }
@@ -50,6 +56,13 @@ impl Launch {
                 cwd: self.cwd,
                 model: self.model,
                 effort: self.effort,
+                allowed_nesvo_tools: if self.clear_nesvo_tools {
+                    Some(Vec::new())
+                } else if self.allowed_nesvo_tools.is_empty() {
+                    None
+                } else {
+                    Some(self.allowed_nesvo_tools)
+                },
                 program: self.program,
                 workspace: if self.worktree {
                     Workspace::Worktree
@@ -88,6 +101,8 @@ pub struct Profile {
     model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allowed_nesvo_tools: Option<Vec<String>>,
     name: Option<String>,
     cwd: Option<String>,
     program: Program,
@@ -102,4 +117,64 @@ pub struct Request {
     task_id: String,
     expected_revision: u64,
     profile: Profile,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use serde_json::json;
+
+    #[derive(Parser)]
+    struct Arguments {
+        #[command(flatten)]
+        launch: Launch,
+    }
+    #[test]
+    fn task_tool_flags_distinguish_defaults_empty_and_exact_selection() {
+        let base = [
+            "launch",
+            "run",
+            "--task",
+            "task",
+            "--key",
+            "k",
+            "--revision",
+            "1",
+            "--program",
+            "claude",
+            "--shared",
+        ];
+        let parse = |extra: &[&str]| {
+            Arguments::try_parse_from(base.into_iter().chain(extra.iter().copied()))
+                .map(|a| serde_json::to_value(a.launch.request()).unwrap())
+        };
+        assert!(
+            parse(&[]).unwrap()["profile"]
+                .get("allowedNesvoTools")
+                .is_none()
+        );
+        assert_eq!(
+            parse(&["--clear-nesvo-tools"]).unwrap()["profile"]["allowedNesvoTools"],
+            json!([])
+        );
+        assert_eq!(
+            parse(&[
+                "--allow-nesvo-tool",
+                "nesvo_get_current_task",
+                "--allow-nesvo-tool",
+                "nesvo_report_task_result"
+            ])
+            .unwrap()["profile"]["allowedNesvoTools"],
+            json!(["nesvo_get_current_task", "nesvo_report_task_result"])
+        );
+        assert!(
+            parse(&[
+                "--clear-nesvo-tools",
+                "--allow-nesvo-tool",
+                "nesvo_get_current_task"
+            ])
+            .is_err()
+        );
+    }
 }

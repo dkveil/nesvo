@@ -433,9 +433,31 @@ pub async fn create(
         issuer,
         accepted.receipt,
         spec,
-        authority,
+        CreateContext::ordinary(authority),
     )
     .await
+}
+/// Internal adapter context, never accepted as a caller-supplied launch field.
+pub(crate) struct CreateContext {
+    authority: crate::caller::Authority,
+    task_tools: Option<Vec<String>>,
+}
+impl CreateContext {
+    fn ordinary(authority: crate::caller::Authority) -> Self {
+        Self {
+            authority,
+            task_tools: None,
+        }
+    }
+    pub(crate) fn task(
+        authority: crate::caller::Authority,
+        task_tools: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            authority,
+            task_tools,
+        }
+    }
 }
 /// Dispatch an already journaled create once. Workflow admission can reserve
 /// its attempt and this receipt atomically before reaching native setup.
@@ -446,13 +468,17 @@ pub(crate) async fn dispatch_create(
     issuer: String,
     receipt: Receipt,
     mut spec: LaunchSpec,
-    authority: crate::caller::Authority,
+    context: CreateContext,
 ) -> Result<Receipt> {
     let claim = log
         .claim(issuer.clone(), receipt.id)
         .await?
         .ok_or_else(|| anyhow!("Operation is no longer available for dispatch"))?;
-    let validation = state.lock().unwrap().resolve_launch(&authority, &mut spec);
+    let validation = state.lock().unwrap().resolve_task_launch(
+        &context.authority,
+        &mut spec,
+        context.task_tools.as_deref(),
+    );
     let (phase, result) = match validation {
         Err(error) => (
             "failed",
@@ -474,10 +500,11 @@ pub(crate) async fn dispatch_create(
                 ),
                 Ok(()) => {
                     let launched = state.lock().unwrap().launch_authorized(
-                        &authority,
+                        &context.authority,
                         &spec,
                         &events,
                         &claim.receipt.session_id,
+                        context.task_tools.as_deref(),
                     );
                     match launched {
                         Ok(id) => ("created", json!({"sessionId":id,"taskResult":null})),

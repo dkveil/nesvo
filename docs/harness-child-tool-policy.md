@@ -32,6 +32,10 @@ under that coordinator, including an owner/executor dispatch using its native
 authority, follows the same path. No prompt or automatic task admission follows
 merely from declaring policy.
 
+Task/executor profiles may explicitly select a
+[subset, including no additions](harness-task-tool-profiles.md). Omission retains
+the full child-policy default. The selector cannot expand or replace this policy.
+
 ## Authority and scope
 
 - Only owner launch can set `childAllowedNesvoTools`, including an empty array.

@@ -140,6 +140,82 @@ fn reserves_native_identity_and_capacity_before_any_process_or_prompt() {
     assert_eq!(recovered, accepted);
 }
 #[test]
+fn selected_task_tools_are_persisted_in_history_and_fingerprint_without_becoming_owner_fields() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = fixture(&mut store);
+    let mut intent = request(&run, "tool-profile", 0);
+    intent.profile.program = crate::launchers::Program::Claude;
+    intent.profile.harness = Some(true);
+    intent.profile.allowed_nesvo_tools = Some(vec!["nesvo_get_current_task".into()]);
+    let (accepted, dispatch) = prepare(&mut store, "coordinator", intent.clone()).unwrap();
+    let dispatch = dispatch.unwrap();
+    assert_eq!(
+        accepted["launch"]["profile"]["allowedNesvoTools"],
+        json!(["nesvo_get_current_task"])
+    );
+    assert_eq!(dispatch.selected_tools, intent.profile.allowed_nesvo_tools);
+    assert!(dispatch.spec.allowed_nesvo_tools.is_none());
+    assert!(dispatch.spec.child_allowed_nesvo_tools.is_none());
+    finish(
+        &mut store,
+        &dispatch,
+        "created",
+        json!({"sessionId":dispatch.receipt.session_id}),
+    );
+    let history = workflow(
+        &mut store,
+        "owner",
+        json!({"action":"task","runId":run["run"]["id"],"taskId":run["tasks"][0]["id"],"offset":0}),
+    )
+    .unwrap();
+    assert_eq!(
+        history["attempts"][0]["launch"]["profile"],
+        accepted["launch"]["profile"]
+    );
+    let (replay, dispatch) = prepare(&mut store, "coordinator", intent.clone()).unwrap();
+    assert!(dispatch.is_none());
+    assert_eq!(replay, accepted);
+    for selected in [
+        None,
+        Some(Vec::new()),
+        Some(vec!["nesvo_report_task_result".into()]),
+    ] {
+        intent.profile.allowed_nesvo_tools = selected;
+        error(
+            prepare(&mut store, "coordinator", intent.clone()).map(|v| v.0),
+            "idempotency_conflict",
+        );
+    }
+}
+#[test]
+fn launch_profile_migration_preserves_legacy_rows_and_saved_acceptance() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = fixture(&mut store);
+    let intent = request(&run, "legacy-profile", 0);
+    assert!(
+        serde_json::to_value(&intent).unwrap()["profile"]
+            .get("allowedNesvoTools")
+            .is_none()
+    );
+    let (accepted, dispatch) = prepare(&mut store, "coordinator", intent.clone()).unwrap();
+    let dispatch = dispatch.unwrap();
+    store
+        .0
+        .execute_batch("ALTER TABLE workflow_launches DROP COLUMN profile;")
+        .unwrap();
+    workflow_launches::initialize(&store.0).unwrap();
+    workflow_launches::initialize(&store.0).unwrap();
+    let saved = workflow_launches::summary(&store.0, &dispatch.attempt_id).unwrap();
+    assert!(saved["profile"].is_null());
+    assert_eq!(saved["receiptId"], dispatch.receipt.id);
+    let (replay, dispatch) = prepare(&mut store, "coordinator", intent).unwrap();
+    assert!(dispatch.is_none());
+    assert_eq!(
+        replay, accepted,
+        "Migration must never rewrite a saved acceptance"
+    );
+}
+#[test]
 fn refuses_unmet_dependencies_worker_scope_and_stale_revisions_without_native_records() {
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let run = fixture(&mut store);

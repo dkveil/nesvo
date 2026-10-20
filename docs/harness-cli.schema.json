@@ -1168,6 +1168,16 @@
         "directory"
       ],
       "properties": {
+        "profile": {
+          "type": ["object", "null"],
+          "description": "Immutable requested task profile; null for pre-migration records. This is not a restored native grant or a claim that rejected settings were applied.",
+          "properties": {
+            "allowedNesvoTools": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
         "attemptId": {
           "type": "string"
         },

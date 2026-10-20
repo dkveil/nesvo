@@ -674,12 +674,61 @@ impl State {
         }
         self.validate_launch(spec)
     }
+    pub fn resolve_task_launch(
+        &self,
+        authority: &crate::caller::Authority,
+        spec: &mut crate::jobs::LaunchSpec,
+        tools: Option<&[String]>,
+    ) -> Result<PathBuf> {
+        let directory = self.resolve_launch(authority, spec)?;
+        self.task_tool_grant(authority, spec, tools)?;
+        Ok(directory)
+    }
+    fn task_tool_grant(
+        &self,
+        authority: &crate::caller::Authority,
+        spec: &crate::jobs::LaunchSpec,
+        selected: Option<&[String]>,
+    ) -> Result<Option<crate::tool_permissions::Grant>> {
+        let parent = self.actor_session(authority)?;
+        if let Some(tools) = selected {
+            crate::tool_permissions::validate(tools)?;
+            if spec.program != Program::Claude || spec.harness != Some(true) {
+                return Err(crate::api_error::Error::new("unsupported", "Task native tools require a supported Claude harness launch, including an explicit empty selection").into());
+            }
+            if let Some(parent) = parent {
+                let policy = parent
+                    .caller_context
+                    .as_ref()
+                    .map_or(&[][..], |c| c.child_tools());
+                if tools.iter().any(|tool| !policy.contains(tool)) {
+                    return Err(crate::api_error::Error::new("forbidden", "Task native tools must be a subset of the coordinator's immutable owner child policy").into());
+                }
+            }
+        }
+        if let Some(parent) = parent {
+            if spec.program == Program::Claude && spec.harness == Some(true) {
+                let policy = parent
+                    .caller_context
+                    .as_ref()
+                    .map_or(&[][..], |c| c.child_tools());
+                return Ok(Some(crate::tool_permissions::Grant::child(
+                    selected.unwrap_or(policy),
+                    parent.info.id.clone(),
+                )));
+            }
+            Ok(None)
+        } else {
+            Ok(selected.map(crate::tool_permissions::Grant::owner))
+        }
+    }
     pub fn launch_authorized(
         &mut self,
         authority: &crate::caller::Authority,
         spec: &crate::jobs::LaunchSpec,
         events: &mpsc::Sender<PtyEvent>,
         reserved: &str,
+        tools: Option<&[String]>,
     ) -> Result<String> {
         let mut check = spec.clone();
         self.normalize_launch_intent(authority, &mut check)?;
@@ -695,16 +744,7 @@ impl State {
             )
             .into());
         }
-        let grant = parent
-            .as_ref()
-            .filter(|_| check.program == Program::Claude && check.harness == Some(true))
-            .map(|parent| {
-                let tools = self.sessions[parent]
-                    .caller_context
-                    .as_ref()
-                    .map_or(&[][..], |context| context.child_tools());
-                crate::tool_permissions::Grant::child(tools, parent.clone())
-            });
+        let grant = self.task_tool_grant(authority, &check, tools)?;
         let id = self.launch_reserved(&check, events, reserved, grant)?;
         if let Some(parent) = parent
             && let Some(session) = self.sessions.get_mut(&parent)
@@ -845,6 +885,7 @@ impl State {
         event["sessionToolPermissions"] = true.into();
         event["childToolPolicy"] = true.into();
         event["sessionModelProfiles"] = true.into();
+        event["taskNativeToolProfiles"] = true.into();
         event["launchProfileSupport"] =
             crate::launch_profile::capabilities(&self.provider_versions);
         event["workflowPlans"] = true.into();

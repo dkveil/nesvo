@@ -70,7 +70,7 @@ pub async fn execute_guarded(
                     actor.issuer,
                     dispatch.receipt.clone(),
                     dispatch.spec,
-                    authority,
+                    crate::operations::CreateContext::task(authority, dispatch.selected_tools),
                 )
                 .await;
             }

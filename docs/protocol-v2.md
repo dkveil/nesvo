@@ -43,6 +43,11 @@ generation fences, native provenance, budgets and non-replay after restart.
 inside authenticated workflow requests. See [task delivery](harness-task-delivery.md)
 for receipt correlation, readiness, human priority and restart behavior.
 
+`taskNativeToolProfiles` adds optional task/executor `profile.allowedNesvoTools`
+with distinct omission/empty/subset semantics. Native grants remain internal;
+task history records requested `launch.profile` (null on legacy rows).
+See [task tool profiles](harness-task-tool-profiles.md) for scope and migration.
+
 `runLaunch` adds `{action:"launch",request:{key,runId,taskId,expectedRevision,profile}}`
 inside authenticated workflow requests. It reserves the attempt, run capacity,
 native receipt and session identity atomically before physical startup. New

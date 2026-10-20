@@ -58,6 +58,8 @@ mod run_executor;
 mod run_launches;
 #[path = "support/run_wakes.rs"]
 mod run_wakes;
+#[path = "support/task_tool_profiles.rs"]
+mod task_tool_profiles;
 impl Fixture {
     async fn start() -> Result<Self> {
         Self::start_variant(false).await

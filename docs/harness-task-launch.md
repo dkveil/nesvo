@@ -26,6 +26,12 @@ Optional `model`/`effort` fields (CLI `--model`/`--effort`) use the same
 [versioned native adapters](harness-model-profiles.md) as ordinary session create.
 They remain part of immutable task-launch intent and executor profiles.
 
+Optional `allowedNesvoTools` selects native additions per task: a subset of the
+bound coordinator's owner child policy, or explicit owner intent for an unbound
+run. Omission preserves defaults; `[]` chooses none. See
+[task tool profiles](harness-task-tool-profiles.md) for CLI flags, capability,
+provenance, history and no-effect refusals.
+
 ## Admission, scope and native effects
 
 Only an active run with accepted dependency results can reserve a new attempt.

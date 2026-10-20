@@ -61,11 +61,12 @@ native permission mode, file permissions, login or MCP registration is changed.
 - Owner launch receipts include the exact requested list in idempotency input.
   Reusing the same key with changed rules conflicts; inspection cannot reapply
   rules to an old process. CLI/MCP check the capability before relying on it.
-- This direct field covers owner session creation. Task profiles cannot choose
-  arbitrary native additions; task launches may derive the coordinator's separate
-  owner child policy. Native [model/effort selection](harness-model-profiles.md)
-  is available independently. External MCP/skill editing, per-task permission
-  subsets and controlled resume remain separate F37/F38 work.
+- This direct field covers owner session creation. Separate
+  [task tool profiles](harness-task-tool-profiles.md) can select a subset of the
+  bound coordinator's owner child policy, or exact explicit owner additions for
+  a coordinatorless run. Native [model/effort selection](harness-model-profiles.md)
+  is available independently. External MCP/skill editing and controlled resume
+  remain separate F37/F38 work.
 
 `session get`, `session explain` and snapshots show
 `harness.nativePermissions.{allow,scope,source,originSessionId,inheritedByChildren,

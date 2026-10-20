@@ -30,6 +30,8 @@ pub struct Profile {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_nesvo_tools: Option<Vec<String>>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -57,6 +59,7 @@ pub enum Work {
 }
 pub struct Dispatch {
     pub spec: LaunchSpec,
+    pub selected_tools: Option<Vec<String>>,
     pub receipt: Receipt,
     pub coordinator: Option<String>,
     pub attempt_id: String,
@@ -70,6 +73,14 @@ pub enum Reply {
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_launches(attempt_id TEXT PRIMARY KEY REFERENCES workflow_attempts(id),operation_id TEXT NOT NULL UNIQUE REFERENCES operation_receipts(id),operation_key TEXT NOT NULL,workspace TEXT NOT NULL,created_at INTEGER NOT NULL);")?;
+    let mut query = connection.prepare("PRAGMA table_info(workflow_launches)")?;
+    let columns = query
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(query);
+    if !columns.iter().any(|name| name == "profile") {
+        connection.execute_batch("ALTER TABLE workflow_launches ADD COLUMN profile TEXT;")?;
+    }
     Ok(())
 }
 fn event(
@@ -95,15 +106,28 @@ fn event(
     )
 }
 pub fn summary(connection: &Connection, attempt: &str) -> Result<Value> {
-    let row: Option<(String,String,String,String,String,i64,String)> = connection.query_row("SELECT l.operation_id,l.operation_key,o.phase,o.session_id,l.workspace,l.created_at,o.result FROM workflow_launches l JOIN operation_receipts o ON o.id=l.operation_id WHERE l.attempt_id=?1",[attempt],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))).optional()?;
-    let Some((receipt, key, phase, session, workspace, created, result)) = row else {
+    let row = connection.query_row(
+        "SELECT l.operation_id,l.operation_key,o.phase,o.session_id,l.workspace,l.created_at,o.result,l.profile FROM workflow_launches l JOIN operation_receipts o ON o.id=l.operation_id WHERE l.attempt_id=?1",
+        [attempt],
+        |row| Ok((
+            json!({"attemptId":attempt,"receiptId":row.get::<_,String>(0)?,"operationKey":row.get::<_,String>(1)?,"phase":row.get::<_,String>(2)?,"sessionId":row.get::<_,String>(3)?,"workspace":row.get::<_,String>(4)?,"createdAt":row.get::<_,i64>(5)?}),
+            row.get::<_,String>(6)?, row.get::<_,Option<String>>(7)?,
+        )),
+    ).optional()?;
+    let Some((mut view, result, profile)) = row else {
         return Ok(Value::Null);
     };
     let result: Value = serde_json::from_str(&result)?;
-    Ok(
-        json!({"attemptId":attempt,"receiptId":receipt,"operationKey":key,"phase":phase,"sessionId":session,"workspace":workspace,"createdAt":created,"code":result["code"],"effectStarted":result["effectStarted"],"directory":result["directory"]}),
-    )
+    view["profile"] = profile
+        .map(|value| serde_json::from_str::<Value>(&value))
+        .transpose()?
+        .unwrap_or(Value::Null);
+    for key in ["code", "effectStarted", "directory"] {
+        view[key] = result[key].clone();
+    }
+    Ok(view)
 }
+
 pub fn recover(connection: &mut Connection) -> Result<()> {
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -258,7 +282,7 @@ fn prepare(
         ));
     }
     transaction.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES(?1,?2,?3,?4,'launching')",params![attempt,request.task_id,ordinal,accepted.receipt.session_id])?;
-    transaction.execute("INSERT INTO workflow_launches(attempt_id,operation_id,operation_key,workspace,created_at) VALUES(?1,?2,?3,?4,?5)",params![attempt,accepted.receipt.id,native_key,if spec.worktree {"worktree"} else {"shared"},now as i64])?;
+    transaction.execute("INSERT INTO workflow_launches(attempt_id,operation_id,operation_key,workspace,created_at,profile) VALUES(?1,?2,?3,?4,?5,?6)",params![attempt,accepted.receipt.id,native_key,if spec.worktree {"worktree"} else {"shared"},now as i64,serde_json::to_string(&request.profile)?])?;
     if let Some(guard) = &executor {
         crate::workflow_executor::record_launch(
             &transaction,
@@ -288,6 +312,7 @@ fn prepare(
         view,
         dispatch: Some(Box::new(Dispatch {
             spec,
+            selected_tools: request.profile.allowed_nesvo_tools,
             receipt: accepted.receipt,
             coordinator,
             attempt_id: attempt,

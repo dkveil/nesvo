@@ -62,8 +62,8 @@ not evidence that the expanded acceptance criteria pass.
 | F34 | Verified session/turn edit provenance           | Partial: agent edit folder context only                       | Pending                                                                                                                                     |
 | F35 | Revision-bound checks and review readiness      | Missing                                                       | Pending                                                                                                                                     |
 | F36 | Trusted worktree setup/run/archive              | Partial: create worktree only                                 | Pending                                                                                                                                     |
-| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Partial: model/effort and owner native tool profiles; broader config/skills/UI/resume pending                                               |
-| F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending                                   |
+| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Partial: model/effort, owner policy and task native-tool subsets; broader config/skills/UI/resume pending                                   |
+| F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, task subsets and effective config; external MCP/skills/resume pending                               |
 | F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending: cleanup prerequisite and measured baseline documented; MCP pooling not implemented                                                 |
 | F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: native Claude compaction/recovery, saved owner constraints and coordinator replacement verified; native resume/adoption/UI pending |
 | F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: native metadata recovery and Windows process ownership verified; conversation/layout/mobile recovery pending                       |
@@ -1858,3 +1858,30 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Shared-profile head a9175f2 passed all five CI jobs (39405551767), including
   its complete recovery scenario on Windows, macOS and Linux. Original model
   behavior remains verified only for the stated native Windows/Claude version.
+
+### F37/F38 task native-tool profile selection
+
+- Added optional task/executor `profile.allowedNesvoTools`, native CLI repeated
+  `--allow-nesvo-tool` and explicit `--clear-nesvo-tools`. Omission preserves the
+  old serialized intent and child defaults; empty selections are distinct.
+- A bound run can select only a subset of its immutable coordinator owner policy,
+  including owner/executor dispatch under that coordinator. Owner coordinatorless
+  runs may explicitly select catalog tools for supported new Claude harness workers.
+  Native allow rules never grant a worker host coordinator authority. Internal
+  grant provenance is never deserialized into raw owner-only create fields.
+- Selection is checked before worktree/native effects and again before spawn.
+  Rejected profiles retain failed no-effect receipts. Requested profiles survive
+  in task attempt history through an additive SQLite migration; legacy profiles
+  stay null and saved mutation replies are unchanged. Process recovery does not
+  restore grants or replay effects. See [contract](harness-task-tool-profiles.md).
+- Native Windows: fmt, warnings-denied workspace Clippy, 336 unit tests, build,
+  all 28 serial official SDK scenarios and all 30 Node host/sync/CLI cases passed.
+  The new controlled scenario inspects actual inline native settings for subsets,
+  empty/default inheritance, owner coordinatorless selection, executor dispatch,
+  CLI/MCP immutable replay/conflict, refusal before worktree effects, worker scope
+  and restart history. Actual envelopes pass the published JSON schema.
+- No model calls, user sessions, global provider edits or new dependencies were
+  involved. This does not claim original-model subset-selection evidence or finish
+  external MCP/skills, controlled resume or all F37/F38 requirements.
+- Parent db85e62 and e8f623d each passed all five CI jobs (39407190711 and
+  39406487557). New cross-platform CI evidence is recorded after this feature push.
