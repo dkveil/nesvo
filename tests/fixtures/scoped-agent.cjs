@@ -38,6 +38,12 @@ if (process.argv.includes('--mcp-config')) {
     throw new Error('Launch-local harness was not loaded by the controlled provider');
 }
 const settings = codex ? null : JSON.parse(process.argv[process.argv.indexOf('--settings') + 1]);
+if (!codex) {
+  fs.writeFileSync(
+    path.join(directory, `${id}.native-permissions.json`),
+    JSON.stringify(settings.permissions?.allow ?? []),
+  );
+}
 // The fixture consumes only the host's bounded literal inline shape, not arbitrary TOML.
 const codexHook = codex
   ? JSON.parse(process.argv[process.argv.indexOf('-c') + 1].match(/command=("(?:[^"\\]|\\.)*")/)[1])

@@ -146,6 +146,9 @@ pub struct CreateOptions {
     /// Load the launch-local Nesvo instruction and MCP (supported Claude versions).
     #[arg(long, conflicts_with = "no_harness")]
     harness: bool,
+    /// Owner-only native approval addition for one exact Nesvo MCP tool; repeat as needed.
+    #[arg(long = "allow-nesvo-tool", requires = "harness")]
+    allowed_nesvo_tools: Vec<String>,
     /// Explicitly opt out when the coordinator profile would inherit the harness.
     #[arg(long, conflicts_with = "harness")]
     no_harness: bool,
@@ -646,6 +649,15 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
             ));
         }
         spec["harness"] = options.harness.into();
+    }
+    if !options.allowed_nesvo_tools.is_empty() {
+        if caps["sessionToolPermissions"] != true {
+            return Err(failure(
+                "unsupported",
+                "Host cannot enforce process-scoped tool permission additions; update nesvo-host",
+            ));
+        }
+        spec["allowedNesvoTools"] = options.allowed_nesvo_tools.into();
     }
     if let Some(parent) = options.parent {
         valid_id(&parent)?;

@@ -30,6 +30,7 @@ mod storage;
 mod submission;
 mod terminal_protocol;
 mod titles;
+mod tool_permissions;
 mod transport;
 mod turns;
 mod usage;

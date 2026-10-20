@@ -22,6 +22,25 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 const MAX_MESSAGE: usize = 64 * 1024;
 
+fn published_tools() -> Vec<String> {
+    // Compile-time bundled contract, never a client-supplied document.
+    serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json"))
+        .expect("Bundled MCP catalog contract is valid")
+}
+
+fn valid_permission_additions(value: &Value) -> bool {
+    let Some(tools) = value.as_array() else {
+        return false;
+    };
+    let known = published_tools();
+    let mut seen = std::collections::HashSet::new();
+    tools.len() <= 32
+        && tools.iter().all(|v| {
+            v.as_str()
+                .is_some_and(|t| known.iter().any(|k| k == t) && seen.insert(t))
+        })
+}
+
 fn launch_schema() -> Value {
     json!({
         "type":"object", "required":["name"], "additionalProperties":false,
@@ -30,6 +49,7 @@ fn launch_schema() -> Value {
             "program":{"enum":["shell","claude","codex","gemini"],"default":"shell"},
             "role":{"enum":["worker","coordinator"],"default":"worker","description":"Only owner access may grant coordinator at launch; a coordinator cannot create coordinators"},
             "harness":{"type":"boolean","description":"Launch-local Nesvo MCP/instructions on supported Claude; inherits coordinator setting when omitted"},
+            "allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Owner-only exact native permission additions for this explicit harness process, not inherited by children or restored processes. Does not grant host authority or bypass provider deny/ask rules."},
             "cwd":{"type":"string"}, "groupId":{"type":["string","null"]},
             "parentSessionId":{"type":["string","null"],"description":"Lineage only; scoped creation binds the authenticated parent automatically"},
             "prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},
@@ -1015,6 +1035,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                         "harness" | "worktree" | "autoTitle" | "muted" | "resumePicker" => {
                             value.is_boolean()
                         }
+                        "allowedNesvoTools" => valid_permission_additions(value),
                         _ => false,
                     })
             });
@@ -1140,6 +1161,15 @@ impl HostTools {
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
             if name == "nesvo_create_session"
+                && command["spec"].get("allowedNesvoTools").is_some()
+                && caps["sessionToolPermissions"] != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host cannot enforce process-scoped tool permission additions; update nesvo-host",
+                ));
+            }
+            if name == "nesvo_create_session"
                 && command["spec"]["harness"].is_boolean()
                 && caps["sessionHarness"] != true
             {
@@ -1258,6 +1288,17 @@ mod tests {
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
         assert_eq!(catalog().len(), 60);
+        let published: Vec<String> =
+            serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json")).unwrap();
+        let mut names = catalog()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(
+            names, published,
+            "Host permission validation and actual MCP tools must share one exact catalog contract"
+        );
         for extra in [
             json!({"sessionId":"foreign"}),
             json!({"owner":true}),

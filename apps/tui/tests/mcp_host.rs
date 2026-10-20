@@ -32,6 +32,8 @@ mod budgets;
 mod inbox;
 #[path = "support/input_redraw.rs"]
 mod input_redraw;
+#[path = "support/native_tool_permissions.rs"]
+mod native_tool_permissions;
 #[path = "support/recovery_hooks.rs"]
 mod recovery_hooks;
 #[path = "support/run_budgets.rs"]

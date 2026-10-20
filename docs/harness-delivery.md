@@ -1550,3 +1550,34 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   build, 320 unit checks, all 19 serial native SDK scenarios, 30 host/sync/CLI
   cases and formatting. The new native scenario passed again with an explicit
   changed temp root. This commit's cross-platform CI remains separate evidence.
+
+### Explicit owner native tool permission additions
+
+- F12/F37/F38: `sessionToolPermissions` adds owner-only create spec
+  `allowedNesvoTools` and CLI `--allow-nesvo-tool` (repeat, explicit `--harness`).
+  At most 32 unique exact published Nesvo tool names; no wildcard, foreign MCP
+  namespace, arbitrary native rule or permission-mode switch. Default launches
+  add none. Older hosts fail the capability check before relying on this field.
+- A supported Claude process receives exact `mcp__nesvo__TOOL` allow additions
+  beside lifecycle/recovery hooks in the same inline settings. Provider deny/ask
+  rules still apply. These additions neither restrict all other tools nor grant
+  new host roles, workspace scope or run authority. No global settings change.
+- Scoped callers cannot grant additions to children, even via an empty list.
+  Ordinary children may inherit the harness but never these additions. Saved
+  process recovery omits them; replacement needs a deliberate owner launch.
+  Explicit owner-authored job/template intent is separate. Effective configured
+  additions are exposed in get/explain/snapshots; loaded stays null. Existing live
+  processes and instruction V11 remain unchanged.
+- A public exact tool-name contract is tested against all 60 actual MCP tools.
+  Native official SDK/CLI cases verify captured provider settings, child
+  inheritance, passive-worker host refusal, validation, repeated original key
+  and changed-policy conflict against isolated real host/PTYs. Fixtures are not
+  models. Legacy default launch serialization/idempotency stays unchanged.
+- Local Windows checks passed production build, fmt, warnings-denied Clippy,
+  321 unit tests, 20 serial native SDK cases, 30 host/sync/CLI cases and formatting.
+  The previous recovery commit 5b3d01b passed all five CI jobs (39384288622).
+- Original-model child creation remains pending the exact isolated native-policy
+  choice requested from the owner. A guarded probe is prepared outside the repo;
+  it has not run or approved a native prompt. No CLI transport fallback or broad
+  allow is substituted. General task/profile permission delegation, external
+  MCP/skills, model/effort settings and controlled resume remain F37/F38 work.

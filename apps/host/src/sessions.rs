@@ -572,6 +572,9 @@ impl State {
         let Some(session) = self.actor_session(authority)? else {
             return Ok(());
         };
+        if spec.allowed_nesvo_tools.is_some() {
+            return Err(crate::api_error::Error::new("forbidden", "Only owner launch may add native tool permissions; children do not inherit these additions").into());
+        }
         if session.policy.role != crate::caller::Role::Coordinator
             || spec.role != crate::caller::Role::Worker
             || spec
@@ -781,6 +784,7 @@ impl State {
         event["runRecovery"] = self.event_log.is_some().into();
         event["runConstraints"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
+        event["sessionToolPermissions"] = true.into();
         event["workflowPlans"] = true.into();
         event
     }
@@ -1364,6 +1368,12 @@ impl State {
     pub fn validate_launch(&self, spec: &crate::jobs::LaunchSpec) -> Result<PathBuf> {
         ensure!(!self.shutting_down, "Host is shutting down.");
         valid_name(&spec.name)?;
+        if let Some(tools) = &spec.allowed_nesvo_tools {
+            if spec.harness != Some(true) {
+                return Err(crate::api_error::Error::new("invalid_argument", "Native Nesvo tool permission additions require an explicit supported harness launch").into());
+            }
+            crate::tool_permissions::validate(tools)?;
+        }
         if spec.harness == Some(true) {
             if spec.program != Program::Claude
                 || !self.provider_versions.iter().any(|version| {
@@ -1879,6 +1889,7 @@ impl State {
                 role: spec.role,
                 harness: spec.harness == Some(true),
                 codex_hooks: self.codex_hooks_available(),
+                native_tools: spec.allowed_nesvo_tools.as_deref().unwrap_or_default(),
             },
         )?;
         session.info.group_id = spec.group_id.clone();
@@ -2318,6 +2329,7 @@ impl State {
                         role: crate::caller::Role::Worker,
                         harness: false,
                         codex_hooks: self.codex_hooks_available(),
+                        native_tools: &[],
                     },
                 )?;
                 session.info.group_id = group_id;
@@ -2584,6 +2596,7 @@ struct SpawnIdentity<'a> {
     role: crate::caller::Role,
     harness: bool,
     codex_hooks: bool,
+    native_tools: &'a [String],
 }
 fn spawn_session(
     name: &str,
@@ -2599,13 +2612,13 @@ fn spawn_session(
         .map(str::to_owned)
         .unwrap_or_else(|| hex::encode(crate::wire::random::<16>()));
     command.env("NESVO_SESSION_ID", &id);
-    let caller_context = caller_url
+    let mut caller_context = caller_url
         .map(|url| crate::caller::Context::new(url, &id, identity.role))
         .transpose()?;
-    if let Some(context) = &caller_context {
+    if let Some(context) = &mut caller_context {
         context.bind(&mut command);
         if identity.harness {
-            context.configure_claude(&mut command)?;
+            context.configure_claude(&mut command, identity.native_tools)?;
         }
     }
     let agent_context = if program == Program::Claude {
@@ -2617,6 +2630,7 @@ fn spawn_session(
                 &mut command,
                 &id,
                 context.recovery_hook()?,
+                context.permission_rules(),
             )?
         } else {
             crate::agent_context::Tracker::install_for(&mut command, &id)?

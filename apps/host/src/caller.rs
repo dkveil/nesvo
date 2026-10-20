@@ -117,6 +117,7 @@ pub struct Context {
     directory: PathBuf,
     client: Option<PathBuf>,
     pub recovery_status: serde_json::Value,
+    native_tools: Vec<String>,
 }
 impl Context {
     pub fn new(url: &str, session_id: &str, role: Role) -> Result<Self> {
@@ -129,6 +130,7 @@ impl Context {
             )),
             client: runtime_client(),
             recovery_status: serde_json::Value::Null,
+            native_tools: Vec::new(),
         };
         std::fs::create_dir(&context.directory)?;
         std::fs::create_dir(context.references())?;
@@ -181,7 +183,13 @@ impl Context {
             command.env("NESVO_CLI", path);
         }
     }
-    pub fn configure_claude(&self, command: &mut portable_pty::CommandBuilder) -> Result<()> {
+    pub fn configure_claude(
+        &mut self,
+        command: &mut portable_pty::CommandBuilder,
+        tools: &[String],
+    ) -> Result<()> {
+        crate::tool_permissions::validate(tools)?;
+        self.native_tools = tools.to_vec();
         let client = self.client.as_ref().ok_or_else(||crate::api_error::Error::new("harness_client_unavailable","Harness needs a discoverable native nesvo executable beside the host or NESVO_CLIENT_BINARY"))?;
         let config = json!({"mcpServers":{"nesvo":{"type":"stdio","command":crate::process::display_path(client),"args":["mcp"],"env":{"NESVO_AGENT_CONTEXT":self.path()}}}});
         crate::private_write(&self.mcp(), &serde_json::to_vec(&config)?)?;
@@ -212,11 +220,19 @@ impl Context {
             json!({"type":"command","command":crate::process::display_path(client),"args":["--pairing",self.path(),"run","recover-hook"],"timeout":3}),
         )
     }
+    pub fn permission_rules(&self) -> Vec<String> {
+        crate::tool_permissions::rules(&self.native_tools)
+    }
     fn mcp(&self) -> PathBuf {
         self.directory.join("mcp.json")
     }
     pub fn configuration(&self, enabled: bool) -> serde_json::Value {
-        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":INSTRUCTION_VERSION,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"recovery":{"configured":enabled,"status":self.recovery_status},"globalConfigChanged":false})
+        let permission_source = if self.native_tools.is_empty() {
+            "none"
+        } else {
+            "ownerLaunch"
+        };
+        json!({"enabled":enabled,"cliAvailable":self.client.is_some(),"instructionVersion":INSTRUCTION_VERSION,"instructions":if enabled {"append-system-prompt-file"} else {"available-only"},"mcp":if enabled {vec!["nesvo"]} else {vec![]},"scope":"launch","loaded":null,"recovery":{"configured":enabled,"status":self.recovery_status},"nativePermissions":{"allow":self.native_tools,"scope":"process","inheritedByChildren":false,"source":permission_source,"providerRulesStillApply":true,"restrictsOtherTools":false},"globalConfigChanged":false})
     }
 }
 impl Drop for Context {
@@ -463,6 +479,10 @@ mod tests {
             assert!(!supports_claude_harness(unsupported), "{unsupported}");
         }
         let mut context = Context::new("ws://127.0.0.1:1", "s", Role::Coordinator).unwrap();
+        assert_eq!(
+            context.configuration(true)["nativePermissions"]["source"],
+            "none"
+        );
         context.client = Some(PathBuf::from(if cfg!(windows) {
             r"C:\native client\nesvo.exe"
         } else {
@@ -470,7 +490,13 @@ mod tests {
         }));
         let mut command = portable_pty::CommandBuilder::new("fixture");
         command.args(["--resume", "--", "literal --mcp-config malicious"]);
-        context.configure_claude(&mut command).unwrap();
+        context
+            .configure_claude(&mut command, &["nesvo_create_session".into()])
+            .unwrap();
+        assert_eq!(
+            context.permission_rules(),
+            vec!["mcp__nesvo__nesvo_create_session"]
+        );
         let argv = command.get_argv();
         assert_eq!(argv.last().unwrap(), "literal --mcp-config malicious");
         assert_eq!(argv[2], "--mcp-config");

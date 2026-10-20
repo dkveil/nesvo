@@ -45,6 +45,12 @@ path uses UI focus, and changing the hint or private-file role cannot grant acce
 
 ## Current tools
 
+`sessionToolPermissions` adds owner-only `spec.allowedNesvoTools` to session
+creation. Exact native allow additions are process-scoped and never inherited by
+children. They do not grant host authority or override provider deny/ask rules.
+See [tool permission contract](harness-tool-permissions.md) and the
+[exact name catalog](harness-mcp-tools.json).
+
 `runCheckpoints` adds save/list/get and current-context reconstruction through
 `nesvo_save_run_checkpoint`, `nesvo_list_run_checkpoints`,
 `nesvo_get_run_checkpoint` and `nesvo_read_run_context`. `runConstraints` adds

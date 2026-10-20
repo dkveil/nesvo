@@ -20,6 +20,8 @@ pub struct LaunchSpec {
     pub role: crate::caller::Role,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_nesvo_tools: Option<Vec<String>>,
     #[serde(default)]
     pub program: Program,
     #[serde(default)]

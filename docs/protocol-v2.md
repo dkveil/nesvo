@@ -4,6 +4,13 @@ Implementation contract for the Rust host, mobile client and TUI. Wire pairing r
 
 ## Connection and snapshots
 
+`sessionToolPermissions` adds owner-only create spec `allowedNesvoTools:string[]`
+for an explicit supported Claude harness process. At most 32 unique exact names
+from the published MCP catalog, with no wildcard/native-rule syntax. Scoped
+callers cannot add or inherit these native permissions, which never change host
+authority. Effective additions appear in `harness.nativePermissions`; saved
+process recovery omits them. See [contract](harness-tool-permissions.md).
+
 `runRecovery` adds read-only workflow `{action:"recover",runId?,offset?,expectedDigest?}`.
 It resolves current authenticated worker context or a uniquely bound coordinator
 run, with explicit selection for ambiguity and owner calls. It shares current

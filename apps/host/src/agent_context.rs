@@ -26,8 +26,9 @@ impl Tracker {
         command: &mut CommandBuilder,
         session_id: &str,
         recovery: Value,
+        permissions: Vec<String>,
     ) -> Result<Self> {
-        Self::install_inner(command, Some(session_id), Some(recovery))
+        Self::install_inner(command, Some(session_id), Some((recovery, permissions)))
     }
     pub fn install_codex(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
         let mut tracker = Self::create(Some(session_id))?;
@@ -45,7 +46,7 @@ impl Tracker {
     fn install_inner(
         command: &mut CommandBuilder,
         session_id: Option<&str>,
-        recovery: Option<Value>,
+        recovery: Option<(Value, Vec<String>)>,
     ) -> Result<Self> {
         let mut tracker = Self::create(session_id)?;
         if let Some(id) = session_id {
@@ -65,12 +66,15 @@ impl Tracker {
             "StopFailure":[{"hooks":[hook.clone()]}],
             "CwdChanged":[{"hooks":[hook]}]
         }});
-        if let Some(recovery) = recovery {
+        if let Some((recovery, permissions)) = recovery {
             tracker.1 = Adapter::ClaudeHarness;
             settings["hooks"]["SessionStart"][0]["hooks"]
                 .as_array_mut()
                 .ok_or_else(|| anyhow::anyhow!("Missing startup hook array"))?
                 .push(recovery);
+            if !permissions.is_empty() {
+                settings["permissions"] = json!({"allow":permissions});
+            }
         }
         let settings = settings.to_string();
         let argv = command.get_argv_mut();
@@ -389,8 +393,13 @@ mod tests {
     fn harness_recovery_appends_only_a_launch_local_startup_hook_without_replacing_lifecycle() {
         let mut command = CommandBuilder::new("fixture");
         let recovery = json!({"type":"command","command":"literal native client","args":["--pairing","private context.json","run","recover-hook"],"timeout":3});
-        let tracker =
-            Tracker::install_harness(&mut command, "host-session", recovery.clone()).unwrap();
+        let tracker = Tracker::install_harness(
+            &mut command,
+            "host-session",
+            recovery.clone(),
+            vec!["mcp__nesvo__nesvo_get_session".into()],
+        )
+        .unwrap();
         assert_eq!(tracker.adapter(), "claude-hooks-v4");
         let argv = command.get_argv();
         let index = argv.iter().position(|arg| arg == "--settings").unwrap();
@@ -401,6 +410,10 @@ mod tests {
             .unwrap();
         assert_eq!(startup.len(), 2);
         assert_eq!(startup[1], recovery);
+        assert_eq!(
+            settings["permissions"]["allow"],
+            json!(["mcp__nesvo__nesvo_get_session"])
+        );
         assert_eq!(
             startup[0],
             settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]

@@ -4,6 +4,11 @@ Headless commands use the same paired, authenticated native host as the TUI.
 Running `nesvo` without a subcommand still opens the existing TUI. Help never
 loads pairing or contacts a host.
 
+Supported owner Claude harness launches can add exact process-scoped native
+Nesvo tool permissions with `--allow-nesvo-tool TOOL_NAME` (repeat as needed).
+This requires `--harness` and `sessionToolPermissions`; children do not inherit
+the additions. See [scope, validation and effective configuration](harness-tool-permissions.md).
+
 ```powershell
 nesvo --pairing C:\private\pairing.json doctor --json
 nesvo --pairing C:\private\pairing.json session list --json
