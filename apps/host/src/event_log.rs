@@ -104,6 +104,9 @@ struct Store(Connection);
 #[path = "budget_tests.rs"]
 mod budget_tests;
 #[cfg(test)]
+#[path = "job_cancellations_tests.rs"]
+mod job_cancellations_tests;
+#[cfg(test)]
 #[path = "job_definitions_tests.rs"]
 mod job_definitions_tests;
 #[cfg(test)]

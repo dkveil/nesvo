@@ -722,6 +722,11 @@ fn job_precheck_requested(request: &Value) -> bool {
             Some("prechecks" | "abandonPrecheck")
         ) || action["request"]["spec"].get("precheckId").is_some())
 }
+fn job_cancellation_supported(caps: &Value, request: &Value) -> bool {
+    request["request"]["action"] != "jobs"
+        || request["request"]["request"]["action"] != "cancelOccurrence"
+        || caps["jobCancellation"] == true
+}
 pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
         connection,
@@ -794,6 +799,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host cannot enforce owner-approved bounded prechecks; update nesvo-host",
         ));
     }
+    if !job_cancellation_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot enforce occurrence cancellation and cleanup; update nesvo-host",
+        ));
+    }
     if model_profile_requested(request) && caps["sessionModelProfiles"] != true {
         return Err(cli::failure(
             "unsupported",
@@ -829,6 +840,30 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn occurrence_cancellation_requires_its_own_host_capability() {
+        let cancel = tool(
+            "jobs",
+            json!({"request":{"action":"cancelOccurrence","key":"cancel-once","jobId":"j","occurrenceId":"o"}}),
+        )
+        .unwrap();
+        for caps in [
+            json!({}),
+            json!({"durableJobs":true,"jobPrechecks":true,"runControls":true}),
+            json!({"jobCancellation":false}),
+            json!({"jobCancellation":"true"}),
+        ] {
+            assert!(!job_cancellation_supported(&caps, &cancel));
+        }
+        assert!(job_cancellation_supported(
+            &json!({"jobCancellation":true}),
+            &cancel
+        ));
+        assert!(job_cancellation_supported(
+            &json!({}),
+            &tool("jobs", json!({"request":{"action":"list"}})).unwrap()
+        ));
+    }
     #[test]
     fn command_approval_and_checked_jobs_require_their_own_host_capability() {
         let command = tool(

@@ -53,7 +53,7 @@ not evidence that the expanded acceptance criteria pass.
 | F25 | Bounded precheck                                | Missing                                                       | Partial: explicit owner command approval, bounded scopes, retained skip/failure/uncertainty and CLI/MCP; job UI/native-provider matrix pending |
 | F26 | Delta-only coordinator wakeups                  | Missing                                                       | Partial: opt-in durable coalescing/native receipt and human/budget fences; original-model/checkpoint/UI gates pending                          |
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                                                        |
-| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: occurrence/run/attempt/native receipt history and bounded skip/queue; retry, hard timeout and cleanup pending                         |
+| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: occurrence/run/attempt history, skip/queue and owner cancellation; retry, hard timeout and cleanup policy pending                     |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                               |
 | F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                                                        |
 | F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                        |
@@ -2092,3 +2092,40 @@ Darwin live-group and zombie observations together with real descendant cleanup;
 the earlier failures remain recorded above. No unchanged failed run was rerun as
 replacement evidence. This completes this precheck slice's platform gate, not
 the remaining F01–F44, job UI, original-provider or device acceptance gates.
+
+### F28 owner occurrence cancellation
+
+- Stable owner cancellation targets one occurrence, independently of later
+  definition revisions. Its acceptance and mutation key are immutable; current
+  history exposes cancellation progress separately. Coordinators/workers are
+  refused before lookup. CLI `job cancel` and MCP `nesvo_cancel_job_occurrence`
+  share the request and require `jobCancellation:true`; the catalog has 78 tools.
+- Queued/unbound dispatches cancel transactionally. Bound runs are immediately
+  fenced against attempt admission, automated input, executor enablement and
+  result validation. Cleanup uses the existing native run-control permit and
+  exact target/receipt/exit machinery, preserving human leases and dirty drafts.
+  Accepting cancellation is never exit proof. No native stop is automatically
+  repeated after unknown dispatch or restart.
+- Prechecks receive cooperative cancellation through their owned scope, retain
+  actual output/results, and never dispatch a model after accepted cancellation.
+  Unknown cleanup stays unfinished/reconcile. Explicit acknowledged abandonment
+  retains uncertainty. Store guard reads have a one-second budget and cannot
+  suspend polling the process future's own deadlines or cleanup.
+- Ten store tests cover admission/validation races, immutable replay, cancellation
+  tokens versus native projections, event deduplication, real-evidence settlement,
+  restart and abandonment. Two native scenarios verify queued/precheck cancellation
+  with three-level process cleanup and bound-worker cancellation with exact stop
+  receipts plus independent PID disappearance. They check CLI/MCP parity, current
+  schema envelopes, no replacement attempts and no restart replay. Existing native
+  run-control coverage checks human lease/draft protection on the same stop path.
+- Local Windows verification: warnings-denied workspace Clippy and 384 ordinary
+  unit tests passed (140 TUI, 241 host, 3 wire; three ordinary host helpers ignored).
+  All 36 serial official native MCP SDK scenarios passed in 180.66 seconds and all
+  30 Node host/sync/CLI cases passed in 34.85 seconds. Review then found a slow-store
+  supervision gap; two additional unit cases now cover it and all four native
+  precheck scenarios passed again on the final supervision code (30.25 seconds). Final CI
+  platform acceptance is recorded after publication. No original model was invoked,
+  production dependency added, user session touched or UI/device behavior certified.
+
+This is the occurrence-cancellation slice. F28 retry/backoff, hard execution timeout,
+history-preserving session cleanup and the other F01–F44/plugin gates remain open.

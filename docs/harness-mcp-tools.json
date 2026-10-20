@@ -9,6 +9,7 @@
   "nesvo_ask_decision",
   "nesvo_assign_task",
   "nesvo_cancel_decision",
+  "nesvo_cancel_job_occurrence",
   "nesvo_cancel_run",
   "nesvo_cancel_task_delivery",
   "nesvo_create_job",

@@ -13,6 +13,7 @@ mod groups;
 mod host_lock;
 mod job_calendar;
 mod job_calendar_adapter;
+mod job_cancellations;
 mod job_definitions;
 mod job_precheck_adapter;
 mod job_precheck_records;

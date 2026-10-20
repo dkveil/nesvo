@@ -90,6 +90,15 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Cancel one admitted occurrence; acceptance is not proof of native exit.
+    Cancel {
+        id: String,
+        occurrence: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Read bounded occurrence history with run pointers and explicit outcomes.
     History {
         id: String,
@@ -125,12 +134,13 @@ impl Command {
             | Self::Enable { json, .. }
             | Self::Disable { json, .. }
             | Self::RunNow { json, .. }
+            | Self::Cancel { json, .. }
             | Self::History { json, .. }
             | Self::Occurrence { json, .. }
             | Self::Mutation { json, .. } => *json,
         }
     }
-    fn request(self) -> Result<Request> {
+    pub(crate) fn request(self) -> Result<Request> {
         Ok(match self {
             Self::Precheck { command } => Request::Prechecks {
                 request: command.request()?,
@@ -189,6 +199,16 @@ impl Command {
                 key,
                 job_id: id,
                 expected_revision: revision,
+            },
+            Self::Cancel {
+                id,
+                occurrence,
+                key,
+                ..
+            } => Request::CancelOccurrence {
+                key,
+                job_id: id,
+                occurrence_id: occurrence,
             },
             Self::History { id, offset, .. } => Request::History { job_id: id, offset },
             Self::Occurrence { id, occurrence, .. } => Request::Occurrence {
@@ -316,6 +336,11 @@ pub enum Request {
         key: String,
         job_id: String,
         expected_revision: u64,
+    },
+    CancelOccurrence {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
     },
     History {
         job_id: String,

@@ -130,7 +130,7 @@ pub fn finish(
     mut result: Outcome,
     now: u64,
 ) -> Result<(bool, &'static str, Option<&'static str>)> {
-    let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_prechecks p JOIN harness_job_occurrences o ON o.id=p.occurrence_id WHERE o.id=?1 AND o.state='prechecking' AND o.run_id IS NULL AND p.state='running')",[id],|r|r.get(0))?;
+    let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_prechecks p JOIN harness_job_occurrences o ON o.id=p.occurrence_id WHERE o.id=?1 AND o.state IN ('prechecking','canceling') AND o.run_id IS NULL AND p.state='running')",[id],|r|r.get(0))?;
     if !valid {
         return Err(conflict());
     }
@@ -151,7 +151,7 @@ pub fn finish(
         result.state = OutcomeState::Unknown;
         result.reason = "execution_unconfirmed".into();
     }
-    let (passed, state, reason) = match result.state {
+    let (mut passed, mut state, mut reason) = match result.state {
         OutcomeState::Passed => (true, "dispatching", None),
         OutcomeState::Skipped => (false, "skipped", Some("precheck_skip")),
         OutcomeState::Unknown => (false, "reconcile", Some("precheck_unconfirmed")),
@@ -160,6 +160,17 @@ pub fn finish(
         OutcomeState::Refused => (false, "failed", Some("precheck_refused")),
         OutcomeState::Failed => (false, "failed", Some("precheck_exit_failed")),
     };
+    if crate::job_cancellations::requested(tx, id)? {
+        let confirmed = result.cleanup_confirmed && result.state != OutcomeState::Unknown;
+        crate::job_cancellations::precheck_finished(tx, id, confirmed, now)?;
+        passed = false;
+        state = if confirmed { "canceled" } else { "reconcile" };
+        reason = Some(if confirmed {
+            "owner_canceled"
+        } else {
+            "precheck_unconfirmed"
+        });
+    }
     let recorded = serde_json::to_value(result.state)?;
     tx.execute("UPDATE harness_job_prechecks SET state=?2,reason=?3,observed_at=?4,finished_at=?6,result=?5 WHERE occurrence_id=?1",params![id,recorded.as_str(),result.reason,now as i64,serde_json::to_string(&result)?,result.cleanup_confirmed.then_some(now as i64)])?;
     Ok((passed, state, reason))

@@ -83,7 +83,55 @@ current native attempt when allocated; they are null before admission. A reserve
 session ID alone is not proof that a process started: inspect its launch receipt.
 Use the existing owner `nesvo run stop` or `nesvo run cancel` with
 their own exact revision/key to control that run. A definition toggle is not a
-substitute for run cancellation. A dedicated job-cancel adapter remains pending.
+substitute for occurrence cancellation.
+
+## Cancel one occurrence
+
+Hosts advertising `jobCancellation:true` accept stable occurrence cancellation
+through the owner CLI or `nesvo_cancel_job_occurrence`:
+
+```powershell
+nesvo job cancel JOB_ID OCCURRENCE_ID --key cancel-review-1 --json
+nesvo job occurrence JOB_ID OCCURRENCE_ID --json
+nesvo job history JOB_ID --json
+nesvo job mutation --key cancel-review-1 --json
+```
+
+The exact `jobId`, `occurrenceId` and caller mutation `key` identify the intent;
+no focused session, definition revision or provider permission grants authority.
+Coordinators and workers cannot cancel jobs. Older hosts are refused before the
+new request is sent. Canceling an occurrence does not disable its definition or
+create a replacement occurrence.
+
+An unbound queued/dispatching occurrence can cancel immediately. A precheck stays
+`canceling` until its exact owned process scope is observed terminated; its actual
+output/result is retained even if it passed just before cancellation. A bound run
+is fenced immediately against new attempts, executor enablement, automated input
+and result validation. An already admitted native launch can finish its critical
+section before cancellation enumerates the exact run targets under the native
+run permit. Human direct PTY input and its control/draft protection are preserved.
+
+At most two native cancellation dispatches run concurrently. No stop is retried
+automatically after a restart or unknown outcome. `cancellation.controlId` and
+`controlKey` correlate existing native control evidence and its immutable mutation.
+A blocked human-controlled worker remains pending until explicit owner action or
+real process exit; releasing a lease alone never sends a deferred stop. An unknown
+precheck can still be explicitly abandoned using the separate acknowledged
+precheck operation. This sets cancellation `abandoned`, retaining the uncertain
+effect/cleanup evidence rather than fabricating physical termination.
+
+Cancellation fences further admissions for that occurrence and requests cleanup
+of an active bounded precheck or bound native run. Acceptance is not evidence of
+process exit. Inspect the occurrence's current `cancellation`, precheck outcome,
+run control and native receipts: cleanup can remain pending, be refused by human
+input/control guards, or require reconciliation after uncertainty or restart.
+Cancellation does not undo command effects or claim control over detached code.
+It does not reinterpret an already completed result as canceled.
+
+The original key recovers the immutable accepted cancellation; history and
+occurrence reads show later observations. Replay and read requests never resend
+native stop effects. After an uncertain outcome, inspect those original records
+instead of issuing a fresh run or cancellation key automatically.
 
 ## Misfires and overlap
 
@@ -92,7 +140,7 @@ substitute for run cancellation. A dedicated job-cancel adapter remains pending.
 - `misfire:catchUp` accepts lateness within `graceMs` (default 60 seconds, maximum
   24 hours); it records a skip outside that window. There is no unlimited backlog.
 - `overlap:skip` records a skip while an admitted occurrence for the same job is
-  queued, dispatching, prechecking, running, awaiting validation or awaiting reconciliation.
+  queued, dispatching, prechecking, running, canceling, awaiting validation or awaiting reconciliation.
 - `overlap:queue` retains at most one additional queued occurrence. Further
   admissions record `queue_full` skips. Queued intent is not reinterpreted as a
   new clock misfire when the preceding occurrence finishes. Native uncertainty
@@ -114,7 +162,7 @@ archive policies and broader overlap modes remain future work.
 
 ## Outcomes and crash safety
 
-`queued`, `dispatching`, `prechecking`, `running`, `needsValidation` and `reconcile` are distinct
+`queued`, `dispatching`, `prechecking`, `running`, `needsValidation`, `canceling` and `reconcile` are distinct
 from terminal `succeeded`, `failed`, `skipped` and `canceled`. Process creation,
 PTY silence and idle are never job success. A succeeded worker report still needs
 an explicit matching result validation; the existing workflow rules require
@@ -148,7 +196,7 @@ provider configuration is edited or restored from a historical occurrence.
 
 The same authenticated host implementation serves `nesvo_create_job`,
 `nesvo_get_job`, `nesvo_list_jobs`, `nesvo_update_job`, `nesvo_set_job_enabled`,
-`nesvo_run_job_now`, `nesvo_get_job_history`, `nesvo_get_job_occurrence` and
+`nesvo_run_job_now`, `nesvo_cancel_job_occurrence`, `nesvo_get_job_history`, `nesvo_get_job_occurrence` and
 `nesvo_get_job_mutation`. Coordinators and workers are refused; no ambient focused
 session or parent metadata grants job authority. Clients check the capability.
 

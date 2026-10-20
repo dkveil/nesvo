@@ -12,6 +12,48 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 pub const FLAG: &str = "--precheck-exec";
 static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Stop {
+    OwnerCancel,
+    GuardUnavailable,
+}
+
+fn stop_now(stop: &mut tokio::sync::watch::Receiver<Option<Stop>>) -> Option<Stop> {
+    let requested = *stop.borrow_and_update();
+    requested.or_else(|| {
+        stop.has_changed()
+            .is_err()
+            .then_some(Stop::GuardUnavailable)
+    })
+}
+
+async fn stopping(stop: &mut tokio::sync::watch::Receiver<Option<Stop>>) -> Stop {
+    loop {
+        if let Some(reason) = stop_now(stop) {
+            return reason;
+        }
+        if stop.changed().await.is_err() {
+            return Stop::GuardUnavailable;
+        }
+    }
+}
+
+fn stopped(reason: Stop, input_released: bool) -> Outcome {
+    let (state, reason) = match (reason, input_released) {
+        (Stop::OwnerCancel, _) => (OutcomeState::Refused, "owner_canceled"),
+        (Stop::GuardUnavailable, false) => (OutcomeState::Refused, "guard_unavailable"),
+        (Stop::GuardUnavailable, true) => (OutcomeState::Unknown, "guard_unavailable"),
+    };
+    let mut outcome = Outcome::failed(state, reason);
+    if input_released {
+        // A partially written frame may already have released the command.
+        // Cancellation is no evidence of whether execution actually started.
+        outcome.command_started = None;
+        outcome.cleanup_confirmed = false;
+    }
+    outcome
+}
+
 fn text(bytes: Vec<u8>) -> (String, bool) {
     let mut out = String::new();
     let mut truncated = bytes.len() > 512;
@@ -200,9 +242,18 @@ impl Drop for Contained {
         }
     }
 }
-pub async fn run(spec: Command) -> Outcome {
-    let Ok(Ok(slot)) = tokio::time::timeout(Duration::from_secs(15), SLOTS.acquire()).await else {
-        return Outcome::failed(OutcomeState::Refused, "precheck_busy");
+pub async fn run(spec: Command, mut stop: tokio::sync::watch::Receiver<Option<Stop>>) -> Outcome {
+    if let Some(reason) = stop_now(&mut stop) {
+        return stopped(reason, false);
+    }
+    let slot = tokio::select! {
+        reason = stopping(&mut stop) => return stopped(reason, false),
+        acquired = tokio::time::timeout(Duration::from_secs(15), SLOTS.acquire()) => {
+            match acquired {
+                Ok(Ok(slot)) => slot,
+                _ => return Outcome::failed(OutcomeState::Refused, "precheck_busy"),
+            }
+        }
     };
     let Ok(exe) = std::env::current_exe() else {
         return Outcome::failed(OutcomeState::Refused, "helper_unavailable");
@@ -237,25 +288,32 @@ pub async fn run(spec: Command) -> Outcome {
         return Outcome::failed(OutcomeState::Refused, "containment_unavailable");
     };
     owned.scope = Some(scope);
-    let result = tokio::time::timeout(deadline, async {
-        let stdin = owned.child.stdin.as_mut().ok_or(())?;
-        stdin.write_all(&input).await.map_err(|_| ())?;
-        stdin.flush().await.map_err(|_| ())?;
-        let stdout = owned.child.stdout.take().ok_or(())?;
-        let mut output = Vec::new();
-        tokio::io::BufReader::new(stdout.take(8193))
-            .read_until(b'\n', &mut output)
-            .await
-            .map_err(|_| ())?;
-        if output.len() > 8192 || output.last() != Some(&b'\n') {
-            return Err(());
+    let mut input_released = false;
+    let mut outcome = if let Some(reason) = stop_now(&mut stop) {
+        stopped(reason, false)
+    } else {
+        tokio::select! {
+            reason = stopping(&mut stop) => stopped(reason, input_released),
+            result = tokio::time::timeout(deadline, async {
+                let stdin = owned.child.stdin.as_mut().ok_or(())?;
+                input_released = true;
+                stdin.write_all(&input).await.map_err(|_| ())?;
+                stdin.flush().await.map_err(|_| ())?;
+                let stdout = owned.child.stdout.take().ok_or(())?;
+                let mut output = Vec::new();
+                tokio::io::BufReader::new(stdout.take(8193))
+                    .read_until(b'\n', &mut output)
+                    .await
+                    .map_err(|_| ())?;
+                if output.len() > 8192 || output.last() != Some(&b'\n') {
+                    return Err(());
+                }
+                serde_json::from_slice::<Outcome>(&output).map_err(|_| ())
+            }) => match result {
+                Ok(Ok(result)) => result,
+                _ => Outcome::failed(OutcomeState::Unknown, "helper_result_unconfirmed"),
+            },
         }
-        serde_json::from_slice::<Outcome>(&output).map_err(|_| ())
-    })
-    .await;
-    let mut outcome = match result {
-        Ok(Ok(result)) => result,
-        _ => Outcome::failed(OutcomeState::Unknown, "helper_result_unconfirmed"),
     };
     let killed = owned
         .scope
@@ -291,4 +349,52 @@ pub async fn run(spec: Command) -> Outcome {
         });
     }
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn preexisting_stop_is_observed_without_waiting_for_another_update() {
+        let (_send, mut receive) = tokio::sync::watch::channel(Some(Stop::OwnerCancel));
+        assert_eq!(stopping(&mut receive).await, Stop::OwnerCancel);
+    }
+
+    #[tokio::test]
+    async fn a_closed_guard_is_observed_as_unavailable() {
+        let (send, mut receive) = tokio::sync::watch::channel(None);
+        drop(send);
+        assert_eq!(stopping(&mut receive).await, Stop::GuardUnavailable);
+    }
+
+    #[tokio::test]
+    async fn a_stop_update_wakes_an_existing_waiter() {
+        let (send, mut receive) = tokio::sync::watch::channel(None);
+        let (reason, ()) = tokio::join!(stopping(&mut receive), async {
+            tokio::task::yield_now().await;
+            send.send(Some(Stop::OwnerCancel)).unwrap();
+        });
+        assert_eq!(reason, Stop::OwnerCancel);
+    }
+
+    #[test]
+    fn cancellation_does_not_invent_execution_or_cleanup_evidence() {
+        let before = stopped(Stop::OwnerCancel, false);
+        assert_eq!(before.state, OutcomeState::Refused);
+        assert_eq!(before.reason, "owner_canceled");
+        assert_eq!(before.command_started, Some(false));
+        assert!(before.cleanup_confirmed);
+        let after = stopped(Stop::OwnerCancel, true);
+        assert_eq!(after.state, OutcomeState::Refused);
+        assert_eq!(after.reason, "owner_canceled");
+        assert!(after.command_started.is_none());
+        assert!(after.exit_code.is_none());
+        assert!(!after.cleanup_confirmed);
+        let guard = stopped(Stop::GuardUnavailable, true);
+        assert_eq!(guard.state, OutcomeState::Unknown);
+        assert_eq!(guard.reason, "guard_unavailable");
+        assert!(guard.command_started.is_none());
+        assert!(!guard.cleanup_confirmed);
+    }
 }

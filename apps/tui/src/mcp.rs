@@ -223,6 +223,15 @@ fn catalog() -> Vec<Tool> {
             false,
         ),
         (
+            "nesvo_cancel_job_occurrence",
+            "Owner-only cancellation of one admitted job occurrence by stable job/occurrence IDs. Fences further model admissions and requests bounded precheck/native cleanup. Acceptance is intent, not proof of process exit; inspect the occurrence's current cancellation/receipts. Unknown effects require reconciliation. Original mutation replay never repeats native effects or creates a replacement run.",
+            object(
+                json!({"key":key,"jobId":id,"occurrenceId":id}),
+                &["key", "jobId", "occurrenceId"],
+            ),
+            false,
+        ),
+        (
             "nesvo_get_job_history",
             "Owner-only bounded occurrence history with state, reason and workflow run pointer. Started/idle is not succeeded; reported results need explicit validation.",
             object(
@@ -776,7 +785,7 @@ fn catalog() -> Vec<Tool> {
         ),
     ];
     definitions.into_iter().map(|(name,description,schema,read_only)| {
-        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run")).idempotent(true).open_world(!read_only))
+        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
     }).collect()
 }
@@ -1131,6 +1140,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         | "nesvo_update_job"
         | "nesvo_set_job_enabled"
         | "nesvo_run_job_now"
+        | "nesvo_cancel_job_occurrence"
         | "nesvo_get_job_history"
         | "nesvo_get_job_occurrence"
         | "nesvo_get_job_mutation"
@@ -1142,6 +1152,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "nesvo_update_job" => "update",
                 "nesvo_set_job_enabled" => "setEnabled",
                 "nesvo_run_job_now" => "runNow",
+                "nesvo_cancel_job_occurrence" => "cancelOccurrence",
                 "nesvo_get_job_history" => "history",
                 "nesvo_get_job_occurrence" => "occurrence",
                 "nesvo_abandon_job_precheck" => "abandonPrecheck",
@@ -1567,6 +1578,77 @@ pub async fn serve(pairing: PathBuf, url: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn occurrence_cancel_cli_and_mcp_share_exact_owner_intent() {
+        use clap::Parser;
+        let parsed = crate::Arguments::try_parse_from([
+            "nesvo",
+            "job",
+            "cancel",
+            "job-stable-id",
+            "occurrence-stable-id",
+            "--key",
+            "cancel-once",
+            "--json",
+        ])
+        .unwrap();
+        let Some(cli::Command::Job { command: cli }) = parsed.command else {
+            panic!("Expected job command");
+        };
+        assert!(cli.machine());
+        let cli =
+            crate::workflow::tool("jobs", json!({"request": cli.request().unwrap()})).unwrap();
+        let arguments = json!({
+            "key": "cancel-once",
+            "jobId": "job-stable-id",
+            "occurrenceId": "occurrence-stable-id"
+        });
+        let (mcp, result_kind) = command("nesvo_cancel_job_occurrence", arguments.clone()).unwrap();
+        assert_eq!(result_kind, "workflow");
+        assert_eq!(cli, mcp);
+        assert_eq!(
+            mcp["request"]["request"],
+            json!({"action":"cancelOccurrence","key":"cancel-once","jobId":"job-stable-id","occurrenceId":"occurrence-stable-id"})
+        );
+
+        for required in ["key", "jobId", "occurrenceId"] {
+            let mut missing = arguments.clone();
+            missing.as_object_mut().unwrap().remove(required);
+            assert!(command("nesvo_cancel_job_occurrence", missing).is_err());
+        }
+        for (field, value) in [
+            ("action", json!("runNow")),
+            ("owner", json!(true)),
+            ("sessionId", json!("focused-session")),
+            ("expectedRevision", json!(1)),
+            ("key", json!(7)),
+        ] {
+            let mut changed = arguments.clone();
+            changed[field] = value;
+            assert!(command("nesvo_cancel_job_occurrence", changed).is_err());
+        }
+
+        let tool = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "nesvo_cancel_job_occurrence")
+            .unwrap();
+        let schema = serde_json::to_value(tool).unwrap();
+        assert_eq!(schema["inputSchema"]["additionalProperties"], false);
+        assert_eq!(
+            schema["inputSchema"]["required"],
+            json!(["key", "jobId", "occurrenceId"])
+        );
+        assert_eq!(
+            schema["inputSchema"]["properties"]
+                .as_object()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(schema["annotations"]["readOnlyHint"], false);
+        assert_eq!(schema["annotations"]["destructiveHint"], true);
+        assert_eq!(schema["annotations"]["idempotentHint"], true);
+    }
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
         let published: Vec<String> =

@@ -12,6 +12,39 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+/// The owned process future must remain polled while the store guard is slow.
+/// Guard reads have no native effects and can be dropped on timeout/completion.
+async fn supervise_precheck<C, G>(
+    check: C,
+    stop: tokio::sync::watch::Sender<Option<crate::job_precheck_adapter::Stop>>,
+    mut guard: impl FnMut() -> G,
+) -> crate::job_prechecks::Outcome
+where
+    C: std::future::Future<Output = crate::job_prechecks::Outcome>,
+    G: std::future::Future<Output = Result<Reply>>,
+{
+    use crate::job_precheck_adapter::Stop;
+    tokio::pin!(check);
+    let mut monitor = tokio::time::interval(std::time::Duration::from_millis(100));
+    loop {
+        tokio::select! {
+            result = &mut check => return result,
+            _ = monitor.tick(), if stop.borrow().is_none() => {
+                let answer = tokio::select! {
+                    result = &mut check => return result,
+                    answer = tokio::time::timeout(std::time::Duration::from_secs(1), guard()) => answer,
+                };
+                let reason = match answer {
+                    Ok(Ok(Reply::CancelRequested(false))) => None,
+                    Ok(Ok(Reply::CancelRequested(true))) => Some(Stop::OwnerCancel),
+                    _ => Some(Stop::GuardUnavailable),
+                };
+                if let Some(reason) = reason { let _ = stop.send(Some(reason)); }
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Runner {
     state: Arc<Mutex<State>>,
@@ -39,7 +72,14 @@ impl Runner {
             .await?
         {
             Reply::Precheck(Some(command)) => {
-                let result = crate::job_precheck_adapter::run(*command).await;
+                let (stop_tx, stop_rx) = tokio::sync::watch::channel(None);
+                let check = crate::job_precheck_adapter::run(*command, stop_rx);
+                let result = supervise_precheck(check, stop_tx, || {
+                    self.log.jobs(Work::CancelRequested {
+                        occurrence: claim.id.clone(),
+                    })
+                })
+                .await;
                 if !matches!(
                     self.log
                         .jobs(Work::FinishPrecheck {
@@ -84,14 +124,48 @@ impl Runner {
         result
     }
 }
+
 pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>, log: Service) {
     let runner = Runner { state, events, log };
     let mut delay = 1;
     let mut dispatches = tokio::task::JoinSet::new();
     let mut calendars = tokio::task::JoinSet::new();
+    let mut cancellations = tokio::task::JoinSet::new();
     let mut pending_calendars = std::collections::BTreeSet::new();
     loop {
         while dispatches.try_join_next().is_some() {}
+        while cancellations.try_join_next().is_some() {}
+        if let Ok(Reply::Cancellations(claims)) = runner
+            .log
+            .jobs(Work::CancelPoll {
+                slots: 2u8.saturating_sub(cancellations.len() as u8),
+            })
+            .await
+        {
+            for claim in claims {
+                let runner = runner.clone();
+                cancellations.spawn(async move {
+                    let result =
+                        std::panic::AssertUnwindSafe(crate::workflow_control_runtime::cancel_job(
+                            runner.state,
+                            runner.log.clone(),
+                            claim.issuer.clone(),
+                            claim.run.clone(),
+                            claim.key.clone(),
+                        ))
+                        .catch_unwind()
+                        .await;
+                    let result = match result {
+                        Ok(Ok(view)) => Some(view),
+                        _ => None,
+                    };
+                    let _ = runner
+                        .log
+                        .jobs(Work::CancelFinished { claim, result })
+                        .await;
+                });
+            }
+        }
         while let Some(result) = calendars.try_join_next() {
             if let Ok(key) = result {
                 pending_calendars.remove(&key);
@@ -180,5 +254,48 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>, log: 
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::job_prechecks::{Outcome, OutcomeState};
+
+    #[tokio::test]
+    async fn slow_store_guard_cannot_suspend_the_owned_check_deadline() {
+        let (stop, _receive) = tokio::sync::watch::channel(None);
+        let check = async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            Outcome::failed(OutcomeState::Refused, "check_deadline_observed")
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            supervise_precheck(check, stop, std::future::pending::<Result<Reply>>),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.reason, "check_deadline_observed");
+    }
+
+    #[tokio::test]
+    async fn stalled_store_guard_requests_cooperative_cleanup_within_its_budget() {
+        let (stop, mut receive) = tokio::sync::watch::channel(None);
+        let check = async move {
+            receive.changed().await.unwrap();
+            assert_eq!(
+                *receive.borrow(),
+                Some(crate::job_precheck_adapter::Stop::GuardUnavailable)
+            );
+            Outcome::failed(OutcomeState::Unknown, "cleanup_observed_after_guard_loss")
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            supervise_precheck(check, stop, std::future::pending::<Result<Reply>>),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.reason, "cleanup_observed_after_guard_loss");
+        assert!(!result.cleanup_confirmed);
     }
 }

@@ -11,7 +11,8 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const ACTIVE: &str = "'dispatching','prechecking','running','needsValidation','reconcile'";
+const ACTIVE: &str =
+    "'dispatching','prechecking','running','needsValidation','reconcile','canceling'";
 fn grace() -> u64 {
     60_000
 }
@@ -61,6 +62,11 @@ pub struct Spec {
     deny_unknown_fields
 )]
 pub enum Request {
+    CancelOccurrence {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
+    },
     Prechecks {
         request: crate::job_prechecks::Request,
     },
@@ -118,6 +124,16 @@ pub struct Claim {
     pub spec: Spec,
 }
 pub enum Work {
+    CancelPoll {
+        slots: u8,
+    },
+    CancelRequested {
+        occurrence: String,
+    },
+    CancelFinished {
+        claim: crate::job_cancellations::Claim,
+        result: Option<Value>,
+    },
     Poll {
         slots: u8,
     },
@@ -152,6 +168,8 @@ pub enum Work {
     },
 }
 pub enum Reply {
+    Cancellations(Vec<crate::job_cancellations::Claim>),
+    CancelRequested(bool),
     Claims(Vec<Claim>),
     Calendars(Vec<CalendarDue>),
     Precheck(Option<Box<crate::job_prechecks::Command>>),
@@ -199,13 +217,14 @@ pub fn initialize(connection: &Connection) -> Result<()> {
         )?;
     }
     crate::job_prechecks::initialize(connection)?;
+    crate::job_cancellations::initialize(connection)?;
     Ok(())
 }
 pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let ids = {
-        let mut q=transaction.prepare("SELECT id FROM harness_job_occurrences WHERE state IN ('dispatching','prechecking','running','needsValidation')")?;
+        let mut q=transaction.prepare("SELECT id FROM harness_job_occurrences WHERE state IN ('dispatching','prechecking','running','needsValidation','canceling')")?;
         q.query_map([], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
@@ -220,6 +239,7 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
             now,
         )?;
     }
+    crate::job_cancellations::recover(&transaction, now)?;
     transaction.commit()?;
     Ok(())
 }
@@ -347,7 +367,12 @@ fn job(connection: &Connection, id: &str, detail: bool) -> Result<Value> {
     }
     Ok(view)
 }
-fn occurrence(connection: &Connection, job_id: &str, id: &str, detail: bool) -> Result<Value> {
+pub(crate) fn occurrence(
+    connection: &Connection,
+    job_id: &str,
+    id: &str,
+    detail: bool,
+) -> Result<Value> {
     let row=connection.query_row("SELECT job_revision,trigger_kind,due_at,created_at,state,reason,run_id,started_at,finished_at,spec FROM harness_job_occurrences WHERE id=?1 AND job_id=?2",params![id,job_id],|r|Ok((json!({"id":id,"jobId":job_id,"jobRevision":r.get::<_,i64>(0)?,"trigger":r.get::<_,String>(1)?,"dueAt":r.get::<_,i64>(2)?,"createdAt":r.get::<_,i64>(3)?,"state":r.get::<_,String>(4)?,"reason":r.get::<_,Option<String>>(5)?,"runId":r.get::<_,Option<String>>(6)?,"startedAt":r.get::<_,Option<i64>>(7)?,"finishedAt":r.get::<_,Option<i64>>(8)?}),r.get::<_,String>(9)?))).optional()?;
     let Some((mut view, spec)) = row else {
         return Err(Error::new(
@@ -364,6 +389,7 @@ fn occurrence(connection: &Connection, job_id: &str, id: &str, detail: bool) -> 
         )?
         .into();
     view["precheck"] = crate::job_precheck_records::view(connection, id, detail)?;
+    view["cancellation"] = crate::job_cancellations::view(connection, id)?;
     let binding = if let Some(run) = view["runId"].as_str() {
         connection.query_row("SELECT a.id,a.session_id,l.operation_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id LEFT JOIN workflow_launches l ON l.attempt_id=a.id WHERE t.run_id=?1 ORDER BY a.ordinal DESC,a.rowid DESC LIMIT 1",[run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional()?
     } else {
@@ -395,7 +421,7 @@ fn observe(
     )?;
     Ok(())
 }
-fn transition(
+pub(crate) fn transition(
     transaction: &Transaction<'_>,
     id: &str,
     state: &str,
@@ -551,6 +577,7 @@ pub fn execute(
         | Request::Update { key, .. }
         | Request::SetEnabled { key, .. }
         | Request::RunNow { key, .. }
+        | Request::CancelOccurrence { key, .. }
         | Request::AbandonPrecheck { key, .. } => key,
         _ => unreachable!(),
     };
@@ -593,6 +620,11 @@ pub fn execute(
         .into());
     }
     let view = match &request {
+        Request::CancelOccurrence {
+            job_id,
+            occurrence_id,
+            ..
+        } => crate::job_cancellations::accept(&transaction, &actor, job_id, occurrence_id, now)?,
         Request::AbandonPrecheck {
             job_id,
             occurrence_id,
@@ -613,6 +645,7 @@ pub fn execute(
                 return Err(Error::new("occurrence_conflict","Inspect the unknown precheck and explicitly acknowledge its effects before abandoning this exact command; no process is resumed or undone").into());
             }
             transaction.execute("UPDATE harness_job_prechecks SET state='abandoned',reason='owner_abandoned',observed_at=?2 WHERE occurrence_id=?1",params![occurrence_id,now as i64])?;
+            transaction.execute("UPDATE harness_job_cancellations SET state='abandoned',reason='owner_acknowledged_unknown_effects',observed_at=?2 WHERE occurrence_id=?1",params![occurrence_id,now as i64])?;
             transition(
                 &transaction,
                 occurrence_id,
@@ -705,6 +738,7 @@ pub fn execute(
     Ok(view)
 }
 fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
+    crate::job_cancellations::refresh(transaction, now)?;
     let rows = {
         let mut q=transaction.prepare(&format!("SELECT o.id,r.state,(SELECT a.state FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=r.id ORDER BY a.ordinal DESC LIMIT 1),e.reason,o.state FROM harness_job_occurrences o JOIN workflow_runs r ON r.id=o.run_id LEFT JOIN workflow_executors e ON e.run_id=r.id WHERE o.state IN ({ACTIVE})"))?;
         q.query_map([], |r| {
@@ -719,6 +753,9 @@ fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
         .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (id, run, attempt, reason, current) in rows {
+        if crate::job_cancellations::requested(transaction, &id)? {
+            continue;
+        }
         match (run.as_str(), attempt.as_deref()) {
             ("succeeded", _) => transition(transaction, &id, "succeeded", None, true, now)?,
             ("canceled" | "stopped", _) => {
@@ -765,6 +802,17 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let reply = match work {
+        Work::CancelRequested { occurrence } => Reply::CancelRequested(
+            crate::job_cancellations::requested(&transaction, &occurrence)?,
+        ),
+        Work::CancelPoll { slots } => {
+            crate::job_cancellations::refresh(&transaction, now)?;
+            Reply::Cancellations(crate::job_cancellations::claims(&transaction, slots, now)?)
+        }
+        Work::CancelFinished { claim, result } => {
+            crate::job_cancellations::finish(&transaction, &claim, result, now)?;
+            Reply::Done
+        }
         Work::Interrupted { occurrence } => {
             let phase: Option<String> = transaction
                 .query_row(
@@ -773,7 +821,8 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                     |r| r.get(0),
                 )
                 .optional()?;
-            if phase.as_deref() == Some("prechecking") {
+            let running_precheck:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_prechecks WHERE occurrence_id=?1 AND state='running')",[&occurrence],|r|r.get(0))?;
+            if running_precheck {
                 let result = crate::job_prechecks::Outcome::failed(
                     crate::job_prechecks::OutcomeState::Unknown,
                     "dispatch_interrupted",

@@ -562,3 +562,203 @@ async fn slow_prechecks_do_not_starve_unrelated_due_jobs_or_free_all_dispatch_ca
         }
     }
 }
+
+#[tokio::test]
+#[ignore = "native owner CLI/MCP cancellation, owned command descendants and restart; no models"]
+async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_after_restart()
+-> Result<()> {
+    let mut f = Fixture::start_variant(true).await?;
+    let outcome = std::panic::AssertUnwindSafe(async {
+        let owner = client(&f.pairing()).await?;
+        let (approval, directory) = approve(&f, &owner, "tree-cancel", 10000).await?;
+        let spec = json!({
+            "title":"Cancelable command tree",
+            "instruction":"report-task",
+            "profile":{"program":"claude","workspace":"shared","harness":true,"allowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]},
+            "precheckId":approval["id"],
+            "schedule":{"kind":"once","at":(chrono::Utc::now()+chrono::Duration::hours(1)).to_rfc3339()},
+            "overlap":"queue"
+        });
+        let created = data(
+            call(
+                &owner,
+                "nesvo_create_job",
+                json!({"key":"cancelable-tree","spec":spec}),
+            )
+            .await?,
+        )?;
+        let job = &created["data"]["job"];
+        let job_id = job["id"].as_str().context("cancelable job ID")?;
+        let active = now(&owner, job, "active-tree").await?;
+        let active_id = active["data"]["occurrence"]["id"]
+            .as_str()
+            .context("active occurrence ID")?;
+        tree_ready(&directory).await?;
+
+        // The live first occurrence holds the overlap gate, so the second one
+        // is durably queued without racing a claim from an otherwise idle host.
+        let queued = now(&owner, job, "queued-tree").await?;
+        assert_eq!(queued["data"]["occurrence"]["state"], "queued");
+        let queued_id = queued["data"]["occurrence"]["id"]
+            .as_str()
+            .context("queued occurrence ID")?;
+        let queued_cancel = budgets::owner_cli(
+            &f,
+            &[
+                "job", "cancel", job_id, queued_id, "--key", "cancel-queued", "--json",
+            ],
+        )
+        .await?;
+        let queued_view = &queued_cancel["data"]["occurrence"];
+        assert_eq!(queued_view["state"], "canceled");
+        assert_eq!(queued_view["cancellation"]["state"], "completed");
+        assert!(queued_view["runId"].is_null());
+        assert!(queued_view["precheck"].is_null());
+
+        let active_arguments =
+            json!({"key":"cancel-active","jobId":job_id,"occurrenceId":active_id});
+        let active_cancel = data(
+            call(
+                &owner,
+                "nesvo_cancel_job_occurrence",
+                active_arguments.clone(),
+            )
+            .await?,
+        )?;
+        assert_eq!(active_cancel["data"]["occurrence"]["state"], "canceling");
+        assert_eq!(
+            active_cancel["data"]["occurrence"]["cancellation"]["state"],
+            "awaitingPrecheck"
+        );
+        let mut last = Value::Null;
+        let completed = timeout(Duration::from_secs(6), async {
+            loop {
+                let current = data(
+                    call(
+                        &owner,
+                        "nesvo_get_job_occurrence",
+                        json!({"jobId":job_id,"occurrenceId":active_id}),
+                    )
+                    .await?,
+                )?;
+                if current["data"]["occurrence"]["state"] == "canceled" {
+                    return Ok::<_, anyhow::Error>(current);
+                }
+                last = current;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .with_context(|| format!("Canceled command cleanup was not confirmed; last: {last}"))??;
+        let current = &completed["data"]["occurrence"];
+        assert_eq!(current["cancellation"]["state"], "completed");
+        assert_eq!(current["reason"], "owner_canceled");
+        assert_eq!(current["precheck"]["result"]["cleanupConfirmed"], true);
+        assert_eq!(current["precheck"]["result"]["reason"], "owner_canceled");
+        assert!(current["precheck"]["finishedAt"].is_number());
+        assert!(current["finishedAt"].is_number());
+        assert!(current["runId"].is_null());
+        tree_gone(&f, &directory).await?;
+        no_model(&owner).await?;
+
+        let queued_replay = data(
+            call(
+                &owner,
+                "nesvo_cancel_job_occurrence",
+                json!({"key":"cancel-queued","jobId":job_id,"occurrenceId":queued_id}),
+            )
+            .await?,
+        )?;
+        assert_eq!(queued_replay["data"], queued_cancel["data"]);
+        let active_replay = budgets::owner_cli(
+            &f,
+            &[
+                "job", "cancel", job_id, active_id, "--key", "cancel-active", "--json",
+            ],
+        )
+        .await?;
+        assert_eq!(active_replay["data"], active_cancel["data"]);
+        assert_eq!(active_replay["data"]["occurrence"]["state"], "canceling");
+        let conflict = call(
+            &owner,
+            "nesvo_cancel_job_occurrence",
+            json!({"key":"cancel-active","jobId":job_id,"occurrenceId":queued_id}),
+        )
+        .await?
+        .structured_content
+        .context("Cancellation changed-intent refusal")?;
+        assert_eq!(conflict["error"]["code"], "idempotency_conflict");
+        let accepted = budgets::owner_cli(
+            &f,
+            &["job", "mutation", "--key", "cancel-active", "--json"],
+        )
+        .await?;
+        assert_eq!(accepted["data"], active_cancel["data"]);
+        assert_eq!(
+            std::fs::read_to_string(directory.join("effects.log"))?
+                .lines()
+                .count(),
+            1
+        );
+        owner.cancel().await?;
+        f.restart(false).await?;
+        let owner = client(&f.pairing()).await?;
+        let retained = data(
+            call(
+                &owner,
+                "nesvo_get_job_history",
+                json!({"jobId":job_id}),
+            )
+            .await?,
+        )?;
+        let rows = retained["data"]["occurrences"]
+            .as_array()
+            .context("retained canceled occurrences")?;
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row["state"] == "canceled"
+            && row["cancellation"]["state"] == "completed"
+            && row["runId"].is_null()));
+        let after_restart = data(
+            call(&owner, "nesvo_cancel_job_occurrence", active_arguments).await?,
+        )?;
+        assert_eq!(after_restart["data"], active_cancel["data"]);
+        tree_gone(&f, &directory).await?;
+        no_model(&owner).await?;
+        assert_eq!(
+            std::fs::read_to_string(directory.join("effects.log"))?
+                .lines()
+                .count(),
+            1
+        );
+        run_checkpoints::schema(vec![
+            created,
+            active,
+            queued,
+            queued_cancel,
+            active_cancel,
+            completed,
+            queued_replay,
+            active_replay,
+            conflict,
+            accepted,
+            retained,
+            after_restart,
+        ])
+        .await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .catch_unwind()
+    .await;
+    let cleanup = f.close().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}

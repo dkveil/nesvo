@@ -3347,7 +3347,8 @@
             "succeeded",
             "failed",
             "canceled",
-            "prechecking"
+            "prechecking",
+            "canceling"
           ]
         },
         "reason": {
@@ -3417,6 +3418,16 @@
             }
           ]
         },
+        "cancellation": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobCancellation"
+            }
+          ]
+        },
         "precheck": {
           "anyOf": [
             {
@@ -3479,6 +3490,49 @@
                   "minimum": 0
                 }
               }
+            }
+          ]
+        }
+      }
+    },
+    "jobCancellation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "requestedAt", "observedAt", "reason", "controlKey", "controlId"],
+      "properties": {
+        "state": {
+          "enum": [
+            "requested",
+            "awaitingPrecheck",
+            "dispatching",
+            "awaitingExit",
+            "blocked",
+            "unconfirmed",
+            "completed",
+            "abandoned"
+          ]
+        },
+        "requestedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "observedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "controlKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
             }
           ]
         }

@@ -192,6 +192,7 @@ pub fn activate(transaction: &Transaction<'_>, run_id: &str, now: u64) -> Result
     Ok(())
 }
 pub fn admit_attempt(connection: &Connection, run_id: &str, ordinal: i64) -> Result<()> {
+    crate::job_cancellations::guard_run(connection, run_id)?;
     crate::workflow_context::guard(connection, run_id)?;
     let record = load(connection, run_id)?;
     if record.exhausted.is_some() {
@@ -403,6 +404,7 @@ pub(crate) fn guard_dispatch_transaction(
     let Some((run_id, attempt, state, current)) = binding else {
         return Ok(());
     };
+    crate::job_cancellations::guard_run(connection, &run_id)?;
     crate::workflow_context::guard(connection, &run_id)?;
     let run_state: String = connection.query_row(
         "SELECT state FROM workflow_runs WHERE id=?1",

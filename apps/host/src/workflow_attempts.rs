@@ -372,6 +372,7 @@ pub fn mutate(
             validation,
             ..
         } => {
+            crate::job_cancellations::guard_run(connection, run_id)?;
             revision(
                 connection,
                 actor,
