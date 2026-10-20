@@ -1999,3 +1999,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "jobs_preview.rs"]
+mod jobs_preview;
