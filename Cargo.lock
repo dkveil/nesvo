@@ -1222,6 +1222,7 @@ dependencies = [
  "clap",
  "futures-util",
  "hex",
+ "libc",
  "nesvo-wire",
  "portable-pty",
  "qrcode",

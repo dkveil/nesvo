@@ -581,7 +581,20 @@ impl Service {
             .await
             .map_err(|_| anyhow!("Operation could not be read"))?
     }
+    #[cfg(test)]
     pub async fn open(path: PathBuf) -> Result<Self> {
+        Self::open_inner(path, None).await
+    }
+    pub async fn open_with_owner(
+        path: PathBuf,
+        owner: Arc<crate::host_lock::HostLock>,
+    ) -> Result<Self> {
+        Self::open_inner(path, Some(owner)).await
+    }
+    async fn open_inner(
+        path: PathBuf,
+        owner: Option<Arc<crate::host_lock::HostLock>>,
+    ) -> Result<Self> {
         let (sender, mut receiver) = mpsc::channel::<Work>(128);
         let (changed_tx, changed) = watch::channel(0);
         let health_changed = changed_tx.clone();
@@ -594,6 +607,9 @@ impl Service {
         std::thread::Builder::new()
             .name("nesvo-events".into())
             .spawn(move || {
+                // Keep directory ownership while the writer drains, including
+                // error/cancellation paths after the async host future ends.
+                let _owner_guard = owner;
                 let mut store = match Store::open(&path) {
                     Ok(store) => store,
                     Err(error) => {

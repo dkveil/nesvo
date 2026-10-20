@@ -1599,3 +1599,19 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   tool policy, provider parity and the remaining stage gates are still open.
 - Published 88943b0 CI passed all five jobs (39386643756), separately from this
   original-model test. Earlier permission-gated failures remain recorded above.
+
+### Single upgraded host owns its data directory
+
+- F41 prerequisite for safe orchestration recovery: a nonblocking exclusive OS
+  file lock is acquired before reading/rotating keys, rewriting pairing or opening
+  metadata. It stays alive through the single writer's drain/error paths.
+- The native Windows test refused a second host on another port using
+  `--rotate-key`, preserved pairing and proved the first host still reachable.
+  Terminating only the test's empty host released ownership; restart used the same
+  key with an existing lock filename. The unit case also verifies live exclusion
+  and drop/reacquire. No user host/session was stopped.
+- Uses existing windows-sys with filesystem/I/O features and adds Unix libc as a
+  direct dependency for flock (already locked transitively), preserving Rust 1.88.
+  CI must separately verify Unix runtime behavior. Older binaries that never take
+  the lock are not fenced; acquiring a directory is not proof old workers exited.
+  See [ownership and upgrade limits](host-directory-ownership.md).

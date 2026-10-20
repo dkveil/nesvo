@@ -9,6 +9,7 @@ mod codex_context;
 mod event_log;
 mod git;
 mod groups;
+mod host_lock;
 mod jobs;
 mod launchers;
 mod notifications;
@@ -261,6 +262,7 @@ async fn run(args: Args) -> Result<()> {
         }
     });
     fs::create_dir_all(&pairing_dir)?;
+    let host_lock = Arc::new(host_lock::HostLock::acquire(&pairing_dir)?);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -294,7 +296,11 @@ async fn run(args: Args) -> Result<()> {
     private_write(&qr_path, svg.as_bytes())?;
 
     let metadata = storage::MetadataStore::open(&pairing_dir.join("metadata.sqlite3"))?;
-    let event_log = event_log::Service::open(pairing_dir.join("metadata.sqlite3")).await?;
+    let event_log = event_log::Service::open_with_owner(
+        pairing_dir.join("metadata.sqlite3"),
+        host_lock.clone(),
+    )
+    .await?;
     event_log
         .append(vec![event_log::Observation {
             session_id: None,

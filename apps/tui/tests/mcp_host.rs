@@ -28,6 +28,8 @@ struct Fixture {
 }
 #[path = "support/budgets.rs"]
 mod budgets;
+#[path = "support/host_ownership.rs"]
+mod host_ownership;
 #[path = "support/inbox.rs"]
 mod inbox;
 #[path = "support/input_redraw.rs"]
@@ -63,16 +65,7 @@ impl Fixture {
             hex::encode(nesvo_wire::random::<8>())
         ));
         std::fs::create_dir(&directory)?;
-        let binary = std::env::var_os("NESVO_HOST_BINARY")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                Path::new(env!("CARGO_BIN_EXE_nesvo")).with_file_name(if cfg!(windows) {
-                    "nesvo-host.exe"
-                } else {
-                    "nesvo-host"
-                })
-            });
-        let mut command = Command::new(binary);
+        let mut command = Command::new(Self::host_binary());
         if agent {
             install_agent_fixture(&directory, &mut command).await?;
         }
@@ -83,11 +76,15 @@ impl Fixture {
             std::fs::copy(env!("CARGO_BIN_EXE_nesvo"), &client)?;
             command.env("NESVO_CLIENT_BINARY", client);
         }
+        let host = Self::spawn_host(&directory, command).await?;
+        Ok(Self { directory, host })
+    }
+    async fn spawn_host(directory: &Path, mut command: Command) -> Result<Child> {
         command
             .args(["--port", "0", "--exit-on-stdin-close", "--pairing-dir"])
-            .arg(&directory)
+            .arg(directory)
             .arg("--workspace")
-            .arg(&directory)
+            .arg(directory)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -110,10 +107,39 @@ impl Fixture {
         // Keep draining after readiness; closing the pipe here could race the
         // host's remaining startup lines and cause a platform-specific BrokenPipe.
         tokio::spawn(async move { while matches!(output.next_line().await, Ok(Some(_))) {} });
-        Ok(Self { directory, host })
+        Ok(host)
     }
     fn pairing(&self) -> PathBuf {
         self.directory.join("pairing.json")
+    }
+    fn host_binary() -> PathBuf {
+        std::env::var_os("NESVO_HOST_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_BIN_EXE_nesvo")).with_file_name(if cfg!(windows) {
+                    "nesvo-host.exe"
+                } else {
+                    "nesvo-host"
+                })
+            })
+    }
+    async fn restart(&mut self, force: bool) -> Result<()> {
+        if force {
+            self.host.start_kill()?;
+        } else {
+            drop(self.host.stdin.take());
+        }
+        let status = timeout(Duration::from_secs(12), self.host.wait()).await??;
+        ensure!(
+            force || status.success(),
+            "Owned host did not finish graceful shutdown"
+        );
+        let mut command = Command::new(Self::host_binary());
+        if self.directory.join("bin").is_dir() {
+            agent_fixture_environment(&self.directory, &mut command)?;
+        }
+        self.host = Self::spawn_host(&self.directory, command).await?;
+        Ok(())
     }
     async fn close(&mut self) -> Result<()> {
         drop(self.host.stdin.take());
@@ -180,12 +206,15 @@ async fn install_agent_fixture(directory: &Path, host: &mut Command) -> Result<(
             }
         }
     }
-    let mut paths = vec![bin];
+    agent_fixture_environment(directory, host)
+}
+fn agent_fixture_environment(directory: &Path, host: &mut Command) -> Result<()> {
+    let mut paths = vec![directory.join("bin")];
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
     host.env("PATH", std::env::join_paths(paths)?)
-        .env("NESVO_TEST_CALLERS", callers)
+        .env("NESVO_TEST_CALLERS", directory.join("callers"))
         .env("NESVO_CLIENT_BINARY", env!("CARGO_BIN_EXE_nesvo"));
     Ok(())
 }
