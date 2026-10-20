@@ -1985,7 +1985,7 @@ impl State {
             "processIdentity":{"pid":session.pty.process_id(),"launchedAt":session.info.created_at,"launchId":session.info.id},
             "processAgeSeconds":session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed()).as_secs(),
             "harness":session.caller_context.as_ref().map(|context|context.configuration(session.harness_enabled)),
-            "inputOperation":session.pending_input.as_ref().map(|pending|json!({"id":pending.claim.id,"queued":pending.queued,"canceled":*pending.canceled.borrow(),"correlated":pending.correlation.is_some()})),
+            "inputOperation":session.pending_input.as_ref().map(|pending|json!({"id":pending.claim.id,"queued":pending.queued,"canceled":*pending.canceled.borrow(),"correlated":pending.correlation.is_some(),"correlationEvidence":pending.correlation.as_ref().map(crate::submission::Correlation::diagnostic)})),
             "integration":{"configured":session.agent_context.is_some(), "adapter":session.agent_context.as_ref().map_or("screen/protocol",|tracker|tracker.adapter()),
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
@@ -2881,7 +2881,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         session.status.record_hook_reason(&event.name, event.state);
                                         session.status_projection_dirty = true;
                                         if let Some(log) = &event_log {
-                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"agent.lifecycle",at:now_millis(),payload:json!({"event":event.name,"state":event.state,"generation":event.generation,"sourceSequence":event.sequence,"submissionEvidence":event.prompt_digest.is_some()})});
+                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"agent.lifecycle",at:now_millis(),payload:json!({"event":event.name,"state":event.state,"generation":event.generation,"sourceSequence":event.sequence,"submissionEvidence":event.prompt_digest.is_some()||event.paste_digest.is_some()})});
                                         }
                                     }
                                 }

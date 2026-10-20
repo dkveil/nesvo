@@ -120,7 +120,14 @@ function reportTask(outcome = 'succeeded') {
 }
 function submit(prompt) {
   turn++;
-  hook('UserPromptSubmit', { prompt });
+  // Observed original Claude marks expanded multiline pastes in this envelope.
+  // Keep native input unchanged; only its hook payload carries the wrapper.
+  hook('UserPromptSubmit', {
+    prompt:
+      !codex && prompt.includes('\n')
+        ? `\n\n<pasted_content id="f558">\n${prompt}\n</pasted_content id="f558">\n`
+        : prompt,
+  });
   if (prompt.startsWith('Nesvo run update ')) {
     const run = prompt.match(/Run ([a-f0-9]{32}), wake batch ([a-f0-9]{32})/);
     if (!run) throw new Error('Missing fixed host wake identities');

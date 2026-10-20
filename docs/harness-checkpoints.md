@@ -146,6 +146,10 @@ unchanged. A local original Claude 2.1.304 literal-response probe returned the
 V11 marker, bundled context-reference title and an owner constraint code after
 deliberate acknowledgement. The dependent reviewer remained planned without a
 worker report or validation. The response was visible but its receipt remained
-`delivered` despite lifecycle pickup/Stop; prompt correlation needs separate
-investigation. This proves instruction/context consumption, not receipt
-settlement, actual provider compaction, model-to-MCP execution or native resume.
+`delivered` despite lifecycle pickup/Stop in the initial probe. An owned-session
+hash/transcript comparison identified Claude's whole-paste envelope. After its
+strict adapter fix, a fresh isolated probe reached `settled` with
+`promptMatch:claudePasteWrapper`, retained result null/review planned, and observed
+worker exit through explicit run stop. This proves instruction/context consumption
+and correlated response settlement, not actual provider compaction, model-to-MCP
+execution or native resume.

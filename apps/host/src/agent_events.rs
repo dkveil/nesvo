@@ -16,7 +16,7 @@ pub fn exists(report: &Path) -> bool {
 pub fn initialize(report: &Path, session_id: &str) -> Result<()> {
     let connection = Connection::open(database(report))?;
     connection.execute_batch("CREATE TABLE scope (id INTEGER PRIMARY KEY CHECK(id=1), host_session TEXT NOT NULL, launch_id TEXT NOT NULL, provider_session TEXT, provider_turn TEXT, generation INTEGER NOT NULL DEFAULT 1, rejected INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, provider_session TEXT, event TEXT NOT NULL, state TEXT NOT NULL, prompt_digest TEXT);
+      CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, provider_session TEXT, event TEXT NOT NULL, state TEXT NOT NULL, prompt_digest TEXT, paste_digest TEXT);
       CREATE TABLE native_turns (generation INTEGER NOT NULL, id TEXT NOT NULL, PRIMARY KEY(generation,id));")?;
     connection.execute(
         "INSERT INTO scope(id,host_session,launch_id) VALUES(1,?1,?2)",
@@ -57,6 +57,7 @@ pub fn append(
             state,
             allow_rebind,
             prompt_digest,
+            paste_digest: None,
         },
     )
 }
@@ -67,6 +68,7 @@ pub struct SourceEvent<'a> {
     pub state: StatusState,
     pub allow_rebind: bool,
     pub prompt_digest: Option<&'a str>,
+    pub paste_digest: Option<&'a str>,
 }
 pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u64>> {
     let SourceEvent {
@@ -76,11 +78,15 @@ pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u6
         state,
         allow_rebind,
         prompt_digest,
+        paste_digest,
     } = source;
     ensure!(
-        prompt_digest.is_none_or(|hash| event == "UserPromptSubmit"
-            && hash.len() == 64
-            && hash.bytes().all(|b| b.is_ascii_hexdigit())),
+        prompt_digest
+            .into_iter()
+            .chain(paste_digest)
+            .all(|hash| event == "UserPromptSubmit"
+                && hash.len() == 64
+                && hash.bytes().all(|b| b.is_ascii_hexdigit())),
         "Invalid prompt fingerprint"
     );
     ensure!(
@@ -169,7 +175,9 @@ pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u6
     // their host is still running. They simply provide no prompt correlation.
     let digest_column = has_digest_column(&transaction)?;
     let state = serde_json::to_string(&state)?;
-    if digest_column {
+    if digest_column && has_column(&transaction, "events", "paste_digest")? {
+        transaction.execute("INSERT INTO events(generation,provider_session,event,state,prompt_digest,paste_digest) VALUES(?1,?2,?3,?4,?5,?6)",params![generation,provider_session,event,state,prompt_digest,paste_digest])?;
+    } else if digest_column {
         transaction.execute("INSERT INTO events(generation,provider_session,event,state,prompt_digest) VALUES(?1,?2,?3,?4,?5)",params![generation,provider_session,event,state,prompt_digest])?;
     } else {
         transaction.execute(
@@ -226,6 +234,7 @@ pub struct Event {
     pub generation: u64,
     pub state: StatusState,
     pub prompt_digest: Option<String>,
+    pub paste_digest: Option<String>,
 }
 pub struct Batch {
     pub identity: Identity,
@@ -243,6 +252,8 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
     let mut connection = open(report, false)?;
     let transaction = connection.transaction()?;
     let prompt_correlation = has_digest_column(&transaction)?;
+    let paste_correlation =
+        prompt_correlation && has_column(&transaction, "events", "paste_digest")?;
     let identity = transaction.query_row(
         "SELECT host_session,launch_id,provider_session,generation,rejected FROM scope WHERE id=1",
         [],
@@ -273,7 +284,12 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
     let gap = first.is_some_and(|first| first as u64 > after.saturating_add(1));
     let mut events = Vec::new();
     {
-        let mut statement=transaction.prepare(if prompt_correlation {"SELECT sequence,generation,state,event,prompt_digest FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2"} else {"SELECT sequence,generation,state,event,NULL FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2"})?;
+        let columns = match (prompt_correlation, paste_correlation) {
+            (true, true) => "prompt_digest,paste_digest",
+            (true, false) => "prompt_digest,NULL",
+            _ => "NULL,NULL",
+        };
+        let mut statement=transaction.prepare(&format!("SELECT sequence,generation,state,event,{columns} FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2"))?;
         let rows = statement.query_map(params![after as i64, BATCH as i64], |row| {
             Ok((
                 unsigned(row, 0)?,
@@ -281,15 +297,17 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })?;
         for row in rows {
-            let (sequence, generation, state, name, prompt_digest) = row?;
+            let (sequence, generation, state, name, prompt_digest, paste_digest) = row?;
             ensure!(state.len() <= 32, "Invalid lifecycle state");
             ensure!(
                 prompt_digest
-                    .as_ref()
-                    .is_none_or(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())),
+                    .iter()
+                    .chain(paste_digest.iter())
+                    .all(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())),
                 "Invalid stored prompt fingerprint"
             );
             events.push(Event {
@@ -298,6 +316,7 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
                 generation,
                 state: serde_json::from_str(&state)?,
                 prompt_digest,
+                paste_digest,
             });
         }
     }
@@ -336,6 +355,7 @@ mod tests {
                     state,
                     allow_rebind: false,
                     prompt_digest: None,
+                    paste_digest: None,
                 },
             )
             .unwrap()
@@ -421,6 +441,44 @@ mod tests {
         let legacy = read(&report, "host-session", 0).unwrap();
         assert!(!legacy.identity.prompt_correlation);
         assert!(legacy.events.iter().all(|e| e.prompt_digest.is_none()));
+        std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn optional_paste_fingerprint_preserves_raw_legacy_journals_and_rejects_bad_metadata() {
+        let report = fixture();
+        initialize(&report, "host-session").unwrap();
+        let hash = crate::submission::digest("literal owned test").unwrap();
+        let source = |event, paste| SourceEvent {
+            provider_session: Some("conversation"),
+            provider_turn: None,
+            event,
+            state: StatusState::Working,
+            allow_rebind: false,
+            prompt_digest: Some(hash.as_str()),
+            paste_digest: paste,
+        };
+        assert!(append_scoped(&report, source("Stop", Some(hash.as_str()))).is_err());
+        assert!(append_scoped(&report, source("UserPromptSubmit", Some("invalid"))).is_err());
+        append_scoped(&report, source("UserPromptSubmit", Some(hash.as_str()))).unwrap();
+        let current = read(&report, "host-session", 0).unwrap();
+        assert_eq!(
+            current.events[0].paste_digest.as_deref(),
+            Some(hash.as_str())
+        );
+        Connection::open(database(&report))
+            .unwrap()
+            .execute_batch("ALTER TABLE events DROP COLUMN paste_digest")
+            .unwrap();
+        append_scoped(&report, source("UserPromptSubmit", Some(hash.as_str()))).unwrap();
+        let legacy = read(&report, "host-session", 0).unwrap();
+        assert!(legacy.identity.prompt_correlation);
+        assert!(
+            legacy
+                .events
+                .iter()
+                .all(|e| e.prompt_digest.as_deref() == Some(hash.as_str())
+                    && e.paste_digest.is_none())
+        );
         std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
     }
     #[test]

@@ -165,6 +165,19 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         let pages=data(call(&owner,"nesvo_list_run_checkpoints",json!({"runId":run})).await?)?;assert_eq!(pages["data"]["checkpoints"].as_array().context("single retained checkpoint")?.len(),1);
         data(call(&coordinator,"nesvo_send_prompt",json!({"key":"deliberate-post-context-input","sessionId":child,"prompt":"ONLY_AFTER_ACK"})).await?)?;
         observed_output(&owner,&child,"FIXTURE_RESPONSE ONLY_AFTER_ACK").await?;
+        let task=view(&coordinator,&run).await?["tasks"][0]["id"].as_str().context("constraint delivery task")?.to_owned();
+        mutate(&coordinator,&run,"nesvo_deliver_task",json!({"key":"literal-owner-context-task","taskId":task})).await?;
+        let receipt=timeout(Duration::from_secs(8),async{loop{
+            let task=data(call(&coordinator,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;
+            if let Some(receipt)=task["data"]["attempts"][0]["delivery"]["receiptId"].as_str(){return Ok::<_,anyhow::Error>(receipt.to_owned());}
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }}).await??;
+        let settled=data(call(&coordinator,"nesvo_wait_prompt",json!({"id":receipt,"until":"settled","timeoutMs":5000})).await?)?;
+        assert_eq!(settled["data"]["receipt"]["phase"],"settled");
+        assert_eq!(settled["data"]["receipt"]["result"]["promptMatch"],"claudePasteWrapper");
+        let context_output=data(call(&owner,"nesvo_read_session",json!({"sessionId":child,"maxBytes":8192})).await?)?;
+        let context_text=context_output["data"]["page"]["data"].as_str().context("literal delivered context")?;
+        assert!(context_text.contains(text));assert!(context_text.contains("CONTEXT_TASK_ONCE"));
         let state=view(&owner,&run).await?;assert_eq!(state["tasks"][0]["state"],"assigned");assert!(state["tasks"][0]["taskResult"].is_null());assert_eq!(state["tasks"][1]["state"],"planned");
         data(call(&owner,"nesvo_stop_session",json!({"key":"owned-coordinator-exit","sessionId":id})).await?)?;
         timeout(Duration::from_secs(6),async{loop{let root=data(call(&owner,"nesvo_get_session",json!({"sessionId":id})).await?)?;if root["data"]["session"]["running"]==false{return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;

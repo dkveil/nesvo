@@ -30,7 +30,7 @@ impl Tracker {
     pub fn adapter(&self) -> &'static str {
         match self.1 {
             Adapter::Codex => "codex-hooks-v1",
-            Adapter::Claude => "claude-hooks-v2",
+            Adapter::Claude => "claude-hooks-v3",
         }
     }
     fn install_inner(command: &mut CommandBuilder, session_id: Option<&str>) -> Result<Self> {
@@ -188,6 +188,13 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
         let digest = (value["hook_event_name"] == "UserPromptSubmit")
             .then(|| value["prompt"].as_str().and_then(crate::submission::digest))
             .flatten();
+        let paste_digest = (!codex && value["hook_event_name"] == "UserPromptSubmit")
+            .then(|| {
+                value["prompt"]
+                    .as_str()
+                    .and_then(crate::submission::claude_paste_digest)
+            })
+            .flatten();
         let sequence = if crate::agent_events::exists(report) {
             match crate::agent_events::append_scoped(
                 report,
@@ -205,6 +212,7 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
                         Some("clear" | "resume" | "compact")
                     ),
                     prompt_digest: digest.as_deref(),
+                    paste_digest: paste_digest.as_deref(),
                 },
             )? {
                 Some(sequence) => sequence,
@@ -357,6 +365,40 @@ pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn claude_paste_envelope_is_separate_private_evidence_not_general_prompt_rewriting() {
+        let mut command = CommandBuilder::new("claude");
+        let tracker = Tracker::install_for(&mut command, "host-session").unwrap();
+        assert_eq!(tracker.adapter(), "claude-hooks-v3");
+        let text =
+            "literal owner context\nDo not lose this rule.\n\nTask instruction:\nReply only.";
+        let prompt =
+            format!("\n\n<pasted_content id=\"f558\">\n{text}\n</pasted_content id=\"f558\">\n");
+        receive_from(&tracker.report(), json!({"hook_event_name":"UserPromptSubmit","session_id":"conversation","prompt":prompt}).to_string().as_bytes()).unwrap();
+        let batch = crate::agent_events::read(&tracker.report(), "host-session", 0).unwrap();
+        assert_eq!(
+            batch.events[0].prompt_digest,
+            crate::submission::digest(&prompt)
+        );
+        assert_eq!(
+            batch.events[0].paste_digest,
+            crate::submission::digest(text)
+        );
+        assert_ne!(batch.events[0].paste_digest, batch.events[0].prompt_digest);
+        let maximum = "x".repeat(8192);
+        let prompt =
+            format!("<pasted_content id=\"f558\">\n{maximum}\n</pasted_content id=\"f558\">");
+        receive_from(&tracker.report(),json!({"hook_event_name":"UserPromptSubmit","session_id":"conversation","prompt":prompt}).to_string().as_bytes()).unwrap();
+        let batch = crate::agent_events::read(&tracker.report(), "host-session", 0).unwrap();
+        assert!(batch.events[1].prompt_digest.is_none());
+        assert_eq!(
+            batch.events[1].paste_digest,
+            crate::submission::digest(&maximum)
+        );
+        let stored = std::fs::read(tracker.report().with_file_name("events.sqlite3")).unwrap();
+        assert!(!String::from_utf8_lossy(&stored).contains("literal owner context"));
+        assert!(!String::from_utf8_lossy(&stored).contains("pasted_content"));
+    }
     #[test]
     fn empty_agent_id_is_root_but_children_cannot_change_parent_context() {
         assert_eq!(

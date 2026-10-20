@@ -119,14 +119,28 @@ just queue admission. The durable send phases add:
 | settled     | Provider Stop for that response; task result remains null               |
 | interrupted | A newer prompt superseded the matched response                          |
 
-The private Claude v2 journal records only a SHA-256 prompt fingerprint. Matching
+The private Claude hook journal records only SHA-256 prompt fingerprints. The
+`claude-hooks-v3` adapter adds the optional whole-paste fingerprint. Matching
 normalizes line endings and surrounding whitespace; it does not rewrite sent
 bytes. Correlation also fences launch, conversation generation and source
 sequence. Unmatched prompts, child/foreign events, old idle/Stop and later
-conversations cannot settle a send. Provider-specific pasted-content rewriting
-may prevent matching and remains unconfirmed; it is never guessed into success.
+conversations cannot settle a send. Claude 2.1.304 was observed wrapping a whole
+multiline paste in matching `<pasted_content id="…">` lines in its hook payload,
+as described in the [upstream hook contract](https://code.claude.com/docs/en/hooks#userpromptsubmit-input).
+The adapter retains the raw fingerprint and, only for that bounded complete
+envelope, a separate exact-body fingerprint. Raw matches take precedence. It
+does not strip inline tags, repeatedly unwrap nested content, change sent bytes,
+collapse internal whitespace or accept unrelated prompts. Envelope IDs must be
+1–16 hexadecimal characters and the body must fit the original 8192-byte/control
+bounds; unsupported forms stay unconfirmed. Matching receipts identify
+`promptMatch:exact|claudePasteWrapper`, without prompt text or hash disclosure.
+`session explain --json` exposes `inputOperation.correlationEvidence` with the
+last pickup sequence/match boolean and matched method, so an unmatched pickup
+is distinguishable from no pickup. This evidence grants no success or authority.
 An old journal without the fingerprint column stays compatible but advertises
 no correlation. Other providers currently have no prompt-correlation adapter.
+An older fingerprint journal without the optional paste column stays writable
+and readable with raw matching only; no live per-launch schema is rewritten.
 
 `until` is `delivered`, `received`, `started` or default `settled`. Wait uses the
 receipt's exact operation/turn, registers before its transactional receipt read,

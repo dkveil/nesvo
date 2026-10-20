@@ -1436,3 +1436,42 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Both preceding commits completed all five CI jobs: 645d7b1 (39376016534),
   61d1b27 (39376742750). Controlled native tests passed Windows/Linux/macOS;
   account/model/device coverage is still reported separately.
+
+### Claude whole-paste receipt correlation
+
+- F02/F03/F17/F40: an original Claude 2.1.304 task with owner constraints returned
+  a response while its receipt stayed delivered. A second isolated probe compared
+  private hashes and only its exact owned conversation: the hook/transcript had
+  a complete pasted-content envelope; its exact inner body matched native input.
+  Only the synthetic probe prompt and its owned conversation were sampled;
+  credentials and unrelated conversations were excluded.
+- The Claude adapter retains the raw digest and a separate bounded complete-
+  envelope body digest. Exact raw matches win. Malformed/mismatched/inline tags,
+  extra surrounding content, unsupported IDs, oversized bodies and control bytes
+  gain no alternate match. One outer layer only; literal inner content survives.
+  No sent input or global provider configuration is rewritten. Optional journal
+  columns preserve raw-only legacy launches without live schema migration.
+- Receipts retain the matched method. Read-only session diagnostics distinguish
+  awaiting pickup from a mismatched prompt by sequence/boolean, exposing neither
+  hash nor content. Old/foreign/generation events and unrelated Stop still cannot
+  settle input. Received/settled is never accepted task success.
+- Four new unit regressions cover parsing/bounds/nesting, exact versus wrapped
+  pickup, private helper fingerprints and legacy journal compatibility. The real
+  SDK checkpoint scenario now delivers the full immutable instruction plus owner
+  constraints through the native PTY, settles the correct receipt and preserves
+  result null/review planned. Controlled Claude fixture payloads model the observed
+  envelope while native bytes remain literal.
+- A fresh sequential original-Claude probe after the parser fix returned V11,
+  the bundled reference heading and owner context code; its exact receipt reached
+  settled with `claudePasteWrapper`. Explicit run stop observed exit; host exited
+  zero and all 21 observed owned descendants were gone (282 ms cleanup check).
+  No tools, reports, edits or native approval were requested. An earlier attempt
+  hit the documented empty-output parser failure and remains failed evidence.
+  Provider compaction/resume, model-to-MCP child creation and remaining full-goal
+  acceptance gates are still open; this response does not substitute for them.
+- Final local Windows checks passed fmt, warnings-denied Clippy, production
+  build, 310 unit checks, all 18 serial native SDK scenarios, 30 host/sync/CLI
+  checks and formatting. After labeling the adapter `claude-hooks-v3` and covering
+  a maximum-size wrapped body, helper and native checkpoint/receipt checks passed
+  again. No new dependency, global database migration or material UI change.
+  CI for dd4e57c was still running when recorded; this commit's CI is separate.

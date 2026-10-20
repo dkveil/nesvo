@@ -35,6 +35,8 @@ pub struct Correlation {
     turn: Option<String>,
     closed: bool,
     processing: bool,
+    matched_by: Option<&'static str>,
+    last_prompt: Option<(u64, bool)>,
 }
 impl Correlation {
     pub fn new(identity: &Identity, after: u64, digest: String) -> Self {
@@ -46,6 +48,8 @@ impl Correlation {
             turn: None,
             closed: false,
             processing: false,
+            matched_by: None,
+            last_prompt: None,
         }
     }
     pub fn observe(&mut self, identity: &Identity, event: &Event) -> Option<(&'static str, Value)> {
@@ -61,14 +65,22 @@ impl Correlation {
         }
         self.after = event.sequence;
         let phase = if event.name == "UserPromptSubmit" {
+            let matched_by = if event.prompt_digest.as_deref() == Some(self.digest.as_str()) {
+                Some("exact")
+            } else if event.paste_digest.as_deref() == Some(self.digest.as_str()) {
+                Some("claudePasteWrapper")
+            } else {
+                None
+            };
+            self.last_prompt = Some((event.sequence, matched_by.is_some()));
             if self.turn.is_some() {
                 self.closed = true;
                 "interrupted"
-            } else if event.prompt_digest.as_deref() == Some(self.digest.as_str()) {
+            } else {
+                let matched_by = matched_by?;
+                self.matched_by = Some(matched_by);
                 self.turn = Some(format!("{}:{}", self.launch, event.sequence));
                 "received"
-            } else {
-                return None;
             }
         } else {
             self.turn.as_ref()?;
@@ -108,8 +120,12 @@ impl Correlation {
         );
         Some((
             phase,
-            json!({"turnId":self.turn,"sourceSequence":event.sequence,"generation":event.generation,"taskResult":null,"providerPromptObserved":true,"processingObserved":self.processing}),
+            json!({"turnId":self.turn,"sourceSequence":event.sequence,"generation":event.generation,"taskResult":null,"providerPromptObserved":true,"processingObserved":self.processing,"promptMatch":self.matched_by}),
         ))
+    }
+    /// Explain unmatched pickup without exposing either fingerprint or prompt.
+    pub fn diagnostic(&self) -> Value {
+        json!({"closed":self.closed,"matchedBy":self.matched_by,"lastPromptSequence":self.last_prompt.map(|p|p.0),"lastPromptMatched":self.last_prompt.map(|p|p.1)})
     }
 }
 
@@ -127,6 +143,25 @@ pub fn digest(prompt: &str) -> Option<String> {
     Some(hex::encode(
         ring::digest::digest(&ring::digest::SHA256, canonical.trim().as_bytes()).as_ref(),
     ))
+}
+
+/// Claude can mark one whole pasted prompt in its hook payload. Preserve the raw
+/// fingerprint too: only this bounded, complete envelope adds an alternative.
+/// Inline/malformed tags and their contents are never generally rewritten.
+pub fn claude_paste_digest(prompt: &str) -> Option<String> {
+    if prompt.len() > 8192 + 128 {
+        return None;
+    }
+    let canonical = prompt.replace("\r\n", "\n").replace('\r', "\n");
+    let (id, content) = canonical
+        .trim()
+        .strip_prefix("<pasted_content id=\"")?
+        .split_once("\">\n")?;
+    if id.is_empty() || id.len() > 16 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let suffix = format!("\n</pasted_content id=\"{id}\">");
+    digest(content.strip_suffix(&suffix)?)
 }
 
 #[cfg(test)]
@@ -149,6 +184,7 @@ mod tests {
             generation: 1,
             state,
             prompt_digest: prompt.and_then(digest),
+            paste_digest: None,
         }
     }
     #[test]
@@ -239,5 +275,87 @@ mod tests {
         assert_ne!(digest("A"), digest("a"));
         assert!(digest("\x1b[201~").is_none());
         assert!(digest(&"x".repeat(8193)).is_none());
+    }
+    #[test]
+    fn paste_envelope_requires_complete_matching_tags_and_keeps_inner_content_exact() {
+        let text = "literal łódź\r\n\t[1] owner rule\r\n\r\nTask";
+        let wrapped = format!(
+            "\n\n<pasted_content id=\"f558\">\r\n{text}\r\n</pasted_content id=\"f558\">\n"
+        );
+        assert_eq!(claude_paste_digest(&wrapped), digest(text));
+        assert_ne!(digest(&wrapped), digest(text));
+        for invalid in [
+            wrapped.replace(
+                "</pasted_content id=\"f558\">",
+                "</pasted_content id=\"b123\">",
+            ),
+            format!("prefix {wrapped}"),
+            format!("{wrapped} suffix"),
+            wrapped.replace("f558", ""),
+            wrapped.replace("f558", "bad identity"),
+            wrapped.replace("f558", &"a".repeat(17)),
+            wrapped.replace("literal", "\x1bliteral"),
+        ] {
+            assert!(claude_paste_digest(&invalid).is_none());
+        }
+        let maximum = format!(
+            "<pasted_content id=\"f558\">\n{}\n</pasted_content id=\"f558\">",
+            "x".repeat(8192)
+        );
+        assert!(digest(&maximum).is_none());
+        assert_eq!(claude_paste_digest(&maximum), digest(&"x".repeat(8192)));
+        assert!(
+            claude_paste_digest(&maximum.replace(&"x".repeat(8192), &"x".repeat(8193))).is_none()
+        );
+        // Strip exactly one envelope; literal nested tags remain significant.
+        let nested = format!("<pasted_content id=\"a\">\n{wrapped}\n</pasted_content id=\"a\">");
+        assert_eq!(claude_paste_digest(&nested), digest(&wrapped));
+    }
+    #[test]
+    fn wrapped_pickup_requires_exact_body_and_cannot_settle_other_or_stale_work() {
+        let id = identity();
+        let mut c = Correlation::new(&id, 10, digest("wanted\nowner rule").unwrap());
+        let wrap = |text: &str| {
+            format!("<pasted_content id=\"f558\">\n{text}\n</pasted_content id=\"f558\">")
+        };
+        let mut wrong = event(
+            11,
+            "UserPromptSubmit",
+            Some(&wrap("other\nowner rule")),
+            StatusState::Working,
+        );
+        wrong.paste_digest = claude_paste_digest(&wrap("other\nowner rule"));
+        assert!(c.observe(&id, &wrong).is_none());
+        assert_eq!(c.diagnostic()["lastPromptMatched"], false);
+        assert!(
+            c.observe(&id, &event(12, "Stop", None, StatusState::Idle))
+                .is_none()
+        );
+        let mut correct = event(
+            13,
+            "UserPromptSubmit",
+            Some(&wrap("wanted\nowner rule")),
+            StatusState::Working,
+        );
+        correct.paste_digest = claude_paste_digest(&wrap("wanted\nowner rule"));
+        let matched = c.observe(&id, &correct).unwrap();
+        assert_eq!(matched.0, "received");
+        assert_eq!(matched.1["promptMatch"], "claudePasteWrapper");
+        assert_eq!(c.diagnostic()["lastPromptMatched"], true);
+        assert_eq!(
+            c.observe(&id, &event(14, "Stop", None, StatusState::Idle))
+                .unwrap()
+                .0,
+            "settled"
+        );
+        assert!(
+            c.observe(&id, &event(15, "Stop", None, StatusState::Idle))
+                .is_none()
+        );
+        let literal = wrap("literal body");
+        let mut c = Correlation::new(&id, 0, digest(&literal).unwrap());
+        let mut e = event(1, "UserPromptSubmit", Some(&literal), StatusState::Working);
+        e.paste_digest = claude_paste_digest(&literal);
+        assert_eq!(c.observe(&id, &e).unwrap().1["promptMatch"], "exact");
     }
 }
