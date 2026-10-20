@@ -108,10 +108,13 @@ async fn initial_report_diagnostics(
         .await;
         diagnostics["explain"] = match explain {
             Ok(Ok(reply)) => match reply.structured_content {
-                Some(reply) if reply["ok"] == true => {
-                    let session = &reply["data"]["diagnostics"]["sessions"][0];
-                    diagnostic_fields(
-                        session,
+                Some(reply) if reply["ok"] == true => match reply["data"]["report"]["sessions"]
+                    .as_array()
+                    .and_then(|sessions| {
+                        sessions.iter().find(|entry| entry["sessionId"] == session)
+                    }) {
+                    Some(entry) => diagnostic_fields(
+                        entry,
                         &[
                             "sessionId",
                             "running",
@@ -123,8 +126,9 @@ async fn initial_report_diagnostics(
                             "turn",
                             "publicationLatency",
                         ],
-                    )
-                }
+                    ),
+                    None => json!({"errorCode":"diagnostic_session_unavailable"}),
+                },
                 Some(reply) => json!({"errorCode":reply["error"]["code"]}),
                 None => json!({"errorCode":"diagnostic_response_unavailable"}),
             },

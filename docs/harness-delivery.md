@@ -3077,3 +3077,20 @@ build and warnings-denied all-target Clippy. The pending explicit-capture native
 SDK fixture also passes its actual generated helper with a named-main payload in
 9.55 seconds. This fixes a documented false rejection; it does not establish the
 cause of any earlier original-provider callback omission.
+
+### Bounded worker-report timeout diagnostics
+
+Publication CI on exact `6b341a3` completed browser, app, Linux and macOS, but the
+Windows SDK cohort had one failure waiting for the first job generation's worker
+report. Allocated run/attempt/session IDs established admission, not native
+readiness, input delivery or a completed report. The teardown warning alone does
+not identify the cause. The preceding `2034973` run completed all five jobs.
+
+That initial-report failure now retains bounded, allowlisted delivery/native
+receipt, lifecycle/readiness and owned-fixture stage metadata before teardown.
+It excludes transcript, context credentials and result contents. Both job tests
+select explain records from `data.report.sessions` by the exact session ID. The
+existing eight-second acceptance and eighteen-second outer bounds are unchanged.
+The focused Windows case passed locally in 3.83 seconds on the capture candidate;
+the updated diagnostics compile under warnings-denied all-target Clippy. This
+does not prove the earlier CI timeout cannot recur or substitute for new CI.

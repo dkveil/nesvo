@@ -28,6 +28,155 @@ async fn reported_occurrence(
     .with_context(|| format!("Job generation did not retain its worker result; last: {last}"))?
 }
 
+fn diagnostic_fields(value: &Value, fields: &[&str]) -> Value {
+    Value::Object(
+        fields
+            .iter()
+            .filter_map(|field| {
+                value
+                    .get(*field)
+                    .map(|value| ((*field).into(), value.clone()))
+            })
+            .collect(),
+    )
+}
+
+fn diagnostic_native(value: &Value) -> Value {
+    let mut summary = diagnostic_fields(value, &["id", "operation", "sessionId", "phase"]);
+    summary["result"] = diagnostic_fields(
+        &value["result"],
+        &[
+            "code",
+            "effectStarted",
+            "submissionStage",
+            "nativeWriteFlushed",
+            "providerPromptObserved",
+            "nativeStopRequested",
+            "processExited",
+        ],
+    );
+    summary
+}
+
+async fn initial_report_diagnostics(
+    fixture: &mut Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    occurrence: &str,
+) -> Value {
+    // Read only after the existing acceptance wait has failed, before teardown
+    // removes the owned worker and its evidence. Neither test deadline changes.
+    let actual = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
+    let unavailable = Value::Null;
+    let current = actual["history"]["reply"]["data"]["occurrences"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == occurrence))
+        .unwrap_or(&unavailable);
+    let attempt_id = current["attemptId"].as_str();
+    let attempt = actual["taskAttempts"]["reply"]["data"]["attempts"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == attempt_id))
+        .unwrap_or(&unavailable);
+    let mut diagnostics = json!({
+        "jobId":job,"occurrenceId":occurrence,
+        "host":diagnostic_fields(&actual["host"],&["exited","exitCode"]),
+        "providerProbe":diagnostic_fields(&actual["providerProbe"],&["providerVersions","eventJournal"]),
+        "diagnosticDeadlineElapsed":actual["diagnosticDeadlineElapsed"],
+        "occurrence":diagnostic_fields(current,&[
+            "id","state","reason","runId","attemptId","sessionId","jobAttemptId","launchReceiptId"
+        ]),
+        "run":diagnostic_fields(&actual["run"]["reply"]["data"]["run"],&["id","state","revision","reason"]),
+        "attempt":diagnostic_fields(attempt,&["id","taskId","state","sessionId","ordinal"]),
+        "launch":diagnostic_fields(&attempt["launch"],&["attemptId","receiptId","phase","sessionId"]),
+        "launchOperation":diagnostic_native(&actual["launchReceipt"]["reply"]["data"]["receipt"]),
+        "delivery":diagnostic_fields(&attempt["delivery"],&["id","attemptId","phase","blocker","receiptId","createdAt","deadlineAt"]),
+        "deliveryNative":diagnostic_native(&attempt["delivery"]["native"]),
+        "session":diagnostic_fields(&actual["session"]["reply"]["data"]["session"],&["id","program","running","status","readiness","turn","lifecycle","inputOperation"])
+    });
+    diagnostics["providerProbe"]["providerVersions"] = actual["providerProbe"]["providerVersions"]
+        .as_array()
+        .map(|versions| {
+            Value::Array(
+                versions
+                    .iter()
+                    .map(|version| diagnostic_fields(version, &["program", "status", "version"]))
+                    .collect(),
+            )
+        })
+        .unwrap_or(Value::Null);
+    diagnostics["attempt"]["result"] = diagnostic_fields(&attempt["result"], &["outcome"]);
+    // A report-input marker is written only after the scoped run-context CLI
+    // returned; a result marker is written only after the report CLI returned.
+    // Publish stage booleans and a bounded typed reply code, never raw files.
+    if let Some(session) = current["sessionId"].as_str().filter(|id| {
+        id.len() == 32
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }) {
+        let callers = fixture.directory.join("callers");
+        let result_path = callers.join(format!("{session}.result.json"));
+        let result = std::fs::metadata(&result_path)
+            .ok()
+            .filter(|metadata| metadata.is_file() && metadata.len() <= 65536)
+            .and_then(|_| std::fs::read(&result_path).ok())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let reply_code = result
+            .as_ref()
+            .and_then(|reply| reply["error"]["code"].as_str())
+            .filter(|code| {
+                !code.is_empty()
+                    && code.len() <= 64
+                    && code.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+            });
+        diagnostics["fixtureReportStages"] = json!({
+            "callerContextPresent":callers.join(format!("{session}.txt")).is_file(),
+            "launchArgumentsPresent":callers.join(format!("{session}.launch-argv.json")).is_file(),
+            "reportInputPresent":callers.join(format!("{session}.report-input.json")).is_file(),
+            "reportReplyPresent":result_path.is_file(),
+            "reportReplyOk":result.as_ref().and_then(|reply| reply["ok"].as_bool()),
+            "reportReplyErrorCode":reply_code
+        });
+        diagnostics["explain"] = match timeout(
+            Duration::from_millis(600),
+            call(owner, "nesvo_explain_session", json!({"sessionId":session})),
+        )
+        .await
+        {
+            Ok(Ok(reply)) => match reply.structured_content {
+                Some(reply) if reply["ok"] == true => match reply["data"]["report"]["sessions"]
+                    .as_array()
+                    .and_then(|sessions| {
+                        sessions.iter().find(|entry| entry["sessionId"] == session)
+                    }) {
+                    Some(entry) => diagnostic_fields(
+                        entry,
+                        &[
+                            "sessionId",
+                            "running",
+                            "processIdentity",
+                            "inputOperation",
+                            "integration",
+                            "status",
+                            "readiness",
+                            "turn",
+                            "publicationLatency",
+                        ],
+                    ),
+                    None => json!({"errorCode":"diagnostic_session_unavailable"}),
+                },
+                Some(reply) => json!({"errorCode":reply["error"]["code"]}),
+                None => json!({"errorCode":"diagnostic_response_unavailable"}),
+            },
+            Ok(Err(_)) => json!({"errorCode":"diagnostic_transport_unavailable"}),
+            Err(_) => json!({"errorCode":"diagnostic_deadline_elapsed"}),
+        };
+    }
+    diagnostics
+}
+
 #[tokio::test]
 #[ignore = "native CLI/MCP/host and controlled Node worker; durable job generation history, no models"]
 async fn first_job_generation_retains_native_pointers_and_restarts_without_creating_another_attempt()
@@ -49,7 +198,13 @@ async fn first_job_generation_retains_native_pointers_and_restarts_without_creat
             "job","run-now",job,"--key","attempt-history-run","--revision","1","--json"
         ]).await?;
         let occurrence = admitted["data"]["occurrence"]["id"].as_str().context("Journal occurrence ID")?;
-        let reported = reported_occurrence(&owner,job,occurrence).await?;
+        let reported = match reported_occurrence(&owner,job,occurrence).await {
+            Ok(reported) => reported,
+            Err(error) => {
+                let diagnostics = initial_report_diagnostics(&mut fixture, &owner, job, occurrence).await;
+                return Err(error.context(format!("Initial job generation report diagnostics: {diagnostics}")));
+            }
+        };
         let current = &reported["data"]["occurrence"];
         let run = current["runId"].as_str().context("Journal workflow run")?;
         let native_attempt = current["attemptId"].as_str().context("Native workflow attempt")?;
