@@ -354,6 +354,7 @@ fn due(spec: &Spec) -> Result<Option<u64>> {
         .map_err(|_| invalid("Once time must be after the Unix epoch"))
 }
 fn validate(spec: &Spec, now: u64) -> Result<Option<u64>> {
+    spec.profile.validate_capture(true)?;
     if let Some(policy) = &spec.quota_policy {
         policy.validate(spec.profile.program)?;
     }

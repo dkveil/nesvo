@@ -6,6 +6,7 @@ mod attention_projection;
 mod budgets;
 mod caller;
 mod claude_quota;
+mod claude_statusline;
 mod codex_context;
 mod command_scope;
 mod event_log;
@@ -116,6 +117,12 @@ struct Args {
     #[arg(long, hide = true)]
     claude_quota_hook: Option<PathBuf>,
     #[arg(long, hide = true)]
+    claude_statusline: Option<PathBuf>,
+    #[arg(long, hide = true)]
+    claude_statusline_child: bool,
+    #[arg(long, hide = true)]
+    claude_statusline_profile: bool,
+    #[arg(long, hide = true)]
     codex_context_hook: bool,
     /// Print the source build identity without starting a host.
     #[arg(long)]
@@ -208,6 +215,15 @@ fn main() -> Result<()> {
         return job_calendar_adapter::stdio();
     }
     let args = Args::parse();
+    if let Some(manifest) = args.claude_statusline {
+        std::process::exit(claude_statusline::run(&manifest));
+    }
+    if args.claude_statusline_child {
+        std::process::exit(claude_statusline::child());
+    }
+    if args.claude_statusline_profile {
+        std::process::exit(claude_statusline::profile_child());
+    }
     if let Some(report) = args.claude_quota_hook {
         if claude_quota::receive(&report, std::io::stdin()).is_err() {
             eprintln!("nesvo quota callback delivery failed; inspect session diagnostics");

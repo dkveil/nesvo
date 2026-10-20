@@ -73,6 +73,8 @@ retention refuses new intent while preserving existing history.
 Claude's global cache remains display-only. The private launch-owned Claude
 callback receiver records allowlisted optional windows and root/generation
 identity, but callback time does not establish backend freshness or permission.
-Nesvo does not replace the user's statusline. Claude/Gemini wake and job admission
+Default launches preserve the user's statusline; an optional
+[declared-display capture](harness-claude-quota-capture.md) is scoped to one launch.
+Claude/Gemini wake and job admission
 remain separate unfinished provider integrations. This feature neither bypasses
 provider limits nor purchases credits.

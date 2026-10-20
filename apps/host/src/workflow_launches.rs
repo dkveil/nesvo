@@ -32,6 +32,27 @@ pub struct Profile {
     pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_nesvo_tools: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::claude_statusline::deserialize_options"
+    )]
+    pub claude_quota_capture: Option<crate::claude_statusline::Options>,
+}
+impl Profile {
+    pub fn validate_capture(&self, owner: bool) -> Result<()> {
+        if let Some(options) = &self.claude_quota_capture {
+            if !owner {
+                return Err(Error::new(
+                    "forbidden",
+                    "Only the owner may select a declared Claude quota display profile",
+                )
+                .into());
+            }
+            options.validate(self.program)?;
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -234,6 +255,9 @@ fn prepare(
             dispatch: None,
         });
     }
+    request
+        .profile
+        .validate_capture(matches!(actor.scope, orchestration::Scope::Owner))?;
     if let Some(guard) = &executor {
         crate::workflow_executor::guard_run(&transaction, guard, &actor.issuer, &request.run_id)?;
     }
@@ -316,6 +340,8 @@ fn prepare(
         harness: request.profile.harness,
         model: request.profile.model.clone(),
         effort: request.profile.effort.clone(),
+        claude_quota_capture: request.profile.claude_quota_capture.clone(),
+        claude_quota_owner_selected: request.profile.claude_quota_capture.is_some(),
         parent_session_id: coordinator.clone(),
         ..Default::default()
     };

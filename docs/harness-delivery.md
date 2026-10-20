@@ -3115,3 +3115,51 @@ core, but it lacks Claude lifecycle/quota observation. This is not a matched
 regression comparison, total-tree measurement, memory-leak verdict or explanation
 of historical 100% CPU. A matched instrumented observer comparison remains open,
 alongside pooling and hibernation.
+
+### F44 explicit launch-local Claude capture
+
+An owner can now select a bounded host-side display manifest using
+`--claude-quota-display-profile` or `claudeQuotaCapture` in the shared launch/job
+profiles. One native settings object retains lifecycle/recovery hooks and tool
+permissions and adds the requested statusline wrapper. Defaults and global
+provider configuration are unchanged; children do not inherit this selection.
+Strict capability checks and present-null rejection are shared across CLI/MCP.
+See [configuration, limits and removal](harness-claude-quota-capture.md).
+
+The wrapper captures the existing root ticket before input, forwards the declared
+display's literal arguments, stdin, cwd, environment, stdout bytes and exit code,
+and bounds helper execution and descendant cleanup. Windows explicitly inherits
+raw handles and flushes input before EOF; PowerShell task return values cannot
+pollute stdout. Manifest reads run in a killable private helper, with capacity
+retained until cleanup is observed. Receipt replay uses the pinned declaration.
+
+Windows verification passes 676 workspace units, warnings-denied all-target
+Clippy, locked build, formatting and whitespace checks. The final native SDK
+capture case passes in 9.55 seconds, covering actual generated-command Unicode/
+ANSI/input forwarding, callback projection, foreign rejection with preserved
+display, replay after source mutation, scoped refusal, unchanged default settings
+and hung-display descendant cleanup. Four quota SDK cases passed separately in
+75.87 seconds before the named-root predicate follow-up; this is not a claim of
+a newly rerun complete SDK cohort.
+
+A checked passive original-Claude 2.1.305 run on native Windows completed 20.110
+seconds with one session, no prompt/send/keypress/model task or native tool
+addition. The declared display marker and a current generation-one callback were
+both observed; the callback retained two valid windows and sequence three.
+Lifecycle delivery was received without helper error or gap. Its test manifest
+alone selected `refreshInterval:5`; the default still adds no interval. Exact
+binary digests, bounded allowlisted observations and confirmed cleanup are
+retained outside Git. Nineteen pure probe-validation checks passed first.
+
+Earlier probes remain separate evidence: the first rejected an unbound identity
+too early in its own validator; the corrected 2.1.304 default-interval probe saw
+display output but no callback. A later version gate stopped before creating a
+session after the installed CLI updated. The successful explicit-refresh probe
+does not establish the cause of the earlier omission or guarantee an immediate
+default-startup callback. Receiver rejection/error diagnostics still need a
+separate projection; absent callbacks are not reported as success.
+
+This callback remains display evidence, without backend freshness, account
+identity or ordinary-use permission. Claude quota admission/automatic wake,
+other original-provider/platform acceptance, job presentation and the broader
+F01–F44/plugin gates remain open. No dependency was added.

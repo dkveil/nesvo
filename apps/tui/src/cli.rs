@@ -187,6 +187,9 @@ pub struct CreateOptions {
     /// Provider reasoning effort for an explicit model; unsupported versions refuse.
     #[arg(long, requires = "model")]
     effort: Option<String>,
+    /// Owner-only explicit Claude display manifest; does not change global settings.
+    #[arg(long)]
+    claude_quota_display_profile: Option<String>,
     /// Explicitly opt out when the coordinator profile would inherit the harness.
     #[arg(long, conflicts_with = "harness")]
     no_harness: bool,
@@ -865,6 +868,22 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
     let prompt = read_prompt(options.prompt, options.prompt_file, options.stdin)?;
     let caps = operation_capability(connection).await?;
     let mut spec = json!({"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt});
+    if let Some(path) = options.claude_quota_display_profile {
+        let capture = json!({"displayProfile":path});
+        if !crate::workflow_launches::valid_capture(&capture, &spec["program"]) {
+            return Err(failure(
+                "invalid_argument",
+                "Claude quota capture requires Claude and an absolute host display-profile path",
+            ));
+        }
+        if caps["claudeQuotaCapture"] != true {
+            return Err(failure(
+                "unsupported",
+                "Host cannot configure explicit Claude quota capture; update nesvo-host",
+            ));
+        }
+        spec["claudeQuotaCapture"] = capture;
+    }
     if options.model.is_some() || options.effort.is_some() {
         if caps["sessionModelProfiles"] != true {
             return Err(failure(

@@ -235,6 +235,16 @@ ordinary-use permission for eligibility, and every reported denial/reset remains
 a hold. Sparse notifications cannot create or refresh that authority. Five-hour
 wake additionally requires an actual unique 300-minute window.
 
+Additive `claudeQuotaCapture:true` advertises optional owner-selected
+`claudeQuotaCapture:{displayProfile:absoluteHostPath}` on supported Claude create
+and workflow/task/job profiles. It pins an explicitly declared display executable,
+arguments and presentation in one private launch scope; omission preserves the
+native statusline. Scoped callers cannot select or implicitly inherit it. Session
+diagnostics distinguish requested configuration from `nativeQuotaCallback` receipt;
+neither establishes fresh backend permission or an account lease. See the
+[launch-local capture contract](harness-claude-quota-capture.md). There is no new
+MCP tool or global provider configuration mutation.
+
 Additive `durableQuotaWake:true` advertises owner-only `{type:"getQuotaWake",sessionId}`
 and the durable implementation of `{type:"setWake",sessionId,enabled}`. The getter
 returns `{type:"quotaWake",sessionId,quotaWake:null|view}`; the setter retains

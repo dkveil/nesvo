@@ -343,6 +343,10 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
     }
     let (id, enabled) = match &request {
         Request::Start { spec, .. } => {
+            for task in &spec.tasks {
+                task.profile
+                    .validate_capture(matches!(actor.scope, orchestration::Scope::Owner))?;
+            }
             if previous.is_some() {
                 return Err(Error::new(
                     "executor_exists",
@@ -378,6 +382,10 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
                 previous.ok_or_else(|| Error::new("executor_not_found", "Run has no executor"))?;
             let enabled = matches!(request, Request::Enable { .. });
             if enabled {
+                for task in &previous.spec.tasks {
+                    task.profile
+                        .validate_capture(matches!(actor.scope, orchestration::Scope::Owner))?;
+                }
                 if previous.enabled {
                     return Err(Error::new(
                         "executor_state_conflict",

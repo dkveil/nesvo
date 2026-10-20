@@ -666,7 +666,18 @@ fn wire(request: Request) -> Result<Value> {
             "Workflow request exceeds 24 KiB",
         ));
     }
-    Ok(json!({"type":"workflow","request":value}))
+    let request = json!({"type":"workflow","request":value});
+    if task_profile_requested(&request, |profile| {
+        profile.get("claudeQuotaCapture").is_some_and(|capture| {
+            !crate::workflow_launches::valid_capture(capture, &profile["program"])
+        })
+    }) {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Claude quota capture requires Claude and an absolute host display-profile path",
+        ));
+    }
+    Ok(request)
 }
 pub fn tool(action: &str, mut arguments: Value) -> Result<Value> {
     let object = arguments
@@ -690,6 +701,11 @@ fn model_profile_requested(request: &Value) -> bool {
     task_profile_requested(request, |profile: &Value| {
         profile.get("model").is_some() || profile.get("effort").is_some()
     })
+}
+fn capture_supported(caps: &Value, request: &Value) -> bool {
+    !task_profile_requested(request, |profile| {
+        profile.get("claudeQuotaCapture").is_some()
+    }) || caps["claudeQuotaCapture"] == true
 }
 fn task_profile_requested(request: &Value, selected: impl Fn(&Value) -> bool) -> bool {
     let action = &request["request"];
@@ -940,6 +956,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host lacks launch-local model profile support; update nesvo-host",
         ));
     }
+    if !capture_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot configure explicit Claude quota capture; update nesvo-host",
+        ));
+    }
     if task_profile_requested(request, |p| p.get("allowedNesvoTools").is_some())
         && caps["taskNativeToolProfiles"] != true
     {
@@ -969,6 +991,80 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capture_null_is_rejected_before_profile_normalization() {
+        for capture in [
+            None,
+            Some(Value::Null),
+            Some(json!({"displayProfile":"/owner/display.json"})),
+        ] {
+            let mut profile = json!({"program":"claude","workspace":"shared"});
+            if let Some(value) = &capture {
+                profile["claudeQuotaCapture"] = value.clone();
+            }
+            let mut requests = vec![
+                (
+                    "launch",
+                    json!({"request":{"key":"launch","runId":"r","taskId":"t","expectedRevision":1,"profile":profile}}),
+                ),
+                (
+                    "executor",
+                    json!({"request":{"action":"start","key":"executor","runId":"r","expectedRevision":1,"spec":{"tasks":[{"taskId":"t","profile":profile}]}}}),
+                ),
+            ];
+            for action in ["create", "update"] {
+                let mut job = json!({"action":action,"key":"job","spec":{"title":"Declared display","instruction":"Report result","profile":profile,"schedule":{"kind":"external"}}});
+                if action == "update" {
+                    job["jobId"] = json!("j");
+                    job["expectedRevision"] = json!(1);
+                }
+                requests.push(("jobs", json!({"request":job})));
+            }
+            for (action, arguments) in requests {
+                let result = tool(action, arguments);
+                if capture.as_ref().is_some_and(Value::is_null) {
+                    assert!(
+                        result.is_err(),
+                        "{action} must reject explicit capture null"
+                    );
+                } else {
+                    let request = result.unwrap();
+                    assert!(task_profile_requested(&request, |profile| {
+                        profile.get("claudeQuotaCapture") == capture.as_ref()
+                    }));
+                    assert_eq!(capture_supported(&json!({}), &request), capture.is_none());
+                }
+            }
+        }
+    }
+    #[test]
+    fn declared_claude_capture_crosses_all_profiles_and_requires_exact_capability() {
+        let profile = json!({"program":"claude","workspace":"shared","claudeQuotaCapture":{"displayProfile":"/owner/display.json"}});
+        let launch=tool("launch",json!({"request":{"key":"k","runId":"r","taskId":"t","expectedRevision":1,"profile":profile}})).unwrap();
+        let executor=tool("executor",json!({"request":{"action":"start","key":"e","runId":"r","expectedRevision":1,"spec":{"tasks":[{"taskId":"t","profile":profile}]}}})).unwrap();
+        let jobs=tool("jobs",json!({"request":{"action":"create","key":"j","spec":{"title":"Explicit display","instruction":"Report result","profile":profile,"schedule":{"kind":"external"}}}})).unwrap();
+        for request in [&launch, &executor, &jobs] {
+            assert!(!capture_supported(&json!({}), request));
+            assert!(!capture_supported(
+                &json!({"claudeQuotaCapture":"true"}),
+                request
+            ));
+            assert!(capture_supported(
+                &json!({"claudeQuotaCapture":true}),
+                request
+            ));
+        }
+        let mut invalid = profile;
+        invalid["program"] = json!("codex");
+        assert!(tool("launch",json!({"request":{"key":"k","runId":"r","taskId":"t","expectedRevision":1,"profile":invalid}})).is_err());
+        let legacy=tool("launch",json!({"request":{"key":"k","runId":"r","taskId":"t","expectedRevision":1,"profile":{"program":"claude","workspace":"shared"}}})).unwrap();
+        assert!(capture_supported(&json!({}), &legacy));
+        assert!(
+            legacy["request"]["request"]["profile"]
+                .get("claudeQuotaCapture")
+                .is_none()
+        );
+    }
     #[test]
     fn external_jobs_and_trigger_actions_require_typed_scoped_support() {
         let external = tool("jobs",json!({"request":{"action":"create","key":"external","spec":{"title":"Triggered checks","instruction":"report-task","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"external"}}}})).unwrap();

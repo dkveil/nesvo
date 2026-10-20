@@ -1056,6 +1056,13 @@ impl State {
         let Some(session) = self.actor_session(authority)? else {
             return Ok(());
         };
+        if spec.claude_quota_capture.is_some() && !spec.claude_quota_owner_selected {
+            return Err(crate::api_error::Error::new(
+                "forbidden",
+                "Only the owner may select a declared Claude quota display profile",
+            )
+            .into());
+        }
         if spec.allowed_nesvo_tools.is_some() || spec.child_allowed_nesvo_tools.is_some() {
             return Err(crate::api_error::Error::new("forbidden", "Only owner launch may add native tool permissions; children do not inherit these additions").into());
         }
@@ -1331,6 +1338,7 @@ impl State {
         event["sessionToolPermissions"] = true.into();
         event["childToolPolicy"] = true.into();
         event["sessionModelProfiles"] = true.into();
+        event["claudeQuotaCapture"] = true.into();
         event["taskNativeToolProfiles"] = true.into();
         event["durableJobs"] = true.into();
         event["jobPrechecks"] = true.into();
@@ -1896,6 +1904,9 @@ impl State {
     }
 
     pub fn validate_launch(&self, spec: &crate::jobs::LaunchSpec) -> Result<PathBuf> {
+        if let Some(options) = &spec.claude_quota_capture {
+            crate::claude_statusline::validate(options, spec.program, &self.provider_versions)?;
+        }
         ensure!(!self.shutting_down, "Host is shutting down.");
         valid_name(&spec.name)?;
         if let Some(tools) = &spec.child_allowed_nesvo_tools {
@@ -2427,6 +2438,10 @@ impl State {
         grant: Option<crate::tool_permissions::Grant>,
     ) -> Result<String> {
         let cwd = self.validate_launch(spec)?;
+        ensure!(
+            spec.claude_quota_capture.is_none() || spec.claude_quota_prepared.is_some(),
+            "Declared Claude quota display profile was not prepared"
+        );
         let grant = grant.unwrap_or_else(|| {
             crate::tool_permissions::Grant::owner(
                 spec.allowed_nesvo_tools.as_deref().unwrap_or_default(),
@@ -2495,6 +2510,7 @@ impl State {
                 role: spec.role,
                 harness: spec.harness == Some(true),
                 codex_hooks: self.codex_hooks_available(),
+                claude_quota_capture: spec.claude_quota_prepared.as_ref(),
                 native_grant: &grant,
                 child_tools: spec
                     .child_allowed_nesvo_tools
@@ -2626,6 +2642,7 @@ impl State {
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
             "conversationIdentity":session.conversation_identity,
             "nativeQuotaCallback":session.claude_quota.as_ref().map(|quota|json!({"source":"claudeStatusLine","sequence":quota.scope.sequence,"generation":quota.scope.generation,"snapshot":quota.snapshot,"backendFreshness":"unknown","ordinaryUsageAllowed":null,"accountFingerprint":null})),
+            "claudeQuotaCapture":session.agent_context.as_ref().and_then(|tracker|tracker.capture_diagnostic()),
             "publicationLatency":session.status_latency.snapshot(),
             "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())), "turnHistory":session.turn.history(), "terminalProtocol":session.terminal_protocol.diagnostics(),
         })).collect();
@@ -2935,6 +2952,7 @@ impl State {
                         role: crate::caller::Role::Worker,
                         harness: false,
                         codex_hooks: self.codex_hooks_available(),
+                        claude_quota_capture: None,
                         native_grant: &crate::tool_permissions::Grant::owner(&[]),
                         child_tools: &[],
                     },
@@ -3212,6 +3230,7 @@ struct SpawnIdentity<'a> {
     role: crate::caller::Role,
     harness: bool,
     codex_hooks: bool,
+    claude_quota_capture: Option<&'a crate::claude_statusline::Prepared>,
     native_grant: &'a crate::tool_permissions::Grant,
     child_tools: &'a [String],
 }
@@ -3240,19 +3259,20 @@ fn spawn_session(
         }
     }
     let agent_context = if program == Program::Claude {
-        Some(if identity.harness {
+        let recovery = if identity.harness {
             let context = caller_context
                 .as_ref()
                 .ok_or_else(|| anyhow!("Harness caller context is unavailable"))?;
-            crate::agent_context::Tracker::install_harness(
-                &mut command,
-                &id,
-                context.recovery_hook()?,
-                context.permission_rules(),
-            )?
+            Some((context.recovery_hook()?, context.permission_rules()))
         } else {
-            crate::agent_context::Tracker::install_for(&mut command, &id)?
-        })
+            None
+        };
+        Some(crate::agent_context::Tracker::install_claude(
+            &mut command,
+            &id,
+            recovery,
+            identity.claude_quota_capture,
+        )?)
     } else if program == Program::Codex && identity.codex_hooks {
         Some(crate::agent_context::Tracker::install_codex(
             &mut command,

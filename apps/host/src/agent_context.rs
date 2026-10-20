@@ -13,22 +13,40 @@ enum Adapter {
     ClaudeHarness,
     Codex,
 }
-pub struct Tracker(PathBuf, Adapter);
+pub struct Tracker(PathBuf, Adapter, Option<Value>);
 impl Tracker {
     #[cfg(test)]
     pub fn install(command: &mut CommandBuilder) -> Result<Self> {
-        Self::install_inner(command, None, None)
+        Self::install_inner(command, None, None, None)
     }
+    #[cfg(test)]
     pub fn install_for(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
-        Self::install_inner(command, Some(session_id), None)
+        Self::install_inner(command, Some(session_id), None, None)
     }
+    #[cfg(test)]
     pub fn install_harness(
         command: &mut CommandBuilder,
         session_id: &str,
         recovery: Value,
         permissions: Vec<String>,
     ) -> Result<Self> {
-        Self::install_inner(command, Some(session_id), Some((recovery, permissions)))
+        Self::install_inner(
+            command,
+            Some(session_id),
+            Some((recovery, permissions)),
+            None,
+        )
+    }
+    pub fn install_claude(
+        command: &mut CommandBuilder,
+        session_id: &str,
+        recovery: Option<(Value, Vec<String>)>,
+        capture: Option<&crate::claude_statusline::Prepared>,
+    ) -> Result<Self> {
+        Self::install_inner(command, Some(session_id), recovery, capture)
+    }
+    pub fn capture_diagnostic(&self) -> Option<&Value> {
+        self.2.as_ref()
     }
     pub fn install_codex(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
         let mut tracker = Self::create(Some(session_id))?;
@@ -47,6 +65,7 @@ impl Tracker {
         command: &mut CommandBuilder,
         session_id: Option<&str>,
         recovery: Option<(Value, Vec<String>)>,
+        capture: Option<&crate::claude_statusline::Prepared>,
     ) -> Result<Self> {
         let mut tracker = Self::create(session_id)?;
         if let Some(id) = session_id {
@@ -76,6 +95,10 @@ impl Tracker {
                 settings["permissions"] = json!({"allow":permissions});
             }
         }
+        if let Some(capture) = capture {
+            settings["statusLine"] = capture.install(&tracker.report())?;
+            tracker.2 = Some(capture.diagnostic());
+        }
         let settings = settings.to_string();
         let argv = command.get_argv_mut();
         let index = argv
@@ -96,7 +119,7 @@ impl Tracker {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
-        let tracker = Self(directory, Adapter::Claude);
+        let tracker = Self(directory, Adapter::Claude, None);
         if let Some(session_id) = session_id {
             crate::agent_events::initialize(&tracker.report(), session_id)?;
         }

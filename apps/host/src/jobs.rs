@@ -28,6 +28,17 @@ pub struct LaunchSpec {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::claude_statusline::deserialize_options"
+    )]
+    pub claude_quota_capture: Option<crate::claude_statusline::Options>,
+    #[serde(skip)]
+    pub(crate) claude_quota_prepared: Option<crate::claude_statusline::Prepared>,
+    // Set only by owner-validated task preparation; scoped input cannot supply it.
+    #[serde(skip)]
+    pub(crate) claude_quota_owner_selected: bool,
     #[serde(default)]
     pub program: Program,
     #[serde(default)]
@@ -84,8 +95,16 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>) {
             .lock()
             .ok()
             .and_then(|state| state.validate_launch(&spec).ok());
+        let cwd = match cwd {
+            Some(cwd) => crate::claude_statusline::prepare(&mut spec)
+                .await
+                .map(|()| cwd),
+            None => Err(anyhow::anyhow!(
+                "Launch no longer valid: check folder, group, installed program and session capacity."
+            )),
+        };
         let result = match cwd {
-            Some(cwd) => {
+            Ok(cwd) => {
                 if spec.worktree {
                     match crate::git::create_worktree(&cwd).await {
                         Ok(path) => {
@@ -99,9 +118,7 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>) {
                     Ok(())
                 }
             }
-            None => Err(anyhow::anyhow!(
-                "Launch no longer valid: check folder, group, installed program and session capacity."
-            )),
+            Err(error) => Err(error),
         };
         if let Ok(mut state) = state.lock() {
             let result = result.and_then(|()| state.launch(&spec, &events));

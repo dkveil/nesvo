@@ -936,6 +936,12 @@ pub(crate) async fn dispatch_create(
         &mut spec,
         context.task_tools.as_deref(),
     );
+    let validation = match validation {
+        Ok(directory) => crate::claude_statusline::prepare(&mut spec)
+            .await
+            .map(|()| directory),
+        Err(error) => Err(error),
+    };
     let (phase, result) = match validation {
         Err(error) => (
             "failed",

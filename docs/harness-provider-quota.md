@@ -29,8 +29,10 @@ omit it.
   observation or renew permission. No login, auth refresh, turn or model RPC is
   issued. The host does not read credential files.
 - Claude: the existing quota-only `.rate-limits.json` status-line cache under
-  `CLAUDE_CONFIG_DIR` or the user's `.claude` directory. Nesvo does not install or
-  modify a status-line producer. Missing/invalid cache remains unavailable. Reads
+  `CLAUDE_CONFIG_DIR` or the user's `.claude` directory. Default launches leave
+  its producer untouched. An [explicit launch capture](harness-claude-quota-capture.md)
+  can preserve an owner-declared display and separately record scoped callbacks;
+  it does not make this cache authoritative. Missing/invalid cache remains unavailable. Reads
   accept regular files only, validate the opened handle and have a two-second
   deadline; special files cannot hold the observer in a blocking pipe read.
 - Gemini: no implemented structured source; its installed entry explicitly
@@ -111,6 +113,9 @@ does not renew prior windows. `backendFreshness:"unknown"`, nullable account and
 permission fields explicitly prevent treating callback receipt time as a fresh
 backend read. No automatic producer installation or global settings mutation is
 performed. The existing global cache remains the compatible display source.
+Owners can explicitly select a launch-local producer and declared display with
+the [Claude capture profile](harness-claude-quota-capture.md); omission preserves
+the existing native statusline.
 
 No dependency was added. Controlled native acceptance uses private Node RPC/PTY
 fixtures and the official MCP SDK, not original model calls or user settings.

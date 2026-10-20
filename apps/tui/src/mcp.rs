@@ -48,6 +48,9 @@ fn valid_permission_additions(value: &Value) -> bool {
         })
 }
 
+fn capture_schema() -> Value {
+    json!({"type":"object","additionalProperties":false,"required":["displayProfile"],"properties":{"displayProfile":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host path to an owner-declared bounded display manifest. Explicit Claude-only opt-in; pins declared executable/argv/presentation for this launch, without guessing or modifying global statusLine. Callback is display evidence only, not fresh account permission."}}})
+}
 fn launch_schema() -> Value {
     json!({
         "type":"object", "required":["name"], "additionalProperties":false,
@@ -60,6 +63,7 @@ fn launch_schema() -> Value {
             "childAllowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Owner-only immutable coordinator policy for authenticated supported Claude harness children. Not copied from the coordinator's own native permissions. Never delegates host roles, allows recursive coordinators or applies merely from parent metadata. Other programs/opt-out children receive no additions."},
             "model":{"type":"string","minLength":1,"maxLength":256,"description":"Explicit launch-local native model alias/ID, not resolved account availability"},
             "effort":{"type":"string","minLength":1,"maxLength":32,"description":"Requires explicit model; provider-specific native reasoning level"},
+            "claudeQuotaCapture":capture_schema(),
             "cwd":{"type":"string"}, "groupId":{"type":["string","null"]},
             "parentSessionId":{"type":["string","null"],"description":"Lineage only; scoped creation binds the authenticated parent automatically"},
             "prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},
@@ -73,6 +77,7 @@ fn launch_schema() -> Value {
 
 fn task_profile_schema(include_shell: bool) -> Value {
     let mut schema = json!({"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"program":{"enum":["claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"harness":{"type":"boolean"},"model":{"type":"string","minLength":1,"maxLength":256},"effort":{"type":"string","minLength":1,"maxLength":32},"allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Exact task-native additions: coordinator policy subset or explicit owner coordinatorless intent; [] chooses none. Does not grant host authority or bypass provider policy."}}});
+    schema["properties"]["claudeQuotaCapture"] = capture_schema();
     if include_shell {
         schema["properties"]["program"]["enum"] = json!(["shell", "claude", "codex", "gemini"]);
     }
@@ -1578,6 +1583,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                         "allowedNesvoTools" | "childAllowedNesvoTools" => {
                             valid_permission_additions(value)
                         }
+                        "claudeQuotaCapture" => {
+                            crate::workflow_launches::valid_capture(value, &a.spec["program"])
+                        }
                         _ => false,
                     })
             });
@@ -1738,6 +1746,15 @@ impl HostTools {
             cli::prompt_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
+            if name == "nesvo_create_session"
+                && command["spec"].get("claudeQuotaCapture").is_some()
+                && caps["claudeQuotaCapture"] != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host cannot configure explicit Claude quota capture; update nesvo-host",
+                ));
+            }
             if name == "nesvo_create_session"
                 && command["spec"].get("childAllowedNesvoTools").is_some()
                 && caps["childToolPolicy"] != true
@@ -1916,6 +1933,24 @@ mod tests {
 
     fn retry_job_spec() -> Value {
         json!({"title":"Retry","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"}})
+    }
+    #[test]
+    fn declared_claude_display_capture_is_strict_and_advertised_on_existing_tools() {
+        let capture = json!({"displayProfile":"/owner/display.json"});
+        let (request,kind)=command("nesvo_create_session",json!({"key":"capture","spec":{"name":"Capture","program":"claude","claudeQuotaCapture":capture}})).unwrap();
+        assert_eq!(kind, "operation");
+        assert_eq!(request["spec"]["claudeQuotaCapture"], capture);
+        assert!(command("nesvo_create_session",json!({"key":"capture","spec":{"name":"Capture","program":"codex","claudeQuotaCapture":capture}})).is_err());
+        assert!(command("nesvo_create_session",json!({"key":"capture","spec":{"name":"Capture","program":"claude","claudeQuotaCapture":{"displayProfile":"/owner/display.json","shell":"extra"}}})).is_err());
+        assert_eq!(
+            launch_schema()["properties"]["claudeQuotaCapture"],
+            capture_schema()
+        );
+        assert_eq!(
+            task_profile_schema(false)["properties"]["claudeQuotaCapture"],
+            capture_schema()
+        );
+        assert_eq!(capture_schema()["additionalProperties"], false);
     }
     #[test]
     fn job_execution_timeout_create_and_edit_share_cli_mcp_shape_and_optional_schema() {

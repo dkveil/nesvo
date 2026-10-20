@@ -1215,6 +1215,19 @@
     }
   ],
   "definitions": {
+    "claudeQuotaCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayProfile"],
+      "properties": {
+        "displayProfile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Absolute host path to an explicit owner-declared Claude display manifest. Pins display executable, argv and presentation for this launch; does not inspect or modify global statusLine. Callback data is display evidence, not backend freshness or account permission."
+        }
+      }
+    },
     "runBudget": {
       "type": "object",
       "additionalProperties": false,
@@ -1430,6 +1443,9 @@
           "type": ["object", "null"],
           "description": "Immutable requested task profile; null for pre-migration records. This is not a restored native grant or a claim that rejected settings were applied.",
           "properties": {
+            "claudeQuotaCapture": {
+              "$ref": "#/definitions/claudeQuotaCapture"
+            },
             "allowedNesvoTools": {
               "type": "array",
               "items": {
@@ -1740,6 +1756,9 @@
                     "type": "object",
                     "required": ["program", "workspace"],
                     "properties": {
+                      "claudeQuotaCapture": {
+                        "$ref": "#/definitions/claudeQuotaCapture"
+                      },
                       "program": {
                         "enum": ["claude", "codex", "gemini"]
                       },
@@ -3537,6 +3556,14 @@
           "type": "object",
           "required": ["title", "instruction", "profile", "schedule"],
           "properties": {
+            "profile": {
+              "type": "object",
+              "properties": {
+                "claudeQuotaCapture": {
+                  "$ref": "#/definitions/claudeQuotaCapture"
+                }
+              }
+            },
             "retry": {
               "$ref": "#/definitions/jobRetryPolicy"
             },
@@ -3716,6 +3743,14 @@
               "minimum": 1000,
               "maximum": 604800000,
               "description": "Immutable execution window accepted for this occurrence; omission preserves legacy behavior."
+            },
+            "profile": {
+              "type": "object",
+              "properties": {
+                "claudeQuotaCapture": {
+                  "$ref": "#/definitions/claudeQuotaCapture"
+                }
+              }
             },
             "quotaPolicy": {
               "$ref": "#/definitions/jobQuotaPolicy"

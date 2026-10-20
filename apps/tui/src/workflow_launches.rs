@@ -21,6 +21,9 @@ pub struct Launch {
     model: Option<String>,
     #[arg(long, requires = "model")]
     effort: Option<String>,
+    /// Owner-only explicit Claude display manifest; does not change global settings.
+    #[arg(long)]
+    claude_quota_display_profile: Option<String>,
     /// Explicitly share the existing checkout with other workers.
     #[arg(
         long,
@@ -56,6 +59,9 @@ impl Launch {
                 cwd: self.cwd,
                 model: self.model,
                 effort: self.effort,
+                claude_quota_capture: self
+                    .claude_quota_display_profile
+                    .map(|display_profile| Capture { display_profile }),
                 allowed_nesvo_tools: if self.clear_nesvo_tools {
                     Some(Vec::new())
                 } else if self.allowed_nesvo_tools.is_empty() {
@@ -96,7 +102,41 @@ enum Program {
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Capture {
+    pub display_profile: String,
+}
+fn deserialize_capture<'de, D>(deserializer: D) -> Result<Option<Capture>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Capture::deserialize(deserializer).map(Some)
+}
+pub(crate) fn valid_capture(value: &serde_json::Value, program: &serde_json::Value) -> bool {
+    let Ok(capture) = serde_json::from_value::<Capture>(value.clone()) else {
+        return false;
+    };
+    let path = capture.display_profile;
+    let windows_absolute = path.as_bytes().get(1) == Some(&b':')
+        && path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        && path
+            .as_bytes()
+            .get(2)
+            .is_some_and(|byte| matches!(*byte, b'/' | b'\\'));
+    program == "claude"
+        && !path.is_empty()
+        && path.len() <= 4096
+        && !path.chars().any(char::is_control)
+        && (path.starts_with('/') || path.starts_with("\\\\") || windows_absolute)
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Profile {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_capture"
+    )]
+    claude_quota_capture: Option<Capture>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,6 +169,31 @@ mod tests {
     struct Arguments {
         #[command(flatten)]
         launch: Launch,
+    }
+    #[test]
+    fn capture_is_explicit_strict_and_uses_host_absolute_path_syntax() {
+        for path in [
+            "/owner/display.json",
+            "C:/Owner/display.json",
+            "C:\\Owner\\display.json",
+        ] {
+            assert!(valid_capture(
+                &json!({"displayProfile":path}),
+                &json!("claude")
+            ));
+            assert!(!valid_capture(
+                &json!({"displayProfile":path}),
+                &json!("codex")
+            ));
+        }
+        for capture in [
+            json!({}),
+            json!({"displayProfile":"relative.json"}),
+            json!({"displayProfile":"/valid","shell":"extra"}),
+            json!({"displayProfile":null}),
+        ] {
+            assert!(!valid_capture(&capture, &json!("claude")));
+        }
     }
     #[test]
     fn task_tool_flags_distinguish_defaults_empty_and_exact_selection() {

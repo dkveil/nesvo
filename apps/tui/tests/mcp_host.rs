@@ -36,6 +36,8 @@ fn published_tool_count() -> usize {
 mod budgets;
 #[path = "support/calendars.rs"]
 mod calendars;
+#[path = "support/claude_quota_capture.rs"]
+mod claude_quota_capture;
 #[path = "support/host_ownership.rs"]
 mod host_ownership;
 #[path = "support/inbox.rs"]
