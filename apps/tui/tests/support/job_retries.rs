@@ -1,6 +1,9 @@
 //! Opted-in retry uses genuine native launch receipts and controlled Node PTYs.
 use super::*;
 
+#[path = "job_retry_prechecks.rs"]
+mod precheck_generations;
+
 fn retry(max_attempts: u64, delay_ms: u64) -> Value {
     json!({"on":"launchNoEffect","maxAttempts":max_attempts,"initialDelayMs":delay_ms,"maxDelayMs":delay_ms})
 }

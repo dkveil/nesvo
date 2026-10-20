@@ -2372,3 +2372,54 @@ three-platform test gate. Earlier report timeouts remain unexplained; a green
 run does not prove a production fix, and the retained diagnostics must be used
 if they recur. Per-generation prechecks, wider retry classes, hard execution
 timeouts, cleanup and the remaining full-goal acceptance gates stay open.
+
+### F25/F28 independent prechecks for each retry generation
+
+An explicit job combining `retry.launchNoEffect` and `precheckId` now authorizes
+bounded repeated execution of the exact approved command. Each claimed generation
+must freshly read an enabled, canonical approval, persist its own authorization,
+execute the bounded command and retain its actual outcome. A prior pass cannot
+release the next worker. This extends only the existing proven no-effect native
+launch retry class; a failed/skipped/unknown command does not become a retry.
+
+Generation 1 keeps its published storage and response shape. A separate table
+retains later command snapshots, approval revision, authorization/observation/
+finish times and bounded output, keyed by exact journal identity and occurrence.
+The composite foreign key enforces generation membership. Occurrence views show
+the current precheck; attempt detail/history show that generation's evidence.
+Accepted mutation bodies and omitted legacy fields remain unchanged.
+
+Both retry source proof and Run binding require the exact current command snapshot
+and terminal `passed` result with actual JSON booleans `commandStarted:true` and
+`cleanupConfirmed:true`. The due claim rechecks approval availability separately.
+Revocation blocks future execution without erasing old evidence or preventing
+logical cancellation of a proven cleaned-up waiting retry. A generation claimed
+before revocation still checks approval again before starting its command.
+
+Current dispatch tokens fence begin, finish and interrupted callbacks. Cancellation
+also retains the exact command generation internally, and a previous callback
+cannot settle a new cleanup request. Restart clears producer tokens and marks only
+the current running command unknown. Explicit abandonment after generation 1
+requires its exact `jobAttemptId`, digest and owner acknowledgement; an identical
+digest or omitted ID is insufficient. Replay of an already accepted mutation keeps
+the original body and performs no new action.
+
+CLI/MCP require strict `jobPrecheckGenerations:true` for combined specs or explicit
+abandonment IDs, in addition to the existing operation capabilities. The existing
+abandon tool gains an optional argument and the CLI adds `--job-attempt-id`; there
+is no new tool, provider grant, model call or production dependency. Job UI,
+original-provider coverage, broader retry classes and the remaining full-goal
+gates are still open. Verification evidence for this slice follows below.
+
+The initial Windows source passed formatting, all-target warnings-denied Clippy,
+438 unit tests (148 TUI, 287 host, 3 wire; three ordinary subprocess helpers
+ignored), production builds and all 43 serial native SDK scenarios in 250.43
+seconds. The three new repeated-precheck scenarios separately passed in 32.07
+seconds. Seven storage test groups and six retry/proof tests cover current-only
+authorization, typed cleanup evidence, immutable history, exact cancellation and
+abandonment, revocation, rollback and reopen. The native tests exercise actual
+command processes/descendants, no-effect launch refusal, one successful later
+worker, skip, revocation and restart via CLI/MCP with schema-checked envelopes.
+No original model, native phone or three-platform acceptance is claimed by these
+local fixtures. Later input diagnostics and fixture-ordering verification are
+recorded separately.

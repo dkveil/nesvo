@@ -2,7 +2,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
-const [mode, directory, role, literal] = process.argv.slice(2);
+const [requestedMode, directory, role, literal] = process.argv.slice(2);
+let mode = requestedMode;
 if (mode === 'probe') {
   const running = ['root', 'child', 'grandchild'].map(name => {
     const pid = JSON.parse(fs.readFileSync(path.join(directory, `${name}.json`), 'utf8')).pid;
@@ -42,6 +43,14 @@ if (literal !== 'literal $(x); & łódź "quoted"' || process.env.CHECK_LITERAL 
 }
 fs.mkdirSync(directory, { recursive: true });
 if (role === 'root') fs.appendFileSync(path.join(directory, 'effects.log'), `${mode}\n`);
+if (role === 'root' && mode.startsWith('generation-')) {
+  const counter = path.join(directory, 'counter.json');
+  const count = fs.existsSync(counter) ? JSON.parse(fs.readFileSync(counter, 'utf8')).count + 1 : 1;
+  fs.writeFileSync(counter, JSON.stringify({ count }));
+  // The approved command is immutable; owned state selects only the second outcome.
+  mode = count === 1 ? 'pass' : mode.slice('generation-'.length);
+  if (mode.startsWith('tree')) mode = 'tree-cancel';
+}
 if (mode.startsWith('tree-')) {
   fs.writeFileSync(path.join(directory, `${role}.json`), JSON.stringify({ pid: process.pid }));
   const next = role === 'root' ? 'child' : role === 'child' ? 'grandchild' : null;
