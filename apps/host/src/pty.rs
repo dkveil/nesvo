@@ -10,6 +10,12 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+#[cfg(test)]
+#[path = "pty_input_trace.rs"]
+mod input_trace;
+#[cfg(all(test, windows))]
+pub use input_trace::{InputTraceEvent, InputTraceKind, InputTracePhase};
+
 pub enum PtyEvent {
     Data(String, String),
     Exited(String, Option<u32>),
@@ -22,11 +28,15 @@ pub struct Pty {
     input: sync_mpsc::SyncSender<Input>,
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    #[cfg(test)]
+    trace: Option<input_trace::Trace>,
 }
 
 struct Input {
     data: String,
     confirmation: Option<Confirmation>,
+    #[cfg(test)]
+    trace: Option<input_trace::Envelope>,
 }
 
 enum Confirmation {
@@ -36,10 +46,18 @@ enum Confirmation {
 }
 
 fn write_input(writer: &mut impl Write, input: Input) -> bool {
+    #[cfg(test)]
+    if let Some(trace) = &input.trace {
+        trace.started();
+    }
     let written = writer
         .write_all(input.data.as_bytes())
         .and_then(|_| writer.flush())
         .is_ok();
+    #[cfg(test)]
+    if let Some(trace) = &input.trace {
+        trace.finished(written);
+    }
     if let Some(confirmation) = input.confirmation {
         match confirmation {
             #[cfg(windows)]
@@ -60,6 +78,37 @@ impl Pty {
         command: CommandBuilder,
         size: PtySize,
         events: mpsc::Sender<PtyEvent>,
+    ) -> Result<Self> {
+        Self::spawn_internal(
+            id,
+            command,
+            size,
+            events,
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    #[cfg(all(test, windows))]
+    pub fn spawn_traced(
+        id: &str,
+        command: CommandBuilder,
+        size: PtySize,
+        events: mpsc::Sender<PtyEvent>,
+    ) -> Result<(Self, sync_mpsc::Receiver<InputTraceEvent>)> {
+        let (trace, receiver) = input_trace::Trace::new();
+        Ok((
+            Self::spawn_internal(id, command, size, events, Some(trace))?,
+            receiver,
+        ))
+    }
+
+    fn spawn_internal(
+        id: &str,
+        command: CommandBuilder,
+        size: PtySize,
+        events: mpsc::Sender<PtyEvent>,
+        #[cfg(test)] trace: Option<input_trace::Trace>,
     ) -> Result<Self> {
         let pair = native_pty_system().openpty(size)?;
         let mut child = pair.slave.spawn_command(command)?;
@@ -128,30 +177,40 @@ impl Pty {
             input: input_tx,
             master: pair.master,
             killer,
+            #[cfg(test)]
+            trace,
         })
     }
 
     pub fn send_input(&self, data: String) -> Result<()> {
-        self.input
-            .try_send(Input {
-                data,
-                confirmation: None,
-            })
+        self.enqueue(data, None)
             .map_err(|_| anyhow!("Terminal input queue is full or closed. Input was not sent."))
     }
 
     /// Acknowledges native write+flush only, never provider pickup or completion.
     pub fn send_confirmed(&self, data: String) -> Result<oneshot::Receiver<bool>> {
         let (sender, answer) = oneshot::channel();
-        self.input
-            .try_send(Input {
-                data,
-                confirmation: Some(Confirmation::Receipt(sender)),
-            })
+        self.enqueue(data, Some(Confirmation::Receipt(sender)))
             .map_err(|_| {
                 anyhow!("Terminal input queue is full or closed. Input was not queued.")
             })?;
         Ok(answer)
+    }
+    fn enqueue(
+        &self,
+        data: String,
+        confirmation: Option<Confirmation>,
+    ) -> std::result::Result<(), sync_mpsc::TrySendError<Input>> {
+        #[cfg(test)]
+        if let Some(trace) = &self.trace {
+            return trace.enqueue(&self.input, data, confirmation);
+        }
+        self.input.try_send(Input {
+            data,
+            confirmation,
+            #[cfg(test)]
+            trace: None,
+        })
     }
     pub fn process_id(&self) -> Option<u32> {
         self.process_id
@@ -162,17 +221,16 @@ impl Pty {
     #[cfg(windows)]
     pub fn prepare_termination(&self, reply_initial_cursor: bool) -> Result<()> {
         let (flushed_tx, flushed_rx) = sync_mpsc::channel();
-        self.input
-            .try_send(Input {
-                data: if reply_initial_cursor {
-                    "\x1b[1;1R"
-                } else {
-                    ""
-                }
-                .into(),
-                confirmation: Some(Confirmation::Cleanup(flushed_tx)),
-            })
-            .map_err(|_| anyhow!("Terminal input queue is full or closed."))?;
+        self.enqueue(
+            if reply_initial_cursor {
+                "\x1b[1;1R"
+            } else {
+                ""
+            }
+            .into(),
+            Some(Confirmation::Cleanup(flushed_tx)),
+        )
+        .map_err(|_| anyhow!("Terminal input queue is full or closed."))?;
         let written = flushed_rx
             .recv_timeout(Duration::from_secs(1))
             .map_err(|_| anyhow!("Timed out answering ConPTY's startup cursor query."))?;
@@ -231,6 +289,7 @@ mod tests {
                 Input {
                     data: "literal łódź".into(),
                     confirmation: Some(Confirmation::Receipt(sender)),
+                    trace: None,
                 },
             );
             assert_eq!(answer.await.unwrap(), !fails);
@@ -251,7 +310,8 @@ mod tests {
             &mut flush_failure,
             Input {
                 data: "x".into(),
-                confirmation: Some(Confirmation::Receipt(sender))
+                confirmation: Some(Confirmation::Receipt(sender)),
+                trace: None,
             }
         ));
         assert!(!answer.await.unwrap());
@@ -266,7 +326,8 @@ mod tests {
                 &mut Vec::new(),
                 Input {
                     data: "still write once".into(),
-                    confirmation: Some(Confirmation::Receipt(sender))
+                    confirmation: Some(Confirmation::Receipt(sender)),
+                    trace: None,
                 }
             ),
             "a lost receipt never replays or cancels accepted bytes"

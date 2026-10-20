@@ -1,4 +1,5 @@
-//! Native Rust fixtures and real ConPTYs; no shell, Node or model dependency.
+//! Native Rust ownership fixtures use real ConPTY without a shell, Node or model.
+//! The separately ignored startup diagnostic uses an installed Node fixture.
 use crate::{
     pty::{Pty, PtyEvent},
     terminal_protocol::{Decoder, Event},
@@ -169,6 +170,9 @@ impl FixturePty {
             .collect()
     }
 }
+
+#[path = "windows_input_fifo_probe_tests.rs"]
+mod input_fifo_probe;
 impl Drop for FixturePty {
     fn drop(&mut self) {
         let _ = self

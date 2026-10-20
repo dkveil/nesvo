@@ -90,6 +90,29 @@ These are diagnostic samples from one Windows environment, not an FPS guarantee 
 
 A later investigation found orphan Windows console backends after force-stopped fixtures and closure of sessions whose initial ConPTY cursor query had never been answered. Host shutdown now waits for tracked cleanup workers outside the state lock, and closing an unattached Windows session releases that startup handshake before termination. The updated host and synchronization integration runs completed without adding a console backend process; this is a lifecycle check, not a new rendering benchmark.
 
+## Opt-in Windows input FIFO diagnostic
+
+```powershell
+cargo test -p nesvo-host --locked process::windows::tests::input_fifo_probe::native_conpty_input_fifo_diagnostic -- --exact --ignored --nocapture
+```
+
+This ignored diagnostic requires installed Node on PATH, an owned ConPTY and
+private temporary files. It changes no provider configuration and invokes no
+model. A bounded test-only trace records queue/write entry/completion metadata,
+never input contents; ordinary binaries contain no trace channel or mutex.
+The independent TCP child-readiness signal precedes the intended one-time
+23-byte paste and decoder gate release. Cleanup uses the owned job and retained
+process handles; an outer watchdog bounds the holder.
+
+Inspect `scenario_attempted` and `outcome` in the emitted report. A missing
+readiness/query precondition is an observation, not a successful reproduction or
+proof that the suspected ordering cannot occur elsewhere. `WriteStarted` marks
+the Rust call before `write_all`, not OS syscall entry. Native confirmation means
+write/flush only, never provider pickup. The local Rust-helper and then silent
+Node-helper observations both lacked readiness while the decoder was held;
+neither attempted a paste. Both returned through owned cleanup. These results
+do not establish a cause or fix for earlier job submission failures.
+
 ## Local checks
 
 Run from the repository root. On Windows, `.cmd` avoids the PowerShell execution-policy issue.
