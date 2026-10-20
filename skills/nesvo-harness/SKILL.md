@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 4 (`NESVO_HARNESS_INSTRUCTIONS_V4`).
+Instruction version: 5 (`NESVO_HARNESS_INSTRUCTIONS_V5`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -48,7 +48,8 @@ can be requested with `--cwd`; it must remain inside your canonical workspace.
 Do not request a coordinator child, foreign parent/group or permission bypass.
 Use `--worktree` when the user requests isolation; this does not authorize
 deleting/merging worktrees. Default live-process and 256 lifetime child-grant
-bounds apply. Configurable run budgets are not yet available.
+bounds apply. Host/provider policy is owner-controlled; run-specific budgets
+and drain have the separate rules below.
 Harness-enabled coordinators pass the setting to children by default. When
 requesting a shell or another provider without the Claude harness adapter, use
 `--no-harness` (MCP `spec.harness:false`) explicitly. It does not change the child's
@@ -112,7 +113,10 @@ and revisions; titles and array positions are not identities.
 
 Freeze a nonempty draft using `run activate RUN_ID --key KEY --revision REV
 --json`. Create a fresh worker with the ordinary session API, **without an
-initial prompt**, and inspect readiness. Bind it before requesting task work:
+initial prompt**, and inspect readiness. First inspect the run's current budget
+and drain state; do not create extra workers while admission is blocked. These
+reads are preflight checks, not atomic run-capacity reservations. Bind the ready
+worker before requesting task work:
 `run assign RUN_ID --task TASK_ID --session CHILD_ID --key KEY --revision REV
 --json`. The host allows only your granted worker children and dependency-ready
 tasks, refusing human control/drafts/pending input. Assignment does not type
@@ -120,8 +124,8 @@ anything or start a process. Read the returned attempt ID, then deliberately
 send the task context through the normal guarded `session send` path. Native
 operation keys recover through `operation`; workflow metadata keys recover
 through `run mutation --key ORIGINAL_KEY --json`. Do not interchange namespaces
-or invent a fresh key after an uncertain effect. No automatic DAG executor or
-configurable run budgets are supplied by this instruction version.
+or invent a fresh key after an uncertain effect. No automatic DAG executor is
+supplied; explicit run budget/drain operations are described below.
 
 As a worker, `run context --json` returns your host-bound task and current
 attempt. It does not use `NESVO_SESSION_ID`/UI hints. If no attempt is assigned,
@@ -229,6 +233,49 @@ validate/retry on a fresh worker; do not manufacture approval or success. A
 resolved question never validates the task. Superseded attempts cannot answer,
 cancel or recover under a replacement identity. No automatic native dispatcher,
 approval bridge or model wake loop is provided by these decision APIs.
+
+## Run budgets and graceful drain
+
+When the host advertises `runBudgets`, inspect `run budget get RUN_ID --json`.
+Workers see only their own policy in `run context`. Parallel limits count both
+assigned workers and reported results awaiting validation; an idle screen or
+inbox ACK does not release capacity. A failed result needs deliberate validation
+and a fresh worker for a retry. The attempt limit includes the first attempt.
+Global retained-session, running-worker and provider process caps are independent
+owner policy. A coordinator cannot raise those caps or recursively grant roles.
+
+`run budget set RUN_ID --key POLICY_KEY --revision RUN_REV --file POLICY_JSON
+--json` replaces all three policy fields, with a 4 KiB file bound:
+
+```json
+{ "maxParallel": 2, "maxAttemptsPerTask": 3, "maxElapsedMs": 1800000 }
+```
+
+Parallel/attempt limits are 1–16; elapsed is explicit null or 1000–604800000 ms.
+Coordinators can only tighten policy. Only the human owner may relax it or
+extend/remove an exhausted time limit. Do not substitute owner pairing or edit
+private context when a limit blocks work. Surface the specific budget and wait
+for authorized policy changes. Exhaustion blocks new assignments and automated
+input; existing workers may still report honestly and parents may validate them.
+Activation starts the clock. Drain, resume, reconnect and metadata edits never
+reset it; a backward clock jump or replayed reply does not reopen exhaustion.
+
+With `runDrain`, `run drain RUN_ID --key DRAIN_KEY --revision RUN_REV --json`
+blocks new assignments while current reports/validation finish. It does not
+interrupt, stop or kill native processes. An owner drain remains owner-controlled
+even if a coordinator drains again. Only owner can resume it; a coordinator may
+`run resume RUN_ID --key RESUME_KEY --revision RUN_REV --json` for its own drain.
+Resume preserves budgets/history and performs no launch or input replay. A fully
+validated completed run cannot be revived. Do not invent run-wide stop/cancel
+commands; they are not implemented by this drain contract.
+
+Policy/drain/resume replies recover with `run mutation --key ORIGINAL_KEY
+--json`, followed by `run get`/`run budget get` for current state. Recovered policy
+or drain data is historical, not permission to restore it. Use the exact run
+revision, distinct from the global budget and decision revisions. After a native
+send returns unknown, inspect `operation --key ORIGINAL_SEND_KEY --json` and the
+terminal before any new intent: paste may exist even if Enter was refused by a
+new decision/deadline. Resolve a blocker without overwriting a human draft.
 
 ## Interruption
 

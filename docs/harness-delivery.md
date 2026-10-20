@@ -910,5 +910,30 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   automatic pre-launch DAG reservations, coordinator adoption and actual provider
   escalation remain required. Native sessions without run bindings obey global
   process budgets; they are not silently attributed to a run. See
-  [run policy and remaining scope](harness-run-budgets.md). Platform CI for this
-  implementation must still be recorded after publication.
+  [run policy and remaining scope](harness-run-budgets.md). Commit `ce68ead`
+  passed Linux, macOS, browser and app jobs in run `39352987299`; Windows was
+  still running at the last observation and is not yet claimed verified by CI.
+
+### F38 instruction version 5: run policy and human priority
+
+- Launch-local instruction version 5 documents the implemented budget,
+  drain/resume and recovery grammar; obsolete budget-unavailable statements were
+  removed. Coordinators inspect policy before creating extra workers, without
+  confusing a read with an atomic pre-launch reservation. Owner-only relaxation,
+  owner drain, reported-slot retention and preserved activation/retry history are
+  explicit. Unknown native input and human drafts remain separate blockers.
+- Added one targeted offline case against the version-4 snapshot, with an initial
+  review artifact before grading and a final candidate rerun after wording
+  cleanup. The final candidate satisfies 5/5 expectations, baseline 2/5. Both
+  preserve conservative authority/recovery safety; new command/accounting
+  knowledge distinguishes them. This is one sample per version, not statistical,
+  actual-provider or model-execution evidence. Timing/token metrics were not
+  exposed and were omitted. Existing five offline cases are retained, not claimed
+  rerun in this targeted iteration. Review/evaluation outputs stay outside Git.
+- Updated the injected snapshot version and native fixture checks together.
+  Windows fmt, Clippy with warnings denied, 247 unit checks and all five native
+  SDK cases pass. After final wording cleanup, caller snapshot tests and all five
+  native SDK cases pass against rebuilt binaries. New launches receive this
+  snapshot; live user sessions/global provider settings are not rewritten.
+  No dependency or visual layout changes. Stage-3 native control/dispatcher and
+  actual provider integration gates remain open.

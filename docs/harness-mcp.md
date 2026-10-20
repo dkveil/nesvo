@@ -81,6 +81,13 @@ Instruction version 4 covers addressed authority, deadlines, exact decision
 revisions, cancellation and metadata recovery. None types a native permission
 approval or validates task success. See the [decision contract](harness-decisions.md).
 
+Instruction version 5 adds run policy inspection/edit grammar, parallel slots
+through validation, activation-based time/retry history, owner-only relaxation
+and owner drain/resume boundaries. It distinguishes workflow-key recovery from
+uncertain native-send receipts and does not advertise unimplemented run-wide
+stop/cancel. Each new opted-in launch receives its own versioned snapshot;
+existing sessions/global instructions are not rewritten.
+
 Create accepts optional `spec.parentSessionId` for a live process parent, gated
 by `sessionLineage`. It creates an ordinary background session without changing
 parent input ownership. The relation appears in session data and survives client
