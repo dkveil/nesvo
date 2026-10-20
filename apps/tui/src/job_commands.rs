@@ -21,6 +21,9 @@ pub enum Command {
         key: String,
         #[arg(long)]
         digest: String,
+        /// Exact current dispatch generation; required after generation 1.
+        #[arg(long)]
+        job_attempt_id: Option<String>,
         #[arg(long, required = true)]
         acknowledge_unknown_effects: bool,
         #[arg(long)]
@@ -169,6 +172,7 @@ impl Command {
                 occurrence,
                 key,
                 digest,
+                job_attempt_id,
                 acknowledge_unknown_effects,
                 ..
             } => Request::AbandonPrecheck {
@@ -176,6 +180,7 @@ impl Command {
                 job_id: id,
                 occurrence_id: occurrence,
                 expected_digest: digest,
+                job_attempt_id,
                 acknowledge_unknown_effects,
             },
             Self::Create { key, file, .. } => Request::Create {
@@ -388,6 +393,8 @@ pub enum Request {
         job_id: String,
         occurrence_id: String,
         expected_digest: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        job_attempt_id: Option<String>,
         acknowledge_unknown_effects: bool,
     },
     Create {
@@ -446,21 +453,6 @@ pub enum Request {
     Mutation {
         key: String,
     },
-}
-impl Request {
-    pub(crate) fn validate(&self) -> Result<()> {
-        if matches!(
-            self,
-            Self::Create { spec, .. } | Self::Update { spec, .. }
-                if spec.retry.is_some() && spec.precheck_id.is_some()
-        ) {
-            return Err(cli::failure(
-                "invalid_argument",
-                "Job retry policy cannot be combined with precheckId until per-generation command execution is supported",
-            ));
-        }
-        Ok(())
-    }
 }
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let machine = command.machine();

@@ -659,9 +659,6 @@ enum Request {
     },
 }
 fn wire(request: Request) -> Result<Value> {
-    if let Request::Jobs { request } = &request {
-        request.validate()?;
-    }
     let value = serde_json::to_value(request)?;
     if serde_json::to_vec(&value)?.len() > 24 * 1024 {
         return Err(cli::failure(
@@ -724,6 +721,21 @@ fn job_precheck_requested(request: &Value) -> bool {
             action["request"]["action"].as_str(),
             Some("prechecks" | "abandonPrecheck")
         ) || action["request"]["spec"].get("precheckId").is_some())
+}
+fn job_precheck_generations_supported(caps: &Value, request: &Value) -> bool {
+    let action = &request["request"];
+    if action["action"] != "jobs" {
+        return true;
+    }
+    let job = &action["request"];
+    let requested = match job["action"].as_str() {
+        Some("create" | "update") => {
+            job["spec"].get("retry").is_some() && job["spec"].get("precheckId").is_some()
+        }
+        Some("abandonPrecheck") => job.get("jobAttemptId").is_some(),
+        _ => false,
+    };
+    !requested || caps["jobPrecheckGenerations"] == true
 }
 fn job_cancellation_supported(caps: &Value, request: &Value) -> bool {
     request["request"]["action"] != "jobs"
@@ -828,6 +840,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host cannot enforce owner-approved bounded prechecks; update nesvo-host",
         ));
     }
+    if !job_precheck_generations_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot enforce fresh prechecks for job generations; update nesvo-host",
+        ));
+    }
     if !job_cancellation_supported(&caps, request) {
         return Err(cli::failure(
             "unsupported",
@@ -881,6 +899,96 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repeated_prechecks_require_explicit_typed_generation_support() {
+        for action in ["create", "update"] {
+            let mut fields = json!({"action":action,"key":"retry","spec":{"title":"Retry","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"}}});
+            if action == "update" {
+                fields["jobId"] = json!("j");
+                fields["expectedRevision"] = json!(1);
+            }
+            for (retry, precheck) in [(false, false), (true, false), (false, true), (true, true)] {
+                let mut fields = fields.clone();
+                if retry {
+                    fields["spec"]["retry"] = json!({"on":"launchNoEffect","maxAttempts":3,"initialDelayMs":1000,"maxDelayMs":10000});
+                }
+                if precheck {
+                    fields["spec"]["precheckId"] = json!("01234567890123456789012345678901");
+                }
+                let request = tool("jobs", json!({"request":fields})).unwrap();
+                assert_eq!(job_precheck_requested(&request), precheck);
+                assert_eq!(job_retry_supported(&json!({}), &request), !retry);
+                let caps = json!({"jobPrechecks":true,"jobRetries":true,"jobRetryKinds":["launchNoEffect"]});
+                assert!(job_retry_supported(&caps, &request));
+                assert_eq!(
+                    job_precheck_generations_supported(&caps, &request),
+                    !(retry && precheck)
+                );
+                for value in [
+                    json!(false),
+                    json!("true"),
+                    json!(1),
+                    Value::Null,
+                    json!([]),
+                    json!({}),
+                ] {
+                    let mut caps = caps.clone();
+                    caps["jobPrecheckGenerations"] = value;
+                    assert_eq!(
+                        job_precheck_generations_supported(&caps, &request),
+                        !(retry && precheck)
+                    );
+                }
+                assert!(job_precheck_generations_supported(
+                    &json!({"jobPrecheckGenerations":true}),
+                    &request
+                ));
+                if retry && precheck {
+                    assert!(!job_retry_supported(
+                        &json!({"jobPrecheckGenerations":true,"jobPrechecks":true}),
+                        &request
+                    ));
+                }
+            }
+        }
+    }
+    #[test]
+    fn exact_precheck_abandonment_requires_generation_support_but_legacy_omission_does_not() {
+        let fields = json!({"action":"abandonPrecheck","key":"abandon","jobId":"j","occurrenceId":"o","expectedDigest":"d","acknowledgeUnknownEffects":true});
+        let legacy = tool("jobs", json!({"request":fields.clone()})).unwrap();
+        assert_eq!(legacy["request"]["request"], fields);
+        assert!(job_precheck_requested(&legacy));
+        assert!(job_precheck_generations_supported(&json!({}), &legacy));
+        let mut fields = fields;
+        fields["jobAttemptId"] = json!("generation-2");
+        let exact = tool("jobs", json!({"request":fields})).unwrap();
+        assert!(job_precheck_requested(&exact));
+        assert!(job_retry_supported(&json!({}), &exact));
+        for caps in [
+            json!({}),
+            json!({"jobAttempts":true,"jobPrechecks":true,"jobRetries":true}),
+            json!({"jobPrecheckGenerations":false}),
+            json!({"jobPrecheckGenerations":"true"}),
+            json!({"jobPrecheckGenerations":1}),
+            json!({"jobPrecheckGenerations":null}),
+        ] {
+            assert!(!job_precheck_generations_supported(&caps, &exact));
+        }
+        assert!(job_precheck_generations_supported(
+            &json!({"jobPrecheckGenerations":true}),
+            &exact
+        ));
+        for fields in [
+            json!({"action":"list"}),
+            json!({"action":"runNow","key":"run","jobId":"j","expectedRevision":1}),
+            json!({"action":"attempt","jobId":"j","occurrenceId":"o","jobAttemptId":"a"}),
+        ] {
+            assert!(job_precheck_generations_supported(
+                &json!({}),
+                &tool("jobs", json!({"request":fields})).unwrap()
+            ));
+        }
+    }
     #[test]
     fn retry_policy_requires_explicit_typed_host_support_only_when_serialized() {
         for action in ["create", "update"] {

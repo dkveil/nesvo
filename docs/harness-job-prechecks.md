@@ -80,6 +80,17 @@ legacy behavior and serialized intent. Create/edit require an enabled approval;
 execution checks it again. The original occurrence's check ID is not rewritten
 by a later definition edit.
 
+Hosts advertising strict boolean `jobPrecheckGenerations:true` also accept an
+explicit combination of `precheckId` and the existing `launchNoEffect` retry
+policy, with the ordinary `jobPrechecks` and retry capability checks. This
+combination authorizes bounded repeated execution of that exact command before
+each fresh generation, including any side effects it may have. Each begin reads
+the enabled approval again, reparses its command, checks its digest and records
+a fresh authorization. The approval ID may stay the same; the authorization and
+execution result belong to that generation. No old authorization or passed
+result can release a later Run. Omission of `retry` preserves single-generation
+execution and legacy serialized intent.
+
 ```powershell
 nesvo job precheck revoke APPROVAL_ID --revision CURRENT_REVISION --key revoke-ready-1 --json
 ```
@@ -89,6 +100,11 @@ finish; it does not undo effects, stop a model or cancel a running check. A
 revoked/missing/changed approval produces a retained `precheck_not_trusted`
 occurrence failure before command/model launch. Approval records are immutable
 apart from revocation, with exact revisions and original mutation-key lookup.
+Approval availability is also checked when a retry becomes due. Revocation while
+waiting blocks the retry and retains the failed source generation; revocation
+between claim and command begin refuses the fresh generation. Revocation after a
+committed begin cannot undo its authorization or prove that the command did not
+run. Use occurrence cancellation to request cleanup of an admitted command.
 
 ## Results and uncertainty
 
@@ -98,6 +114,8 @@ normal model dispatch or a terminal/uncertain check outcome. Inspect:
 ```powershell
 nesvo job history JOB_ID --json
 nesvo job occurrence JOB_ID OCCURRENCE_ID --json
+nesvo job attempts JOB_ID OCCURRENCE_ID --json
+nesvo job attempt JOB_ID OCCURRENCE_ID JOB_ATTEMPT_ID --json
 ```
 
 `precheck` exposes approval ID/digest, state, reason, `authorizedAt`, `observedAt`,
@@ -111,11 +129,23 @@ Detail adds sanitized stdout/stderr, at most 512 UTF-8 bytes each. Summaries omi
 those logs. The command's separate stdout/stderr cap is 4096 bytes each; excess
 output fails the check. Output is not parsed as another command or approval.
 Approvals/outputs are persisted owner data; routine events carry IDs/phases only.
+Occurrence detail resolves the current generation; historical attempt detail
+resolves only that exact generation's precheck. Generation 1 retains its legacy
+field shape. Later generation records may add `approvalRevision`, the integer
+revision observed when that generation began, or null when it was unavailable.
+Quiet reads do not change authorization, observation or finish times.
 
 Pass codes and skip codes are nonempty, unique, disjoint lists (0–255). Default
 pass is `[0]`, skip `[10]`; other codes/signals fail. `precheck_skip` records a
 deliberate skip; failure/timeout/output-limit retain separate causes. No retry of
 the same occurrence is implicit. A later scheduled occurrence is separate intent.
+The explicit retry/precheck combination retries only a confirmed native worker
+create refusal with `effectStarted:false`, after that source generation's own
+precheck passed with `commandStarted:true` and `cleanupConfirmed:true`. A failed,
+skipped, timed-out, abandoned, unconfirmed or interrupted command never causes an
+automatic retry. The new generation must run its command again and pass before
+its Run can be bound. The worker create receipt does not imply that the earlier
+command had no lasting effects.
 
 Missing helper results, unconfirmed cleanup, interrupted dispatch and host restart
 during a check require `reconcile`, without repeating the command or starting a
@@ -126,14 +156,34 @@ then explicitly acknowledge the exact stored digest:
 nesvo job abandon-precheck JOB_ID OCCURRENCE_ID --key abandon-1 --digest RECORDED_DIGEST --acknowledge-unknown-effects --json
 ```
 
+That legacy omission is accepted only for current generation 1. For generation 2
+or later, inspect the current `jobAttemptId` and include it explicitly:
+
+```powershell
+nesvo job abandon-precheck JOB_ID OCCURRENCE_ID --job-attempt-id JOB_ATTEMPT_ID --key abandon-generation-2 --digest RECORDED_DIGEST --acknowledge-unknown-effects --json
+```
+
+An explicit ID requires `jobPrecheckGenerations:true` and must match the exact
+current generation, even when two generations have the same command digest. A
+delayed acknowledgment cannot abandon the next generation. The MCP tool's
+optional `jobAttemptId` has the same contract. Omitted IDs remain absent from the
+wire request, preserving legacy mutation fingerprints and accepted replay bodies.
+
 This marks the occurrence canceled. It does not terminate a detached command,
 undo filesystem/network effects, repeat a check or resume work. Original-key replay
 returns that immutable acceptance. Unknown checks block overlapping queued work
 until reconciled/abandoned. A known passed check interrupted before run binding
 can also be abandoned; metadata-only run creation may already have been accepted
-under `job:JOB_ID:OCCURRENCE_ID:run`, which must be inspected rather than adopted
-or dispatched automatically. General job cancel/retry/reconciliation remains a
-separate implementation gate.
+under that generation's Run mutation key, which must be inspected rather than
+adopted or dispatched automatically. Occurrence cancellation fences all future
+generations and waits for the exact active command's cleanup evidence. A prior
+pass cannot settle cancellation of a later command. Canceling during backoff
+retains the failed source and never claims to undo a passed command's effects.
+
+Restart marks only the exact current running command unknown and clears its
+preparation token. It retains previous passed command records and does not replay
+a previously passed command. An interrupted claimed generation cannot receive a
+replacement token; reconciliation remains explicit.
 
 ## Process lifetime and limits
 
@@ -173,12 +223,17 @@ model dispatch. Unconfirmed cleanup retains ownership/capacity while reaping and
 never counts as passed. Checks allow two concurrent scopes, up to 15 seconds of
 slot wait, 100–10000 ms command budget (default 2000), 1000 ms helper protocol
 allowance and 2000 ms cleanup observation. These are separate from the later run's
-admission/input `maxElapsedMs`, which is not a hard process kill budget.
+admission/input `maxElapsedMs`, which is not a hard process kill budget. The
+command's `timeoutMs` does not limit the worker's model execution. A durable model
+execution timeout with native stop/exit evidence remains a later implementation
+gate.
 
 Command specs are at most 16 KiB, 32 literal arguments (2048 bytes each), 16
 environment additions and eight codes per exit list. Approval/mutation retention
-is bounded at 128/4096 without silent deletion; one check record belongs to each
-retained occurrence. Quiet timer ticks execute no checks or model calls.
+is bounded at 128/4096 without silent deletion; each checked dispatch generation
+has its own retained record within the retry policy's total generation limit.
+Generation 1 retains its existing storage and JSON body. Quiet timer ticks
+execute no checks or model calls.
 
 Four dispatch preparations and two calendar calculations can be in flight; neither
 awaits inside SQLite or holds a session-state mutex. Pending calendars are tracked
@@ -192,6 +247,8 @@ pending recurrence calculations cannot hide an independently due once job.
 `nesvo_abandon_job_precheck` use the same authenticated host domain as CLI. Clients
 require the distinct capability before these operations or a checked job mutation.
 Native tool allowances do not grant host owner authority.
+Repeated prechecks and exact-generation abandonment add capability checks to
+these existing operations; they add no MCP tool or native grant.
 
 Injected-store tests cover explicit digest/trust, immutable replay, revocation,
 scope, exact once-only check phases, no run on skip/failure, cleanup uncertainty,

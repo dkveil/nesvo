@@ -102,7 +102,7 @@ fn job_spec_schema() -> Value {
         }),
         &["on", "maxAttempts", "initialDelayMs", "maxDelayMs"],
     );
-    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"not":{"required":["precheckId","retry"]},"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Revocation is checked again at execution. Cannot combine with retry until commands are migrated to each generation."},"retry":retry,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000,"description":"Per-Run admission/input budget, not a hard process timeout"}}})
+    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Combining with retry explicitly authorizes bounded repeated execution before each fresh generation and requires jobPrecheckGenerations:true. Each begin checks current approval and records fresh authorization; prior passes cannot release a new Run."},"retry":retry,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000,"description":"Per-Run admission/input budget, not a hard process timeout"}}})
 }
 fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
     let mut schema = serde_json::Map::new();
@@ -167,9 +167,9 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_abandon_job_precheck",
-            "Owner-only explicit acknowledgement of an uncertain precheck's effects, abandoning its exact occurrence before any job run was bound. Requires inspection/digest and acknowledgement. Does not kill detached commands, undo effects, repeat a check, resume work or create a model.",
+            "Owner-only explicit acknowledgement of an uncertain precheck's effects, abandoning its exact current generation before its Run was bound. Requires inspection/digest and acknowledgement. jobAttemptId requires jobPrecheckGenerations:true and is mandatory after generation 1; omission preserves legacy generation-1 requests. Does not kill detached commands, undo effects, repeat a check, resume work or create a model.",
             object(
-                json!({"key":key,"jobId":id,"occurrenceId":id,"expectedDigest":{"type":"string","minLength":64,"maxLength":64},"acknowledgeUnknownEffects":{"type":"boolean","const":true}}),
+                json!({"key":key,"jobId":id,"occurrenceId":id,"jobAttemptId":id,"expectedDigest":{"type":"string","minLength":64,"maxLength":64},"acknowledgeUnknownEffects":{"type":"boolean","const":true}}),
                 &[
                     "key",
                     "jobId",
@@ -182,7 +182,7 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_create_job",
-            "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
+            "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Combining with precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution before each fresh generation. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
             object(
                 json!({"key":key,"spec":job_spec_schema()}),
                 &["key", "spec"],
@@ -206,7 +206,7 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_update_job",
-            "Owner-only exact-revision replacement of future job intent, including optional launchNoEffect retry policy. Existing occurrences keep their immutable spec; does not change running processes. Retry policy cannot be combined with precheckId.",
+            "Owner-only exact-revision replacement of future job intent, including optional launchNoEffect retry policy. Existing occurrences keep their immutable spec; does not change running processes. Combining retry and precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution with fresh approval checks before each generation.",
             object(
                 json!({"key":key,"jobId":id,"expectedRevision":revision,"spec":job_spec_schema()}),
                 &["key", "jobId", "expectedRevision", "spec"],
@@ -1625,10 +1625,18 @@ mod tests {
         ));
         let retry =
             json!({"on":"launchNoEffect","maxAttempts":3,"initialDelayMs":1000,"maxDelayMs":10000});
-        for policy in [None, Some(retry.clone())] {
+        for (policy, precheck) in [
+            (None, false),
+            (None, true),
+            (Some(retry.clone()), false),
+            (Some(retry.clone()), true),
+        ] {
             let mut spec = retry_job_spec();
             if let Some(policy) = policy {
                 spec["retry"] = policy;
+            }
+            if precheck {
+                spec["precheckId"] = json!("01234567890123456789012345678901");
             }
             std::fs::write(&path, serde_json::to_vec(&spec).unwrap()).unwrap();
             for (mut args, name, mut arguments) in [
@@ -1666,6 +1674,10 @@ mod tests {
                     mcp["request"]["request"]["spec"].get("retry"),
                     spec.get("retry")
                 );
+                assert_eq!(
+                    mcp["request"]["request"]["spec"].get("precheckId"),
+                    spec.get("precheckId")
+                );
                 if spec.get("retry").is_none() {
                     arguments["spec"]["retry"] = Value::Null;
                     assert_eq!(command(name, arguments).unwrap().0, mcp);
@@ -1682,7 +1694,7 @@ mod tests {
             )
             .unwrap();
             let spec = &schema["inputSchema"]["properties"]["spec"];
-            assert_eq!(spec["not"]["required"], json!(["precheckId", "retry"]));
+            assert!(spec.get("not").is_none());
             assert_eq!(
                 spec["properties"]["retry"]["required"],
                 json!(["on", "maxAttempts", "initialDelayMs", "maxDelayMs"])
@@ -1724,19 +1736,20 @@ mod tests {
         for policy in invalid {
             let mut spec = retry_job_spec();
             spec["retry"] = policy;
-            assert!(command("nesvo_create_job", json!({"key":"retry","spec":spec})).is_err());
-            assert!(
-                command(
-                    "nesvo_update_job",
-                    json!({"key":"retry","jobId":"j","expectedRevision":1,"spec":spec})
-                )
-                .is_err()
-            );
+            for precheck in [false, true] {
+                if precheck {
+                    spec["precheckId"] = json!("01234567890123456789012345678901");
+                }
+                assert!(command("nesvo_create_job", json!({"key":"retry","spec":spec})).is_err());
+                assert!(
+                    command(
+                        "nesvo_update_job",
+                        json!({"key":"retry","jobId":"j","expectedRevision":1,"spec":spec})
+                    )
+                    .is_err()
+                );
+            }
         }
-        let mut checked = retry_job_spec();
-        checked["retry"] = valid;
-        checked["precheckId"] = json!("01234567890123456789012345678901");
-        assert!(command("nesvo_create_job", json!({"key":"retry","spec":checked})).is_err());
         for policy in [
             json!({"on":"launchNoEffect","maxAttempts":1,"initialDelayMs":1000,"maxDelayMs":1000}),
             json!({"on":"launchNoEffect","maxAttempts":8,"initialDelayMs":3600000,"maxDelayMs":86400000}),
@@ -1839,6 +1852,107 @@ mod tests {
             ])
             .is_err()
         );
+    }
+    #[test]
+    fn precheck_abandon_cli_and_mcp_preserve_legacy_and_exact_generation_intent() {
+        use clap::Parser;
+        let legacy = json!({"key":"abandon-once","jobId":"j","occurrenceId":"o","expectedDigest":"d".repeat(64),"acknowledgeUnknownEffects":true});
+        for generation in [None, Some("generation-2")] {
+            let digest = "d".repeat(64);
+            let mut args = vec![
+                "nesvo",
+                "job",
+                "abandon-precheck",
+                "j",
+                "o",
+                "--key",
+                "abandon-once",
+                "--digest",
+                &digest,
+                "--acknowledge-unknown-effects",
+                "--json",
+            ];
+            let mut arguments = legacy.clone();
+            if let Some(id) = generation {
+                args.extend(["--job-attempt-id", id]);
+                arguments["jobAttemptId"] = json!(id);
+            }
+            let parsed = crate::Arguments::try_parse_from(args).unwrap();
+            let Some(cli::Command::Job { command: cli }) = parsed.command else {
+                panic!("Expected job command");
+            };
+            assert!(cli.machine());
+            let cli =
+                crate::workflow::tool("jobs", json!({"request":cli.request().unwrap()})).unwrap();
+            let (mcp, kind) = command("nesvo_abandon_job_precheck", arguments.clone()).unwrap();
+            assert_eq!(kind, "workflow");
+            assert_eq!(cli, mcp);
+            let mut expected = arguments;
+            expected["action"] = json!("abandonPrecheck");
+            assert_eq!(mcp["request"]["request"], expected);
+            if generation.is_none() {
+                assert!(mcp["request"]["request"].get("jobAttemptId").is_none());
+                assert_eq!(
+                    serde_json::to_string(&mcp["request"]["request"]).unwrap(),
+                    concat!(
+                        "{\"acknowledgeUnknownEffects\":true,\"action\":\"abandonPrecheck\",",
+                        "\"expectedDigest\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",",
+                        "\"jobId\":\"j\",\"key\":\"abandon-once\",\"occurrenceId\":\"o\"}"
+                    )
+                );
+            }
+        }
+        for value in [json!(true), json!(2), json!([]), json!({})] {
+            let mut fields = legacy.clone();
+            fields["jobAttemptId"] = value;
+            assert!(command("nesvo_abandon_job_precheck", fields).is_err());
+        }
+        for required in [
+            "key",
+            "jobId",
+            "occurrenceId",
+            "expectedDigest",
+            "acknowledgeUnknownEffects",
+        ] {
+            let mut fields = legacy.clone();
+            fields.as_object_mut().unwrap().remove(required);
+            assert!(command("nesvo_abandon_job_precheck", fields).is_err());
+        }
+        for (field, value) in [
+            ("action", json!("runNow")),
+            ("owner", json!(true)),
+            ("expectedDigest", json!(7)),
+            ("acknowledgeUnknownEffects", json!("true")),
+        ] {
+            let mut fields = legacy.clone();
+            fields[field] = value;
+            assert!(command("nesvo_abandon_job_precheck", fields).is_err());
+        }
+        let schema = serde_json::to_value(
+            catalog()
+                .into_iter()
+                .find(|tool| tool.name == "nesvo_abandon_job_precheck")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(schema["inputSchema"]["additionalProperties"], false);
+        assert_eq!(
+            schema["inputSchema"]["properties"]["jobAttemptId"]["type"],
+            "string"
+        );
+        assert_eq!(
+            schema["inputSchema"]["required"],
+            json!([
+                "key",
+                "jobId",
+                "occurrenceId",
+                "expectedDigest",
+                "acknowledgeUnknownEffects"
+            ])
+        );
+        assert_eq!(schema["annotations"]["readOnlyHint"], false);
+        assert_eq!(schema["annotations"]["idempotentHint"], true);
+        assert_eq!(catalog().len(), 80);
     }
     #[test]
     fn occurrence_cancel_cli_and_mcp_share_exact_owner_intent() {

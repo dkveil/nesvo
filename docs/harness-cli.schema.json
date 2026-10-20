@@ -3565,6 +3565,11 @@
                 "approvalDigest": {
                   "type": ["string", "null"]
                 },
+                "approvalRevision": {
+                  "type": ["integer", "null"],
+                  "minimum": 1,
+                  "description": "Observed approval revision for generation 2 and later, or null when unavailable; omitted from legacy generation-1 records."
+                },
                 "state": {
                   "enum": [
                     "running",

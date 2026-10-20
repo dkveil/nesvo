@@ -140,10 +140,15 @@ They are not CLI/MCP authority and are never returned in public history.
 Historical Runs stay inspectable, while automated native admissions reject a
 Run whose job generation is no longer current. A retired preparation token does
 not stop already admitted native work. Human direct terminal input retains its
-existing control contract. Prechecks remain occurrence-keyed and dispatch stays
-generation 1 when a `precheckId` is present. A retry policy combined with
-`precheckId` is explicitly refused until command execution is migrated to each
-generation; these fences alone do not authorize repeated commands.
+existing control contract. Prechecks stay in generation 1 unless the immutable
+spec explicitly combines `precheckId` with a retry policy. Hosts advertising
+`jobPrecheckGenerations:true` support a fresh execution of the exact approved
+command before every later generation. Each generation records its own
+authorization and outcome; an earlier pass cannot release a later Run. Current
+occurrence detail shows the current generation's precheck, while attempt detail
+retains that exact generation's record. Generation 1 keeps its legacy JSON shape;
+later precheck records may include the observed `approvalRevision` or null when
+that revision is unavailable.
 
 ## Retry confirmed launch refusals
 
@@ -153,6 +158,14 @@ specifications. The CLI and MCP check both capabilities only when the serialized
 spec contains a policy. Older hosts and malformed capability values are refused
 before the new request is sent. Omitting `retry` preserves a single dispatch and
 the existing serialized intent.
+
+Combining `retry` with `precheckId` additionally requires strict boolean
+`jobPrecheckGenerations:true` and `jobPrechecks:true`. That explicit combination
+authorizes bounded repeated execution of the exact approved command, including
+any side effects it may have, before each fresh generation. Each command begin
+reads the current approval again and records new authorization; no previous
+command authorization or passed result is reused. A precheck without a retry
+policy still has a single generation.
 
 Add all four explicit fields to the job JSON file before creating or editing it:
 
@@ -181,7 +194,12 @@ class. An exception from spawning, PTY setup or worktree preparation remains an
 unknown outcome unless that exact no-effect evidence exists. Provider exit,
 result failure, idle/silence, timeouts, missing receipts and unknown effects do
 not qualify. Retrying does not relax provider permissions, workspace constraints,
-budgets or input guards. Policies with `precheckId` are currently refused.
+budgets or input guards. When a precheck is present, the failed source generation
+must also have its own passed command outcome with `commandStarted:true` and
+`cleanupConfirmed:true`. Skip, failure, timeout, abandonment, interruption and
+unknown command cleanup do not qualify for automatic retry. An arbitrary passed
+command can have lasting effects; the native no-effect receipt concerns the
+worker create operation only.
 
 During backoff the logical occurrence is `retryWaiting`; its outgoing journal
 generation remains `failed`. The current occurrence and attempt summary/detail
@@ -192,8 +210,17 @@ state distinguishes waiting, canceled work and a later generation. Once the curs
 advances, the current occurrence's `retry` is null until another qualifying failure;
 the old attempt retains its facts.
 
+The host checks approval availability again when a retry becomes due and at the
+fresh command begin. Revocation while waiting blocks admission with a visible
+reason and preserves the failed source generation. Revocation after claim but
+before begin refuses the new generation without executing the command. A
+committed begin remains evidence of admitted execution even if the approval is
+later revoked; cancellation is the explicit cleanup request.
+
 Each retry gets a fresh dispatch generation, Run, native task attempt and launch
-receipt. Prior Runs, attempts and receipts remain inspectable. `maxElapsedMs`
+receipt. A checked generation begins without a precheck result or Run; its own
+newly passed command with confirmed start and cleanup is required before Run
+binding. Prior Runs, attempts, prechecks and receipts remain inspectable. `maxElapsedMs`
 applies independently to each Run as an admission/input budget; it does not impose
 a hard process timeout. Exhausting the generation limit retains the final failure.
 Canceling while waiting fences further admissions for that occurrence and keeps
