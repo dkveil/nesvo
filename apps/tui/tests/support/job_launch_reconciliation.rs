@@ -508,7 +508,12 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
         let retained_receipt = reply(&owner,"nesvo_get_operation",json!({"id":row["launchReceiptId"]})).await?;
         let retained_control = reply(&owner,"nesvo_get_run_control",json!({"runId":row["runId"],"controlId":row["executionTimeout"]["controlId"]})).await?;
         assert_eq!(retained_receipt["data"]["receipt"],receipt["data"]["receipt"]);
-        assert_eq!(retained_control["data"],control["data"]);
+        // A control read also includes the current Run projection, whose
+        // revision can advance when the in-flight launch finalizes. Compare
+        // the retained control and target facts, not that live projection.
+        assert_eq!(retained_control["data"]["control"],control["data"]["control"]);
+        assert_eq!(retained_control["data"]["targets"],control["data"]["targets"]);
+        assert_eq!(retained_control["data"]["nextOffset"],control["data"]["nextOffset"]);
         assert_eq!(artifact_inventory(&fixture,&source).await?,artifacts,"Refused acknowledgment must not erase partial Git artifacts");
         envelopes.extend(retained_generation(&owner,&final_first["data"]["occurrence"],"unknown").await?);
         envelopes.extend([created,admitted,claimed,unresolved.clone(),receipt,control,refused,rejected,edited,queued,pending,sessions,final_first,retained_receipt,retained_control]);
