@@ -12,6 +12,11 @@ atomic revisions, scoped metadata recovery, addressed delivery, exact ACK and
 bounds. These requests have no PTY effects and produce no unsolicited workflow
 packets for legacy clients.
 
+`hostBudgets` additionally advertises owner-only `hostBudget` actions inside the
+workflow envelope. [Host admission policy](harness-budgets.md) defines exact budget
+revisions, recovery, shared runtime projection and the absence of native effects
+from policy mutations. This does not change legacy client authentication/input.
+
 Session-scoped native callers may send one `x-nesvo-scope` WebSocket handshake
 header with the public random scope ID from their private context file. The host
 selects that launch's independent key before the existing challenge/nonce/sequence

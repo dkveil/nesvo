@@ -157,6 +157,63 @@
                   }
                 },
                 {
+                  "required": ["budget"],
+                  "properties": {
+                    "budget": {
+                      "type": "object",
+                      "required": ["revision", "limits"],
+                      "properties": {
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "limits": {
+                          "type": "object",
+                          "required": ["maxSessions", "maxWorkers", "providers"],
+                          "properties": {
+                            "maxSessions": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 16
+                            },
+                            "maxWorkers": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 16
+                            },
+                            "providers": {
+                              "type": "object",
+                              "required": ["shell", "claude", "codex", "gemini"],
+                              "properties": {
+                                "shell": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 16
+                                },
+                                "claude": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 16
+                                },
+                                "codex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 16
+                                },
+                                "gemini": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 16
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
                   "required": ["run", "mailbox"],
                   "properties": {
                     "run": { "type": "object", "required": ["id", "title", "revision", "state"] },

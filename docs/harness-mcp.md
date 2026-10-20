@@ -45,6 +45,10 @@ path uses UI focus, and changing the hint or private-file role cannot grant acce
 
 ## Current tools
 
+`hostBudgets` adds owner-only `nesvo_get_host_budget` and `nesvo_set_host_budget`.
+Both use the shared host admission policy and workflow recovery namespace;
+changing policy never terminates existing work. See [budget contract](harness-budgets.md).
+
 The five workflow tools (`nesvo_create_run`, `nesvo_list_runs`, `nesvo_get_run`,
 `nesvo_set_run_plan`, `nesvo_get_run_mutation`) are gated by `workflowPlans`.
 They use durable draft metadata and the same CLI recovery keys/revision checks.

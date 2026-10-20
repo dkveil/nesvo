@@ -101,6 +101,9 @@ pub(crate) fn append_transaction(
 
 struct Store(Connection);
 #[cfg(test)]
+#[path = "budget_tests.rs"]
+mod budget_tests;
+#[cfg(test)]
 #[path = "journal_concurrency_tests.rs"]
 mod journal_concurrency_tests;
 #[cfg(test)]
@@ -273,6 +276,7 @@ fn record_storage_failure<T>(
 }
 #[derive(Clone)]
 pub struct Service {
+    budget: crate::budgets::Shared,
     sender: mpsc::Sender<Work>,
     changed: watch::Receiver<u64>,
     health_changed: watch::Sender<u64>,
@@ -281,6 +285,9 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub fn budget(&self) -> crate::budgets::Shared {
+        self.budget.clone()
+    }
     pub async fn workflow(
         &self,
         actor: crate::orchestration::Actor,
@@ -411,6 +418,8 @@ impl Service {
         let drops = Arc::new(AtomicU64::new(0));
         let failures = Arc::new(AtomicU64::new(0));
         let worker_failures = failures.clone();
+        let budget = crate::budgets::defaults();
+        let worker_budget = budget.clone();
         std::thread::Builder::new()
             .name("nesvo-events".into())
             .spawn(move || {
@@ -428,6 +437,10 @@ impl Service {
                         return;
                     }
                 };
+                if let Err(error) = crate::budgets::publish(&store.0, &worker_budget) {
+                    let _ = ready_tx.send(Err(error));
+                    return;
+                }
                 changed_tx.send_replace(head);
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
@@ -437,8 +450,21 @@ impl Service {
                             request,
                             reply,
                         } => {
+                            let budget_request =
+                                matches!(actor.scope, crate::orchestration::Scope::Owner)
+                                    && matches!(
+                                        request,
+                                        crate::orchestration::Request::HostBudget { .. }
+                                    );
                             let result =
                                 crate::orchestration::execute(&mut store.0, actor, request);
+                            // Also invalidate the projection when an authorized
+                            // read detects unavailable/corrupt policy storage.
+                            let result = if budget_request {
+                                crate::budgets::publish(&store.0, &worker_budget).and(result)
+                            } else {
+                                result
+                            };
                             record_storage_failure(&result, &worker_failures, &changed_tx);
                             notify_head(&store, &changed_tx);
                             let _ = reply.send(result);
@@ -538,6 +564,7 @@ impl Service {
             .map_err(|_| anyhow!("Event journal initialization stopped"))??;
         Ok(Self {
             sender,
+            budget,
             changed,
             health_changed,
             drops,
@@ -989,6 +1016,7 @@ mod tests {
         let (sender, _held_receiver) = mpsc::channel(1);
         let (health_changed, changed) = watch::channel(0);
         let service = Service {
+            budget: crate::budgets::defaults(),
             sender,
             changed,
             health_changed,

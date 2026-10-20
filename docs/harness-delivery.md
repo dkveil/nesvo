@@ -45,7 +45,7 @@ not evidence that the expanded acceptance criteria pass.
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending     |
 | F18 | Attempt-bound worker result                     | Missing                                                       | Partial: scoped explicit results, validation and retry fences; actual provider execution gate pending        |
 | F19 | Questions and decision gates                    | Missing                                                       | Partial: attempt-bound authority, exact revisions, timeout/cancel and inbox notices; native/UI gates pending |
-| F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Pending                                                                                                      |
+| F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Partial: persisted host/worker/provider admission; run/time/retry/cancel/drain pending                       |
 | F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Pending                                                                                                      |
 | F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Pending                                                                                                      |
 | F23 | Missed-run policy and grace window              | Missing                                                       | Pending                                                                                                      |
@@ -831,7 +831,46 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   through MCP, exact-key recovery and versioned JSON schemas are verified, and
   PTY replay remains unchanged. No model calls/global settings or UI changes.
   Controlled publication p95 is 252.763 ms over 26 batches, excluding native
-  helper/model/network latency. This feature needs its own cross-platform CI.
+  helper/model/network latency. Decision commit `c9ee53e` passed all jobs in
+  39348747416; writer-admission `7008595` passed all jobs in 39348280045. Both
+  include native SDK verification on Windows, Linux and macOS.
 - Full stage-3 acceptance is still open: actual provider/model escalation,
   automatic dispatcher/wakes, run budgets/cancel/drain and replacement-process
   adoption remain. See [decision contract](harness-decisions.md).
+
+### F20 persisted host and provider admission budgets
+
+- Replaced the fixed eight-session admission check with owner-controlled,
+  revisioned host policy: retained session slots, running worker-role processes
+  and running processes per provider. Default policy preserves eight, with a
+  bounded ceiling of 16. Exited sessions release live process capacity while
+  retained terminal output still consumes a slot. Lowering limits preserves work,
+  input control and focus; coordinators/workers cannot raise global policy.
+- Policy, domain event and original-key result commit together. Startup loads
+  the committed policy into shared native state; live guards read that projection
+  without SQLite/render I/O. Historical same-key replay returns its old result
+  while the active projection remains current. Reopen/full-capacity tests verify
+  persistence, refusal without partial changes and recoverability.
+- All native launch paths use the shared guard, including legacy creation.
+  Metadata admission reserves name/path bytes and startup headroom before spawn;
+  actual candidate snapshots are checked before persistence/announcement. This
+  preserves existing frame/retention bounds rather than silently raising wire
+  limits. Unpaged worst-case snapshot growth remains explicit transport work.
+- Added CLI `budget get|set` and two owner-only MCP tools, sharing workflow keys
+  and exact budget revisions. No new dependencies, model calls, provider-global
+  settings or material UI changes. See [budget contract](harness-budgets.md).
+- Windows storage/admission tests and native SDK exercise ten retained sessions,
+  nine running workers, policy reduction without termination, scoped refusals,
+  observed exit/provider-slot reuse and eleven retained sessions. CLI/MCP replay
+  agrees without restoring obsolete limits. CLI/legacy checks validate JSON,
+  bounded input files and rejection of an old create request without disrupting
+  existing sessions. Run/time/retry budgets, cancel/stop/drain and automatic DAG
+  dispatch remain F20/F14 requirements; this is not the full stage-3 gate.
+- Windows validation: fmt, Clippy with warnings denied, 128 TUI + 112 host + 3
+  wire unit checks, all four official SDK/native integrations and all 27
+  host/sync/CLI checks. A corrupt-policy fault test verifies that an authorized
+  failed read disables new admissions instead of retaining obsolete limits.
+  The final budget SDK scenario and eleven CLI/legacy checks also pass after
+  that error-path hardening. Controlled receipt-to-publication p95 is 263.611 ms
+  over 26 batches, excluding native helper/model/network latency. This budget
+  implementation requires its own published cross-platform CI results.

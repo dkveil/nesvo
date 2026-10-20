@@ -48,6 +48,7 @@ Owner-created parent metadata alone grants no access. Reconnecting preserves
 the grants while the coordinator process lives; its observed exit revokes them
 without stopping its children. A fixed 256 lifetime child capability bound and
 the existing live-process cap apply; configurable run budgets remain F20 work.
+The owner can configure the [host/provider admission budget](harness-budgets.md).
 Human control/drafts still prevent automation. These are process capabilities,
 not durable run/recovery handover permissions.
 
@@ -222,6 +223,10 @@ subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.
 
 ## Workflow plans and attempts
+
+`nesvo budget get|set` exposes the owner's persisted host admission limits.
+Coordinators/workers cannot change global budgets, and lowering them leaves live
+work untouched. See [process budgets and recovery](harness-budgets.md).
 
 Durable plans use `nesvo run create|list|get|plan|mutation`; activate, assign,
 task, context, report and validate add explicit worker attempts/results. See

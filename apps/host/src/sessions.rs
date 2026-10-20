@@ -22,8 +22,6 @@ use std::{
 };
 use tokio::sync::{mpsc, watch};
 
-const MAX_SESSIONS: usize = 8;
-
 #[derive(Clone)]
 pub struct Client {
     pub events: mpsc::Sender<Value>,
@@ -124,6 +122,7 @@ impl Session {
 }
 
 pub struct State {
+    budget: crate::budgets::Shared,
     event_log: Option<crate::event_log::Service>,
     submission_updates: Vec<crate::submission::Transition>,
     caller_url: Option<String>,
@@ -159,6 +158,7 @@ impl State {
         let provider_limits = usage::installed(&launchers);
         let provider_versions = launchers.pending_versions();
         Self {
+            budget: crate::budgets::defaults(),
             event_log: None,
             submission_updates: Vec::new(),
             caller_url: None,
@@ -185,6 +185,7 @@ impl State {
         self.caller_url = Some(url);
     }
     pub fn set_event_log(&mut self, service: crate::event_log::Service) {
+        self.budget = service.budget();
         self.event_log = Some(service);
     }
     pub fn event_log(&self) -> Result<crate::event_log::Service> {
@@ -609,6 +610,7 @@ impl State {
         event["workflowAttempts"] = self.event_log.is_some().into();
         event["workflowInbox"] = self.event_log.is_some().into();
         event["workflowDecisions"] = self.event_log.is_some().into();
+        event["hostBudgets"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event
@@ -681,7 +683,10 @@ impl State {
         self.list_scoped(None)
     }
     fn list_scoped(&self, caller: Option<&str>) -> Value {
-        let mut sessions: Vec<&Session> = self.sessions.values().collect();
+        self.list_with_candidate(caller, None)
+    }
+    fn list_with_candidate(&self, caller: Option<&str>, candidate: Option<&Session>) -> Value {
+        let mut sessions: Vec<&Session> = self.sessions.values().chain(candidate).collect();
         sessions.retain(|s| caller.is_none_or(|id| self.can_read(id, &s.info.id)));
         sessions.sort_by(|left, right| left.info.created_at.cmp(&right.info.created_at));
         let projections: Vec<_> = sessions
@@ -1204,10 +1209,7 @@ impl State {
                 "Parent session is not a live process"
             );
         }
-        ensure!(
-            self.sessions.len() < MAX_SESSIONS,
-            "Maximum 8 sessions. Close a session first."
-        );
+        self.admit_launch(spec.program, spec.role)?;
         ensure!(
             self.launchers.available(spec.program),
             "Program is not installed on the host."
@@ -1220,7 +1222,56 @@ impl State {
             spec.prompt.is_empty() || spec.program != Program::Shell,
             "Initial prompts require an agent program."
         );
-        working_directory(&self.workspace, spec.cwd.as_deref())
+        let directory = working_directory(&self.workspace, spec.cwd.as_deref())?;
+        self.admit_metadata(&spec.name, &directory)?;
+        Ok(directory)
+    }
+
+    fn admit_metadata(&self, name: &str, directory: &Path) -> Result<()> {
+        crate::budgets::admit_snapshot_bytes(
+            serde_json::to_vec(&self.list())?.len(),
+            serde_json::to_vec(&json!([name, crate::process::display_path(directory)]))?.len(),
+        )
+    }
+
+    fn admit_snapshot(&self, session: &Session) -> Result<()> {
+        // Keep headroom for status updates/request IDs within the legacy 64 KiB
+        // plaintext frame. A rejected candidate is never persisted or announced.
+        if serde_json::to_vec(&self.list_with_candidate(None, Some(session)))?.len() > 48 * 1024 {
+            return Err(crate::api_error::Error::new(
+                "budget_snapshot_capacity",
+                "Session metadata capacity reached; close retained sessions before creating more",
+            )
+            .into());
+        }
+        Ok(())
+    }
+    fn admit_launch(&self, program: Program, role: crate::caller::Role) -> Result<()> {
+        let limits = self.budget.read().map_err(|_| {
+            crate::api_error::Error::new("budget_unavailable", "Admission policy is unavailable")
+        })?;
+        let limits = limits.as_ref().ok_or_else(|| {
+            crate::api_error::Error::new(
+                "budget_unavailable",
+                "Current admission policy could not be loaded; existing work is preserved",
+            )
+        })?;
+        let live = self
+            .sessions
+            .values()
+            .filter(|session| session.info.running);
+        limits.limits.admit(
+            crate::budgets::Usage {
+                retained: self.sessions.len(),
+                workers: live
+                    .clone()
+                    .filter(|s| s.policy.role == crate::caller::Role::Worker)
+                    .count(),
+                provider: live.filter(|s| s.info.program == program).count(),
+            },
+            program,
+            role,
+        )
     }
 
     pub fn dispatch_control(
@@ -1569,7 +1620,10 @@ impl State {
                 .collect();
         }
         let id = session.info.id.clone();
-        if let Err(error) = self.persist_session(&session) {
+        if let Err(error) = self
+            .admit_snapshot(&session)
+            .and_then(|()| self.persist_session(&session))
+        {
             let _ = session.kill();
             self.cleanup_workers
                 .push(thread::spawn(move || drop(session)));
@@ -1972,11 +2026,9 @@ impl State {
             } => {
                 let name = valid_name(&name)?;
                 self.valid_group(group_id.as_deref())?;
-                ensure!(
-                    self.sessions.len() < MAX_SESSIONS,
-                    "Maximum 8 sessions. Close an existing session first."
-                );
+                self.admit_launch(program, crate::caller::Role::Worker)?;
                 let cwd = working_directory(&self.workspace, cwd.as_deref())?;
+                self.admit_metadata(&name, &cwd)?;
                 let command = self.launchers.command(program, &cwd)?;
                 let mut session = spawn_session(
                     &name,
@@ -1994,7 +2046,15 @@ impl State {
                 )?;
                 session.info.group_id = group_id;
                 let session_id = session.info.id.clone();
-                self.persist_session(&session)?;
+                if let Err(error) = self
+                    .admit_snapshot(&session)
+                    .and_then(|()| self.persist_session(&session))
+                {
+                    let _ = session.kill();
+                    self.cleanup_workers
+                        .push(thread::spawn(move || drop(session)));
+                    return Err(error);
+                }
                 self.sessions.insert(session_id.clone(), session);
                 self.emit(
                     Some(&session_id),
@@ -2937,7 +2997,8 @@ mod tests {
         let history = "a".repeat(BACKLOG_BYTES);
         // Exercise the real replay chunking and queue overflow path without a
         // scheduler draining messages between subscriptions or any local PTYs.
-        for index in 0..MAX_SESSIONS {
+        let sessions = usize::from(crate::budgets::Limits::default().max_sessions);
+        for index in 0..sessions {
             let id = index.to_string();
             state.send(
                 1,
@@ -2954,7 +3015,7 @@ mod tests {
                 restored_bytes += data.len();
             }
         }
-        assert_eq!(restored_bytes, MAX_SESSIONS * BACKLOG_BYTES);
+        assert_eq!(restored_bytes, sessions * BACKLOG_BYTES);
         for _ in 0..=crate::transport::CLIENT_EVENT_CAPACITY {
             state.send(1, json!({"type":"output", "sessionId":"0", "data":"x"}));
         }

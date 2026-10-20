@@ -154,7 +154,7 @@ test(
     ): Promise<Extract<HostEvent, { type: T }>> {
       return until(() => {
         const error = events.find(event => event.type === 'error');
-        if (error?.type === 'error') throw new Error(error.message);
+        if (type !== 'error' && error?.type === 'error') throw new Error(error.message);
         const index = events.findIndex(
           event => event.type === type && predicate(event as Extract<HostEvent, { type: T }>),
         );
@@ -840,6 +840,79 @@ test(
             'owner focus is not a worker binding',
           );
           assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
+        },
+      );
+
+      await suite.test(
+        'owner budgets reject legacy creation without changing existing sessions',
+        async () => {
+          const invoke = async (args: string[]) => {
+            const output = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'budget',
+              ...args,
+              '--json',
+            ]);
+            queryOutput(output.stdout);
+            assert.equal(output.code, 0, output.stdout);
+            return JSON.parse(output.stdout).data;
+          };
+          const original = await invoke(['get']);
+          const path = join(fixture, 'budget łódź.json');
+          await writeFile(
+            path,
+            JSON.stringify({
+              ...original.budget.limits,
+              providers: { ...original.budget.limits.providers, shell: 0 },
+            }),
+          );
+          const denied = await invoke([
+            'set',
+            '--key',
+            'legacy-shell-budget',
+            '--revision',
+            String(original.budget.revision),
+            '--file',
+            path,
+          ]);
+          try {
+            const requestId = client.createSession(
+              'Budget must refuse this legacy start',
+              child.groupId,
+            );
+            const refusal = await next('error', event => event.requestId === requestId);
+            assert.equal(refusal.code, 'budget_exhausted');
+            assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
+            const current = await invoke(['get']);
+            assert.equal(current.budget.revision, denied.budget.revision);
+            assert.equal(current.budget.limits.providers.shell, 0);
+            const oversized = join(fixture, 'oversized-budget.json');
+            await writeFile(oversized, ' '.repeat(4097));
+            const malformed = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'budget',
+              'set',
+              '--key',
+              'oversized-budget',
+              '--revision',
+              String(current.budget.revision),
+              '--file',
+              oversized,
+              '--json',
+            ]);
+            queryOutput(malformed.stdout);
+            assert.equal(malformed.code, 2);
+          } finally {
+            const current = await invoke(['get']);
+            await writeFile(path, JSON.stringify(original.budget.limits));
+            await invoke([
+              'set',
+              '--key',
+              'restore-fixture-budget',
+              '--revision',
+              String(current.budget.revision),
+              '--file',
+              path,
+            ]);
+          }
         },
       );
 

@@ -21,7 +21,7 @@ fn create(store: &mut Store, id: Option<&str>, key: &str) -> Value {
 fn task(key: &str, deps: &[&str]) -> Value {
     json!({"key":key,"title":key,"instruction":"private task text","dependencies":deps})
 }
-pub(super) fn error(result: anyhow::Result<Value>, code: &str) {
+pub(super) fn error(result: anyhow::Result<impl std::fmt::Debug>, code: &str) {
     assert_eq!(
         result
             .unwrap_err()

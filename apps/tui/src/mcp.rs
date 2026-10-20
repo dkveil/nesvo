@@ -58,6 +58,21 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_get_host_budget",
+            "Read the explicit owner's persisted host admission policy and its revision. Coordinators/workers cannot inspect or raise global budgets. This changes no live process, focus or input control.",
+            object(json!({}), &[]),
+            true,
+        ),
+        (
+            "nesvo_set_host_budget",
+            "Owner-only replacement of future admission limits at the exact budget revision. maxSessions counts retained session slots (1–16); maxWorkers counts running worker-role processes (0–16); provider caps count running processes including coordinators (0–16). Reducing limits never terminates existing work. Same-key replay is historical and cannot restore an old active policy; recover through nesvo_get_run_mutation.",
+            object(
+                json!({"key":key,"expectedRevision":revision,"limits":{"type":"object","additionalProperties":false,"required":["maxSessions","maxWorkers","providers"],"properties":{"maxSessions":{"type":"integer","minimum":1,"maximum":16},"maxWorkers":{"type":"integer","minimum":0,"maximum":16},"providers":{"type":"object","additionalProperties":false,"required":["shell","claude","codex","gemini"],"properties":{"shell":{"type":"integer","minimum":0,"maximum":16},"claude":{"type":"integer","minimum":0,"maximum":16},"codex":{"type":"integer","minimum":0,"maximum":16},"gemini":{"type":"integer","minimum":0,"maximum":16}}}}}}),
+                &["key", "expectedRevision", "limits"],
+            ),
+            false,
+        ),
+        (
             "nesvo_ask_decision",
             "Ask one durable question for this worker's exact current attempt. Audience owner requires an explicit human answer; coordinator permits that run's coordinator or owner. Answered is data, not native permission approval. Pending/canceled/expired gates prevent successful result reporting. No input or model wake occurs. Recover a lost reply with nesvo_get_run_mutation and the original key.",
             object(
@@ -411,6 +426,33 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_get_host_budget" | "nesvo_set_host_budget" => {
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Budget arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Budget action is selected by the tool name",
+                ));
+            }
+            fields.insert(
+                "action".into(),
+                if name == "nesvo_get_host_budget" {
+                    "get"
+                } else {
+                    "set"
+                }
+                .into(),
+            );
+            (
+                crate::workflow::tool("hostBudget", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_ask_decision"
         | "nesvo_list_decisions"
         | "nesvo_get_decision"
@@ -814,7 +856,8 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 32);
+        assert_eq!(catalog().len(), 34);
+        assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(
             command(

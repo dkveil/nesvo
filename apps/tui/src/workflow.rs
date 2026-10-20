@@ -8,6 +8,12 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Owner admission policy, shared with the top-level budget command.
+    #[command(hide = true)]
+    HostBudget {
+        #[command(subcommand)]
+        command: crate::budgets::Command,
+    },
     /// Ask, inspect and resolve attempt-bound questions without native approval.
     Decision {
         #[command(subcommand)]
@@ -134,6 +140,7 @@ impl Command {
     pub fn machine(&self) -> bool {
         match self {
             Self::Decision { command } => command.machine(),
+            Self::HostBudget { command } => command.machine(),
             Self::Inbox { command } => command.machine(),
             Self::Create { json, .. }
             | Self::List { json, .. }
@@ -150,6 +157,9 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::HostBudget { command } => Request::HostBudget {
+                request: command.request()?,
+            },
             Self::Decision { command } => Request::Decision {
                 request: command.request()?,
             },
@@ -340,6 +350,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    HostBudget {
+        request: crate::budgets::Request,
+    },
     Decision {
         request: crate::workflow_decisions::Request,
     },
@@ -431,6 +444,16 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         "capabilities",
     )
     .await?;
+    if request["request"]["action"] == "hostBudget" {
+        return if caps["hostBudgets"] == true {
+            Ok(())
+        } else {
+            Err(cli::failure(
+                "unsupported",
+                "Host does not support persisted admission budgets; update nesvo-host",
+            ))
+        };
+    }
     if caps["workflowPlans"] != true {
         return Err(cli::failure(
             "unsupported",

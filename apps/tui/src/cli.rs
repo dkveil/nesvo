@@ -7,6 +7,11 @@ use std::{io::Write, path::Path, time::Duration};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Inspect or replace the owner's persisted host admission budgets.
+    Budget {
+        #[command(subcommand)]
+        command: crate::budgets::Command,
+    },
     /// Serve scoped host tools over MCP stdio. No global provider setup is changed.
     Mcp,
     /// Durable workflow plans (separate run/task identities, no automatic launch).
@@ -261,6 +266,7 @@ impl Command {
         match self {
             Self::Mcp => false,
             Self::Run { command } => command.machine(),
+            Self::Budget { command } => command.machine(),
             Self::Doctor { json } | Self::Events { json, .. } | Self::Operation { json, .. } => {
                 *json
             }
@@ -760,6 +766,13 @@ pub(crate) fn error_value(error: &anyhow::Error) -> Value {
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let (session, machine) = match command {
         Command::Run { command } => return crate::workflow::run(command, connection).await,
+        Command::Budget { command } => {
+            return crate::workflow::run(
+                crate::workflow::Command::HostBudget { command },
+                connection,
+            )
+            .await;
+        }
         Command::Mcp => {
             return Err(failure(
                 "invalid_argument",

@@ -3,6 +3,7 @@ mod agent_events;
 mod api_error;
 mod attention;
 mod attention_projection;
+mod budgets;
 mod caller;
 mod codex_context;
 mod event_log;

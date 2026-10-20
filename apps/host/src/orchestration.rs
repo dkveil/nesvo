@@ -68,6 +68,9 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    HostBudget {
+        request: crate::budgets::Request,
+    },
     Create {
         key: String,
         spec: RunSpec,
@@ -132,6 +135,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
       CREATE TABLE IF NOT EXISTS workflow_attempts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES workflow_tasks(id),ordinal INTEGER NOT NULL,session_id TEXT NOT NULL UNIQUE,state TEXT NOT NULL,result TEXT,validation TEXT,UNIQUE(task_id,ordinal));")?;
     crate::workflow_inbox::initialize(connection)?;
     crate::workflow_decisions::initialize(connection)?;
+    crate::budgets::initialize(connection)?;
     Ok(())
 }
 fn invalid(message: &'static str) -> anyhow::Error {
@@ -260,6 +264,9 @@ fn random_id() -> String {
     hex::encode(crate::wire::random::<16>())
 }
 pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> Result<Value> {
+    if let Request::HostBudget { request } = request {
+        return crate::budgets::execute(connection, actor, request);
+    }
     if let Request::Decision { request } = request {
         return crate::workflow_decisions::execute(connection, actor, request, now_millis());
     }
@@ -516,6 +523,9 @@ pub(crate) fn remember(
 }
 
 fn authorize_history(connection: &Connection, actor: &Actor, result: &Value) -> Result<()> {
+    if result.get("budget").is_some() {
+        return crate::budgets::owner(actor);
+    }
     if matches!(actor.scope, Scope::Worker(_)) {
         let attempt = result["attempt"]["id"]
             .as_str()
