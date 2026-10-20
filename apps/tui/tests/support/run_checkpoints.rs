@@ -90,7 +90,7 @@ pub(super) async fn setup(
     .await?;
     Ok((id, child_id, run, path, coordinator))
 }
-async fn schema(envelopes: Vec<Value>) -> Result<()> {
+pub(super) async fn schema(envelopes: Vec<Value>) -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut command = Command::new("node");
     command

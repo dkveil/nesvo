@@ -45,6 +45,7 @@
   "nesvo_read_inbox",
   "nesvo_read_run_context",
   "nesvo_read_session",
+  "nesvo_rebind_run_coordinator",
   "nesvo_recover_run_context",
   "nesvo_report_task_result",
   "nesvo_resume_run",

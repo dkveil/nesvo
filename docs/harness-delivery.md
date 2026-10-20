@@ -66,7 +66,7 @@ not evidence that the expanded acceptance criteria pass.
 | F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending                                   |
 | F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending                                                                                                                                     |
 | F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: durable snapshots/current context and owner constraints with native revision fences; provider compaction/adoption/UI gates pending |
-| F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Pending                                                                                                                                     |
+| F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: owner coordinator metadata rebind and exclusive host directory; conversation/adoption/layout/mobile pending                        |
 | F42 | Safe resumable hibernation                      | Missing                                                       | Pending                                                                                                                                     |
 | F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                                                     |
 | F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Pending                                                                                                                                     |
@@ -1615,3 +1615,40 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   CI must separately verify Unix runtime behavior. Older binaries that never take
   the lock are not fenced; acquiring a directory is not proof old workers exited.
   See [ownership and upgrade limits](host-directory-ownership.md).
+
+### Explicit owner coordinator metadata recovery
+
+- F15/F40/F41 prerequisite for the stage-three coordinator-restart gate:
+  `runCoordinatorRecovery`, CLI `run bind-coordinator` and owner-only MCP
+  `nesvo_rebind_run_coordinator` bind retained run metadata to a different live
+  native coordinator. Source ID (explicit null for unbound), stable mutation key
+  and current revision are required. Same canonical workspace/group evidence
+  comes from a retained session, saved launch context or previous binding.
+- One transaction changes run coordinator/revision/generation, invalidates and
+  pauses executor/wake generations and pauses queued input. Earlier native input
+  keeps its acceptance generation and is fenced before paste/Enter. No ACK,
+  result validation, input replay, worker/process adoption, policy enable or
+  budget reset occurs. A human lease/draft on the target stays intact.
+- Additive binding table and idempotent input-generation migration retain old
+  data. Missing/malformed source evidence is refused; an absent host session does
+  not claim physical process exit. Immutable key replay cannot undo a newer
+  binding. Native uncertainty/slots remain unreconciled, and old worker terminal
+  grants are not transferred. Downgrading bypasses the new fence and is not a
+  supported mixed-host recovery mode. See the
+  [contract, CLI/MCP examples and limits](harness-coordinator-recovery.md).
+- Five storage regressions cover authority, migration, source evidence, replay,
+  constraints/inbox/budget preservation and old pump/input generations. Three
+  native official SDK/CLI cases verify live/stale/wrong-workspace refusals,
+  preserved target human draft, retained questions/results, actual host restart,
+  pending owner rules and an actual partial-paste/Enter fence. Real envelopes
+  pass Ajv; these providers are deterministic fixtures, not original models.
+- Local Windows verification passed fmt, warnings-denied Clippy, production
+  build, 327 unit tests and 30 host/sync/CLI cases. Twenty-three native suite cases
+  passed; the catalog compatibility case then passed after correcting all three
+  stale count assertions for the added 61st tool. Original failed runs are retained.
+  Final formatting, Clippy and all five storage cases including malformed-record
+  refusal also passed. No new UI/global setting/dependency is
+  introduced by coordinator binding; directory ownership landed as ff56427.
+- Full conversation resume, deliberate worker adoption, unknown-effect owner
+  reconciliation, provider orchestration and UI/mobile gates remain open. This
+  metadata operation does not complete F40/F41 or the full 44-feature goal.

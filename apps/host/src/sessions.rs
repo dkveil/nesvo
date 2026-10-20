@@ -271,6 +271,52 @@ impl State {
             scope_id: context.scope_id.clone(),
         })
     }
+    pub fn coordinator_rebind_facts(
+        &self,
+        previous: Option<&str>,
+        target: &str,
+    ) -> Result<crate::workflow_coordinator::Facts> {
+        use crate::workflow_coordinator::{Facts, Location};
+        let previous = previous.and_then(|id| self.sessions.get(id));
+        if previous.is_some_and(|s| s.info.running) {
+            return Err(crate::api_error::Error::new(
+                "coordinator_alive",
+                "Previous coordinator is still running; recovery does not take over a live process",
+            )
+            .into());
+        }
+        if previous.is_some_and(|s| s.policy.role != crate::caller::Role::Coordinator) {
+            return Err(crate::api_error::Error::new(
+                "coordinator_context_missing",
+                "Retained source is not a native coordinator",
+            )
+            .into());
+        }
+        let target = self
+            .sessions
+            .get(target)
+            .filter(|s| {
+                s.info.running
+                    && s.policy.role == crate::caller::Role::Coordinator
+                    && s.caller_context.is_some()
+            })
+            .ok_or_else(|| {
+                crate::api_error::Error::new(
+                    "session_not_found",
+                    "Replacement must be a live native coordinator with a scoped capability",
+                )
+            })?;
+        // Metadata changes neither the target's lease/draft nor native control.
+        let location = |s: &Session| Location {
+            directory: s.info.cwd.clone(),
+            group_id: s.info.group_id.clone(),
+        };
+        Ok(Facts {
+            target_id: target.info.id.clone(),
+            target: location(target),
+            previous: previous.map(location),
+        })
+    }
     pub fn operation_caller(&self, client_id: u64) -> Result<(String, bool)> {
         Ok(match self.caller_session(client_id)? {
             Some(id) => (format!("session:{id}"), false),
@@ -782,6 +828,7 @@ impl State {
         event["runWakes"] = self.event_log.is_some().into();
         event["runCheckpoints"] = self.event_log.is_some().into();
         event["runRecovery"] = self.event_log.is_some().into();
+        event["runCoordinatorRecovery"] = self.event_log.is_some().into();
         event["runConstraints"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["sessionToolPermissions"] = true.into();

@@ -12,6 +12,9 @@ const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
 const editorRedraw = fs.existsSync(path.join(process.cwd(), '.fixture-editor-redraw'));
+const editorRedrawDelay = fs.existsSync(path.join(process.cwd(), '.fixture-slow-redraw'))
+  ? 3000
+  : 600;
 const editorBlocked =
   editorRedraw &&
   fs.readFileSync(path.join(process.cwd(), '.fixture-editor-redraw'), 'utf8') === 'working';
@@ -274,7 +277,7 @@ process.stdin.on('data', text => {
             ? '\x1b[2J\x1b[HPASTE_PENDING_REDRAW\r\nThinking (esc to interrupt)'
             : '\x1b[2J\x1b[HPASTE_PENDING_REDRAW\r\n',
         );
-        setTimeout(drawEditor, 600);
+        setTimeout(drawEditor, editorRedrawDelay);
       }
     } else if (/^[\r\n]/.test(pending)) {
       pending = pending.slice(1);

@@ -119,6 +119,9 @@ mod workflow_checkpoints_tests;
 #[path = "workflow_controls_tests.rs"]
 mod workflow_controls_tests;
 #[cfg(test)]
+#[path = "workflow_coordinator_tests.rs"]
+mod workflow_coordinator_tests;
+#[cfg(test)]
 #[path = "workflow_decisions_tests.rs"]
 mod workflow_decisions_tests;
 #[cfg(test)]
@@ -306,6 +309,10 @@ enum Work {
         request: crate::orchestration::Request,
         reply: oneshot::Sender<Result<Value>>,
     },
+    Coordinator {
+        work: crate::workflow_coordinator::Work,
+        reply: oneshot::Sender<Result<Option<Value>>>,
+    },
     Accept {
         operation: &'static str,
         issuer: String,
@@ -458,6 +465,21 @@ impl Service {
     }
     pub fn budget(&self) -> crate::budgets::Shared {
         self.budget.clone()
+    }
+    pub async fn coordinator(
+        &self,
+        work: crate::workflow_coordinator::Work,
+    ) -> Result<Option<Value>> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::Coordinator { work, reply })
+            .await
+            .map_err(|_| anyhow!("Workflow store is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!(
+                "Coordinator recovery outcome was not confirmed; recover the original workflow key"
+            )
+        })?
     }
     pub async fn workflow(
         &self,
@@ -707,6 +729,16 @@ impl Service {
                                     crate::status::now_millis(),
                                 )
                             });
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
+                        Work::Coordinator { work, reply } => {
+                            let result = crate::workflow_coordinator::execute(
+                                &mut store.0,
+                                work,
+                                crate::status::now_millis(),
+                            );
                             record_storage_failure(&result, &worker_failures, &changed_tx);
                             notify_head(&store, &changed_tx);
                             let _ = reply.send(result);

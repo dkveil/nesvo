@@ -8,6 +8,22 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Owner-only replacement of a lost coordinator; never adopts native work.
+    BindCoordinator {
+        id: String,
+        #[arg(long, required_unless_present = "unbound", conflicts_with = "unbound")]
+        from: Option<String>,
+        #[arg(long, required_unless_present = "from", conflicts_with = "from")]
+        unbound: bool,
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Preserve owner-written constraints and explicitly acknowledge their revision.
     Constraints {
         #[command(subcommand)]
@@ -215,6 +231,7 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::BindCoordinator { json, .. } => *json,
             Self::RecoverHook => false,
             Self::Constraints { command } => command.machine(),
             Self::Checkpoint { command } => command.machine(),
@@ -246,6 +263,22 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::BindCoordinator {
+                id,
+                from,
+                session,
+                key,
+                revision,
+                ..
+            } => Request::Coordinator {
+                request: CoordinatorRequest {
+                    key,
+                    run_id: id,
+                    expected_revision: revision,
+                    expected_coordinator_session_id: from,
+                    coordinator_session_id: session,
+                },
+            },
             Self::Constraints { command } => Request::Constraints {
                 request: command.request()?,
             },
@@ -486,6 +519,16 @@ struct ValidationSpec {
     summary: String,
     checks: Vec<Check>,
 }
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CoordinatorRequest {
+    key: String,
+    run_id: String,
+    expected_revision: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
+    expected_coordinator_session_id: Option<String>,
+    coordinator_session_id: String,
+}
 // These DTOs validate the wire shape only; the host owns DAG, access and revision rules.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -511,6 +554,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Coordinator {
+        request: CoordinatorRequest,
+    },
     Constraints {
         request: crate::workflow_constraints::Request,
     },
@@ -683,6 +729,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         ));
     }
     let capability = match request["request"]["action"].as_str() {
+        Some("coordinator") => Some("runCoordinatorRecovery"),
         Some("recover") => Some("runRecovery"),
         Some("checkpoints") => Some("runCheckpoints"),
         Some("constraints") => Some("runConstraints"),

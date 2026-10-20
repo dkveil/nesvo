@@ -32,6 +32,11 @@ Run-scoped admission and graceful drain are available through
 They use the run revision and existing workflow mutation keys. See
 [limits, activation clock and human priority](harness-run-budgets.md).
 
+An owner can explicitly attach retained run metadata to a replacement coordinator
+using `nesvo run bind-coordinator`. It preserves inbox/results/constraints and
+pauses automation; it does not adopt old worker processes or native authority.
+See [binding recovery, revision fences and limits](harness-coordinator-recovery.md).
+
 `current` uses the authenticated host caller binding. For explicit owner/legacy
 connections without that binding it uses the injected `NESVO_SESSION_ID` hint.
 It never guesses from the TUI's selection. This identifier is context, not an

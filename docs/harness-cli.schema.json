@@ -54,6 +54,27 @@
                 },
                 "cursor": {
                   "$ref": "#/definitions/cursor"
+                },
+                "run": {
+                  "type": "object",
+                  "properties": {
+                    "coordinatorBinding": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/definitions/workflowCoordinatorBinding"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "nativeEffectsRestored": {
+                  "const": false
+                },
+                "workerAuthorityRestored": {
+                  "const": false
                 }
               },
               "oneOf": [
@@ -2811,6 +2832,57 @@
           }
         }
       ]
+    },
+    "workflowCoordinatorBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "previousSessionId",
+        "directory",
+        "groupId",
+        "generation",
+        "source",
+        "updatedAt",
+        "nativeEffectsRestored",
+        "workerAuthorityRestored"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "previousSessionId": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "groupId": {
+          "type": ["string", "null"]
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "source": {
+          "enum": ["retainedSession", "recoveryRecord", "previousBinding", "unbound"]
+        },
+        "updatedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "nativeEffectsRestored": {
+          "const": false
+        },
+        "workerAuthorityRestored": {
+          "const": false
+        }
+      }
     }
   }
 }

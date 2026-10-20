@@ -44,6 +44,8 @@ mod workflow_constraints;
 mod workflow_context;
 mod workflow_control_runtime;
 mod workflow_controls;
+mod workflow_coordinator;
+mod workflow_coordinator_runtime;
 mod workflow_decisions;
 mod workflow_delivery;
 mod workflow_delivery_runtime;

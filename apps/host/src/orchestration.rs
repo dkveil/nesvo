@@ -68,6 +68,9 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Coordinator {
+        request: crate::workflow_coordinator::Request,
+    },
     Checkpoints {
         request: crate::workflow_checkpoints::Request,
     },
@@ -275,8 +278,9 @@ pub(crate) fn run(connection: &Connection, actor: &Actor, id: &str) -> Result<Va
         "Invalid stored workflow metadata"
     );
     let budget = crate::workflow_budget::snapshot(connection, &id, &state)?;
+    let coordinator_binding = crate::workflow_coordinator::summary(connection, &id)?;
     Ok(
-        json!({"id":id,"title":title,"goal":goal,"coordinatorSessionId":coordinator,"revision":revision,"state":state,"createdAt":created_at,"budget":budget,"taskResult":if state=="succeeded"{Some("succeeded")}else{None}}),
+        json!({"id":id,"title":title,"goal":goal,"coordinatorSessionId":coordinator,"coordinatorBinding":coordinator_binding,"revision":revision,"state":state,"createdAt":created_at,"budget":budget,"taskResult":if state=="succeeded"{Some("succeeded")}else{None}}),
     )
 }
 pub(crate) fn view(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
@@ -320,6 +324,13 @@ pub(crate) fn execute_at(
     request: Request,
     now: u64,
 ) -> Result<Value> {
+    if matches!(request, Request::Coordinator { .. }) {
+        return Err(Error::new(
+            "unsupported",
+            "Coordinator replacement requires the native recovery adapter",
+        )
+        .into());
+    }
     if let Request::Checkpoints { request } = request {
         return crate::workflow_checkpoints::execute(connection, actor, request, now);
     }

@@ -336,6 +336,7 @@ pub async fn handle(
                                     tokio::spawn(async move {
                                         let _permit=permit;
                                         let result=match request {
+                                            crate::orchestration::Request::Coordinator {request}=>crate::workflow_coordinator_runtime::execute(state.clone(),log,actor,authority,request).await,
                                             crate::orchestration::Request::Wakes {request}=>crate::workflow_wake_runtime::execute(state.clone(),log,actor,authority,request).await,
                                             crate::orchestration::Request::Executor {request}=>crate::workflow_executor_runtime::execute(state.clone(),events,log,actor,authority,request).await,
                                             crate::orchestration::Request::Delivery {request}=>crate::workflow_delivery_runtime::execute(state.clone(),log,actor,authority,request).await,

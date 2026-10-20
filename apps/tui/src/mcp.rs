@@ -78,6 +78,21 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_rebind_run_coordinator",
+            "Owner-only binding of retained run context to a different live native coordinator after the previous process is unavailable. Exact source ID (null for unbound), revision and mutation key required. Preserves inbox/results/constraints/budgets; pauses executor/wakes and queued input, fences earlier native input. No native worker authority, process/conversation adoption, ACK, validation, prompt or policy enable is restored. Target must match retained workspace/group. Recover the original workflow mutation key.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision,"expectedCoordinatorSessionId":{"anyOf":[{"type":"null"},id.clone()]},"coordinatorSessionId":id}),
+                &[
+                    "key",
+                    "runId",
+                    "expectedRevision",
+                    "expectedCoordinatorSessionId",
+                    "coordinatorSessionId",
+                ],
+            ),
+            false,
+        ),
+        (
             "nesvo_add_run_constraint",
             "Owner-only append of literal manual constraints at the current run revision. Pauses executor/wakes and queued task input; earlier native input cannot rearm after acknowledgement. No user text is discarded or treated as task success/native permission. Existing model work may finish. Recover immutable acceptance with the original workflow mutation key.",
             object(
@@ -668,6 +683,10 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_rebind_run_coordinator" => (
+            crate::workflow::tool("coordinator", json!({"request":arguments}))?,
+            "workflow",
+        ),
         "nesvo_add_run_constraint"
         | "nesvo_list_run_constraints"
         | "nesvo_acknowledge_run_constraints"
@@ -1287,7 +1306,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 60);
+        assert_eq!(catalog().len(), 61);
         let published: Vec<String> =
             serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json")).unwrap();
         let mut names = catalog()

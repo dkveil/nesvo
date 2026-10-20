@@ -5,6 +5,11 @@ transport and the same command/error/receipt path as the CLI. It never embeds a
 model client, starts another host, writes global provider configuration or adds
 an HTTP listener. Running `nesvo` normally retains the TUI.
 
+`nesvo_rebind_run_coordinator` is the owner-only metadata recovery operation for
+an unavailable coordinator. It preserves retained run context and pauses input
+without adopting worker terminals. See the
+[CLI/MCP recovery contract](harness-coordinator-recovery.md).
+
 ## Launch and authority
 
 An agent-launched server should inherit `NESVO_AGENT_CONTEXT` from its managed

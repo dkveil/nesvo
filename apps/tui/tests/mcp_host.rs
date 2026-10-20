@@ -44,6 +44,8 @@ mod run_budgets;
 mod run_checkpoints;
 #[path = "support/run_controls.rs"]
 mod run_controls;
+#[path = "support/run_coordinator.rs"]
+mod run_coordinator;
 #[path = "support/run_delivery.rs"]
 mod run_delivery;
 #[path = "support/run_executor.rs"]
@@ -390,7 +392,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
     let outcome = std::panic::AssertUnwindSafe(async {
         let mcp = client(&fixture.pairing()).await?;
         let tools = mcp.list_all_tools().await?;
-        assert_eq!(tools.len(), 60);
+        assert_eq!(tools.len(), 61);
         assert!(tools.iter().all(|tool| tool.output_schema.is_some()));
         let run=data(call(&mcp,"nesvo_create_run",json!({"key":"sdk-run","spec":{"title":"SDK plan","goal":"A literal private goal"}})).await?)?;
         assert_eq!(run["data"]["run"]["state"],"draft");
@@ -577,7 +579,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         .with_protocol_version(ProtocolVersion::V_2025_11_25)
         .serve(TokioChildProcess::new(legacy_command)?)
         .await?;
-        assert_eq!(legacy.list_all_tools().await?.len(), 60);
+        assert_eq!(legacy.list_all_tools().await?.len(), 61);
         let legacy_result = legacy
             .call_tool(
                 CallToolRequestParams::new("nesvo_get_session")
@@ -602,7 +604,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let scoped = client(&context).await?;
         assert_eq!(
             scoped.list_all_tools().await?.len(),
-            60,
+            61,
             "catalog/help need no host effects"
         );
         let refused = call(&scoped, "nesvo_list_sessions", json!({})).await?;
