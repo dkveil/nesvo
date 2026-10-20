@@ -63,6 +63,7 @@ impl ControlLease {
 }
 
 struct Session {
+    claude_quota: Option<crate::claude_quota::Observation>,
     model_selection: crate::launch_profile::Selection,
     harness_enabled: bool,
     policy: crate::caller::Policy,
@@ -2657,6 +2658,7 @@ impl State {
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
             "conversationIdentity":session.conversation_identity,
+            "nativeQuotaCallback":session.claude_quota.as_ref().map(|quota|json!({"source":"claudeStatusLine","sequence":quota.scope.sequence,"generation":quota.scope.generation,"snapshot":quota.snapshot,"backendFreshness":"unknown","ordinaryUsageAllowed":null,"accountFingerprint":null})),
             "publicationLatency":session.status_latency.snapshot(),
             "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())), "turnHistory":session.turn.history(), "terminalProtocol":session.terminal_protocol.diagnostics(),
         })).collect();
@@ -3326,6 +3328,7 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        claude_quota: None,
         model_selection: Default::default(),
         harness_enabled: identity.harness,
         policy: crate::caller::Policy::new(identity.role),
@@ -3504,6 +3507,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                             id.clone(),
                             tracker.report(),
                             session.lifecycle_cursor,
+                            session.info.program == Program::Claude,
                             session.caller_context.as_ref().and_then(|context| {
                                 session.harness_enabled.then(|| context.recovery_report())
                             }),
@@ -3511,7 +3515,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     })
                 })
                 .collect();
-            for (id, path, after, recovery_path) in reports {
+            for (id, path, after, claude, recovery_path) in reports {
                 let observation = crate::agent_context::observe(&path).await;
                 let recovery = match recovery_path {
                     Some(path) => Some(crate::caller::observe_recovery(&path).await),
@@ -3519,7 +3523,12 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 };
                 let expected = id.clone();
                 let batch = tokio::task::spawn_blocking(move || {
-                    crate::agent_events::read(&path, &expected, after)
+                    let quota = if claude {
+                        crate::claude_quota::read(&path, &expected).ok().flatten()
+                    } else {
+                        None
+                    };
+                    (crate::agent_events::read(&path, &expected, after), quota)
                 })
                 .await;
                 let mut state = state.lock().unwrap();
@@ -3539,7 +3548,13 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     session.integration_delivery = observation.delivery;
                     session.integration_shadow_sequence = observation.report.map(|r| r.sequence);
                     match batch {
-                        Ok(Ok(batch)) => {
+                        Ok((Ok(batch), quota)) => {
+                            session.claude_quota = quota.filter(|quota| {
+                                quota.scope.launch_id == batch.identity.launch_id
+                                    && quota.scope.generation == batch.identity.generation
+                                    && Some(&quota.scope.provider_session_id)
+                                        == batch.identity.provider_session_id.as_ref()
+                            });
                             session.lifecycle_gap |= batch.gap;
                             if batch.gap {
                                 session.turn.gap(elapsed);

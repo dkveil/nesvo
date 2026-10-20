@@ -5,6 +5,7 @@ mod attention;
 mod attention_projection;
 mod budgets;
 mod caller;
+mod claude_quota;
 mod codex_context;
 mod command_scope;
 mod event_log;
@@ -109,6 +110,9 @@ use tokio::{
 struct Args {
     #[arg(long, hide = true)]
     agent_context_hook: Option<PathBuf>,
+    /// Launch-owned status-line metadata receiver; never installs global settings.
+    #[arg(long, hide = true)]
+    claude_quota_hook: Option<PathBuf>,
     #[arg(long, hide = true)]
     codex_context_hook: bool,
     /// Print the source build identity without starting a host.
@@ -202,6 +206,12 @@ fn main() -> Result<()> {
         return job_calendar_adapter::stdio();
     }
     let args = Args::parse();
+    if let Some(report) = args.claude_quota_hook {
+        if claude_quota::receive(&report, std::io::stdin()).is_err() {
+            eprintln!("nesvo quota callback delivery failed; inspect session diagnostics");
+        }
+        return Ok(());
+    }
     if args.codex_context_hook {
         if std::env::var_os("NESVO_LIFECYCLE_REPORT")
             .map(PathBuf::from)

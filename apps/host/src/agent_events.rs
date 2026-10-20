@@ -1,7 +1,7 @@
 //! Launch-scoped lifecycle journal. Sequence order does not depend on wall time.
 use crate::status::StatusState;
 use anyhow::{Result, ensure};
-use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use std::{path::Path, time::Duration};
 
@@ -216,6 +216,154 @@ pub fn accepts_context(report: &Path, provider_session: Option<&str>) -> Result<
         |row| row.get(0),
     )?;
     Ok(active.is_none() || active.as_deref() == provider_session)
+}
+
+/// A private callback ticket never binds or changes lifecycle identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RootQuotaTicket {
+    pub(crate) host_session_id: String,
+    pub(crate) launch_id: String,
+    pub(crate) provider_session_id: String,
+    pub(crate) generation: u64,
+    pub(crate) sequence: u64,
+}
+
+fn quota_scope(connection: &Connection) -> Result<(String, String, Option<String>, u64)> {
+    Ok(connection.query_row(
+        "SELECT host_session,launch_id,provider_session,generation FROM scope WHERE id=1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, unsigned(row, 3)?)),
+    )?)
+}
+
+/// Reserve ordering before reading stdin, so an older callback cannot replace a
+/// newer callback that completed first. Only one small snapshot is retained.
+pub(crate) fn begin_root_quota(report: &Path) -> Result<Option<RootQuotaTicket>> {
+    let mut connection = open(report, true)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let (host_session_id, launch_id, provider_session_id, generation) = quota_scope(&transaction)?;
+    let Some(provider_session_id) = provider_session_id else {
+        return Ok(None);
+    };
+    ensure!(
+        !provider_session_id.is_empty() && generation > 0,
+        "Invalid bound quota scope"
+    );
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS root_quota (
+          id INTEGER PRIMARY KEY CHECK(id=1),
+          next_sequence INTEGER NOT NULL CHECK(next_sequence>=0),
+          sequence INTEGER,
+          launch_id TEXT,
+          provider_session TEXT,
+          generation INTEGER,
+          snapshot TEXT CHECK(snapshot IS NULL OR length(snapshot)<=2048)
+        );
+        INSERT OR IGNORE INTO root_quota(id,next_sequence) VALUES(1,0);",
+    )?;
+    let previous: u64 = transaction.query_row(
+        "SELECT next_sequence FROM root_quota WHERE id=1",
+        [],
+        |row| unsigned(row, 0),
+    )?;
+    let sequence = previous
+        .checked_add(1)
+        .filter(|v| *v <= i64::MAX as u64)
+        .ok_or_else(|| anyhow::anyhow!("Quota callback counter exhausted"))?;
+    transaction.execute(
+        "UPDATE root_quota SET next_sequence=?1 WHERE id=1",
+        [sequence as i64],
+    )?;
+    transaction.commit()?;
+    Ok(Some(RootQuotaTicket {
+        host_session_id,
+        launch_id,
+        provider_session_id,
+        generation,
+        sequence,
+    }))
+}
+
+/// The value is the receiver's typed projection, never the native JSON input.
+pub(crate) fn append_root_quota(
+    report: &Path,
+    ticket: &RootQuotaTicket,
+    snapshot: &crate::claude_quota::StoredSnapshot,
+) -> Result<bool> {
+    snapshot.validate()?;
+    let encoded = serde_json::to_string(snapshot)?;
+    ensure!(
+        encoded.len() <= 2048,
+        "Quota snapshot exceeds private bound"
+    );
+    let mut connection = open(report, true)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let (host_session, launch, provider_session, generation) = quota_scope(&transaction)?;
+    if host_session != ticket.host_session_id
+        || launch != ticket.launch_id
+        || provider_session.as_deref() != Some(ticket.provider_session_id.as_str())
+        || generation != ticket.generation
+    {
+        return Ok(false);
+    }
+    let changed = transaction.execute(
+        "UPDATE root_quota SET sequence=?1,launch_id=?2,provider_session=?3,generation=?4,snapshot=?5
+         WHERE id=1 AND next_sequence=?1",
+        params![i64::try_from(ticket.sequence)?, ticket.launch_id, ticket.provider_session_id,
+            i64::try_from(ticket.generation)?, encoded],
+    )?;
+    transaction.commit()?;
+    Ok(changed == 1)
+}
+
+pub(crate) fn read_root_quota(
+    report: &Path,
+    expected_session: &str,
+) -> Result<Option<(RootQuotaTicket, crate::claude_quota::StoredSnapshot)>> {
+    let mut connection = open(report, false)?;
+    let transaction = connection.transaction()?;
+    let (host_session_id, launch_id, provider_session_id, generation) = quota_scope(&transaction)?;
+    ensure!(
+        host_session_id == expected_session,
+        "Quota launch belongs to another session"
+    );
+    let Some(provider_session_id) = provider_session_id else {
+        return Ok(None);
+    };
+    let table_exists: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='root_quota')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !table_exists {
+        return Ok(None);
+    }
+    let saved = transaction
+        .query_row(
+            "SELECT sequence,snapshot FROM root_quota WHERE id=1 AND launch_id=?1
+         AND provider_session=?2 AND generation=?3 AND snapshot IS NOT NULL",
+            params![launch_id, provider_session_id, i64::try_from(generation)?],
+            |row| Ok((unsigned(row, 0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let Some((sequence, encoded)) = saved else {
+        return Ok(None);
+    };
+    ensure!(encoded.len() <= 2048, "Invalid stored quota snapshot");
+    let snapshot: crate::claude_quota::StoredSnapshot = serde_json::from_str(&encoded)
+        .map_err(|_| anyhow::anyhow!("Invalid stored quota snapshot"))?;
+    snapshot.validate()?;
+    transaction.commit()?;
+    Ok(Some((
+        RootQuotaTicket {
+            host_session_id,
+            launch_id,
+            provider_session_id,
+            generation,
+            sequence,
+        },
+        snapshot,
+    )))
 }
 
 #[derive(Serialize)]
