@@ -1,5 +1,5 @@
 //! Headless operations over the same authenticated host connection as TUI.
-use crate::network::{Connection, NetworkEvent, Pairing};
+use crate::network::{Connection, NetworkEvent, Pairing, open_failure_message};
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
 use serde_json::{Value, json};
@@ -337,10 +337,13 @@ pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -
                 "Cannot load a valid private pairing file; start the host and pass --pairing PATH",
             )
         })?;
-        let mut connection = Connection::open(pairing).await.map_err(|_| {
+        let mut connection = Connection::open(pairing).await.map_err(|error| {
             failure(
                 "host_unavailable",
-                "Cannot authenticate with the paired host; check that it is running and reachable",
+                &open_failure_message(
+                    &error,
+                    "Cannot authenticate with the paired host; check that it is running and reachable",
+                ),
             )
         })?;
         run(command, &mut connection).await

@@ -243,6 +243,17 @@ optional owner-supplied metadata.
 
 `nesvo mcp` exposes current shared operations over native stdio; see the
 [MCP adapter](harness-mcp.md) for scope and SDK integration tests.
+
+Connection failures retain `host_unavailable`, the existing exit status and
+retryability. Authentication errors distinguish fixed stages (`connect`,
+`challengeRead`, `challengeValidate`, `authSend`, `authRead`, `hostProof`,
+`connectedValidate`) and safe causes in the message. An HTTP rejection or received
+WebSocket close may include its numeric status; response bodies, close reasons,
+addresses, keys, scopes and nonces are never included. Unknown internal errors
+keep the adapter's generic message. These diagnostics do not prove admission
+saturation or permit automatic replay. Existing connection/read/write timeouts
+and host proof, nonce and protocol validation remain unchanged.
+
 Job receipts, agent instruction installation and durable run grants remain
 subsequent gates. This is not a completed orchestration interface. Existing
 legacy `nesvo --list` remains compatible.

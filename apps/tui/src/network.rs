@@ -9,7 +9,7 @@ use tokio::{sync::mpsc, task::JoinHandle, time::timeout};
 use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{
-        Message,
+        Error as WebSocketError, Message,
         client::IntoClientRequest,
         protocol::{WebSocketConfig, frame::coding::CloseCode},
     },
@@ -80,6 +80,166 @@ pub enum NetworkEvent {
     Disconnected(String),
 }
 
+#[derive(Clone, Copy, Debug)]
+enum OpenStage {
+    Connect,
+    ChallengeRead,
+    ChallengeValidate,
+    AuthSend,
+    AuthRead,
+    HostProof,
+    ConnectedValidate,
+}
+
+impl OpenStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Connect => "connect",
+            Self::ChallengeRead => "challengeRead",
+            Self::ChallengeValidate => "challengeValidate",
+            Self::AuthSend => "authSend",
+            Self::AuthRead => "authRead",
+            Self::HostProof => "hostProof",
+            Self::ConnectedValidate => "connectedValidate",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OpenCause {
+    Timeout,
+    Io,
+    PeerClosed,
+    HttpRejected,
+    UnexpectedFrame,
+    MalformedMessage,
+    InvalidChallenge,
+    InvalidProof,
+    NonceMismatch,
+    ProtocolUnsupported,
+    MissingIdentity,
+    EncodingFailed,
+    InvalidRequest,
+    Transport,
+}
+
+impl OpenCause {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Io => "io",
+            Self::PeerClosed => "peerClosed",
+            Self::HttpRejected => "httpRejected",
+            Self::UnexpectedFrame => "unexpectedFrame",
+            Self::MalformedMessage => "malformedMessage",
+            Self::InvalidChallenge => "invalidChallenge",
+            Self::InvalidProof => "invalidProof",
+            Self::NonceMismatch => "nonceMismatch",
+            Self::ProtocolUnsupported => "protocolUnsupported",
+            Self::MissingIdentity => "missingIdentity",
+            Self::EncodingFailed => "encodingFailed",
+            Self::InvalidRequest => "invalidRequest",
+            Self::Transport => "transport",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ConnectionOpenError {
+    stage: OpenStage,
+    cause: OpenCause,
+    status: Option<u16>,
+}
+
+impl ConnectionOpenError {
+    fn new(stage: OpenStage, cause: OpenCause) -> Self {
+        Self {
+            stage,
+            cause,
+            status: None,
+        }
+    }
+
+    fn websocket(stage: OpenStage, error: WebSocketError) -> Self {
+        let cause = match error {
+            WebSocketError::Http(response) => {
+                return Self {
+                    stage,
+                    cause: OpenCause::HttpRejected,
+                    status: Some(response.status().as_u16()),
+                };
+            }
+            WebSocketError::Io(_) => OpenCause::Io,
+            WebSocketError::ConnectionClosed | WebSocketError::AlreadyClosed => {
+                OpenCause::PeerClosed
+            }
+            _ => OpenCause::Transport,
+        };
+        Self::new(stage, cause)
+    }
+}
+
+impl std::fmt::Display for ConnectionOpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Cannot authenticate with the paired host (stage={}, cause={}",
+            self.stage.label(),
+            self.cause.label()
+        )?;
+        if let Some(status) = self.status {
+            write!(f, ", status={status}")?;
+        }
+        f.write_str(")")
+    }
+}
+
+impl std::error::Error for ConnectionOpenError {}
+
+/// Only typed, fixed diagnostics may cross the CLI/MCP boundary. Unknown errors
+/// retain the caller's generic message; their text and sources are never exposed.
+pub(crate) fn open_failure_message(error: &anyhow::Error, fallback: &str) -> String {
+    error
+        .downcast_ref::<ConnectionOpenError>()
+        .map_or_else(|| fallback.to_owned(), ToString::to_string)
+}
+
+struct OpenTimeouts {
+    connect: Duration,
+    challenge_read: Duration,
+    auth_send: Duration,
+    auth_read: Duration,
+}
+
+impl Default for OpenTimeouts {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_secs(8),
+            challenge_read: Duration::from_secs(5),
+            auth_send: Duration::from_secs(3),
+            auth_read: Duration::from_secs(5),
+        }
+    }
+}
+
+fn handshake_text(
+    stage: OpenStage,
+    frame: Option<std::result::Result<Message, WebSocketError>>,
+) -> Result<String> {
+    match frame {
+        Some(Ok(Message::Text(text))) => Ok(text.to_string()),
+        Some(Ok(Message::Close(frame))) => Err(ConnectionOpenError {
+            stage,
+            cause: OpenCause::PeerClosed,
+            status: frame.map(|frame| u16::from(frame.code)),
+        }
+        .into()),
+        None => Err(ConnectionOpenError::new(stage, OpenCause::PeerClosed).into()),
+        Some(Err(error)) => Err(ConnectionOpenError::websocket(stage, error).into()),
+        Some(Ok(_)) => Err(ConnectionOpenError::new(stage, OpenCause::UnexpectedFrame).into()),
+    }
+}
+
 pub struct Connection {
     pub client_id: u64,
     pub events: mpsc::Receiver<NetworkEvent>,
@@ -89,6 +249,10 @@ pub struct Connection {
 
 impl Connection {
     pub async fn open(pairing: Pairing) -> Result<Self> {
+        Self::open_with_timeouts(pairing, OpenTimeouts::default()).await
+    }
+
+    async fn open_with_timeouts(pairing: Pairing, timeouts: OpenTimeouts) -> Result<Self> {
         pairing.validate()?;
         let decoded = hex::decode(&pairing.key).context("Invalid pairing key")?;
         let key: [u8; 32] = decoded
@@ -97,67 +261,86 @@ impl Connection {
         let config = WebSocketConfig::default()
             .max_message_size(Some(wire::MAX_FRAME))
             .max_frame_size(Some(wire::MAX_FRAME));
-        let mut request = pairing.url.as_str().into_client_request()?;
+        let mut request =
+            pairing.url.as_str().into_client_request().map_err(|_| {
+                ConnectionOpenError::new(OpenStage::Connect, OpenCause::InvalidRequest)
+            })?;
         if let Some(scope) = &pairing.scope_id {
-            request
-                .headers_mut()
-                .insert("x-nesvo-scope", scope.parse()?);
+            request.headers_mut().insert(
+                "x-nesvo-scope",
+                scope.parse().map_err(|_| {
+                    ConnectionOpenError::new(OpenStage::Connect, OpenCause::InvalidRequest)
+                })?,
+            );
         }
         let (mut socket, _) = timeout(
-            Duration::from_secs(8),
+            timeouts.connect,
             connect_async_with_config(request, Some(config), true),
         )
         .await
-        .context("Host connection timed out")?
-        .context("Cannot connect to host; check that it is running and reachable")?;
-        let hello = timeout(Duration::from_secs(5), socket.next())
+        .map_err(|_| ConnectionOpenError::new(OpenStage::Connect, OpenCause::Timeout))?
+        .map_err(|error| ConnectionOpenError::websocket(OpenStage::Connect, error))?;
+        let hello = timeout(timeouts.challenge_read, socket.next())
             .await
-            .context("Host handshake timed out")?
-            .ok_or_else(|| anyhow!("Host closed during handshake"))??;
-        let Message::Text(text) = hello else {
-            return Err(anyhow!("Invalid host handshake"));
-        };
-        let hello: Value = serde_json::from_str(&text).context("Invalid host handshake")?;
+            .map_err(|_| ConnectionOpenError::new(OpenStage::ChallengeRead, OpenCause::Timeout))?;
+        let text = handshake_text(OpenStage::ChallengeRead, hello)?;
+        let hello: Value = serde_json::from_str(&text).map_err(|_| {
+            ConnectionOpenError::new(OpenStage::ChallengeValidate, OpenCause::MalformedMessage)
+        })?;
         let challenge = hello["challenge"].as_str().unwrap_or_default().to_owned();
-        ensure!(
-            hello["type"] == "challenge"
-                && hello["version"] == 1
-                && challenge.len() == 64
-                && challenge.bytes().all(|b| b.is_ascii_hexdigit()),
-            "Invalid host challenge"
-        );
+        if !(hello["type"] == "challenge"
+            && hello["version"] == 1
+            && challenge.len() == 64
+            && challenge.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err(ConnectionOpenError::new(
+                OpenStage::ChallengeValidate,
+                OpenCause::InvalidChallenge,
+            )
+            .into());
+        }
         let client_nonce = hex::encode(wire::random::<32>());
         let auth = wire::encode_client(
             json!({"type":"auth", "clientNonce":client_nonce}),
             &key,
             &challenge,
             1,
-        )?;
-        timeout(
-            Duration::from_secs(3),
-            socket.send(Message::Text(auth.into())),
         )
-        .await??;
-        let answer = timeout(Duration::from_secs(5), socket.next())
+        .map_err(|_| ConnectionOpenError::new(OpenStage::AuthSend, OpenCause::EncodingFailed))?;
+        timeout(timeouts.auth_send, socket.send(Message::Text(auth.into())))
             .await
-            .context("Host authentication timed out")?
-            .ok_or_else(|| anyhow!("Host closed during authentication"))??;
-        let Message::Text(answer) = answer else {
-            return Err(anyhow!("Host rejected authentication"));
-        };
+            .map_err(|_| ConnectionOpenError::new(OpenStage::AuthSend, OpenCause::Timeout))?
+            .map_err(|error| ConnectionOpenError::websocket(OpenStage::AuthSend, error))?;
+        let answer = timeout(timeouts.auth_read, socket.next())
+            .await
+            .map_err(|_| ConnectionOpenError::new(OpenStage::AuthRead, OpenCause::Timeout))?;
+        let answer = handshake_text(OpenStage::AuthRead, answer)?;
         let connected = wire::decode_host(&answer, &key, &challenge, 1)
-            .context("Could not authenticate host")?;
-        ensure!(
-            connected["type"] == "connected" && connected["clientNonce"] == client_nonce,
-            "Host did not prove this connection's fresh nonce"
-        );
-        ensure!(
-            connected["protocolVersion"] == 2,
-            "This TUI requires host protocol v2; update the host"
-        );
-        let client_id = connected["clientId"]
-            .as_u64()
-            .ok_or_else(|| anyhow!("Missing client identity"))?;
+            .map_err(|_| ConnectionOpenError::new(OpenStage::HostProof, OpenCause::InvalidProof))?;
+        if connected["type"] != "connected" {
+            return Err(ConnectionOpenError::new(
+                OpenStage::ConnectedValidate,
+                OpenCause::UnexpectedFrame,
+            )
+            .into());
+        }
+        if connected["clientNonce"] != client_nonce {
+            return Err(ConnectionOpenError::new(
+                OpenStage::ConnectedValidate,
+                OpenCause::NonceMismatch,
+            )
+            .into());
+        }
+        if connected["protocolVersion"] != 2 {
+            return Err(ConnectionOpenError::new(
+                OpenStage::ConnectedValidate,
+                OpenCause::ProtocolUnsupported,
+            )
+            .into());
+        }
+        let client_id = connected["clientId"].as_u64().ok_or_else(|| {
+            ConnectionOpenError::new(OpenStage::ConnectedValidate, OpenCause::MissingIdentity)
+        })?;
         let (commands, mut command_rx) = mpsc::channel::<Value>(64);
         let (events_tx, events) = mpsc::channel(128);
         let worker = tokio::spawn(async move {
@@ -252,3 +435,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "network_open_tests.rs"]
+mod open_tests;

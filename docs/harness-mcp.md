@@ -38,6 +38,12 @@ context is selected automatically; invalid context fails closed. Catalog/help
 work without a host. Each tool call authenticates afresh, so revocation is not
 bypassed by an authorization cache.
 
+Failed authentication retains `host_unavailable` and fixed stage/cause diagnostics
+shared with the [CLI](harness-cli.md). Only numeric HTTP/close status may accompany
+them; peer bodies, close reasons, addresses and authentication material are omitted.
+An unknown internal error retains the adapter's generic fallback message. The
+diagnostic does not establish host admission saturation or authorize input replay.
+
 Host policy always wins. The default passive worker reads its own session but
 cannot create children or inspect owner receipts. An owner may launch a session
 with `spec.role:"coordinator"` when `coordinatorScopes` is advertised. Its private

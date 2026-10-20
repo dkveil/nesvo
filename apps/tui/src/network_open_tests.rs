@@ -1,0 +1,326 @@
+use super::*;
+use std::{future::Future, net::SocketAddr};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{
+    WebSocketStream, accept_async, accept_hdr_async,
+    tungstenite::{
+        handshake::server::{Request, Response},
+        http::Response as HttpResponse,
+        protocol::CloseFrame,
+    },
+};
+
+const CHALLENGE: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const KEY: [u8; 32] = [42; 32];
+const SOCKET_BOUND: Duration = Duration::from_secs(2);
+type MockSocket = WebSocketStream<TcpStream>;
+
+fn pairing(address: SocketAddr) -> Pairing {
+    Pairing {
+        version: 1,
+        url: format!("ws://{address}/"),
+        key: hex::encode(KEY),
+        scope_id: None,
+    }
+}
+
+async fn mock_open_error<F, Fut>(host: F, timeouts: OpenTimeouts) -> anyhow::Error
+where
+    F: FnOnce(MockSocket) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let pairing = pairing(listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        timeout(SOCKET_BOUND, async {
+            let (stream, _) = listener.accept().await.unwrap();
+            host(accept_async(stream).await.unwrap()).await;
+        })
+        .await
+        .expect("mock host must finish within its bound");
+    });
+    let result = timeout(
+        SOCKET_BOUND,
+        Connection::open_with_timeouts(pairing, timeouts),
+    )
+    .await
+    .expect("client must finish within its bound");
+    let error = result.err().expect("host response must be rejected");
+    timeout(SOCKET_BOUND, task)
+        .await
+        .expect("mock host task must finish")
+        .unwrap();
+    error
+}
+
+async fn auth(socket: &mut MockSocket) -> Value {
+    socket
+        .send(Message::Text(
+            json!({"type":"challenge", "version":1, "challenge":CHALLENGE})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let Message::Text(frame) = socket.next().await.unwrap().unwrap() else {
+        panic!("client must send an auth frame");
+    };
+    let auth = wire::decode(&frame, &KEY, CHALLENGE, 1).unwrap();
+    assert_eq!(auth["type"], "auth");
+    let nonce = auth["clientNonce"].as_str().unwrap();
+    assert_eq!(nonce.len(), 64);
+    assert!(nonce.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    auth
+}
+
+fn assert_diagnostic(error: anyhow::Error, suffix: &str) {
+    let expected = format!("Cannot authenticate with the paired host ({suffix})");
+    assert_eq!(open_failure_message(&error, "fallback"), expected);
+    assert_eq!(error.to_string(), expected);
+    assert!(expected.len() < 160);
+    for private in ["private-host-response", CHALLENGE, &hex::encode(KEY)] {
+        assert!(!expected.contains(private));
+    }
+}
+
+#[test]
+fn unknown_open_errors_keep_the_callers_generic_message() {
+    let error = anyhow!("private-host-response: ws://private-host/ private-key");
+    for fallback in [
+        "Cannot authenticate with the paired host; check that it is running and reachable",
+        "Cannot authenticate with the paired host",
+    ] {
+        assert_eq!(open_failure_message(&error, fallback), fallback);
+    }
+    let timeouts = OpenTimeouts::default();
+    assert_eq!(timeouts.connect, Duration::from_secs(8));
+    assert_eq!(timeouts.challenge_read, Duration::from_secs(5));
+    assert_eq!(timeouts.auth_send, Duration::from_secs(3));
+    assert_eq!(timeouts.auth_read, Duration::from_secs(5));
+}
+
+#[tokio::test]
+// Tungstenite's handshake callback requires this exact unboxed response type.
+#[allow(clippy::result_large_err)]
+async fn http_rejection_reports_only_the_connect_stage_and_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut pairing = pairing(listener.local_addr().unwrap());
+    pairing.scope_id = Some("b".repeat(32));
+    let task = tokio::spawn(async move {
+        timeout(SOCKET_BOUND, async {
+            let (stream, _) = listener.accept().await.unwrap();
+            let result = accept_hdr_async(stream, |request: &Request, _: Response| {
+                assert_eq!(request.headers()["x-nesvo-scope"], "b".repeat(32));
+                Err(HttpResponse::builder()
+                    .status(403)
+                    .body(Some(format!("private-host-response {CHALLENGE}")))
+                    .unwrap())
+            })
+            .await;
+            assert!(result.is_err());
+        })
+        .await
+        .unwrap();
+    });
+    let error = timeout(SOCKET_BOUND, Connection::open(pairing))
+        .await
+        .unwrap()
+        .err()
+        .expect("HTTP rejection must fail authentication");
+    timeout(SOCKET_BOUND, task).await.unwrap().unwrap();
+    assert_diagnostic(error, "stage=connect, cause=httpRejected, status=403");
+}
+
+#[tokio::test]
+async fn challenge_and_auth_closes_report_numeric_codes_without_reasons() {
+    for during_auth in [false, true] {
+        let error = mock_open_error(
+            move |mut socket| async move {
+                if during_auth {
+                    auth(&mut socket).await;
+                }
+                socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: CloseCode::Library(4003),
+                        reason: format!("private-host-response {CHALLENGE}").into(),
+                    })))
+                    .await
+                    .unwrap();
+            },
+            OpenTimeouts::default(),
+        )
+        .await;
+        assert_diagnostic(
+            error,
+            if during_auth {
+                "stage=authRead, cause=peerClosed, status=4003"
+            } else {
+                "stage=challengeRead, cause=peerClosed, status=4003"
+            },
+        );
+    }
+}
+
+#[tokio::test]
+async fn challenge_frames_are_validated_before_authentication() {
+    for (frame, expected) in [
+        (
+            Message::Binary(vec![1, 2, 3].into()),
+            "stage=challengeRead, cause=unexpectedFrame",
+        ),
+        (
+            Message::Text("private-host-response {".into()),
+            "stage=challengeValidate, cause=malformedMessage",
+        ),
+        (
+            Message::Text(
+                json!({"type":"challenge", "version":1, "challenge":"private-host-response"})
+                    .to_string()
+                    .into(),
+            ),
+            "stage=challengeValidate, cause=invalidChallenge",
+        ),
+    ] {
+        let error = mock_open_error(
+            move |mut socket| async move {
+                socket.send(frame).await.unwrap();
+                // Invalid challenges must not produce an authentication frame.
+                assert!(!matches!(socket.next().await, Some(Ok(Message::Text(_)))));
+            },
+            OpenTimeouts::default(),
+        )
+        .await;
+        assert_diagnostic(error, expected);
+    }
+}
+
+#[tokio::test]
+async fn host_proof_rejects_bad_keys_context_sequence_reflection_and_malformed_frames() {
+    for scenario in 0..5 {
+        let error = mock_open_error(
+            move |mut socket| async move {
+                let auth = auth(&mut socket).await;
+                let connected = json!({
+                    "type":"connected", "clientNonce":auth["clientNonce"],
+                    "protocolVersion":2, "clientId":7,
+                });
+                let frame = match scenario {
+                    0 => wire::encode(connected, &[43; 32], CHALLENGE, 1).unwrap(),
+                    1 => wire::encode(connected, &KEY, "other-private-challenge", 1).unwrap(),
+                    2 => wire::encode(connected, &KEY, CHALLENGE, 2).unwrap(),
+                    3 => wire::encode_client(connected, &KEY, CHALLENGE, 1).unwrap(),
+                    _ => "private-host-response malformed-proof".into(),
+                };
+                socket.send(Message::Text(frame.into())).await.unwrap();
+            },
+            OpenTimeouts::default(),
+        )
+        .await;
+        assert_diagnostic(error, "stage=hostProof, cause=invalidProof");
+    }
+}
+
+#[tokio::test]
+async fn authenticated_connected_payload_requires_type_nonce_protocol_and_identity() {
+    for (field, value, expected) in [
+        (
+            "type",
+            json!("private-host-response"),
+            "stage=connectedValidate, cause=unexpectedFrame",
+        ),
+        (
+            "clientNonce",
+            json!("private-host-response"),
+            "stage=connectedValidate, cause=nonceMismatch",
+        ),
+        (
+            "protocolVersion",
+            json!(1),
+            "stage=connectedValidate, cause=protocolUnsupported",
+        ),
+        (
+            "clientId",
+            Value::Null,
+            "stage=connectedValidate, cause=missingIdentity",
+        ),
+    ] {
+        let error = mock_open_error(
+            move |mut socket| async move {
+                let auth = auth(&mut socket).await;
+                let mut connected = json!({
+                    "type":"connected", "clientNonce":auth["clientNonce"],
+                    "protocolVersion":2, "clientId":7,
+                });
+                connected[field] = value;
+                let frame = wire::encode(connected, &KEY, CHALLENGE, 1).unwrap();
+                socket.send(Message::Text(frame.into())).await.unwrap();
+            },
+            OpenTimeouts::default(),
+        )
+        .await;
+        assert_diagnostic(error, expected);
+    }
+}
+
+#[tokio::test]
+async fn stalled_challenge_and_authentication_reads_keep_distinct_timeout_stages() {
+    for during_auth in [false, true] {
+        let short = Duration::from_millis(25);
+        let timeouts = OpenTimeouts {
+            challenge_read: if during_auth { SOCKET_BOUND } else { short },
+            auth_read: short,
+            ..OpenTimeouts::default()
+        };
+        let error = mock_open_error(
+            move |mut socket| async move {
+                if during_auth {
+                    auth(&mut socket).await;
+                }
+                // The client's read timeout must drop this connection without retrying.
+                assert!(!matches!(socket.next().await, Some(Ok(Message::Text(_)))));
+            },
+            timeouts,
+        )
+        .await;
+        assert_diagnostic(
+            error,
+            if during_auth {
+                "stage=authRead, cause=timeout"
+            } else {
+                "stage=challengeRead, cause=timeout"
+            },
+        );
+    }
+}
+
+#[tokio::test]
+async fn stalled_websocket_upgrade_reports_the_connect_timeout() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let pairing = pairing(listener.local_addr().unwrap());
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        timeout(SOCKET_BOUND, async {
+            let (_stream, _) = listener.accept().await.unwrap();
+            done_rx.await.unwrap();
+        })
+        .await
+        .unwrap();
+    });
+    let error = timeout(
+        SOCKET_BOUND,
+        Connection::open_with_timeouts(
+            pairing,
+            OpenTimeouts {
+                connect: Duration::from_millis(25),
+                ..OpenTimeouts::default()
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .err()
+    .expect("stalled upgrade must time out");
+    done_tx.send(()).unwrap();
+    timeout(SOCKET_BOUND, task).await.unwrap().unwrap();
+    assert_diagnostic(error, "stage=connect, cause=timeout");
+}

@@ -1,7 +1,7 @@
 //! MCP is a transport adapter to the authenticated host, never a session engine.
 use crate::{
     cli,
-    network::{Connection, Pairing},
+    network::{Connection, Pairing, open_failure_message},
 };
 use anyhow::Result;
 use futures_util::{StreamExt, future};
@@ -1442,10 +1442,10 @@ impl HostTools {
             )
         })?;
         let pairing=Pairing::load(&self.pairing,self.url.as_deref()).map_err(|_|cli::failure("pairing_unavailable","Cannot load the private caller context; never substitute an owner key for a worker"))?;
-        let mut connection = Connection::open(pairing).await.map_err(|_| {
+        let mut connection = Connection::open(pairing).await.map_err(|error| {
             cli::failure(
                 "host_unavailable",
-                "Cannot authenticate with the paired host",
+                &open_failure_message(&error, "Cannot authenticate with the paired host"),
             )
         })?;
         if name == "nesvo_get_current_session" {
