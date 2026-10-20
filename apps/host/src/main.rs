@@ -21,6 +21,8 @@ mod job_precheck_records;
 mod job_prechecks;
 mod job_retries;
 mod job_runtime;
+mod job_timeout_runtime;
+mod job_timeouts;
 mod jobs;
 mod launch_profile;
 mod launchers;
@@ -363,6 +365,7 @@ async fn run(args: Args) -> Result<()> {
         event_tx.clone(),
         event_log.clone(),
     ));
+    tokio::spawn(job_timeout_runtime::run(state.clone(), event_log.clone()));
     tokio::spawn(notifications::run(state.clone()));
     if claude_installed {
         let state = state.clone();

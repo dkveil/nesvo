@@ -43,6 +43,8 @@ pub struct Spec {
     pub precheck_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<Box<crate::job_retries::Policy>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_timeout_ms: Option<u64>,
     #[serde(default)]
     pub misfire: Misfire,
     #[serde(default = "grace")]
@@ -154,6 +156,13 @@ pub enum Work {
         claim: crate::job_cancellations::Claim,
         result: Option<Value>,
     },
+    TimeoutPoll {
+        slots: u8,
+    },
+    TimeoutFinished {
+        claim: crate::job_timeouts::Claim,
+        result: Option<Value>,
+    },
     Poll {
         slots: u8,
     },
@@ -190,6 +199,7 @@ pub enum Work {
 pub enum Reply {
     Prepared(Value),
     Cancellations(Vec<crate::job_cancellations::Claim>),
+    Timeouts(crate::job_timeouts::Schedule),
     CancelRequested(bool),
     Claims(Vec<Claim>),
     Calendars(Vec<CalendarDue>),
@@ -240,6 +250,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::job_prechecks::initialize(connection)?;
     crate::job_cancellations::initialize(connection)?;
     crate::job_attempts::initialize(connection)?;
+    crate::job_timeouts::initialize(connection)?;
     crate::job_precheck_records::initialize(connection)?;
     crate::job_retries::initialize(connection)?;
     Ok(())
@@ -270,6 +281,7 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
         )?;
     }
     crate::job_cancellations::recover(&transaction, now)?;
+    crate::job_timeouts::recover(&transaction, now)?;
     transaction.commit()?;
     Ok(())
 }
@@ -305,6 +317,12 @@ fn due(spec: &Spec) -> Result<u64> {
     u64::try_from(instant).map_err(|_| invalid("Once time must be after the Unix epoch"))
 }
 fn validate(spec: &Spec, now: u64) -> Result<u64> {
+    if spec
+        .execution_timeout_ms
+        .is_some_and(|timeout| !(1000..=604_800_000).contains(&timeout))
+    {
+        return Err(invalid("Execution timeout must be 1 second–7 days"));
+    }
     if let Some(retry) = &spec.retry {
         retry.validate()?;
     }
@@ -423,6 +441,7 @@ pub(crate) fn occurrence(
         .into();
     view["precheck"] = crate::job_precheck_records::view_current(connection, id, detail)?;
     view["cancellation"] = crate::job_cancellations::view(connection, id)?;
+    view["executionTimeout"] = crate::job_timeouts::view_current(connection, id)?;
     let generation: Option<(String,i64)> = connection.query_row("SELECT a.id,a.ordinal FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     view["jobAttemptId"] = generation.as_ref().map(|r| r.0.as_str()).into();
     view["jobAttemptOrdinal"] = generation.as_ref().map(|r| r.1).into();
@@ -818,6 +837,7 @@ pub fn execute(
     Ok(view)
 }
 fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
+    crate::job_timeouts::refresh(transaction, now)?;
     crate::job_cancellations::refresh(transaction, now)?;
     let rows = {
         let mut q=transaction.prepare(&format!("SELECT o.id,r.state,(SELECT a.state FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=r.id ORDER BY a.ordinal DESC LIMIT 1),e.reason,o.state FROM harness_job_occurrences o JOIN workflow_runs r ON r.id=o.run_id LEFT JOIN workflow_executors e ON e.run_id=r.id WHERE o.state IN ({ACTIVE})"))?;
@@ -833,7 +853,10 @@ fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
         .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (id, run, attempt, reason, current) in rows {
-        if current == "retryWaiting" || crate::job_cancellations::requested(transaction, &id)? {
+        if current == "retryWaiting"
+            || crate::job_cancellations::requested(transaction, &id)?
+            || crate::job_timeouts::owns_occurrence(transaction, &id)?
+        {
             continue;
         }
         if attempt.as_deref() == Some("launchFailed")
@@ -926,6 +949,16 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
         }
         Work::CancelFinished { claim, result } => {
             crate::job_cancellations::finish(&transaction, &claim, result, now)?;
+            Reply::Done
+        }
+        Work::TimeoutPoll { slots } => Reply::Timeouts(crate::job_timeouts::schedule(
+            &transaction,
+            slots,
+            now,
+            crate::event_log::monotonic_millis(),
+        )?),
+        Work::TimeoutFinished { claim, result } => {
+            crate::job_timeouts::finish(&transaction, &claim, result, now)?;
             Reply::Done
         }
         Work::Interrupted { dispatch } => {

@@ -66,6 +66,22 @@ views may expose nullable immutable `retry` decision facts. Older accepted
 responses may omit those fields. These additive capabilities do not change
 protocol framing, agent tool grants or automatic replay rules.
 
+An explicit non-null `spec.executionTimeoutMs` requires strict boolean
+`jobExecutionTimeouts:true`. The optional duration is 1000 through 604800000
+milliseconds; omission/null preserves existing admission-budget behavior. It is
+frozen with each occurrence and armed atomically at native launch admission,
+after any approved precheck. Enforcement uses the current host's monotonic
+clock; public wall-clock `armedAt`/`deadlineAt` are diagnostic evidence. Current
+occurrence and exact job-attempt detail add nullable `executionTimeout`, with
+stable generation/native/control pointers and cleanup state. Private claims and
+monotonic origins are never exposed. A valid explicit worker report accepted
+before expiration disarms the timer independently of later validation. A due
+timer cannot override a human takeover, and a stop receipt alone cannot prove
+process exit. Restart invalidates unfinished timer authority and requires
+reconciliation, without rearming or replaying effects. See the
+[execution timeout contract](harness-job-timeouts.md) for exact fields, states
+and owner cleanup behavior. This adds no MCP tool, grant or framing version.
+
 Combining `spec.retry` with `precheckId` additionally requires the strict boolean
 `jobPrecheckGenerations:true`. Each claimed generation separately authorizes and
 executes the immutable approved command; an older pass cannot release a newer

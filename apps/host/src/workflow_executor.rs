@@ -333,6 +333,12 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
     let previous = read(&transaction, run)?;
     if !matches!(request, Request::Disable { .. }) {
         crate::job_cancellations::guard_run(&transaction, run)?;
+        crate::job_timeouts::guard_run(
+            &transaction,
+            run,
+            now,
+            crate::event_log::monotonic_millis(),
+        )?;
         crate::workflow_context::guard(&transaction, run)?;
     }
     let (id, enabled) = match &request {

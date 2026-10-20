@@ -243,6 +243,12 @@ fn prepare(
         .into());
     }
     let ordinal = prior.map_or(1, |attempt| attempt["ordinal"].as_i64().unwrap_or(0) + 1);
+    crate::job_timeouts::guard_run(
+        &transaction,
+        &request.run_id,
+        now,
+        crate::event_log::monotonic_millis(),
+    )?;
     crate::workflow_budget::admit_attempt(&transaction, &request.run_id, ordinal)?;
     let retained: i64 =
         transaction.query_row("SELECT count(*) FROM workflow_attempts", [], |row| {
@@ -283,6 +289,13 @@ fn prepare(
     }
     transaction.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES(?1,?2,?3,?4,'launching')",params![attempt,request.task_id,ordinal,accepted.receipt.session_id])?;
     transaction.execute("INSERT INTO workflow_launches(attempt_id,operation_id,operation_key,workspace,created_at,profile) VALUES(?1,?2,?3,?4,?5,?6)",params![attempt,accepted.receipt.id,native_key,if spec.worktree {"worktree"} else {"shared"},now as i64,serde_json::to_string(&request.profile)?])?;
+    crate::job_timeouts::arm(
+        &transaction,
+        &request.run_id,
+        &attempt,
+        now,
+        crate::event_log::monotonic_millis(),
+    )?;
     if let Some(guard) = &executor {
         crate::workflow_executor::record_launch(
             &transaction,

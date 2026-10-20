@@ -249,6 +249,7 @@ fn record(
     value["precheck"] =
         crate::job_precheck_records::view_attempt(connection, occurrence, id, detail)?;
     value["retry"] = crate::job_retries::view(connection, id)?;
+    value["executionTimeout"] = crate::job_timeouts::view_attempt(connection, id)?;
     for field in ["runState", "attemptId", "sessionId", "launchReceiptId"] {
         value[field] = Value::Null;
     }

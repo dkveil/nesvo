@@ -768,6 +768,18 @@ fn job_retry_supported(caps: &Value, request: &Value) -> bool {
             kinds.iter().all(Value::is_string) && kinds.iter().any(|kind| kind == &retry["on"])
         })
 }
+fn job_execution_timeout_supported(caps: &Value, request: &Value) -> bool {
+    let action = &request["request"];
+    action["action"] != "jobs"
+        || !matches!(
+            action["request"]["action"].as_str(),
+            Some("create" | "update")
+        )
+        || action["request"]["spec"]
+            .get("executionTimeoutMs")
+            .is_none()
+        || caps["jobExecutionTimeouts"] == true
+}
 pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
         connection,
@@ -864,6 +876,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host cannot enforce this job retry policy; update nesvo-host",
         ));
     }
+    if !job_execution_timeout_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot enforce job execution timeouts; update nesvo-host",
+        ));
+    }
     if model_profile_requested(request) && caps["sessionModelProfiles"] != true {
         return Err(cli::failure(
             "unsupported",
@@ -899,6 +917,61 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn job_execution_timeout_requires_typed_support_only_for_effective_create_or_update_intent() {
+        for action in ["create", "update"] {
+            let mut fields = json!({"action":action,"key":"timeout","spec":{"title":"Bounded job","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"}}});
+            if action == "update" {
+                fields["jobId"] = json!("j");
+                fields["expectedRevision"] = json!(1);
+            }
+            let legacy = tool("jobs", json!({"request":fields.clone()})).unwrap();
+            assert!(
+                legacy["request"]["request"]["spec"]
+                    .get("executionTimeoutMs")
+                    .is_none()
+            );
+            assert!(job_execution_timeout_supported(&json!({}), &legacy));
+            fields["spec"]["executionTimeoutMs"] = Value::Null;
+            let normalized = tool("jobs", json!({"request":fields.clone()})).unwrap();
+            assert_eq!(normalized, legacy);
+            assert!(job_execution_timeout_supported(&json!({}), &normalized));
+            fields["spec"]["executionTimeoutMs"] = json!(1_000);
+            let bounded = tool("jobs", json!({"request":fields})).unwrap();
+            for caps in [
+                json!({}),
+                json!({"durableJobs":true,"jobCancellation":true,"jobAttempts":true}),
+                json!({"jobExecutionTimeouts":false}),
+                json!({"jobExecutionTimeouts":"true"}),
+                json!({"jobExecutionTimeouts":1}),
+                json!({"jobExecutionTimeouts":null}),
+                json!({"jobExecutionTimeouts":[]}),
+                json!({"jobExecutionTimeouts":{}}),
+            ] {
+                assert!(!job_execution_timeout_supported(&caps, &bounded));
+            }
+            assert!(job_execution_timeout_supported(
+                &json!({"jobExecutionTimeouts":true}),
+                &bounded
+            ));
+        }
+        for fields in [
+            json!({"action":"list"}),
+            json!({"action":"get","jobId":"j"}),
+            json!({"action":"runNow","key":"run","jobId":"j","expectedRevision":1}),
+            json!({"action":"cancelOccurrence","key":"cancel","jobId":"j","occurrenceId":"o"}),
+            json!({"action":"attempt","jobId":"j","occurrenceId":"o","jobAttemptId":"a"}),
+        ] {
+            assert!(job_execution_timeout_supported(
+                &json!({}),
+                &tool("jobs", json!({"request":fields})).unwrap()
+            ));
+        }
+        assert!(job_execution_timeout_supported(
+            &json!({}),
+            &tool("context", json!({})).unwrap()
+        ));
+    }
     #[test]
     fn repeated_prechecks_require_explicit_typed_generation_support() {
         for action in ["create", "update"] {

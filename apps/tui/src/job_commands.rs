@@ -317,6 +317,18 @@ fn grace() -> u64 {
 fn budget() -> u64 {
     300_000
 }
+fn execution_timeout<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<u64>::deserialize(deserializer)?;
+    if value.is_some_and(|milliseconds| !(1_000..=604_800_000).contains(&milliseconds)) {
+        return Err(serde::de::Error::custom(
+            "Job execution timeout must be between 1 second and 7 days",
+        ));
+    }
+    Ok(value)
+}
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum RetryKind {
@@ -376,6 +388,12 @@ pub struct Spec {
     overlap: Overlap,
     #[serde(default = "budget")]
     max_elapsed_ms: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "execution_timeout"
+    )]
+    execution_timeout_ms: Option<u64>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(
@@ -462,4 +480,61 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         machine,
         cli::request(connection, request, "workflow").await?,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    // Canonical serialization before executionTimeoutMs was introduced. Keeping
+    // these exact bytes preserves fingerprints of legacy job mutation intent.
+    const LEGACY: &str = concat!(
+        r#"{"title":"Legacy","instruction":"Report result","profile":{"name":null,"cwd":null,"program":"claude","workspace":"shared","harness":null},"#,
+        r#""schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"},"misfire":"catchUp","graceMs":60000,"overlap":"skip","maxElapsedMs":300000}"#
+    );
+
+    #[test]
+    fn execution_timeout_round_trip_preserves_legacy_fingerprint_and_run_budget() {
+        let legacy: Spec = serde_json::from_str(LEGACY).unwrap();
+        assert!(legacy.execution_timeout_ms.is_none());
+        assert_eq!(serde_json::to_string(&legacy).unwrap(), LEGACY);
+        let mut omitted: Value = serde_json::from_str(LEGACY).unwrap();
+        omitted["executionTimeoutMs"] = Value::Null;
+        let normalized: Spec = serde_json::from_value(omitted).unwrap();
+        assert_eq!(serde_json::to_string(&normalized).unwrap(), LEGACY);
+
+        for milliseconds in [1_000, 604_800_000] {
+            let mut selected: Value = serde_json::from_str(LEGACY).unwrap();
+            selected["executionTimeoutMs"] = json!(milliseconds);
+            selected["maxElapsedMs"] = json!(12_345);
+            let parsed: Spec = serde_json::from_value(selected.clone()).unwrap();
+            assert_eq!(parsed.execution_timeout_ms, Some(milliseconds));
+            assert_eq!(parsed.max_elapsed_ms, 12_345);
+            assert_eq!(serde_json::to_value(&parsed).unwrap(), selected);
+            let round_trip: Spec =
+                serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();
+            assert_eq!(serde_json::to_value(round_trip).unwrap(), selected);
+        }
+    }
+
+    #[test]
+    fn execution_timeout_refuses_unbounded_or_untyped_intent() {
+        for invalid in [
+            json!(0),
+            json!(999),
+            json!(604_800_001_u64),
+            json!(u64::MAX),
+            json!(-1),
+            json!(1_000.5),
+            json!("1000"),
+            json!(true),
+            json!([]),
+            json!({}),
+        ] {
+            let mut spec: Value = serde_json::from_str(LEGACY).unwrap();
+            spec["executionTimeoutMs"] = invalid;
+            assert!(serde_json::from_value::<Spec>(spec).is_err());
+        }
+    }
 }

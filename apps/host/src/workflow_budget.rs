@@ -436,6 +436,12 @@ pub(crate) fn guard_dispatch_transaction(
         return Ok(());
     };
     crate::job_cancellations::guard_run(connection, &run_id)?;
+    crate::job_timeouts::guard_run(
+        connection,
+        &run_id,
+        now,
+        crate::event_log::monotonic_millis(),
+    )?;
     crate::workflow_context::guard(connection, &run_id)?;
     let run_state: String = connection.query_row(
         "SELECT state FROM workflow_runs WHERE id=?1",

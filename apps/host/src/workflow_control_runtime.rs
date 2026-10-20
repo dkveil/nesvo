@@ -16,6 +16,7 @@ async fn pump(
     actor: &Actor,
     authority: &Authority,
     claim: Claim,
+    action: crate::operations::ControlAction,
 ) -> Result<()> {
     loop {
         let Reply::Targets(targets) = log
@@ -36,7 +37,7 @@ async fn pump(
                 actor.issuer.clone(),
                 target.key,
                 target.session_id.clone(),
-                crate::operations::ControlAction::StopRunWorker,
+                action,
                 authority.clone(),
             )
             .await
@@ -49,6 +50,84 @@ async fn pump(
             .await?;
         }
     }
+}
+
+async fn run_permit(
+    state: &Arc<Mutex<State>>,
+    run_id: &str,
+) -> Result<tokio::sync::OwnedMutexGuard<()>> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let attempt = state.lock().unwrap().native_run_permit(run_id);
+        match attempt {
+            Ok(permit) => return Ok(permit),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::api_error::Error>()
+                    .is_some_and(|error| error.code == "busy")
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                let next = tokio::time::Instant::now() + std::time::Duration::from_millis(25);
+                tokio::time::sleep_until(next.min(deadline)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Stop only the worker frozen by one due job generation. Existing controls are
+/// observed, never reclaimed, and a blocked/unknown claim is not redispatched.
+pub async fn timeout_job(
+    state: Arc<Mutex<State>>,
+    log: Service,
+    timeout: crate::job_timeouts::Claim,
+) -> Result<Value> {
+    // The durable timeout claim has already fenced reports/input/launches. An
+    // earlier admitted native launch may leave its critical section first.
+    let _permit = run_permit(&state, &timeout.identity.run_id).await?;
+    let actor = Actor {
+        issuer: timeout.issuer.clone(),
+        scope: Scope::Owner,
+    };
+    let Reply::Prepared { view, claim } = log
+        .run_control(Work::PrepareJobTimeout {
+            claim: timeout.clone(),
+        })
+        .await?
+    else {
+        return Err(crate::api_error::Error::new(
+            "job_execution_timeout",
+            "Automatic timeout cleanup is blocked; inspect the retained timeout reason and existing owner control",
+        )
+        .into());
+    };
+    if let Some(claim) = claim {
+        pump(
+            &state,
+            &log,
+            &actor,
+            &Authority::Owner,
+            claim,
+            crate::operations::ControlAction::StopJobTimeoutWorker,
+        )
+        .await?;
+    }
+    let control_id = view["control"]["id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Missing exact timeout control identity"))?
+        .to_owned();
+    execute(
+        state,
+        log,
+        actor,
+        Authority::Owner,
+        Request::Get {
+            run_id: timeout.identity.run_id,
+            control_id,
+            offset: Some(0),
+        },
+    )
+    .await
 }
 
 /// Cancel the exact job-bound run through its ordinary native control guards.
@@ -68,24 +147,7 @@ pub async fn cancel_job(
     };
     // Target enumeration must follow any admitted physical launch or delivery.
     // Keep the permit through preparation and dispatch, as ordinary control does.
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    let _permit = loop {
-        // Drop the State lock before waiting for another native effect to leave.
-        let attempt = state.lock().unwrap().native_run_permit(&run_id);
-        match attempt {
-            Ok(permit) => break permit,
-            Err(error)
-                if error
-                    .downcast_ref::<crate::api_error::Error>()
-                    .is_some_and(|error| error.code == "busy")
-                    && tokio::time::Instant::now() < deadline =>
-            {
-                let next = tokio::time::Instant::now() + std::time::Duration::from_millis(25);
-                tokio::time::sleep_until(next.min(deadline)).await;
-            }
-            Err(error) => return Err(error),
-        }
-    };
+    let _permit = run_permit(&state, &run_id).await?;
     let accepted = match log
         .workflow(
             actor.clone(),
@@ -127,7 +189,15 @@ pub async fn cancel_job(
                 return Err(anyhow!("Unexpected job control preparation reply"));
             };
             if let Some(claim) = claim {
-                pump(&state, &log, &actor, &Authority::Owner, claim).await?;
+                pump(
+                    &state,
+                    &log,
+                    &actor,
+                    &Authority::Owner,
+                    claim,
+                    crate::operations::ControlAction::StopRunWorker,
+                )
+                .await?;
             }
             view
         }
@@ -185,7 +255,15 @@ pub async fn execute(
                 return Err(anyhow!("Unexpected run control preparation reply"));
             };
             if let Some(claim) = claim {
-                pump(&state, &log, &actor, &authority, claim).await?;
+                pump(
+                    &state,
+                    &log,
+                    &actor,
+                    &authority,
+                    claim,
+                    crate::operations::ControlAction::StopRunWorker,
+                )
+                .await?;
             }
             // This is the immutable acceptance view, also recovered by its key.
             // Current per-target receipts/exit proof are read explicitly below.

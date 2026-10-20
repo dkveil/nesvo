@@ -105,7 +105,7 @@ fn job_spec_schema() -> Value {
         }),
         &["on", "maxAttempts", "initialDelayMs", "maxDelayMs"],
     );
-    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Combining with retry explicitly authorizes bounded repeated execution before each fresh generation and requires jobPrecheckGenerations:true. Each begin checks current approval and records fresh authorization; prior passes cannot release a new Run."},"retry":retry,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000,"description":"Per-Run admission/input budget, not a hard process timeout"}}})
+    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Combining with retry explicitly authorizes bounded repeated execution before each fresh generation and requires jobPrecheckGenerations:true. Each begin checks current approval and records fresh authorization; prior passes cannot release a new Run."},"retry":retry,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000,"description":"Per-Run admission/input budget, not a hard process timeout"},"executionTimeoutMs":{"type":"integer","minimum":1000,"maximum":604800000,"description":"Optional per-generation execution window from native launch admission, including preparation/readiness and excluding prechecks. An accepted explicit worker report before the deadline disarms it while validation may remain pending. Expiry requests exact bound-worker cleanup subject to human control; acceptance is not observed exit. Requires jobExecutionTimeouts:true. Omission adds no execution timeout; maxElapsedMs remains independent."}}})
 }
 fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
     let mut schema = serde_json::Map::new();
@@ -185,7 +185,7 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_create_job",
-            "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Combining with precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution before each fresh generation. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
+            "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional executionTimeoutMs requires jobExecutionTimeouts and starts at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Combining with precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution before each fresh generation. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
             object(
                 json!({"key":key,"spec":job_spec_schema()}),
                 &["key", "spec"],
@@ -209,7 +209,7 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_update_job",
-            "Owner-only exact-revision replacement of future job intent, including optional launchNoEffect retry policy. Existing occurrences keep their immutable spec; does not change running processes. Combining retry and precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution with fresh approval checks before each generation.",
+            "Owner-only exact-revision replacement of future job intent, including optional launchNoEffect retry policy and executionTimeoutMs. Execution timeouts require jobExecutionTimeouts and start at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Existing occurrences keep their immutable spec; does not change running processes. Combining retry and precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution with fresh approval checks before each generation.",
             object(
                 json!({"key":key,"jobId":id,"expectedRevision":revision,"spec":job_spec_schema()}),
                 &["key", "jobId", "expectedRevision", "spec"],
@@ -1664,6 +1664,113 @@ mod tests {
 
     fn retry_job_spec() -> Value {
         json!({"title":"Retry","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"}})
+    }
+    #[test]
+    fn job_execution_timeout_create_and_edit_share_cli_mcp_shape_and_optional_schema() {
+        use clap::Parser;
+        let path = std::env::temp_dir().join(format!(
+            "nesvo-job-execution-timeout-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for selected in [
+            None,
+            Some(Value::Null),
+            Some(json!(1_000)),
+            Some(json!(604_800_000)),
+        ] {
+            let mut spec = retry_job_spec();
+            spec["maxElapsedMs"] = json!(12_345);
+            if let Some(value) = selected {
+                spec["executionTimeoutMs"] = value;
+            }
+            std::fs::write(&path, serde_json::to_vec(&spec).unwrap()).unwrap();
+            for (mut args, name, arguments) in [
+                (
+                    vec!["nesvo", "job", "create", "--key", "timeout"],
+                    "nesvo_create_job",
+                    json!({"key":"timeout","spec":spec}),
+                ),
+                (
+                    vec![
+                        "nesvo",
+                        "job",
+                        "edit",
+                        "j",
+                        "--key",
+                        "timeout",
+                        "--revision",
+                        "1",
+                    ],
+                    "nesvo_update_job",
+                    json!({"key":"timeout","jobId":"j","expectedRevision":1,"spec":spec}),
+                ),
+            ] {
+                args.extend(["--file", path.to_str().unwrap(), "--json"]);
+                let parsed = crate::Arguments::try_parse_from(args).unwrap();
+                let Some(cli::Command::Job { command: cli }) = parsed.command else {
+                    panic!("Expected job command");
+                };
+                let cli = crate::workflow::tool("jobs", json!({"request":cli.request().unwrap()}))
+                    .unwrap();
+                let (mcp, kind) = command(name, arguments).unwrap();
+                assert_eq!(kind, "workflow");
+                assert_eq!(
+                    cli, mcp,
+                    "Both callers must reach the shared capability gate with identical intent"
+                );
+                assert_eq!(mcp["request"]["request"]["spec"]["maxElapsedMs"], 12_345);
+                assert_eq!(
+                    mcp["request"]["request"]["spec"].get("executionTimeoutMs"),
+                    spec.get("executionTimeoutMs")
+                        .filter(|value| !value.is_null())
+                );
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+        for name in ["nesvo_create_job", "nesvo_update_job"] {
+            let schema = serde_json::to_value(
+                catalog()
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .unwrap(),
+            )
+            .unwrap();
+            let spec = &schema["inputSchema"]["properties"]["spec"];
+            let timeout = &spec["properties"]["executionTimeoutMs"];
+            assert_eq!(timeout["type"], "integer");
+            assert_eq!(timeout["minimum"], 1_000);
+            assert_eq!(timeout["maximum"], 604_800_000);
+            assert!(timeout.get("default").is_none());
+            assert!(
+                !spec["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|field| field == "executionTimeoutMs")
+            );
+            assert_eq!(spec["properties"]["maxElapsedMs"]["default"], 300_000);
+            for value in [
+                json!(999),
+                json!(604_800_001_u64),
+                json!(-1),
+                json!(1_000.5),
+                json!("1000"),
+                json!(true),
+            ] {
+                let mut invalid = retry_job_spec();
+                invalid["executionTimeoutMs"] = value;
+                let mut arguments = json!({"key":"timeout","spec":invalid});
+                if name == "nesvo_update_job" {
+                    arguments["jobId"] = json!("j");
+                    arguments["expectedRevision"] = json!(1);
+                }
+                assert!(command(name, arguments).is_err());
+            }
+        }
     }
     #[test]
     fn job_retry_create_and_edit_share_cli_mcp_shape_and_preserve_legacy_specs() {

@@ -7,16 +7,28 @@ use serde_json::Value;
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
 const RETENTION: u64 = 4096;
 const MAX_PAGE: usize = 32;
 const MAX_CURSOR: u64 = 9_007_199_254_740_991;
+
+/// A process-local elapsed clock for explicitly armed execution limits. Stored
+/// deadlines lose dispatch authority at recovery and never cross this origin.
+pub(crate) fn monotonic_millis() -> u64 {
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
 #[derive(Clone)]
 pub struct Observation {
     pub session_id: Option<String>,
@@ -124,6 +136,12 @@ mod job_prechecks_tests;
 #[cfg(test)]
 #[path = "job_retries_tests.rs"]
 mod job_retries_tests;
+#[cfg(test)]
+#[path = "job_timeout_controls_tests.rs"]
+mod job_timeout_controls_tests;
+#[cfg(test)]
+#[path = "job_timeouts_tests.rs"]
+mod job_timeouts_tests;
 #[cfg(test)]
 #[path = "journal_concurrency_tests.rs"]
 mod journal_concurrency_tests;
@@ -406,6 +424,10 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub(crate) fn is_closed(&self) -> bool {
+        self.sender.is_closed()
+    }
+
     pub async fn executor(
         &self,
         work: crate::workflow_executor::Work,
@@ -515,7 +537,7 @@ impl Service {
         if matches!(actor.scope, crate::orchestration::Scope::Owner)
             && let crate::orchestration::Request::Jobs { request } = &mut request
             && let crate::job_definitions::Request::Create { spec, .. }
-            | crate::job_definitions::Request::Update { spec, .. } = request
+            | crate::job_definitions::Request::Update { spec, .. } = request.as_mut()
             && !matches!(spec.schedule, crate::job_calendar::Schedule::Once { .. })
         {
             // Keep computation off the SQLite worker. Even a failed evaluation

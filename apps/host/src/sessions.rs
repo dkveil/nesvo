@@ -897,6 +897,7 @@ impl State {
         event["jobCancellation"] = true.into();
         event["jobAttempts"] = true.into();
         event["jobRetries"] = true.into();
+        event["jobExecutionTimeouts"] = true.into();
         event["jobRetryKinds"] = json!(["launchNoEffect"]);
         event["jobScheduleKinds"] = json!(["once", "cron", "rrule"]);
         event["launchProfileSupport"] =
@@ -1634,22 +1635,19 @@ impl State {
             .sessions
             .get_mut(id)
             .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
-        if session.controller.is_some()
-            || (matches!(action, ControlAction::StopRunWorker)
-                && session.info.running
-                && session.human_input_dirty)
-        {
-            return Err(Error::new(
-                "control_busy",
-                "Human terminal control must be released before automated interruption or stop",
-            )
-            .into());
-        }
+        // The epoch fence and physical effect share this State lock. Releasing
+        // a lease cannot restore automatic timeout authority over a taken worker.
+        action.check_human_priority(
+            session.info.running,
+            session.controller.is_some(),
+            session.human_input_dirty,
+            session.human_control_epoch,
+        )?;
         if !session.info.running {
             return match action {
-                ControlAction::Stop | ControlAction::StopRunWorker => {
-                    Ok(ControlDispatch::AlreadyExited)
-                }
+                ControlAction::Stop
+                | ControlAction::StopRunWorker
+                | ControlAction::StopJobTimeoutWorker => Ok(ControlDispatch::AlreadyExited),
                 ControlAction::Interrupt => {
                     Err(Error::new("process_exited", "Process has already exited").into())
                 }
@@ -1667,7 +1665,9 @@ impl State {
                     )
                 })?)
             }
-            ControlAction::Stop | ControlAction::StopRunWorker => {
+            ControlAction::Stop
+            | ControlAction::StopRunWorker
+            | ControlAction::StopJobTimeoutWorker => {
                 session.kill()?;
                 ControlDispatch::StopRequested
             }

@@ -69,7 +69,7 @@ pub struct TaskSpec {
 )]
 pub enum Request {
     Jobs {
-        request: crate::job_definitions::Request,
+        request: Box<crate::job_definitions::Request>,
     },
     Coordinator {
         request: crate::workflow_coordinator::Request,
@@ -375,7 +375,7 @@ fn execute_inner(
         .into());
     }
     if let Request::Jobs { request } = request {
-        return crate::job_definitions::execute(connection, actor, request, now);
+        return crate::job_definitions::execute(connection, actor, *request, now);
     }
     if let Request::Checkpoints { request } = request {
         return crate::workflow_checkpoints::execute(connection, actor, request, now);

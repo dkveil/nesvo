@@ -37,6 +37,8 @@ pub enum ControlAction {
     Stop,
     /// Run orchestration also protects a retained human draft without a lease.
     StopRunWorker,
+    /// A job timeout additionally refuses any prior human takeover of its worker.
+    StopJobTimeoutWorker,
 }
 pub enum ControlDispatch {
     Write(tokio::sync::oneshot::Receiver<bool>),
@@ -47,8 +49,36 @@ impl ControlAction {
     fn operation(self) -> &'static str {
         match self {
             Self::Interrupt => "interrupt",
-            Self::Stop | Self::StopRunWorker => "stop",
+            Self::Stop | Self::StopRunWorker | Self::StopJobTimeoutWorker => "stop",
         }
+    }
+
+    pub(crate) fn check_human_priority(
+        self,
+        running: bool,
+        leased: bool,
+        dirty: bool,
+        human_epoch: u64,
+    ) -> Result<()> {
+        if leased
+            || (running
+                && dirty
+                && matches!(self, Self::StopRunWorker | Self::StopJobTimeoutWorker))
+        {
+            return Err(crate::api_error::Error::new(
+                "control_busy",
+                "Human terminal control must be released before automated interruption or stop",
+            )
+            .into());
+        }
+        if running && human_epoch != 0 && matches!(self, Self::StopJobTimeoutWorker) {
+            return Err(crate::api_error::Error::new(
+                "control_busy",
+                "Human takeover was observed; this worker requires explicit owner control instead of automatic timeout termination",
+            )
+            .into());
+        }
+        Ok(())
     }
 }
 pub async fn control(

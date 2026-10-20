@@ -53,7 +53,7 @@ not evidence that the expanded acceptance criteria pass.
 | F25 | Bounded precheck                                | Missing                                                       | Partial: explicit owner command approval, bounded scopes, retained skip/failure/uncertainty and CLI/MCP; job UI/native-provider matrix pending |
 | F26 | Delta-only coordinator wakeups                  | Missing                                                       | Partial: opt-in durable coalescing/native receipt and human/budget fences; original-model/checkpoint/UI gates pending                          |
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                                                        |
-| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: history, no-effect retry/backoff, overlap and cancellation; broader retry, timeout and cleanup pending                                |
+| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: history, no-effect retry, overlap, cancellation and execution timeouts; broader retry, reconciliation, cleanup and job UI pending     |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                               |
 | F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                                                        |
 | F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                        |
@@ -2566,3 +2566,54 @@ macOS runner's particular descriptor history was not observed and remains a
 hypothesis. Local Windows workspace tests pass, including the existing
 ownership test. Unix runtime verification awaits publication CI. No dependency
 or process/session recovery claim is added by this fix.
+
+### F28 exact-worker execution deadlines
+
+Optional `executionTimeoutMs` adds an immutable 1-second through 7-day execution
+window per native job generation, with strict `jobExecutionTimeouts:true`
+CLI/MCP gating. Omission/null preserves previous specifications and fingerprints;
+the existing `maxElapsedMs` remains the separate Run admission/input budget.
+Native admission atomically binds the deadline to exact job/occurrence/generation,
+Run, attempt, session and launch receipt IDs. It includes native preparation and
+readiness, excludes approved prechecks, and cannot be reset by definition edits,
+budget extensions, reads or replay.
+
+Enforcement and the first-report boundary use a process-local monotonic clock;
+public wall timestamps remain diagnostic facts. An accepted explicit report
+disarms the timer regardless of outcome, independently of validation. At/after
+the deadline fresh reports and further automated admission/input are fenced.
+Accepted historical mutation replay still returns its original body. Independent
+bounded supervision waits on journal changes/deadlines and sends no model input.
+Only result persistence retries after a writer error; native stop is never
+reconstructed from an uncertain callback.
+
+Cleanup reuses exact native controls/receipts and requires actual exit evidence
+before terminal timeout failure. One claim targets only its frozen worker.
+Active leases, retained drafts and prior takeover epochs block automatic stop
+inside the same State lock as the physical effect; release never authorizes a
+deferred signal. Existing exact owner controls can be linked read-only, while
+conflicting controls block cleanup. Unknown/blocked cleanup retains overlap.
+Early trusted exit fails honestly without inventing a task result or timeout
+signal. Recovery honors already persisted passive proof, then invalidates
+unfinished timer authority without rearming or process adoption.
+
+Current occurrence and generation summary/detail include nullable execution
+evidence with control pointers and explicit states. Private tokens and monotonic
+origins are excluded. The shared workflow job request is boxed internally to
+avoid inflating every workflow message after the optional policy was added;
+Serde wire bodies and mutation fingerprints remain unchanged. There is no new
+dependency, MCP tool, native permission grant, UI change or provider call. See
+the [timeout contract](harness-job-timeouts.md) for fields, owner operations and
+the conservative late no-effect/reconciliation limitation.
+
+Local Windows formatting, warnings-denied all-target Clippy and 477 units pass
+(161 TUI, 313 host, 3 wire; five host helpers/diagnostics ignored). Thirteen
+storage, six control and one runtime test groups cover strict compatibility,
+clock boundaries, current-only claims, report ordering/replay, actual-exit proof,
+human priority, callback uncertainty and recovery. The initial three native
+CLI/MCP/PTY scenarios passed in 55.73 seconds. After that run, review added two
+storage regressions for lost native callbacks and trusted exits persisted before
+restart; final complete native regression evidence is recorded separately below.
+Broader retry classes, explicit uncertain-cleanup reconciliation, reported-worker
+cleanup, job UI and original-provider acceptance remain open. This is not full
+F28 or full-goal completion.

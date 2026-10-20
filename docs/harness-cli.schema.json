@@ -3369,6 +3369,12 @@
           "properties": {
             "retry": {
               "$ref": "#/definitions/jobRetryPolicy"
+            },
+            "executionTimeoutMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 604800000,
+              "description": "Optional per-generation execution window from native launch admission; excludes prechecks and remains independent of maxElapsedMs. An accepted explicit worker report before the deadline disarms it."
             }
           }
         }
@@ -3419,6 +3425,17 @@
               "$ref": "#/definitions/jobRetryDecision"
             }
           ]
+        },
+        "executionTimeout": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobExecutionTimeout"
+            }
+          ],
+          "description": "Current generation's retained timeout evidence, or null without a timeout; historical accepted envelopes may omit this field. Cleanup acceptance is not observed native exit."
         },
         "jobRevision": {
           "type": "integer",
@@ -3498,6 +3515,12 @@
           "properties": {
             "retry": {
               "$ref": "#/definitions/jobRetryPolicy"
+            },
+            "executionTimeoutMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 604800000,
+              "description": "Immutable execution window accepted for this occurrence; omission preserves legacy behavior."
             }
           }
         },
@@ -3655,6 +3678,9 @@
               "$ref": "#/definitions/jobRetryDecision"
             }
           ]
+        },
+        "executionTimeout": {
+          "$ref": "#/definitions/jobOccurrence/properties/executionTimeout"
         },
         "runId": {
           "anyOf": [
@@ -3890,6 +3916,98 @@
         },
         "reason": {
           "type": ["string", "null"]
+        },
+        "controlKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        }
+      }
+    },
+    "jobExecutionTimeout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "occurrenceId",
+        "jobAttemptId",
+        "runId",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+        "executionTimeoutMs",
+        "armedAt",
+        "deadlineAt",
+        "state",
+        "requestedAt",
+        "observedAt",
+        "reason",
+        "controlKey",
+        "controlId"
+      ],
+      "properties": {
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "occurrenceId": {
+          "$ref": "#/definitions/id"
+        },
+        "jobAttemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "runId": {
+          "$ref": "#/definitions/id"
+        },
+        "attemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/id"
+        },
+        "launchReceiptId": {
+          "$ref": "#/definitions/id"
+        },
+        "executionTimeoutMs": {
+          "$ref": "#/definitions/jobDefinition/properties/spec/properties/executionTimeoutMs"
+        },
+        "armedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "deadlineAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "state": {
+          "enum": [
+            "armed",
+            "disarmed",
+            "dispatching",
+            "awaitingExit",
+            "blocked",
+            "unconfirmed",
+            "completed"
+          ]
+        },
+        "requestedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "observedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128
         },
         "controlKey": {
           "type": "string",

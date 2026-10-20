@@ -7,9 +7,10 @@ Run/Task/Attempt executor, native receipts, readiness, workspace, process budget
 and human-input guards. No model API keys or direct model calls are added.
 
 Once, [recurring IANA calendars](harness-job-calendars.md) and
-[owner-approved command prechecks](harness-job-prechecks.md) are available. Safe reuse,
-authenticated triggers, broader retry classes, hard runtime timeout/cleanup,
-quota queues and job UI remain separate implementation gates. Existing legacy
+[owner-approved command prechecks](harness-job-prechecks.md), bounded no-effect
+retry and optional [execution timeouts](harness-job-timeouts.md) are available.
+Safe reuse, authenticated triggers, broader retry classes, cleanup after reported
+results, quota queues and job UI remain separate implementation gates. Existing legacy
 once schedules and their storage/API remain unchanged until a tested migration
 can preserve their launch semantics. The new `job` commands list the new records.
 
@@ -319,6 +320,17 @@ passed checks. `maxElapsedMs` is the run's admission/input budget. It does not
 claim a hard process timeout or automatic termination after a completed result.
 Completed worker processes remain available for owner inspection and count toward
 host process budgets until explicitly stopped/closed; cleanup policy is pending.
+
+### Optional execution timeout
+
+Hosts advertising `jobExecutionTimeouts:true` accept optional `executionTimeoutMs`
+from one second to seven days. Its frozen window begins at native launch
+admission, includes preparation/readiness and excludes command prechecks. A valid
+explicit report accepted before the deadline disarms it while ordinary result
+validation remains required. Expiration fences further automated work and
+requests cleanup of the exact bound worker, preserving human control and
+separate exit evidence. See [job execution timeouts](harness-job-timeouts.md) for
+clock behavior, `executionTimeout` evidence, overlap and restart reconciliation.
 
 Each occurrence uses deterministic workflow keys prefixed
 `job:JOB_ID:OCCURRENCE_ID` for `run`, `plan`, `budget`, `activate` and `executor`.

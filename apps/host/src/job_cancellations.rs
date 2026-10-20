@@ -57,6 +57,13 @@ pub fn accept(
     if !current["cancellation"].is_null() {
         return Err(Error::new("cancellation_exists", "Inspect the accepted cancellation and its original mutation; cleanup is never repeated by a new key").into());
     }
+    if crate::job_timeouts::owns_occurrence(tx, occurrence)? {
+        return Err(Error::new(
+            "job_execution_timeout",
+            "Execution timeout already owns cleanup; inspect its exact control and receipt before another owner action",
+        )
+        .into());
+    }
     if !matches!(
         current["state"].as_str(),
         Some(
@@ -129,6 +136,10 @@ pub fn claims(tx: &Transaction<'_>, slots: u8, now: u64) -> Result<Vec<Claim>> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut claims = Vec::new();
     for (occurrence, issuer, run, key) in rows {
+        if crate::job_timeouts::owns_occurrence(tx, &occurrence)? {
+            tx.execute("UPDATE harness_job_cancellations SET state='unconfirmed',reason='timeout_cleanup_owned',observed_at=?2 WHERE occurrence_id=?1",params![occurrence,now as i64])?;
+            continue;
+        }
         let token = hex::encode(crate::wire::random::<32>());
         tx.execute("UPDATE harness_job_cancellations SET state='dispatching',token=?2,observed_at=?3 WHERE occurrence_id=?1",params![occurrence,token,now as i64])?;
         claims.push(Claim {
@@ -178,7 +189,9 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
             _ => ("canceling", "cancel_pending", false),
         };
         tx.execute("UPDATE harness_job_cancellations SET state=?2,control_id=?3,reason=?4,observed_at=CASE WHEN state<>?2 OR control_id IS NOT ?3 OR reason IS NOT ?4 THEN ?5 ELSE observed_at END WHERE occurrence_id=?1",params![occurrence,state,control,reason,now as i64])?;
-        job_definitions::transition(tx, &occurrence, phase, Some(reason), finished, now)?;
+        if !crate::job_timeouts::owns_occurrence(tx, &occurrence)? {
+            job_definitions::transition(tx, &occurrence, phase, Some(reason), finished, now)?;
+        }
     }
     // Another explicit owner control may have stopped this exact run while our
     // admission was waiting or uncertain. Its latest completed control and
@@ -190,14 +203,16 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
     };
     for (occurrence, control) in observed {
         tx.execute("UPDATE harness_job_cancellations SET state='completed',control_id=?2,reason='run_termination_observed',observed_at=?3 WHERE occurrence_id=?1",params![occurrence,control,now as i64])?;
-        job_definitions::transition(
-            tx,
-            &occurrence,
-            "canceled",
-            Some("run_termination_observed"),
-            true,
-            now,
-        )?;
+        if !crate::job_timeouts::owns_occurrence(tx, &occurrence)? {
+            job_definitions::transition(
+                tx,
+                &occurrence,
+                "canceled",
+                Some("run_termination_observed"),
+                true,
+                now,
+            )?;
+        }
     }
     // A dispatch error before any control acceptance is still not exit proof.
     let unmatched = {
@@ -206,6 +221,9 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for occurrence in unmatched {
+        if crate::job_timeouts::owns_occurrence(tx, &occurrence)? {
+            continue;
+        }
         job_definitions::transition(
             tx,
             &occurrence,

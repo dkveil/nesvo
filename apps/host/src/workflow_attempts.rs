@@ -290,6 +290,12 @@ pub fn mutate(
                 .into());
             }
             let ordinal = current.map_or(1, |a| a["ordinal"].as_i64().unwrap_or(0) + 1);
+            crate::job_timeouts::guard_run(
+                connection,
+                run_id,
+                now,
+                crate::event_log::monotonic_millis(),
+            )?;
             crate::workflow_budget::admit_attempt(connection, run_id, ordinal)?;
             let count: i64 =
                 connection.query_row("SELECT count(*) FROM workflow_attempts", [], |r| r.get(0))?;
@@ -357,6 +363,15 @@ pub fn mutate(
                 now,
             )?;
             crate::workflow_inbox::notify_result(connection, actor, &own, result)?;
+            // This is the report's deadline boundary after all validation and
+            // dependent metadata work; a refusal rolls the whole report back.
+            crate::job_timeouts::guard_report(
+                connection,
+                attempt_id,
+                now,
+                crate::event_log::monotonic_millis(),
+            )?;
+            crate::job_timeouts::report_accepted(connection, attempt_id, now)?;
             (
                 own["run"]["id"]
                     .as_str()
@@ -373,6 +388,12 @@ pub fn mutate(
             ..
         } => {
             crate::job_cancellations::guard_run(connection, run_id)?;
+            crate::job_timeouts::guard_run(
+                connection,
+                run_id,
+                now,
+                crate::event_log::monotonic_millis(),
+            )?;
             revision(
                 connection,
                 actor,

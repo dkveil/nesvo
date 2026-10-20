@@ -61,6 +61,9 @@ pub struct Target {
     pub key: String,
 }
 pub enum Work {
+    PrepareJobTimeout {
+        claim: crate::job_timeouts::Claim,
+    },
     Prepare {
         actor: Actor,
         request: Request,
@@ -221,6 +224,7 @@ fn check_claim(connection: &Connection, claim: &Claim) -> Result<()> {
 }
 fn settle(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<()> {
     let (run_id, kind) = identity(transaction, id)?;
+    let timeout = crate::job_timeouts::owns_control(transaction, id)?;
     let mut phases = Vec::new();
     let mut statement =
         transaction.prepare("SELECT phase FROM workflow_control_targets WHERE control_id=?1")?;
@@ -257,9 +261,9 @@ fn settle(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<()> {
         let changed=transaction.execute("UPDATE workflow_runs SET state=?2,revision=revision+1 WHERE id=?1 AND state IN ('stopping','canceling') AND ?3=(SELECT id FROM workflow_controls WHERE run_id=?1 ORDER BY rowid DESC LIMIT 1)",params![run_id,terminal,id])?;
         if changed > 0 {
             let attempts = {
-                let mut statement=transaction.prepare("SELECT a.id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND a.state IN ('assigned','reported')")?;
+                let mut statement=transaction.prepare("SELECT a.id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND a.state IN ('assigned','reported') AND (?2=0 OR EXISTS(SELECT 1 FROM workflow_control_targets c WHERE c.control_id=?3 AND c.attempt_id=a.id))")?;
                 statement
-                    .query_map([&run_id], |row| row.get::<_, String>(0))?
+                    .query_map(params![run_id, timeout, id], |row| row.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             };
             for attempt in attempts {
@@ -270,11 +274,140 @@ fn settle(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<()> {
                     "Run native control completed; no answer or task success inferred",
                 )?;
             }
-            transaction.execute("UPDATE workflow_attempts SET state='stopped' WHERE task_id IN (SELECT id FROM workflow_tasks WHERE run_id=?1) AND (state IN ('assigned','launching','launchUnknown') OR (?2='cancel' AND state='reported'))",params![run_id,kind])?;
+            transaction.execute("UPDATE workflow_attempts SET state='stopped' WHERE task_id IN (SELECT id FROM workflow_tasks WHERE run_id=?1) AND (state IN ('assigned','launching','launchUnknown') OR (?2='cancel' AND state='reported')) AND (?3=0 OR id IN (SELECT attempt_id FROM workflow_control_targets WHERE control_id=?4))",params![run_id,kind,timeout,id])?;
             event(transaction, &run_id, id, "run.control_completed", now)?;
         }
     }
     Ok(())
+}
+
+fn prepare_job_timeout(
+    connection: &mut Connection,
+    timeout: crate::job_timeouts::Claim,
+    now: u64,
+) -> Result<Reply> {
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    crate::job_timeouts::guard_claim(&transaction, &timeout)?;
+    let actor = Actor {
+        issuer: timeout.issuer.clone(),
+        scope: Scope::Owner,
+    };
+    let run_id = &timeout.identity.run_id;
+    let run = orchestration::run(&transaction, &actor, run_id)?;
+    let previous: Option<(String, String, String)> = transaction
+        .query_row(
+            "SELECT id,issuer,kind FROM workflow_controls WHERE run_id=?1 ORDER BY rowid DESC LIMIT 1",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    if let Some((id, issuer, kind)) = previous {
+        let exact: bool = transaction.query_row(
+            "SELECT count(*)=1 AND COALESCE(sum(attempt_id=?2 AND session_id=?3),0)=1 FROM workflow_control_targets WHERE control_id=?1",
+            params![id, timeout.identity.attempt_id, timeout.identity.session_id],
+            |row| row.get(0),
+        )?;
+        if exact && issuer == timeout.issuer && matches!(kind.as_str(), "stop" | "cancel") {
+            // An accepted owner control owns its physical effect. The timeout
+            // links the exact evidence and never reclaims that control's token.
+            crate::job_timeouts::control_prepared(&transaction, &timeout, &id, now)?;
+            let view = view(&transaction, &actor, run_id, &id, 0)?;
+            transaction.commit()?;
+            return Ok(Reply::Prepared { view, claim: None });
+        }
+        crate::job_timeouts::block_claim(&transaction, &timeout, "existing_control_conflict", now)?;
+        transaction.commit()?;
+        return Ok(Reply::Done);
+    }
+    if !matches!(
+        run["state"].as_str(),
+        Some("active" | "draining" | "drained")
+    ) {
+        crate::job_timeouts::block_claim(&transaction, &timeout, "timeout_run_state_changed", now)?;
+        transaction.commit()?;
+        return Ok(Reply::Done);
+    }
+    orchestration::mutation_capacity(&transaction)?;
+    orchestration::validate_key(&timeout.control_key)?;
+    let fingerprint = hex::encode(
+        ring::digest::digest(
+            &ring::digest::SHA256,
+            &serde_json::to_vec(&json!({
+                "action":"jobExecutionTimeout",
+                "jobId":timeout.identity.job_id,
+                "occurrenceId":timeout.identity.occurrence_id,
+                "jobAttemptId":timeout.identity.job_attempt_id,
+                "runId":run_id,
+                "attemptId":timeout.identity.attempt_id,
+                "sessionId":timeout.identity.session_id,
+                "launchReceiptId":timeout.identity.launch_receipt_id,
+                "deadlineAt":timeout.deadline_at,
+            }))?,
+        )
+        .as_ref(),
+    );
+    if orchestration::replay(&transaction, &actor, &timeout.control_key, &fingerprint)?.is_some() {
+        return Err(Error::new("control_unconfirmed", "An existing timeout mutation has no matching retained control; no native effect was repeated").into());
+    }
+    let (controls, targets): (i64, i64) = transaction.query_row(
+        "SELECT (SELECT count(*) FROM workflow_controls),(SELECT count(*) FROM workflow_control_targets)",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if controls >= 1024 || targets >= 8192 {
+        return Err(Error::new(
+            "busy",
+            "Run control retention is full; no history was discarded",
+        )
+        .into());
+    }
+    let id = hex::encode(crate::wire::random::<16>());
+    let token = hex::encode(crate::wire::random::<32>());
+    let exited: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM workflow_process_exits WHERE session_id=?1)",
+        [&timeout.identity.session_id],
+        |row| row.get(0),
+    )?;
+    transaction.execute(
+        "INSERT INTO workflow_controls(id,run_id,kind,issuer,state,token,created_at) VALUES(?1,?2,'stop',?3,'dispatching',?4,?5)",
+        params![id,run_id,timeout.issuer,if exited { None } else { Some(&token) },now as i64],
+    )?;
+    transaction.execute(
+        "INSERT INTO workflow_control_targets(control_id,session_id,attempt_id,position,key,phase) VALUES(?1,?2,?3,0,?4,?5)",
+        params![id,timeout.identity.session_id,timeout.identity.attempt_id,format!("run-control:{id}:{}",timeout.identity.attempt_id),if exited { "exited" } else { "pending" }],
+    )?;
+    crate::job_timeouts::control_prepared(&transaction, &timeout, &id, now)?;
+    crate::workflow_budget::ensure_record(&transaction, run_id)?;
+    transaction.execute(
+        "UPDATE workflow_run_budget SET drain_owner=1 WHERE run_id=?1",
+        [run_id],
+    )?;
+    transaction.execute(
+        "UPDATE workflow_runs SET state='stopping',revision=revision+1 WHERE id=?1",
+        [run_id],
+    )?;
+    event(&transaction, run_id, &id, "run.control_requested", now)?;
+    settle(&transaction, &id, now)?;
+    let mut view = view(&transaction, &actor, run_id, &id, 0)?;
+    view["cursor"] = u64::try_from(transaction.query_row(
+        "SELECT head FROM domain_event_cursor WHERE id=1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?)?
+    .into();
+    orchestration::remember(
+        &transaction,
+        &actor,
+        &timeout.control_key,
+        &fingerprint,
+        &view,
+    )?;
+    transaction.commit()?;
+    Ok(Reply::Prepared {
+        view,
+        claim: (!exited).then_some(Claim { id, token }),
+    })
 }
 /// Only trusted host process-exit observations call this; never provider text.
 pub fn observe_exit(transaction: &Transaction<'_>, session: &str, now: u64) -> Result<()> {
@@ -412,6 +545,7 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
 }
 pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
     match work {
+        Work::PrepareJobTimeout { claim } => prepare_job_timeout(connection, claim, now),
         Work::Prepare { actor, request } => prepare(connection, actor, request, now),
         Work::Read {
             actor,
