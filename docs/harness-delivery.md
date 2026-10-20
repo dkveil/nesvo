@@ -2423,3 +2423,56 @@ worker, skip, revocation and restart via CLI/MCP with schema-checked envelopes.
 No original model, native phone or three-platform acceptance is claimed by these
 local fixtures. Later input diagnostics and fixture-ordering verification are
 recorded separately.
+
+### F03/F17 bounded submission-failure diagnostics and fixture readiness
+
+Prior docs-only CI
+[`39464718115`](https://github.com/dkveil/nesvo/actions/runs/39464718115), exact
+`bc25ea3` with the previously verified Rust source, passed Linux/macOS and
+app/browser. Windows passed the build checks but 38/40 SDK scenarios: the
+disconnected once-job report and startup catch-up report timed out. The retained
+disconnected-job diagnostic shows an active ready/idle worker, a created native
+launch receipt, no task report and delivery `unknown` with
+`submission_unconfirmed/effectStarted:true`. The PTY replay contains only startup
+output. This establishes submission uncertainty, not a missing task result after
+confirmed delivery. It does not identify which native write or guard failed.
+
+Send errors now retain an optional fixed `submissionStage`, and native write
+confirmation distinguishes timeout, closed channel and failed write/flush with
+typed safe codes. All existing write/readiness/paste deadlines, native grants,
+queued-effect uncertainty and first terminal receipt preservation remain intact.
+Shared control writes deliberately retain their earlier conservative projection.
+Four unit tests cover confirmation outcomes, paste/submit stages, redaction and
+control compatibility. The [operation contract](harness-operations.md) describes
+the additive error-only metadata.
+
+The controlled agent fixture also published semantic readiness before attaching
+and starting its stdin consumer. It now installs the unchanged parser and resumes
+input before an event-loop callback publishes readiness. Deferred readiness and
+hook order/payloads remain unchanged; no delay or retry was added. This closes a
+fixture ordering gap. Node buffering and the earlier coarse diagnostic do not
+prove that gap caused the Windows timeout. A passing follow-up is separate
+verification, not evidence that the earlier production uncertainty is resolved.
+
+Local Windows verification of the input diagnostic/readiness source passed
+formatting, warnings-denied all-target Clippy, 442 unit tests (148 TUI, 291 host,
+3 wire), production builds and all 30 host/sync/CLI tests in 34.35 seconds. Its
+full serial SDK run passed 42/43 in 249.22 seconds: the checkpoint scenario
+returned generic `host_unavailable` while opening a paired-host connection. That
+message collapses connection/handshake failures and does not identify a cause.
+The checkpoint now retains safe caller/tool/phase context and owned host status
+before cleanup, without new connections, effects, deadlines or retry. The changed
+diagnostic case passed individually in 5.03 seconds; that does not reproduce or
+explain its earlier failure. Earlier logs and failures remain retained. An
+occurrence index additionally bounds the no-unexpected-precheck proof lookup;
+host units and all-target Clippy passed after that migration was added.
+
+The final local source, including the index and checkpoint diagnostic contexts,
+passed all 43 serial SDK scenarios in 249.60 seconds without changing acceptance
+deadlines, native permissions, retry semantics or prompt parsing. Formatting and
+all-target Clippy passed on this source; host units/build passed after the index.
+The earlier complete 442-unit and 30-integration checks remain as recorded above.
+This passes the local Windows regression gate for the current slice. The earlier
+connection/submission failures remain unexplained; neither the passing targeted
+case nor this full run proves a production fix. Final source CI on Windows,
+macOS and Linux is pending, and the remaining full-goal gates stay open.
