@@ -102,7 +102,7 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The current [catalog](harness-mcp-tools.json) contains 93 tools. Task instruction intents use
+The current [catalog](harness-mcp-tools.json) contains 95 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 

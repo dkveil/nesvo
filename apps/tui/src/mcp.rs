@@ -152,6 +152,21 @@ fn catalog() -> Vec<Tool> {
             true,
         ),
         (
+            "nesvo_set_quota_wake",
+            "Owner-only explicit enable/disable of one durable native Codex quota wake; requires durableQuotaWake:true. Enable requires a live bound lifecycle, the exact captured configured reader, a fresh complete five-hour window at >=90% with a future reset, and no human lease or draft. One ordinary native send receipt may resume the same process only after a fresh matching-account read started after reset affirmatively permits usage. Unknown effects, human takeover and known identity changes never retry input. Disable does not undo an already accepted send. No Claude/Gemini support, account lock, purchase or limit bypass.",
+            object(
+                json!({"sessionId":id,"enabled":{"type":"boolean"}}),
+                &["sessionId", "enabled"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_quota_wake",
+            "Owner-only read of the retained quota wake and its linked native send receipt identity for one stable session. Requires durableQuotaWake:true. Returns null when no arm is retained. Does not arm, refresh provider evidence, send input, resume a process or replay effects; a wake phase is not task success.",
+            object(json!({"sessionId":id}), &["sessionId"]),
+            true,
+        ),
+        (
             "nesvo_describe_precheck",
             "Owner-only normalization/digest of a proposed command. Does not approve or execute it. Review literal executable/cwd/argv/environment; file contents and called code remain mutable, not sandboxed.",
             object(json!({"spec":precheck_command_schema()}), &["spec"]),
@@ -885,10 +900,112 @@ fn catalog() -> Vec<Tool> {
 #[path = "quota_mcp_tests.rs"]
 mod quota_tests;
 
+#[cfg(test)]
+mod quota_wake_tests {
+    use super::*;
+
+    #[test]
+    fn quota_wake_mcp_matches_cli_wire_and_requires_exact_mutation_arguments() {
+        for enabled in [false, true] {
+            assert_eq!(
+                command(
+                    "nesvo_set_quota_wake",
+                    json!({"sessionId":"s","enabled":enabled})
+                )
+                .unwrap(),
+                cli::quota_wake_query("s", Some(enabled)).unwrap()
+            );
+        }
+        assert_eq!(
+            command("nesvo_get_quota_wake", json!({"sessionId":"s"})).unwrap(),
+            cli::quota_wake_query("s", None).unwrap()
+        );
+        for value in [
+            json!({}),
+            json!({"sessionId":"s"}),
+            json!({"enabled":true}),
+            json!({"sessionId":null,"enabled":true}),
+            json!({"sessionId":"s","enabled":null}),
+            json!({"sessionId":"s","enabled":"true"}),
+            json!({"sessionId":"s","enabled":1}),
+            json!({"sessionId":"s","enabled":true,"owner":true}),
+            json!({"sessionId":"s","enabled":true,"accountId":"injected"}),
+            json!({"sessionId":"s","enabled":true,"readerId":"ambient"}),
+            json!({"sessionId":"s","enabled":true,"prompt":"new task"}),
+            json!({"sessionId":"s","enabled":true,"key":"replay-input"}),
+            json!({"sessionId":"s","enabled":true,"type":"sendOperation"}),
+            json!({"sessionId":"bad\nidentity","enabled":true}),
+            json!([]),
+            json!(null),
+        ] {
+            assert!(command("nesvo_set_quota_wake", value).is_err());
+        }
+        for value in [
+            json!({}),
+            json!({"sessionId":"s","enabled":true}),
+            json!({"sessionId":"s","refresh":true}),
+            json!({"sessionId":"s","scopeId":"foreign"}),
+            json!({"sessionId":null}),
+        ] {
+            assert!(command("nesvo_get_quota_wake", value).is_err());
+        }
+    }
+
+    #[test]
+    fn quota_wake_catalog_is_strict_and_get_remains_read_only() {
+        for (name, required, read_only) in [
+            (
+                "nesvo_set_quota_wake",
+                json!(["sessionId", "enabled"]),
+                false,
+            ),
+            ("nesvo_get_quota_wake", json!(["sessionId"]), true),
+        ] {
+            let tool = serde_json::to_value(
+                catalog()
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+            assert_eq!(tool["inputSchema"]["required"], required);
+            assert_eq!(
+                tool["inputSchema"]["properties"].as_object().unwrap().len(),
+                if read_only { 1 } else { 2 }
+            );
+            assert_eq!(tool["annotations"]["readOnlyHint"], read_only);
+            assert_eq!(tool["annotations"]["destructiveHint"], false);
+            assert_eq!(tool["annotations"]["openWorldHint"], !read_only);
+            assert!(
+                tool["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("durableQuotaWake:true")
+            );
+            assert_eq!(
+                published_tools()
+                    .iter()
+                    .filter(|tool| tool.as_str() == name)
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(catalog().len(), 95);
+        assert_eq!(published_tools().len(), 95);
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Session {
     session_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetQuotaWake {
+    session_id: String,
+    enabled: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -967,6 +1084,14 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         return request.map(|request| (request, "workflow"));
     }
     Ok(match name {
+        "nesvo_set_quota_wake" => {
+            let request: SetQuotaWake = parse(arguments)?;
+            cli::quota_wake_query(&request.session_id, Some(request.enabled))?
+        }
+        "nesvo_get_quota_wake" => {
+            let request: Session = parse(arguments)?;
+            cli::quota_wake_query(&request.session_id, None)?
+        }
         "nesvo_get_provider_quota" => {
             if arguments
                 .get("directory")
@@ -1587,7 +1712,9 @@ impl HostTools {
             .await?;
             command["sessionId"] = cli::current_session(&caps)?.into();
         }
-        if kind == "providerQuota" {
+        if matches!(kind, "quotaWake" | "wakeConfigured") {
+            cli::quota_wake_capability(&mut connection).await?;
+        } else if kind == "providerQuota" {
             cli::provider_quota_capability(&mut connection).await?;
             if command.get("directory").is_some()
                 && cli::request(
@@ -2237,7 +2364,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 93);
+        assert_eq!(catalog().len(), 95);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

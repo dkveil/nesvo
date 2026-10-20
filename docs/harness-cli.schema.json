@@ -958,6 +958,31 @@
             },
             {
               "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "sessionId", "quotaWake"],
+              "properties": {
+                "type": { "const": "quotaWake" },
+                "sessionId": { "$ref": "#/definitions/id" },
+                "quotaWake": {
+                  "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/quotaWake" }]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "sessionId", "wakeAt", "quotaWake"],
+              "properties": {
+                "type": { "const": "wakeConfigured" },
+                "sessionId": { "$ref": "#/definitions/id" },
+                "wakeAt": { "type": ["integer", "null"], "minimum": 1 },
+                "quotaWake": {
+                  "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/quotaWake" }]
+                }
+              }
+            },
+            {
+              "type": "object",
               "required": ["type", "receipt"],
               "properties": {
                 "type": {
@@ -4430,6 +4455,46 @@
         "stderrTruncated": {
           "type": "boolean"
         }
+      }
+    },
+    "quotaWake": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Retained owner-authorized one-shot native Codex continuation. Configured-reader evidence is not an immutable provider account lease. Operation settlement does not establish task success; restart pauses automatic authority.",
+      "required": [
+        "id",
+        "sessionId",
+        "launchId",
+        "generation",
+        "phase",
+        "reason",
+        "predecessorId",
+        "source",
+        "operationId",
+        "operationPhase"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "sessionId": { "$ref": "#/definitions/id" },
+        "launchId": { "$ref": "#/definitions/id" },
+        "generation": { "type": "integer", "minimum": 1 },
+        "phase": { "enum": ["armed", "dispatching", "paused"] },
+        "reason": { "type": ["string", "null"] },
+        "predecessorId": { "type": ["string", "null"], "maxLength": 128 },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["readerId", "contextId", "accountFingerprint", "revision", "resetAt"],
+          "properties": {
+            "readerId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+            "contextId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "accountFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "revision": { "type": "integer", "minimum": 1 },
+            "resetAt": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "operationId": { "type": ["string", "null"], "maxLength": 128 },
+        "operationPhase": { "type": ["string", "null"] }
       }
     },
     "providerQuotaWindow": {

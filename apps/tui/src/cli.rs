@@ -85,6 +85,18 @@ pub enum SessionCommand {
     Interrupt(ControlOptions),
     /// Request native process stop once; retain the session and terminal output.
     Stop(ControlOptions),
+    /// Inspect or explicitly arm/disable one durable quota wake for native Codex.
+    Wake {
+        id: String,
+        /// Arm once from fresh exact-reader evidence at >=90% of a known five-hour window.
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        /// Disable future wake admission; inspect any already accepted send receipt.
+        #[arg(long, conflicts_with = "enable")]
+        disable: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Wait for one send receipt, never an old idle state or the focused session.
     Wait {
         #[arg(required_unless_present = "key", conflicts_with = "key")]
@@ -314,6 +326,7 @@ impl Command {
                 SessionCommand::Send(options) => options.json,
                 SessionCommand::Interrupt(options) | SessionCommand::Stop(options) => options.json,
                 SessionCommand::List { json }
+                | SessionCommand::Wake { json, .. }
                 | SessionCommand::Wait { json, .. }
                 | SessionCommand::Get { json, .. }
                 | SessionCommand::Current { json }
@@ -499,6 +512,47 @@ pub(crate) fn check_provider_quota_capability(capabilities: &Value) -> Result<()
         ));
     }
     Ok(())
+}
+
+pub(crate) fn quota_wake_query(
+    session_id: &str,
+    enabled: Option<bool>,
+) -> Result<(Value, &'static str)> {
+    valid_id(session_id)?;
+    Ok(match enabled {
+        Some(enabled) => (
+            json!({"type":"setWake","sessionId":session_id,"enabled":enabled}),
+            "wakeConfigured",
+        ),
+        None => (
+            json!({"type":"getQuotaWake","sessionId":session_id}),
+            "quotaWake",
+        ),
+    })
+}
+
+pub(crate) fn check_quota_wake_capability(capabilities: &Value) -> Result<()> {
+    if capabilities
+        .get("durableQuotaWake")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err(failure(
+            "unsupported",
+            "Host does not support durable quota wakes; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn quota_wake_capability(connection: &mut Connection) -> Result<()> {
+    let capabilities = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    check_quota_wake_capability(&capabilities)
 }
 
 pub(crate) async fn provider_quota_capability(connection: &mut Connection) -> Result<()> {
@@ -715,6 +769,7 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
             )
         }
         SessionCommand::Explain { .. }
+        | SessionCommand::Wake { .. }
         | SessionCommand::Interrupt(_)
         | SessionCommand::Stop(_)
         | SessionCommand::Create(_)
@@ -1070,6 +1125,26 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         } => return control(options, "stopOperation", connection).await,
         Command::Session {
             command:
+                SessionCommand::Wake {
+                    id,
+                    enable,
+                    disable,
+                    json,
+                },
+        } => {
+            let enabled = if enable {
+                Some(true)
+            } else if disable {
+                Some(false)
+            } else {
+                None
+            };
+            let (query, kind) = quota_wake_query(&id, enabled)?;
+            quota_wake_capability(connection).await?;
+            return print_data(json, request(connection, query, kind).await?);
+        }
+        Command::Session {
+            command:
                 SessionCommand::Wait {
                     id,
                     key,
@@ -1201,3 +1276,7 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 #[path = "quota_cli_tests.rs"]
 mod quota_tests;
+
+#[cfg(test)]
+#[path = "quota_wake_cli_tests.rs"]
+mod quota_wake_tests;
