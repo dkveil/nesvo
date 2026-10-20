@@ -79,7 +79,15 @@ async fn main() -> Result<()> {
         PathBuf::from("host/.local/pairing.json")
     });
     if let Some(command) = arguments.command {
-        let code = cli::execute(command, &pairing_path, arguments.url.as_deref()).await;
+        // The headless dispatcher contains the SDK server and nested command
+        // futures. Keep it off the entrypoint stack, including before parsing
+        // --help on Windows' smaller default main-thread stack.
+        let code = Box::pin(cli::execute(
+            command,
+            &pairing_path,
+            arguments.url.as_deref(),
+        ))
+        .await;
         if code != 0 {
             std::process::exit(code);
         }
