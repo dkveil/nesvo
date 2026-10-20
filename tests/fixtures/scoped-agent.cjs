@@ -12,7 +12,7 @@ const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
 if (
-  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V7')
+  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V8')
 )
   throw new Error('Missing versioned launch-local harness instructions');
 fs.writeFileSync(path.join(directory, `${id}.txt`), process.env.NESVO_AGENT_CONTEXT);
@@ -26,7 +26,7 @@ if (process.argv.includes('--mcp-config')) {
   );
   if (
     config.mcpServers.nesvo.env.NESVO_AGENT_CONTEXT !== process.env.NESVO_AGENT_CONTEXT ||
-    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V7')
+    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V8')
   )
     throw new Error('Launch-local harness was not loaded by the controlled provider');
 }

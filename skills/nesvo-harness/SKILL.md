@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 7 (`NESVO_HARNESS_INSTRUCTIONS_V7`).
+Instruction version: 8 (`NESVO_HARNESS_INSTRUCTIONS_V8`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -121,7 +121,8 @@ not be presented as atomic fan-out. Bind the existing ready worker before work:
 --json`. The host allows only your granted worker children and dependency-ready
 tasks, refusing human control/drafts/pending input. Assignment does not type
 anything or start a process. Read the returned attempt ID, then deliberately
-send the task context through the normal guarded `session send` path. Native
+queue its immutable instruction through task delivery below when `runDelivery`
+is supported, or send explicit context through guarded `session send`. Native
 operation keys recover through `operation`; workflow metadata keys recover
 through `run mutation --key ORIGINAL_KEY --json`. Do not interchange namespaces
 or invent a fresh key after an uncertain effect. No automatic DAG executor is
@@ -168,7 +169,8 @@ another physical launch/control for this run; inspect existing intents first.
 Successful native creation binds the reserved process as `assigned` without
 typing a prompt, taking human control or switching focus. Inspect `assigned`
 and actual readiness before deliberately sending task context through guarded
-`session send`. Do not separately assign the same process again. A reported
+`session send`, or explicitly queue task delivery below to wait for readiness.
+Do not separately assign the same process again. A reported
 result still occupies its slot until real validation; dependencies require
 accepted results, never created/idle/settled/ACK. No background DAG executor,
 automatic prompt submission or model heartbeat is supplied by this launch API.
@@ -197,6 +199,55 @@ run without killing sessions. A rejected attempt can be retried on a fresh
 worker process, retaining previous history. Current bounds: 16 attempts per
 task, 4096 retained attempts globally, one native process per attempt. A revision
 conflict requires re-reading the run; it never authorizes overwriting newer work.
+
+## Queue a task instruction after assignment
+
+With `runDelivery`, an explicit host-owned intent can wait for the **current
+assigned agent worker** to become idle and ready, without a model heartbeat:
+
+```powershell
+& $env:NESVO_CLI run deliver RUN_ID --task TASK_ID --key task-input-1 --revision RUN_REV --timeout-ms 60000 --json
+```
+
+MCP `nesvo_deliver_task` takes `{key,runId,taskId,expectedRevision,timeoutMs?}`.
+It sends the immutable task instruction from the active plan. There is no prompt,
+foreign session, role or shell-command field. Agent sessions only: task prose is
+never executed in a plain terminal. Timeout is 1–300000 ms, default 60000. This
+does not choose/launch tasks automatically or add a scheduled-job executor.
+
+Acceptance says `queued` with a null `receiptId`, not input or success. Recover
+the workflow key through `run mutation --key task-input-1 --json`; inspect current
+`run get` and `run task RUN_ID TASK_ID --json` separately. The attempt's `delivery`
+then shows its phase, blocker and nullable native receipt. Inspect `operation
+--id RECEIPT_ID --json` only when a receipt exists and you have issuer authority;
+an owner-issued ID in your run history grants no access to the owner's receipt.
+Never replace the workflow key, invent a null receipt ID or confuse acceptance
+with native `sent`/provider `settled`. Neither is an accepted task result.
+
+The waiter continues after CLI/MCP disconnect, but human control/drafts, revoked
+authority, decisions and elapsed/readiness fences still apply. Human control at
+acceptance or later quick takeover/release pauses the intent even without a
+draft. Release does not rearm it. Do not silently switch to ordinary send or
+another key; an explicit new human instruction and resolved state must precede
+another deliberate input decision. One instruction intent is retained per
+attempt; new keys cannot bypass `delivery_exists`. Same-key replay never sends
+again. There is no automatic rearm of paused/expired/failed intents. Restart
+pauses unclaimed intents and keeps native claims uncertain, without input replay.
+
+Cancel only a still-queued, unclaimed intent using its current run revision:
+
+```powershell
+& $env:NESVO_CLI run cancel-delivery RUN_ID DELIVERY_ID --key cancel-input-1 --revision RUN_REV --json
+```
+
+MCP `nesvo_cancel_task_delivery` takes
+`{key,runId,deliveryId,expectedRevision}`. Cancellation/expiry before claim has no
+native receipt or input. Cancellation cannot undo bytes or interrupt a claimed,
+sent or unknown effect. Inspect that original native receipt and terminal;
+separate native controls require their own deliberate authority. Do not invent
+exit/no-effect proof or use a fresh key to replay uncertainty. Explicit worker
+report plus independent validation still precedes dependent review; idle/settled,
+queue ACK or a permission answer cannot substitute for either.
 
 ## Durable messages and ACK
 

@@ -1122,3 +1122,32 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   Previous task-launch commit `a2836fa` passed all five CI jobs in `39359771560`,
   including Windows, macOS and Linux. New delivery platform CI is not claimed
   before it runs. See [task delivery contract](harness-task-delivery.md).
+
+### F38 instruction V8: queued task delivery and safe cancellation
+
+- V8 documents `runDelivery`, exact CLI/MCP queue and queued-only cancellation,
+  immutable plan instruction/agent-only targets, null-receipt acceptance,
+  current task history and authorized native receipt recovery. It explains
+  bounded readiness waiting across client disconnect, one retained intent per
+  attempt, human takeover/release pauses and non-replay after restart. Explicit
+  results/validation still precede review. New launches receive V8; live snapshots
+  and provider-global settings are not rewritten.
+- Targeted offline case 9 compared one V8 sample with a frozen V7 snapshot.
+  An ungraded canonical viewer preceded reading/grading outputs. Semantic review
+  and programmatic command checks find V8 satisfies 6/6 expectations, V7 2/6.
+  Both versions preserve conservative safety: V7 explicitly admits the new
+  queue/cancel grammar and accounting are absent rather than inventing commands.
+  Recovery/receipt authority and result validation are non-discriminating. The
+  human/restart assertion is composite: V7 preserves human priority but lacks the
+  new restart contract. Its formal failure is not a finding of unsafe behavior;
+  future cases should separate those concerns.
+- One sample per version is not statistical or actual-provider/model-tool proof.
+  Earlier eight cases remain retained inputs, not claimed rerun. Notifications
+  provided no duration/token/model metrics; those were omitted. Evaluation and
+  canonical viewer outputs stay outside Git. User review is available through
+  the saved artifact; the app queued its tab rather than confirming visibility.
+- After rebuilding the native binaries with final V8 instructions, Windows fmt,
+  Clippy with warnings denied, all 271 unit checks and eight controlled native
+  SDK scenarios pass. The fixture verifies the injected V8 snapshot; it does not
+  prove an original model read or used these new commands. The preceding original
+  Claude prompt/response evidence used V7. No dependency or visual change.
