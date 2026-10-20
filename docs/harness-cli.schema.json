@@ -846,6 +846,66 @@
                       "minimum": 0
                     }
                   }
+                },
+                {
+                  "required": ["trigger"],
+                  "properties": {
+                    "trigger": {
+                      "$ref": "#/definitions/jobTrigger"
+                    }
+                  }
+                },
+                {
+                  "required": ["triggers", "nextOffset"],
+                  "properties": {
+                    "triggers": {
+                      "type": "array",
+                      "maxItems": 16,
+                      "items": {
+                        "$ref": "#/definitions/jobTrigger"
+                      }
+                    },
+                    "nextOffset": {
+                      "type": ["integer", "null"],
+                      "minimum": 0,
+                      "maximum": 4096
+                    }
+                  }
+                },
+                {
+                  "required": ["deliveries", "nextOffset"],
+                  "properties": {
+                    "deliveries": {
+                      "type": "array",
+                      "maxItems": 16,
+                      "items": {
+                        "$ref": "#/definitions/jobTriggerDelivery"
+                      }
+                    },
+                    "nextOffset": {
+                      "type": ["integer", "null"],
+                      "minimum": 0,
+                      "maximum": 4096
+                    }
+                  }
+                },
+                {
+                  "required": ["delivery"],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": ["run"]
+                      },
+                      {
+                        "required": ["tasks"]
+                      }
+                    ]
+                  },
+                  "properties": {
+                    "delivery": {
+                      "$ref": "#/definitions/jobTriggerDelivery"
+                    }
+                  }
                 }
               ]
             },
@@ -3338,6 +3398,16 @@
                   "type": "string"
                 }
               }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "properties": {
+                "kind": {
+                  "const": "external"
+                }
+              }
             }
           ]
         },
@@ -3464,7 +3534,7 @@
           "minimum": 1
         },
         "trigger": {
-          "enum": ["schedule", "manual"]
+          "enum": ["schedule", "manual", "external"]
         },
         "dueAt": {
           "$ref": "#/definitions/cursor"
@@ -4275,6 +4345,249 @@
         },
         "stderrTruncated": {
           "type": "boolean"
+        }
+      }
+    },
+    "jobTriggerSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "jobId", "jobRevision", "adapter"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "jobRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "adapter": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "event"],
+              "properties": {
+                "kind": {
+                  "const": "webhook"
+                },
+                "event": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_.:-]+$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "repositoryId", "repository", "event", "actions", "branch"],
+              "properties": {
+                "kind": {
+                  "const": "github"
+                },
+                "repositoryId": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "repository": {
+                  "type": "string",
+                  "maxLength": 201
+                },
+                "event": {
+                  "enum": ["push", "pull_request", "workflow_run"]
+                },
+                "actions": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "branch": {
+                  "type": ["string", "null"],
+                  "maxLength": 255,
+                  "pattern": "^\\S+$"
+                }
+              },
+              "oneOf": [
+                {
+                  "properties": {
+                    "event": {
+                      "const": "push"
+                    },
+                    "actions": {
+                      "maxItems": 0
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "event": {
+                      "const": "pull_request"
+                    },
+                    "actions": {
+                      "minItems": 1,
+                      "items": {
+                        "enum": [
+                          "assigned",
+                          "unassigned",
+                          "labeled",
+                          "unlabeled",
+                          "opened",
+                          "edited",
+                          "closed",
+                          "reopened",
+                          "synchronize",
+                          "converted_to_draft",
+                          "locked",
+                          "unlocked",
+                          "enqueued",
+                          "dequeued",
+                          "milestoned",
+                          "demilestoned",
+                          "ready_for_review",
+                          "review_requested",
+                          "review_request_removed",
+                          "auto_merge_enabled",
+                          "auto_merge_disabled"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "event": {
+                      "const": "workflow_run"
+                    },
+                    "actions": {
+                      "const": ["completed"]
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "jobTrigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "enabled",
+        "revoked",
+        "credentialGeneration",
+        "createdAt",
+        "updatedAt",
+        "spec"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "revoked": {
+          "type": "boolean"
+        },
+        "credentialGeneration": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "updatedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "spec": {
+          "$ref": "#/definitions/jobTriggerSpec"
+        }
+      }
+    },
+    "jobTriggerDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "triggerId",
+        "deliveryId",
+        "bodyDigest",
+        "credentialGeneration",
+        "triggerRevision",
+        "jobId",
+        "jobRevision",
+        "acceptedAt",
+        "disposition",
+        "reason",
+        "occurrenceId"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "triggerId": {
+          "$ref": "#/definitions/id"
+        },
+        "deliveryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "bodyDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "credentialGeneration": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "triggerRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "jobRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "acceptedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "disposition": {
+          "enum": ["queued", "skipped", "ignored"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "occurrenceId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
         }
       }
     }

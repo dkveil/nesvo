@@ -714,6 +714,29 @@ fn job_calendar_supported(caps: &Value, request: &Value) -> bool {
             .as_array()
             .is_some_and(|kinds| kinds.iter().any(|k| k == kind))
 }
+fn job_external_supported(caps: &Value, request: &Value) -> bool {
+    let job = &request["request"]["request"];
+    if request["request"]["action"] != "jobs"
+        || (job["action"] != "triggers" && job["spec"]["schedule"]["kind"] != "external")
+    {
+        return true;
+    }
+    if caps["jobExternalTriggers"] != true {
+        return false;
+    }
+    let Some(providers) = caps["jobTriggerProviders"].as_array() else {
+        return false;
+    };
+    if providers.is_empty() || !providers.iter().all(Value::is_string) {
+        return false;
+    }
+    match job["request"]["spec"]["adapter"]["kind"].as_str() {
+        Some(provider) => providers.iter().any(|value| value == provider),
+        None => providers
+            .iter()
+            .any(|value| value == "webhook" || value == "github"),
+    }
+}
 fn job_precheck_requested(request: &Value) -> bool {
     let action = &request["request"];
     action["action"] == "jobs"
@@ -887,6 +910,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host cannot enforce this job retry policy; update nesvo-host",
         ));
     }
+    if !job_external_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot authorize this external job or trigger provider; update nesvo-host",
+        ));
+    }
     if !job_execution_timeout_supported(&caps, request) {
         return Err(cli::failure(
             "unsupported",
@@ -928,6 +957,36 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_jobs_and_trigger_actions_require_typed_scoped_support() {
+        let external = tool("jobs",json!({"request":{"action":"create","key":"external","spec":{"title":"Triggered checks","instruction":"report-task","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"external"}}}})).unwrap();
+        let list = tool(
+            "jobs",
+            json!({"request":{"action":"triggers","request":{"action":"list"}}}),
+        )
+        .unwrap();
+        for bad in [
+            json!({}),
+            json!({"jobExternalTriggers":"true","jobTriggerProviders":["webhook"]}),
+            json!({"jobExternalTriggers":true}),
+            json!({"jobExternalTriggers":true,"jobTriggerProviders":"webhook"}),
+            json!({"jobExternalTriggers":true,"jobTriggerProviders":[true]}),
+            json!({"jobExternalTriggers":true,"jobTriggerProviders":["unknown"]}),
+        ] {
+            assert!(!job_external_supported(&bad, &external));
+            assert!(!job_external_supported(&bad, &list));
+        }
+        let caps = json!({"jobExternalTriggers":true,"jobTriggerProviders":["webhook","github"],"jobScheduleKinds":["once","external"]});
+        assert!(job_external_supported(&caps, &external));
+        assert!(job_external_supported(&caps, &list));
+        assert!(job_calendar_supported(&caps, &external));
+        assert!(!job_calendar_supported(
+            &json!({"jobScheduleKinds":["once"]}),
+            &external
+        ));
+        let old = tool("jobs", json!({"request":{"action":"list"}})).unwrap();
+        assert!(job_external_supported(&json!({}), &old));
+    }
     #[test]
     fn launch_reconciliation_requires_strict_support_only_for_its_owner_action() {
         let request = tool(

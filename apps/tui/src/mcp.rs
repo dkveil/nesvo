@@ -94,7 +94,8 @@ fn job_spec_schema() -> Value {
     let schedule = json!({"oneOf":[
         object(json!({"kind":{"const":"once"},"at":{"type":"string","maxLength":64,"description":"Future RFC3339 instant with an explicit UTC offset, at most 366 days ahead"}}), &["kind","at"]),
         object(json!({"kind":{"const":"cron"},"expression":{"type":"string","minLength":1,"maxLength":256,"description":"Five fields: minute hour day month weekday"},"timeZone":zone}), &["kind","expression"]),
-        object(json!({"kind":{"const":"rrule"},"rule":{"type":"string","minLength":1,"maxLength":1024,"description":"Uppercase Gregorian RFC5545 RRULE; MINUTELY or coarser, COUNT<=10000, UTC UNTIL. Bounded search can explicitly refuse complex/old dense rules."},"start":{"type":"string","minLength":19,"maxLength":19,"description":"Existing local DTSTART as YYYY-MM-DDTHH:MM:SS"},"timeZone":zone}), &["kind","rule","start"])
+        object(json!({"kind":{"const":"rrule"},"rule":{"type":"string","minLength":1,"maxLength":1024,"description":"Uppercase Gregorian RFC5545 RRULE; MINUTELY or coarser, COUNT<=10000, UTC UNTIL. Bounded search can explicitly refuse complex/old dense rules."},"start":{"type":"string","minLength":19,"maxLength":19,"description":"Existing local DTSTART as YYYY-MM-DDTHH:MM:SS"},"timeZone":zone}), &["kind","rule","start"]),
+        object(json!({"kind":{"const":"external","description":"No timer schedule; requires jobExternalTriggers:true. Only explicit run-now or authenticated configured external delivery admits an occurrence."}}), &["kind"])
     ]});
     let retry = object(
         json!({
@@ -833,7 +834,7 @@ fn catalog() -> Vec<Tool> {
     definitions.into_iter().map(|(name,description,schema,read_only)| {
         Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
-    }).collect()
+    }).chain(crate::job_trigger_tools::catalog()).collect()
 }
 
 #[derive(Deserialize)]
@@ -905,6 +906,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
             "invalid_argument",
             "Tool arguments exceed 24 KiB",
         ));
+    }
+    if let Some(request) = crate::job_trigger_tools::command(name, &arguments) {
+        return request.map(|request| (request, "workflow"));
     }
     Ok(match name {
         "nesvo_rebind_run_coordinator" => (
@@ -2130,7 +2134,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 81);
+        assert_eq!(catalog().len(), 91);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

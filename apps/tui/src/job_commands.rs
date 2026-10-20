@@ -8,6 +8,11 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Configure separately authenticated external delivery; never shares owner pairing.
+    Trigger {
+        #[command(subcommand)]
+        command: crate::job_triggers::Command,
+    },
     /// Inspect, explicitly approve and revoke exact owner command checks.
     Precheck {
         #[command(subcommand)]
@@ -163,6 +168,7 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Trigger { command } => command.machine(),
             Self::Precheck { command } => command.machine(),
             Self::AbandonPrecheck { json, .. } | Self::AbandonLaunch { json, .. } => *json,
             Self::Create { json, .. }
@@ -182,6 +188,9 @@ impl Command {
     }
     pub(crate) fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Trigger { command } => Request::Triggers {
+                request: command.request()?,
+            },
             Self::Precheck { command } => Request::Prechecks {
                 request: command.request()?,
             },
@@ -344,6 +353,7 @@ where
     deny_unknown_fields
 )]
 enum Schedule {
+    External,
     Once {
         at: String,
     },
@@ -468,6 +478,9 @@ pub struct Spec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Triggers {
+        request: crate::job_triggers::Request,
+    },
     Prechecks {
         request: crate::job_prechecks::Request,
     },

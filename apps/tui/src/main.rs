@@ -5,6 +5,8 @@ mod controller;
 mod input;
 mod job_commands;
 mod job_prechecks;
+mod job_trigger_tools;
+mod job_triggers;
 mod launch;
 mod mcp;
 mod model;

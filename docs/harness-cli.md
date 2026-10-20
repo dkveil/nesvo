@@ -4,6 +4,12 @@ Headless commands use the same paired, authenticated native host as the TUI.
 Running `nesvo` without a subcommand still opens the existing TUI. Help never
 loads pairing or contacts a host.
 
+Owner `nesvo job trigger` manages signed generic/GitHub triggers with secret files,
+exact revisions and immutable delivery lookups. See the
+[external trigger contract and commands](harness-job-triggers.md). A trigger only
+admits an occurrence through the existing job dispatcher; it never grants a
+scoped agent owner authority or turns event payloads into executable instructions.
+
 New session/task launches can select a native `--model` and `--effort` on verified
 providers. Values are launch-local and are not inherited by children or written
 to provider defaults. See [model profiles and capability limits](harness-model-profiles.md).
