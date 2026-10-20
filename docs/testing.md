@@ -49,6 +49,42 @@ Failures retain bounded phase/host/job diagnostics before cleanup. They compleme
 the injected-clock and restart storage regressions; they are not original-provider
 or native-phone acceptance. See the [timeout contract](harness-job-timeouts.md).
 
+### Native no-effect launch reconciliation
+
+The serial `mcp_host` target also includes `job_launch_reconciliation::`.
+
+```powershell
+cargo test --package nesvo --test mcp_host --locked job_launch_reconciliation:: -- --ignored --test-threads=1
+```
+
+One scenario creates a private Git repository with a required smudge filter.
+After an approved precheck, the filter holds checkout until timeout cleanup owns
+its claim, then fails checkout. The actual create receipt remains
+`unknown/worktree_unconfirmed`: checkout may already have changed files. Owner
+abandonment must refuse that evidence and retain occupied overlap. The filter
+has its own five-second termination bound. Only repository-local Git
+configuration changes; there are no injected native receipts or production
+delay hooks.
+
+A separate native scenario obtains actual `effectStarted:false` from failed
+preflight validation. It checks owner digest/acknowledgment, CLI/MCP replay,
+nonowner refusal, permanent generation retirement and an independent subsequent
+worker. It does not establish that owner acknowledgment caused queue release:
+an ordinary failed preflight can already be terminal. Storage regressions cover
+the distinct late-known-no-effect/claimed-cleanup ordering and logical overlap
+release. The native tests check preserved command/native receipts and avoid
+manufactured exit proof. They use controlled PTYs, not original model calls.
+See the
+[launch reconciliation contract](harness-job-launch-reconciliation.md).
+
+Initial native fixture startup retains a 15-second readiness deadline. On failure
+only, `NATIVE_HOST_STARTUP_DIAGNOSTIC` records child status, stdout counters,
+buffer occupancy and the presence/size of five fixed startup files. A dedicated
+metadata thread has a one-second observation wait and cannot hold Tokio runtime
+shutdown; owned-child kill/reap observation is bounded at two seconds. No pairing
+keys, SQLite contents, prompt text or raw startup lines are sampled. Diagnostics
+do not retry startup or establish the root cause of a timeout by themselves.
+
 ### Ultraviolet checks
 
 `npm run test:brand` checks the shared palette, exact SVG-to-terminal glyph geometry and six-second motion timeline. `npm run test:brand:web` checks the rendered logo, full violet visor during blinking, session creation from the launchpad, narrow layout, reduced motion and animation suspension when hidden or offscreen. These checks run in CI alongside the existing application and terminal tests.
