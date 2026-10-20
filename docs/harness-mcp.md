@@ -45,6 +45,13 @@ path uses UI focus, and changing the hint or private-file role cannot grant acce
 
 ## Current tools
 
+`runBudgets` adds `nesvo_get_run_budget` and `nesvo_set_run_budget`; `runDrain`
+adds `nesvo_drain_run` and `nesvo_resume_run`. Limits count assigned/reported
+attempts, preserve retry history and use an activation-based elapsed clock.
+Only the owner may relax limits or undo an owner drain. These metadata tools
+do not kill processes, grant native approval or replay input. See
+[run budget contract](harness-run-budgets.md). The catalog now contains 38 tools.
+
 `hostBudgets` adds owner-only `nesvo_get_host_budget` and `nesvo_set_host_budget`.
 Both use the shared host admission policy and workflow recovery namespace;
 changing policy never terminates existing work. See [budget contract](harness-budgets.md).

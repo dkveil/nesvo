@@ -5,8 +5,9 @@ a revisioned DAG; a **task** has a stable host ID and a caller-supplied key with
 that run. An **attempt** binds exactly one managed worker process to a task.
 `workflowAttempts:true` adds assignment, explicit worker results and owner/
 coordinator validation. [Attempt-bound decisions](harness-decisions.md) add
-explicit questions without granting native permission approval. Automatic native
-dispatch, configurable budgets and run cancellation remain F14/F20 work.
+explicit questions without granting native permission approval. [Run admission
+budgets and drain](harness-run-budgets.md) preserve native work and human priority.
+Automatic native dispatch and run-wide stop/cancel remain F14/F20 work.
 Idle never means success.
 
 ## CLI and MCP
@@ -171,8 +172,9 @@ oversized input are rejected. File reads are bounded during decoding.
 
 Lists return 16 summaries per page, omitting goals/instructions. Storage caps:
 1024 retained runs, 4096 metadata mutations/attempts, 16 attempts per task.
-These are storage safety bounds, not configurable execution budgets.
-Exhaustion returns explicit `busy`;
+These are storage safety bounds; configurable parallel/retry/time policy is
+separate and never exceeds them. Storage exhaustion returns `busy`; the default
+16-attempt policy returns `retry_budget_exhausted` at its boundary.
 accepted keys remain recoverable. No silent eviction/replay. Export/retention
 controls remain recovery work. Routine domain events contain only run ID/revision
 and an authorized coordinator subject, without goals/instructions.
@@ -188,4 +190,4 @@ no model calls. Controlled native workers also discover/report their own task
 through the actual CLI; independent coordinator validation releases a reviewer
 task. Reopen/late-result/history tests cover retry fences. This does not pass
 the full stage-3 gate: actual provider escalation, decision UI, coordinator adoption,
-automatic dispatch and budget/cancel policy remain open.
+automatic dispatch and native run-wide stop/cancel remain open.

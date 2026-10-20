@@ -68,6 +68,19 @@ pub struct TaskSpec {
     deny_unknown_fields
 )]
 pub enum Request {
+    RunBudget {
+        request: crate::workflow_budget::Request,
+    },
+    Drain {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    Resume {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
     HostBudget {
         request: crate::budgets::Request,
     },
@@ -135,6 +148,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
       CREATE TABLE IF NOT EXISTS workflow_attempts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES workflow_tasks(id),ordinal INTEGER NOT NULL,session_id TEXT NOT NULL UNIQUE,state TEXT NOT NULL,result TEXT,validation TEXT,UNIQUE(task_id,ordinal));")?;
     crate::workflow_inbox::initialize(connection)?;
     crate::workflow_decisions::initialize(connection)?;
+    crate::workflow_budget::initialize(connection)?;
     crate::budgets::initialize(connection)?;
     Ok(())
 }
@@ -227,8 +241,9 @@ pub(crate) fn run(connection: &Connection, actor: &Actor, id: &str) -> Result<Va
         revision >= 1 && created_at >= 0,
         "Invalid stored workflow metadata"
     );
+    let budget = crate::workflow_budget::snapshot(connection, &id, &state)?;
     Ok(
-        json!({"id":id,"title":title,"goal":goal,"coordinatorSessionId":coordinator,"revision":revision,"state":state,"createdAt":created_at,"taskResult":if state=="succeeded"{Some("succeeded")}else{None}}),
+        json!({"id":id,"title":title,"goal":goal,"coordinatorSessionId":coordinator,"revision":revision,"state":state,"createdAt":created_at,"budget":budget,"taskResult":if state=="succeeded"{Some("succeeded")}else{None}}),
     )
 }
 fn view(connection: &Connection, actor: &Actor, id: &str) -> Result<Value> {
@@ -264,11 +279,22 @@ fn random_id() -> String {
     hex::encode(crate::wire::random::<16>())
 }
 pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> Result<Value> {
+    execute_at(connection, actor, request, now_millis())
+}
+pub(crate) fn execute_at(
+    connection: &mut Connection,
+    actor: Actor,
+    request: Request,
+    now: u64,
+) -> Result<Value> {
+    if let Request::RunBudget { request } = request {
+        return crate::workflow_budget::execute(connection, actor, request, now);
+    }
     if let Request::HostBudget { request } = request {
         return crate::budgets::execute(connection, actor, request);
     }
     if let Request::Decision { request } = request {
-        return crate::workflow_decisions::execute(connection, actor, request, now_millis());
+        return crate::workflow_decisions::execute(connection, actor, request, now);
     }
     if let Request::Inbox { request } = request {
         return crate::workflow_inbox::execute(connection, actor, request);
@@ -286,6 +312,10 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
         .into());
     }
     if matches!(request, Request::Context { .. }) {
+        let own = crate::workflow_attempts::context(connection, &actor, None)?;
+        if let Some(id) = own["run"]["id"].as_str() {
+            crate::workflow_budget::refresh(connection, id, now)?;
+        }
         return crate::workflow_attempts::context(connection, &actor, None);
     }
     if let Request::Task {
@@ -322,6 +352,8 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
         return Ok(result);
     }
     if let Request::Get { run_id } = &request {
+        run(connection, &actor, run_id)?;
+        crate::workflow_budget::refresh(connection, run_id, now)?;
         return view(connection, &actor, run_id);
     }
     if let Request::List { offset } = &request {
@@ -335,7 +367,21 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
         runs.truncate(16);
         return Ok(json!({"runs":runs,"nextOffset":more.then_some(offset+16)}));
     }
+    if let Request::Assign { run_id, .. }
+    | Request::Drain { run_id, .. }
+    | Request::Resume { run_id, .. } = &request
+    {
+        run(connection, &actor, run_id)?;
+        crate::workflow_budget::refresh(connection, run_id, now)?;
+    }
+    if let Request::Report { attempt_id, .. } = &request {
+        let own = crate::workflow_attempts::context(connection, &actor, Some(attempt_id))?;
+        if let Some(id) = own["run"]["id"].as_str() {
+            crate::workflow_budget::refresh(connection, id, now)?;
+        }
+    }
     let key = match &request {
+        Request::Drain { key, .. } | Request::Resume { key, .. } => key,
         Request::Create { key, .. }
         | Request::SetPlan { key, .. }
         | Request::Activate { key, .. }
@@ -351,7 +397,9 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     // Recheck the run boundary even when recovering a historical mutation.
-    if let Request::SetPlan { run_id, .. }
+    if let Request::Drain { run_id, .. }
+    | Request::Resume { run_id, .. }
+    | Request::SetPlan { run_id, .. }
     | Request::Activate { run_id, .. }
     | Request::Assign { run_id, .. }
     | Request::Validate { run_id, .. } = &request
@@ -388,7 +436,8 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
                 .into());
             }
             let id = random_id();
-            transaction.execute("INSERT INTO workflow_runs(id,title,goal,coordinator_id,revision,state,created_at) VALUES(?1,?2,?3,?4,1,'draft',?5)",params![id,spec.title,spec.goal,spec.coordinator_session_id,now_millis() as i64])?;
+            transaction.execute("INSERT INTO workflow_runs(id,title,goal,coordinator_id,revision,state,created_at) VALUES(?1,?2,?3,?4,1,'draft',?5)",params![id,spec.title,spec.goal,spec.coordinator_session_id,now as i64])?;
+            crate::workflow_budget::ensure_record(&transaction, &id)?;
             (id, "run.created")
         }
         Request::SetPlan {
@@ -433,7 +482,7 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
             )?;
             (run_id.clone(), "run.plan_changed")
         }
-        _ => crate::workflow_attempts::mutate(&transaction, &actor, &request)?,
+        _ => crate::workflow_attempts::mutate(&transaction, &actor, &request, now)?,
     };
     let result = if matches!(actor.scope, Scope::Worker(_)) {
         crate::workflow_attempts::context(&transaction, &actor, None)?
@@ -450,7 +499,7 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
         vec![Observation {
             session_id: subject,
             kind,
-            at: now_millis(),
+            at: now,
             payload: json!({"runId":id,"revision":result["run"]["revision"]}),
         }],
     )?;

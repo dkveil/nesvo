@@ -3,7 +3,7 @@ use super::*;
 fn limits(slots: u16, workers: u16, shell: u16) -> Value {
     json!({"maxSessions":slots,"maxWorkers":workers,"providers":{"shell":shell,"claude":16,"codex":16,"gemini":16}})
 }
-async fn owner_cli(fixture: &Fixture, args: &[&str]) -> Result<Value> {
+pub(super) async fn owner_cli(fixture: &Fixture, args: &[&str]) -> Result<Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
     command
         .arg("--pairing")

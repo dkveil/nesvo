@@ -8,6 +8,31 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Inspect or replace this run's parallel, retry and elapsed budgets.
+    Budget {
+        #[command(subcommand)]
+        command: crate::workflow_budget::Command,
+    },
+    /// Block new task assignments while current attempts finish. Does not kill.
+    Drain {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reopen a drained run without resetting history or its elapsed clock.
+    Resume {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Owner admission policy, shared with the top-level budget command.
     #[command(hide = true)]
     HostBudget {
@@ -139,6 +164,8 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Budget { command } => command.machine(),
+            Self::Drain { json, .. } | Self::Resume { json, .. } => *json,
             Self::Decision { command } => command.machine(),
             Self::HostBudget { command } => command.machine(),
             Self::Inbox { command } => command.machine(),
@@ -157,6 +184,23 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Budget { command } => Request::RunBudget {
+                request: command.request()?,
+            },
+            Self::Drain {
+                id, key, revision, ..
+            } => Request::Drain {
+                key,
+                run_id: id,
+                expected_revision: revision,
+            },
+            Self::Resume {
+                id, key, revision, ..
+            } => Request::Resume {
+                key,
+                run_id: id,
+                expected_revision: revision,
+            },
             Self::HostBudget { command } => Request::HostBudget {
                 request: command.request()?,
             },
@@ -350,6 +394,19 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    RunBudget {
+        request: crate::workflow_budget::Request,
+    },
+    Drain {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    Resume {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
     HostBudget {
         request: crate::budgets::Request,
     },
@@ -480,6 +537,17 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         return Err(cli::failure(
             "unsupported",
             "Host does not support attempt-bound decisions; update nesvo-host",
+        ));
+    }
+    let capability = match request["request"]["action"].as_str() {
+        Some("runBudget") => Some("runBudgets"),
+        Some("drain" | "resume") => Some("runDrain"),
+        _ => None,
+    };
+    if capability.is_some_and(|key| caps[key] != true) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host does not enforce run budgets/drain; update nesvo-host",
         ));
     }
     Ok(())

@@ -24,6 +24,7 @@ mod ui_controls;
 mod ui_launch;
 mod ui_palette;
 mod workflow;
+mod workflow_budget;
 mod workflow_decisions;
 mod workflow_inbox;
 mod workspace_layout;

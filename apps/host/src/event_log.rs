@@ -110,6 +110,9 @@ mod journal_concurrency_tests;
 #[path = "orchestration_tests.rs"]
 mod orchestration_tests;
 #[cfg(test)]
+#[path = "workflow_budget_tests.rs"]
+mod workflow_budget_tests;
+#[cfg(test)]
 #[path = "workflow_decisions_tests.rs"]
 mod workflow_decisions_tests;
 #[cfg(test)]
@@ -213,6 +216,10 @@ impl Store {
 }
 
 enum Work {
+    GuardRunDispatch {
+        session_id: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
     Workflow {
         actor: crate::orchestration::Actor,
         request: crate::orchestration::Request,
@@ -285,6 +292,19 @@ pub struct Service {
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
 impl Service {
+    pub async fn guard_run_dispatch(&self, session_id: &str) -> Result<()> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::GuardRunDispatch {
+                session_id: session_id.into(),
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!("Workflow store is closed"))?;
+        answer
+            .await
+            .map_err(|_| anyhow!("Run dispatch guard was not confirmed"))?
+    }
     pub fn budget(&self) -> crate::budgets::Shared {
         self.budget.clone()
     }
@@ -445,6 +465,16 @@ impl Service {
                 let _ = ready_tx.send(Ok(()));
                 while let Some(work) = receiver.blocking_recv() {
                     match work {
+                        Work::GuardRunDispatch { session_id, reply } => {
+                            let result = crate::workflow_budget::guard_dispatch(
+                                &mut store.0,
+                                &session_id,
+                                crate::status::now_millis(),
+                            );
+                            record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
                         Work::Workflow {
                             actor,
                             request,

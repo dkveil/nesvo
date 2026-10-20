@@ -293,7 +293,7 @@ fn bounded_attempt_history_paginates_and_never_prunes_or_reuses_workers() {
             Some("coordinator"),
             json!({"action":"assign","key":"overflow","runId":run,"taskId":task,"sessionId":"worker-overflow","expectedRevision":revision}),
         ),
-        "busy",
+        "retry_budget_exhausted",
     );
     let mut count = 0;
     for offset in [0, 4, 8, 12] {

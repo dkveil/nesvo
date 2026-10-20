@@ -244,6 +244,7 @@ async fn enqueue_fenced(
             .into());
         }
         changed.borrow_and_update();
+        log.guard_run_dispatch(session_id).await?;
         let latest = fence(path.clone(), session_id).await?;
         let result =
             state

@@ -844,6 +844,123 @@ test(
       );
 
       await suite.test(
+        'run budget CLI preserves activation clock, revisions and drain history',
+        async () => {
+          const invoke = async (args: string[]) => {
+            const output = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'run',
+              ...args,
+              '--json',
+            ]);
+            queryOutput(output.stdout);
+            assert.equal(output.code, 0, output.stdout);
+            return JSON.parse(output.stdout).data;
+          };
+          const created = await invoke([
+            'create',
+            'Budget CLI',
+            '--key',
+            'budget-cli-run',
+            '--goal',
+            'No native effects',
+          ]);
+          const id = created.run.id;
+          const file = join(fixture, 'run-budget.json');
+          await writeFile(
+            file,
+            JSON.stringify([{ key: 'later', title: 'Later', instruction: 'Controlled admission' }]),
+          );
+          await invoke(['plan', id, '--key', 'budget-cli-plan', '--revision', '1', '--file', file]);
+          const activated = await invoke([
+            'activate',
+            id,
+            '--key',
+            'budget-cli-start',
+            '--revision',
+            '2',
+          ]);
+          const start = activated.run.budget.startedAt;
+          assert.equal(typeof start, 'number');
+          const limits = { maxParallel: 2, maxAttemptsPerTask: 3, maxElapsedMs: null };
+          await writeFile(file, JSON.stringify(limits));
+          const args = [
+            'budget',
+            'set',
+            id,
+            '--key',
+            'budget-cli-policy',
+            '--revision',
+            '3',
+            '--file',
+            file,
+          ];
+          const configured = await invoke(args);
+          assert.deepEqual(configured.policy.limits, limits);
+          assert.deepEqual(await invoke(args), configured);
+          assert.deepEqual(await invoke(['mutation', '--key', 'budget-cli-policy']), configured);
+          const read = await invoke(['budget', 'get', id]);
+          assert.equal(read.policy.startedAt, start);
+          assert.equal(read.run.revision, 4);
+          const drained = await invoke([
+            'drain',
+            id,
+            '--key',
+            'budget-cli-drain',
+            '--revision',
+            '4',
+          ]);
+          assert.equal(drained.run.state, 'drained');
+          assert.equal(drained.run.budget.ownerDrain, true);
+          const resumed = await invoke([
+            'resume',
+            id,
+            '--key',
+            'budget-cli-resume',
+            '--revision',
+            '5',
+          ]);
+          assert.equal(resumed.run.state, 'active');
+          assert.equal(resumed.run.budget.startedAt, start);
+          const historic = await invoke([
+            'drain',
+            id,
+            '--key',
+            'budget-cli-drain',
+            '--revision',
+            '4',
+          ]);
+          assert.deepEqual(historic, drained);
+          assert.equal((await invoke(['get', id])).run.state, 'active');
+          for (const [index, contents] of [
+            JSON.stringify({ ...limits, maxParallel: 0 }),
+            JSON.stringify({ ...limits, maxElapsedMs: 999 }),
+            JSON.stringify({ ...limits, role: 'owner' }),
+            JSON.stringify({ maxParallel: 2, maxAttemptsPerTask: 3 }),
+            'x'.repeat(4097),
+          ].entries()) {
+            await writeFile(file, contents);
+            const denied = await runTui(tuiBinary, pairingPath, runningTuis, [
+              'run',
+              'budget',
+              'set',
+              id,
+              '--key',
+              `bad-run-budget-${index}`,
+              '--revision',
+              '6',
+              '--file',
+              file,
+              '--json',
+            ]);
+            queryOutput(denied.stdout);
+            assert.equal(JSON.parse(denied.stdout).error.code, 'invalid_argument');
+          }
+          assert.equal((await invoke(['budget', 'get', id])).run.revision, 6);
+          assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
+        },
+      );
+
+      await suite.test(
         'owner budgets reject legacy creation without changing existing sessions',
         async () => {
           const invoke = async (args: string[]) => {

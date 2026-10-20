@@ -58,6 +58,39 @@ fn catalog() -> Vec<Tool> {
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
         (
+            "nesvo_get_run_budget",
+            "Read a visible run's current policy, active attempts and activation/deadline clock. Workers use their own task context. Reads may persist observed time exhaustion; never start/stop a process.",
+            object(json!({"runId":id}), &["runId"]),
+            true,
+        ),
+        (
+            "nesvo_set_run_budget",
+            "Replace a visible run's parallel, per-task attempt and elapsed limits at its exact run revision. Coordinator can only tighten; only owner can relax or extend an exhausted deadline. Reported results occupy parallel slots until validated. Elapsed time includes draining and resume never resets the clock. This neither grants global capacity nor kills current work. Recover the original key through nesvo_get_run_mutation.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision,"limits":{"type":"object","additionalProperties":false,"required":["maxParallel","maxAttemptsPerTask","maxElapsedMs"],"properties":{"maxParallel":{"type":"integer","minimum":1,"maximum":16},"maxAttemptsPerTask":{"type":"integer","minimum":1,"maximum":16},"maxElapsedMs":{"type":["integer","null"],"minimum":1000,"maximum":604_800_000}}}}),
+                &["key", "runId", "expectedRevision", "limits"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_drain_run",
+            "Block new task assignments; allow assigned workers to report and parents to validate. Does not stop, interrupt or send input to native processes. Owner drain remains owner-controlled even after coordinator drains again. Exact run revision and original mutation key are required.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_resume_run",
+            "Resume new assignments after drain without resetting time/retry history or relaxing budgets. Only owner may undo an owner drain; coordinator can resume its own drain. No process is launched and no input replayed.",
+            object(
+                json!({"key":key,"runId":id,"expectedRevision":revision}),
+                &["key", "runId", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
             "nesvo_get_host_budget",
             "Read the explicit owner's persisted host admission policy and its revision. Coordinators/workers cannot inspect or raise global budgets. This changes no live process, focus or input control.",
             object(json!({}), &[]),
@@ -426,7 +459,10 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
-        "nesvo_get_host_budget" | "nesvo_set_host_budget" => {
+        "nesvo_get_host_budget"
+        | "nesvo_set_host_budget"
+        | "nesvo_get_run_budget"
+        | "nesvo_set_run_budget" => {
             let mut fields = arguments
                 .as_object()
                 .ok_or_else(|| {
@@ -441,7 +477,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
             }
             fields.insert(
                 "action".into(),
-                if name == "nesvo_get_host_budget" {
+                if matches!(name, "nesvo_get_host_budget" | "nesvo_get_run_budget") {
                     "get"
                 } else {
                     "set"
@@ -449,10 +485,28 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 .into(),
             );
             (
-                crate::workflow::tool("hostBudget", json!({"request":fields}))?,
+                crate::workflow::tool(
+                    if name.contains("host_budget") {
+                        "hostBudget"
+                    } else {
+                        "runBudget"
+                    },
+                    json!({"request":fields}),
+                )?,
                 "workflow",
             )
         }
+        "nesvo_drain_run" | "nesvo_resume_run" => (
+            crate::workflow::tool(
+                if name == "nesvo_drain_run" {
+                    "drain"
+                } else {
+                    "resume"
+                },
+                arguments,
+            )?,
+            "workflow",
+        ),
         "nesvo_ask_decision"
         | "nesvo_list_decisions"
         | "nesvo_get_decision"
@@ -856,7 +910,7 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 34);
+        assert_eq!(catalog().len(), 38);
         assert!(command("nesvo_set_host_budget",json!({"key":"k","expectedRevision":1,"limits":{"maxSessions":2,"maxWorkers":1,"providers":{"shell":1,"claude":1,"codex":1,"gemini":1},"role":"owner"}})).is_err());
         assert!(command("nesvo_answer_decision",json!({"runId":"r","decisionId":"d","key":"k","expectedRevision":1,"answer":"x","audience":"owner"})).is_err());
         assert!(

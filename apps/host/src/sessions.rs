@@ -611,6 +611,8 @@ impl State {
         event["workflowInbox"] = self.event_log.is_some().into();
         event["workflowDecisions"] = self.event_log.is_some().into();
         event["hostBudgets"] = self.event_log.is_some().into();
+        event["runBudgets"] = self.event_log.is_some().into();
+        event["runDrain"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["workflowPlans"] = true.into();
         event

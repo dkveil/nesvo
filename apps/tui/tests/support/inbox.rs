@@ -63,6 +63,10 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
         assert_eq!(denied.structured_content.context("self-answer refusal")?["error"]["code"],"forbidden");
         let early=call(&worker,"nesvo_report_task_result",json!({"key":"blocked-success","attemptId":attempt,"result":{"outcome":"succeeded","summary":"Must be blocked, not accepted","files":[],"artifacts":[],"checks":[],"limitations":[]}})).await?;
         assert_eq!(early.structured_content.context("decision result gate")?["error"]["code"],"decision_pending");
+        let gated=call(&coordinator,"nesvo_send_prompt",json!({"key":"decision-send-refusal","sessionId":child_id,"prompt":"Do not bypass the pending human question"})).await?;
+        let refused=gated.structured_content.context("native decision send fence")?;
+        assert_eq!(refused["error"]["receipt"]["result"]["code"],"decision_pending");
+        assert_eq!(refused["error"]["receipt"]["result"]["effectStarted"],false);
         let answered=data(call(&owner,"nesvo_answer_decision",answer_args.clone()).await?)?;
         assert_eq!(answered["data"]["decision"]["resolvedBy"]["role"],"owner");
         let replay=data(call(&owner,"nesvo_answer_decision",answer_args).await?)?;

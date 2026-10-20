@@ -34,6 +34,7 @@ mod transport;
 mod turns;
 mod usage;
 mod workflow_attempts;
+mod workflow_budget;
 mod workflow_decisions;
 mod workflow_inbox;
 use nesvo_host::wire;

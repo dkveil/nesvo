@@ -17,6 +17,14 @@ workflow envelope. [Host admission policy](harness-budgets.md) defines exact bud
 revisions, recovery, shared runtime projection and the absence of native effects
 from policy mutations. This does not change legacy client authentication/input.
 
+`runBudgets` and `runDrain` advertise per-run admission policy and drain/resume
+workflow actions. [Run budgets](harness-run-budgets.md) define the activation
+clock, typed refusals and owner drain latch. Policy responses use `run,policy`;
+ordinary run/context views include `run.budget`. Neither metadata mutation
+starts or terminates a process. Automated native send checks the bound attempt's
+time/decision gates before paste and again before submit. Direct human input
+and existing native interrupt/stop authorization remain separate.
+
 Session-scoped native callers may send one `x-nesvo-scope` WebSocket handshake
 header with the public random scope ID from their private context file. The host
 selects that launch's independent key before the existing challenge/nonce/sequence

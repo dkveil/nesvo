@@ -149,7 +149,12 @@ pub fn context(
         |r| r.get(0),
     )?;
     let spec = task(connection, &run_id, task_id)?;
-    let run=connection.query_row("SELECT id,title,revision,state FROM workflow_runs WHERE id=?1",[&run_id],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"revision":r.get::<_,i64>(2)?,"state":r.get::<_,String>(3)?})))?;
+    let mut run=connection.query_row("SELECT id,title,revision,state FROM workflow_runs WHERE id=?1",[&run_id],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"revision":r.get::<_,i64>(2)?,"state":r.get::<_,String>(3)?})))?;
+    run["budget"] = crate::workflow_budget::snapshot(
+        connection,
+        &run_id,
+        run["state"].as_str().unwrap_or("unknown"),
+    )?;
     Ok(
         json!({"run":run,"task":{"id":task_id,"key":spec.key,"title":spec.title,"instruction":spec.instruction},"attempt":a}),
     )
@@ -187,7 +192,7 @@ fn revision(
     actor: &Actor,
     run_id: &str,
     expected: u64,
-    state: &str,
+    states: &[&str],
 ) -> Result<Value> {
     let run = crate::orchestration::run(connection, actor, run_id)?;
     if run["revision"].as_u64() != Some(expected) {
@@ -197,7 +202,10 @@ fn revision(
         )
         .into());
     }
-    if run["state"] != state {
+    if !run["state"]
+        .as_str()
+        .is_some_and(|state| states.contains(&state))
+    {
         return Err(Error::new("run_state_conflict", "Run is not in the required state").into());
     }
     Ok(run)
@@ -217,6 +225,7 @@ pub fn mutate(
     connection: &rusqlite::Transaction<'_>,
     actor: &Actor,
     request: &Request,
+    now: u64,
 ) -> Result<(String, &'static str)> {
     let (run_id, kind) = match request {
         Request::Activate {
@@ -224,7 +233,7 @@ pub fn mutate(
             expected_revision,
             ..
         } => {
-            revision(connection, actor, run_id, *expected_revision, "draft")?;
+            revision(connection, actor, run_id, *expected_revision, &["draft"])?;
             let count: i64 = connection.query_row(
                 "SELECT count(*) FROM workflow_tasks WHERE run_id=?1",
                 [run_id],
@@ -233,6 +242,7 @@ pub fn mutate(
             if count == 0 {
                 return Err(invalid("An empty draft cannot be activated"));
             }
+            crate::workflow_budget::activate(connection, run_id, now)?;
             connection.execute(
                 "UPDATE workflow_runs SET state='active' WHERE id=?1",
                 [run_id],
@@ -246,7 +256,7 @@ pub fn mutate(
             expected_revision,
             ..
         } => {
-            revision(connection, actor, run_id, *expected_revision, "active")?;
+            revision(connection, actor, run_id, *expected_revision, &["active"])?;
             let spec = task(connection, run_id, task_id)?;
             let summaries = summaries(connection, run_id)?;
             for key in &spec.dependencies {
@@ -275,6 +285,7 @@ pub fn mutate(
                 .into());
             }
             let ordinal = current.map_or(1, |a| a["ordinal"].as_i64().unwrap_or(0) + 1);
+            crate::workflow_budget::admit_attempt(connection, run_id, ordinal)?;
             let count: i64 =
                 connection.query_row("SELECT count(*) FROM workflow_attempts", [], |r| r.get(0))?;
             if ordinal > 16 || count >= 4096 {
@@ -304,7 +315,9 @@ pub fn mutate(
             attempt_id, result, ..
         } => {
             let own = context(connection, actor, Some(attempt_id))?;
-            if own["run"]["state"] != "active" || own["attempt"]["state"] != "assigned" {
+            if !matches!(own["run"]["state"].as_str(), Some("active" | "draining"))
+                || own["attempt"]["state"] != "assigned"
+            {
                 return Err(Error::new(
                     "attempt_state_conflict",
                     "Only the current assigned attempt can submit its first result",
@@ -336,7 +349,7 @@ pub fn mutate(
                 connection,
                 attempt_id,
                 matches!(result.outcome, Outcome::Succeeded),
-                crate::status::now_millis(),
+                now,
             )?;
             crate::workflow_inbox::notify_result(connection, actor, &own, result)?;
             (
@@ -354,7 +367,13 @@ pub fn mutate(
             validation,
             ..
         } => {
-            revision(connection, actor, run_id, *expected_revision, "active")?;
+            revision(
+                connection,
+                actor,
+                run_id,
+                *expected_revision,
+                &["active", "draining"],
+            )?;
             let a = active_attempt(connection, run_id, attempt_id)?;
             if a["state"] != "reported" {
                 return Err(Error::new(
@@ -415,8 +434,41 @@ pub fn mutate(
             }
             (run_id.clone(), "run.result_validated")
         }
+        Request::Drain {
+            run_id,
+            expected_revision,
+            ..
+        }
+        | Request::Resume {
+            run_id,
+            expected_revision,
+            ..
+        } => {
+            let resume = matches!(request, Request::Resume { .. });
+            revision(
+                connection,
+                actor,
+                run_id,
+                *expected_revision,
+                if resume {
+                    &["draining", "drained"]
+                } else {
+                    &["active", "draining", "drained"]
+                },
+            )?;
+            crate::workflow_budget::mutate_drain(connection, actor, run_id, resume)?;
+            (
+                run_id.clone(),
+                if resume {
+                    "run.resumed"
+                } else {
+                    "run.draining"
+                },
+            )
+        }
         _ => return Err(invalid("Not a workflow mutation")),
     };
+    crate::workflow_budget::settle_drain(connection, &run_id)?;
     connection.execute(
         "UPDATE workflow_runs SET revision=revision+1 WHERE id=?1",
         [&run_id],

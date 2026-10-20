@@ -96,10 +96,15 @@ fn only_addressed_authority_answers_exact_attempt_and_ack_cannot_release_gate() 
         ),
         "decision_pending",
     );
+    error(
+        crate::workflow_budget::guard_dispatch(&mut store.0, "worker-1", 1100),
+        "decision_pending",
+    );
     let current = worker(&mut store, "worker-1", json!({"action":"context"})).unwrap();
     assert_eq!(current["attempt"]["state"], "assigned");
     assert_eq!(current["attempt"]["decisionGate"]["blocksSuccess"], true);
     let answered = owner(&mut store, answer.clone(), 1100).unwrap();
+    crate::workflow_budget::guard_dispatch(&mut store.0, "worker-1", 1100).unwrap();
     assert_eq!(answered["decision"]["resolvedBy"]["role"], "owner");
     assert_eq!(answered["run"]["revision"], 4);
     assert_eq!(owner(&mut store, answer.clone(), 1200).unwrap(), answered);
