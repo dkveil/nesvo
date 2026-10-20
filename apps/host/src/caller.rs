@@ -9,7 +9,9 @@ use std::{
 };
 
 const INSTRUCTIONS: &str = include_str!("../../../skills/nesvo-harness/SKILL.md");
-const INSTRUCTION_VERSION: u32 = 9;
+const RUN_POLICY: &str =
+    include_str!("../../../skills/nesvo-harness/references/run-policy-and-control.md");
+const INSTRUCTION_VERSION: u32 = 10;
 
 pub fn runtime_client() -> Option<PathBuf> {
     resolve_client(
@@ -122,12 +124,22 @@ impl Context {
             client: runtime_client(),
         };
         std::fs::create_dir(&context.directory)?;
+        std::fs::create_dir(context.references())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&context.directory, std::fs::Permissions::from_mode(0o700))?;
+            std::fs::set_permissions(context.references(), std::fs::Permissions::from_mode(0o700))?;
         }
         crate::private_write(&context.skill(), INSTRUCTIONS.as_bytes())?;
+        crate::private_write(&context.policy_reference(), RUN_POLICY.as_bytes())?;
+        // Native injection includes referenced control rules up front. Requiring
+        // a new provider Read permission to learn safe control would deadlock a
+        // blocked coordinator. Generic skill users still get normal references.
+        crate::private_write(
+            &context.instructions(),
+            format!("{INSTRUCTIONS}\n\n---\n\nBundled reference: references/run-policy-and-control.md\n\n{RUN_POLICY}").as_bytes(),
+        )?;
         crate::private_write(
             &context.path(),
             &serde_json::to_vec(
@@ -141,6 +153,15 @@ impl Context {
     }
     pub fn skill(&self) -> PathBuf {
         self.directory.join("SKILL.md")
+    }
+    fn references(&self) -> PathBuf {
+        self.directory.join("references")
+    }
+    fn policy_reference(&self) -> PathBuf {
+        self.references().join("run-policy-and-control.md")
+    }
+    fn instructions(&self) -> PathBuf {
+        self.directory.join("instructions.md")
     }
     pub fn bind(&self, command: &mut portable_pty::CommandBuilder) {
         command.env("NESVO_AGENT_CONTEXT", self.path());
@@ -165,7 +186,7 @@ impl Context {
                 "--mcp-config".into(),
                 self.mcp().into_os_string(),
                 "--append-system-prompt-file".into(),
-                self.skill().into_os_string(),
+                self.instructions().into_os_string(),
             ],
         );
         Ok(())
@@ -190,6 +211,16 @@ impl Drop for Context {
             let _ = std::fs::remove_file(directory.join("context.json"));
             let _ = std::fs::remove_file(directory.join("SKILL.md"));
             let _ = std::fs::remove_file(directory.join("mcp.json"));
+            let _ = std::fs::remove_file(directory.join("instructions.md"));
+            // Remove only our named reference, never caller-created contents.
+            let reference = directory.join("references");
+            if reference
+                .canonicalize()
+                .is_ok_and(|resolved| resolved == reference)
+            {
+                let _ = std::fs::remove_file(reference.join("run-policy-and-control.md"));
+                let _ = std::fs::remove_dir(reference);
+            }
             // Never recursively delete caller-controlled contents.
             let _ = std::fs::remove_dir(directory);
         }
@@ -242,6 +273,20 @@ mod tests {
             std::fs::read_to_string(first.skill()).unwrap(),
             INSTRUCTIONS
         );
+        assert!(INSTRUCTIONS.lines().count() < 500);
+        assert_eq!(
+            std::fs::read_to_string(first.policy_reference()).unwrap(),
+            RUN_POLICY
+        );
+        let bundle = std::fs::read_to_string(first.instructions()).unwrap();
+        assert!(bundle.starts_with(INSTRUCTIONS));
+        assert!(bundle.ends_with(RUN_POLICY));
+        assert_eq!(
+            bundle
+                .matches("# Run policy and native control reference")
+                .count(),
+            1
+        );
         let mut command = portable_pty::CommandBuilder::new("unused-test-program");
         command.env("NESVO_CLI", "do-not-inherit-a-foreign-client");
         first.bind(&mut command);
@@ -262,15 +307,35 @@ mod tests {
                     & 0o777,
                 0o600
             );
+            for path in [first.instructions(), first.policy_reference()] {
+                assert_eq!(
+                    std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
         }
         let path = first.path();
         let directory = first.directory.clone();
         std::fs::write(directory.join("unowned.txt"), b"preserve").unwrap();
+        std::fs::write(
+            first.references().join("unowned.txt"),
+            b"preserve reference",
+        )
+        .unwrap();
         drop(first);
         assert!(!path.exists());
         assert!(!directory.join("SKILL.md").exists());
+        assert!(!directory.join("instructions.md").exists());
+        assert!(
+            !directory
+                .join("references/run-policy-and-control.md")
+                .exists()
+        );
+        assert!(directory.join("references/unowned.txt").exists());
         assert!(directory.join("unowned.txt").exists());
         std::fs::remove_file(directory.join("unowned.txt")).unwrap();
+        std::fs::remove_file(directory.join("references/unowned.txt")).unwrap();
+        std::fs::remove_dir(directory.join("references")).unwrap();
         std::fs::remove_dir(directory).unwrap();
         let path = second.path();
         drop(second);
@@ -295,6 +360,7 @@ mod tests {
         let argv = command.get_argv();
         assert_eq!(argv.last().unwrap(), "literal --mcp-config malicious");
         assert_eq!(argv[2], "--mcp-config");
+        assert_eq!(argv[5], context.instructions().into_os_string());
         assert_eq!(argv[6], "--");
         let config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(context.mcp()).unwrap()).unwrap();
@@ -311,6 +377,37 @@ mod tests {
         let directory = context.directory.clone();
         drop(context);
         assert!(!directory.exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn reference_cleanup_never_follows_a_replaced_directory_symlink() {
+        use std::os::unix::fs::symlink;
+        let context = Context::new("ws://127.0.0.1:1", "s", Role::Coordinator).unwrap();
+        let outside = std::env::temp_dir().join(format!(
+            "nesvo-unowned-reference-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        std::fs::create_dir(&outside).unwrap();
+        let unowned = outside.join("run-policy-and-control.md");
+        std::fs::write(&unowned, "Preserve caller-controlled target").unwrap();
+        std::fs::remove_file(context.policy_reference()).unwrap();
+        std::fs::remove_dir(context.references()).unwrap();
+        symlink(&outside, context.references()).unwrap();
+        let directory = context.directory.clone();
+        drop(context);
+        assert!(unowned.exists());
+        assert!(
+            directory
+                .join("references")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        std::fs::remove_file(directory.join("references")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+        std::fs::remove_file(unowned).unwrap();
+        std::fs::remove_dir(outside).unwrap();
     }
     #[test]
     fn client_discovery_is_absolute_explicit_and_never_uses_a_shell_shim() {

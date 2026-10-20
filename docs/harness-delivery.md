@@ -1290,3 +1290,40 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   No new dependency or visual change. Original-model wake handling, checkpoint
   compaction, full recovery and mobile controls remain open acceptance work;
   existing live V9 instruction snapshots remain unchanged.
+
+### F38 instruction V10: wake recovery and bundled control reference
+
+- New launches receive exact wake enable/disable/get/batch CLI/MCP grammar,
+  current-versus-historical policy recovery, reference-only input and distinct
+  native/inbox cursors. Instructions distinguish first delivery of never-claimed
+  backlog from prohibited replay of claimed/failed/unknown batches. No wake
+  settlement, ACK or idle state validates a task or approves native permission.
+- The core skill has 476 lines. Run budget/drain/control rules moved unchanged
+  into a linked reference, copied per launch. Native system-prompt injection
+  includes both core and reference up front; no extra file-read permission is
+  needed to obtain these safety rules. Existing live snapshots stay untouched.
+  Unit checks verify literal argv, complete private copies and owned-file-only
+  cleanup. A replaced reference-directory symlink is never followed for cleanup;
+  a dedicated Unix regression is included for CI, without claiming a local
+  Windows native symlink test.
+- Offline iteration 10 compared one V10 and frozen V9 sample for wake recovery:
+  8/8 versus 2/8 assertions. V9 conservatively admits the new wake contract is
+  absent rather than inventing it; those capability failures do not imply unsafe
+  behavior. A second paired native-control regression read the moved reference
+  and passed 5/5 for both versions. The other nine cases were retained, not rerun.
+  Canonical ungraded views preceded output review/grading; the app queued the
+  viewer, without claiming human visibility or feedback. No token/time/model
+  accounting was supplied, so none was estimated. Composite capability checks
+  and shared non-discriminating safety checks are documented in the evaluation.
+- Fresh original Claude Code 2.1.304 returned the injected V10 marker, a unique
+  literal response and the bundled reference title without file/tool use or
+  approval. Its actual prompt-correlated native receipt settled, while task result
+  remained null and dependent review planned. Native run stop observed exit;
+  the isolated host exited zero and all 21 observed owned descendants ended
+  (390 ms bounded cleanup check). This proves instruction/reference consumption,
+  not original-model handling of a wake or completed model-to-MCP orchestration.
+- Local Windows checks passed fmt, warnings-denied Clippy, 295 unit checks,
+  all 15 controlled native SDK scenarios, 30 host/sync/CLI integration checks,
+  production build and repository formatting. No dependency or visual change;
+  full original-provider matrix, checkpoint recovery, mobile controls and remaining
+  F01–F44/plugin gates stay open.

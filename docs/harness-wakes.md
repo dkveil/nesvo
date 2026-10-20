@@ -127,6 +127,12 @@ management beyond these refusal bounds remains further work.
 
 ## Verification and limits
 
+New harness-enabled launches receive instruction V10 with exact wake CLI/MCP
+grammar and recovery rules. The core skill stays below 500 lines, with linked
+budget/control details copied into the private launch directory and included
+in native system-prompt injection. Existing live sessions retain their original
+snapshot; they are not silently reconfigured.
+
 Storage tests exercise transactional rollback, scopes, immutable replay versus
 current state, exact batching, canonical deduplication, clean exit without
 invented success, quiet-loop stability, elapsed-clock regression, real database
