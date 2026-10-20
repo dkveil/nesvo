@@ -4,7 +4,7 @@ This is a prepared acceptance scenario for F12/F15/F18/F19/F26/F40/F41. It is
 metadata-only, not an implementation/review of source code or a completed stage
 three gate. Preparing this document does not authorize a model launch.
 
-## Proposed owner scope
+## Revision 1 scope (ended before the first prompt)
 
 - One isolated host with private pairing, native temporary files and immutable
   binary copies. The workspace is an owned ignored scratch directory under
@@ -107,3 +107,39 @@ and refuses launch without its separate explicit owner-approval flag. Its
 `--describe` path and pure evidence-correlator checks launch no process/model.
 Native deny/ask rules can still block the proposed additions; a refusal is an
 external observation, not permission to widen policy or change transport.
+
+## Revision 1 result
+
+The owner approved this exact scope. One coordinator started, but the controller
+treated string lifecycle `blockReason` as an object and failed before submitting
+any prompt or creating a run/worker. Host exit was zero and every observed owned
+descendant was gone. The original failed report is preserved. This is not an
+original-model orchestration result and does not authorize an automatic retry.
+
+The unused scratch directory had no exact accepted native Claude trust record;
+the existing repository workspace did have one. This is a configuration fact,
+not proof of which blocker caused that lost observation. No trust/settings were
+modified. A future controller handles the documented string/null projection,
+stops on setup/auth/quota/permission and records bounded safe lifecycle metadata.
+Eight pure guard cases verify those data and refusal paths without model launch.
+
+## Revision 2 proposal (requires a new owner decision)
+
+Repeat the same single bounded scenario, including the exact 17 coordinator and
+six child tools, at most two sequential coordinator starts/two worker starts,
+three concurrent sessions and a 180-second run budget. This is a new explicit
+test authorization; the revision 1 start is not hidden or counted as success.
+
+The sole workspace change is using the existing trusted repository directory as
+the providers' cwd. No source reads, edits, file/code tasks or shell commands are
+requested or approved. Private host/pairing/temp and immutable runtime copies
+remain isolated. The fixed reports and validations attest only to metadata
+markers. This is still not an OS sandbox: inherited provider/global permissions
+remain active, and the final native transcript audit must reject tool use outside
+the declared set. No trust key, native permission key or global modification may
+be used to make startup work. Any unexpected native boundary ends this probe.
+
+The corrected controller must pass its catalog, lifecycle-projection and native
+call/result identity checks before launch. The new Windows session-job cleanup
+must also pass its native PTY and host/MCP regression tests first. Revision 2 is
+prepared only; no original model has been launched under it yet.
