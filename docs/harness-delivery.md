@@ -2541,3 +2541,28 @@ multi-client leases, durable operations and current workflow adapters. The
 checks introduce no new original-model or native phone coverage. Source
 publication CI is pending; do not infer three-platform acceptance from the local
 Windows result or erase the prior manual-queue failure.
+
+### F41 Unix host-lock ownership lifetime
+
+Baseline CI
+[`39473421754`](https://github.com/dkveil/nesvo/actions/runs/39473421754), exact
+`b04cccd`, passed Linux, Windows, app and browser. The Windows serial SDK gate
+passed on that run; this does not explain the earlier manual-queue timeout.
+macOS failed one host unit test while reacquiring a data-directory lock after
+dropping its previous owner (291 passed, one failed, one ignored). The native
+SDK gate was consequently not executed on macOS.
+
+Unix `flock` belongs to a shared open file description. A duplicate/forked
+descriptor can retain it after the Rust guard's descriptor closes; close-on-exec
+does not cover the fork-to-exec interval. The guard now explicitly unlocks its
+live description on drop, then closes normally. Acquisition remains exclusive
+and nonblocking; the persistent lock file is never unlinked. Windows locking,
+session ownership and abrupt host-death cleanup are unchanged.
+
+A deterministic Unix-only regression retains a duplicate description across
+guard drop, acquires a successor, and verifies that closing the old duplicate
+does not release the successor. It isolates that descriptor lifetime; the failed
+macOS runner's particular descriptor history was not observed and remains a
+hypothesis. Local Windows workspace tests pass, including the existing
+ownership test. Unix runtime verification awaits publication CI. No dependency
+or process/session recovery claim is added by this fix.

@@ -1,4 +1,10 @@
 //! One live host owns a data directory. A stale file is not a stale OS lock.
+//!
+//! Unix `flock` ownership is shared by duplicated/forked descriptors. Explicit
+//! unlock ends this guard's ownership even while another descriptor remains open;
+//! close-on-exec alone does not cover the interval between fork and exec.
+//! See [Apple's flock(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)
+//! and [Linux flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html).
 use anyhow::{Context, Result};
 use std::{
     fs::{File, OpenOptions},
@@ -27,8 +33,19 @@ impl HostLock {
             } else {anyhow::Error::new(error).context("Cannot exclusively lock host data directory")}
         })?;
         // Never unlink: another process could otherwise lock a different inode.
-        // File handles are not inherited by spawned PTY/provider processes.
+        // Rust opens Unix files close-on-exec and Windows handles non-inheritable.
+        // A Unix fork can still retain the shared lock until exec; Drop unlocks it.
         Ok(Self { _file: file })
+    }
+}
+#[cfg(unix)]
+impl Drop for HostLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        // SAFETY: this guard still owns a live file descriptor. LOCK_UN releases
+        // its shared open-file-description lock without waiting for another host.
+        // The File closes normally afterwards, including if unlock reports error.
+        let _ = unsafe { libc::flock(self._file.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 #[cfg(unix)]
@@ -89,20 +106,60 @@ fn try_lock(_file: &File) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    struct Directory(PathBuf);
+    impl Directory {
+        fn new() -> Self {
+            let directory = std::env::temp_dir().join(format!(
+                "nesvo-host-lock-{}",
+                hex::encode(crate::wire::random::<8>())
+            ));
+            std::fs::create_dir(&directory).unwrap();
+            Self(directory)
+        }
+    }
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            // This private fixture is declared before its handles, so their
+            // guards close first even when an assertion unwinds the test.
+            let _ = std::fs::remove_file(self.0.join("host.lock"));
+            let _ = std::fs::remove_dir(&self.0);
+        }
+    }
+
     #[test]
     fn live_owner_excludes_other_handles_but_existing_file_does_not_prevent_restart() {
-        let directory = std::env::temp_dir().join(format!(
-            "nesvo-host-lock-{}",
-            hex::encode(crate::wire::random::<8>())
-        ));
-        std::fs::create_dir(&directory).unwrap();
-        let first = HostLock::acquire(&directory).unwrap();
-        assert!(HostLock::acquire(&directory).is_err());
+        let directory = Directory::new();
+        let first = HostLock::acquire(&directory.0).unwrap();
+        assert!(HostLock::acquire(&directory.0).is_err());
         drop(first);
-        assert!(directory.join("host.lock").exists());
-        let next = HostLock::acquire(&directory).unwrap();
+        assert!(directory.0.join("host.lock").exists());
+        let next = HostLock::acquire(&directory.0).unwrap();
         drop(next);
-        std::fs::remove_file(directory.join("host.lock")).unwrap();
-        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_owner_unlocks_a_retained_description_without_releasing_its_successor() {
+        let directory = Directory::new();
+        let first = HostLock::acquire(&directory.0).unwrap();
+        // Deterministically retain the same open file description as dup/fork.
+        // This tests that lifetime directly, not a particular child scheduler.
+        let retained = first._file.try_clone().unwrap();
+        assert!(HostLock::acquire(&directory.0).is_err());
+        drop(first);
+        assert!(retained.metadata().is_ok());
+        assert!(directory.0.join("host.lock").exists());
+
+        let successor = HostLock::acquire(&directory.0).unwrap();
+        assert!(HostLock::acquire(&directory.0).is_err());
+        drop(retained);
+        assert!(
+            HostLock::acquire(&directory.0).is_err(),
+            "Closing an old unlocked description must not release a new owner's lock"
+        );
+        drop(successor);
+        drop(HostLock::acquire(&directory.0).unwrap());
     }
 }
