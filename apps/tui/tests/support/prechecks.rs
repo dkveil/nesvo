@@ -106,10 +106,12 @@ async fn now(owner: &RunningService<RoleClient, ()>, job: &Value, key: &str) -> 
     )
 }
 async fn state(owner: &RunningService<RoleClient, ()>, job: &Value, wanted: &str) -> Result<Value> {
-    timeout(Duration::from_secs(20), async {
+    let mut last = Value::Null;
+    let observed = timeout(Duration::from_secs(20), async {
         loop {
             let history =
                 data(call(owner, "nesvo_get_job_history", json!({"jobId":job["id"]})).await?)?;
+            last = history.clone();
             if let Some(id) = history["data"]["occurrences"]
                 .as_array()
                 .and_then(|rows| rows.iter().find(|r| r["state"] == wanted))
@@ -127,8 +129,9 @@ async fn state(owner: &RunningService<RoleClient, ()>, job: &Value, wanted: &str
             tokio::time::sleep(Duration::from_millis(60)).await;
         }
     })
-    .await
-    .context("Precheck occurrence outcome")?
+    .await;
+    observed
+        .with_context(|| format!("Precheck occurrence outcome {wanted}; last history: {last}"))?
 }
 async fn no_model(owner: &RunningService<RoleClient, ()>) -> Result<()> {
     let sessions = data(call(owner, "nesvo_list_sessions", json!({})).await?)?;

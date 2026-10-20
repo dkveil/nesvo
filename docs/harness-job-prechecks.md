@@ -150,13 +150,23 @@ interpreter and exact arguments are supported.
   leader until group termination, preventing reuse of its identity. Parent death
   closes the pipe; the helper kills its own group. The adapter signals the owned
   group before reaping the helper, then retires termination ownership. A
-  non-signalling existence query must confirm that the group is gone before a
+  non-signalling observation must confirm that the group has terminated before a
   passed check can dispatch. A live/reused group ID or an observation error is
   conservative uncertainty, never permission to signal that number again.
   Ordinary descendants are covered; detached
   sessions/groups or privilege-changing commands are outside this trusted
   foreground policy. `cleanupConfirmed` concerns the owned scope, not arbitrary
   detached processes or a sandbox guarantee.
+
+Linux uses a signal-zero absence query. Darwin also reports unreaped zombies as
+signal-zero targets, although they have terminated. On macOS libproc enumerates
+at most 4096 group members and reads their BSD process state, including zombies;
+only absent or zombie members count as terminated. Truncated membership, a live
+member or any observation error cannot confirm cleanup. Neither observer sends
+termination after reaping the original helper or inspects arbitrary file content.
+The platform distinction follows Apple's [signal handling](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c)
+and [libproc state implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c);
+the binding uses the already locked libc, with no additional package.
 
 Both normal command exit and failure terminate the remaining owned scope before
 model dispatch. Unconfirmed cleanup retains ownership/capacity while reaping and

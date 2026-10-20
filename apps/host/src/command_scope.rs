@@ -70,7 +70,7 @@ impl Scope {
         }
     }
     pub fn empty(&self) -> Result<bool> {
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
             // SAFETY: signal zero only observes existence/permission. This may be used
             // after reaping the leader: a recycled numeric group can at worst
@@ -85,11 +85,78 @@ impl Scope {
                 Err(error.into())
             }
         }
+        #[cfg(target_os = "macos")]
+        {
+            macos_group_terminated(self.group)
+        }
         #[cfg(windows)]
         {
             Ok(crate::process::command_job_empty(&self.job)?)
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_group_terminated(group: i32) -> Result<bool> {
+    // Darwin counts unreaped zombies as successful kill(..., 0) targets. Read
+    // bounded group membership and process states instead; never signal them.
+    let mut pids = vec![0i32; 4096];
+    // SAFETY: __error is this thread's errno; the initialized PID array has the
+    // exact byte capacity passed to libproc. No await or shared errno access.
+    let count = unsafe {
+        *libc::__error() = 0;
+        libc::proc_listpgrppids(
+            group,
+            pids.as_mut_ptr().cast(),
+            std::mem::size_of_val(pids.as_slice()) as i32,
+        )
+    };
+    if count <= 0 {
+        let error = std::io::Error::last_os_error();
+        anyhow::ensure!(
+            count == 0 && error.raw_os_error() == Some(0),
+            "Group membership observation failed: {error}"
+        );
+        return Ok(true);
+    }
+    let count = usize::try_from(count)?;
+    anyhow::ensure!(
+        count < pids.len(),
+        "Group membership exceeds observation bound"
+    );
+    for pid in pids.into_iter().take(count) {
+        anyhow::ensure!(pid > 0, "Invalid observed process identity");
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+        // SAFETY: this flavor writes a proc_bsdinfo, with the exact output size.
+        // arg=1 includes zombie records. Only full successful writes are read.
+        let read = unsafe {
+            *libc::__error() = 0;
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
+                1,
+                info.as_mut_ptr().cast(),
+                size,
+            )
+        };
+        if read != size {
+            let error = std::io::Error::last_os_error();
+            if read == 0 && error.raw_os_error() == Some(libc::ESRCH) {
+                continue;
+            }
+            anyhow::bail!("Process state observation failed: {error}");
+        }
+        // SAFETY: libproc confirmed the exact initialized structure size.
+        let info = unsafe { info.assume_init() };
+        anyhow::ensure!(info.pbi_pid == pid as u32, "Process state identity changed");
+        if info.pbi_status != libc::SZOMB {
+            // A reused/moved identity is conservative uncertainty too; repeat
+            // the membership query on the next observation, never send a signal.
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 // The adapter retires termination ownership before/when it reaps the leader.
 // A retained observer may query signal zero, never terminate a recycled group.
@@ -104,5 +171,26 @@ mod tests {
         let group = unsafe { libc::getpgrp() };
         let observer = Scope { group };
         assert!(!observer.empty().unwrap());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_unreaped_zombie_has_terminated_without_requiring_a_signal() -> Result<()> {
+        let mut command = Command::new("/usr/bin/true");
+        configure(&mut command);
+        let mut child = command.spawn()?;
+        let scope = Scope::enroll(&child)?;
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !scope.empty()? {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await;
+        // Child is still unreaped: termination identity cannot have been reused.
+        let _ = scope.terminate();
+        child.wait().await?;
+        observed.context("Observe terminated zombie before parent wait")??;
+        Ok(())
     }
 }

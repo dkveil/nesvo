@@ -2063,6 +2063,15 @@ timeout/root-exit/parent-death scenarios exercise the complete process adapter.
 Windows fmt/Clippy, all 366 unit tests and all three native precheck scenarios
 passed after that lifetime change; final platform CI remains the next gate.
 
+The stronger observation passed Linux native cases but CI `39437673001` exposed
+two macOS precheck outcome timeouts. Darwin's signal-zero implementation includes
+unreaped zombies; it is not a live-work predicate. The macOS adapter now uses
+bounded libproc group membership and BSD state, treating only absent/zombie
+members as terminated and refusing incomplete/error observations. A native macOS
+regression test retains a zombie before its parent wait; SDK failure diagnostics
+also retain the last occurrence history without increasing deadlines. Actual
+platform results for this correction are recorded separately.
+
 An isolated native Windows idle observation on source `1cd6af3`: eight real
 PowerShell PTYs, no clients, 60.40 seconds; host CPU 0.310% of one logical core,
 working set 19.51 to 19.46 MiB, threads 50 to 45 and immediate children 17 to 17.
