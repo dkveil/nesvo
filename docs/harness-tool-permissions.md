@@ -80,10 +80,18 @@ against real host/PTYs. A deterministic executable captures settings; it never
 calls a model. The shared catalog contract is checked against all actual MCP
 tool names, preventing permission/schema drift without an application dependency.
 
-Original-model creation of a visible child requires a separately scoped native
-permission choice. A proposed isolated probe would add only the exact create
-rule above, allow one coordinator/one passive shell child through host budgets,
-request no prompt in the child, prohibit CLI transport fallback, file/shell work
-and broad/native approvals, then stop only its owned processes. It must inspect
-the original tool call/result and authenticated child ID/lineage; a controlled
-fixture or a model's claim alone does not prove this gate.
+With the owner's explicit approval of that narrow scope, original Claude 2.1.304
+on Windows completed the isolated probe: exactly one native
+`mcp__nesvo__nesvo_create_session` tool call, the requested stable key and a matching
+native tool result. The authenticated shell child's `parentSessionId` matched
+the coordinator, its role was worker and its controller was null. The assistant
+returned that same child ID; the original prompt receipt settled. The host budget
+allowed two sessions/one worker, the child received no prompt, and no other tool,
+CLI transport fallback, native approval key or global config change was used.
+The host exited zero and all 23 observed owned descendants were gone.
+
+This verifies the original-model visible-child gate for that provider/version
+and exact policy. It does not prove multi-worker implementation/review, task
+permission delegation, arbitrary native tools or cross-provider parity. Earlier
+native-permission refusals remain separate failed observations. A deterministic
+fixture or an assistant's claim alone would not establish this result.

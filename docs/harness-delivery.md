@@ -36,7 +36,7 @@ not evidence that the expanded acceptance criteria pass.
 | F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                                                                  |
 | F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: all native session commands implemented; coordinator/provider end-to-end gates pending                                             |
 | F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                                                          |
-| F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and scoped background child launch; actual provider gate pending                                                 |
+| F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage/scoped child launch and original Claude MCP child gate verified; full orchestration matrix pending               |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending                                 |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Partial: task launch with explicit shared/worktree mode, dirty-source preservation; ownership UI/setup/archive pending                      |
 | F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: opt-in deterministic host executor; full provider orchestration/adoption gates remain                                              |
@@ -1581,3 +1581,21 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   it has not run or approved a native prompt. No CLI transport fallback or broad
   allow is substituted. General task/profile permission delegation, external
   MCP/skills, model/effort settings and controlled resume remain F37/F38 work.
+
+### Original Claude creates one visible child through native MCP
+
+- After explicit owner approval of the recommended exact create-tool addition,
+  original Claude 2.1.304 on Windows invoked
+  `mcp__nesvo__nesvo_create_session` exactly once with the requested stable key.
+  The original transcript contained its matching tool result and the assistant
+  returned the same child ID verified by the authenticated host.
+- The passive shell child had the coordinator's parentSessionId, worker role and
+  no controller. Host budget allowed two sessions/one worker. The child received
+  no prompt; no other tool, CLI transport fallback, native approval key, source
+  edit or global configuration change was used. The initial send settled.
+- The owned host exited zero and all 23 observed descendants were gone. This
+  closes the narrow original-model F11/F12 child-creation gate for that exact
+  provider/version/policy. Multi-worker implementation/review, inherited task
+  tool policy, provider parity and the remaining stage gates are still open.
+- Published 88943b0 CI passed all five jobs (39386643756), separately from this
+  original-model test. Earlier permission-gated failures remain recorded above.
