@@ -1752,3 +1752,19 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   checks. Raw recovery/model-policy scenarios pass the expanded JSON contract.
   Formatting and successor CI are checked separately; original-model use of this
   broader child policy remains unapproved and unrun.
+
+### Original-provider recovery acceptance preparation
+
+- Published child-policy head cd26ebf passed all five CI jobs (39398486223):
+  native Windows/macOS/Linux suites, app checks and browser synchronization.
+- A [bounded metadata-only original-provider scenario](harness-native-recovery-probe.md)
+  is prepared for two sequential coordinators and two workers. It combines a
+  retained owner question, coordinator replacement, exact worker result,
+  addressed reviewer context and native MCP evidence. No model run is implied
+  by preparation; the earlier single passive-child approval has been consumed.
+- The private evidence correlator accepts a matching actual call/result and
+  refuses absent/errored/foreign results, wrong attempts and duplicate mutations.
+  Prepared prompts use the actual validation schema and require a nonempty
+  metadata-check attestation, without claiming source/test validation.
+- This scenario and stage-three production completion remain separate. The
+  run/tool scope must be explicitly approved before original-model launch.
