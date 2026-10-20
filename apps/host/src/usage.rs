@@ -1,13 +1,17 @@
 //! Read-only subscription limits. Never read CLI credential stores or use model APIs.
 use crate::launchers::{Launchers, Program};
-use anyhow::{Result, anyhow};
 use serde::Serialize;
-use serde_json::{Value, json};
-use std::{ffi::OsString, path::PathBuf, process::Stdio, time::Duration};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Command,
-    time::timeout,
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt};
+
+#[path = "usage_codex.rs"]
+mod codex;
+#[cfg(test)]
+pub use codex::{BucketCompleteness, BucketSource, CodexSnapshot, ReadFailure};
+pub use codex::{
+    CodexObservation, ReadOutcome, ReaderContext, WindowState, read_codex_observation,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -41,6 +45,7 @@ pub fn installed(launchers: &Launchers) -> Vec<ProviderLimit> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn parse_codex_limits(response: &Value) -> Option<Vec<LimitWindow>> {
     let result = response.get("result")?;
     let limits = result
@@ -92,7 +97,42 @@ pub fn parse_claude_limits(value: &Value, now: i64) -> Vec<LimitWindow> {
         .collect()
 }
 
-pub async fn read_claude_limits() -> Vec<LimitWindow> {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ClaudeObservation {
+    pub source_at_ms: Option<u64>,
+    pub observed_at_ms: u64,
+    pub windows: Vec<LimitWindow>,
+    pub reason: &'static str,
+}
+
+pub(crate) fn parse_claude_observation(value: &Value, observed_at_ms: u64) -> ClaudeObservation {
+    let at = value["at"].as_i64().and_then(|at| u64::try_from(at).ok());
+    let source_at_ms = at.and_then(|at| at.checked_mul(1000));
+    let now = i64::try_from(observed_at_ms / 1000).unwrap_or(i64::MAX);
+    let mut windows = parse_claude_limits(value, now);
+    let reason = match at {
+        None => "invalid_cache",
+        Some(at) if source_at_ms.is_none() || at > (observed_at_ms / 1000).saturating_add(60) => {
+            "future_cache"
+        }
+        Some(at) if (observed_at_ms / 1000).saturating_sub(at) > 900 => "stale_cache",
+        Some(_) if windows.is_empty() => "windows_unavailable",
+        Some(_) if windows.len() < 2 => "partial_snapshot",
+        Some(_) => "observed",
+    };
+    if matches!(reason, "invalid_cache" | "future_cache" | "stale_cache") {
+        windows.clear();
+    }
+    ClaudeObservation {
+        source_at_ms,
+        observed_at_ms,
+        windows,
+        reason,
+    }
+}
+
+pub(crate) async fn read_claude_observation() -> ClaudeObservation {
+    let observed_at_ms = crate::status::now_millis();
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| {
@@ -101,80 +141,142 @@ pub async fn read_claude_limits() -> Vec<LimitWindow> {
                 .map(|p| PathBuf::from(p).join(".claude"))
         });
     let Some(dir) = dir else {
-        return vec![];
+        return unavailable_claude_observation(observed_at_ms, "context_unavailable");
     };
-    let path = dir.join(".rate-limits.json");
-    let Ok(meta) = tokio::fs::metadata(&path).await else {
-        return vec![];
-    };
-    if meta.len() > 16_384 {
-        return vec![];
-    }
-    let Ok(bytes) = tokio::fs::read(path).await else {
-        return vec![];
-    };
-    let Ok(value) = serde_json::from_slice(&bytes) else {
-        return vec![];
-    };
-    parse_claude_limits(&value, chrono::Utc::now().timestamp())
+    read_claude_cache(&dir.join(".rate-limits.json"), observed_at_ms).await
 }
 
-pub async fn read_codex_limits(command: &(PathBuf, Vec<OsString>)) -> Result<Vec<LimitWindow>> {
-    let mut child = Command::new(&command.0)
-        .args(&command.1)
-        .arg("app-server")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()?;
-    let mut input = child.stdin.take().ok_or_else(|| anyhow!("No CLI stdin"))?;
-    let output = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("No CLI stdout"))?;
-    let mut lines = BufReader::new(output).lines();
-    let result = timeout(Duration::from_secs(8), async {
-        input
-            .write_all(
-                format!(
-                    "{}\n",
-                    json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"nesvo","version":"0.1.0"},"capabilities":{}}})
-                )
-                .as_bytes(),
-            )
-            .await?;
-        loop {
-            let line = lines.next_line().await?.ok_or_else(|| anyhow!("CLI exited"))?;
-            let response: Value = serde_json::from_str(&line)?;
-            if response["id"] == 1 {
-                if response.get("error").is_some() {
-                    return Err(anyhow!("CLI initialization failed"));
-                }
-                break;
-            }
+const CLAUDE_CACHE_MAX_BYTES: u64 = 16_384;
+const CLAUDE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClaudeCacheFailure {
+    Unavailable,
+    NonRegular,
+    Oversized,
+    Invalid,
+    Timeout,
+}
+
+impl ClaudeCacheFailure {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Unavailable => "cache_unavailable",
+            Self::NonRegular => "cache_non_regular",
+            Self::Oversized => "cache_oversized",
+            Self::Invalid => "invalid_cache",
+            Self::Timeout => "cache_timeout",
         }
-        input
-            .write_all(b"{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n")
-            .await?;
-        loop {
-            let line = lines.next_line().await?.ok_or_else(|| anyhow!("CLI exited"))?;
-            let response: Value = serde_json::from_str(&line)?;
-            if response["id"] == 2 {
-                return parse_codex_limits(&response)
-                    .ok_or_else(|| anyhow!("No Codex subscription limits available"));
-            }
+    }
+}
+
+fn unavailable_claude_observation(observed_at_ms: u64, reason: &'static str) -> ClaudeObservation {
+    ClaudeObservation {
+        source_at_ms: None,
+        observed_at_ms,
+        windows: Vec::new(),
+        reason,
+    }
+}
+
+async fn read_claude_cache(path: &Path, observed_at_ms: u64) -> ClaudeObservation {
+    observe_claude_cache(
+        observed_at_ms,
+        load_claude_cache(path),
+        CLAUDE_CACHE_TIMEOUT,
+    )
+    .await
+}
+
+async fn observe_claude_cache(
+    observed_at_ms: u64,
+    read: impl std::future::Future<Output = Result<Value, ClaudeCacheFailure>>,
+    deadline: Duration,
+) -> ClaudeObservation {
+    let result = tokio::time::timeout(deadline, read)
+        .await
+        .unwrap_or(Err(ClaudeCacheFailure::Timeout));
+    match result {
+        Ok(value) => parse_claude_observation(&value, observed_at_ms),
+        Err(failure) => unavailable_claude_observation(observed_at_ms, failure.reason()),
+    }
+}
+
+fn check_claude_cache_metadata(metadata: &std::fs::Metadata) -> Result<(), ClaudeCacheFailure> {
+    if !metadata.is_file() {
+        return Err(ClaudeCacheFailure::NonRegular);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(ClaudeCacheFailure::NonRegular);
         }
-    })
-    .await;
-    let _ = child.kill().await;
-    let _ = child.wait().await;
-    result.map_err(|_| anyhow!("CLI limit read timed out"))?
+    }
+    if metadata.len() > CLAUDE_CACHE_MAX_BYTES {
+        return Err(ClaudeCacheFailure::Oversized);
+    }
+    Ok(())
+}
+
+async fn open_claude_cache(path: &Path) -> Result<tokio::fs::File, ClaudeCacheFailure> {
+    let mut options = tokio::fs::OpenOptions::new();
+    options.read(true);
+    // A path can change after its preliminary metadata check. Never block opening a
+    // replacement FIFO or follow a replacement final symlink on Unix.
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    #[cfg(windows)]
+    options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    let file = options
+        .open(path)
+        .await
+        .map_err(|_| ClaudeCacheFailure::Unavailable)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_DISK, GetFileType};
+        // SAFETY: the live File owns this valid handle for the duration of the query.
+        if unsafe { GetFileType(file.as_raw_handle()) } != FILE_TYPE_DISK {
+            return Err(ClaudeCacheFailure::NonRegular);
+        }
+    }
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|_| ClaudeCacheFailure::Unavailable)?;
+    check_claude_cache_metadata(&metadata)?;
+    Ok(file)
+}
+
+async fn load_claude_cache(path: &Path) -> Result<Value, ClaudeCacheFailure> {
+    let metadata = tokio::fs::symlink_metadata(path)
+        .await
+        .map_err(|_| ClaudeCacheFailure::Unavailable)?;
+    check_claude_cache_metadata(&metadata)?;
+    read_claude_cache_bytes(open_claude_cache(path).await?).await
+}
+
+async fn read_claude_cache_bytes(
+    reader: impl AsyncRead + Unpin,
+) -> Result<Value, ClaudeCacheFailure> {
+    let mut bytes = Vec::new();
+    reader
+        .take(CLAUDE_CACHE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| ClaudeCacheFailure::Unavailable)?;
+    if bytes.len() as u64 > CLAUDE_CACHE_MAX_BYTES {
+        return Err(ClaudeCacheFailure::Oversized);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| ClaudeCacheFailure::Invalid)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn claude_cache_rejects_stale_missing_and_invalid_windows() {
@@ -187,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_codex_windows_and_ignores_other_accounts() {
+    fn legacy_display_selects_codex_bucket_without_claiming_account_identity() {
         let response = json!({"result":{"rateLimitsByLimitId":{
             "codex":{"primary":{"usedPercent":81,"windowDurationMins":300,"resetsAt":100},
                      "secondary":{"usedPercent":47,"windowDurationMins":10080,"resetsAt":200}},

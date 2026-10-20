@@ -1,0 +1,103 @@
+//! Bounded read-only provider observers, shared by periodic and owner refreshes.
+use crate::{launchers::Program, sessions::State};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::sync::{mpsc, watch};
+
+pub(crate) type Reader = (
+    (std::path::PathBuf, Vec<std::ffi::OsString>),
+    std::path::PathBuf,
+    mpsc::Receiver<()>,
+);
+
+pub(crate) struct RefreshControl {
+    pub program: Program,
+    pub sender: mpsc::Sender<()>,
+    pub in_flight: bool,
+    pub last_started: Option<u64>,
+}
+
+pub(crate) struct Runtime {
+    stop: watch::Sender<bool>,
+    tasks: tokio::task::JoinSet<()>,
+}
+impl Runtime {
+    pub fn start(state: Arc<Mutex<State>>) -> Self {
+        let (stop, _) = watch::channel(false);
+        let mut tasks = tokio::task::JoinSet::new();
+        for program in [Program::Claude, Program::Codex] {
+            let Some((command, cwd, mut refresh)) = state.lock().unwrap().quota_reader(program)
+            else {
+                continue;
+            };
+            let mut stopped = stop.subscribe();
+            let state = state.clone();
+            tasks.spawn(async move {
+                let period = if program == Program::Claude { 15 } else { 120 };
+                let mut timer = tokio::time::interval(Duration::from_secs(period));
+                timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = stopped.changed() => break,
+                        _ = timer.tick() => {},
+                        requested = refresh.recv() => if requested.is_none() { break; },
+                    }
+                    // Start and drain under the same lock used by owner
+                    // admission. No acknowledged token can slip between them.
+                    let started = {
+                        let mut state = state.lock().unwrap();
+                        let started = state.quota_read_started(program);
+                        if started {
+                            let _ = refresh.try_recv();
+                        }
+                        started
+                    };
+                    if !started {
+                        if *stopped.borrow() {
+                            break;
+                        }
+                        continue;
+                    }
+                    if program == Program::Codex {
+                        let observation =
+                            crate::usage::read_codex_observation(&command, &cwd).await;
+                        state.lock().unwrap().observe_codex_quota(observation);
+                    } else {
+                        let start = crate::event_log::monotonic_millis();
+                        let observation = crate::usage::read_claude_observation().await;
+                        let finish = crate::event_log::monotonic_millis();
+                        state
+                            .lock()
+                            .unwrap()
+                            .observe_claude_quota(observation, start, finish);
+                    }
+                }
+            });
+        }
+        Self { stop, tasks }
+    }
+    pub fn request_shutdown(&self) {
+        let _ = self.stop.send(true);
+    }
+    pub async fn shutdown(mut self) -> bool {
+        self.request_shutdown();
+        let drained = tokio::time::timeout(Duration::from_secs(11), async {
+            let mut healthy = true;
+            while let Some(task) = self.tasks.join_next().await {
+                healthy &= task.is_ok();
+            }
+            healthy
+        })
+        .await;
+        match drained {
+            Ok(healthy) => healthy,
+            Err(_) => {
+                self.tasks.abort_all();
+                false
+            }
+        }
+    }
+}

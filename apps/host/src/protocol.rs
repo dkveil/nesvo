@@ -80,6 +80,11 @@ pub enum Command {
         directory: Option<String>,
     },
     GetCapabilities,
+    GetProviderQuota {
+        program: Option<crate::launchers::Program>,
+        #[serde(default)]
+        refresh: bool,
+    },
     GetDiagnostics {
         session_id: Option<String>,
     },

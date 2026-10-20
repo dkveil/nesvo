@@ -36,6 +36,8 @@ mod orchestration;
 mod process;
 mod program_status;
 mod protocol;
+mod provider_quota;
+mod provider_quota_runtime;
 mod pty;
 mod readiness;
 mod receipts;
@@ -345,8 +347,6 @@ async fn run(args: Args) -> Result<()> {
         }])
         .await?;
     let launchers = launchers::Launchers::discover();
-    let claude_installed = launchers.available(launchers::Program::Claude);
-    let codex_probe = launchers.probe_command(launchers::Program::Codex);
     let version_probes = launchers.version_probes();
     let state = Arc::new(Mutex::new(sessions::State::new(
         workspace.clone(),
@@ -394,29 +394,7 @@ async fn run(args: Args) -> Result<()> {
         job_runtime::Runtime::start(state.clone(), event_tx.clone(), event_log.clone());
     tokio::spawn(job_timeout_runtime::run(state.clone(), event_log.clone()));
     tokio::spawn(notifications::run(state.clone()));
-    if claude_installed {
-        let state = state.clone();
-        tokio::spawn(async move {
-            loop {
-                let windows = usage::read_claude_limits().await;
-                state
-                    .lock()
-                    .unwrap()
-                    .update_provider_limits(launchers::Program::Claude, windows);
-                tokio::time::sleep(Duration::from_secs(15)).await;
-            }
-        });
-    }
-    if let Some(command) = codex_probe {
-        let state = state.clone();
-        tokio::spawn(async move {
-            loop {
-                let windows = usage::read_codex_limits(&command).await.unwrap_or_default();
-                state.lock().unwrap().update_codex_limits(windows);
-                tokio::time::sleep(Duration::from_secs(120)).await;
-            }
-        });
-    }
+    let quota_runtime = provider_quota_runtime::Runtime::start(state.clone());
     let permits = Arc::new(Semaphore::new(16));
     println!("nesvo Rust host listening on {bind}:{actual_port}");
     println!("Workspace: {}", workspace.display());
@@ -448,6 +426,7 @@ async fn run(args: Args) -> Result<()> {
     // Fence final native spawn/input under the same lock before stopping either
     // producer. Command checks still need the event journal to persist cleanup.
     state.lock().unwrap().begin_shutdown();
+    quota_runtime.request_shutdown();
     job_runtime.request_shutdown();
     let (job_shutdown, webhook_shutdown) = tokio::join!(job_runtime.shutdown(), async {
         if let Some(listener) = webhooks {
@@ -458,6 +437,9 @@ async fn run(args: Args) -> Result<()> {
             Ok(())
         }
     });
+    if !quota_runtime.shutdown().await {
+        eprintln!("Provider quota observation cleanup is unconfirmed");
+    }
     // Closed sessions may still be releasing ConPTY resources in background
     // workers. Keep the output dispatcher alive while they finish, without
     // holding the state lock that it needs to drain PTY output.

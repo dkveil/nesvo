@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 #[cfg(test)]
 #[path = "pty_input_trace.rs"]
 mod input_trace;
-#[cfg(all(test, windows))]
+#[cfg(test)]
 pub use input_trace::{InputTraceEvent, InputTraceKind, InputTracePhase};
 
 pub enum PtyEvent {
@@ -73,6 +73,13 @@ fn write_input(writer: &mut impl Write, input: Input) -> bool {
 }
 
 impl Pty {
+    #[cfg(test)]
+    pub fn trace_input(&mut self) -> sync_mpsc::Receiver<InputTraceEvent> {
+        let (trace, receiver) = input_trace::Trace::new();
+        self.trace = Some(trace);
+        receiver
+    }
+
     pub fn spawn(
         id: &str,
         command: CommandBuilder,

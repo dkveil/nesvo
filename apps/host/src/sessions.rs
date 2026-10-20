@@ -146,10 +146,16 @@ pub struct State {
     launchers: Launchers,
     provider_versions: Vec<crate::launchers::Version>,
     provider_limits: Vec<ProviderLimit>,
+    provider_quota: crate::provider_quota::Tracker,
+    quota_refresh: Vec<crate::provider_quota_runtime::RefreshControl>,
     limits_read_at: i64,
     schedule_watchers: HashSet<u64>,
     native_run_gates: HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
 }
+
+#[cfg(test)]
+#[path = "provider_quota_host_tests.rs"]
+mod provider_quota_host_tests;
 
 fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
     ensure!(
@@ -167,6 +173,13 @@ fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
 impl State {
     pub fn new(workspace: PathBuf, metadata: MetadataStore, launchers: Launchers) -> Self {
         let provider_limits = usage::installed(&launchers);
+        let provider_quota = crate::provider_quota::Tracker::new(
+            &provider_limits
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            nesvo_wire::random::<32>(),
+        );
         let provider_versions = launchers.pending_versions();
         Self {
             human_control_epoch: 0,
@@ -185,15 +198,193 @@ impl State {
             launchers,
             provider_versions,
             provider_limits,
+            provider_quota,
+            quota_refresh: Vec::new(),
             limits_read_at: 0,
             schedule_watchers: HashSet::new(),
             native_run_gates: HashMap::new(),
         }
     }
 
-    pub fn update_codex_limits(&mut self, windows: Vec<LimitWindow>) {
-        self.limits_read_at = chrono::Utc::now().timestamp();
-        self.update_provider_limits(Program::Codex, windows);
+    pub fn quota_reader(
+        &mut self,
+        program: Program,
+    ) -> Option<crate::provider_quota_runtime::Reader> {
+        let command = self.launchers.probe_command(program)?;
+        let (sender, receiver) = mpsc::channel(1);
+        self.quota_refresh
+            .push(crate::provider_quota_runtime::RefreshControl {
+                program,
+                sender,
+                in_flight: false,
+                last_started: None,
+            });
+        Some((command, self.workspace.clone(), receiver))
+    }
+    pub fn quota_read_started(&mut self, program: Program) -> bool {
+        if self.shutting_down {
+            return false;
+        }
+        let now = crate::event_log::monotonic_millis();
+        let Some(control) = self
+            .quota_refresh
+            .iter_mut()
+            .find(|control| control.program == program)
+        else {
+            return false;
+        };
+        if control.in_flight
+            || control
+                .last_started
+                .is_some_and(|at| now.saturating_sub(at) < 5000)
+        {
+            return false;
+        }
+        control.in_flight = true;
+        control.last_started = Some(now);
+        true
+    }
+    fn quota_read_finished(&mut self, program: Program) {
+        if let Some(control) = self
+            .quota_refresh
+            .iter_mut()
+            .find(|control| control.program == program)
+        {
+            control.in_flight = false;
+        }
+    }
+    pub fn observe_codex_quota(&mut self, observation: usage::CodexObservation) {
+        let previous_identity = self
+            .quota_views()
+            .into_iter()
+            .find(|view| view.program == Program::Codex)
+            .map(|view| (view.context_id, view.account_fingerprint));
+        self.limits_read_at = match &observation.outcome {
+            usage::ReadOutcome::Snapshot(snapshot)
+                if snapshot.complete
+                    && snapshot.account_id.is_some()
+                    && observation.context.is_some()
+                    && snapshot.ordinary_usage_allowed == Some(true)
+                    && !snapshot.rate_limit_reached
+                    && snapshot.spend_control_reached != Some(true)
+                    && observation.fresh_at(crate::event_log::monotonic_millis(), 180_000) =>
+            {
+                i64::try_from(observation.started_at_ms / 1000).unwrap_or(0)
+            }
+            _ => 0,
+        };
+        self.provider_quota.apply_codex(observation);
+        let identity = self
+            .quota_views()
+            .into_iter()
+            .find(|view| view.program == Program::Codex)
+            .map(|view| (view.context_id, view.account_fingerprint));
+        if identity != previous_identity {
+            let mut changed = false;
+            for session in self
+                .sessions
+                .values_mut()
+                .filter(|session| session.info.program == Program::Codex)
+            {
+                changed |= session.wake_at.take().is_some();
+            }
+            if changed {
+                self.broadcast_list();
+            }
+        }
+        self.quota_read_finished(Program::Codex);
+        self.refresh_quota_projection();
+    }
+    pub fn observe_claude_quota(
+        &mut self,
+        observation: usage::ClaudeObservation,
+        started: u64,
+        finished: u64,
+    ) {
+        self.provider_quota
+            .apply_claude(observation, started, finished);
+        self.quota_read_finished(Program::Claude);
+        self.refresh_quota_projection();
+    }
+    fn quota_views(&mut self) -> Vec<crate::provider_quota::View> {
+        self.provider_quota
+            .view(now_millis(), crate::event_log::monotonic_millis())
+    }
+    fn refresh_quota_projection(&mut self) {
+        for view in self.quota_views() {
+            let current = view.freshness == "fresh";
+            if view.program == Program::Codex && !current {
+                self.limits_read_at = 0;
+            }
+            let status = if view.status == "checking" {
+                "checking"
+            } else if current && !view.windows.is_empty() {
+                "ready"
+            } else {
+                "unavailable"
+            };
+            self.update_provider_limits(
+                view.program,
+                status,
+                if current { view.windows } else { Vec::new() },
+            );
+        }
+    }
+    fn provider_quota_query(&mut self, program: Option<Program>, refresh: bool) -> Result<Value> {
+        if program == Some(Program::Shell) || (refresh && program.is_none()) {
+            return Err(crate::api_error::Error::new(
+                "invalid_argument",
+                "Quota refresh requires a named provider",
+            )
+            .into());
+        }
+        let providers: Vec<_> = self
+            .quota_views()
+            .into_iter()
+            .filter(|view| program.is_none_or(|program| view.program == program))
+            .collect();
+        if program.is_some() && providers.is_empty() {
+            return Err(crate::api_error::Error::new(
+                "provider_unavailable",
+                "Provider is not installed on the host",
+            )
+            .into());
+        }
+        let request = if refresh {
+            let program = program.ok_or_else(|| {
+                crate::api_error::Error::new("invalid_argument", "Provider is required")
+            })?;
+            let revision = providers.first().map_or(0, |view| view.revision);
+            let control = self
+                .quota_refresh
+                .iter_mut()
+                .find(|control| control.program == program)
+                .ok_or_else(|| {
+                    crate::api_error::Error::new(
+                        "unsupported",
+                        "No read-only quota source is available for this provider",
+                    )
+                })?;
+            let age = control
+                .last_started
+                .map(|at| crate::event_log::monotonic_millis().saturating_sub(at));
+            let (status, target, delay) = if control.in_flight {
+                ("pending", revision.saturating_add(1), 0)
+            } else if control.sender.capacity() == 0 {
+                ("queued", revision.saturating_add(1), 0)
+            } else if let Some(age) = age.filter(|age| *age < 5000) {
+                ("cooldown", revision, 5000 - age)
+            } else {
+                control.sender.try_send(()).map_err(|_| {
+                    crate::api_error::Error::new("busy", "Quota reader is unavailable")
+                })?;
+                ("queued", revision.saturating_add(1), 0)
+            };
+            json!({"program":program,"state":status,"revision":target,"retryAfterMs":delay})
+        } else {
+            Value::Null
+        };
+        Ok(json!({"type":"providerQuota","providers":providers,"refresh":request}))
     }
     pub fn set_caller_url(&mut self, url: String) {
         self.caller_url = Some(url);
@@ -843,18 +1034,18 @@ impl State {
         })
     }
 
-    pub fn update_provider_limits(&mut self, program: Program, windows: Vec<LimitWindow>) {
+    fn update_provider_limits(
+        &mut self,
+        program: Program,
+        status: &'static str,
+        windows: Vec<LimitWindow>,
+    ) {
         let Some(index) = self
             .provider_limits
             .iter()
             .position(|limit| limit.id == program)
         else {
             return;
-        };
-        let status = if windows.is_empty() {
-            "unavailable"
-        } else {
-            "ready"
         };
         if self.provider_limits[index].status == status
             && self.provider_limits[index].windows == windows
@@ -873,6 +1064,7 @@ impl State {
         let mut event = json!({"type":"capabilities", "buildId":env!("NESVO_BUILD_ID"), "version":env!("CARGO_PKG_VERSION"), "workspace":crate::process::display_path(&self.workspace),
             "hostId":self.metadata.host_id, "pushNotifications":true, "diagnostics":true, "sessionQueries":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
             "providerLimits":self.provider_limits});
+        event["providerQuotaObservations"] = true.into();
         event["domainEvents"] = self.event_log.is_some().into();
         event["operationReceipts"] = self.event_log.is_some().into();
         event["promptReceipts"] = self.event_log.is_some().into();
@@ -1178,6 +1370,9 @@ impl State {
     }
 
     fn wake_after_reset(&mut self) -> bool {
+        if self.shutting_down {
+            return false;
+        }
         let now = chrono::Utc::now().timestamp();
         let mut changed = false;
         for session in self.sessions.values_mut() {
@@ -1255,6 +1450,7 @@ impl State {
 
     fn refresh_status(&mut self) {
         let now = now_millis();
+        self.refresh_quota_projection();
         let mut changed = self.wake_after_reset();
         let mut renamed = Vec::new();
         let mut alerts = Vec::new();
@@ -1475,6 +1671,9 @@ impl State {
         });
         self.human_control_epoch = self.human_control_epoch.saturating_add(1);
         session.human_control_epoch = self.human_control_epoch;
+        // Taking control is deliberate human priority, even without typing.
+        // Releasing that lease must not reactivate an earlier automatic wake.
+        session.wake_at = None;
         let first_controller = !session.has_been_attached;
         session.has_been_attached = true;
         if legacy {
@@ -2240,12 +2439,19 @@ impl State {
                 self.respond(client_id,json!({"type":"sessionRead","sessionId":session_id,"cols":session.info.cols,"rows":session.info.rows,"page":page}),request_id);
             }
             Command::GetDiagnostics { session_id } => {
-                let report = self.diagnostics(session_id.as_deref())?;
+                let mut report = self.diagnostics(session_id.as_deref())?;
+                if self.caller_session(client_id)?.is_none() {
+                    report["providerQuota"] = serde_json::to_value(self.quota_views())?;
+                }
                 self.respond(
                     client_id,
                     json!({"type":"diagnostics", "report":report}),
                     request_id,
                 );
+            }
+            Command::GetProviderQuota { program, refresh } => {
+                let result = self.provider_quota_query(program, refresh)?;
+                self.respond(client_id, result, request_id);
             }
             Command::Auth { .. } => return Err(anyhow!("Already authenticated.")),
             Command::Launch { .. } => {
@@ -2748,6 +2954,9 @@ impl State {
     /// Existing PTYs stay available until the final resource shutdown below.
     pub fn begin_shutdown(&mut self) {
         self.shutting_down = true;
+        for session in self.sessions.values_mut() {
+            session.wake_at = None;
+        }
     }
 
     pub fn shutdown(&mut self) -> Vec<thread::JoinHandle<()>> {
@@ -3567,6 +3776,209 @@ mod tests {
             "quota recovery must not append to another pending submission"
         );
         assert_eq!(state.sessions[&id].wake_at, Some(now - 1));
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
+
+    fn quota_wake_input_fixture() -> (
+        State,
+        String,
+        std::sync::mpsc::Receiver<crate::pty::InputTraceEvent>,
+        mpsc::Receiver<PtyEvent>,
+    ) {
+        // An owned ordinary shell gives us the real native input queue without
+        // starting any provider. All quota evidence below is explicit fixture data.
+        let workspace = std::env::temp_dir().canonicalize().unwrap();
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(workspace, metadata, Launchers::discover());
+        let (events, output) = mpsc::channel(128);
+        let id = state
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Quota wake native input fence".into(),
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        let now = chrono::Utc::now().timestamp();
+        state.provider_limits = vec![ProviderLimit {
+            id: Program::Codex,
+            status: "ready",
+            windows: vec![LimitWindow {
+                used_percent: 20,
+                duration_mins: 300,
+                resets_at: Some(now + 60),
+            }],
+        }];
+        state.limits_read_at = now;
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.info.program = Program::Codex;
+        session.status = StatusTracker::new(Program::Codex, 24, 80, 0);
+        session
+            .status
+            .output("You've hit your usage limit. Try again later.\r\n› ", 1);
+        session.status.refresh(2);
+        assert!(session.status.rate_limited());
+        assert_eq!(
+            session.status.status().state,
+            crate::status::StatusState::Blocked
+        );
+        session.wake_at = Some(now - 1);
+        let trace = session.pty.trace_input();
+        // An empty confirmed barrier proves the real writer is live without
+        // submitting text or executing a command in this shell.
+        let _barrier = session.pty.send_confirmed(String::new()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let event = trace
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("Owned empty input barrier did not finish within two seconds");
+            if event.phase == crate::pty::InputTracePhase::WriteFinished {
+                assert_eq!(event.kind, crate::pty::InputTraceKind::Receipt);
+                assert_eq!(event.bytes, 0);
+                assert_eq!(event.written, Some(true));
+                break;
+            }
+        }
+        (state, id, trace, output)
+    }
+
+    #[test]
+    fn quota_wake_shutdown_disarms_and_never_queues_native_input() {
+        let (mut state, id, trace, _output) = quota_wake_input_fixture();
+        state.begin_shutdown();
+        assert!(state.sessions[&id].wake_at.is_none());
+        assert!(state.sessions[&id].info.running);
+        assert!(!state.wake_after_reset());
+        // Even a stale in-memory callback holding the old timer cannot bypass
+        // the final shutdown fence while terminal cleanup is still pending.
+        state.sessions.get_mut(&id).unwrap().wake_at = Some(chrono::Utc::now().timestamp() - 1);
+        assert!(!state.wake_after_reset());
+        assert!(matches!(
+            trace.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn quota_wake_known_reader_identity_switch_disarms_before_any_native_write() {
+        let (mut state, id, trace, _output) = quota_wake_input_fixture();
+        state.provider_quota = crate::provider_quota::Tracker::new(&[Program::Codex], [7; 32]);
+        let observation = |account: &str| {
+            let now = now_millis();
+            let elapsed = crate::event_log::monotonic_millis();
+            usage::CodexObservation {
+                started_at_ms: now,
+                finished_at_ms: now,
+                started_elapsed_ms: elapsed,
+                finished_elapsed_ms: elapsed,
+                context: Some(usage::ReaderContext {
+                    codex_home: "private-fixture-home".into(),
+                    context_id: "private-fixture-context".into(),
+                }),
+                outcome: usage::ReadOutcome::Snapshot(usage::CodexSnapshot {
+                    account_id: Some(account.into()),
+                    ordinary_usage_allowed: Some(true),
+                    windows: vec![
+                        LimitWindow {
+                            used_percent: 20,
+                            duration_mins: 300,
+                            resets_at: Some((now / 1000) as i64 + 3600),
+                        },
+                        LimitWindow {
+                            used_percent: 20,
+                            duration_mins: 10080,
+                            resets_at: Some((now / 1000) as i64 + 86400),
+                        },
+                    ],
+                    complete: true,
+                    reason: "observed",
+                    bucket: usage::BucketSource::NamedCodex,
+                    completeness: usage::BucketCompleteness {
+                        primary: usage::WindowState::Complete,
+                        secondary: usage::WindowState::Complete,
+                    },
+                    spend_control_reached: None,
+                    rate_limit_reached: false,
+                }),
+            }
+        };
+        state.observe_codex_quota(observation("owned-reader-A"));
+        state.sessions.get_mut(&id).unwrap().wake_at = Some(chrono::Utc::now().timestamp() - 1);
+        let armed = state.sessions[&id].wake_at;
+        state.observe_codex_quota(observation("owned-reader-A"));
+        assert_eq!(
+            state.sessions[&id].wake_at, armed,
+            "An unchanged reader does not cancel explicit intent"
+        );
+        state.observe_codex_quota(observation("owned-reader-B"));
+        assert!(state.sessions[&id].wake_at.is_none());
+        assert!(!state.wake_after_reset());
+        assert!(matches!(
+            trace.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn quota_wake_human_takeover_and_release_never_rearms_or_queues_native_input() {
+        let (mut state, id, trace, _output) = quota_wake_input_fixture();
+        let (client_events, _client_output) = mpsc::channel(128);
+        let (cancelled, _cancellation) = watch::channel(false);
+        state.clients.insert(
+            2,
+            Client {
+                events: client_events,
+                cancelled,
+                authority: crate::caller::Authority::Owner,
+            },
+        );
+        state.sessions.get_mut(&id).unwrap().controller = Some(ControlLease {
+            client_id: 1,
+            id: "previous-owned-controller".into(),
+            legacy: false,
+        });
+        let armed = state.sessions[&id].wake_at;
+        assert!(state.acquire(2, &id, 80, 24, false, false).is_err());
+        assert_eq!(
+            state.sessions[&id].wake_at, armed,
+            "A rejected acquisition changes no wake intent"
+        );
+        state.acquire(2, &id, 80, 24, true, false).unwrap();
+        assert!(state.sessions[&id].wake_at.is_none());
+        assert!(state.sessions[&id].human_control_epoch > 0);
+        assert!(
+            !state.sessions[&id].human_input_dirty,
+            "No human text is needed to disarm"
+        );
+        let lease_id = state.sessions[&id].controller.as_ref().unwrap().id.clone();
+        let (events, _command_output) = mpsc::channel(1);
+        state
+            .command(
+                2,
+                Command::ReleaseControl {
+                    session_id: id.clone(),
+                    lease_id,
+                },
+                None,
+                &events,
+            )
+            .unwrap();
+        assert!(state.sessions[&id].controller.is_none());
+        assert!(!state.wake_after_reset());
+        assert!(state.sessions[&id].wake_at.is_none());
+        assert!(matches!(
+            trace.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
         for worker in state.shutdown() {
             worker.join().unwrap();
         }
