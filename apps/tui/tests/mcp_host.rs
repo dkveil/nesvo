@@ -127,16 +127,88 @@ impl Fixture {
         let mut host = command
             .spawn()
             .context("Build nesvo-host before running this ignored native integration test")?;
+        let started = tokio::time::Instant::now();
+        let mut stdout_lines = 0u64;
+        let mut stdout_bytes = 0u64;
+        let mut stdout_closed = false;
         let mut output = BufReader::new(host.stdout.take().context("fixture stdout")?).lines();
-        timeout(Duration::from_secs(15), async {
+        let ready = timeout(Duration::from_secs(15), async {
             while let Some(line) = output.next_line().await? {
+                stdout_lines = stdout_lines.saturating_add(1);
+                stdout_bytes = stdout_bytes.saturating_add(line.len() as u64);
                 if line.contains("Rust host listening") {
                     return Ok::<_, anyhow::Error>(());
                 }
             }
+            stdout_closed = true;
             anyhow::bail!("Fixture host did not start")
         })
-        .await??;
+        .await;
+        if !matches!(&ready, Ok(Ok(()))) {
+            let pid = host.id();
+            let status = match host.try_wait() {
+                Ok(Some(status)) => {
+                    json!({"state":"exited","code":status.code(),"success":status.success()})
+                }
+                Ok(None) => json!({"state":"running"}),
+                Err(_) => json!({"state":"unavailable"}),
+            };
+            let observed_at_ms = started.elapsed().as_millis();
+            let buffered_bytes = output.get_ref().buffer().len();
+            let owned_directory = directory.to_path_buf();
+            // A detached diagnostic thread cannot hold Tokio runtime shutdown
+            // if filesystem metadata stalls. Never read private file contents.
+            let (files_tx, files_rx) = tokio::sync::oneshot::channel();
+            let _diagnostic = std::thread::Builder::new()
+                .name("fixture-startup-diagnostic".into())
+                .spawn(move || {
+                    let files = [
+                        "host.lock",
+                        "pairing.json",
+                        "pairing.svg",
+                        "metadata.sqlite3",
+                        "metadata.sqlite3-wal",
+                    ]
+                    .into_iter()
+                    .map(|name| {
+                        let facts = match std::fs::metadata(owned_directory.join(name)) {
+                            Ok(metadata) => json!({"present":true,"bytes":metadata.len()}),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                json!({"present":false})
+                            }
+                            Err(_) => json!({"unavailable":true}),
+                        };
+                        (name.to_owned(), facts)
+                    })
+                    .collect::<serde_json::Map<String, Value>>();
+                    let _ = files_tx.send(files);
+                });
+            let files = match timeout(Duration::from_secs(1), files_rx).await {
+                Ok(Ok(files)) => Value::Object(files),
+                _ => json!({"unavailable":true}),
+            };
+            // Failure before Fixture exists must still reap this owned child.
+            // This observes cleanup; it never retries startup or extends readiness.
+            let kill_requested = host.start_kill().is_ok();
+            let cleanup = match timeout(Duration::from_secs(2), host.wait()).await {
+                Ok(Ok(status)) => json!({"confirmed":true,"code":status.code()}),
+                _ => json!({"confirmed":false}),
+            };
+            eprintln!(
+                "NATIVE_HOST_STARTUP_DIAGNOSTIC {}",
+                json!({
+                    "phase":"await_listening_line","deadlineMs":15000,"elapsedMs":observed_at_ms,
+                    "pid":pid,"process":status,"stdoutLines":stdout_lines,"stdoutBytes":stdout_bytes,
+                    "stdoutClosed":stdout_closed,"bufferedBytes":buffered_bytes,"files":files,
+                    "ownedKillRequested":kill_requested,"cleanup":cleanup
+                })
+            );
+            return match ready {
+                Ok(Err(error)) => Err(error.context("Native fixture host startup failed before readiness; see bounded startup diagnostic")),
+                Err(error) => Err(anyhow::Error::new(error).context("Native fixture host startup exceeded its 15-second readiness deadline; see bounded startup diagnostic")),
+                Ok(Ok(())) => unreachable!(),
+            };
+        }
         // Keep draining after readiness; closing the pipe here could race the
         // host's remaining startup lines and cause a platform-specific BrokenPipe.
         tokio::spawn(async move { while matches!(output.next_line().await, Ok(Some(_))) {} });
