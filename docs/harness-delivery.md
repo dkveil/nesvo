@@ -2207,3 +2207,12 @@ The corrected full serial native SDK suite then passed all 37 cases in 183.67
 seconds, including fairness, both cancellation cases and first-generation history.
 Cross-platform CI remains the publication gate; local Windows is not proof of
 Linux/macOS execution.
+
+Final generation-1 platform acceptance: CI
+[`39450113725`](https://github.com/dkveil/nesvo/actions/runs/39450113725), exact
+`5e617a1`, passed all five jobs. All 37 serial native MCP SDK scenarios passed
+on Linux (173.56 seconds), macOS (179.16 seconds) and Windows (281.59 seconds),
+including the corrected revision refusal, unchanged eight-second fairness gate
+and actual first-generation restart history. The earlier failed sources and
+their logs remain recorded above; this is fresh verification of changed source,
+not an unchanged rerun. Other F28 and full-goal acceptance gates remain open.
