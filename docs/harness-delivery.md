@@ -2250,3 +2250,12 @@ prechecks, exact bound-worker stop, fairness and first-generation restart histor
 All 30 Node host/sync/CLI regression cases passed in 34.05 seconds. Review found
 no additional production defect. No original model or device was invoked for
 these checks; exact published platform evidence follows separately.
+
+Final dispatch-fence platform acceptance: CI
+[`39452970064`](https://github.com/dkveil/nesvo/actions/runs/39452970064), exact
+`4b3fe2e`, passed all five jobs. Each native platform passed the complete 37-case
+serial SDK suite: Linux 170.07 seconds, macOS 187.95 seconds and Windows 275.61
+seconds. This includes guarded preparation, existing process/control boundaries,
+job/precheck cancellation, fairness and restart history together with the full
+workspace checks and public CLI regressions. This closes the dispatch-fence
+slice's platform gate; retry/backoff and all remaining goal gates stay open.
