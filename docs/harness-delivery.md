@@ -69,7 +69,7 @@ not evidence that the expanded acceptance criteria pass.
 | F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: native metadata recovery and Windows process ownership verified; conversation/layout/mobile recovery pending                                                                             |
 | F42 | Safe resumable hibernation                      | Missing                                                       | Pending: process ownership/cleanup prerequisite verified; resume eligibility and hibernation not implemented                                                                                      |
 | F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                                                                                                           |
-| F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Partial: typed observations, owner refresh and wake fences; quota job admission/durable wake pending                                                                                              |
+| F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Partial: typed observations, configured-account job admission and retained native continuation; legacy direct-PTY wake and original-provider acceptance remain open                               |
 
 ## Verification log
 
@@ -2897,3 +2897,67 @@ pass. Controlled status publication measured p95 251.062 ms, maximum 264.414 ms
 from host receipt to snapshot enqueue; provider delay is excluded. Final fmt,
 changed-file Prettier and whitespace checks pass. No original model or physical
 device was used, and the new source's publication CI remains a distinct gate.
+
+### F44 configured-account jobs and retained native admission
+
+The observation checkpoint `57a70a1` completed all five publication CI jobs:
+[39499001497](https://github.com/dkveil/nesvo/actions/runs/39499001497), including
+Windows, Linux, macOS, browser and app. This does not identify the cause of the
+older cancellation setup failure and does not validate the later changes below.
+
+The owner can opt a Codex job into a configured-account quota queue using the
+actual directory's inspected opaque context/account fingerprints. CLI/MCP share
+the same policy, explicit capability and per-occurrence reauthorization. Route
+inspection uses read-only account/config metadata and keeps independently useful
+quota display when routing is unknown. Queued and retry-waiting jobs allocate no
+precheck, attempt or Run while held; SQL filtering precedes the candidate limit.
+Same-poll overlap siblings are rechecked inside the transaction.
+
+Late holds preserve exact claims, precheck results, Run, launch receipt, reserved
+session and already prepared workspace. Waiting releases dispatch/native-control
+capacity; cancellation, timeout, frozen constraints, scope changes and retained
+human takeover remain fences. Prepared workspace facts survive restart as unknown
+evidence without automatic Git/native replay. Reader authority is process-local;
+pending opted-in occurrences require explicit owner reauthorization after restart.
+See [configured-account jobs](harness-quota-jobs.md) for commands and limitations.
+
+This admission is a point-in-time configured-account observation. It is not an
+immutable native-account lease or a promise that the original provider accepts
+work. Claude cache admission, Gemini quota integration, legacy direct-PTY wake
+migration and the remaining F01–F44/plugin gates stay open. No new dependency or
+global provider configuration is introduced by this slice.
+
+Local Windows verification passes 620 units (179 TUI, 438 host, 3 wire; five
+special host helpers remain ignored), a locked workspace build and warnings-denied
+all-target Clippy. All five focused official-SDK/private-host/controlled-RPC/PTY
+quota scenarios pass in 63.64 seconds. They cover independent directory/account
+bindings, queue fairness, failed observations, cancellation, immutable replay and
+one retained worktree/receipt/session after the owner disconnects.
+
+The first focused run exposed a Windows Git/native path alias mismatch during
+the final worktree check. Reader keys now normalize the extended Windows path
+form used by native validation to the same cwd passed to the CLI; a deterministic
+regression and the unchanged native release assertion both pass. The initial
+failure is retained as evidence rather than replacing that assertion with a looser
+claim. Native timeout diagnostics retain allowlisted original receipt/launch/job
+codes before cleanup without prompts, accounts or paths. No original model or
+physical device was used for this acceptance slice.
+
+The full serial SDK cohort passed 57 of 58 cases in 393.91 seconds; its sole
+failure was the existing retry test's hardcoded 92-tool catalog assertion after
+the catalog gained `nesvo_authorize_job_quota` (93 tools). Correcting that explicit
+expectation, without changing native behavior or removing any assertion, passes
+the complete failed scenario in 8.76 seconds on the same production binaries.
+The original failed cohort is retained; this is combined per-scenario evidence,
+not a claim that the original single invocation passed all 58.
+
+All 30 serial host/sync/CLI Node cases pass in 45.26 seconds, the 23 client
+protocol/control/replay cases pass, and both Windows dev-host probe/runtime tests
+pass. Controlled publication measured p95 262.972 ms and maximum 263.057 ms from
+host receipt to snapshot enqueue, excluding provider delay. Final all-target
+Clippy, formatting and whitespace checks pass. Publication CI for this new source
+is a separate pending gate; older `57a70a1` CI success is not substituted for it.
+
+Configured-account host/storage/native support is `78587cc`; the shared CLI/MCP
+policy and owner authorization are `da28b50`; actual contextual queue/worktree
+acceptance and failure evidence are `28bbd0c`.
