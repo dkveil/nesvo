@@ -50,6 +50,8 @@ fn launch_schema() -> Value {
             "role":{"enum":["worker","coordinator"],"default":"worker","description":"Only owner access may grant coordinator at launch; a coordinator cannot create coordinators"},
             "harness":{"type":"boolean","description":"Launch-local Nesvo MCP/instructions on supported Claude; inherits coordinator setting when omitted"},
             "allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Owner-only exact native permission additions for this explicit harness process, not inherited by children or restored processes. Does not grant host authority or bypass provider deny/ask rules."},
+            "model":{"type":"string","minLength":1,"maxLength":256,"description":"Explicit launch-local native model alias/ID, not resolved account availability"},
+            "effort":{"type":"string","minLength":1,"maxLength":32,"description":"Requires explicit model; provider-specific native reasoning level"},
             "cwd":{"type":"string"}, "groupId":{"type":["string","null"]},
             "parentSessionId":{"type":["string","null"],"description":"Lineage only; scoped creation binds the authenticated parent automatically"},
             "prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},
@@ -189,7 +191,7 @@ fn catalog() -> Vec<Tool> {
             "nesvo_start_run_executor",
             "Opt in to automatic dependency-ready task launch and immutable instruction delivery for an active run. Explicit profile for every task; agents only, shared/worktree required. No model heartbeat, self-validation or permission approval. Human/decision/time/retry/native guards still apply. Stable workflow key recovers acceptance; inspect current executor/task/native receipts. Restart disables scheduling without replay. Already admitted work may finish after disabling.",
             object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"spec":{"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["taskId","profile"],"properties":{"taskId":id,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"program":{"enum":["claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"harness":{"type":"boolean"}}}}}},"retryFailed":{"type":"boolean","default":false},"retryDelayMs":{"type":"integer","minimum":1000,"maximum":60000,"default":1000},"readinessTimeoutMs":{"type":"integer","minimum":1,"maximum":300000,"default":60000}}}}),
+                json!({"key":key,"runId":id,"expectedRevision":revision,"spec":{"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["taskId","profile"],"properties":{"taskId":id,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"program":{"enum":["claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"harness":{"type":"boolean"},"model":{"type":"string","minLength":1,"maxLength":256},"effort":{"type":"string","minLength":1,"maxLength":32}}}}}},"retryFailed":{"type":"boolean","default":false},"retryDelayMs":{"type":"integer","minimum":1000,"maximum":60000,"default":1000},"readinessTimeoutMs":{"type":"integer","minimum":1,"maximum":300000,"default":60000}}}}),
                 &["key", "runId", "expectedRevision", "spec"],
             ),
             false,
@@ -240,7 +242,7 @@ fn catalog() -> Vec<Tool> {
             "nesvo_launch_task",
             "Reserve a dependency-ready task, run parallel/retry capacity and a native create identity atomically, then launch its visible worker once. Explicitly choose shared checkout or isolated worktree. No initial prompt is sent. Reply is immutable acceptance; inspect run/task history and the returned native receipt before sending work. Unknown launches keep capacity and cannot be retried with a fresh key. Does not take human focus/control or grant coordinator roles.",
             object(
-                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"program":{"enum":["shell","claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"harness":{"type":"boolean"}}}}),
+                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"profile":{"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"program":{"enum":["shell","claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"harness":{"type":"boolean"},"model":{"type":"string","minLength":1,"maxLength":256},"effort":{"type":"string","minLength":1,"maxLength":32}}}}),
                 &["key", "runId", "taskId", "expectedRevision", "profile"],
             ),
             false,
@@ -1043,7 +1045,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
             let valid = a.spec.as_object().is_some_and(|spec| {
                 spec.get("name").is_some_and(Value::is_string)
                     && spec.iter().all(|(key, value)| match key.as_str() {
-                        "name" | "cwd" | "prompt" => value.is_string(),
+                        "name" | "cwd" | "prompt" | "model" | "effort" => value.is_string(),
                         "program" => value
                             .as_str()
                             .is_some_and(|v| matches!(v, "shell" | "claude" | "codex" | "gemini")),
@@ -1179,6 +1181,16 @@ impl HostTools {
             cli::prompt_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
+            if name == "nesvo_create_session"
+                && (command["spec"].get("model").is_some()
+                    || command["spec"].get("effort").is_some())
+                && caps["sessionModelProfiles"] != true
+            {
+                return Err(cli::failure(
+                    "unsupported",
+                    "Host lacks launch-local model profile support; update nesvo-host",
+                ));
+            }
             if name == "nesvo_create_session"
                 && command["spec"].get("allowedNesvoTools").is_some()
                 && caps["sessionToolPermissions"] != true

@@ -946,6 +946,10 @@
         "providerVersions": {
           "type": "array"
         },
+        "launchProfileSupport": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/launchProfileSupport" }
+        },
         "sessions": {
           "type": "array"
         }
@@ -1452,7 +1456,9 @@
                       },
                       "harness": {
                         "type": ["boolean", "null"]
-                      }
+                      },
+                      "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+                      "effort": { "type": "string", "minLength": 1, "maxLength": 32 }
                     }
                   }
                 }
@@ -1712,6 +1718,9 @@
         },
         "uptimeSeconds": {
           "$ref": "#/definitions/cursor"
+        },
+        "launchProfile": {
+          "$ref": "#/definitions/launchProfile"
         }
       }
     },
@@ -2832,6 +2841,50 @@
           }
         }
       ]
+    },
+    "launchProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "resolved", "source", "scope", "inheritedByChildren"],
+      "properties": {
+        "requested": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "effort"],
+          "properties": {
+            "model": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+            "effort": { "type": ["string", "null"], "minLength": 1, "maxLength": 32 }
+          }
+        },
+        "resolved": { "const": null },
+        "source": { "enum": ["launch", "providerDefaults"] },
+        "scope": { "const": "process" },
+        "inheritedByChildren": { "const": false }
+      }
+    },
+    "launchProfileSupport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "program",
+        "version",
+        "probeStatus",
+        "supported",
+        "modelFlag",
+        "effortValues",
+        "effortSource",
+        "explicitModelRequiredForEffort"
+      ],
+      "properties": {
+        "program": { "enum": ["claude", "codex", "gemini"] },
+        "version": { "type": ["string", "null"] },
+        "probeStatus": { "type": "string" },
+        "supported": { "type": "boolean" },
+        "modelFlag": { "enum": ["--model", null] },
+        "effortValues": { "type": ["array", "null"], "items": { "type": "string" } },
+        "effortSource": { "enum": ["cli", "modelAdvertised", null] },
+        "explicitModelRequiredForEffort": { "const": true }
+      }
     },
     "workflowCoordinatorBinding": {
       "type": "object",

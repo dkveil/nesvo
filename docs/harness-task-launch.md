@@ -22,6 +22,10 @@ authorized workspace. Provider installation/profile, workspace, group and native
 admission guards still apply. No initial prompt, coordinator role, foreign parent
 or arbitrary launch arguments are accepted by this API.
 
+Optional `model`/`effort` fields (CLI `--model`/`--effort`) use the same
+[versioned native adapters](harness-model-profiles.md) as ordinary session create.
+They remain part of immutable task-launch intent and executor profiles.
+
 ## Admission, scope and native effects
 
 Only an active run with accepted dependency results can reserve a new attempt.

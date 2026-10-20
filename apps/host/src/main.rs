@@ -11,6 +11,7 @@ mod git;
 mod groups;
 mod host_lock;
 mod jobs;
+mod launch_profile;
 mod launchers;
 mod notifications;
 mod operations;

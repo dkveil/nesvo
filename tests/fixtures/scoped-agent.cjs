@@ -11,6 +11,10 @@ if (process.argv.includes('--version')) {
 const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
+fs.writeFileSync(
+  path.join(directory, `${id}.launch-argv.json`),
+  JSON.stringify(process.argv.slice(2)),
+);
 const editorRedraw = fs.existsSync(path.join(process.cwd(), '.fixture-editor-redraw'));
 const editorRedrawDelay = fs.existsSync(path.join(process.cwd(), '.fixture-slow-redraw'))
   ? 3000
@@ -49,7 +53,11 @@ if (!codex) {
 }
 // The fixture consumes only the host's bounded literal inline shape, not arbitrary TOML.
 const codexHook = codex
-  ? JSON.parse(process.argv[process.argv.indexOf('-c') + 1].match(/command=("(?:[^"\\]|\\.)*")/)[1])
+  ? JSON.parse(
+      process.argv
+        .find((arg, index) => process.argv[index - 1] === '-c' && arg.startsWith('hooks='))
+        .match(/command=("(?:[^"\\]|\\.)*")/)[1],
+    )
   : null;
 if (codex && !process.argv.includes('--no-daemon'))
   throw new Error('Codex must own its local executor');

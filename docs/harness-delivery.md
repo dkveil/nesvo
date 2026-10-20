@@ -62,7 +62,7 @@ not evidence that the expanded acceptance criteria pass.
 | F34 | Verified session/turn edit provenance           | Partial: agent edit folder context only                       | Pending                                                                                                                                     |
 | F35 | Revision-bound checks and review readiness      | Missing                                                       | Pending                                                                                                                                     |
 | F36 | Trusted worktree setup/run/archive              | Partial: create worktree only                                 | Pending                                                                                                                                     |
-| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Pending                                                                                                                                     |
+| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Partial: native model/effort for sessions/tasks/executor; broader profile settings/UI/resume pending                                        |
 | F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending                                   |
 | F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending                                                                                                                                     |
 | F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: durable snapshots/current context and owner constraints with native revision fences; provider compaction/adoption/UI gates pending |
@@ -1682,3 +1682,39 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   was relaxed, and no fixture error is treated as success.
 - Targeted native wake and queued-delivery cases passed locally. The shared-helper
   native suite and successor CI remain separate required checks.
+
+### Versioned launch-local model and effort selection
+
+- F37: session CLI/MCP create, task launch and immutable executor profiles accept
+  explicit model/effort. Native adapters require probed Claude 2.1.303+ within
+  2.1 or Codex 0.156.0. Shell/Gemini/unconfirmed versions refuse these fields;
+  ordinary default launches and prior fingerprints stay unchanged.
+- Arguments remain literal, before prompt delimiters. Codex uses a fixed quoted
+  model_reasoning_effort config entry beside lifecycle hooks. Effort requires an
+  explicit model, avoiding accidental paired new-thread default changes. Claude
+  accepts its verified levels; Codex uses bounded model-advertised identifiers.
+  Provider account/model support still belongs to the original CLI.
+- `sessionModelProfiles` gates new clients against old hosts; get/list/explain
+  show requested selection and resolved:null rather than claiming a model result.
+  Doctor/capabilities expose versioned adapter support. Managed children use their
+  own native defaults when fields are absent; tasks/executor keep explicit values.
+  Saved template/recovery selection survives without input or auto restart.
+- Storage/argument and actual encoded-capability contracts pass. The official
+  native SDK/CLI scenario captures real executable argv, Unicode/spaces/literal
+  shell text, Codex config/hook coexistence, child defaults, task profiles,
+  immutable replay/conflict and invalid-value refusals. Real session/doctor and
+  workflow envelopes pass Ajv against the expanded schema. Fixtures make no
+  model requests. See [profiles, sources and limits](harness-model-profiles.md).
+- Original Claude 2.1.304 Windows startup with opus/low reached ready/idle and
+  exposed both native flags; no prompt, child or approval key was submitted.
+  Host exited zero. Three of 30 observed descendants outlasted the initial
+  five-second cleanup window; the same IDs were absent in a follow-up 142 seconds
+  later, without relaunch/killing. Exact exit latency is unknown. The failed
+  bounded cleanup observation remains open F39/F42 evidence, not a passed gate.
+- Full model responses/resolved telemetry, broader profile/MCP/skill editing,
+  owner task permission delegation, controlled resume and UI still remain open.
+  No dependency, material UI or global provider configuration change.
+- Final local Windows checks passed production build, fmt, warnings-denied
+  Clippy, 329 unit tests, all 25 serial native SDK scenarios (including the new
+  human-ACK helper), 30 host/sync/CLI cases, JSON envelope validation and formatting.
+  Cross-platform CI for this head is separate from these local results.

@@ -63,6 +63,7 @@ impl ControlLease {
 }
 
 struct Session {
+    model_selection: crate::launch_profile::Selection,
     harness_enabled: bool,
     policy: crate::caller::Policy,
     caller_context: Option<crate::caller::Context>,
@@ -832,6 +833,9 @@ impl State {
         event["runConstraints"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["sessionToolPermissions"] = true.into();
+        event["sessionModelProfiles"] = true.into();
+        event["launchProfileSupport"] =
+            crate::launch_profile::capabilities(&self.provider_versions);
         event["workflowPlans"] = true.into();
         event
     }
@@ -864,6 +868,8 @@ impl State {
                 parent_session_id: session.info.parent_session_id.clone(),
                 role: session.policy.role,
                 harness: session.harness_enabled.then_some(true),
+                model: session.model_selection.model.clone(),
+                effort: session.model_selection.effort.clone(),
                 program: session.info.program,
                 auto_title: session.auto_title,
                 muted: session.attention.muted,
@@ -955,6 +961,7 @@ impl State {
                 let mut info =
                     serde_json::to_value(&session.info).expect("Session metadata serializes");
                 info["role"]=json!(session.policy.role);
+                info["launchProfile"]=session.model_selection.diagnostic();
                 info["harness"]=json!(session.caller_context.as_ref().map(|context|context.configuration(session.harness_enabled)));
                 info["attention"] = json!(session.attention.event);
                 info["currentAttention"] = json!(session.current_attention());
@@ -1415,6 +1422,14 @@ impl State {
     pub fn validate_launch(&self, spec: &crate::jobs::LaunchSpec) -> Result<PathBuf> {
         ensure!(!self.shutting_down, "Host is shutting down.");
         valid_name(&spec.name)?;
+        crate::launch_profile::validate(
+            spec.program,
+            &self.provider_versions,
+            &crate::launch_profile::Selection {
+                model: spec.model.clone(),
+                effort: spec.effort.clone(),
+            },
+        )?;
         if let Some(tools) = &spec.allowed_nesvo_tools {
             if spec.harness != Some(true) {
                 return Err(crate::api_error::Error::new("invalid_argument", "Native Nesvo tool permission additions require an explicit supported harness launch").into());
@@ -1909,6 +1924,11 @@ impl State {
     ) -> Result<String> {
         let cwd = self.validate_launch(spec)?;
         let mut command = self.launchers.command(spec.program, &cwd)?;
+        let selection = crate::launch_profile::Selection {
+            model: spec.model.clone(),
+            effort: spec.effort.clone(),
+        };
+        command.args(crate::launch_profile::arguments(spec.program, &selection)?);
         if spec.resume_picker {
             ensure!(
                 spec.prompt.is_empty(),
@@ -1940,6 +1960,7 @@ impl State {
             },
         )?;
         session.info.group_id = spec.group_id.clone();
+        session.model_selection = selection;
         session.info.parent_session_id = spec.parent_session_id.clone();
         session.auto_title = spec.auto_title && spec.program != Program::Shell;
         session.attention.muted = spec.muted;
@@ -2045,6 +2066,7 @@ impl State {
             "processIdentity":{"pid":session.pty.process_id(),"launchedAt":session.info.created_at,"launchId":session.info.id},
             "processAgeSeconds":session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed()).as_secs(),
             "harness":session.caller_context.as_ref().map(|context|context.configuration(session.harness_enabled)),
+            "launchProfile":session.model_selection.diagnostic(),
             "inputOperation":session.pending_input.as_ref().map(|pending|json!({"id":pending.claim.id,"queued":pending.queued,"canceled":*pending.canceled.borrow(),"correlated":pending.correlation.is_some(),"correlationEvidence":pending.correlation.as_ref().map(crate::submission::Correlation::diagnostic)})),
             "integration":{"configured":session.agent_context.is_some(), "adapter":session.agent_context.as_ref().map_or("screen/protocol",|tracker|tracker.adapter()),
                 "helperBuildId":if session.agent_context.is_some(){Some(env!("NESVO_BUILD_ID"))}else{None},
@@ -2055,7 +2077,7 @@ impl State {
         })).collect();
         Ok(
             json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
-            "programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"eventJournal":self.event_log.as_ref().map(|log|log.health()),"sessions":sessions}),
+            "programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"launchProfileSupport":crate::launch_profile::capabilities(&self.provider_versions),"eventJournal":self.event_log.as_ref().map(|log|log.health()),"sessions":sessions}),
         )
     }
 
@@ -2692,6 +2714,7 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        model_selection: Default::default(),
         harness_enabled: identity.harness,
         policy: crate::caller::Policy::new(identity.role),
         caller_context,

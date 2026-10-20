@@ -17,6 +17,10 @@ pub struct Launch {
     name: Option<String>,
     #[arg(long)]
     cwd: Option<String>,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long, requires = "model")]
+    effort: Option<String>,
     /// Explicitly share the existing checkout with other workers.
     #[arg(
         long,
@@ -44,6 +48,8 @@ impl Launch {
             profile: Profile {
                 name: self.name,
                 cwd: self.cwd,
+                model: self.model,
+                effort: self.effort,
                 program: self.program,
                 workspace: if self.worktree {
                     Workspace::Worktree
@@ -78,6 +84,10 @@ enum Program {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Profile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
     name: Option<String>,
     cwd: Option<String>,
     program: Program,

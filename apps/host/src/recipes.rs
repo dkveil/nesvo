@@ -116,6 +116,8 @@ mod tests {
             name: "Review".into(),
             prompt: "Do work".into(),
             parent_session_id: Some("parent-process".into()),
+            model: Some("opus".into()),
+            effort: Some("low".into()),
             worktree: true,
             ..Default::default()
         };
@@ -123,6 +125,8 @@ mod tests {
         assert_eq!(store.templates().unwrap()[0]["spec"]["prompt"], "Do work");
         store.save_recovery("old", &spec).unwrap();
         let restored = store.claim_recovery("old").unwrap();
+        assert_eq!(restored.model.as_deref(), Some("opus"));
+        assert_eq!(restored.effort.as_deref(), Some("low"));
         assert!(restored.prompt.is_empty() && !restored.worktree);
         assert_eq!(
             restored.parent_session_id.as_deref(),

@@ -149,6 +149,12 @@ pub struct CreateOptions {
     /// Owner-only native approval addition for one exact Nesvo MCP tool; repeat as needed.
     #[arg(long = "allow-nesvo-tool", requires = "harness")]
     allowed_nesvo_tools: Vec<String>,
+    /// Launch-local model alias/ID; does not modify provider defaults.
+    #[arg(long)]
+    model: Option<String>,
+    /// Provider reasoning effort for an explicit model; unsupported versions refuse.
+    #[arg(long, requires = "model")]
+    effort: Option<String>,
     /// Explicitly opt out when the coordinator profile would inherit the harness.
     #[arg(long, conflicts_with = "harness")]
     no_harness: bool,
@@ -632,6 +638,20 @@ async fn create(options: CreateOptions, connection: &mut Connection) -> Result<(
     let prompt = read_prompt(options.prompt, options.prompt_file, options.stdin)?;
     let caps = operation_capability(connection).await?;
     let mut spec = json!({"name":options.name,"program":options.program,"cwd":options.cwd,"groupId":options.group,"worktree":options.worktree,"prompt":prompt});
+    if options.model.is_some() || options.effort.is_some() {
+        if caps["sessionModelProfiles"] != true {
+            return Err(failure(
+                "unsupported",
+                "Host lacks launch-local model profile support; update nesvo-host",
+            ));
+        }
+        if let Some(model) = options.model {
+            spec["model"] = model.into();
+        }
+        if let Some(effort) = options.effort {
+            spec["effort"] = effort.into();
+        }
+    }
     if options.role == "coordinator" {
         if caps["coordinatorScopes"] != true {
             return Err(failure(

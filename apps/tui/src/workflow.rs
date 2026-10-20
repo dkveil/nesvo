@@ -683,6 +683,18 @@ pub fn tool(action: &str, mut arguments: Value) -> Result<Value> {
         )
     })?)
 }
+fn model_profile_requested(request: &Value) -> bool {
+    let explicit_model =
+        |profile: &Value| profile.get("model").is_some() || profile.get("effort").is_some();
+    let action = &request["request"];
+    match action["action"].as_str() {
+        Some("launch") => explicit_model(&action["request"]["profile"]),
+        Some("executor") => action["request"]["spec"]["tasks"]
+            .as_array()
+            .is_some_and(|tasks| tasks.iter().any(|task| explicit_model(&task["profile"]))),
+        _ => false,
+    }
+}
 pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
         connection,
@@ -742,6 +754,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         Some("drain" | "resume") => Some("runDrain"),
         _ => None,
     };
+    if model_profile_requested(request) && caps["sessionModelProfiles"] != true {
+        return Err(cli::failure(
+            "unsupported",
+            "Host lacks launch-local model profile support; update nesvo-host",
+        ));
+    }
     if capability.is_some_and(|key| caps[key] != true) {
         return Err(cli::failure(
             "unsupported",
@@ -763,6 +781,34 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn encoded_model_profiles_gate_native_capability_and_preserve_legacy_intent() {
+        let plain = json!({"program":"claude","workspace":"shared","harness":true});
+        let launch = |profile: Value| {
+            tool("launch",json!({"request":{"key":"k","runId":"r","taskId":"t","expectedRevision":1,"profile":profile}})).unwrap()
+        };
+        let legacy = launch(plain.clone());
+        assert!(!model_profile_requested(&legacy));
+        assert!(
+            legacy["request"]["request"]["profile"]
+                .get("model")
+                .is_none()
+        );
+        assert!(
+            legacy["request"]["request"]["profile"]
+                .get("effort")
+                .is_none()
+        );
+        let mut selected = plain;
+        selected["model"] = "opus".into();
+        selected["effort"] = "low".into();
+        assert!(model_profile_requested(&launch(selected.clone())));
+        let executor=tool("executor",json!({"request":{"action":"start","key":"e","runId":"r","expectedRevision":1,"spec":{"tasks":[{"taskId":"t","profile":selected}]}}})).unwrap();
+        assert!(model_profile_requested(&executor));
+        assert!(!model_profile_requested(
+            &tool("executor", json!({"request":{"action":"get","runId":"r"}})).unwrap()
+        ));
+    }
     #[test]
     fn adapters_reject_malformed_shapes_before_host_dispatch() {
         for extra in [
