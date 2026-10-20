@@ -71,6 +71,21 @@ fn task_profile_schema(include_shell: bool) -> Value {
     }
     schema
 }
+fn precheck_command_schema() -> Value {
+    let codes = json!({"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":255}});
+    json!(object(
+        json!({
+            "version":{"type":"integer","const":1,"default":1},"title":{"type":"string","minLength":1,"maxLength":80},
+            "executable":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute executable on host; Windows requires .exe/.com. No implicit shell."},
+            "cwd":{"type":"string","minLength":1,"maxLength":4096,"description":"Exact absolute host directory, not an ambient/focused session path"},
+            "arguments":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":2048},"default":[]},
+            "timeoutMs":{"type":"integer","minimum":100,"maximum":10000,"default":2000},
+            "passExitCodes":codes,"skipExitCodes":codes,
+        "environment":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","maxLength":2048},"description":"Explicit additions to isolated-platform-v1. No ambient inheritance. Windows adds OS-derived SystemRoot. Overrides and NESVO_/POCKET_ keys forbidden; ASCII alphanumeric/underscore names, unique without regard to case. Not a sandbox."}
+        }),
+        &["title", "executable", "cwd"]
+    ))
+}
 fn job_spec_schema() -> Value {
     let zone = json!({"type":"string","maxLength":64,"default":"Europe/Warsaw","description":"IANA time zone. Gaps are skipped; folds use the first instant only."});
     let schedule = json!({"oneOf":[
@@ -78,7 +93,7 @@ fn job_spec_schema() -> Value {
         object(json!({"kind":{"const":"cron"},"expression":{"type":"string","minLength":1,"maxLength":256,"description":"Five fields: minute hour day month weekday"},"timeZone":zone}), &["kind","expression"]),
         object(json!({"kind":{"const":"rrule"},"rule":{"type":"string","minLength":1,"maxLength":1024,"description":"Uppercase Gregorian RFC5545 RRULE; MINUTELY or coarser, COUNT<=10000, UTC UNTIL. Bounded search can explicitly refuse complex/old dense rules."},"start":{"type":"string","minLength":19,"maxLength":19,"description":"Existing local DTSTART as YYYY-MM-DDTHH:MM:SS"},"timeZone":zone}), &["kind","rule","start"])
     ]});
-    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000}}})
+    json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Revocation is checked again at execution. Never an inline shell/script."},"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000}}})
 }
 fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
     let mut schema = serde_json::Map::new();
@@ -96,6 +111,66 @@ fn catalog() -> Vec<Tool> {
     let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
+        (
+            "nesvo_describe_precheck",
+            "Owner-only normalization/digest of a proposed command. Does not approve or execute it. Review literal executable/cwd/argv/environment; file contents and called code remain mutable, not sandboxed.",
+            object(json!({"spec":precheck_command_schema()}), &["spec"]),
+            true,
+        ),
+        (
+            "nesvo_approve_precheck",
+            "Explicit owner trust for this exact command/cwd/argv/environment/duration/exit policy. Arbitrary OS code, not sandboxed. Requires previously inspected normalized digest. Separate from loading a job/repository config. Never delegated to coordinators/workers; no execution now.",
+            object(
+                json!({"key":key,"spec":precheck_command_schema(),"expectedDigest":{"type":"string","minLength":64,"maxLength":64}}),
+                &["key", "spec", "expectedDigest"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_precheck",
+            "Owner-only immutable command approval, including revoked intent. No execution.",
+            object(json!({"id":id}), &["id"]),
+            true,
+        ),
+        (
+            "nesvo_list_prechecks",
+            "Owner-only bounded approval summaries without command arguments or execution.",
+            object(
+                json!({"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
+                &[],
+            ),
+            true,
+        ),
+        (
+            "nesvo_revoke_precheck",
+            "Owner-only exact-revision refusal of future executions. Already authorized checks may finish; does not undo effects or terminate a process.",
+            object(
+                json!({"id":id,"key":key,"expectedRevision":revision}),
+                &["id", "key", "expectedRevision"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_get_precheck_mutation",
+            "Recover immutable original precheck approval/revocation acceptance. Does not execute/reapprove or reflect current enabled state.",
+            object(json!({"key":key}), &["key"]),
+            true,
+        ),
+        (
+            "nesvo_abandon_job_precheck",
+            "Owner-only explicit acknowledgement of an uncertain precheck's effects, abandoning its exact occurrence before any job run was bound. Requires inspection/digest and acknowledgement. Does not kill detached commands, undo effects, repeat a check, resume work or create a model.",
+            object(
+                json!({"key":key,"jobId":id,"occurrenceId":id,"expectedDigest":{"type":"string","minLength":64,"maxLength":64},"acknowledgeUnknownEffects":{"type":"boolean","const":true}}),
+                &[
+                    "key",
+                    "jobId",
+                    "occurrenceId",
+                    "expectedDigest",
+                    "acknowledgeUnknownEffects",
+                ],
+            ),
+            false,
+        ),
         (
             "nesvo_create_job",
             "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
@@ -1015,6 +1090,41 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "workflow",
             )
         }
+        "nesvo_describe_precheck"
+        | "nesvo_approve_precheck"
+        | "nesvo_get_precheck"
+        | "nesvo_list_prechecks"
+        | "nesvo_revoke_precheck"
+        | "nesvo_get_precheck_mutation" => {
+            let action = match name {
+                "nesvo_describe_precheck" => "describe",
+                "nesvo_approve_precheck" => "approve",
+                "nesvo_get_precheck" => "get",
+                "nesvo_list_prechecks" => "list",
+                "nesvo_revoke_precheck" => "revoke",
+                _ => "mutation",
+            };
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Precheck arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Precheck action is selected by tool name",
+                ));
+            }
+            fields.insert("action".into(), action.into());
+            (
+                crate::workflow::tool(
+                    "jobs",
+                    json!({"request":{"action":"prechecks","request":fields}}),
+                )?,
+                "workflow",
+            )
+        }
         "nesvo_create_job"
         | "nesvo_get_job"
         | "nesvo_list_jobs"
@@ -1023,7 +1133,8 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         | "nesvo_run_job_now"
         | "nesvo_get_job_history"
         | "nesvo_get_job_occurrence"
-        | "nesvo_get_job_mutation" => {
+        | "nesvo_get_job_mutation"
+        | "nesvo_abandon_job_precheck" => {
             let action = match name {
                 "nesvo_create_job" => "create",
                 "nesvo_get_job" => "get",
@@ -1033,6 +1144,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "nesvo_run_job_now" => "runNow",
                 "nesvo_get_job_history" => "history",
                 "nesvo_get_job_occurrence" => "occurrence",
+                "nesvo_abandon_job_precheck" => "abandonPrecheck",
                 _ => "mutation",
             };
             let mut fields = arguments

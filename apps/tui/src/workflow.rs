@@ -714,6 +714,14 @@ fn job_calendar_supported(caps: &Value, request: &Value) -> bool {
             .as_array()
             .is_some_and(|kinds| kinds.iter().any(|k| k == kind))
 }
+fn job_precheck_requested(request: &Value) -> bool {
+    let action = &request["request"];
+    action["action"] == "jobs"
+        && (matches!(
+            action["request"]["action"].as_str(),
+            Some("prechecks" | "abandonPrecheck")
+        ) || action["request"]["spec"].get("precheckId").is_some())
+}
 pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
         connection,
@@ -780,6 +788,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host does not support this job calendar; update nesvo-host",
         ));
     }
+    if job_precheck_requested(request) && caps["jobPrechecks"] != true {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot enforce owner-approved bounded prechecks; update nesvo-host",
+        ));
+    }
     if model_profile_requested(request) && caps["sessionModelProfiles"] != true {
         return Err(cli::failure(
             "unsupported",
@@ -815,6 +829,20 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn command_approval_and_checked_jobs_require_their_own_host_capability() {
+        let command = tool(
+            "jobs",
+            json!({"request":{"action":"prechecks","request":{"action":"list"}}}),
+        )
+        .unwrap();
+        assert!(job_precheck_requested(&command));
+        assert!(!job_precheck_requested(
+            &tool("jobs", json!({"request":{"action":"list"}})).unwrap()
+        ));
+        let checked=tool("jobs",json!({"request":{"action":"create","key":"checked","spec":{"title":"x","instruction":"x","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"},"precheckId":"01234567890123456789012345678901"}}})).unwrap();
+        assert!(job_precheck_requested(&checked));
+    }
     #[test]
     fn recurrence_requires_its_own_capability_and_preserves_legacy_once_requests() {
         let request = |schedule: Value| {

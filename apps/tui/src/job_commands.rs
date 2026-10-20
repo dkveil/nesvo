@@ -8,6 +8,24 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Inspect, explicitly approve and revoke exact owner command checks.
+    Precheck {
+        #[command(subcommand)]
+        command: crate::job_prechecks::Command,
+    },
+    /// Acknowledge an unknown precheck and abandon its occurrence; never resume it.
+    AbandonPrecheck {
+        id: String,
+        occurrence: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long, required = true)]
+        acknowledge_unknown_effects: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Save an enabled host-owned job; does not start a model immediately.
     Create {
         #[arg(long)]
@@ -98,6 +116,8 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Precheck { command } => command.machine(),
+            Self::AbandonPrecheck { json, .. } => *json,
             Self::Create { json, .. }
             | Self::Show { json, .. }
             | Self::List { json, .. }
@@ -112,6 +132,23 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Precheck { command } => Request::Prechecks {
+                request: command.request()?,
+            },
+            Self::AbandonPrecheck {
+                id,
+                occurrence,
+                key,
+                digest,
+                acknowledge_unknown_effects,
+                ..
+            } => Request::AbandonPrecheck {
+                key,
+                job_id: id,
+                occurrence_id: occurrence,
+                expected_digest: digest,
+                acknowledge_unknown_effects,
+            },
             Self::Create { key, file, .. } => Request::Create {
                 key,
                 spec: read_spec(&file)?,
@@ -223,6 +260,8 @@ pub struct Spec {
     instruction: String,
     profile: Profile,
     schedule: Schedule,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    precheck_id: Option<String>,
     #[serde(default)]
     misfire: Misfire,
     #[serde(default = "grace")]
@@ -240,6 +279,16 @@ pub struct Spec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Prechecks {
+        request: crate::job_prechecks::Request,
+    },
+    AbandonPrecheck {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
+        expected_digest: String,
+        acknowledge_unknown_effects: bool,
+    },
     Create {
         key: String,
         spec: Spec,

@@ -764,6 +764,72 @@
                       "minimum": 0
                     }
                   }
+                },
+                {
+                  "anyOf": [
+                    {
+                      "required": ["precheckApproval"]
+                    },
+                    {
+                      "required": ["precheckApprovals"]
+                    },
+                    {
+                      "required": ["precheckDescription"]
+                    }
+                  ],
+                  "properties": {
+                    "precheckApproval": {
+                      "$ref": "#/definitions/precheckApproval"
+                    },
+                    "precheckApprovals": {
+                      "type": "array",
+                      "maxItems": 16,
+                      "items": {
+                        "$ref": "#/definitions/precheckApproval"
+                      }
+                    },
+                    "precheckDescription": {
+                      "type": "object",
+                      "required": [
+                        "spec",
+                        "digest",
+                        "trust",
+                        "sandboxed",
+                        "environmentPolicy",
+                        "platformEnvironmentKeys"
+                      ],
+                      "properties": {
+                        "spec": {
+                          "type": "object"
+                        },
+                        "digest": {
+                          "type": "string",
+                          "minLength": 64,
+                          "maxLength": 64
+                        },
+                        "trust": {
+                          "const": "notApproved"
+                        },
+                        "sandboxed": {
+                          "const": false
+                        },
+                        "environmentPolicy": {
+                          "const": "isolated-platform-v1"
+                        },
+                        "platformEnvironmentKeys": {
+                          "type": "array",
+                          "maxItems": 1,
+                          "items": {
+                            "const": "SystemRoot"
+                          }
+                        }
+                      }
+                    },
+                    "nextOffset": {
+                      "type": ["integer", "null"],
+                      "minimum": 0
+                    }
+                  }
                 }
               ]
             },
@@ -3153,37 +3219,69 @@
             {
               "type": "object",
               "required": ["kind", "at"],
-              "properties": { "kind": { "const": "once" }, "at": { "type": "string" } }
+              "properties": {
+                "kind": {
+                  "const": "once"
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
             },
             {
               "type": "object",
               "required": ["kind", "expression", "timeZone"],
               "properties": {
-                "kind": { "const": "cron" },
-                "expression": { "type": "string" },
-                "timeZone": { "type": "string" }
+                "kind": {
+                  "const": "cron"
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "timeZone": {
+                  "type": "string"
+                }
               }
             },
             {
               "type": "object",
               "required": ["kind", "rule", "start", "timeZone"],
               "properties": {
-                "kind": { "const": "rrule" },
-                "rule": { "type": "string" },
-                "start": { "type": "string" },
-                "timeZone": { "type": "string" }
+                "kind": {
+                  "const": "rrule"
+                },
+                "rule": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "timeZone": {
+                  "type": "string"
+                }
               }
             }
           ]
         },
-        "calendarState": { "enum": ["ready", "exhausted", "blocked"] },
+        "calendarState": {
+          "enum": ["ready", "exhausted", "blocked"]
+        },
         "calendarError": {
           "anyOf": [
-            { "type": "null" },
+            {
+              "type": "null"
+            },
             {
               "type": "object",
               "required": ["code", "message"],
-              "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
             }
           ]
         },
@@ -3226,7 +3324,14 @@
           "$ref": "#/definitions/cursor"
         },
         "coalescedFromAt": {
-          "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/cursor" }]
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/cursor"
+            }
+          ]
         },
         "createdAt": {
           "$ref": "#/definitions/cursor"
@@ -3241,7 +3346,8 @@
             "skipped",
             "succeeded",
             "failed",
-            "canceled"
+            "canceled",
+            "prechecking"
           ]
         },
         "reason": {
@@ -3310,6 +3416,183 @@
               "$ref": "#/definitions/id"
             }
           ]
+        },
+        "precheck": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "approvalId",
+                "approvalDigest",
+                "state",
+                "reason",
+                "authorizedAt",
+                "finishedAt",
+                "result",
+                "observedAt"
+              ],
+              "properties": {
+                "approvalId": {
+                  "type": "string"
+                },
+                "approvalDigest": {
+                  "type": ["string", "null"]
+                },
+                "state": {
+                  "enum": [
+                    "running",
+                    "passed",
+                    "skipped",
+                    "failed",
+                    "timedOut",
+                    "outputLimit",
+                    "refused",
+                    "unknown",
+                    "abandoned"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "authorizedAt": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "finishedAt": {
+                  "type": ["integer", "null"]
+                },
+                "result": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/definitions/precheckOutcome"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": ["integer", "null"],
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "precheckApproval": {
+      "type": "object",
+      "required": [
+        "id",
+        "digest",
+        "revision",
+        "enabled",
+        "createdAt",
+        "trust",
+        "sandboxed",
+        "environmentPolicy",
+        "platformEnvironmentKeys"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "spec": {
+          "type": "object",
+          "required": [
+            "version",
+            "title",
+            "executable",
+            "arguments",
+            "cwd",
+            "timeoutMs",
+            "passExitCodes",
+            "skipExitCodes",
+            "environment"
+          ]
+        },
+        "digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "trust": {
+          "const": "ownerExactCommand"
+        },
+        "sandboxed": {
+          "const": false
+        },
+        "environmentPolicy": {
+          "const": "isolated-platform-v1"
+        },
+        "platformEnvironmentKeys": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "const": "SystemRoot"
+          }
+        }
+      }
+    },
+    "precheckOutcome": {
+      "type": "object",
+      "required": [
+        "state",
+        "reason",
+        "exitCode",
+        "durationMs",
+        "cleanupConfirmed",
+        "commandStarted",
+        "stdoutTruncated",
+        "stderrTruncated"
+      ],
+      "properties": {
+        "state": {
+          "enum": ["passed", "skipped", "failed", "timedOut", "outputLimit", "refused", "unknown"]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": ["integer", "null"]
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cleanupConfirmed": {
+          "type": "boolean"
+        },
+        "commandStarted": {
+          "type": ["boolean", "null"]
+        },
+        "stdout": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "stderr": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "stdoutTruncated": {
+          "type": "boolean"
+        },
+        "stderrTruncated": {
+          "type": "boolean"
         }
       }
     }

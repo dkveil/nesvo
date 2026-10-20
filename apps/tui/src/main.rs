@@ -4,6 +4,7 @@ mod cli;
 mod controller;
 mod input;
 mod job_commands;
+mod job_prechecks;
 mod launch;
 mod mcp;
 mod model;

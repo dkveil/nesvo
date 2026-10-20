@@ -47,6 +47,8 @@ mod jobs;
 mod model_profiles;
 #[path = "support/native_tool_permissions.rs"]
 mod native_tool_permissions;
+#[path = "support/prechecks.rs"]
+mod prechecks;
 #[path = "support/recovery_hooks.rs"]
 mod recovery_hooks;
 #[path = "support/recovery_profile.rs"]
