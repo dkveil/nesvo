@@ -117,7 +117,6 @@ function hook(name, extra = {}) {
 }
 process.stdin.setEncoding('utf8');
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
-process.stdout.write('\x1b[?2004hSCOPE_FIXTURE_READY\r\n');
 const announceReady = () => {
   hook('SessionStart', { source: 'startup' });
   if (!codex) hook('Stop');
@@ -126,9 +125,6 @@ const announceReady = () => {
 function drawEditor() {
   process.stdout.write('\x1b[2J\x1b[H❯ draft\r\n? for shortcuts\x1b[1;8H');
 }
-if (fs.existsSync(path.join(process.cwd(), '.fixture-defer-ready')))
-  setTimeout(announceReady, 2500);
-else announceReady();
 function fixtureCli(args) {
   const result = spawnSync(process.env.NESVO_CLI, args, {
     windowsHide: true,
@@ -334,3 +330,10 @@ process.stdin.on('data', text => {
   }
 });
 process.stdin.resume();
+// Start the input consumer before startup hooks can publish semantic readiness.
+setImmediate(() => {
+  process.stdout.write('\x1b[?2004hSCOPE_FIXTURE_READY\r\n');
+  if (fs.existsSync(path.join(process.cwd(), '.fixture-defer-ready')))
+    setTimeout(announceReady, 2500);
+  else announceReady();
+});
