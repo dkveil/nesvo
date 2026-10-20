@@ -18,7 +18,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Semaphore;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::{
+    codec::{FramedRead, FramedWrite},
+    sync::CancellationToken,
+};
 
 const MAX_MESSAGE: usize = 64 * 1024;
 
@@ -1433,6 +1436,24 @@ struct HostTools {
     slots: Semaphore,
 }
 impl HostTools {
+    async fn invoke_until_cancelled(
+        &self,
+        name: &str,
+        arguments: Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value> {
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(cli::failure(
+                "canceled",
+                "Tool call canceled; inspect the original mutation or receipt before another request",
+            )),
+            result = self.invoke(name, arguments) => result,
+        }
+        // Dropping invoke releases its slot and connection. Accepted host work
+        // keeps its original identity and is never replayed or interrupted here.
+    }
+
     async fn invoke(&self, name: &str, arguments: Value) -> Result<Value> {
         let (mut command, kind) = command(name, arguments)?;
         let _permit = self.slots.try_acquire().map_err(|_| {
@@ -1565,12 +1586,13 @@ impl ServerHandler for HostTools {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResponse, ErrorData> {
         let result = match self
-            .invoke(
+            .invoke_until_cancelled(
                 &request.name,
                 Value::Object(request.arguments.unwrap_or_default()),
+                &context.ct,
             )
             .await
         {
@@ -1609,6 +1631,37 @@ pub async fn serve(pairing: PathBuf, url: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancellation_before_invoke_precedes_validation_and_slot_acquisition() {
+        let tools = HostTools {
+            pairing: PathBuf::new(),
+            url: None,
+            slots: Semaphore::new(0),
+        };
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        for name in ["nesvo_get_current_session", "unknown-tool"] {
+            let error = tools
+                .invoke_until_cancelled(name, json!({}), &cancellation)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                cli::error_value(&error),
+                json!({
+                    "schemaVersion":1,
+                    "ok":false,
+                    "error":{
+                        "code":"canceled",
+                        "message":"Tool call canceled; inspect the original mutation or receipt before another request",
+                        "retryable":false,
+                    },
+                })
+            );
+            assert_eq!(tools.slots.available_permits(), 0);
+        }
+    }
+
     fn retry_job_spec() -> Value {
         json!({"title":"Retry","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"}})
     }

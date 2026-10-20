@@ -51,6 +51,8 @@ mod job_diagnostics;
 mod job_retries;
 #[path = "support/jobs.rs"]
 mod jobs;
+#[path = "support/mcp_cancellation.rs"]
+mod mcp_cancellation;
 #[path = "support/model_profiles.rs"]
 mod model_profiles;
 #[path = "support/native_tool_permissions.rs"]

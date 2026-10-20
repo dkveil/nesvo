@@ -92,7 +92,7 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The catalog contains 60 tools. Task instruction intents use
+The current [catalog](harness-mcp-tools.json) contains 80 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 
@@ -234,8 +234,16 @@ run is not claimed.
 Stdout contains only MCP frames, stderr generic diagnostics. Prompts/keys are not
 logged. EOF ends the adapter. Disconnect/cancellation never requests input replay
 or agent shutdown. Accepted host creates can still finish; inspect their receipts.
-Per-request cancellation/protocol conformance beyond the tested SDK paths remains
-an explicit audit item before claiming the complete F10 gate.
+The SDK's per-request cancellation token wraps the complete invocation, including
+authentication and passive waits. A cancellation drops that invocation's host
+connection and releases its MCP slot. An already accepted host operation retains
+its original identity and continues independently; cancellation is not native
+interrupt, rollback or permission to replay. Inspect the original receipt or
+workflow mutation after an uncertain response. A cancellation already observed
+before invocation takes precedence over validation and slot acquisition.
+Dropping a client-side future alone is not the protocol cancellation notification.
+The SDK controls whether a canceled request receives a wire response. Broader
+protocol conformance remains an explicit audit item before the complete F10 gate.
 
 References verified for this implementation:
 [stdio](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio),
@@ -266,6 +274,16 @@ client verifies matching receipts across MCP/CLI, child-only visibility, literal
 send/correlated wait, human control refusal, reconnect and process-exit revocation.
 Owner-supplied lineage, forged role/authority/current hints and workspace escape
 cannot grant access. No model calls or changes to user sessions/provider settings.
+
+The cancellation regression uses an original held fixture response, two cohorts
+of four passive requests and actual SDK cancellation notifications in one MCP
+process. A fifth read must observe `busy` with four pending requests. Read-only
+requests rejected as busy may be replaced within fixed bounds; native submission
+is never repeated. After cancellation the same process serves host queries, and
+the original receipt/turn remain unchanged until explicit fixture release. Journal
+events and terminal markers require one send, no interrupt/stop/failure, and one
+natural settlement. The scenario keeps a ten-second acceptance deadline; this is
+controlled PTY coverage, not an original-model or general protocol conformance claim.
 
 Actual provider prompt-correlation coverage, MCP event streaming,
 full durable run recovery and actual provider-to-child orchestration remain F10/F17
