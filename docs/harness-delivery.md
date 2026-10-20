@@ -1227,3 +1227,35 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   original-provider input, not model-driven CLI/MCP orchestration. The controlled
   fixture separately verifies V9 injection; all 12 native SDK cases and 30
   host/sync/CLI integration checks pass. No dependency or visual change.
+
+### F11/F12 original model tool intent and native permission gate
+
+- An additional isolated original Claude Code 2.1.304 coordinator with V9 selected
+  the actual Nesvo Create Session MCP tool, literal Claude worker spec and stable
+  `native-model-child-once` key. The provider showed its native permission prompt
+  before executing the tool. No child existed and no approval/fallback CLI was
+  supplied. This is model tool-selection evidence, not a completed child launch.
+- The prompt-correlated receipt became `waiting`, the turn reason was permission,
+  agent state blocked and readiness waiting. No human controller lease was taken.
+  Thus the blocker propagated through the original helper/host path, rather than
+  being misreported as unknown, task failure or completion. The test then shut
+  down its owned host; exit was zero and all 21 observed owned descendants ended.
+- Full original model-to-MCP-to-visible-child acceptance remains open pending
+  actual native permission handling; neither the fixture nor tool intent satisfies
+  it. Global provider settings and user sessions were preserved. Do not silently
+  allow tools or switch to another transport to evade the permission gate.
+
+### Published executor verification checkpoint
+
+- Published directly on the authorized existing `main`: `12bc547` fresh editor
+  admission, `b0b9304` deterministic native executor and `35b498b` V9 instructions.
+  All commits use Damian's author identity and contain no AI attribution.
+- [CI 39367123182](https://github.com/dkveil/nesvo/actions/runs/39367123182)
+  completed successfully for code head `35b498b`: Windows, Linux and macOS native
+  jobs, app checks and browser checks (five jobs). Local checks also passed fmt,
+  warnings-denied Clippy, 280 unit checks, 12 controlled native SDK scenarios,
+  30 host/sync/CLI integration checks and repository formatting.
+- Original-provider probes here ran on Windows only. The CI native jobs use
+  controlled providers and do not establish real account/login/model behavior on
+  other platforms. Completed model-driven child creation, remaining stage gates
+  and F01–F44 delivery remain open; no overall completion is claimed.
