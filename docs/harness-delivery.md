@@ -7,11 +7,11 @@ not count as delivered. Preserve the approved compact navigation and native host
 ## Stages and dependencies
 
 0. Inventory, reproduce status failures and measure an isolated host baseline.
-1. Reliable status evidence and projections: F01–F08, F29, F32.
-2. Shared host API, CLI and MCP: F09–F12, F16–F17, F37–F38.
-3. Durable orchestration: F13–F15, F18–F20, F26, F40.
-4. Host jobs and triggers: F21–F25, F27–F28, F44.
-5. Navigation, review and environment: F30–F31, F33–F36.
+1. Reliable status evidence and projections: F01â€“F08, F29, F32.
+2. Shared host API, CLI and MCP: F09â€“F12, F16â€“F17, F37â€“F38.
+3. Durable orchestration: F13â€“F15, F18â€“F20, F26, F40.
+4. Host jobs and triggers: F21â€“F25, F27â€“F28, F44.
+5. Navigation, review and environment: F30â€“F31, F33â€“F36.
 6. Recovery and mobile: F41, F43.
 7. Resource isolation and performance: F39, F42.
 
@@ -36,16 +36,16 @@ not evidence that the expanded acceptance criteria pass.
 | F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                                                                  |
 | F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: all native session commands implemented; coordinator/provider end-to-end gates pending                                             |
 | F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                                                          |
-| F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage/scoped child launch and original Claude MCP child gate verified; full orchestration matrix pending               |
-| F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending                                 |
+| F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and original Claude metadata DAG/replacement verified; source-work/provider matrix pending                       |
+| F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: scoped identity, V11 instructions and native metadata DAG/recovery verified; source-work/UI/provider matrix pending                |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Partial: task launch with explicit shared/worktree mode, dirty-source preservation; ownership UI/setup/archive pending                      |
-| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: opt-in deterministic host executor; full provider orchestration/adoption gates remain                                              |
-| F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: scoped messages, atomic result notices, exact ACK and replay/reopen; dispatch/UI pending                                  |
+| F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: host executor and original Claude metadata DAG/replacement verified; production code, adoption and UI pending                      |
+| F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: durable messages/result context and exact native ACK across replacement; UI integration pending                           |
 | F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                                                   |
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending                                    |
-| F18 | Attempt-bound worker result                     | Missing                                                       | Partial: scoped explicit results, validation and retry fences; actual provider execution gate pending                                       |
-| F19 | Questions and decision gates                    | Missing                                                       | Partial: attempt-bound authority, exact revisions, timeout/cancel and inbox notices; native/UI gates pending                                |
-| F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Partial: host/provider/run budgets, drain/resume and receipt-backed native stop/cancel; automatic dispatch/job queues pending               |
+| F18 | Attempt-bound worker result                     | Missing                                                       | Partial: native Claude attempt results/validation verified; source checks and provider/UI matrix pending                                    |
+| F19 | Questions and decision gates                    | Missing                                                       | Partial: native Claude owner decision/recovery verified; timeout/cancel core tested; permission UI pending                                  |
+| F20 | Worker budgets, cancellation and drain          | Partial: fixed eight-session limit                            | Partial: retained/live/provider/run budgets and native control verified; scheduled dispatch/queue UI pending                                |
 | F21 | Once and recurring host jobs                    | Partial: host-owned once schedules                            | Pending                                                                                                                                     |
 | F22 | Timezone, cron/RRULE and DST                    | Missing                                                       | Pending                                                                                                                                     |
 | F23 | Missed-run policy and grace window              | Missing                                                       | Pending                                                                                                                                     |
@@ -62,12 +62,12 @@ not evidence that the expanded acceptance criteria pass.
 | F34 | Verified session/turn edit provenance           | Partial: agent edit folder context only                       | Pending                                                                                                                                     |
 | F35 | Revision-bound checks and review readiness      | Missing                                                       | Pending                                                                                                                                     |
 | F36 | Trusted worktree setup/run/archive              | Partial: create worktree only                                 | Pending                                                                                                                                     |
-| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Partial: native model/effort for sessions/tasks/executor; broader profile settings/UI/resume pending                                        |
+| F37 | Provider-aware launch profiles                  | Partial: templates                                            | Partial: model/effort and owner native tool profiles; broader config/skills/UI/resume pending                                               |
 | F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, inheritance and effective config; broader profiles/resume pending                                   |
-| F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending                                                                                                                                     |
-| F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: durable snapshots/current context and owner constraints with native revision fences; provider compaction/adoption/UI gates pending |
-| F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: owner coordinator metadata rebind and exclusive host directory; conversation/adoption/layout/mobile pending                        |
-| F42 | Safe resumable hibernation                      | Missing                                                       | Pending                                                                                                                                     |
+| F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending: cleanup prerequisite and measured baseline documented; MCP pooling not implemented                                                 |
+| F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: native Claude compaction/recovery, saved owner constraints and coordinator replacement verified; native resume/adoption/UI pending |
+| F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: native metadata recovery and Windows process ownership verified; conversation/layout/mobile recovery pending                       |
+| F42 | Safe resumable hibernation                      | Missing                                                       | Pending: process ownership/cleanup prerequisite verified; resume eligibility and hibernation not implemented                                |
 | F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                                                     |
 | F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Pending                                                                                                                                     |
 
@@ -85,13 +85,13 @@ not evidence that the expanded acceptance criteria pass.
 - Baseline `cargo test --workspace --locked` (target `target/verification`):
   121 TUI, 45 host and 3 wire tests passed. These existing tests did not establish
   real provider hook delivery.
-- Isolated real Claude 2.1.303, without a model prompt: `unknown → working →
+- Isolated real Claude 2.1.303, without a model prompt: `unknown â†’ working â†’
 unknown` by 2.3 s. Output included a folder-trust screen and OSC 7501 probe.
   The baseline neither classifies this blocker nor answers that probe. A trust
   screen is not evidence that lifecycle hooks have loaded; root cause of the
   user's already-trusted conversations still needs verification.
 - Idle baseline: eight real PowerShell PTYs, no clients, 60.41 s observation,
-  host CPU 0.129% of one logical core, working set 16.65 → 16.60 MB, 17 immediate
+  host CPU 0.129% of one logical core, working set 16.65 â†’ 16.60 MB, 17 immediate
   child processes unchanged. Host memory/process numbers exclude descendants;
   this fixture did not reproduce historical 100% CPU. No provider prompt was
   submitted. Reproduce with `node --import tsx tests/harness-probe.ts baseline`
@@ -147,7 +147,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   open. A fixture does not certify every version/language.
 - Real Claude 2.1.303 now reported blocked on startup consent instead of returning
   to unknown. After consent, an explicitly bracketed-pasted short prompt showed
-  confirmed working → confirmed idle, with no intermediate idle. Expected reply
+  confirmed working â†’ confirmed idle, with no intermediate idle. Expected reply
   text did not appear contiguously in the input. Graceful cleanup passed. Earlier
   probe failures were retained as failures: a CR in the same fast input packet
   was treated as pasted text, not submission; the fixture now separates paste
@@ -166,7 +166,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   recovers a timeout. Exit cannot be revived by a delayed report.
 - Additive wire data preserves older clients' status enums. TUI sidebar and both
   switchers show `starting`/`start fail`; existing mobile badges show
-  `Uruchamianie`/`Błąd startu` without changing layout. `session explain` carries
+  `Uruchamianie`/`BĹ‚Ä…d startu` without changing layout. `session explain` carries
   the reason. Initialization alone does not establish turn readiness or permission.
 - Deterministic tests cover no-semantic-output, prolonged consent, resumed
   startup, timeout, recovery and exit; clients validate optional readiness and
@@ -179,13 +179,13 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   multi-thread runtime. Only the actual host constructs that runtime. This
   removes avoidable thread initialization on every tool-boundary hook.
 - Windows debug-build sample: 20 measured helper processes after three warmups,
-  no model requests; median wall time 16.71 → 14.59 ms, p95 23.12 → 15.15 ms.
+  no model requests; median wall time 16.71 â†’ 14.59 ms, p95 23.12 â†’ 15.15 ms.
   These include process creation, are local diagnostic samples, and do not explain
   or certify a fix for the user's historical CPU spike. Reproduce using
   `python tests/hook-helper-benchmark.py target/verification/debug/nesvo-host.exe`.
 - Actual Windows ConPTY smoke passed on isolated data: onboarding, shell input,
   focus/menu, palette, filters, live/expanded diff, launch settings, recovery,
-  150×44 / 100×32 / 80×24 resize and clean terminal exit. Captures are ignored
+  150Ă—44 / 100Ă—32 / 80Ă—24 resize and clean terminal exit. Captures are ignored
   artifacts under `artifacts/harness-conpty-20261019/current-previews`.
 - F02 remains partial: Claude lifecycle has real delivery evidence; Codex/Gemini
   adapter/version coverage and disabled-hook scenarios still need work.
@@ -206,8 +206,8 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   empty/child IDs and a regressing wall clock. 123 TUI, 59 host and 3 wire unit
   checks pass; Clippy and 18 native integration checks pass on Windows.
 - Real Claude 2.1.303 verified generation 1, provider identity, launch sequence,
-  no gap, readiness starting → trust waiting → MCP waiting → ready, then one
-  short working → Stop/idle turn with normal cleanup. No intermediate idle was
+  no gap, readiness starting â†’ trust waiting â†’ MCP waiting â†’ ready, then one
+  short working â†’ Stop/idle turn with normal cleanup. No intermediate idle was
   observed and no external MCP tool was approved.
 
 ### Additional status verification
@@ -321,7 +321,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   incremental path for CLI/MCP callers, with explicit retention gaps rather than a
   claim of a complete screen/transcript. Recovery does not share cursor space.
 - Unit regressions cover independent/frozen clocks and legacy hosts. 125 TUI tests
-  and Clippy pass; existing render/focus checks cover 80×24, 100×32 and 150×44.
+  and Clippy pass; existing render/focus checks cover 80Ă—24, 100Ă—32 and 150Ă—44.
 
 ### F12 scoped caller foundation
 
@@ -362,7 +362,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   Ubuntu and macOS jobs, including native PTY/transport/CLI checks. This is CI
   evidence, not physical mobile or interactive Unix terminal verification.
 - Local real ConPTY smoke passed after scoped authentication: onboarding, input,
-  menu focus, diff/review, search, filters, launch dialogs, 150×44/100×32/80×24,
+  menu focus, diff/review, search, filters, launch dialogs, 150Ă—44/100Ă—32/80Ă—24,
   resize and clean terminal restoration. Current renderer PNGs are kept in ignored
   `artifacts/harness-conpty-20261019/current-previews` with explicit fixture data.
 - F32 repair: the final lifecycle drain retains the duration frozen at process
@@ -438,7 +438,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   the explicit native SDK integration and all 24 existing native host/sync/CLI
   checks pass. Controlled status publication p95 was 259.783 ms over 27 batches.
   Real ConPTY smoke also passes, including UI/input/menu/review, three dimensions
-  (150×44, 100×32, 80×24), resize and clean terminal restoration.
+  (150Ă—44, 100Ă—32, 80Ă—24), resize and clean terminal restoration.
 
 ### F17 native send/wait checkpoint
 
@@ -472,7 +472,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Wait deadlines include the requested host timeout. Timeout/failed/unknown
   outcomes preserve a recoverable receipt, and unsupported provider correlation
   fails explicitly. Neither adapter takes human control or retries terminal input.
-- Official SDK/native MCP tests verify send → CLI same-key replay → delivered
+- Official SDK/native MCP tests verify send â†’ CLI same-key replay â†’ delivered
   wait and reject shell response completion. Native CLI tests exercise file/stdin
   sends, replay and schema-valid waits. Controlled helper/PTY tests also send
   multiline Unicode through the actual CLI and verify exit 7/receipt on timeout.
@@ -542,7 +542,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   recovery lineage remapping remains F41.
 - Native tests verify background child creation while a human controls the parent,
   late-observer lineage, invalid parent refusal, restart metadata and replay with
-  no resurrection. SDK-to-MCP → CLI child replay creates only once. A TUI model
+  no resurrection. SDK-to-MCP â†’ CLI child replay creates only once. A TUI model
   regression keeps input focus/lease when the same-name child arrives first.
 - Coordinator grants and the agent instruction/real-provider child-launch gate
   are the next F12 boundary; this checkpoint does not label them complete.
@@ -1194,7 +1194,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   native SDK scenarios pass after the final runtime changes. No visual/config
   change. Actual multi-provider model-to-MCP orchestration, delta-only coordinator
   wakes, manual checkpoints, job scheduling and complete recovery/mobile gates
-  remain required. This checkpoint does not complete stage 3 or F01–F44.
+  remain required. This checkpoint does not complete stage 3 or F01â€“F44.
 
 ### F38 instruction V9: opt-in executor and uncertainty boundaries
 
@@ -1258,7 +1258,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - Original-provider probes here ran on Windows only. The CI native jobs use
   controlled providers and do not establish real account/login/model behavior on
   other platforms. Completed model-driven child creation, remaining stage gates
-  and F01–F44 delivery remain open; no overall completion is claimed.
+  and F01â€“F44 delivery remain open; no overall completion is claimed.
 
 ### F26 opt-in coalesced coordinator notices
 
@@ -1326,7 +1326,7 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   all 15 controlled native SDK scenarios, 30 host/sync/CLI integration checks,
   production build and repository formatting. No dependency or visual change;
   full original-provider matrix, checkpoint recovery, mobile controls and remaining
-  F01–F44/plugin gates stay open.
+  F01â€“F44/plugin gates stay open.
 
 ### F26 canonical native blocker verification and CLI parity
 
@@ -1841,3 +1841,20 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   The owner authorizes subsequent necessary checked-profile probes without
   per-run reconfirmation; its exact scope, process/time bounds and unknown-effect
   reconciliation remain in force. See [scope and evidence](harness-native-recovery-probe.md).
+
+### Post-recovery idle host baseline
+
+- Native Windows, same opt-in `tests/harness-probe.ts baseline`, eight real idle
+  PowerShell PTYs, client disconnected, three-second startup stabilization and
+  60.37-second observation. Host CPU was 0.181% of one logical core; host working
+  set 18.74 â†’ 18.68 MiB, threads 50 â†’ 46, immediate children unchanged at 17.
+  Cleanup completed normally. No original model or user session was involved.
+- The earlier 60.41-second baseline was 0.129% of one core and 16.65 â†’ 16.60 MB
+  as previously reported. These single quantized host-only intervals are not a
+  statistical regression verdict or total process-tree memory/CPU measurement.
+  Original baseline artifacts are preserved outside the repository alongside
+  the new report. This observation does not reproduce or explain the historical
+  100% CPU report and does not complete MCP pooling/hibernation benchmarks.
+- Shared-profile head a9175f2 passed all five CI jobs (39405551767), including
+  its complete recovery scenario on Windows, macOS and Linux. Original model
+  behavior remains verified only for the stated native Windows/Claude version.

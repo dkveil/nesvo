@@ -179,9 +179,9 @@ refusal leaves the review task planned; four slots then admit its first attempt.
 The targeted scenario and all 27 serial native SDK scenarios pass. Fixtures do
 not prove model behavior.
 
-## Revision 3 proposal (requires a new owner decision)
+## Revision 3 checked scope (standing authorization below)
 
-One new original-model attempt may use the MCP-tested shared profile directly,
+Necessary original-model probes use the MCP-tested shared profile directly,
 with no copied hard-coded retention limit. Native process/tool/parallel/time
 bounds and existing trusted cwd remain as in revision 2. Four retained records
 support the already proposed two coordinator/two worker starts; this does not
