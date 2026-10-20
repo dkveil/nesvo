@@ -176,6 +176,22 @@ pub fn stdio() -> anyhow::Result<()> {
 struct Contained {
     child: tokio::process::Child,
     scope: Option<command_scope::Scope>,
+    observed_scope: Option<command_scope::Scope>,
+}
+impl Contained {
+    fn retire_termination(&mut self) {
+        if let Some(scope) = self.scope.take() {
+            self.observed_scope = Some(scope);
+        }
+    }
+    fn empty(&self) -> anyhow::Result<bool> {
+        self.observed_scope
+            .as_ref()
+            .ok_or_else(|| {
+                anyhow::anyhow!("Scope observation requires retired termination ownership")
+            })?
+            .empty()
+    }
 }
 impl Drop for Contained {
     fn drop(&mut self) {
@@ -211,7 +227,11 @@ pub async fn run(spec: Command) -> Outcome {
     let Ok(child) = command.spawn() else {
         return Outcome::failed(OutcomeState::Refused, "helper_unavailable");
     };
-    let mut owned = Contained { child, scope: None };
+    let mut owned = Contained {
+        child,
+        scope: None,
+        observed_scope: None,
+    };
     let Ok(scope) = command_scope::Scope::enroll(&owned.child) else {
         let _ = owned.child.kill().await;
         return Outcome::failed(OutcomeState::Refused, "containment_unavailable");
@@ -242,22 +262,13 @@ pub async fn run(spec: Command) -> Outcome {
         .as_ref()
         .is_some_and(|scope| scope.terminate().is_ok());
     let cleanup = tokio::time::timeout(Duration::from_secs(2), async {
-        // All group signals are sent before polling/reaping the leader. Clear
-        // the Unix guard immediately after wait, never signal that ID again.
+        // All termination signals are sent before polling/reaping the leader.
+        // Retire termination ownership immediately after wait. An observer may
+        // query group existence, but never terminate that numeric identity again.
         let result = owned.child.wait().await;
-        #[cfg(unix)]
-        {
-            let _ = owned.scope.take();
-        }
+        owned.retire_termination();
         result.map_err(|_| ())?;
-        while !owned
-            .scope
-            .as_ref()
-            .map(|scope| scope.empty())
-            .transpose()
-            .map_err(|_| ())?
-            .unwrap_or(true)
-        {
+        while !owned.empty().map_err(|_| ())? {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Ok::<_, ()>(())
@@ -271,15 +282,11 @@ pub async fn run(spec: Command) -> Outcome {
         // if an OS/filesystem operation has not yet responded to termination.
         tokio::spawn(async move {
             let _ = owned.child.wait().await;
-            #[cfg(windows)]
-            while !owned
-                .scope
-                .as_ref()
-                .is_some_and(|scope| matches!(scope.empty(), Ok(true)))
-            {
+            owned.retire_termination();
+            while !matches!(owned.empty(), Ok(true)) {
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
-            let _ = owned.scope.take();
+            let _ = owned.observed_scope.take();
             drop(slot);
         });
     }

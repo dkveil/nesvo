@@ -149,7 +149,11 @@ interpreter and exact arguments are supported.
 - Unix: the helper leads its own process group. The parent retains the unreaped
   leader until group termination, preventing reuse of its identity. Parent death
   closes the pipe; the helper kills its own group. The adapter signals the owned
-  group before reaping the helper. Ordinary descendants are covered; detached
+  group before reaping the helper, then retires termination ownership. A
+  non-signalling existence query must confirm that the group is gone before a
+  passed check can dispatch. A live/reused group ID or an observation error is
+  conservative uncertainty, never permission to signal that number again.
+  Ordinary descendants are covered; detached
   sessions/groups or privilege-changing commands are outside this trusted
   foreground policy. `cleanupConfirmed` concerns the owned scope, not arbitrary
   detached processes or a sandbox guarantee.

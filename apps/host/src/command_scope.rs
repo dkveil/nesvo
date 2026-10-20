@@ -72,7 +72,18 @@ impl Scope {
     pub fn empty(&self) -> Result<bool> {
         #[cfg(unix)]
         {
-            Ok(true)
+            // SAFETY: signal zero only observes existence/permission. This may be used
+            // after reaping the leader: a recycled numeric group can at worst
+            // retain capacity conservatively, never receive a terminating signal.
+            if unsafe { libc::kill(-self.group, 0) } == 0 {
+                return Ok(false);
+            }
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                Ok(true)
+            } else {
+                Err(error.into())
+            }
         }
         #[cfg(windows)]
         {
@@ -80,5 +91,18 @@ impl Scope {
         }
     }
 }
-// Termination is invoked by the adapter before it reaps the leader; Scope must
-// never survive Child or signal a recycled Unix group after a successful wait.
+// The adapter retires termination ownership before/when it reaps the leader.
+// A retained observer may query signal zero, never terminate a recycled group.
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_live_group_is_not_assumed_empty() {
+        // SAFETY: queries the test process's group; empty uses signal zero only.
+        let group = unsafe { libc::getpgrp() };
+        let observer = Scope { group };
+        assert!(!observer.empty().unwrap());
+    }
+}

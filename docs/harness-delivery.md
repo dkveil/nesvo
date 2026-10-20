@@ -2052,3 +2052,20 @@ the value without an unnecessary drop call, preserving release order on both
 platforms and without suppressing a lint. Windows fmt/Clippy, production rebuild
 and all three native precheck lifecycle/parity scenarios passed after that fix.
 The initial failing log is retained; final platform results follow separately.
+
+A subsequent lifetime review tightened Unix cleanup proof: successful SIGKILL
+submission alone is not group termination evidence. After reaping the helper,
+termination ownership is retired and only signal-zero existence observation is
+allowed. Remaining processes or observation errors retain uncertainty/capacity;
+a recycled numeric group never receives a termination signal. A Unix OS-boundary
+regression test checks that a live group is not reported empty. The native
+timeout/root-exit/parent-death scenarios exercise the complete process adapter.
+Windows fmt/Clippy, all 366 unit tests and all three native precheck scenarios
+passed after that lifetime change; final platform CI remains the next gate.
+
+An isolated native Windows idle observation on source `1cd6af3`: eight real
+PowerShell PTYs, no clients, 60.40 seconds; host CPU 0.310% of one logical core,
+working set 19.51 to 19.46 MiB, threads 50 to 45 and immediate children 17 to 17.
+Fixture cleanup passed. This single quantized host-only observation is not a
+total-tree measurement, statistical regression proof or a reproduction of the
+historical 100% CPU report. Original reports remain outside Git.
