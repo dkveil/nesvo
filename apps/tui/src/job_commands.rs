@@ -313,6 +313,46 @@ fn budget() -> u64 {
     300_000
 }
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum RetryKind {
+    LaunchNoEffect,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", try_from = "RetryPolicyFields")]
+struct RetryPolicy {
+    on: RetryKind,
+    max_attempts: u8,
+    initial_delay_ms: u64,
+    max_delay_ms: u64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RetryPolicyFields {
+    on: RetryKind,
+    max_attempts: u8,
+    initial_delay_ms: u64,
+    max_delay_ms: u64,
+}
+impl TryFrom<RetryPolicyFields> for RetryPolicy {
+    type Error = &'static str;
+
+    fn try_from(fields: RetryPolicyFields) -> std::result::Result<Self, Self::Error> {
+        if !(1..=8).contains(&fields.max_attempts)
+            || !(1_000..=3_600_000).contains(&fields.initial_delay_ms)
+            || fields.max_delay_ms < fields.initial_delay_ms
+            || fields.max_delay_ms > 86_400_000
+        {
+            return Err("Job retry policy exceeds its supported attempt or delay bounds");
+        }
+        Ok(Self {
+            on: fields.on,
+            max_attempts: fields.max_attempts,
+            initial_delay_ms: fields.initial_delay_ms,
+            max_delay_ms: fields.max_delay_ms,
+        })
+    }
+}
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Spec {
     title: String,
@@ -321,6 +361,8 @@ pub struct Spec {
     schedule: Schedule,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     precheck_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry: Option<RetryPolicy>,
     #[serde(default)]
     misfire: Misfire,
     #[serde(default = "grace")]
@@ -404,6 +446,21 @@ pub enum Request {
     Mutation {
         key: String,
     },
+}
+impl Request {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if matches!(
+            self,
+            Self::Create { spec, .. } | Self::Update { spec, .. }
+                if spec.retry.is_some() && spec.precheck_id.is_some()
+        ) {
+            return Err(cli::failure(
+                "invalid_argument",
+                "Job retry policy cannot be combined with precheckId until per-generation command execution is supported",
+            ));
+        }
+        Ok(())
+    }
 }
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let machine = command.machine();

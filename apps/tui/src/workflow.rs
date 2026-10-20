@@ -659,6 +659,9 @@ enum Request {
     },
 }
 fn wire(request: Request) -> Result<Value> {
+    if let Request::Jobs { request } = &request {
+        request.validate()?;
+    }
     let value = serde_json::to_value(request)?;
     if serde_json::to_vec(&value)?.len() > 24 * 1024 {
         return Err(cli::failure(
@@ -734,6 +737,24 @@ fn job_attempts_supported(caps: &Value, request: &Value) -> bool {
             Some("attempts" | "attempt")
         )
         || caps["jobAttempts"] == true
+}
+fn job_retry_supported(caps: &Value, request: &Value) -> bool {
+    let action = &request["request"];
+    if action["action"] != "jobs"
+        || !matches!(
+            action["request"]["action"].as_str(),
+            Some("create" | "update")
+        )
+    {
+        return true;
+    }
+    let Some(retry) = action["request"]["spec"].get("retry") else {
+        return true;
+    };
+    caps["jobRetries"] == true
+        && caps["jobRetryKinds"].as_array().is_some_and(|kinds| {
+            kinds.iter().all(Value::is_string) && kinds.iter().any(|kind| kind == &retry["on"])
+        })
 }
 pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
@@ -819,6 +840,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host does not support retained job attempt history; update nesvo-host",
         ));
     }
+    if !job_retry_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot enforce this job retry policy; update nesvo-host",
+        ));
+    }
     if model_profile_requested(request) && caps["sessionModelProfiles"] != true {
         return Err(cli::failure(
             "unsupported",
@@ -854,6 +881,49 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retry_policy_requires_explicit_typed_host_support_only_when_serialized() {
+        for action in ["create", "update"] {
+            let mut fields = json!({"action":action,"key":"retry","spec":{"title":"Retry","instruction":"Report result","profile":{"program":"claude","workspace":"shared"},"schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"}}});
+            if action == "update" {
+                fields["jobId"] = json!("j");
+                fields["expectedRevision"] = json!(1);
+            }
+            let legacy = tool("jobs", json!({"request":fields.clone()})).unwrap();
+            assert!(legacy["request"]["request"]["spec"].get("retry").is_none());
+            assert!(job_retry_supported(&json!({}), &legacy));
+            fields["spec"]["retry"] = json!({"on":"launchNoEffect","maxAttempts":3,"initialDelayMs":1000,"maxDelayMs":10000});
+            let retry = tool("jobs", json!({"request":fields})).unwrap();
+            for caps in [
+                json!({}),
+                json!({"durableJobs":true,"jobAttempts":true}),
+                json!({"jobRetries":true}),
+                json!({"jobRetryKinds":["launchNoEffect"]}),
+                json!({"jobRetries":false,"jobRetryKinds":["launchNoEffect"]}),
+                json!({"jobRetries":"true","jobRetryKinds":["launchNoEffect"]}),
+                json!({"jobRetries":true,"jobRetryKinds":"launchNoEffect"}),
+                json!({"jobRetries":true,"jobRetryKinds":["unknown"]}),
+                json!({"jobRetries":true,"jobRetryKinds":["launchNoEffect",true]}),
+            ] {
+                assert!(!job_retry_supported(&caps, &retry));
+            }
+            assert!(job_retry_supported(
+                &json!({"jobRetries":true,"jobRetryKinds":["launchNoEffect"]}),
+                &retry
+            ));
+        }
+        for fields in [
+            json!({"action":"list"}),
+            json!({"action":"get","jobId":"j"}),
+            json!({"action":"runNow","key":"run","jobId":"j","expectedRevision":1}),
+            json!({"action":"attempts","jobId":"j","occurrenceId":"o"}),
+        ] {
+            assert!(job_retry_supported(
+                &json!({}),
+                &tool("jobs", json!({"request":fields})).unwrap()
+            ));
+        }
+    }
     #[test]
     fn job_attempt_reads_require_their_own_host_capability() {
         for fields in [

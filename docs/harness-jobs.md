@@ -8,7 +8,7 @@ and human-input guards. No model API keys or direct model calls are added.
 
 Once, [recurring IANA calendars](harness-job-calendars.md) and
 [owner-approved command prechecks](harness-job-prechecks.md) are available. Safe reuse,
-authenticated triggers, automatic retries, hard runtime timeout/cleanup,
+authenticated triggers, broader retry classes, hard runtime timeout/cleanup,
 quota queues and job UI remain separate implementation gates. Existing legacy
 once schedules and their storage/API remain unchanged until a tested migration
 can preserve their launch semantics. The new `job` commands list the new records.
@@ -106,12 +106,14 @@ A `jobAttemptId` identifies a retained dispatch generation of an occurrence.
 It is distinct from that occurrence's workflow `attemptId`, which identifies the
 native worker's task attempt. Current occurrence reads expose nullable
 `jobAttemptId` and `jobAttemptOrdinal` alongside the existing native pointers.
-An unclaimed queued occurrence has no generation. This first implementation
-records generation 1 when work is claimed; it does not accept or advertise a retry
-policy, automatic retry, backoff or a second dispatch generation. A deliberate
-`run-now` still creates a separate occurrence.
+An unclaimed queued occurrence has no generation. The host records generation 1
+when work is claimed. An explicit `launchNoEffect` retry policy
+can admit later generations of the same occurrence after a confirmed native
+pre-spawn refusal, as described below. A deliberate `run-now` creates a separate
+occurrence.
 
-Summaries include the generation state/reason, logical intent `createdAt`, actual
+Summaries include the generation state/reason, generation `createdAt` (the
+original intent time for generation 1), actual
 `claimedAt`, nullable `finishedAt`, bound `runId`/`runState`, native attempt/session/
 launch receipt pointers and bounded precheck evidence without stdout/stderr.
 Detail adds retained precheck output, the worker's explicit `result` and its
@@ -121,8 +123,9 @@ Null native pointers do not prove that an uncertain effect never happened;
 
 Original mutation replay preserves its historical acceptance, including absent
 generation pointers in older records. Read the current occurrence and exact
-generation for later observations. Restart retains the same journal identity and
-does not allocate a retry or repeat an unknown native effect.
+generation for later observations. Reads and mutation replay never allocate a
+generation or repeat native effects. Restart retains journal identity and pending
+retry decisions; interrupted native effects still require reconciliation.
 
 Each new dispatch also has a private host-only preparation token tied to its
 exact current generation. Precheck supervision/completion, Run binding and
@@ -138,7 +141,64 @@ Historical Runs stay inspectable, while automated native admissions reject a
 Run whose job generation is no longer current. A retired preparation token does
 not stop already admitted native work. Human direct terminal input retains its
 existing control contract. Prechecks remain occurrence-keyed and dispatch stays
-generation 1 only; these fences alone do not enable retries or repeated commands.
+generation 1 when a `precheckId` is present. A retry policy combined with
+`precheckId` is explicitly refused until command execution is migrated to each
+generation; these fences alone do not authorize repeated commands.
+
+## Retry confirmed launch refusals
+
+Hosts advertising both `jobRetries:true` and
+`jobRetryKinds:["launchNoEffect"]` accept an optional retry policy in create/edit
+specifications. The CLI and MCP check both capabilities only when the serialized
+spec contains a policy. Older hosts and malformed capability values are refused
+before the new request is sent. Omitting `retry` preserves a single dispatch and
+the existing serialized intent.
+
+Add all four explicit fields to the job JSON file before creating or editing it:
+
+```json
+{
+  "retry": {
+    "on": "launchNoEffect",
+    "maxAttempts": 3,
+    "initialDelayMs": 1000,
+    "maxDelayMs": 10000
+  }
+}
+```
+
+This fragment is the optional member of the full specification shown above.
+`on` currently accepts only the string `launchNoEffect`. `maxAttempts` is 1–8 and
+includes the first dispatch generation. `initialDelayMs` is 1000–3600000;
+`maxDelayMs` is at least `initialDelayMs` and at most 86400000. No field defaults
+inside the policy. The host persists each capped exponential backoff decision
+once: the first retry waits `initialDelayMs`, then the delay doubles up to
+`maxDelayMs`. A read, reconnect, mutation replay or restart does not reset it.
+
+Only an exact failed native create receipt containing JSON boolean
+`effectStarted:false` qualifies. This is the native pre-spawn validation refusal
+class. An exception from spawning, PTY setup or worktree preparation remains an
+unknown outcome unless that exact no-effect evidence exists. Provider exit,
+result failure, idle/silence, timeouts, missing receipts and unknown effects do
+not qualify. Retrying does not relax provider permissions, workspace constraints,
+budgets or input guards. Policies with `precheckId` are currently refused.
+
+During backoff the logical occurrence is `retryWaiting`; its outgoing journal
+generation remains `failed`. The current occurrence and attempt summary/detail
+may expose nullable `retry` facts: `jobAttemptId`, `attemptId`, `launchReceiptId`,
+`decidedAt`, `notBefore` and `nextOrdinal`. They identify the immutable outgoing
+decision and its evidence; they are not instructions to execute again. Current
+state distinguishes waiting, canceled work and a later generation. Once the cursor
+advances, the current occurrence's `retry` is null until another qualifying failure;
+the old attempt retains its facts.
+
+Each retry gets a fresh dispatch generation, Run, native task attempt and launch
+receipt. Prior Runs, attempts and receipts remain inspectable. `maxElapsedMs`
+applies independently to each Run as an admission/input budget; it does not impose
+a hard process timeout. Exhausting the generation limit retains the final failure.
+Canceling while waiting fences further admissions for that occurrence and keeps
+the outgoing decision as historical evidence. A separate `run-now` remains a new
+occurrence with its own intent and overlap checks.
 
 ## Cancel one occurrence
 
@@ -202,7 +262,7 @@ and immutable acceptance. Observation never dispatches an additional stop.
 - `misfire:catchUp` accepts lateness within `graceMs` (default 60 seconds, maximum
   24 hours); it records a skip outside that window. There is no unlimited backlog.
 - `overlap:skip` records a skip while an admitted occurrence for the same job is
-  queued, dispatching, prechecking, running, canceling, awaiting validation or awaiting reconciliation.
+  queued, dispatching, prechecking, running, canceling, waiting to retry, awaiting validation or awaiting reconciliation.
 - `overlap:queue` retains at most one additional queued occurrence. Further
   admissions record `queue_full` skips. Queued intent is not reinterpreted as a
   new clock misfire when the preceding occurrence finishes. Native uncertainty
@@ -213,7 +273,7 @@ Recurring downtime coalesces to the latest eligible clock slot and exposes
 for DST, search bounds and durable calendar errors. `calendarState:exhausted`
 means no more automatic terms; it does not mean the last worker succeeded.
 
-At most eight due definitions are materialized per calendar/once pass and four queued occurrences are
+At most eight due definitions are materialized per calendar/once pass and four eligible new/retry generations are
 claimed per host tick. Claims are transactional before native work. Dispatch
 preparation is bounded to four in-flight tasks; two independent calendar calculations
 and two command scopes have their own bounds, preserving timer progress. Definition,
@@ -224,7 +284,7 @@ archive policies and broader overlap modes remain future work.
 
 ## Outcomes and crash safety
 
-`queued`, `dispatching`, `prechecking`, `running`, `needsValidation`, `canceling` and `reconcile` are distinct
+`queued`, `dispatching`, `prechecking`, `running`, `needsValidation`, `canceling`, `retryWaiting` and `reconcile` are distinct
 from terminal `succeeded`, `failed`, `skipped` and `canceled`. Process creation,
 PTY silence and idle are never job success. A succeeded worker report still needs
 an explicit matching result validation; the existing workflow rules require
@@ -235,10 +295,12 @@ host process budgets until explicitly stopped/closed; cleanup policy is pending.
 
 Each occurrence uses deterministic workflow keys prefixed
 `job:JOB_ID:OCCURRENCE_ID` for `run`, `plan`, `budget`, `activate` and `executor`.
-Its run pointer is persisted before native executor admission. A metadata failure
+The first generation preserves its original keys; later generations use distinct
+keys and Runs. Each run pointer is persisted before native executor admission. A metadata failure
 is retained as a refusal; an unconfirmed native dispatch requires reconciliation.
 After restart, unfinished native claims are marked `reconcile`, never automatically
-restarted. Retained results may still be inspected/validated. Unclaimed eligible
+restarted. Persisted eligible retry decisions remain subject to their original
+backoff and current occurrence state. Retained results may still be inspected/validated. Unclaimed eligible
 queued intent can run once; it has not previously performed a native effect.
 The scheduler waits for the host's bounded provider-version probes before
 admitting due work. Discovery still in progress must not be treated as an

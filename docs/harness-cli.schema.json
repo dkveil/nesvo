@@ -3200,6 +3200,68 @@
         }
       }
     },
+    "jobRetryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on", "maxAttempts", "initialDelayMs", "maxDelayMs"],
+      "properties": {
+        "on": {
+          "enum": ["launchNoEffect"]
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Total dispatch generations, including the first."
+        },
+        "initialDelayMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        },
+        "maxDelayMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 86400000,
+          "description": "At least initialDelayMs; enforced at the command boundary."
+        }
+      }
+    },
+    "jobRetryDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobAttemptId",
+        "attemptId",
+        "launchReceiptId",
+        "decidedAt",
+        "notBefore",
+        "nextOrdinal"
+      ],
+      "properties": {
+        "jobAttemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "attemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "launchReceiptId": {
+          "$ref": "#/definitions/id"
+        },
+        "decidedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "notBefore": {
+          "$ref": "#/definitions/cursor"
+        },
+        "nextOrdinal": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8
+        }
+      },
+      "description": "Immutable outgoing retry decision facts. These do not authorize replay; current occurrence state identifies waiting, cancellation or a later generation."
+    },
     "jobDefinition": {
       "type": "object",
       "required": ["id", "title", "revision", "enabled", "nextDueAt", "createdAt", "schedule"],
@@ -3303,7 +3365,12 @@
         },
         "spec": {
           "type": "object",
-          "required": ["title", "instruction", "profile", "schedule"]
+          "required": ["title", "instruction", "profile", "schedule"],
+          "properties": {
+            "retry": {
+              "$ref": "#/definitions/jobRetryPolicy"
+            }
+          }
         }
       }
     },
@@ -3343,6 +3410,16 @@
           "type": ["integer", "null"],
           "minimum": 1
         },
+        "retry": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryDecision"
+            }
+          ]
+        },
         "jobRevision": {
           "type": "integer",
           "minimum": 1
@@ -3378,7 +3455,8 @@
             "failed",
             "canceled",
             "prechecking",
-            "canceling"
+            "canceling",
+            "retryWaiting"
           ]
         },
         "reason": {
@@ -3416,7 +3494,12 @@
         },
         "spec": {
           "type": "object",
-          "required": ["title", "instruction", "profile", "schedule"]
+          "required": ["title", "instruction", "profile", "schedule"],
+          "properties": {
+            "retry": {
+              "$ref": "#/definitions/jobRetryPolicy"
+            }
+          }
         },
         "attemptId": {
           "anyOf": [
@@ -3557,6 +3640,16 @@
         "ordinal": {
           "type": "integer",
           "minimum": 1
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryDecision"
+            }
+          ]
         },
         "runId": {
           "anyOf": [
