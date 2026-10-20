@@ -9,7 +9,7 @@ use std::{
 };
 
 const INSTRUCTIONS: &str = include_str!("../../../skills/nesvo-harness/SKILL.md");
-const INSTRUCTION_VERSION: u32 = 8;
+const INSTRUCTION_VERSION: u32 = 9;
 
 pub fn runtime_client() -> Option<PathBuf> {
     resolve_client(

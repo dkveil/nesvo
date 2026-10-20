@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 8 (`NESVO_HARNESS_INSTRUCTIONS_V8`).
+Instruction version: 9 (`NESVO_HARNESS_INSTRUCTIONS_V9`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -125,8 +125,8 @@ queue its immutable instruction through task delivery below when `runDelivery`
 is supported, or send explicit context through guarded `session send`. Native
 operation keys recover through `operation`; workflow metadata keys recover
 through `run mutation --key ORIGINAL_KEY --json`. Do not interchange namespaces
-or invent a fresh key after an uncertain effect. No automatic DAG executor is
-supplied; explicit run budget/drain operations are described below.
+or invent a fresh key after an uncertain effect. Automatic task selection
+requires the separate opt-in `runExecutor` contract below.
 
 ## Atomically launch a task worker
 
@@ -213,7 +213,8 @@ MCP `nesvo_deliver_task` takes `{key,runId,taskId,expectedRevision,timeoutMs?}`.
 It sends the immutable task instruction from the active plan. There is no prompt,
 foreign session, role or shell-command field. Agent sessions only: task prose is
 never executed in a plain terminal. Timeout is 1–300000 ms, default 60000. This
-does not choose/launch tasks automatically or add a scheduled-job executor.
+delivery API does not choose/launch tasks or add scheduled jobs. Automatic
+selection requires explicit executor start below.
 
 Acceptance says `queued` with a null `receiptId`, not input or success. Recover
 the workflow key through `run mutation --key task-input-1 --json`; inspect current
@@ -248,6 +249,72 @@ separate native controls require their own deliberate authority. Do not invent
 exit/no-effect proof or use a fresh key to replay uncertainty. Explicit worker
 report plus independent validation still precedes dependent review; idle/settled,
 queue ACK or a permission answer cannot substitute for either.
+
+## Opt-in host task executor
+
+With `runExecutor`, start deterministic scheduling for an **active, immutable
+plan**. First inspect `run get RUN_ID --json`, current budget and human blockers.
+Prepare a literal UTF-8 profiles file covering every actual host task ID once:
+
+```json
+{
+  "tasks": [
+    {
+      "taskId": "HOST_TASK_ID",
+      "profile": { "program": "claude", "workspace": "shared", "harness": true }
+    }
+  ],
+  "retryFailed": false,
+  "retryDelayMs": 1000,
+  "readinessTimeoutMs": 60000
+}
+```
+
+Choose `shared` or `worktree` deliberately for each task; isolated worktrees do
+not inherit another worker's uncommitted edits. Programs are `claude|codex|gemini`,
+never shell. Use supported harness settings; other providers require explicit
+`harness:false`. Profiles permit optional `name`/`cwd` with ordinary scope checks,
+not replacement prompts/roles or native permission bypass. Limits: 1–64 profiles,
+24 KiB spec, retry delay 1000–60000 ms, readiness deadline 1–300000 ms (default
+60000). Retry defaults off; enabling it does not relax run/provider limits.
+
+```powershell
+& $env:NESVO_CLI run executor start RUN_ID --key engine-1 --revision RUN_REV --file "C:\private\profiles.json" --json
+& $env:NESVO_CLI run executor get RUN_ID --json
+& $env:NESVO_CLI run executor disable RUN_ID --key disable-1 --revision RUN_REV --json
+& $env:NESVO_CLI run executor enable RUN_ID --key enable-1 --revision RUN_REV --json
+```
+
+MCP start `nesvo_start_run_executor {key,runId,expectedRevision,spec}`; inspect
+`nesvo_get_run_executor {runId}`; disable/enable `nesvo_disable_run_executor` /
+`nesvo_enable_run_executor {key,runId,expectedRevision}`. Only authorized owner
+or that run's coordinator; advertising a tool grants no role/child capability.
+
+Start/enable/disable replies are historical acceptance. Recover lost `engine-1`
+with `run mutation --key engine-1 --json`, then inspect current executor/run/task.
+Its spec is immutable (`executor_exists` is not permission to replace it under
+a new key). Enable requires deliberate fresh authority/current revision and
+increments generation; old runtimes cannot admit effects. Native receipt IDs
+remain separately issuer-scoped; knowing an owner receipt ID grants no access.
+
+Only dependency-ready tasks start within atomic parallel/retry/time reservations.
+The executor queues instructions only for native attempts it actually launched;
+manually assigned workers remain untouched. Reported results still hold slots
+until independent accepted validation; idle/settled/ACK never release review.
+Optional retries apply only to known failed/stopped/no-effect launch history,
+with cooldown and retained ordinal/budgets. Launching/unknown work retains its
+slot: no fresh-key ordinary create/send or auto retry to bypass uncertainty.
+
+Disable stops new admissions; an already committed launch/instruction may finish.
+It does not undo bytes or stop workers; use explicit run control if authorized.
+Host restart disables/pauses scheduling, invalidates generations and retains
+native uncertainty, without process adoption or replay. Quick human takeover
+and release pauses input even without typing. Enable never rearms an existing
+paused/expired/failed/unknown delivery or validates work. A dead coordinator is
+not revived. Inspect blockers and request deliberate reconciliation.
+
+Host journal/timer scheduling is not a model heartbeat. No delta-to-model wake,
+scheduled-job executor, automatic validation or permission approval is implied.
 
 ## Durable messages and ACK
 

@@ -16,7 +16,7 @@ const editorBlocked =
   editorRedraw &&
   fs.readFileSync(path.join(process.cwd(), '.fixture-editor-redraw'), 'utf8') === 'working';
 if (
-  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V8')
+  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V9')
 )
   throw new Error('Missing versioned launch-local harness instructions');
 fs.writeFileSync(path.join(directory, `${id}.txt`), process.env.NESVO_AGENT_CONTEXT);
@@ -30,7 +30,7 @@ if (process.argv.includes('--mcp-config')) {
   );
   if (
     config.mcpServers.nesvo.env.NESVO_AGENT_CONTEXT !== process.env.NESVO_AGENT_CONTEXT ||
-    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V8')
+    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V9')
   )
     throw new Error('Launch-local harness was not loaded by the controlled provider');
 }

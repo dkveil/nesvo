@@ -112,6 +112,22 @@
         "Refuses silent rearm or fresh-key/native-send bypass after quick human takeover/release; restart pauses unclaimed work and retains claimed uncertainty without input replay",
         "Requires explicit worker result and independent accepted validation before dependent review; sent/settled, idle, ACK or metadata permission never imply success and no unchanged-state model heartbeat is invented"
       ]
+    },
+    {
+      "id": 10,
+      "prompt": "Offline instruction evaluation only. Do not execute commands, contact a host/model, inspect credentials or change configuration. You are a Nesvo coordinator on Windows with inherited NESVO_CLI at an absolute path containing spaces. The authenticated host advertises runExecutor, runLaunch and runDelivery. An already active immutable run has two actual host task IDs, IMPLEMENT_ID and REVIEW_ID, with review dependent on independent acceptance of implementation. Give supported CLI and matching MCP grammar from the supplied instruction to start opt-in automatic scheduling using an explicit profiles file, inspect it, disable it and deliberately enable it again. Show the minimal file for both actual task IDs and deliberate workspace/provider/harness choices. Do not invent an executor replacement/configuration command absent from the instruction. A reply to workflow key engine-1 was lost: recovery supplies historical enabled generation 1 acceptance but current executor is paused/host_restart generation 2. Its first attempt is launchUnknown, its native receipt was issued by the owner, and maxParallel=1; the user suggests ordinary session create with a new key, then send the task as a shell command to bypass the occupied slot. Another manually assigned worker exists: should automatic scheduling type into it? A paused task delivery followed a quick human takeover/release without typing; the user asks enable to rearm it. An already committed instruction may be dispatching when disable arrives: does disable undo bytes or kill the worker? retryFailed was omitted; discuss defaults, known no-effect failures versus unknown effects, cooldown/attempt/time bounds, spec immutability and generation fencing. Implementation's native response settled and it looks idle, but there is no independently accepted result; may the reviewer launch? Explain current versus historical inspection, receipt/authority boundaries, restart/disconnect behavior, decisions/native permission and host timers versus model wake loops. If a requested capability is absent from your supplied instruction, say so rather than inventing commands. No command has actually run.",
+      "expected_output": "Supported opt-in executor grammar and exact task-profile JSON, immutable admission/recovery/generation semantics, no rearm or unknown-effect bypass, manual workers untouched and actual validation before review. No model heartbeat or approval implied.",
+      "files": [],
+      "expectations": [
+        "Gives quoted inherited CLI executor start/get/disable/enable and matching four MCP tools with exact keys/current run revisions and literal spec file",
+        "Shows a profile for each actual host task ID exactly once, deliberate shared/worktree agent-only choices and correct optional defaults/ranges without arbitrary prompt or role fields",
+        "Recovers engine-1 with workflow mutation then reads current executor/run/task; historical enabled acceptance cannot restore a paused generation, adopt processes or grant owner receipt access",
+        "Explains immutable spec, deliberate fresh-authority enable and generation fencing without inventing replacement/configuration APIs or reconnect-driven effect replay",
+        "Leaves manually assigned workers untouched and refuses enable as rearm after quick human takeover/release or an existing paused/unknown delivery",
+        "Default retry is off; known failed/no-effect attempts may retry only with explicit policy/cooldown/retained bounds while unknown/launching effects retain slots and cannot be bypassed via create/send/shell",
+        "Disable blocks new admissions but cannot undo an already committed launch/input or kill workers; separate authorized run control is required",
+        "Requires explicit result and independent accepted validation before review; settlement/idle/decision ACK is not success, and deterministic host scheduling implies neither model heartbeat nor native permission approval"
+      ]
     }
   ]
 }

@@ -1195,3 +1195,35 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   change. Actual multi-provider model-to-MCP orchestration, delta-only coordinator
   wakes, manual checkpoints, job scheduling and complete recovery/mobile gates
   remain required. This checkpoint does not complete stage 3 or F01–F44.
+
+### F38 instruction V9: opt-in executor and uncertainty boundaries
+
+- New managed launches receive V9 with exact CLI/MCP executor grammar, complete
+  task-profile file, strict agent/workspace choices and default/range guidance.
+  It explains immutable specs, issuer/generation fences, current versus historical
+  inspection, deliberate enable and retained unknown slots. Live snapshots and
+  provider-global settings remain unchanged; no owner credentials are supplied.
+- The instruction keeps manual workers untouched and refuses enable/new keys as
+  a paused-delivery rearm or unknown-effect bypass. Disable means no new admission,
+  not undo/kill; independent accepted result validation still precedes review.
+  Host scheduling does not imply model heartbeats, scheduled jobs or native approval.
+- Targeted offline case 10 compared one V9 sample with frozen V8. The canonical
+  ungraded viewer was generated before reading/grading outputs. Semantic review
+  plus programmatic command/profile checks found V9 8/8, V8 2/8. V8 conservatively
+  states the new executor grammar/defaults are absent instead of inventing them;
+  formal capability failures are not unsafe baseline behavior. Manual/human and
+  validation/approval safeguards pass both versions. Recovery/retry assertions
+  combine older safeguards and new semantics and should be split in future cases.
+- One sample per version is not statistical, actual model tool-use or a replay
+  of the previous nine cases. No duration/token/model accounting was supplied;
+  unavailable metrics are omitted. Evaluation sources, answers, checks and the
+  canonical viewer stay outside Git. The app queued the review tab, without
+  confirming the user viewed it or supplied feedback.
+- Fresh original Claude Code 2.1.304 answered its injected V9 marker and the unique
+  literal response in an isolated executor-launched process. A real prompt-correlated
+  receipt settled, while task result stayed null and review stayed planned. Native
+  stop observed exit; host exited zero, with all 21 observed owned descendants gone
+  in the bounded shutdown check. This proves instruction consumption and guarded
+  original-provider input, not model-driven CLI/MCP orchestration. The controlled
+  fixture separately verifies V9 injection; all 12 native SDK cases and 30
+  host/sync/CLI integration checks pass. No dependency or visual change.
