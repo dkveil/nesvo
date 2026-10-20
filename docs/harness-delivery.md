@@ -35,7 +35,7 @@ not evidence that the expanded acceptance criteria pass.
 | F07 | Starting, readiness and timeout                 | Missing                                                       | Implemented: readiness/timeout; platform/device matrix pending                                                                                 |
 | F08 | Process, agent, turn, task and unread semantics | Partial: process exit and attention separate                  | Partial: 6d80847; separate axes, completion unread pending                                                                                     |
 | F09 | Stable session CLI                              | Partial: TUI flags and list only                              | Partial: all native session commands implemented; coordinator/provider end-to-end gates pending                                                |
-| F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter; task/effect/subscription/provider gates pending                                                             |
+| F10 | MCP over host operations                        | Missing                                                       | Partial: native stdio SDK adapter and cancellation; effect/subscription/provider gates pending                                                 |
 | F11 | Visible child sessions                          | Missing                                                       | Partial: persisted lineage and original Claude metadata DAG/replacement verified; source-work/provider matrix pending                          |
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: scoped identity, V11 instructions and native metadata DAG/recovery verified; source-work/UI/provider matrix pending                   |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Partial: task launch with explicit shared/worktree mode, dirty-source preservation; ownership UI/setup/archive pending                         |
@@ -64,7 +64,7 @@ not evidence that the expanded acceptance criteria pass.
 | F36 | Trusted worktree setup/run/archive              | Partial: create worktree only                                 | Pending                                                                                                                                        |
 | F37 | Provider-aware launch profiles                  | Partial: templates                                            | Partial: model/effort, owner policy and task native-tool subsets; broader config/skills/UI/resume pending                                      |
 | F38 | Session-scoped MCP and skills                   | Missing                                                       | Partial: opt-in Claude instruction/MCP, task subsets and effective config; external MCP/skills/resume pending                                  |
-| F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending: cleanup prerequisite and measured baseline documented; MCP pooling not implemented                                                    |
+| F39 | Isolated safe MCP pooling                       | Missing                                                       | Pending: ownership and cancellation cleanup prerequisites checked; MCP pooling not implemented                                                 |
 | F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: native Claude compaction/recovery, saved owner constraints and coordinator replacement verified; native resume/adoption/UI pending    |
 | F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: native metadata recovery and Windows process ownership verified; conversation/layout/mobile recovery pending                          |
 | F42 | Safe resumable hibernation                      | Missing                                                       | Pending: process ownership/cleanup prerequisite verified; resume eligibility and hibernation not implemented                                   |
@@ -2476,3 +2476,68 @@ This passes the local Windows regression gate for the current slice. The earlier
 connection/submission failures remain unexplained; neither the passing targeted
 case nor this full run proves a production fix. Final source CI on Windows,
 macOS and Linux is pending, and the remaining full-goal gates stay open.
+
+### F03/F10 request cancellation and connection diagnostics
+
+Published baseline CI
+[`39469654684`](https://github.com/dkveil/nesvo/actions/runs/39469654684), exact
+`42ffe01`, passed Linux, macOS, app and browser. Windows passed formatting,
+warnings-denied Clippy, units, build and development-host checks, then 42/43
+serial SDK scenarios in 376.35 seconds. The second explicit manual occurrence
+timed out waiting for `needsValidation` after the scheduled first occurrence had
+reported, been validated and reached `succeeded`. The old test omitted follow-up
+diagnostics at that later wait, so it cannot identify admission, launch,
+readiness, native submission or reporting as the cause. The existing bounded
+read-only diagnostic now covers that deadline, startup catch-up and both
+occurrence-state waits. Acceptance deadlines, polling and native effects are
+unchanged. The earlier failure remains open rather than being rerun away.
+
+`ceef60a` retains safe typed connection stages/causes in CLI/MCP
+`host_unavailable` messages, with numeric HTTP/close status only. Eight bounded
+real loopback tests cover validation, reflected/wrong-context proofs, nonce,
+protocol, identity, close/rejection and read/upgrade timeout behavior. Raw error
+chains, peer text and authentication data stay private. Existing timeout and
+authentication rules are preserved. This improves evidence; it does not prove
+socket admission saturation or the cause of any earlier generic failure.
+
+Inspection of the pinned SDK found a separate concrete resource-retention bug:
+request cancellation signals its context token while the handler task remains
+detached. The adapter ignored that token, so its host slot/socket could persist
+until an ordinary wait completed. `a432114` wraps the complete invocation with
+that token and drops the pending connection/slot on cancellation. It never
+interrupts, rolls back or repeats an accepted host mutation. A pre-cancel unit
+test and an official SDK/native-host/controlled-PTY scenario cover cancellation
+and same-process capacity recovery while one original response remains active,
+then settles naturally exactly once. The native scenario passed in 2.38 seconds.
+Its early test drafts incorrectly assumed queued reads already occupied slots;
+the final test proves observed capacity, replaces only read-only busy rejections
+within fixed bounds, and keeps the original ten-second acceptance window.
+It does not directly gauge host connections or cancel a mutation during
+authentication/acceptance. Those paths have static review, not native coverage.
+MCP pooling and the complete F10/F39 gates remain open.
+
+`4e26e7c` adds test-only metadata FIFO traces and an opt-in, watchdog-bounded
+ConPTY diagnostic. Both the initial Rust helper and the revised silent Node
+helper lacked out-of-band readiness with the decoder held; neither attempted
+the paste. Both holders returned through owned cleanup. No sampled child-exit
+handle was available, and neither result proves a blocked OS write, a production
+cause, or that the ordering cannot occur in another provider. Normal binaries
+contain no trace channel/lock, and native FIFO, parser and timing semantics are
+unchanged. See the [diagnostic contract](testing.md#opt-in-windows-input-fifo-diagnostic).
+
+Local Windows formatting, all-target warnings-denied Clippy, production builds
+and 453 unit tests passed (157 TUI, 293 host, 3 wire; five host diagnostics/helpers
+ignored). No production dependency, catalog tool, UI or provider grant was added.
+All 44 serial official SDK/native-host/PTY scenarios passed in 250.42 seconds,
+including both once-job report paths and the cancellation regression. This is
+verification of the changed source, not a reproduced cause or production fix for
+the prior Windows manual-queue timeout. Earlier CI failures and remaining
+full-goal gates stay open. Host/sync/CLI integration results and publication CI
+are recorded separately below.
+
+All 30 local host/sync/CLI integration tests passed in 35.05 seconds using the
+same built native binaries. This covers real shell continuity, authentication,
+multi-client leases, durable operations and current workflow adapters. The
+checks introduce no new original-model or native phone coverage. Source
+publication CI is pending; do not infer three-platform acceptance from the local
+Windows result or erase the prior manual-queue failure.
