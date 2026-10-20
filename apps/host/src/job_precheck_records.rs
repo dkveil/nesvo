@@ -31,7 +31,9 @@ pub fn initialize(connection: &Connection) -> Result<()> {
             result TEXT,
             observed_at INTEGER,
             FOREIGN KEY(job_attempt_id,occurrence_id,ordinal) REFERENCES harness_job_attempts(id,occurrence_id,ordinal)
-        );",
+        );
+        CREATE INDEX IF NOT EXISTS harness_job_generation_prechecks_occurrence
+            ON harness_job_generation_prechecks(occurrence_id);",
     )?;
     Ok(())
 }
