@@ -29,6 +29,112 @@ pub(super) async fn occurrence(
     .with_context(|| format!("Bound occurrence did not reach {wanted}; last: {last}"))?
 }
 
+fn diagnostic_fields(value: &Value, fields: &[&str]) -> Value {
+    Value::Object(
+        fields
+            .iter()
+            .filter_map(|field| {
+                value
+                    .get(*field)
+                    .map(|value| ((*field).into(), value.clone()))
+            })
+            .collect(),
+    )
+}
+
+fn diagnostic_native(value: &Value) -> Value {
+    let mut summary = diagnostic_fields(value, &["id", "operation", "sessionId", "phase"]);
+    summary["result"] = diagnostic_fields(
+        &value["result"],
+        &[
+            "code",
+            "effectStarted",
+            "submissionStage",
+            "nativeWriteFlushed",
+            "providerPromptObserved",
+            "nativeStopRequested",
+            "processExited",
+        ],
+    );
+    summary
+}
+
+async fn initial_report_diagnostics(
+    fixture: &mut Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    occurrence: &str,
+) -> Value {
+    // Failure-only existing bounded reads; successful scheduling and both the
+    // seven-second acceptance and twenty-second scenario bounds stay unchanged.
+    let actual = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
+    let unavailable = Value::Null;
+    let current = actual["history"]["reply"]["data"]["occurrences"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == occurrence))
+        .unwrap_or(&unavailable);
+    let attempt_id = current["attemptId"].as_str();
+    let attempt = actual["taskAttempts"]["reply"]["data"]["attempts"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == attempt_id))
+        .unwrap_or(&unavailable);
+    let mut diagnostics = json!({
+        "jobId":job,"occurrenceId":occurrence,
+        "host":diagnostic_fields(&actual["host"],&["exited","exitCode"]),
+        "providerProbe":diagnostic_fields(&actual["providerProbe"],&["providerVersions","eventJournal"]),
+        "diagnosticDeadlineElapsed":actual["diagnosticDeadlineElapsed"],
+        "occurrence":diagnostic_fields(current,&[
+            "id","state","reason","runId","attemptId","sessionId","jobAttemptId","launchReceiptId"
+        ]),
+        "run":diagnostic_fields(&actual["run"]["reply"]["data"]["run"],&[
+            "id","state","revision","reason"
+        ]),
+        "attempt":diagnostic_fields(attempt,&["id","taskId","state","sessionId","ordinal"]),
+        "launch":diagnostic_fields(&attempt["launch"],&["attemptId","receiptId","phase","sessionId"]),
+        "launchOperation":diagnostic_native(&actual["launchReceipt"]["reply"]["data"]["receipt"]),
+        "delivery":diagnostic_fields(&attempt["delivery"],&[
+            "id","attemptId","phase","blocker","receiptId","createdAt","deadlineAt"
+        ]),
+        "deliveryNative":diagnostic_native(&attempt["delivery"]["native"]),
+        "session":diagnostic_fields(&actual["session"]["reply"]["data"]["session"],&[
+            "id","program","running","status","readiness","turn","lifecycle","inputOperation"
+        ])
+    });
+    if let Some(session) = current["sessionId"].as_str() {
+        let explain = timeout(
+            Duration::from_millis(600),
+            call(owner, "nesvo_explain_session", json!({"sessionId":session})),
+        )
+        .await;
+        diagnostics["explain"] = match explain {
+            Ok(Ok(reply)) => match reply.structured_content {
+                Some(reply) if reply["ok"] == true => {
+                    let session = &reply["data"]["diagnostics"]["sessions"][0];
+                    diagnostic_fields(
+                        session,
+                        &[
+                            "sessionId",
+                            "running",
+                            "processIdentity",
+                            "inputOperation",
+                            "integration",
+                            "status",
+                            "readiness",
+                            "turn",
+                            "publicationLatency",
+                        ],
+                    )
+                }
+                Some(reply) => json!({"errorCode":reply["error"]["code"]}),
+                None => json!({"errorCode":"diagnostic_response_unavailable"}),
+            },
+            Ok(Err(_)) => json!({"errorCode":"diagnostic_transport_unavailable"}),
+            Err(_) => json!({"errorCode":"diagnostic_deadline_elapsed"}),
+        };
+    }
+    diagnostics
+}
+
 pub(super) async fn process_alive(fixture: &Fixture, pid: u64) -> Result<bool> {
     let mut command = Command::new(fixture.directory.join("bin").join(if cfg!(windows) {
         "node.exe"
@@ -76,7 +182,13 @@ async fn bound_job_cancel_stops_the_exact_worker_and_retains_original_pending_ac
             "key":"bound-cancel-run-now","jobId":job,"expectedRevision":1
         })).await?)?;
         let id = admitted["data"]["occurrence"]["id"].as_str().context("Bound occurrence ID")?;
-        let reported = occurrence(&owner, job, id, "needsValidation").await?;
+        let reported = match occurrence(&owner, job, id, "needsValidation").await {
+            Ok(reported) => reported,
+            Err(error) => {
+                let diagnostics = initial_report_diagnostics(&mut fixture, &owner, job, id).await;
+                return Err(error.context(format!("Bound initial report diagnostics: {diagnostics}")));
+            }
+        };
         let current = &reported["data"]["occurrence"];
         let run = current["runId"].as_str().context("Bound native run")?;
         let worker = current["sessionId"].as_str().context("Bound worker session")?;
