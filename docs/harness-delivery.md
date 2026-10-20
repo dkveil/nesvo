@@ -2360,3 +2360,15 @@ Clippy, formatting and all 40 serial SDK scenarios in 220.44 seconds. Its three
 retry scenarios also passed in 33.36 seconds. The successful run exercises the
 same unchanged acceptance gates; it does not reproduce the earlier Windows
 failure or establish a production fix. Published diagnostic CI remains pending.
+
+Final diagnostic-source verification: CI
+[`39462535954`](https://github.com/dkveil/nesvo/actions/runs/39462535954), exact
+`a2acdee`, passed all five jobs. All 40 serial SDK scenarios passed on Linux
+(204.14 seconds), macOS (201.48 seconds) and Windows (316.94 seconds), including
+the two previously failing report waits and calendar case. This is fresh
+verification of the changed diagnostic source, without relaxing acceptance
+deadlines, native grants or process semantics. The current source passes the
+three-platform test gate. Earlier report timeouts remain unexplained; a green
+run does not prove a production fix, and the retained diagnostics must be used
+if they recur. Per-generation prechecks, wider retry classes, hard execution
+timeouts, cleanup and the remaining full-goal acceptance gates stay open.
