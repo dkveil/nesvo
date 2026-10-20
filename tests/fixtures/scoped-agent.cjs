@@ -11,6 +11,10 @@ if (process.argv.includes('--version')) {
 const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
+const editorRedraw = fs.existsSync(path.join(process.cwd(), '.fixture-editor-redraw'));
+const editorBlocked =
+  editorRedraw &&
+  fs.readFileSync(path.join(process.cwd(), '.fixture-editor-redraw'), 'utf8') === 'working';
 if (
   !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V8')
 )
@@ -39,6 +43,7 @@ if (codex && !process.argv.includes('--no-daemon'))
   throw new Error('Codex must own its local executor');
 let turn = 0;
 function hook(name, extra = {}) {
+  if (editorRedraw) return; // Explicit screen-only provider, no structured evidence.
   const command = codex ? { command: codexHook, args: [] } : settings.hooks[name][0].hooks[0];
   const result = spawnSync(command.command, command.args, {
     shell: codex, // Trusted host-produced command, payload stays on stdin.
@@ -60,6 +65,11 @@ if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdout.write('\x1b[?2004hSCOPE_FIXTURE_READY\r\n');
 hook('SessionStart', { source: 'startup' });
 if (!codex) hook('Stop');
+if (editorRedraw) drawEditor();
+function drawEditor() {
+  process.stdout.write('\x1b[2J\x1b[H❯ draft\r\n? for shortcuts\x1b[1;8H');
+}
+
 function submit(prompt) {
   turn++;
   hook('UserPromptSubmit', { prompt });
@@ -137,6 +147,14 @@ process.stdin.on('data', text => {
       if (end < 0) return;
       draft += pending.slice(6, end);
       pending = pending.slice(end + 6);
+      if (editorRedraw) {
+        process.stdout.write(
+          editorBlocked
+            ? '\x1b[2J\x1b[HPASTE_PENDING_REDRAW\r\nThinking (esc to interrupt)'
+            : '\x1b[2J\x1b[HPASTE_PENDING_REDRAW\r\n',
+        );
+        setTimeout(drawEditor, 600);
+      }
     } else if (/^[\r\n]/.test(pending)) {
       pending = pending.slice(1);
       const prompt = draft;

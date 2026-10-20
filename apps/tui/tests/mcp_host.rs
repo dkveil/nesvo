@@ -30,6 +30,8 @@ struct Fixture {
 mod budgets;
 #[path = "support/inbox.rs"]
 mod inbox;
+#[path = "support/input_redraw.rs"]
+mod input_redraw;
 #[path = "support/run_budgets.rs"]
 mod run_budgets;
 #[path = "support/run_controls.rs"]

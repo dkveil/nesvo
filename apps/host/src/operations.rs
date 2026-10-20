@@ -223,7 +223,7 @@ async fn flushed(answer: tokio::sync::oneshot::Receiver<bool>) -> Result<()> {
     }
 }
 
-/// Retry only a rejected fence check: the input queue has not accepted bytes.
+/// Retry only rejected admission checks: this queue write accepted no bytes.
 /// Journal notification is registered before reading to avoid a lost wakeup.
 async fn enqueue_fenced(
     state: &Arc<Mutex<State>>,
@@ -265,11 +265,19 @@ async fn enqueue_fenced(
             Err(error)
                 if error
                     .downcast_ref::<Error>()
-                    .is_some_and(|e| e.code == "lifecycle_pending") => {}
+                    .is_some_and(|e| matches!(e.code, "lifecycle_pending" | "editor_pending")) =>
+            {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+            }
             Err(error) => return Err(error),
         }
         tokio::select! {
-            _=tokio::time::sleep_until(deadline)=>return Err(Error::new("lifecycle_pending","Lifecycle fence did not settle within two seconds; no further input was queued").into()),
+            _=tokio::time::sleep_until(deadline)=>return Err(Error::new("lifecycle_pending","Lifecycle fence/editor did not settle within two seconds; no further input was queued").into()),
+            // PTY evidence is coalesced by the status timer, and unchanged
+            // projections need not emit a journal event. Recheck every guard.
+            _=tokio::time::sleep(std::time::Duration::from_millis(50))=>{},
             _=cancellation.changed()=>return Err(Error::new("submission_preempted","Submission was preempted while waiting for lifecycle evidence").into()),
             result=changed.changed()=>{if result.is_err(){return Err(anyhow!("Host journal closed while waiting for lifecycle evidence"));}},
         }

@@ -84,7 +84,7 @@ struct Session {
     human_control_epoch: u64,
     terminal_protocol: crate::terminal_protocol::Decoder,
     program_status: crate::program_status::Records,
-    program_status_dirty: bool,
+    status_projection_dirty: bool,
     pty: Pty,
     backlog: String,
     output_cursor: u64,
@@ -1040,7 +1040,7 @@ impl State {
                 session.status.rule_reason(),
                 session.started.elapsed(),
             );
-            changed |= std::mem::take(&mut session.program_status_dirty);
+            changed |= std::mem::take(&mut session.status_projection_dirty);
             if session.auto_title
                 && let Some(title) = &session.titles.title
                 && session.info.name != *title
@@ -1585,6 +1585,14 @@ impl State {
             .sessions
             .get_mut(id)
             .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
+        // Queue admission must see PTY evidence newer than the last coalesced
+        // timer tick. Leave publication to that timer, including unchanged ticks.
+        session.status_projection_dirty |= session.status.refresh(now_millis());
+        session.status_projection_dirty |= session.readiness.observe(
+            session.status.status(),
+            session.status.rule_reason(),
+            session.started.elapsed(),
+        );
         let pending = session
             .pending_input
             .as_mut()
@@ -1643,6 +1651,24 @@ impl State {
                 crate::status::StatusState::Idle | crate::status::StatusState::Done
             ) || session.readiness.snapshot().phase != crate::readiness::Phase::Ready)
         {
+            // Pasting invalidates a screen-only prompt until the provider draws
+            // its editor again. Wait for new idle evidence, never send on I/O
+            // activity alone. Semantic work/permission evidence fails at once.
+            if text.is_none()
+                && pending.queued
+                && session.readiness.snapshot().phase == crate::readiness::Phase::Ready
+                && session.status.status().source == crate::status::StatusSource::Activity
+                && matches!(
+                    session.status.status().state,
+                    crate::status::StatusState::Working | crate::status::StatusState::Unknown
+                )
+            {
+                return Err(Error::new(
+                    "editor_pending",
+                    "Waiting for fresh idle editor evidence after paste; Enter was not queued",
+                )
+                .into());
+            }
             return Err(Error::new(
                 "agent_not_ready",
                 "Agent is no longer ready and idle; no further input was queued",
@@ -2508,7 +2534,7 @@ fn spawn_session(
         human_control_epoch: 0,
         terminal_protocol: Default::default(),
         program_status: Default::default(),
-        program_status_dirty: false,
+        status_projection_dirty: false,
         info: SessionInfo {
             id,
             name: name.into(),
@@ -2711,7 +2737,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                             result,
                                         });
                                     }
-                                    session.program_status_dirty |= session.turn.event(
+                                    session.status_projection_dirty |= session.turn.event(
                                         crate::turns::Signal {
                                             launch: &batch.identity.launch_id,
                                             generation: event.generation,
@@ -2745,7 +2771,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                     ) {
                                         session.status_latency.received(std::time::Instant::now());
                                         session.status.record_hook_reason(&event.name, event.state);
-                                        session.program_status_dirty = true;
+                                        session.status_projection_dirty = true;
                                         if let Some(log) = &event_log {
                                             log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"agent.lifecycle",at:now_millis(),payload:json!({"event":event.name,"state":event.state,"generation":event.generation,"sourceSequence":event.sequence,"submissionEvidence":event.prompt_digest.is_some()})});
                                         }
@@ -2798,15 +2824,15 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                 session.status_latency.received(std::time::Instant::now());
                                 root_reported |= report.id.is_none();
                                 session.program_status.apply(report);
-                                session.program_status_dirty = true;
+                                session.status_projection_dirty = true;
                             }
                             crate::terminal_protocol::Event::Reset => {
                                 session.program_status.reset();
-                                session.program_status_dirty = true;
+                                session.status_projection_dirty = true;
                             }
                             crate::terminal_protocol::Event::Prompt => {
                                 session.program_status.end_program();
-                                session.program_status_dirty = true;
+                                session.status_projection_dirty = true;
                             }
                         }
                     }

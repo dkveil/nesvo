@@ -182,3 +182,18 @@ lost reply/disconnect lookup, restart/replay without process resurrection, calle
 scope rejection, Unicode and folder spaces. SQLite tests inject an event-write
 failure to prove rollback, reject stale claim reuse and preserve unknown outcomes
 across reopen. Tests use isolated hosts and no model calls.
+
+## Editor redraw between paste and Enter
+
+Queue admission refreshes received PTY status/readiness before each write rather
+than relying on the last coalesced publication tick. Publication remains coalesced.
+After an owned paste invalidates screen-only idle evidence, Enter can wait up to
+two seconds for fresh idle editor evidence. I/O activity never qualifies as idle.
+Every check retains run, authority, conversation and human-control fences; paste
+is never repeated. Semantic work/permission evidence refuses Enter immediately,
+retaining unknown partial input for deliberate reconciliation.
+
+The controlled native SDK regression delays editor redraw by 600 ms and verifies
+one literal paste/Enter across same-key replay. A second process shows a working
+footer after paste: Enter remains refused even when its editor later returns idle.
+This checks the real PTY/event loop without calling a model or taking user control.
