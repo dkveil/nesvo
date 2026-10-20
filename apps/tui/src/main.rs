@@ -23,6 +23,7 @@ mod ui_controls;
 mod ui_launch;
 mod ui_palette;
 mod workflow;
+mod workflow_inbox;
 mod workspace_layout;
 
 use anyhow::{Context, Result, ensure};

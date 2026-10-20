@@ -12,7 +12,7 @@ const id = process.env.NESVO_SESSION_ID;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Missing fixture process identity');
 const directory = process.env.NESVO_TEST_CALLERS;
 if (
-  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V2')
+  !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V3')
 )
   throw new Error('Missing versioned launch-local harness instructions');
 fs.writeFileSync(path.join(directory, `${id}.txt`), process.env.NESVO_AGENT_CONTEXT);
@@ -26,7 +26,7 @@ if (process.argv.includes('--mcp-config')) {
   );
   if (
     config.mcpServers.nesvo.env.NESVO_AGENT_CONTEXT !== process.env.NESVO_AGENT_CONTEXT ||
-    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V2')
+    !instruction.includes('NESVO_HARNESS_INSTRUCTIONS_V3')
   )
     throw new Error('Launch-local harness was not loaded by the controlled provider');
 }
@@ -63,6 +63,11 @@ if (!codex) hook('Stop');
 function submit(prompt) {
   turn++;
   hook('UserPromptSubmit', { prompt });
+  if (prompt === 'hold-response') {
+    hook('PreToolUse', { tool_name: 'controlled_hold' });
+    process.stdout.write('FIXTURE_HOLDING_RESPONSE\r\n');
+    return; // Remains working until an explicit native Ctrl+C from this test.
+  }
   if (prompt === 'spawn-child') {
     // Inherit only this managed process's scoped context. No owner pairing flag.
     const result = spawnSync(

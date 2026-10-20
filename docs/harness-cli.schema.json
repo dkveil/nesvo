@@ -116,6 +116,59 @@
                     },
                     "nextOffset": { "type": ["integer", "null"] }
                   }
+                },
+                {
+                  "required": ["run", "mailbox"],
+                  "properties": {
+                    "run": { "type": "object", "required": ["id", "title", "revision", "state"] },
+                    "mailbox": {
+                      "type": "object",
+                      "required": ["runId", "recipientAttemptId"],
+                      "properties": {
+                        "runId": { "type": "string" },
+                        "recipientAttemptId": { "type": ["string", "null"] }
+                      }
+                    }
+                  },
+                  "oneOf": [
+                    {
+                      "required": ["messages", "nextCursor", "headCursor", "pendingCount", "more"],
+                      "properties": {
+                        "messages": {
+                          "type": "array",
+                          "maxItems": 8,
+                          "items": { "$ref": "#/definitions/workflowMessage" }
+                        },
+                        "nextCursor": { "$ref": "#/definitions/cursor" },
+                        "headCursor": { "$ref": "#/definitions/cursor" },
+                        "pendingCount": { "type": "integer", "minimum": 0 },
+                        "more": { "type": "boolean" }
+                      }
+                    },
+                    {
+                      "required": ["message", "cursor"],
+                      "properties": { "message": { "$ref": "#/definitions/workflowMessage" } }
+                    },
+                    {
+                      "required": ["acknowledged", "cursor"],
+                      "properties": {
+                        "acknowledged": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 32,
+                          "items": {
+                            "type": "object",
+                            "required": ["id", "ackedAt", "ackedBy"],
+                            "properties": {
+                              "id": { "type": "string" },
+                              "ackedAt": { "$ref": "#/definitions/cursor" },
+                              "ackedBy": { "type": "object", "required": ["role"] }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -254,6 +307,45 @@
     }
   ],
   "definitions": {
+    "workflowMessage": {
+      "type": "object",
+      "required": [
+        "id",
+        "sequence",
+        "runId",
+        "recipientAttemptId",
+        "sender",
+        "correlationId",
+        "kind",
+        "body",
+        "payload",
+        "createdAt",
+        "ackedAt",
+        "ackedBy"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "runId": { "type": "string" },
+        "recipientAttemptId": { "type": ["string", "null"] },
+        "sender": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {
+            "role": { "enum": ["owner", "coordinator", "worker"] },
+            "sessionId": { "type": "string" },
+            "attemptId": { "type": "string" }
+          }
+        },
+        "correlationId": { "type": "string" },
+        "kind": { "enum": ["note", "question", "error", "result"] },
+        "body": { "type": "string", "maxLength": 4096 },
+        "payload": { "type": ["object", "null"] },
+        "createdAt": { "$ref": "#/definitions/cursor" },
+        "ackedAt": { "type": ["integer", "null"] },
+        "ackedBy": { "type": ["object", "null"] }
+      }
+    },
     "workflowAttempt": {
       "type": "object",
       "required": ["id", "taskId", "ordinal", "sessionId", "state", "result", "validation"],

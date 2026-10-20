@@ -46,6 +46,9 @@ The returned view resolves dependencies to stable **host task IDs**. Editing
 titles or reordering retains IDs while keys remain in the plan. Removing and
 reintroducing a key in a later draft creates a new ID; re-read the projection.
 Once activated, the plan cannot be replaced. Previous attempts are retained.
+Run/attempt mailboxes and result notices use the [durable inbox](harness-inbox.md).
+Workers access their own mailbox and can message their coordinator, without
+reading other tasks or changing the plan.
 
 ## Attempts and result validation
 
@@ -132,7 +135,9 @@ Replies have `type:"workflow"` and `{run,tasks}`, `{runs,nextOffset}`,
 `{run,task,attempt}`, or `{run,task,attempts,nextOffset}`;
 mutations add the committed domain `cursor`. `requestId` is not an idempotency key.
 
-Runs begin at revision 1/state `draft`; every mutation increments the revision.
+Runs begin at revision 1/state `draft`; plan/execution mutations increment the
+revision. Inbox send/ACK have their own message/domain cursors and do not alter
+the execution revision.
 Activation changes state to `active`. Workers report against their exact current
 attempt, without overwriting concurrent results; coordinator mutations require
 the current revision. Tasks expose dependency state `ready|waiting`, attempt
@@ -180,5 +185,5 @@ edits, malformed-file rejection and unchanged native sessions. These tests make
 no model calls. Controlled native workers also discover/report their own task
 through the actual CLI; independent coordinator validation releases a reviewer
 task. Reopen/late-result/history tests cover retry fences. This does not pass
-the full stage-3 gate: actual provider execution, decisions, inbox recovery,
+the full stage-3 gate: actual provider execution, decisions, coordinator adoption,
 automatic dispatch and budget/cancel policy remain open.

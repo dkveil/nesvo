@@ -50,13 +50,40 @@ fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value
     schema
 }
 fn catalog() -> Vec<Tool> {
-    let id = json!({"type":"string","minLength":1,"maxLength":128,"description":"Stable host session ID, never a display name or focused-session hint"});
+    let id = json!({"type":"string","minLength":1,"maxLength":128,"description":"Stable host-issued ID for the named field; run/task/attempt/session IDs are distinct, never names or UI focus"});
     let cursor = json!({"type":"integer","minimum":0,"maximum":9_007_199_254_740_991_u64});
     let key = json!({"type":"string","minLength":1,"maxLength":128});
     let revision = json!({"type":"integer","minimum":1});
     let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
+        (
+            "nesvo_read_inbox",
+            "Read up to eight durable messages, without ACK or input. Worker defaults to its own current attempt; owner/coordinator defaults to the run coordinator mailbox. Optional attemptId inspects a worker mailbox. Pending messages repeat until explicit ACK. After consumer restart read from zero; cursors paginate, not acknowledge.",
+            object(
+                json!({"runId":id,"attemptId":id,"after":cursor,"includeAcked":{"type":"boolean","default":false}}),
+                &["runId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_send_message",
+            "Persist one addressed message for a stable key/correlation. Optional attemptId targets a current worker; omission addresses the coordinator. Workers may send only to their own coordinator. Host supplies authenticated sender. Questions are messages, not approval/decision grants. No PTY/LLM execution. Recover uncertainty through nesvo_get_run_mutation with the original key.",
+            object(
+                json!({"key":key,"runId":id,"attemptId":id,"correlationId":key,"kind":{"enum":["note","question","error"],"default":"note"},"body":{"type":"string","minLength":1,"maxLength":4096}}),
+                &["key", "runId", "correlationId", "body"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_ack_messages",
+            "ACK 1–32 exact IDs in the receiving mailbox. Worker defaults to its own attempt; coordinator to its run inbox. Coordinator cannot ACK on behalf of a worker; owner may explicitly override. Retry the same IDs after loss: first ACK identity/time are preserved. ACK is delivery only, never task execution or validation.",
+            object(
+                json!({"runId":id,"attemptId":id,"ids":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":id}}),
+                &["runId", "ids"],
+            ),
+            false,
+        ),
         (
             "nesvo_list_sessions",
             "List visible session IDs, groups and lifecycle without acquiring control.",
@@ -339,6 +366,30 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         ));
     }
     Ok(match name {
+        "nesvo_read_inbox" | "nesvo_send_message" | "nesvo_ack_messages" => {
+            let action = match name {
+                "nesvo_read_inbox" => "read",
+                "nesvo_send_message" => "send",
+                _ => "ack",
+            };
+            let mut fields = arguments
+                .as_object()
+                .ok_or_else(|| {
+                    cli::failure("invalid_argument", "Inbox arguments must be an object")
+                })?
+                .clone();
+            if fields.contains_key("action") {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Inbox action is selected by the tool name",
+                ));
+            }
+            fields.insert("action".into(), action.into());
+            (
+                crate::workflow::tool("inbox", json!({"request":fields}))?,
+                "workflow",
+            )
+        }
         "nesvo_create_run"
         | "nesvo_list_runs"
         | "nesvo_get_run"
@@ -688,7 +739,15 @@ mod tests {
     use super::*;
     #[test]
     fn catalog_and_boundary_reject_ambiguous_or_unbounded_requests() {
-        assert_eq!(catalog().len(), 24);
+        assert_eq!(catalog().len(), 27);
+        assert!(
+            command(
+                "nesvo_send_message",
+                json!({"runId":"r","key":"k","correlationId":"c","body":"x","sender":"owner"})
+            )
+            .is_err()
+        );
+        assert!(command("nesvo_ack_messages", json!({"runId":"r","ids":"all"})).is_err());
         assert!(
             command(
                 "nesvo_read_session",

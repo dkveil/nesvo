@@ -228,6 +228,11 @@ task, context, report and validate add explicit worker attempts/results. See
 [workflow identities, DAG and recovery](harness-workflows.md). These metadata
 commands do not start agents or infer task outcomes from idle.
 
+`run inbox read|send|ack` adds scoped durable messages when `workflowInbox` is
+advertised. Read/ACK never send terminal input or validate tasks. See the
+[inbox contract and exact-ID recovery](harness-inbox.md). Launch-local instruction
+version 3 documents these commands; existing processes keep their own snapshot.
+
 ## Literal send and receipt wait
 
 `session send SESSION_ID --key KEY` requires one of `--prompt TEXT`,

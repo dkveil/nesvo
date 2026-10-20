@@ -8,6 +8,11 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Durable addressed messages. ACK is receipt, never task execution.
+    Inbox {
+        #[command(subcommand)]
+        command: crate::workflow_inbox::Command,
+    },
     /// Create a draft run once for this key. Does not start an agent.
     Create {
         title: String,
@@ -123,6 +128,7 @@ pub enum Command {
 impl Command {
     pub fn machine(&self) -> bool {
         match self {
+            Self::Inbox { command } => command.machine(),
             Self::Create { json, .. }
             | Self::List { json, .. }
             | Self::Get { json, .. }
@@ -138,6 +144,9 @@ impl Command {
     }
     fn request(self) -> Result<Request> {
         Ok(match self {
+            Self::Inbox { command } => Request::Inbox {
+                request: command.request()?,
+            },
             Self::Create {
                 title,
                 key,
@@ -244,7 +253,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path, limit: usiz
         )
     })
 }
-fn read_file(path: &std::path::Path, limit: usize) -> Result<String> {
+pub(crate) fn read_file(path: &std::path::Path, limit: usize) -> Result<String> {
     let mut source = String::new();
     std::fs::File::open(path)
         .and_then(|f| f.take(limit as u64 + 1).read_to_string(&mut source))
@@ -322,6 +331,9 @@ struct TaskSpec {
     deny_unknown_fields
 )]
 enum Request {
+    Inbox {
+        request: crate::workflow_inbox::Request,
+    },
     Create {
         key: String,
         spec: RunSpec,
@@ -421,6 +433,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         return Err(cli::failure(
             "unsupported",
             "Host cannot enforce workflow attempts and result grants; update nesvo-host",
+        ));
+    }
+    if request["request"]["action"] == "inbox" && caps["workflowInbox"] != true {
+        return Err(cli::failure(
+            "unsupported",
+            "Host does not support durable inbox/ACK; update nesvo-host",
         ));
     }
     Ok(())

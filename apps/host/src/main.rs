@@ -33,6 +33,7 @@ mod transport;
 mod turns;
 mod usage;
 mod workflow_attempts;
+mod workflow_inbox;
 use nesvo_host::wire;
 
 use anyhow::{Context, Result, ensure};

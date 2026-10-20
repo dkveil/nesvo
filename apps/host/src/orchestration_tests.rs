@@ -8,7 +8,7 @@ fn actor(id: Option<&str>) -> Actor {
         scope: id.map_or(Scope::Owner, |id| Scope::Coordinator(id.into())),
     }
 }
-fn execute(store: &mut Store, id: Option<&str>, value: Value) -> anyhow::Result<Value> {
+pub(super) fn execute(store: &mut Store, id: Option<&str>, value: Value) -> anyhow::Result<Value> {
     orchestration::execute(
         &mut store.0,
         actor(id),
@@ -21,7 +21,7 @@ fn create(store: &mut Store, id: Option<&str>, key: &str) -> Value {
 fn task(key: &str, deps: &[&str]) -> Value {
     json!({"key":key,"title":key,"instruction":"private task text","dependencies":deps})
 }
-fn error(result: anyhow::Result<Value>, code: &str) {
+pub(super) fn error(result: anyhow::Result<Value>, code: &str) {
     assert_eq!(
         result
             .unwrap_err()
@@ -31,7 +31,7 @@ fn error(result: anyhow::Result<Value>, code: &str) {
         code
     );
 }
-fn worker(store: &mut Store, id: &str, request: Value) -> anyhow::Result<Value> {
+pub(super) fn worker(store: &mut Store, id: &str, request: Value) -> anyhow::Result<Value> {
     orchestration::execute(
         &mut store.0,
         Actor {
@@ -41,13 +41,13 @@ fn worker(store: &mut Store, id: &str, request: Value) -> anyhow::Result<Value> 
         serde_json::from_value(request).unwrap(),
     )
 }
-fn report() -> Value {
+pub(super) fn report() -> Value {
     json!({"outcome":"succeeded","summary":"Worker claims completion","files":["src/a.rs"],"artifacts":[],"checks":[{"name":"unit","outcome":"passed","details":"Worker-reported check"}],"limitations":["Needs independent validation"]})
 }
 fn validation(passed: bool) -> Value {
     json!({"passed":passed,"summary":"Explicit coordinator review","checks":[{"name":"review","outcome":if passed{"passed"}else{"failed"},"details":"Coordinator attestation, not host-executed validation"}]})
 }
-fn prepare_run(store: &mut Store) -> Value {
+pub(super) fn prepare_run(store: &mut Store) -> Value {
     let run = create(store, Some("coordinator"), "run");
     let id = run["run"]["id"].clone();
     execute(store,Some("coordinator"),json!({"action":"setPlan","key":"plan","runId":id,"expectedRevision":1,"tasks":[task("implement",&[]),task("review",&["implement"])]})).unwrap();

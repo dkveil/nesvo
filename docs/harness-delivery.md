@@ -40,7 +40,7 @@ not evidence that the expanded acceptance criteria pass.
 | F12 | Scoped caller identity and agent instructions   | Missing                                                       | Partial: worker/coordinator capabilities, human priority and revocation; instructions/provider gate pending |
 | F13 | Fan-out with explicit worktree ownership        | Partial: individual worktree launch                           | Pending                                                                                                     |
 | F14 | Durable run/task/attempt DAG                    | Missing                                                       | Partial: durable runs/tasks/attempts, explicit assignment and DAG gates; automatic dispatch pending         |
-| F15 | Durable inbox and ACK                           | Missing                                                       | Pending                                                                                                     |
+| F15 | Durable inbox and ACK                           | Missing                                                       | Implemented core: scoped messages, atomic result notices, exact ACK and replay/reopen; dispatch/UI pending  |
 | F16 | Resumable bounded event subscriptions           | Missing: terminal replay is not domain event replay           | Partial: durable scoped journal/streams and CLI watch; receipt/result integration pending                   |
 | F17 | Receipts, idempotency and correlated wait       | Partial: request IDs, no durable receipts                     | Partial: shared create/send receipts and CLI/MCP correlated wait; job dispatch/provider coverage pending    |
 | F18 | Attempt-bound worker result                     | Missing                                                       | Partial: scoped explicit results, validation and retry fences; actual provider execution gate pending       |
@@ -755,3 +755,31 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
 - All 26 Windows host/sync/CLI integrations pass with attempt-capable hosts.
   Controlled status receipt-to-publication p95 is 263.076 ms over 26 batches;
   this excludes native helper, model and network latency.
+
+### F15 durable inbox and exact acknowledgement
+
+- Added run coordinator and attempt-specific mailboxes through the same bounded
+  SQLite journal actor. Send, mutation recovery and domain event commit together;
+  report and its single result notice are atomic. Neither message ACK nor native
+  idle validates a task. Inbox actions leave execution revisions unchanged.
+- Host-derived senders, receiver-only worker ACK, run visibility and current
+  attempt fences prevent forged identities and superseded-worker recovery.
+  Reading never ACKs; first exact-ID acknowledgement survives retry/reopen, and
+  later arrivals remain pending. Capacity failures are explicit; ACK remains
+  usable at full retention. Routine events omit message bodies.
+- CLI and three additional MCP tools share the contract and mutation keys.
+  Instruction version 3 explains pending-read recovery, exact ACK, stale results
+  and native-versus-metadata recovery. One offline scenario compares versions
+  2/3; it tests supported command knowledge, not provider/model performance.
+- Six inbox storage tests include full-capacity rollback, reopen, stale workers,
+  pagination and atomic invalid batches. Native SDK coverage restarts an MCP
+  consumer and retains a pending result while its coordinator is working, with
+  no inbox-to-PTY effect. It uses controlled native workers, not model calls.
+  See [the inbox contract](harness-inbox.md) for bounds and remaining gates.
+- The attempt baseline `2f19776` passed all CI jobs in 39344710968, including
+  Windows/Linux/macOS SDK coverage. Inbox Windows checks pass: fmt, Clippy with
+  warnings denied, 128 TUI + 102 host + 3 wire unit tests, all three official
+  SDK/native integrations and all 26 host/sync/CLI integration checks. Controlled
+  host receipt-to-publication p95 is 252.207 ms over 26 batches, excluding native
+  helper/model/network latency. Inbox cross-platform CI remains unverified until
+  its own published run completes.

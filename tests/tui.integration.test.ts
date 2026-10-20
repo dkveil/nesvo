@@ -787,6 +787,42 @@ test(
           ]);
           assert.equal(activated.run.state, 'active');
           assert.equal(activated.run.revision, 3);
+          const sendArgs = [
+            'inbox',
+            'send',
+            created.run.id,
+            '--key',
+            'cli-message',
+            '--correlation',
+            'literal-context',
+            '--message-file',
+            goalPath,
+          ];
+          const message = await invoke(sendArgs);
+          assert.equal(message.message.body, await readFile(goalPath, 'utf8'));
+          assert.deepEqual(await invoke(sendArgs), message);
+          const recovered = await invoke(['mutation', '--key', 'cli-message']);
+          assert.equal(recovered.message.id, message.message.id);
+          const inbox = await invoke(['inbox', 'read', created.run.id]);
+          assert.equal(inbox.messages[0].id, message.message.id);
+          assert.equal(inbox.pendingCount, 1);
+          const ack = await invoke(['inbox', 'ack', created.run.id, message.message.id]);
+          assert.equal(ack.acknowledged[0].ackedBy.role, 'owner');
+          assert.deepEqual(
+            (await invoke(['inbox', 'ack', created.run.id, message.message.id])).acknowledged,
+            ack.acknowledged,
+          );
+          assert.equal((await invoke(['inbox', 'read', created.run.id])).pendingCount, 0);
+          assert.equal(
+            (await invoke(['inbox', 'read', created.run.id, '--include-acked'])).messages[0]
+              .ackedAt,
+            ack.acknowledged[0].ackedAt,
+          );
+          assert.equal(
+            (await invoke(['get', created.run.id])).run.revision,
+            3,
+            'Inbox ACK is separate from workflow execution',
+          );
           const history = await invoke(['task', created.run.id, planned.tasks[0].id]);
           assert.deepEqual(history.attempts, []);
           const context = await runTui(tuiBinary, pairingPath, runningTuis, [

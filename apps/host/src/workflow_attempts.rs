@@ -202,7 +202,7 @@ fn revision(
     }
     Ok(run)
 }
-fn active_attempt(connection: &Connection, run_id: &str, id: &str) -> Result<Value> {
+pub(crate) fn active_attempt(connection: &Connection, run_id: &str, id: &str) -> Result<Value> {
     let a = attempt(connection, id)?;
     let task_id = a["taskId"]
         .as_str()
@@ -214,7 +214,7 @@ fn active_attempt(connection: &Connection, run_id: &str, id: &str) -> Result<Val
     Ok(a)
 }
 pub fn mutate(
-    connection: &Connection,
+    connection: &rusqlite::Transaction<'_>,
     actor: &Actor,
     request: &Request,
 ) -> Result<(String, &'static str)> {
@@ -332,6 +332,7 @@ pub fn mutate(
                 "UPDATE workflow_attempts SET state='reported',result=?2 WHERE id=?1",
                 params![attempt_id, serde_json::to_string(result)?],
             )?;
+            crate::workflow_inbox::notify_result(connection, actor, &own, result)?;
             (
                 own["run"]["id"]
                     .as_str()

@@ -117,6 +117,9 @@ pub enum Request {
         expected_revision: u64,
         validation: crate::workflow_attempts::ValidationSpec,
     },
+    Inbox {
+        request: crate::workflow_inbox::Request,
+    },
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_runs(id TEXT PRIMARY KEY,title TEXT NOT NULL,goal TEXT NOT NULL,coordinator_id TEXT,revision INTEGER NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL);
@@ -124,6 +127,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
       CREATE TABLE IF NOT EXISTS workflow_tasks(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES workflow_runs(id),task_key TEXT NOT NULL,spec TEXT NOT NULL,UNIQUE(run_id,task_key));
       CREATE TABLE IF NOT EXISTS workflow_mutations(issuer TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,view TEXT NOT NULL,PRIMARY KEY(issuer,key));
       CREATE TABLE IF NOT EXISTS workflow_attempts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES workflow_tasks(id),ordinal INTEGER NOT NULL,session_id TEXT NOT NULL UNIQUE,state TEXT NOT NULL,result TEXT,validation TEXT,UNIQUE(task_id,ordinal));")?;
+    crate::workflow_inbox::initialize(connection)?;
     Ok(())
 }
 fn invalid(message: &'static str) -> anyhow::Error {
@@ -252,6 +256,9 @@ fn random_id() -> String {
     hex::encode(crate::wire::random::<16>())
 }
 pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> Result<Value> {
+    if let Request::Inbox { request } = request {
+        return crate::workflow_inbox::execute(connection, actor, request);
+    }
     if matches!(actor.scope, Scope::Worker(_))
         && !matches!(
             request,
@@ -323,11 +330,7 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
         | Request::Validate { key, .. } => key,
         _ => unreachable!(),
     };
-    if key.is_empty() || key.len() > 128 || key.chars().any(char::is_control) {
-        return Err(invalid(
-            "Mutation key must be 1–128 bytes without control characters",
-        ));
-    }
+    validate_key(key)?;
     let digest = hex::encode(
         ring::digest::digest(&ring::digest::SHA256, &serde_json::to_vec(&request)?).as_ref(),
     );
@@ -343,34 +346,10 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
     if let Request::Report { attempt_id, .. } = &request {
         crate::workflow_attempts::context(&transaction, &actor, Some(attempt_id))?;
     }
-    let previous: Option<(String, String)> = transaction
-        .query_row(
-            "SELECT digest,view FROM workflow_mutations WHERE issuer=?1 AND key=?2",
-            params![actor.issuer, key],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    if let Some((old, result)) = previous {
-        if old != digest {
-            return Err(Error::new(
-                "idempotency_conflict",
-                "Mutation key already identifies another workflow request",
-            )
-            .into());
-        }
-        let result: Value = serde_json::from_str(&result)?;
-        authorize_history(&transaction, &actor, &result)?;
+    if let Some(result) = replay(&transaction, &actor, key, &digest)? {
         return Ok(result);
     }
-    let count: i64 =
-        transaction.query_row("SELECT count(*) FROM workflow_mutations", [], |r| r.get(0))?;
-    if count >= 4096 {
-        return Err(Error::new(
-            "busy",
-            "Workflow mutation retention capacity exhausted; existing keys remain recoverable",
-        )
-        .into());
-    }
+    mutation_capacity(&transaction)?;
     let (id, kind) = match &request {
         Request::Create { spec, .. } => {
             if !text(&spec.title, 80)
@@ -462,12 +441,70 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
     )?;
     let mut result = result;
     result["cursor"] = cursor.into();
-    transaction.execute(
-        "INSERT INTO workflow_mutations(issuer,key,digest,view) VALUES(?1,?2,?3,?4)",
-        params![actor.issuer, key, digest, serde_json::to_string(&result)?],
-    )?;
+    remember(&transaction, &actor, key, &digest, &result)?;
     transaction.commit()?;
     Ok(result)
+}
+
+pub(crate) fn validate_key(key: &str) -> Result<()> {
+    if key.is_empty() || key.len() > 128 || key.chars().any(char::is_control) {
+        return Err(invalid(
+            "Mutation key must be 1–128 bytes without control characters",
+        ));
+    }
+    Ok(())
+}
+pub(crate) fn replay(
+    connection: &Connection,
+    actor: &Actor,
+    key: &str,
+    digest: &str,
+) -> Result<Option<Value>> {
+    let previous: Option<(String, String)> = connection
+        .query_row(
+            "SELECT digest,view FROM workflow_mutations WHERE issuer=?1 AND key=?2",
+            params![actor.issuer, key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((old, result)) = previous else {
+        return Ok(None);
+    };
+    if old != digest {
+        return Err(Error::new(
+            "idempotency_conflict",
+            "Mutation key already identifies another workflow request",
+        )
+        .into());
+    }
+    let result: Value = serde_json::from_str(&result)?;
+    authorize_history(connection, actor, &result)?;
+    Ok(Some(result))
+}
+pub(crate) fn mutation_capacity(connection: &Connection) -> Result<()> {
+    let count: i64 =
+        connection.query_row("SELECT count(*) FROM workflow_mutations", [], |r| r.get(0))?;
+    if count >= 4096 {
+        return Err(Error::new(
+            "busy",
+            "Workflow mutation retention capacity exhausted; existing keys remain recoverable",
+        )
+        .into());
+    }
+    Ok(())
+}
+pub(crate) fn remember(
+    connection: &Connection,
+    actor: &Actor,
+    key: &str,
+    digest: &str,
+    result: &Value,
+) -> Result<()> {
+    connection.execute(
+        "INSERT INTO workflow_mutations(issuer,key,digest,view) VALUES(?1,?2,?3,?4)",
+        params![actor.issuer, key, digest, serde_json::to_string(result)?],
+    )?;
+    Ok(())
 }
 
 fn authorize_history(connection: &Connection, actor: &Actor, result: &Value) -> Result<()> {

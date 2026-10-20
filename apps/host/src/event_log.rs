@@ -103,6 +103,9 @@ struct Store(Connection);
 #[cfg(test)]
 #[path = "orchestration_tests.rs"]
 mod orchestration_tests;
+#[cfg(test)]
+#[path = "workflow_inbox_tests.rs"]
+mod workflow_inbox_tests;
 impl Store {
     fn open(path: &std::path::Path) -> Result<Self> {
         let mut connection = Connection::open(path)?;

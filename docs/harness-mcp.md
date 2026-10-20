@@ -58,6 +58,12 @@ commands. Instruction version 2 documents the recovery namespaces, result shape,
 attempt fences and human priority. Older live launches keep their original
 instruction snapshot; they are not silently reconfigured.
 
+`workflowInbox` adds `nesvo_read_inbox`, `nesvo_send_message` and
+`nesvo_ack_messages`. These are durable, scope-checked metadata operations.
+Instruction version 3 covers pending-read recovery and exact-ID ACK, separate
+from native effects and result validation. See the [inbox contract](harness-inbox.md)
+for recipient rules, bounds and restart behavior.
+
 Create accepts optional `spec.parentSessionId` for a live process parent, gated
 by `sessionLineage`. It creates an ordinary background session without changing
 parent input ownership. The relation appears in session data and survives client
@@ -169,5 +175,5 @@ Owner-supplied lineage, forged role/authority/current hints and workspace escape
 cannot grant access. No model calls or changes to user sessions/provider settings.
 
 Actual provider prompt-correlation coverage, MCP event streaming,
-durable task/results and actual provider-to-child orchestration remain F10/F17
+full durable run recovery and actual provider-to-child orchestration remain F10/F17
 gates. A model-driven evaluation corpus for those workflows is also pending.

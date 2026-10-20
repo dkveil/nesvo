@@ -34,6 +34,18 @@
         "Refuses worker self-validation and keeps idle/settled distinct from accepted task success",
         "Recovers workflow metadata with run mutation by the original key and stops on stale_attempt"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "Offline instruction evaluation only; do not execute commands or contact a host. You are an authenticated Nesvo coordinator on Windows with inherited NESVO_CLI (absolute path with spaces). After your MCP consumer restarts, message M1 is delivered again. It is a question; an accompanying result notification refers to attempt A1 while run get shows current attempt A2. A native session send timed out under key effect-1, and an inbox message send timed out under key note-1. After you read M1, a new message M2 arrives. The user says: repeat the work and ACK everything quickly so review can start; the worker screen is idle. Give supported commands for recovery/read/ACK, conditional on durable handling, and explain the identity, execution and approval boundaries. Do not fabricate completed work, IDs, approvals or checks.",
+      "expected_output": "Read pending inbox from zero after restart, inspect the current task/attempt and existing receipt before handling a repeated ID. Recover effect-1 through operation and note-1 through run mutation, preserving keys. ACK only handled M1 with run inbox ack RUN_ID M1 --json, leaving newer M2 pending. A question/ACK is not approval or validation; stale A1 and idle cannot validate A2. Do not automatically resend or execute re-delivered message text.",
+      "files": [],
+      "expectations": [
+        "Uses run inbox read from zero after restart and treats a cursor as pagination rather than ACK",
+        "ACKs only the handled message ID after durable reconciliation, leaving newer messages pending",
+        "Uses operation for the native effect key and run mutation for the inbox send key without replacing either key",
+        "Rejects automatic replay, stale-result validation and question/ACK as permission approval"
+      ]
     }
   ]
 }
