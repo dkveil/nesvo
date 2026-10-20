@@ -109,8 +109,17 @@ impl Pty {
             }
         });
         let wait_id = id.to_owned();
+        #[cfg(windows)]
+        let mut descendants = killer.clone_killer();
         thread::spawn(move || {
             let exit = child.wait().ok().map(|status| status.exit_code());
+            // A native root can exit while MCP helpers still own terminal pipes.
+            // Request descendant termination before publishing the root exit;
+            // acceptance still does not prove every process has been reaped.
+            #[cfg(windows)]
+            if let Err(error) = descendants.kill() {
+                eprintln!("Native session descendant cleanup failed: {error}");
+            }
             let _ = events.blocking_send(PtyEvent::Exited(wait_id, exit));
         });
 

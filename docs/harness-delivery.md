@@ -1768,3 +1768,28 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   metadata-check attestation, without claiming source/test validation.
 - This scenario and stage-three production completion remain separate. The
   run/tool scope must be explicitly approved before original-model launch.
+
+### Owned Windows descendant lifetime
+
+- F39/F42 prerequisite: a private handle-owned Windows job now contains normal
+  descendants spawned after native root enrollment. Explicit stop and natural
+  root exit request that job's termination; host death closes its private job
+  handles. Another session keeps its independent job. No PID/name tree killing,
+  provider permissions or Unix behavior changed.
+- A real ConPTY test starts Rust root/child/grandchild helpers and an independent
+  session, pins creation-validated handles, and verifies both stop and natural
+  exit without leaving those descendants. No Node/model or shell is required.
+  Targeted Windows test passes; full native suites/CI follow separately.
+- Post-spawn enrollment has a known early-descendant race and does not claim
+  WMI/brokered processes. See [ownership and boundaries](windows-process-ownership.md).
+  This is a resource prerequisite, not completed pooling or hibernation.
+- The separately approved original-model recovery probe failed in its controller
+  before the first prompt: it treated string lifecycle `blockReason` as an object.
+  One coordinator had started, no run/worker/model prompt was submitted, the host
+  exited zero and every observed descendant was gone. Its original failure report
+  is retained; no original-model retry or orchestration pass is claimed.
+- Abrupt death of a separate owned PTY-holder process also releases its observed
+  three job members without cooperative shutdown. Both native Windows ownership
+  scenarios pass. Final local checks pass fmt, warnings-denied Clippy, production
+  build, 332 unit tests, all 26 official native SDK scenarios and 30 host/sync/CLI
+  checks. Cross-platform CI remains separate evidence.
