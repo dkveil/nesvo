@@ -250,6 +250,24 @@ fn catalog() -> Vec<Tool> {
             true,
         ),
         (
+            "nesvo_get_job_attempts",
+            "Owner-only read of eight retained dispatch generations for one exact job occurrence. Ordinal 1 is the first dispatch; queued intent has no generation yet. Summaries omit precheck stdout/stderr. Does not create a retry, repeat a command, launch/adopt a process or change native permissions.",
+            object(
+                json!({"jobId":id,"occurrenceId":id,"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
+                &["jobId", "occurrenceId"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_get_job_attempt",
+            "Owner-only detail of one retained job dispatch generation, including bounded precheck evidence. jobAttemptId is distinct from a workflow task attempt/session ID. Reads never retry, launch/adopt a process, repeat native effects or infer success from process silence.",
+            object(
+                json!({"jobId":id,"occurrenceId":id,"jobAttemptId":id}),
+                &["jobId", "occurrenceId", "jobAttemptId"],
+            ),
+            true,
+        ),
+        (
             "nesvo_get_job_mutation",
             "Owner-only recovery of an original job mutation acceptance. Does not reapply its effects or reflect later state.",
             object(json!({"key":key}), &["key"]),
@@ -1143,6 +1161,8 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         | "nesvo_cancel_job_occurrence"
         | "nesvo_get_job_history"
         | "nesvo_get_job_occurrence"
+        | "nesvo_get_job_attempts"
+        | "nesvo_get_job_attempt"
         | "nesvo_get_job_mutation"
         | "nesvo_abandon_job_precheck" => {
             let action = match name {
@@ -1155,6 +1175,8 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "nesvo_cancel_job_occurrence" => "cancelOccurrence",
                 "nesvo_get_job_history" => "history",
                 "nesvo_get_job_occurrence" => "occurrence",
+                "nesvo_get_job_attempts" => "attempts",
+                "nesvo_get_job_attempt" => "attempt",
                 "nesvo_abandon_job_precheck" => "abandonPrecheck",
                 _ => "mutation",
             };
@@ -1578,6 +1600,100 @@ pub async fn serve(pairing: PathBuf, url: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn job_attempt_reads_share_cli_mcp_shape_without_mutation_authority() {
+        use clap::Parser;
+        for (args, name, arguments, expected) in [
+            (
+                vec!["nesvo", "job", "attempts", "j", "o", "--json"],
+                "nesvo_get_job_attempts",
+                json!({"jobId":"j","occurrenceId":"o"}),
+                json!({"action":"attempts","jobId":"j","occurrenceId":"o","offset":0}),
+            ),
+            (
+                vec![
+                    "nesvo", "job", "attempts", "j", "o", "--offset", "8", "--json",
+                ],
+                "nesvo_get_job_attempts",
+                json!({"jobId":"j","occurrenceId":"o","offset":8}),
+                json!({"action":"attempts","jobId":"j","occurrenceId":"o","offset":8}),
+            ),
+            (
+                vec!["nesvo", "job", "attempt", "j", "o", "generation", "--json"],
+                "nesvo_get_job_attempt",
+                json!({"jobId":"j","occurrenceId":"o","jobAttemptId":"generation"}),
+                json!({"action":"attempt","jobId":"j","occurrenceId":"o","jobAttemptId":"generation"}),
+            ),
+        ] {
+            let parsed = crate::Arguments::try_parse_from(args).unwrap();
+            let Some(cli::Command::Job { command: cli }) = parsed.command else {
+                panic!("Expected job command");
+            };
+            assert!(cli.machine());
+            let cli =
+                crate::workflow::tool("jobs", json!({"request":cli.request().unwrap()})).unwrap();
+            let (mcp, kind) = command(name, arguments.clone()).unwrap();
+            assert_eq!(kind, "workflow");
+            assert_eq!(cli, mcp);
+            assert_eq!(mcp["request"]["request"], expected);
+            for field in ["key", "owner", "retry", "action", "sessionId"] {
+                let mut forged = arguments.clone();
+                forged[field] = json!("forged");
+                assert!(command(name, forged).is_err());
+            }
+            for field in ["jobId", "occurrenceId"] {
+                let mut missing = arguments.clone();
+                missing.as_object_mut().unwrap().remove(field);
+                assert!(command(name, missing).is_err());
+            }
+            let schema = serde_json::to_value(
+                catalog()
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(schema["inputSchema"]["additionalProperties"], false);
+            assert_eq!(
+                schema["inputSchema"]["properties"]
+                    .as_object()
+                    .unwrap()
+                    .len(),
+                3
+            );
+            assert_eq!(schema["annotations"]["readOnlyHint"], true);
+            assert_eq!(schema["annotations"]["destructiveHint"], false);
+            if name == "nesvo_get_job_attempts" {
+                assert_eq!(
+                    schema["inputSchema"]["required"],
+                    json!(["jobId", "occurrenceId"])
+                );
+                assert_eq!(
+                    schema["inputSchema"]["properties"]["offset"]["maximum"],
+                    4096
+                );
+            } else {
+                assert_eq!(
+                    schema["inputSchema"]["required"],
+                    json!(["jobId", "occurrenceId", "jobAttemptId"])
+                );
+                assert!(command(name, json!({"jobId":"j","occurrenceId":"o"})).is_err());
+            }
+        }
+        assert!(
+            command(
+                "nesvo_get_job_attempts",
+                json!({"jobId":"j","occurrenceId":"o","offset":65536})
+            )
+            .is_err()
+        );
+        assert!(
+            crate::Arguments::try_parse_from([
+                "nesvo", "job", "attempts", "j", "o", "--offset", "4097"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn occurrence_cancel_cli_and_mcp_share_exact_owner_intent() {
         use clap::Parser;

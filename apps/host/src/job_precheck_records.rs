@@ -38,6 +38,18 @@ fn phase(tx: &Transaction<'_>, id: &str, state: &str, now: u64) -> Result<()> {
         "UPDATE harness_job_occurrences SET state=?2 WHERE id=?1",
         params![id, state],
     )?;
+    let (reason, finished_at): (Option<String>, Option<i64>) = tx.query_row(
+        "SELECT reason,finished_at FROM harness_job_occurrences WHERE id=?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    crate::job_attempts::sync(
+        tx,
+        id,
+        state,
+        reason.as_deref(),
+        finished_at.map(u64::try_from).transpose()?,
+    )?;
     let job: String = tx.query_row(
         "SELECT job_id FROM harness_job_occurrences WHERE id=?1",
         [id],

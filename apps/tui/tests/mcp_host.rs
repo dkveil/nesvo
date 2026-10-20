@@ -41,6 +41,8 @@ mod host_ownership;
 mod inbox;
 #[path = "support/input_redraw.rs"]
 mod input_redraw;
+#[path = "support/job_attempts.rs"]
+mod job_attempts;
 #[path = "support/job_cancellation.rs"]
 mod job_cancellation;
 #[path = "support/jobs.rs"]

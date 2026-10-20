@@ -736,6 +736,12 @@
                     },
                     {
                       "required": ["occurrences"]
+                    },
+                    {
+                      "required": ["jobAttempts", "nextOffset"]
+                    },
+                    {
+                      "required": ["jobAttempt"]
                     }
                   ],
                   "properties": {
@@ -758,6 +764,16 @@
                       "items": {
                         "$ref": "#/definitions/jobOccurrence"
                       }
+                    },
+                    "jobAttempts": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/jobAttemptSummary"
+                      }
+                    },
+                    "jobAttempt": {
+                      "$ref": "#/definitions/jobAttemptDetail"
                     },
                     "nextOffset": {
                       "type": ["integer", "null"],
@@ -3313,6 +3329,20 @@
         "jobId": {
           "$ref": "#/definitions/id"
         },
+        "jobAttemptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "jobAttemptOrdinal": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
         "jobRevision": {
           "type": "integer",
           "minimum": 1
@@ -3490,6 +3520,248 @@
                   "minimum": 0
                 }
               }
+            }
+          ]
+        }
+      }
+    },
+    "jobAttemptSummary": {
+      "type": "object",
+      "required": [
+        "id",
+        "jobId",
+        "occurrenceId",
+        "ordinal",
+        "runId",
+        "runState",
+        "state",
+        "reason",
+        "createdAt",
+        "claimedAt",
+        "finishedAt",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+        "precheck"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "occurrenceId": {
+          "$ref": "#/definitions/id"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "runState": {
+          "type": ["string", "null"]
+        },
+        "state": {
+          "enum": [
+            "dispatching",
+            "prechecking",
+            "running",
+            "needsValidation",
+            "reconcile",
+            "canceling",
+            "succeeded",
+            "failed",
+            "skipped",
+            "canceled"
+          ]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "claimedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "finishedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "attemptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "launchReceiptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "precheck": {
+          "$ref": "#/definitions/jobOccurrence/properties/precheck"
+        }
+      }
+    },
+    "jobAttemptDetail": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/jobAttemptSummary"
+        },
+        {
+          "type": "object",
+          "required": ["result", "validation"],
+          "properties": {
+            "result": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/definitions/jobAttemptResult"
+                }
+              ]
+            },
+            "validation": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/definitions/jobAttemptValidation"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "jobAttemptChecks": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "outcome", "details"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "outcome": {
+            "enum": ["passed", "failed", "skipped"]
+          },
+          "details": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "jobAttemptResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "summary", "files", "artifacts", "checks", "limitations"],
+      "properties": {
+        "outcome": {
+          "enum": ["succeeded", "failed", "blocked", "canceled"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "checks": {
+          "$ref": "#/definitions/jobAttemptChecks"
+        },
+        "limitations": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "jobAttemptValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "summary", "checks", "source", "validatorSessionId"],
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "checks": {
+          "$ref": "#/definitions/jobAttemptChecks"
+        },
+        "source": {
+          "enum": ["ownerAttestation", "coordinatorAttestation"]
+        },
+        "validatorSessionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
             }
           ]
         }

@@ -114,6 +114,23 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Read a bounded page of retained dispatch generations; never retries work.
+    Attempts {
+        id: String,
+        occurrence: String,
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=4096))]
+        offset: u16,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect one exact job dispatch generation and its retained precheck.
+    Attempt {
+        id: String,
+        occurrence: String,
+        attempt: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Recover the original accepted job mutation without dispatching it again.
     Mutation {
         #[arg(long)]
@@ -137,6 +154,8 @@ impl Command {
             | Self::Cancel { json, .. }
             | Self::History { json, .. }
             | Self::Occurrence { json, .. }
+            | Self::Attempts { json, .. }
+            | Self::Attempt { json, .. }
             | Self::Mutation { json, .. } => *json,
         }
     }
@@ -214,6 +233,26 @@ impl Command {
             Self::Occurrence { id, occurrence, .. } => Request::Occurrence {
                 job_id: id,
                 occurrence_id: occurrence,
+            },
+            Self::Attempts {
+                id,
+                occurrence,
+                offset,
+                ..
+            } => Request::Attempts {
+                job_id: id,
+                occurrence_id: occurrence,
+                offset,
+            },
+            Self::Attempt {
+                id,
+                occurrence,
+                attempt,
+                ..
+            } => Request::Attempt {
+                job_id: id,
+                occurrence_id: occurrence,
+                job_attempt_id: attempt,
             },
             Self::Mutation { key, .. } => Request::Mutation { key },
         })
@@ -350,6 +389,17 @@ pub enum Request {
     Occurrence {
         job_id: String,
         occurrence_id: String,
+    },
+    Attempts {
+        job_id: String,
+        occurrence_id: String,
+        #[serde(default)]
+        offset: u16,
+    },
+    Attempt {
+        job_id: String,
+        occurrence_id: String,
+        job_attempt_id: String,
     },
     Mutation {
         key: String,

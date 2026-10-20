@@ -11,6 +11,7 @@ mod event_log;
 mod git;
 mod groups;
 mod host_lock;
+mod job_attempts;
 mod job_calendar;
 mod job_calendar_adapter;
 mod job_cancellations;

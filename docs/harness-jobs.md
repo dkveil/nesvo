@@ -85,6 +85,45 @@ Use the existing owner `nesvo run stop` or `nesvo run cancel` with
 their own exact revision/key to control that run. A definition toggle is not a
 substitute for occurrence cancellation.
 
+## Inspect retained dispatch generations
+
+Hosts advertising `jobAttempts:true` expose owner-only attempt history for an
+exact job occurrence:
+
+```powershell
+nesvo job attempts JOB_ID OCCURRENCE_ID --json
+nesvo job attempts JOB_ID OCCURRENCE_ID --offset NEXT_OFFSET --json
+nesvo job attempt JOB_ID OCCURRENCE_ID JOB_ATTEMPT_ID --json
+```
+
+The matching tools are `nesvo_get_job_attempts` and `nesvo_get_job_attempt`.
+Each page contains at most eight summaries and a nullable `nextOffset`; offsets
+are bounded to 4096. Detail reads require all three stable IDs. These reads never
+run a precheck, launch/adopt a process, retry input or change native permissions.
+Older hosts are refused before the new request is sent.
+
+A `jobAttemptId` identifies a retained dispatch generation of an occurrence.
+It is distinct from that occurrence's workflow `attemptId`, which identifies the
+native worker's task attempt. Current occurrence reads expose nullable
+`jobAttemptId` and `jobAttemptOrdinal` alongside the existing native pointers.
+An unclaimed queued occurrence has no generation. This first implementation
+records generation 1 when work is claimed; it does not accept or advertise a retry
+policy, automatic retry, backoff or a second dispatch generation. A deliberate
+`run-now` still creates a separate occurrence.
+
+Summaries include the generation state/reason, logical intent `createdAt`, actual
+`claimedAt`, nullable `finishedAt`, bound `runId`/`runState`, native attempt/session/
+launch receipt pointers and bounded precheck evidence without stdout/stderr.
+Detail adds retained precheck output, the worker's explicit `result` and its
+`validation` evidence, including the validator's source and session when present.
+Null native pointers do not prove that an uncertain effect never happened;
+`reconcile` remains distinct from success and confirmed cleanup.
+
+Original mutation replay preserves its historical acceptance, including absent
+generation pointers in older records. Read the current occurrence and exact
+generation for later observations. Restart retains the same journal identity and
+does not allocate a retry or repeat an unknown native effect.
+
 ## Cancel one occurrence
 
 Hosts advertising `jobCancellation:true` accept stable occurrence cancellation
@@ -204,7 +243,8 @@ provider configuration is edited or restored from a historical occurrence.
 The same authenticated host implementation serves `nesvo_create_job`,
 `nesvo_get_job`, `nesvo_list_jobs`, `nesvo_update_job`, `nesvo_set_job_enabled`,
 `nesvo_run_job_now`, `nesvo_cancel_job_occurrence`, `nesvo_get_job_history`, `nesvo_get_job_occurrence` and
-`nesvo_get_job_mutation`. Coordinators and workers are refused; no ambient focused
+`nesvo_get_job_mutation`, plus the read-only `nesvo_get_job_attempts` and
+`nesvo_get_job_attempt`. Coordinators and workers are refused; no ambient focused
 session or parent metadata grants job authority. Clients check the capability.
 
 Injected-clock SQLite tests cover future/absolute instants, grace/skip, overlap,

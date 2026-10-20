@@ -62,6 +62,17 @@ pub struct Spec {
     deny_unknown_fields
 )]
 pub enum Request {
+    Attempts {
+        job_id: String,
+        occurrence_id: String,
+        #[serde(default)]
+        offset: u16,
+    },
+    Attempt {
+        job_id: String,
+        occurrence_id: String,
+        job_attempt_id: String,
+    },
     CancelOccurrence {
         key: String,
         job_id: String,
@@ -218,11 +229,13 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     }
     crate::job_prechecks::initialize(connection)?;
     crate::job_cancellations::initialize(connection)?;
+    crate::job_attempts::initialize(connection)?;
     Ok(())
 }
 pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    crate::job_attempts::backfill(&transaction)?;
     let ids = {
         let mut q=transaction.prepare("SELECT id FROM harness_job_occurrences WHERE state IN ('dispatching','prechecking','running','needsValidation','canceling')")?;
         q.query_map([], |r| r.get::<_, String>(0))?
@@ -390,6 +403,9 @@ pub(crate) fn occurrence(
         .into();
     view["precheck"] = crate::job_precheck_records::view(connection, id, detail)?;
     view["cancellation"] = crate::job_cancellations::view(connection, id)?;
+    let generation: Option<(String,i64)> = connection.query_row("SELECT id,ordinal FROM harness_job_attempts WHERE occurrence_id=?1 ORDER BY ordinal DESC LIMIT 1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    view["jobAttemptId"] = generation.as_ref().map(|r| r.0.as_str()).into();
+    view["jobAttemptOrdinal"] = generation.as_ref().map(|r| r.1).into();
     let binding = if let Some(run) = view["runId"].as_str() {
         connection.query_row("SELECT a.id,a.session_id,l.operation_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id LEFT JOIN workflow_launches l ON l.attempt_id=a.id WHERE t.run_id=?1 ORDER BY a.ordinal DESC,a.rowid DESC LIMIT 1",[run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional()?
     } else {
@@ -436,6 +452,18 @@ pub(crate) fn transition(
     )?;
     let changed=transaction.execute("UPDATE harness_job_occurrences SET state=?2,reason=?3,finished_at=CASE WHEN ?4 THEN ?5 ELSE finished_at END WHERE id=?1 AND (state<>?2 OR reason IS NOT ?3)",params![id,state,reason,finished,now as i64])?;
     if changed > 0 {
+        let finished_at: Option<i64> = transaction.query_row(
+            "SELECT finished_at FROM harness_job_occurrences WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        crate::job_attempts::sync(
+            transaction,
+            id,
+            state,
+            reason,
+            finished_at.map(u64::try_from).transpose()?,
+        )?;
         observe(transaction, &job, Some(id), state, now)?;
     }
     Ok(())
@@ -511,6 +539,26 @@ pub fn execute(
         return crate::job_prechecks::execute(connection, actor, request, now);
     }
     match &request {
+        Request::Attempts {
+            job_id,
+            occurrence_id,
+            offset,
+        } => {
+            return crate::job_attempts::view(connection, job_id, occurrence_id, None, *offset);
+        }
+        Request::Attempt {
+            job_id,
+            occurrence_id,
+            job_attempt_id,
+        } => {
+            return crate::job_attempts::view(
+                connection,
+                job_id,
+                occurrence_id,
+                Some(job_attempt_id),
+                0,
+            );
+        }
         Request::Mutation { key } => {
             orchestration::validate_key(key)?;
             let saved: Option<String> = connection
@@ -1021,6 +1069,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                     "UPDATE harness_job_occurrences SET started_at=?2 WHERE id=?1",
                     params![id, now as i64],
                 )?;
+                crate::job_attempts::begin(&transaction, &id, now)?;
                 claims.push(Claim {
                     id,
                     job_id,
@@ -1054,6 +1103,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                 )
                 .into());
             }
+            crate::job_attempts::bind(&transaction, &occurrence, &run)?;
             Reply::Done
         }
         Work::Started { occurrence } => {

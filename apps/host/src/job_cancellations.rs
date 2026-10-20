@@ -23,7 +23,7 @@ pub fn view(connection: &Connection, occurrence: &str) -> Result<Value> {
 /// Applies even after completion: a canceled occurrence's run is never reused.
 /// Human direct PTY input does not pass through this automated admission fence.
 pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
-    let canceled:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_cancellations c JOIN harness_job_occurrences o ON o.id=c.occurrence_id WHERE o.run_id=?1)",[run],|r|r.get(0))?;
+    let canceled:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_cancellations c JOIN harness_job_occurrences o ON o.id=c.occurrence_id WHERE o.run_id=?1) OR EXISTS(SELECT 1 FROM harness_job_cancellations c JOIN harness_job_attempts a ON a.occurrence_id=c.occurrence_id WHERE a.run_id=?1)",[run],|r|r.get(0))?;
     if canceled {
         return Err(Error::new(
             "job_canceled",

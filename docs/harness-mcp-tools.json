@@ -28,6 +28,8 @@
   "nesvo_get_decision",
   "nesvo_get_host_budget",
   "nesvo_get_job",
+  "nesvo_get_job_attempt",
+  "nesvo_get_job_attempts",
   "nesvo_get_job_history",
   "nesvo_get_job_mutation",
   "nesvo_get_job_occurrence",

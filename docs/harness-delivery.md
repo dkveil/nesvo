@@ -53,7 +53,7 @@ not evidence that the expanded acceptance criteria pass.
 | F25 | Bounded precheck                                | Missing                                                       | Partial: explicit owner command approval, bounded scopes, retained skip/failure/uncertainty and CLI/MCP; job UI/native-provider matrix pending |
 | F26 | Delta-only coordinator wakeups                  | Missing                                                       | Partial: opt-in durable coalescing/native receipt and human/budget fences; original-model/checkpoint/UI gates pending                          |
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Pending                                                                                                                                        |
-| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: occurrence/run/attempt history, skip/queue and owner cancellation; retry, hard timeout and cleanup policy pending                     |
+| F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: generation-1 journal, skip/queue and owner cancellation; retry, hard timeout and cleanup policy pending                               |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                               |
 | F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                                                        |
 | F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                        |
@@ -2140,3 +2140,70 @@ history points to the observed control. An additional store test covers both
 stop/cancel, pending exit, queue release and no duplicate control. Windows fmt,
 warnings-denied Clippy, all 385 unit tests and both native cancellation scenarios
 passed (9.28 seconds for the two SDK cases). Final platform CI remains pending.
+
+Cancellation platform failures were retained rather than rerun unchanged:
+CI [`39444844579`](https://github.com/dkveil/nesvo/actions/runs/39444844579), exact
+`43c16cc`, passed Windows/Linux/app/browser but failed one macOS assertion. An
+executor observation advanced the run revision between a snapshot and a refused
+enable request; either `revision_conflict` or `job_canceled` safely refuses that
+request. The regression now accepts either guard while still requiring canceled
+state, the exact original native identity and no replacement attempt/session.
+CI [`39445494252`](https://github.com/dkveil/nesvo/actions/runs/39445494252), exact
+`a16d3d8`, passed Linux/macOS/app/browser but Windows exceeded the existing
+eight-second independent-job deadline while slow prechecks ran; stderr also
+reported SQLite writer contention. The exact timeout phase was not retained.
+
+`c12aca1` removes two confirmed sources of unnecessary writer competition:
+read-only cancellation/calendar supervision uses deferred transactions, and
+legacy scheduler ticks first check due work without reserving the writer. Actual
+due claims reserve the writer and recheck eligibility, retaining cancellation
+safety. Three deterministic WAL tests hold another real writer and verify quiet
+reads, absence of writes/waits, and cancellation before claim reservation. The
+native fairness test keeps its eight-second deadline and now retains the last
+occurrence view on timeout. This fixes verified contention, not a proven complete
+explanation of the earlier Windows timeout. Local full native verification passed
+the fairness case; fresh platform evidence must still be recorded separately.
+
+### F28 first dispatch generation journal
+
+The host records generation 1 transactionally at claim, before precheck/native
+effects, and binds its Run once. Owner-only CLI `job attempts`/`job attempt` and
+MCP `nesvo_get_job_attempts`/`nesvo_get_job_attempt` require `jobAttempts:true`.
+Eight-row summary pages omit result/validation and raw command output; detail
+retains the actual original evidence. The catalog now contains 80 tools without
+changing the frozen native permission profile. A job generation ID is distinct
+from a native workflow attempt/session ID. Unclaimed queued/skipped/canceled
+intent does not manufacture execution history. Current occurrence pointers may
+evolve; original accepted mutation responses remain byte-for-byte unchanged.
+
+Recovery backfills historical claims before changing unfinished occurrence
+phases, preserves the same journal identity, and never creates another native
+attempt. Cancellation guards also fence Runs referenced by journal history.
+Generation-2 admission, retry policy/backoff, per-generation repeated prechecks,
+hard execution timeout and history-preserving retirement remain unimplemented.
+This is groundwork for F28, not completion of F28 or the full goal.
+
+Five metadata tests cover immutable Run binding, first timestamps, bounded and
+tuple-scoped history, exact retained precheck/result/validation evidence and the
+historical-Run cancellation guard. The legacy-disk fixture removes the new table
+from a populated synthetic old-schema database and exercises real initialization,
+recovery and two disk reopens, preserving original mutation bytes. It does not
+claim execution of an old release binary or adoption of surviving processes.
+The additional native SDK scenario checks owner CLI/MCP parity, worker denial,
+actual launch/report pointers, schema envelopes, unchanged acceptance replay and
+restart without another generation, Run, native attempt or session.
+
+Local Windows fmt, warnings-denied workspace Clippy, production build and all
+395 unit tests passed (142 TUI, 250 host, 3 wire; three ordinary helpers ignored).
+The first 37-case native run passed 36 cases and exposed a wrong test path: Run
+summaries publish `reportedOutcome`, while full result evidence belongs to the
+task-attempt endpoint. Correcting the assertion retained the full-result check
+through that detail endpoint. The corrected journal case and revised cancellation
+case passed individually; the subsequent full-suite and platform results are
+recorded separately. All 30 Node host/sync/CLI cases passed in 34.81 seconds.
+No original model, new production dependency, UI change or device test was involved.
+
+The corrected full serial native SDK suite then passed all 37 cases in 183.67
+seconds, including fairness, both cancellation cases and first-generation history.
+Cross-platform CI remains the publication gate; local Windows is not proof of
+Linux/macOS execution.

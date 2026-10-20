@@ -727,6 +727,14 @@ fn job_cancellation_supported(caps: &Value, request: &Value) -> bool {
         || request["request"]["request"]["action"] != "cancelOccurrence"
         || caps["jobCancellation"] == true
 }
+fn job_attempts_supported(caps: &Value, request: &Value) -> bool {
+    request["request"]["action"] != "jobs"
+        || !matches!(
+            request["request"]["request"]["action"].as_str(),
+            Some("attempts" | "attempt")
+        )
+        || caps["jobAttempts"] == true
+}
 pub async fn capability(connection: &mut Connection, request: &Value) -> Result<()> {
     let caps = cli::request(
         connection,
@@ -805,6 +813,12 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host cannot enforce occurrence cancellation and cleanup; update nesvo-host",
         ));
     }
+    if !job_attempts_supported(&caps, request) {
+        return Err(cli::failure(
+            "unsupported",
+            "Host does not support retained job attempt history; update nesvo-host",
+        ));
+    }
     if model_profile_requested(request) && caps["sessionModelProfiles"] != true {
         return Err(cli::failure(
             "unsupported",
@@ -840,6 +854,35 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn job_attempt_reads_require_their_own_host_capability() {
+        for fields in [
+            json!({"action":"attempts","jobId":"j","occurrenceId":"o"}),
+            json!({"action":"attempt","jobId":"j","occurrenceId":"o","jobAttemptId":"a"}),
+        ] {
+            let request = tool("jobs", json!({"request":fields})).unwrap();
+            for caps in [
+                json!({}),
+                json!({"durableJobs":true,"workflowAttempts":true,"jobCancellation":true}),
+                json!({"jobAttempts":false}),
+                json!({"jobAttempts":"true"}),
+            ] {
+                assert!(!job_attempts_supported(&caps, &request));
+            }
+            assert!(job_attempts_supported(
+                &json!({"jobAttempts":true}),
+                &request
+            ));
+        }
+        assert!(job_attempts_supported(
+            &json!({}),
+            &tool(
+                "jobs",
+                json!({"request":{"action":"occurrence","jobId":"j","occurrenceId":"o"}})
+            )
+            .unwrap()
+        ));
+    }
     #[test]
     fn occurrence_cancellation_requires_its_own_host_capability() {
         let cancel = tool(
