@@ -2084,3 +2084,11 @@ working set 19.51 to 19.46 MiB, threads 50 to 45 and immediate children 17 to 17
 Fixture cleanup passed. This single quantized host-only observation is not a
 total-tree measurement, statistical regression proof or a reproduction of the
 historical 100% CPU report. Original reports remain outside Git.
+
+Final precheck acceptance: CI [`39440402809`](https://github.com/dkveil/nesvo/actions/runs/39440402809)
+on exact source `c0ec448` passed all five jobs, including the complete 34 serial
+native MCP SDK scenarios on Windows, Linux and macOS. This verifies the owned
+Darwin live-group and zombie observations together with real descendant cleanup;
+the earlier failures remain recorded above. No unchanged failed run was rerun as
+replacement evidence. This completes this precheck slice's platform gate, not
+the remaining F01–F44, job UI, original-provider or device acceptance gates.
