@@ -139,3 +139,13 @@ These controlled programs make no model calls and do not establish original
 provider compaction/resume. Instruction/model context handling, native adoption,
 mobile controls and material UI still need their own evidence. No provider
 permission bypass or global configuration change is installed.
+
+Instruction V11 includes the linked context/constraint reference in each new
+launch's private system-instruction bundle. Existing live V10 snapshots stay
+unchanged. A local original Claude 2.1.304 literal-response probe returned the
+V11 marker, bundled context-reference title and an owner constraint code after
+deliberate acknowledgement. The dependent reviewer remained planned without a
+worker report or validation. The response was visible but its receipt remained
+`delivered` despite lifecycle pickup/Stop; prompt correlation needs separate
+investigation. This proves instruction/context consumption, not receipt
+settlement, actual provider compaction, model-to-MCP execution or native resume.

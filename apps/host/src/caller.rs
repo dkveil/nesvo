@@ -11,7 +11,12 @@ use std::{
 const INSTRUCTIONS: &str = include_str!("../../../skills/nesvo-harness/SKILL.md");
 const RUN_POLICY: &str =
     include_str!("../../../skills/nesvo-harness/references/run-policy-and-control.md");
-const INSTRUCTION_VERSION: u32 = 10;
+const RUN_CONTEXT: &str = include_str!("../../../skills/nesvo-harness/references/run-context.md");
+const REFERENCES: [(&str, &str); 2] = [
+    ("run-policy-and-control.md", RUN_POLICY),
+    ("run-context.md", RUN_CONTEXT),
+];
+const INSTRUCTION_VERSION: u32 = 11;
 
 pub fn runtime_client() -> Option<PathBuf> {
     resolve_client(
@@ -132,14 +137,17 @@ impl Context {
             std::fs::set_permissions(context.references(), std::fs::Permissions::from_mode(0o700))?;
         }
         crate::private_write(&context.skill(), INSTRUCTIONS.as_bytes())?;
-        crate::private_write(&context.policy_reference(), RUN_POLICY.as_bytes())?;
+        let mut instructions = INSTRUCTIONS.to_owned();
+        for (name, content) in REFERENCES {
+            crate::private_write(&context.references().join(name), content.as_bytes())?;
+            instructions.push_str(&format!(
+                "\n\n---\n\nBundled reference: references/{name}\n\n{content}"
+            ));
+        }
         // Native injection includes referenced control rules up front. Requiring
         // a new provider Read permission to learn safe control would deadlock a
         // blocked coordinator. Generic skill users still get normal references.
-        crate::private_write(
-            &context.instructions(),
-            format!("{INSTRUCTIONS}\n\n---\n\nBundled reference: references/run-policy-and-control.md\n\n{RUN_POLICY}").as_bytes(),
-        )?;
+        crate::private_write(&context.instructions(), instructions.as_bytes())?;
         crate::private_write(
             &context.path(),
             &serde_json::to_vec(
@@ -156,9 +164,6 @@ impl Context {
     }
     fn references(&self) -> PathBuf {
         self.directory.join("references")
-    }
-    fn policy_reference(&self) -> PathBuf {
-        self.references().join("run-policy-and-control.md")
     }
     fn instructions(&self) -> PathBuf {
         self.directory.join("instructions.md")
@@ -212,13 +217,15 @@ impl Drop for Context {
             let _ = std::fs::remove_file(directory.join("SKILL.md"));
             let _ = std::fs::remove_file(directory.join("mcp.json"));
             let _ = std::fs::remove_file(directory.join("instructions.md"));
-            // Remove only our named reference, never caller-created contents.
+            // Remove only our named references, never caller-created contents.
             let reference = directory.join("references");
             if reference
                 .canonicalize()
                 .is_ok_and(|resolved| resolved == reference)
             {
-                let _ = std::fs::remove_file(reference.join("run-policy-and-control.md"));
+                for (name, _) in REFERENCES {
+                    let _ = std::fs::remove_file(reference.join(name));
+                }
                 let _ = std::fs::remove_dir(reference);
             }
             // Never recursively delete caller-controlled contents.
@@ -274,16 +281,24 @@ mod tests {
             INSTRUCTIONS
         );
         assert!(INSTRUCTIONS.lines().count() < 500);
-        assert_eq!(
-            std::fs::read_to_string(first.policy_reference()).unwrap(),
-            RUN_POLICY
-        );
+        for (name, content) in REFERENCES {
+            assert_eq!(
+                std::fs::read_to_string(first.references().join(name)).unwrap(),
+                content
+            );
+        }
         let bundle = std::fs::read_to_string(first.instructions()).unwrap();
         assert!(bundle.starts_with(INSTRUCTIONS));
-        assert!(bundle.ends_with(RUN_POLICY));
+        assert!(bundle.ends_with(RUN_CONTEXT));
         assert_eq!(
             bundle
                 .matches("# Run policy and native control reference")
+                .count(),
+            1
+        );
+        assert_eq!(
+            bundle
+                .matches("# Run context and owner constraints reference")
                 .count(),
             1
         );
@@ -307,7 +322,11 @@ mod tests {
                     & 0o777,
                 0o600
             );
-            for path in [first.instructions(), first.policy_reference()] {
+            for path in std::iter::once(first.instructions()).chain(
+                REFERENCES
+                    .iter()
+                    .map(|(name, _)| first.references().join(name)),
+            ) {
                 assert_eq!(
                     std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
                     0o600
@@ -326,11 +345,9 @@ mod tests {
         assert!(!path.exists());
         assert!(!directory.join("SKILL.md").exists());
         assert!(!directory.join("instructions.md").exists());
-        assert!(
-            !directory
-                .join("references/run-policy-and-control.md")
-                .exists()
-        );
+        for (name, _) in REFERENCES {
+            assert!(!directory.join("references").join(name).exists());
+        }
         assert!(directory.join("references/unowned.txt").exists());
         assert!(directory.join("unowned.txt").exists());
         std::fs::remove_file(directory.join("unowned.txt")).unwrap();
@@ -388,14 +405,19 @@ mod tests {
             hex::encode(crate::wire::random::<8>())
         ));
         std::fs::create_dir(&outside).unwrap();
-        let unowned = outside.join("run-policy-and-control.md");
-        std::fs::write(&unowned, "Preserve caller-controlled target").unwrap();
-        std::fs::remove_file(context.policy_reference()).unwrap();
+        for (name, _) in REFERENCES {
+            std::fs::write(outside.join(name), "Preserve caller-controlled target").unwrap();
+        }
+        for (name, _) in REFERENCES {
+            std::fs::remove_file(context.references().join(name)).unwrap();
+        }
         std::fs::remove_dir(context.references()).unwrap();
         symlink(&outside, context.references()).unwrap();
         let directory = context.directory.clone();
         drop(context);
-        assert!(unowned.exists());
+        for (name, _) in REFERENCES {
+            assert!(outside.join(name).exists());
+        }
         assert!(
             directory
                 .join("references")
@@ -406,7 +428,9 @@ mod tests {
         );
         std::fs::remove_file(directory.join("references")).unwrap();
         std::fs::remove_dir(directory).unwrap();
-        std::fs::remove_file(unowned).unwrap();
+        for (name, _) in REFERENCES {
+            std::fs::remove_file(outside.join(name)).unwrap();
+        }
         std::fs::remove_dir(outside).unwrap();
     }
     #[test]

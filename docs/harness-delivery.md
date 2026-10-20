@@ -1390,3 +1390,31 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   native suites on Windows/Linux/macOS, app and browser checks. Real provider
   behavior was only probed locally on Windows; no wider account/device coverage
   is inferred from CI.
+
+### Instruction V11: current context and constraint recovery
+
+- F12/F40: root instruction remains below 500 lines (486). A linked reference
+  specifies checkpoint capture/current reconstruction, strict CLI/MCP grammar,
+  pagination/digest restart, append-only owner constraints and exact handling ACK.
+  It explicitly preserves current rules, native uncertainty, receipt authority,
+  budgets and independent validation. New launches privately bundle both named
+  references up front; old live instruction snapshots stay unchanged. Named-file
+  cleanup preserves unowned content and refuses replaced reference directories.
+- One offline paired case: V11 meets 8/8 new-contract assertions; frozen V10
+  conservatively admits the missing API (0/8), preserving existing draft/role/
+  validation safeguards. This measures contract availability in one sample, not
+  comparative safety or statistical reliability. Eleven prior cases are retained,
+  not rerun. Canonical ungraded viewer preceded inline semantic/programmatic
+  grading; completion cost/timing was unavailable and omitted.
+- An isolated original Claude 2.1.304 response returned V11, the context reference
+  heading and the exact owner-only context code. No tools, reports, file edits or
+  native approvals were requested. Task stayed assigned/result null; review stayed
+  planned. Native receipt stayed delivered despite UserPromptSubmit/Stop; do not
+  claim settlement from output. This discrepancy remains under investigation.
+  Explicit run stop observed worker exit, host exited zero, and all 21 observed
+  owned descendants disappeared (297 ms cleanup check). No user host/config was
+  changed. Provider compaction/resume and model-to-MCP child creation remain open.
+- Local checks passed warnings-denied Clippy, fmt, 305 unit tests, production
+  build, all 18 serial native SDK cases and 30 host/sync/CLI checks. Private-bundle
+  tests also passed after extending cleanup coverage to both reference names;
+  Unix symlink behavior awaits this commit's CI. Repository formatting passed.

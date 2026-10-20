@@ -5,7 +5,7 @@ description: Operate managed Nesvo sessions through the host CLI or MCP. Use for
 
 # Nesvo harness
 
-Instruction version: 10 (`NESVO_HARNESS_INSTRUCTIONS_V10`).
+Instruction version: 11 (`NESVO_HARNESS_INSTRUCTIONS_V11`).
 
 Nesvo sessions are separate visible native processes. Use this harness when the
 user asks for controlled workers they can inspect. Do not nest the Nesvo TUI or
@@ -410,8 +410,8 @@ enabled policy conflicts. Only never-claimed backlog can first deliver after all
 guards pass. Failed/unknown/claimed batches stay bound and never replay, including
 proven no-effect failures. Restart pauses policies and invalidates generations,
 retaining known settlement and unconfirmed uncertainty without adoption/relaunch.
-Do not automatically reenable after restart or human input. This API adds no
-checkpoint compaction or replacement-coordinator recovery.
+Do not automatically reenable after restart or human input. Wakes do not compact
+context or recover replacement coordinators.
 
 ## Explicit questions and decisions
 
@@ -452,6 +452,16 @@ validate/retry on a fresh worker; do not manufacture approval or success. A
 resolved question never validates the task. Superseded attempts cannot answer,
 cancel or recover under a replacement identity. No automatic native dispatcher,
 approval bridge or model wake loop is provided by these decision APIs alone.
+
+## Recover context and preserve owner constraints
+
+With `runCheckpoints`/`runConstraints`, use the bundled
+[run context reference](references/run-context.md) before capturing/recovering
+context, acknowledging constraints or dispatching work after owner changes.
+It separates historical snapshots from current state and fences old native input.
+Harness-enabled launches append it up front; generic consumers read the linked
+file. Never treat a checkpoint or acknowledgement as process adoption, replay,
+native permission, inbox ACK or task validation.
 
 ## Run budgets, drain and native control
 
