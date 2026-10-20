@@ -444,6 +444,33 @@ pub async fn handle(
                             });
                             continue;
                         }
+                        if let Command::GetProviderQuota {program,refresh,directory:Some(directory)}=&command {
+                            let permit=event_gate.clone().try_acquire_owned();
+                            let directory=directory.clone(); let program=*program; let refresh=*refresh;
+                            let state=state.clone();
+                            tokio::spawn(async move {
+                                let result:Result<serde_json::Value>=async {
+                                    let _permit=permit.map_err(|_|crate::api_error::Error::new("busy","Quota context resolution is busy"))?;
+                                    if program!=Some(crate::launchers::Program::Codex) || directory.is_empty() || directory.len()>4096 || directory.chars().any(char::is_control) || !std::path::Path::new(&directory).is_absolute() {
+                                        return Err(crate::api_error::Error::new("invalid_argument","Quota directory requires Codex and an absolute host directory").into());
+                                    }
+                                    let directory=timeout(Duration::from_secs(2),tokio::fs::canonicalize(directory)).await
+                                        .map_err(|_|crate::api_error::Error::new("timeout","Quota directory resolution timed out"))?
+                                        .map_err(|_|crate::api_error::Error::new("invalid_argument","Quota directory cannot be resolved"))?;
+                                    let metadata=timeout(Duration::from_secs(2),tokio::fs::metadata(&directory)).await
+                                        .map_err(|_|crate::api_error::Error::new("timeout","Quota directory inspection timed out"))?
+                                        .map_err(|_|crate::api_error::Error::new("invalid_argument","Quota directory cannot be inspected"))?;
+                                    if !metadata.is_dir() {return Err(crate::api_error::Error::new("invalid_argument","Quota directory must be a folder").into());}
+                                    let mut state=state.lock().unwrap();
+                                    let reader=state.register_quota_context(directory)?;
+                                    state.quota_context_query(&reader,refresh)
+                                }.await;
+                                let mut event=match result {Ok(event)=>event,Err(error)=>json!({"type":"error","code":error.downcast_ref::<crate::api_error::Error>().map_or("quota_unavailable",|error|error.code),"message":error.to_string()})};
+                                if let Some(request_id)=request_id {event["requestId"]=request_id.into();}
+                                state.lock().unwrap().send(id,event);
+                            });
+                            continue;
+                        }
                         if let Command::GetDiff { session_id, scope, directory } = command {
                             let pinned = directory.as_ref().is_some_and(|path| !path.is_empty());
                             let report = state.lock().unwrap().context_report(&session_id);

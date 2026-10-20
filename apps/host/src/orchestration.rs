@@ -328,14 +328,16 @@ pub(crate) fn execute_at(
     request: Request,
     now: u64,
 ) -> Result<Value> {
-    execute_inner(connection, actor, request, now, None)
+    execute_inner(connection, actor, request, now, None, None)
 }
 /// Internal job preparation proof is never accepted from a public request.
-pub fn execute_for_job(
+pub fn execute_for_job_at(
     connection: &mut Connection,
     actor: &Actor,
     request: Request,
     dispatch: &crate::job_attempts::Dispatch,
+    now: u64,
+    elapsed: u64,
 ) -> Result<Value> {
     if !matches!(actor.scope, Scope::Owner)
         || !matches!(
@@ -356,8 +358,9 @@ pub fn execute_for_job(
         connection,
         actor.clone(),
         request,
-        now_millis(),
+        now,
         Some(dispatch),
+        Some(elapsed),
     )
 }
 fn execute_inner(
@@ -366,6 +369,7 @@ fn execute_inner(
     request: Request,
     now: u64,
     job_dispatch: Option<&crate::job_attempts::Dispatch>,
+    job_elapsed: Option<u64>,
 ) -> Result<Value> {
     if matches!(request, Request::Coordinator { .. }) {
         return Err(Error::new(
@@ -399,8 +403,13 @@ fn execute_inner(
     }
     if let Request::RunBudget { request } = request {
         if let Some(dispatch) = job_dispatch {
-            return crate::workflow_budget::execute_for_job(
-                connection, &actor, request, now, dispatch,
+            return crate::workflow_budget::execute_for_job_at(
+                connection,
+                &actor,
+                request,
+                now,
+                dispatch,
+                job_elapsed.unwrap_or_else(crate::event_log::monotonic_millis),
             );
         }
         return crate::workflow_budget::execute(connection, actor, request, now);
@@ -526,6 +535,11 @@ fn execute_inner(
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     if let Some(dispatch) = job_dispatch {
+        crate::job_quota::guard_dispatch(
+            &transaction,
+            dispatch,
+            job_elapsed.unwrap_or_else(crate::event_log::monotonic_millis),
+        )?;
         match &request {
             Request::SetPlan { run_id, .. } | Request::Activate { run_id, .. } => {
                 crate::job_attempts::guard_bound_run(&transaction, dispatch, run_id)?;

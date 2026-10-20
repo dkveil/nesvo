@@ -218,6 +218,53 @@ pub fn admit_attempt(connection: &Connection, run_id: &str, ordinal: i64) -> Res
     }
     Ok(())
 }
+/// A retained launch already occupies its attempt/parallel slot. Rechecking it
+/// must not count that same attempt as a fresh admission or allow owner drain.
+pub fn guard_admitted_launch(connection: &Connection, run_id: &str, now: u64) -> Result<()> {
+    let state: String = connection.query_row(
+        "SELECT state FROM workflow_runs WHERE id=?1",
+        [run_id],
+        |row| row.get(0),
+    )?;
+    if state != "active" {
+        return Err(Error::new(
+            "run_state_conflict",
+            "The retained launch requires an active run",
+        )
+        .into());
+    }
+    let record = load(connection, run_id)?;
+    if record.drain_owner {
+        return Err(Error::new(
+            "run_draining",
+            "Owner drain blocks this retained native launch",
+        )
+        .into());
+    }
+    if record.exhausted.is_some() || deadline(&record).is_some_and(|deadline| now >= deadline) {
+        return Err(Error::new(
+            "time_budget_exhausted",
+            "Run elapsed budget blocks this retained native launch",
+        )
+        .into());
+    }
+    if active(connection, run_id)? > i64::from(record.limits.max_parallel) {
+        return Err(Error::new(
+            "parallel_budget_exhausted",
+            "Current attempt occupancy exceeds the run parallel budget",
+        )
+        .into());
+    }
+    let exceeds:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND a.state IN ('launching','launchUnknown','assigned','reported') AND a.ordinal>?2)",params![run_id,i64::from(record.limits.max_attempts_per_task)],|row|row.get(0))?;
+    if exceeds {
+        return Err(Error::new(
+            "retry_budget_exhausted",
+            "Current attempt exceeds the run attempt budget",
+        )
+        .into());
+    }
+    Ok(())
+}
 pub fn settle_drain(connection: &Connection, run_id: &str) -> Result<()> {
     if active(connection, run_id)? == 0 {
         connection.execute(
@@ -278,15 +325,16 @@ pub fn execute(
     request: Request,
     now: u64,
 ) -> Result<Value> {
-    execute_inner(connection, actor, request, now, None)
+    execute_inner(connection, actor, request, now, None, None)
 }
 /// Job setup uses the same budget mutation with its proof inside the writer.
-pub fn execute_for_job(
+pub fn execute_for_job_at(
     connection: &mut Connection,
     actor: &Actor,
     request: Request,
     now: u64,
     dispatch: &crate::job_attempts::Dispatch,
+    elapsed: u64,
 ) -> Result<Value> {
     if !matches!(actor.scope, Scope::Owner) || !matches!(request, Request::Set { .. }) {
         return Err(Error::new(
@@ -295,7 +343,14 @@ pub fn execute_for_job(
         )
         .into());
     }
-    execute_inner(connection, actor.clone(), request, now, Some(dispatch))
+    execute_inner(
+        connection,
+        actor.clone(),
+        request,
+        now,
+        Some(dispatch),
+        Some(elapsed),
+    )
 }
 fn execute_inner(
     connection: &mut Connection,
@@ -303,6 +358,7 @@ fn execute_inner(
     request: Request,
     now: u64,
     job_dispatch: Option<&crate::job_attempts::Dispatch>,
+    job_elapsed: Option<u64>,
 ) -> Result<Value> {
     let run_id = match &request {
         Request::Get { run_id } | Request::Set { run_id, .. } => run_id,
@@ -335,6 +391,11 @@ fn execute_inner(
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     if let Some(dispatch) = job_dispatch {
+        crate::job_quota::guard_dispatch(
+            &transaction,
+            dispatch,
+            job_elapsed.unwrap_or_else(crate::event_log::monotonic_millis),
+        )?;
         crate::job_attempts::guard_bound_run(&transaction, dispatch, run_id)?;
     }
     if let Some(previous) = orchestration::replay(&transaction, &actor, key, &digest)? {

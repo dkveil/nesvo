@@ -34,6 +34,7 @@ fn codex() -> CodexObservation {
         context: Some(ReaderContext {
             codex_home: "C:/private/quota-test-home".into(),
             context_id: "private-context-identity".into(),
+            route: crate::usage::RouteObservation::unknown("fixture_route_unknown"),
         }),
         outcome: ReadOutcome::Snapshot(CodexSnapshot {
             account_id: Some("private-reader-account".into()),

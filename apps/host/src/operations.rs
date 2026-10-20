@@ -546,21 +546,286 @@ pub async fn create(
 pub(crate) struct CreateContext {
     authority: crate::caller::Authority,
     task_tools: Option<Vec<String>>,
+    quota: Option<crate::job_quota::Permit>,
 }
 impl CreateContext {
     fn ordinary(authority: crate::caller::Authority) -> Self {
         Self {
             authority,
             task_tools: None,
+            quota: None,
         }
     }
     pub(crate) fn task(
         authority: crate::caller::Authority,
         task_tools: Option<Vec<String>>,
+        quota: Option<crate::job_quota::Permit>,
     ) -> Self {
         Self {
             authority,
             task_tools,
+            quota,
+        }
+    }
+}
+
+fn is_quota_wait(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<crate::api_error::Error>()
+        .is_some_and(|error| error.code == "quota_wait")
+}
+
+/// One live continuation owns the existing claim, prepared directory and
+/// reserved native identity. Nothing in this wait accepts another create or
+/// replays Git. Only the physical run mutex is released while evidence is held.
+struct QuotaContinuation<'a> {
+    state: &'a Arc<Mutex<State>>,
+    log: &'a Service,
+    claim: &'a crate::receipts::Claim,
+    permit: &'a crate::job_quota::Permit,
+    authority: &'a crate::caller::Authority,
+    before: u64,
+    needs_derived_reader: bool,
+}
+impl Drop for QuotaContinuation<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.quota_launch_done(&self.claim.receipt.id);
+        }
+    }
+}
+impl QuotaContinuation<'_> {
+    fn native_ready(&self, directory: &std::path::Path, derived_worktree: bool) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        state.quota_launch_ready(
+            self.permit,
+            &self.claim.receipt.id,
+            directory,
+            derived_worktree,
+        )?;
+        if self.needs_derived_reader && !derived_worktree {
+            state.quota_reserve_derived_reader(&self.claim.receipt.id)?;
+        }
+        Ok(())
+    }
+    async fn hold(&self, reason: Option<&str>) -> Result<()> {
+        self.log
+            .launch(crate::workflow_launches::Work::QuotaHold {
+                operation_id: self.claim.receipt.id.clone(),
+                token: self.claim.token.clone(),
+                reason: reason.map(str::to_owned),
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn durable_guard(&self) -> Result<()> {
+        match self
+            .log
+            .jobs(crate::job_definitions::Work::QuotaNativeGuard {
+                permit: self.permit.clone(),
+            })
+            .await?
+        {
+            crate::job_definitions::Reply::Done => Ok(()),
+            _ => Err(anyhow!("Unexpected native quota guard reply")),
+        }
+    }
+
+    async fn ready(
+        &self,
+        directory: &std::path::Path,
+        derived_worktree: bool,
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>> {
+        let mut changed = self.log.subscribe();
+        'wait: loop {
+            // Register before both reads; updates during either boundary must
+            // not be lost. A bounded poll also observes shutdown/clock expiry.
+            changed.borrow_and_update();
+            self.state
+                .lock()
+                .unwrap()
+                .quota_native_authority_ready(self.authority, self.before)?;
+            let durable = self.durable_guard().await;
+            let durable_ready = match durable {
+                Ok(()) => true,
+                Err(error) if is_quota_wait(&error) => false,
+                Err(error) => return Err(error),
+            };
+            let native = self.native_ready(directory, derived_worktree);
+            let native_ready = match native {
+                Ok(()) => true,
+                Err(error) if is_quota_wait(&error) => false,
+                Err(error) => return Err(error),
+            };
+            let mut reason = "quota_wait";
+            if durable_ready && native_ready {
+                let acquired = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .native_run_permit(&self.permit.run_id);
+                match acquired {
+                    Ok(guard) => {
+                        // Another native control can have changed durable
+                        // authority before this mutex became available.
+                        let durable = match self.durable_guard().await {
+                            Ok(()) => true,
+                            Err(error) if is_quota_wait(&error) => false,
+                            Err(error) => return Err(error),
+                        };
+                        let native = self.native_ready(directory, derived_worktree);
+                        let native = match native {
+                            Ok(()) => true,
+                            Err(error) if is_quota_wait(&error) => false,
+                            Err(error) => return Err(error),
+                        };
+                        let waiting = !durable || !native;
+                        if waiting {
+                            drop(guard);
+                            self.hold(Some("quota_wait")).await?;
+                            continue 'wait;
+                        }
+                        self.hold(None).await?;
+                        self.state
+                            .lock()
+                            .unwrap()
+                            .quota_native_authority_ready(self.authority, self.before)?;
+                        return Ok(guard);
+                    }
+                    Err(error)
+                        if error
+                            .downcast_ref::<crate::api_error::Error>()
+                            .is_some_and(|error| error.code == "busy") =>
+                    {
+                        reason = "native_run_busy";
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            self.hold(Some(reason)).await?;
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
+                changed = changed.changed() => {
+                    if changed.is_err() {
+                        return Err(anyhow!("Host journal closed during retained quota admission"));
+                    }
+                },
+            }
+        }
+    }
+}
+
+async fn dispatch_quota_create(
+    state: &Arc<Mutex<State>>,
+    events: &mpsc::Sender<PtyEvent>,
+    log: &Service,
+    claim: &crate::receipts::Claim,
+    spec: &mut LaunchSpec,
+    context: &CreateContext,
+    authority_epoch: Result<u64>,
+) -> (&'static str, serde_json::Value) {
+    let Some(permit) = context.quota.as_ref() else {
+        return ("unknown", json!({"code":"quota_context_missing"}));
+    };
+    let validation = authority_epoch.and_then(|before| {
+        state
+            .lock()
+            .unwrap()
+            .resolve_task_launch(&context.authority, spec, context.task_tools.as_deref())
+            .map(|directory| (directory, before))
+    });
+    let (mut directory, before) = match validation {
+        Ok(ready) => ready,
+        Err(error) => {
+            return (
+                "failed",
+                json!({"code":error.downcast_ref::<crate::api_error::Error>().map(|error|error.code).unwrap_or("invalid_launch"),"message":error.to_string().chars().take(240).collect::<String>(),"effectStarted":false}),
+            );
+        }
+    };
+    let derived_worktree = spec.worktree;
+    let continuation = QuotaContinuation {
+        state,
+        log,
+        claim,
+        permit,
+        authority: &context.authority,
+        before,
+        needs_derived_reader: derived_worktree,
+    };
+    let mut setup_started = false;
+    let mut spawn_attempted = false;
+    let result: Result<String> = async {
+        let gate = continuation.ready(&directory, false).await?;
+        if derived_worktree {
+            // From this boundary Git may have left real repository artifacts.
+            // Every later refusal remains uncertain about effects, even when
+            // no native process was spawned.
+            setup_started = true;
+            directory = crate::git::create_worktree(&directory).await.map_err(|_| {
+                crate::api_error::Error::new(
+                    "worktree_unconfirmed",
+                    "Inspect the repository before creating another worktree",
+                )
+            })?;
+        }
+        spec.cwd = Some(crate::process::display_path(&directory));
+        spec.worktree = false;
+        log.launch(crate::workflow_launches::Work::PreparedWorkspace {
+            operation_id: claim.receipt.id.clone(),
+            token: claim.token.clone(),
+            spec: Box::new(spec.clone()),
+            derived_worktree,
+        })
+        .await?;
+        drop(gate);
+        spec.quota_launch = Some(crate::quota_contexts::LaunchContext {
+            permit: permit.clone(),
+            derived_worktree,
+            receipt_id: claim.receipt.id.clone(),
+        });
+        loop {
+            let gate = continuation.ready(&directory, derived_worktree).await?;
+            let launched = {
+                let mut current = state.lock().unwrap();
+                current.quota_native_authority_ready(&context.authority, before)?;
+                current.launch_authorized(
+                    &context.authority,
+                    spec,
+                    events,
+                    &claim.receipt.session_id,
+                    context.task_tools.as_deref(),
+                )
+            };
+            drop(gate);
+            match launched {
+                Err(error) if is_quota_wait(&error) => {
+                    continuation.hold(Some("quota_wait")).await?;
+                }
+                other => {
+                    // A native adapter error can occur after process creation;
+                    // its typed spelling alone is never no-effect evidence.
+                    spawn_attempted = true;
+                    return other;
+                }
+            }
+        }
+    }
+    .await;
+    drop(continuation);
+    match result {
+        Ok(id) => ("created", json!({"sessionId":id,"taskResult":null})),
+        Err(error) => {
+            let typed = error.downcast_ref::<crate::api_error::Error>();
+            let no_effect = !setup_started && !spawn_attempted && typed.is_some();
+            (
+                if no_effect { "failed" } else { "unknown" },
+                json!({"code":typed.map(|error|error.code).unwrap_or("launch_unconfirmed"),
+                    "message":if typed.is_some() {error.to_string().chars().take(240).collect::<String>()} else {"Inspect the original launch receipt, workspace and session before another operation".into()},
+                    "effectStarted":if no_effect {Some(false)} else {None},
+                    "reservedSessionId":claim.receipt.session_id,"directory":spec.cwd}),
+            )
         }
     }
 }
@@ -575,10 +840,31 @@ pub(crate) async fn dispatch_create(
     mut spec: LaunchSpec,
     context: CreateContext,
 ) -> Result<Receipt> {
+    let quota_epoch = context.quota.as_ref().map(|_| {
+        state
+            .lock()
+            .unwrap()
+            .quota_native_authority_epoch(&context.authority)
+    });
     let claim = log
         .claim(issuer.clone(), receipt.id)
         .await?
         .ok_or_else(|| anyhow!("Operation is no longer available for dispatch"))?;
+    if let Some(authority_epoch) = quota_epoch {
+        let (phase, result) = dispatch_quota_create(
+            &state,
+            &events,
+            &log,
+            &claim,
+            &mut spec,
+            &context,
+            authority_epoch,
+        )
+        .await;
+        return log
+            .finish(issuer, claim.receipt.id, claim.token, phase.into(), result)
+            .await;
+    }
     let validation = state.lock().unwrap().resolve_task_launch(
         &context.authority,
         &mut spec,

@@ -25,6 +25,8 @@ pub(crate) struct View {
     pub observed_at: Option<u64>,
     pub source_at: Option<u64>,
     pub expires_at: Option<u64>,
+    #[serde(skip)]
+    pub expires_elapsed_ms: Option<u64>,
     /// Codex read-start age, or Claude's original cache-source age.
     pub age_ms: Option<u64>,
     pub freshness: &'static str,
@@ -305,6 +307,7 @@ impl Entry {
             observed_at: None,
             source_at: None,
             expires_at: None,
+            expires_elapsed_ms: None,
             age_ms: None,
             freshness: "unavailable",
             complete: false,
@@ -417,6 +420,15 @@ impl Entry {
             "incomplete_snapshot"
         };
         view.freshness = "fresh";
+        view.expires_elapsed_ms = Some(
+            elapsed_ms
+                .saturating_add(snapshot.expires_at().saturating_sub(now_ms))
+                .min(
+                    snapshot
+                        .started_elapsed_ms
+                        .saturating_add(READ_FRESHNESS_MS),
+                ),
+        );
         view.ordinary_usage_allowed = snapshot.ordinary_usage_allowed;
         view.eligibility_reason = snapshot.eligibility_reason();
         view.ordinary_usage_eligible = view.eligibility_reason == "observed";

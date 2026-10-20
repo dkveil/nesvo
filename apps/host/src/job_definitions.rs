@@ -45,6 +45,8 @@ pub struct Spec {
     pub retry: Option<Box<crate::job_retries::Policy>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_policy: Option<crate::job_quota::Policy>,
     #[serde(default)]
     pub misfire: Misfire,
     #[serde(default = "grace")]
@@ -65,6 +67,15 @@ pub struct Spec {
     deny_unknown_fields
 )]
 pub enum Request {
+    AuthorizeQuota {
+        key: String,
+        job_id: String,
+        occurrence_id: String,
+        expected_context_id: String,
+        expected_account_fingerprint: String,
+        context_id: String,
+        account_fingerprint: String,
+    },
     Attempts {
         job_id: String,
         occurrence_id: String,
@@ -153,6 +164,12 @@ pub struct Claim {
     pub ordinal: u16,
 }
 pub enum Work {
+    QuotaNativeGuard {
+        permit: crate::job_quota::Permit,
+    },
+    QuotaObserved {
+        observation: crate::job_quota::Observation,
+    },
     Prepare {
         dispatch: crate::job_attempts::Dispatch,
         request: Box<orchestration::Request>,
@@ -265,11 +282,13 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::job_precheck_records::initialize(connection)?;
     crate::job_retries::initialize(connection)?;
     crate::job_triggers::initialize(connection)?;
+    crate::job_quota::initialize(connection)?;
     Ok(())
 }
 pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    crate::job_quota::recover(&transaction, now)?;
     crate::job_attempts::backfill(&transaction)?;
     // A recovered row is historical evidence, never a new producer capability.
     transaction.execute(
@@ -335,6 +354,9 @@ fn due(spec: &Spec) -> Result<Option<u64>> {
         .map_err(|_| invalid("Once time must be after the Unix epoch"))
 }
 fn validate(spec: &Spec, now: u64) -> Result<Option<u64>> {
+    if let Some(policy) = &spec.quota_policy {
+        policy.validate(spec.profile.program)?;
+    }
     if spec
         .execution_timeout_ms
         .is_some_and(|timeout| !(1000..=604_800_000).contains(&timeout))
@@ -443,6 +465,21 @@ pub(crate) fn occurrence(
     id: &str,
     detail: bool,
 ) -> Result<Value> {
+    occurrence_at(
+        connection,
+        job_id,
+        id,
+        detail,
+        crate::event_log::monotonic_millis(),
+    )
+}
+pub(crate) fn occurrence_at(
+    connection: &Connection,
+    job_id: &str,
+    id: &str,
+    detail: bool,
+    elapsed: u64,
+) -> Result<Value> {
     let row=connection.query_row("SELECT job_revision,trigger_kind,due_at,created_at,state,reason,run_id,started_at,finished_at,spec FROM harness_job_occurrences WHERE id=?1 AND job_id=?2",params![id,job_id],|r|Ok((json!({"id":id,"jobId":job_id,"jobRevision":r.get::<_,i64>(0)?,"trigger":r.get::<_,String>(1)?,"dueAt":r.get::<_,i64>(2)?,"createdAt":r.get::<_,i64>(3)?,"state":r.get::<_,String>(4)?,"reason":r.get::<_,Option<String>>(5)?,"runId":r.get::<_,Option<String>>(6)?,"startedAt":r.get::<_,Option<i64>>(7)?,"finishedAt":r.get::<_,Option<i64>>(8)?}),r.get::<_,String>(9)?))).optional()?;
     let Some((mut view, spec)) = row else {
         return Err(Error::new(
@@ -461,6 +498,7 @@ pub(crate) fn occurrence(
     view["precheck"] = crate::job_precheck_records::view_current(connection, id, detail)?;
     view["cancellation"] = crate::job_cancellations::view(connection, id)?;
     view["executionTimeout"] = crate::job_timeouts::view_current(connection, id)?;
+    view["quota"] = crate::job_quota::view(connection, id, elapsed)?;
     let (reconciliation, resolution) = crate::job_launch_resolutions::view_current(connection, id)?;
     view["launchReconciliation"] = reconciliation;
     view["launchResolution"] = resolution;
@@ -609,6 +647,19 @@ pub fn execute(
     request: Request,
     now: u64,
 ) -> Result<Value> {
+    #[cfg(test)]
+    let elapsed = now;
+    #[cfg(not(test))]
+    let elapsed = crate::event_log::monotonic_millis();
+    execute_at(connection, actor, request, now, elapsed)
+}
+pub fn execute_at(
+    connection: &mut Connection,
+    actor: Actor,
+    request: Request,
+    now: u64,
+    elapsed: u64,
+) -> Result<Value> {
     if !matches!(actor.scope, Scope::Owner) {
         return Err(Error::new(
             "forbidden",
@@ -665,7 +716,11 @@ pub fn execute(
         Request::Occurrence {
             job_id,
             occurrence_id,
-        } => return Ok(json!({"occurrence":occurrence(connection,job_id,occurrence_id,true)?})),
+        } => {
+            return Ok(
+                json!({"occurrence":occurrence_at(connection,job_id,occurrence_id,true,elapsed)?}),
+            );
+        }
         Request::List { offset } => {
             if *offset > 4096 {
                 return Err(invalid("Invalid job page offset"));
@@ -696,7 +751,7 @@ pub fn execute(
             let rows = ids
                 .iter()
                 .take(8)
-                .map(|id| occurrence(connection, job_id, id, false))
+                .map(|id| occurrence_at(connection, job_id, id, false, elapsed))
                 .collect::<Result<Vec<_>>>()?;
             return Ok(
                 json!({"occurrences":rows,"nextOffset":if ids.len()>8{Some(*offset+8)}else{None}}),
@@ -711,6 +766,7 @@ pub fn execute(
         | Request::RunNow { key, .. }
         | Request::CancelOccurrence { key, .. }
         | Request::AbandonPrecheck { key, .. }
+        | Request::AuthorizeQuota { key, .. }
         | Request::AbandonLaunchNoEffect { key, .. } => key,
         _ => unreachable!(),
     };
@@ -753,6 +809,37 @@ pub fn execute(
         .into());
     }
     let view = match &request {
+        Request::AuthorizeQuota {
+            job_id,
+            occurrence_id,
+            expected_context_id,
+            expected_account_fingerprint,
+            context_id,
+            account_fingerprint,
+            ..
+        } => {
+            occurrence_at(&transaction, job_id, occurrence_id, false, elapsed)?;
+            crate::job_quota::authorize(
+                &transaction,
+                job_id,
+                occurrence_id,
+                expected_context_id,
+                expected_account_fingerprint,
+                &crate::job_quota::Binding {
+                    context_id: context_id.clone(),
+                    account_fingerprint: account_fingerprint.clone(),
+                },
+                now,
+            )?;
+            observe(
+                &transaction,
+                job_id,
+                Some(occurrence_id),
+                "quota_authorized",
+                now,
+            )?;
+            json!({"occurrence":occurrence_at(&transaction,job_id,occurrence_id,true,elapsed)?})
+        }
         Request::AbandonLaunchNoEffect {
             job_id,
             occurrence_id,
@@ -962,10 +1049,14 @@ fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
     }
     Ok(())
 }
+#[cfg(test)]
 pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
+    work_at(connection, work, now, now)
+}
+pub fn work_at(connection: &mut Connection, work: Work, now: u64, elapsed: u64) -> Result<Reply> {
     let work = match work {
         Work::Prepare { dispatch, request } => {
-            return orchestration::execute_for_job(
+            return orchestration::execute_for_job_at(
                 connection,
                 &Actor {
                     issuer: "owner".into(),
@@ -973,6 +1064,8 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                 },
                 *request,
                 &dispatch,
+                now,
+                elapsed,
             )
             .map(Reply::Prepared);
         }
@@ -982,7 +1075,10 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
         Work::Poll { slots } => i64::from((*slots).min(4)),
         _ => 4,
     };
-    let behavior = if matches!(&work, Work::CancelRequested { .. } | Work::CalendarDue) {
+    let behavior = if matches!(
+        &work,
+        Work::CancelRequested { .. } | Work::CalendarDue | Work::QuotaNativeGuard { .. }
+    ) {
         // These branches only read. Repeated supervision/calendar queries must
         // not compete for SQLite's single writer or delay native state locks.
         rusqlite::TransactionBehavior::Deferred
@@ -991,6 +1087,39 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
     };
     let transaction = connection.transaction_with_behavior(behavior)?;
     let reply = match work {
+        Work::QuotaNativeGuard { permit } => {
+            let current = crate::job_quota::permit_for_run(&transaction, &permit.run_id)?;
+            if !current.is_some_and(|current| {
+                current.occurrence_id == permit.occurrence_id
+                    && current.job_attempt_id == permit.job_attempt_id
+                    && current.binding == permit.binding
+            }) {
+                return Err(Error::new(
+                    "quota_binding_conflict",
+                    "The exact job generation or quota authorization changed",
+                )
+                .into());
+            }
+            crate::workflow_budget::guard_admitted_launch(&transaction, &permit.run_id, now)?;
+            crate::workflow_context::guard(&transaction, &permit.run_id)?;
+            crate::job_timeouts::guard_run(&transaction, &permit.run_id, now, elapsed)?;
+            crate::job_quota::guard_permit(&transaction, &permit, elapsed)?;
+            Reply::Done
+        }
+        Work::QuotaObserved { observation } => {
+            if crate::job_quota::publish(&transaction, &observation)? {
+                append_transaction(
+                    &transaction,
+                    vec![Observation {
+                        session_id: None,
+                        kind: "provider.quota_changed",
+                        at: now,
+                        payload: json!({"revision":observation.revision}),
+                    }],
+                )?;
+            }
+            Reply::Done
+        }
         Work::Prepare { .. } => return Err(invalid("Nested job preparation is unsupported")),
         Work::CancelRequested { dispatch } => {
             crate::job_attempts::guard(
@@ -1025,7 +1154,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             crate::job_attempts::guard(
                 &transaction,
                 &dispatch,
-                &["dispatching", "prechecking", "canceling"],
+                &["dispatching", "prechecking", "canceling", "canceled"],
             )?;
             let occurrence = dispatch.occurrence.clone();
             let phase: Option<String> = transaction
@@ -1071,6 +1200,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
         }
         Work::BeginPrecheck { dispatch } => {
             crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
+            crate::job_quota::guard_dispatch(&transaction, &dispatch, elapsed)?;
             let reply = crate::job_precheck_records::begin_attempt(&transaction, &dispatch, now)?;
             if matches!(&reply, Reply::PrecheckPassed(false)) {
                 crate::job_attempts::retire(&transaction, &dispatch)?;
@@ -1229,8 +1359,9 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                 transaction.execute("UPDATE harness_jobs SET next_due=NULL WHERE id=?1", [&id])?;
             }
             let candidates = {
-                let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec,o.state FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id LEFT JOIN harness_job_retries retry ON retry.source_attempt_id=o.current_job_attempt_id AND retry.occurrence_id=o.id WHERE ((o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual')) OR (o.state='retryWaiting' AND retry.state='waiting' AND retry.not_before<=?2)) AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.id<>o.id AND a.state IN ({ACTIVE})) ORDER BY CASE WHEN o.state='retryWaiting' THEN retry.not_before ELSE o.created_at END,o.created_at,o.rowid LIMIT ?1"))?;
-                q.query_map(params![slots, now as i64], |r| {
+                let eligible = crate::job_quota::ELIGIBLE_SQL;
+                let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec,o.state FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id LEFT JOIN harness_job_retries retry ON retry.source_attempt_id=o.current_job_attempt_id AND retry.occurrence_id=o.id WHERE ((o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual')) OR (o.state='retryWaiting' AND retry.state='waiting' AND retry.not_before<=?2)) AND {eligible} AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.id<>o.id AND a.state IN ({ACTIVE})) ORDER BY CASE WHEN o.state='retryWaiting' THEN retry.not_before ELSE o.created_at END,o.created_at,o.rowid LIMIT ?1"))?;
+                q.query_map(params![slots, now as i64, i64::try_from(elapsed)?], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
@@ -1242,8 +1373,15 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
             };
             let mut claims = Vec::new();
             for (id, job_id, spec, phase) in candidates {
+                let active_sibling:bool=transaction.query_row(&format!("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE job_id=?1 AND id<>?2 AND state IN ({ACTIVE}))"),params![job_id,id],|row|row.get(0))?;
+                if active_sibling {
+                    continue;
+                }
+                crate::job_quota::guard_occurrence(&transaction, &id, elapsed)?;
                 let (dispatch, ordinal) = if phase == "retryWaiting" {
-                    let Some(claim) = crate::job_retries::claim(&transaction, &id, now)? else {
+                    let Some(claim) =
+                        crate::job_retries::claim_at(&transaction, &id, now, elapsed)?
+                    else {
                         continue;
                     };
                     claim
@@ -1253,7 +1391,10 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
                         "UPDATE harness_job_occurrences SET started_at=?2 WHERE id=?1",
                         params![id, now as i64],
                     )?;
-                    (crate::job_attempts::claim(&transaction, &id, now)?, 1)
+                    (
+                        crate::job_attempts::claim_at(&transaction, &id, now, elapsed)?,
+                        1,
+                    )
                 };
                 claims.push(Claim {
                     id,
@@ -1267,6 +1408,7 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
         }
         Work::BindRun { dispatch, run } => {
             crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
+            crate::job_quota::guard_dispatch(&transaction, &dispatch, elapsed)?;
             let occurrence = dispatch.occurrence.clone();
             let spec: String = transaction.query_row(
                 "SELECT spec FROM harness_job_occurrences WHERE id=?1",

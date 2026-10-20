@@ -914,24 +914,42 @@
               "additionalProperties": false,
               "required": ["type", "providers", "refresh"],
               "properties": {
-                "type": { "const": "providerQuota" },
+                "type": {
+                  "const": "providerQuota"
+                },
                 "providers": {
                   "type": "array",
                   "maxItems": 3,
-                  "items": { "$ref": "#/definitions/providerQuotaObservation" }
+                  "items": {
+                    "$ref": "#/definitions/providerQuotaObservation"
+                  }
                 },
                 "refresh": {
                   "anyOf": [
-                    { "type": "null" },
+                    {
+                      "type": "null"
+                    },
                     {
                       "type": "object",
                       "additionalProperties": false,
                       "required": ["program", "state", "revision", "retryAfterMs"],
                       "properties": {
-                        "program": { "enum": ["codex", "claude", "gemini"] },
-                        "state": { "enum": ["queued", "pending", "cooldown"] },
-                        "revision": { "$ref": "#/definitions/cursor" },
-                        "retryAfterMs": { "$ref": "#/definitions/cursor" }
+                        "program": {
+                          "enum": ["codex", "claude", "gemini"]
+                        },
+                        "state": {
+                          "enum": ["queued", "pending", "cooldown"]
+                        },
+                        "revision": {
+                          "$ref": "#/definitions/cursor"
+                        },
+                        "retryAfterMs": {
+                          "$ref": "#/definitions/cursor"
+                        },
+                        "readerId": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{32}$"
+                        }
                       }
                     }
                   ]
@@ -1427,6 +1445,34 @@
         },
         "directory": {
           "type": ["string", "null"]
+        },
+        "preparedWorkspace": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["directory", "derivedWorktree", "preparedAt"],
+              "properties": {
+                "directory": {
+                  "type": ["string", "null"]
+                },
+                "derivedWorktree": {
+                  "type": ["boolean", "null"]
+                },
+                "preparedAt": {
+                  "type": ["integer", "null"],
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        },
+        "quotaHoldReason": {
+          "type": ["string", "null"],
+          "enum": [null, "quota_wait", "native_run_busy"]
         }
       }
     },
@@ -3474,6 +3520,9 @@
               "minimum": 1000,
               "maximum": 604800000,
               "description": "Optional per-generation execution window from native launch admission; excludes prechecks and remains independent of maxElapsedMs. An accepted explicit worker report before the deadline disarms it."
+            },
+            "quotaPolicy": {
+              "$ref": "#/definitions/jobQuotaPolicy"
             }
           }
         }
@@ -3642,6 +3691,9 @@
               "minimum": 1000,
               "maximum": 604800000,
               "description": "Immutable execution window accepted for this occurrence; omission preserves legacy behavior."
+            },
+            "quotaPolicy": {
+              "$ref": "#/definitions/jobQuotaPolicy"
             }
           }
         },
@@ -3754,6 +3806,9 @@
               }
             }
           ]
+        },
+        "quota": {
+          "$ref": "#/definitions/jobQuotaDecision"
         }
       }
     },
@@ -4382,9 +4437,19 @@
       "additionalProperties": false,
       "required": ["usedPercent", "durationMins", "resetsAt"],
       "properties": {
-        "usedPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "durationMins": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
-        "resetsAt": { "type": ["integer", "null"] }
+        "usedPercent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "durationMins": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "resetsAt": {
+          "type": ["integer", "null"]
+        }
       }
     },
     "providerQuotaObservation": {
@@ -4412,29 +4477,84 @@
         "scope"
       ],
       "properties": {
-        "program": { "enum": ["codex", "claude", "gemini"] },
-        "source": { "enum": ["codexAppServer", "claudeStatusCache", "unsupported"] },
-        "revision": { "$ref": "#/definitions/cursor" },
-        "status": { "enum": ["checking", "ready", "partial", "unavailable", "stale"] },
-        "reason": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "attemptedAt": { "type": ["integer", "null"], "minimum": 0 },
-        "observedAt": { "type": ["integer", "null"], "minimum": 0 },
-        "sourceAt": { "type": ["integer", "null"], "minimum": 0 },
-        "expiresAt": { "type": ["integer", "null"], "minimum": 0 },
-        "ageMs": { "type": ["integer", "null"], "minimum": 0 },
-        "freshness": { "enum": ["fresh", "stale", "unavailable"] },
-        "complete": { "type": "boolean" },
-        "ordinaryUsageAllowed": { "type": ["boolean", "null"] },
+        "program": {
+          "enum": ["codex", "claude", "gemini"]
+        },
+        "source": {
+          "enum": ["codexAppServer", "claudeStatusCache", "unsupported"]
+        },
+        "revision": {
+          "$ref": "#/definitions/cursor"
+        },
+        "status": {
+          "enum": ["checking", "ready", "partial", "unavailable", "stale"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "attemptedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "observedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "sourceAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "expiresAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "ageMs": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "freshness": {
+          "enum": ["fresh", "stale", "unavailable"]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "ordinaryUsageAllowed": {
+          "type": ["boolean", "null"]
+        },
         "windows": {
           "type": "array",
           "maxItems": 2,
-          "items": { "$ref": "#/definitions/providerQuotaWindow" }
+          "items": {
+            "$ref": "#/definitions/providerQuotaWindow"
+          }
         },
-        "contextId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
-        "accountFingerprint": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
-        "ordinaryUsageEligible": { "type": "boolean" },
-        "eligibilityReason": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "scope": { "const": "readerSnapshotOnly" }
+        "contextId": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "accountFingerprint": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "ordinaryUsageEligible": {
+          "type": "boolean"
+        },
+        "eligibilityReason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "scope": {
+          "const": "readerSnapshotOnly"
+        },
+        "readerId": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        }
       }
     },
     "jobTriggerSpec": {
@@ -4679,6 +4799,38 @@
           ]
         }
       }
+    },
+    "jobQuotaPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "contextId", "accountFingerprint"],
+      "properties": {
+        "mode": {
+          "const": "wait"
+        },
+        "contextId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "accountFingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "description": "Explicit owner opt-in to configured-reader quota admission; currently Codex only. Requires jobQuotaAdmission:true. Reader observations are not an immutable native-account lease or a guarantee of provider acceptance. Omission preserves legacy intent."
+    },
+    "jobQuotaDecision": {
+      "type": "object",
+      "required": ["state", "reason"],
+      "properties": {
+        "state": {
+          "enum": ["waiting", "eligible", "notRequired"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        }
+      },
+      "description": "Additive retained quota admission evidence. Historical accepted envelopes may omit it. Waiting does not imply a native effect or authorize retry; reader eligibility does not guarantee provider acceptance."
     }
   }
 }

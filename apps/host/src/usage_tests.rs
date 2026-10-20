@@ -1,5 +1,380 @@
 use super::*;
 
+fn context_from_initializer(
+    command: &(PathBuf, Vec<OsString>),
+    cwd: &Path,
+    initialized: &Value,
+) -> Result<Option<ReaderContext>, ReadFailure> {
+    reader_context(
+        command,
+        cwd,
+        initialized,
+        None,
+        RouteObservation::unknown("route_metadata_unavailable"),
+    )
+}
+
+fn chatgpt_account() -> Result<Value, ReadFailure> {
+    Ok(
+        json!({"id":2,"result":{"requiresOpenaiAuth":true,"account":{"type":"chatgpt","email":"private@example.invalid","planType":"plus"}}}),
+    )
+}
+
+fn openai_configuration() -> Result<Value, ReadFailure> {
+    Ok(
+        json!({"id":3,"result":{"config":{"model_provider":"openai","model":"native-model","forced_login_method":"chatgpt"},"origins":{"model_provider":{"name":{"type":"user","file":"private-config-path"},"version":"version-1"}}}}),
+    )
+}
+
+fn configured_route() -> RouteObservation {
+    parse_route(
+        &chatgpt_account(),
+        &openai_configuration(),
+        RouteEnvironment::default(),
+    )
+}
+
+#[test]
+fn configured_chatgpt_openai_route_accepts_only_supported_nonoverridden_metadata() {
+    let route = configured_route();
+    assert_eq!(route.verdict, RouteVerdict::ChatgptConfiguredOpenai);
+    assert_eq!(route.reason, "route_chatgpt_configured_openai");
+    assert_eq!(route.config_fingerprint.as_ref().unwrap().len(), 64);
+    let mut config = openai_configuration().unwrap();
+    config["result"]["config"]["model_provider"] = Value::Null;
+    config["result"]["config"]["model_providers"] =
+        json!({"unused":{"base_url":"https://unused.invalid","env_key":"PRIVATE_KEY_NAME"}});
+    assert_eq!(
+        parse_route(&chatgpt_account(), &Ok(config), RouteEnvironment::default()).verdict,
+        RouteVerdict::ChatgptConfiguredOpenai
+    );
+}
+
+#[test]
+fn custom_provider_endpoints_oss_and_forced_api_never_grant_chatgpt_route() {
+    for (field, value, expected) in [
+        ("model_provider", json!("custom"), RouteVerdict::Custom),
+        (
+            "model_providers",
+            json!({"openai":{}}),
+            RouteVerdict::Custom,
+        ),
+        (
+            "openai_base_url",
+            json!("https://api.openai.com/v1"),
+            RouteVerdict::Custom,
+        ),
+        (
+            "chatgpt_base_url",
+            json!("https://custom.invalid/backend-api"),
+            RouteVerdict::Custom,
+        ),
+        ("oss", json!(true), RouteVerdict::Custom),
+        ("local_provider", json!("ollama"), RouteVerdict::Custom),
+        ("forced_login_method", json!("api"), RouteVerdict::ApiKey),
+        (
+            "auth_mode",
+            json!("amazonBedrock"),
+            RouteVerdict::AmazonBedrock,
+        ),
+        ("auth_mode", json!("unknown-mode"), RouteVerdict::Unknown),
+        ("model_providers", json!(false), RouteVerdict::Unknown),
+        ("model_provider", json!(5), RouteVerdict::Unknown),
+    ] {
+        let mut config = openai_configuration().unwrap();
+        config["result"]["config"][field] = value;
+        assert_eq!(
+            parse_route(&chatgpt_account(), &Ok(config), RouteEnvironment::default()).verdict,
+            expected,
+            "{field}"
+        );
+    }
+    for environment in [
+        RouteEnvironment {
+            openai_base_url: true,
+            api_key: false,
+        },
+        RouteEnvironment {
+            openai_base_url: false,
+            api_key: true,
+        },
+    ] {
+        assert_ne!(
+            parse_route(&chatgpt_account(), &openai_configuration(), environment).verdict,
+            RouteVerdict::ChatgptConfiguredOpenai
+        );
+    }
+}
+
+#[test]
+fn missing_invalid_or_failed_account_and_configuration_cannot_grant_route() {
+    for (kind, expected) in [
+        ("apiKey", RouteVerdict::ApiKey),
+        ("amazonBedrock", RouteVerdict::AmazonBedrock),
+        ("futureAuth", RouteVerdict::Unknown),
+    ] {
+        let account = Ok(json!({"result":{"requiresOpenaiAuth":true,"account":{"type":kind}}}));
+        assert_eq!(
+            parse_route(
+                &account,
+                &openai_configuration(),
+                RouteEnvironment::default()
+            )
+            .verdict,
+            expected
+        );
+    }
+    for account in [
+        Err(ReadFailure::ProviderError),
+        Ok(json!({"result":{"requiresOpenaiAuth":true,"account":null}})),
+        Ok(json!({"result":{"requiresOpenaiAuth":false,"account":{"type":"chatgpt"}}})),
+        Ok(json!({"result":{"account":{"type":"chatgpt"}}})),
+    ] {
+        assert_eq!(
+            parse_route(
+                &account,
+                &openai_configuration(),
+                RouteEnvironment::default()
+            )
+            .verdict,
+            RouteVerdict::Unknown
+        );
+    }
+    for config in [
+        Err(ReadFailure::ProviderError),
+        Ok(json!({"result":{"config":{},"origins":null}})),
+        Ok(json!({"result":null})),
+    ] {
+        let route = parse_route(&chatgpt_account(), &config, RouteEnvironment::default());
+        assert_eq!(route.verdict, RouteVerdict::Unknown);
+        assert_eq!(route.config_fingerprint, None);
+    }
+}
+
+#[test]
+fn route_and_context_hash_bind_config_version_and_reader_version_without_secret_fields() {
+    let original = configured_route();
+    let mut config = openai_configuration().unwrap();
+    config["result"]["origins"]["model_provider"]["version"] = json!("version-2");
+    let updated = parse_route(&chatgpt_account(), &Ok(config), RouteEnvironment::default());
+    assert_ne!(original.config_fingerprint, updated.config_fingerprint);
+
+    let home = std::env::temp_dir();
+    let command = (home.join("codex"), vec![]);
+    let initialized =
+        json!({"result":{"codexHome":home.to_str().unwrap(),"userAgent":"codex/0.156.0"}});
+    let context = reader_context(&command, &home, &initialized, Some(&home), original.clone())
+        .unwrap()
+        .unwrap();
+    assert_eq!(context.route.verdict, RouteVerdict::ChatgptConfiguredOpenai);
+    assert_ne!(
+        context.context_id,
+        reader_context(&command, &home, &initialized, Some(&home), updated)
+            .unwrap()
+            .unwrap()
+            .context_id
+    );
+    let mut next_version = initialized.clone();
+    next_version["result"]["userAgent"] = json!("codex/next");
+    assert_ne!(
+        context.context_id,
+        reader_context(
+            &command,
+            &home,
+            &next_version,
+            Some(&home),
+            original.clone()
+        )
+        .unwrap()
+        .unwrap()
+        .context_id
+    );
+    next_version["result"]
+        .as_object_mut()
+        .unwrap()
+        .remove("userAgent");
+    let old = reader_context(
+        &command,
+        &home,
+        &next_version,
+        Some(&home),
+        original.clone(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(old.route.verdict, RouteVerdict::Unknown);
+    assert_eq!(old.route.reason, "route_reader_version_unavailable");
+
+    let mut account = chatgpt_account().unwrap();
+    account["result"]["account"]["email"] = json!("another-private-email@example.invalid");
+    let mut config = openai_configuration().unwrap();
+    config["result"]["config"]["model_providers"] = json!({"unused":{"headers":{"Authorization":"private-secret"},"base_url":"https://private.invalid"}});
+    config["result"]["config"]["instructions"] = json!("private prompt");
+    assert_eq!(
+        parse_route(&Ok(account), &Ok(config), RouteEnvironment::default()).config_fingerprint,
+        original.config_fingerprint
+    );
+}
+
+#[test]
+fn explicit_home_must_match_reported_home_after_lexical_normalization() {
+    let home = std::env::temp_dir();
+    let command = (home.join("codex"), vec![]);
+    let initialized = json!({"result":{"codexHome":home.join("nested").join("..").to_str().unwrap(),"userAgent":"codex/0.156.0"}});
+    assert!(
+        reader_context(
+            &command,
+            &home,
+            &initialized,
+            Some(&home),
+            configured_route()
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert_eq!(
+        reader_context(
+            &command,
+            &home,
+            &initialized,
+            Some(&home.join("other")),
+            configured_route()
+        ),
+        Err(ReadFailure::ContextUnavailable)
+    );
+    assert_eq!(
+        normalized_context_path(Path::new("relative-home")),
+        Err(ReadFailure::ContextUnavailable)
+    );
+}
+
+#[test]
+fn quota_received_before_metadata_timeout_stays_displayable_without_route_authority() {
+    let home = std::env::temp_dir();
+    let command = (home.join("codex"), vec![]);
+    let initialized =
+        json!({"result":{"codexHome":home.to_str().unwrap(),"userAgent":"codex/0.156.0"}});
+    let mut context = reader_context(
+        &command,
+        &home,
+        &initialized,
+        Some(&home),
+        configured_route(),
+    )
+    .unwrap();
+    let previous_id = context.as_ref().unwrap().context_id.clone();
+    let outcome = read_outcome(
+        Err(ReadFailure::Timeout),
+        Some(parse_snapshot(&full()).unwrap()),
+        &mut context,
+    );
+    assert!(
+        matches!(outcome, ReadOutcome::Snapshot(snapshot) if snapshot.complete && snapshot.windows.len() == 2)
+    );
+    let context = context.unwrap();
+    assert_eq!(context.route.verdict, RouteVerdict::Unknown);
+    assert_eq!(context.route.config_fingerprint, None);
+    assert_ne!(context.context_id, previous_id);
+    assert_eq!(
+        read_outcome(Err(ReadFailure::Timeout), None, &mut None),
+        ReadOutcome::Failure(ReadFailure::Timeout)
+    );
+}
+
+async fn route_rpc_fixture(
+    account: Value,
+    config: Value,
+) -> (ReaderContext, CodexSnapshot, Vec<Value>) {
+    let home = std::env::temp_dir();
+    let command = (home.join("codex"), vec![]);
+    let requested = ReadContext {
+        command: &command,
+        cwd: &home,
+        home: Some(&home),
+        environment: RouteEnvironment::default(),
+    };
+    let initialized =
+        json!({"id":1,"result":{"codexHome":home.to_str().unwrap(),"userAgent":"codex/0.156.0"}});
+    let (client, server) = tokio::io::duplex(8192);
+    let (input, output) = tokio::io::split(client);
+    let (server_input, mut server_output) = tokio::io::split(server);
+    let mut context = None;
+    let mut snapshot = None;
+    let adapter = rpc_io(output, input, &requested, &mut context, &mut snapshot);
+    let fixture = async {
+        let mut reader = BufReader::new(server_input);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let mut requests = vec![serde_json::from_str::<Value>(&line).unwrap()];
+        server_output
+            .write_all(format!("{initialized}\n").as_bytes())
+            .await
+            .unwrap();
+        server_output.flush().await.unwrap();
+        for _ in 0..4 {
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            requests.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        let mut quota = full();
+        quota["id"] = json!(4);
+        // Quota arrives before the independent metadata replies.
+        for response in [quota, config, account] {
+            server_output
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+        server_output.flush().await.unwrap();
+        requests
+    };
+    let (result, requests) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(adapter, fixture)
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    (context.unwrap(), snapshot.unwrap(), requests)
+}
+
+#[tokio::test]
+async fn same_reader_requests_only_bounded_readonly_metadata_and_preserves_quota_on_rpc_error() {
+    let (context, snapshot, requests) =
+        route_rpc_fixture(chatgpt_account().unwrap(), openai_configuration().unwrap()).await;
+    assert_eq!(context.route.verdict, RouteVerdict::ChatgptConfiguredOpenai);
+    assert!(snapshot.complete);
+    assert_eq!(requests.len(), 5);
+    assert_eq!(requests[1], json!({"method":"initialized","params":{}}));
+    assert_eq!(
+        requests[2],
+        json!({"id":2,"method":"account/read","params":{"refreshToken":false}})
+    );
+    assert_eq!(
+        requests[3],
+        json!({"id":3,"method":"config/read","params":{"cwd":std::env::temp_dir().to_str().unwrap(),"includeLayers":false}})
+    );
+    assert_eq!(
+        requests[4],
+        json!({"id":4,"method":"account/rateLimits/read","params":{}})
+    );
+    for (account, config) in [
+        (
+            json!({"id":2,"error":{"message":"private account failure"}}),
+            openai_configuration().unwrap(),
+        ),
+        (
+            chatgpt_account().unwrap(),
+            json!({"id":3,"error":{"message":"private config failure"}}),
+        ),
+    ] {
+        let (context, snapshot, _) = route_rpc_fixture(account, config).await;
+        assert_eq!(context.route.verdict, RouteVerdict::Unknown);
+        assert_eq!(snapshot.windows.len(), 2);
+        assert!(snapshot.complete);
+        assert!(!format!("{:?}", context.route).contains("private"));
+    }
+}
+
 fn full() -> Value {
     json!({"id":2,"result":{"accountId":"reader-workspace","ordinaryUsageAllowed":true,"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":300,"resetsAt":4000},"secondary":{"usedPercent":20,"windowDurationMins":10080,"resetsAt":8000}}}})
 }
@@ -148,18 +523,18 @@ fn context_fingerprint_binds_only_executable_arguments_cwd_and_reported_home() {
     let home = std::env::temp_dir();
     let command = (home.join("codex"), vec![OsString::from("literal arg")]);
     let initialized = json!({"id":1,"result":{"codexHome":home.to_str().unwrap()}});
-    let first = reader_context(&command, &home, &initialized)
+    let first = context_from_initializer(&command, &home, &initialized)
         .unwrap()
         .unwrap();
     assert_eq!(first.context_id.len(), 64);
     assert_eq!(
-        reader_context(&command, &home, &initialized)
+        context_from_initializer(&command, &home, &initialized)
             .unwrap()
             .unwrap(),
         first
     );
     assert_ne!(
-        reader_context(&command, &home.join("other"), &initialized)
+        context_from_initializer(&command, &home.join("other"), &initialized)
             .unwrap()
             .unwrap()
             .context_id,
@@ -167,18 +542,18 @@ fn context_fingerprint_binds_only_executable_arguments_cwd_and_reported_home() {
     );
     let other = (command.0.clone(), vec![OsString::from("other arg")]);
     assert_ne!(
-        reader_context(&other, &home, &initialized)
+        context_from_initializer(&other, &home, &initialized)
             .unwrap()
             .unwrap()
             .context_id,
         first.context_id
     );
     assert_eq!(
-        reader_context(&command, &home, &json!({"result":{}})).unwrap(),
+        context_from_initializer(&command, &home, &json!({"result":{}})).unwrap(),
         None
     );
     assert_eq!(
-        reader_context(&command, &home, &json!({"result":{"codexHome":"relative"}})),
+        context_from_initializer(&command, &home, &json!({"result":{"codexHome":"relative"}})),
         Err(ReadFailure::ContextUnavailable)
     );
 }

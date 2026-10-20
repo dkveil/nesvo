@@ -11,7 +11,8 @@ mod codex;
 #[cfg(test)]
 pub use codex::{BucketCompleteness, BucketSource, CodexSnapshot, ReadFailure};
 pub use codex::{
-    CodexObservation, ReadOutcome, ReaderContext, WindowState, read_codex_observation,
+    CodexObservation, ReadOutcome, ReaderContext, RouteObservation, RouteVerdict, WindowState,
+    read_codex_in_context,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

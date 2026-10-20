@@ -345,10 +345,19 @@ fn block(tx: &Transaction<'_>, source: &Source, reason: &str, now: u64) -> Resul
 
 /// The scheduler supplies its common fair candidate order and available slots.
 /// This revalidation and fresh token allocation share its writer transaction.
+#[cfg(test)]
 pub fn claim(
     tx: &Transaction<'_>,
     occurrence: &str,
     now: u64,
+) -> Result<Option<(job_attempts::Dispatch, u16)>> {
+    claim_at(tx, occurrence, now, now)
+}
+pub fn claim_at(
+    tx: &Transaction<'_>,
+    occurrence: &str,
+    now: u64,
+    elapsed: u64,
 ) -> Result<Option<(job_attempts::Dispatch, u16)>> {
     if crate::job_launch_resolutions::resolved_occurrence(tx, occurrence)?
         || crate::job_timeouts::owns_occurrence(tx, occurrence)?
@@ -399,6 +408,15 @@ pub fn claim(
     if !authorized(tx, &source)? {
         block(tx, &source, "retry_authority_changed", now)?;
         return Ok(None);
+    }
+    if let Err(error) = crate::job_quota::guard_occurrence(tx, occurrence, elapsed) {
+        if error
+            .downcast_ref::<Error>()
+            .is_some_and(|error| error.code == "quota_wait")
+        {
+            return Ok(None);
+        }
+        return Err(error);
     }
     job_attempts::capacity(tx, 1)?;
     let attempt = hex::encode(crate::wire::random::<16>());

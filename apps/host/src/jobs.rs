@@ -40,6 +40,9 @@ pub struct LaunchSpec {
     pub muted: bool,
     #[serde(default)]
     pub resume_picker: bool,
+    // Internal admission context is never accepted from serialized launch input.
+    #[serde(skip)]
+    pub(crate) quota_launch: Option<crate::quota_contexts::LaunchContext>,
 }
 
 pub fn timestamp(input: &str) -> Result<i64> {

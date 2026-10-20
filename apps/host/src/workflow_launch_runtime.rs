@@ -37,7 +37,7 @@ pub async fn execute_guarded(
         },
     )
     .await?;
-    let _permit = state.lock().unwrap().native_run_permit(&request.run_id)?;
+    let mut run_permit = Some(state.lock().unwrap().native_run_permit(&request.run_id)?);
     let Reply::Prepared { view, dispatch } = log
         .launch(match guard {
             Some(guard) => Work::PrepareForExecutor {
@@ -55,6 +55,12 @@ pub async fn execute_guarded(
         return Err(anyhow!("Unexpected launch preparation reply"));
     };
     if let Some(dispatch) = dispatch {
+        // A retained quota continuation reacquires this same physical fence
+        // before effects, but must release it while waiting for fresh evidence
+        // so an owner can stop or otherwise control the original run.
+        if dispatch.quota.is_some() {
+            drop(run_permit.take());
+        }
         let authority = state
             .lock()
             .unwrap()
@@ -70,7 +76,11 @@ pub async fn execute_guarded(
                     actor.issuer,
                     dispatch.receipt.clone(),
                     dispatch.spec,
-                    crate::operations::CreateContext::task(authority, dispatch.selected_tools),
+                    crate::operations::CreateContext::task(
+                        authority,
+                        dispatch.selected_tools,
+                        dispatch.quota,
+                    ),
                 )
                 .await;
             }

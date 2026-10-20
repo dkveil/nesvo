@@ -133,11 +133,21 @@ pub fn begin(tx: &Transaction<'_>, occurrence: &str, _now: u64) -> Result<String
 }
 /// Used only by fresh scheduler admission. Even a retired generation cannot
 /// obtain another token: original work is inspected, never implicitly rearmed.
+#[cfg(test)]
 pub fn claim(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<Dispatch> {
+    claim_at(tx, occurrence, now, now)
+}
+pub fn claim_at(
+    tx: &Transaction<'_>,
+    occurrence: &str,
+    now: u64,
+    elapsed: u64,
+) -> Result<Dispatch> {
     let fresh: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences WHERE id=?1 AND state='dispatching' AND started_at IS NOT NULL AND run_id IS NULL AND current_job_attempt_id IS NULL AND NOT EXISTS(SELECT 1 FROM harness_job_attempts WHERE occurrence_id=?1))",[occurrence],|r|r.get(0))?;
     if !fresh {
         return Err(conflict());
     }
+    crate::job_quota::guard_occurrence(tx, occurrence, elapsed)?;
     let attempt = begin(tx, occurrence, now)?;
     let token = hex::encode(crate::wire::random::<32>());
     if tx.execute(

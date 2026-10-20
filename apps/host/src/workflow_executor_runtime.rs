@@ -122,7 +122,7 @@ impl Runner {
                         .downcast_ref::<crate::api_error::Error>()
                         .map(|e| e.code)
                         .unwrap_or("executor_unavailable");
-                    if matches!(code, "revision_conflict" | "busy") {
+                    if matches!(code, "revision_conflict" | "busy" | "quota_wait") {
                         self.note("waiting", Some(code), None, false).await?;
                     } else if code == "executor_paused" {
                         return Ok(());

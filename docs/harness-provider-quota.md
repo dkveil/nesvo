@@ -22,8 +22,10 @@ omit it.
 ## Sources and bounds
 
 - Codex: the resolved original CLI's local `app-server`, with an explicit host
-  workspace cwd. The only RPCs are `initialize`, `initialized` and the full
-  `account/rateLimits/read`. Sparse quota notifications cannot create a full
+  folder and `CODEX_HOME`. The only RPCs are `initialize`, `initialized`,
+  `account/read` with `refreshToken:false`, `config/read` with the actual folder
+  and `includeLayers:false`, and the full `account/rateLimits/read`.
+  Sparse quota notifications cannot create a full
   observation or renew permission. No login, auth refresh, turn or model RPC is
   issued. The host does not read credential files.
 - Claude: the existing quota-only `.rate-limits.json` status-line cache under
@@ -75,8 +77,9 @@ Every public view says `scope:"readerSnapshotOnly"`. `ordinaryUsageEligible`
 describes this snapshot only. It does **not** bind the reader's account to a
 historically running native session, reserve provider capacity, launch a job or
 authorize continuation. Jobs can still be refused by the original provider.
-Configured-account job admission and durable quota wake remain separate F44
-acceptance work; this observation API does not claim their completion.
+The separate explicit [configured-account job policy](harness-quota-jobs.md)
+uses this evidence together with route inspection and final native checks.
+Legacy direct-PTY wake still has its separate receipt-backed acceptance gap.
 
 Raw account IDs, home directories, argv, paths and provider errors are never in
 this view. `accountFingerprint` and `contextId` are opaque HMAC values scoped to

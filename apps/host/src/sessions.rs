@@ -147,6 +147,9 @@ pub struct State {
     provider_versions: Vec<crate::launchers::Version>,
     provider_limits: Vec<ProviderLimit>,
     provider_quota: crate::provider_quota::Tracker,
+    quota_contexts: crate::quota_contexts::Registry,
+    quota_wakeup: Option<mpsc::Sender<()>>,
+    quota_publications: Vec<crate::job_quota::Observation>,
     quota_refresh: Vec<crate::provider_quota_runtime::RefreshControl>,
     limits_read_at: i64,
     schedule_watchers: HashSet<u64>,
@@ -173,12 +176,13 @@ fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
 impl State {
     pub fn new(workspace: PathBuf, metadata: MetadataStore, launchers: Launchers) -> Self {
         let provider_limits = usage::installed(&launchers);
+        let quota_salt = nesvo_wire::random::<32>();
         let provider_quota = crate::provider_quota::Tracker::new(
             &provider_limits
                 .iter()
                 .map(|item| item.id)
                 .collect::<Vec<_>>(),
-            nesvo_wire::random::<32>(),
+            quota_salt,
         );
         let provider_versions = launchers.pending_versions();
         Self {
@@ -199,6 +203,9 @@ impl State {
             provider_versions,
             provider_limits,
             provider_quota,
+            quota_contexts: crate::quota_contexts::Registry::new(quota_salt),
+            quota_wakeup: None,
+            quota_publications: Vec::new(),
             quota_refresh: Vec::new(),
             limits_read_at: 0,
             schedule_watchers: HashSet::new(),
@@ -220,6 +227,187 @@ impl State {
                 last_started: None,
             });
         Some((command, self.workspace.clone(), receiver))
+    }
+    pub fn codex_readers(&mut self) -> Option<mpsc::Receiver<()>> {
+        let command = self.launchers.probe_command(Program::Codex)?;
+        let (sender, receiver) = mpsc::channel(1);
+        self.quota_contexts
+            .register(
+                crate::quota_contexts::ReaderSpec {
+                    command,
+                    directory: self.workspace.clone(),
+                    home: self.codex_home(&self.workspace),
+                },
+                true,
+            )
+            .ok()?;
+        self.quota_wakeup = Some(sender);
+        Some(receiver)
+    }
+    fn codex_home(&self, directory: &Path) -> Option<PathBuf> {
+        let home = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .or_else(|| std::env::var_os("HOME"))
+                    .map(|home| PathBuf::from(home).join(".codex"))
+            })?;
+        Some(if home.is_absolute() {
+            home
+        } else {
+            directory.join(home)
+        })
+    }
+    pub fn next_quota_context(&mut self) -> Option<crate::quota_contexts::Read> {
+        if self.shutting_down {
+            return None;
+        }
+        self.quota_contexts
+            .next(crate::event_log::monotonic_millis())
+    }
+    pub fn finish_quota_context(&mut self, id: &str, observation: usage::CodexObservation) {
+        let ambient = self.quota_contexts.ambient() == Some(id);
+        self.quota_contexts.finish(id, observation.clone());
+        if ambient {
+            self.observe_codex_quota(observation);
+        }
+        self.collect_quota_observations();
+    }
+    pub fn collect_quota_observations(&mut self) {
+        let observations = self
+            .quota_contexts
+            .observations(now_millis(), crate::event_log::monotonic_millis());
+        for observation in observations {
+            self.retain_quota_observation(observation);
+        }
+    }
+    pub fn retain_quota_observation(&mut self, observation: crate::job_quota::Observation) {
+        if let Some(current) = self
+            .quota_publications
+            .iter_mut()
+            .find(|current| current.source_id == observation.source_id)
+        {
+            if current.revision < observation.revision {
+                *current = observation;
+            }
+        } else {
+            self.quota_publications.push(observation);
+        }
+    }
+    pub fn take_quota_observations(&mut self) -> Vec<crate::job_quota::Observation> {
+        self.collect_quota_observations();
+        std::mem::take(&mut self.quota_publications)
+    }
+    pub fn register_quota_context(&mut self, directory: PathBuf) -> Result<String> {
+        ensure!(!self.shutting_down, "Host is shutting down.");
+        let command = self
+            .launchers
+            .probe_command(Program::Codex)
+            .ok_or_else(|| {
+                crate::api_error::Error::new(
+                    "provider_unavailable",
+                    "Codex is not installed on the host",
+                )
+            })?;
+        self.quota_contexts.register(
+            crate::quota_contexts::ReaderSpec {
+                command,
+                home: self.codex_home(&directory),
+                directory,
+            },
+            false,
+        )
+    }
+    pub fn quota_context_query(&mut self, id: &str, refresh: bool) -> Result<Value> {
+        ensure!(!self.shutting_down, "Host is shutting down.");
+        let now = now_millis();
+        let elapsed = crate::event_log::monotonic_millis();
+        let view = self
+            .quota_contexts
+            .public_view(id, now, elapsed)
+            .ok_or_else(|| {
+                crate::api_error::Error::new(
+                    "quota_context_not_found",
+                    "Quota reader context is no longer registered",
+                )
+            })?;
+        let request = if refresh {
+            let request = self.quota_contexts.request(id, now, elapsed)?;
+            if let Some(wake) = &self.quota_wakeup {
+                let _ = wake.try_send(());
+            }
+            request
+        } else {
+            Value::Null
+        };
+        Ok(json!({"type":"providerQuota","providers":[view],"refresh":request}))
+    }
+    pub fn quota_launch_ready(
+        &mut self,
+        permit: &crate::job_quota::Permit,
+        receipt: &str,
+        directory: &Path,
+        derived_worktree: bool,
+    ) -> Result<()> {
+        if self.shutting_down {
+            return Err(
+                crate::api_error::Error::new("host_stopping", "Host is shutting down").into(),
+            );
+        }
+        let now = now_millis();
+        let elapsed = crate::event_log::monotonic_millis();
+        let directory = PathBuf::from(crate::process::display_path(directory));
+        let mut spec = self
+            .quota_contexts
+            .spec_for_context(&permit.binding.context_id, now, elapsed)
+            .ok_or_else(|| {
+                crate::api_error::Error::new(
+                    "quota_wait",
+                    "The approved quota reader context is unavailable or changed",
+                )
+            })?;
+        if self.launchers.probe_command(Program::Codex).as_ref() != Some(&spec.command)
+            || spec.home.is_none()
+            || (!derived_worktree && spec.directory != directory)
+        {
+            return Err(crate::api_error::Error::new(
+                "quota_wait",
+                "Native launch does not match the approved reader configuration",
+            )
+            .into());
+        }
+        spec.directory = directory;
+        let id = if derived_worktree {
+            self.quota_contexts.consume_derived(receipt, spec)?
+        } else {
+            self.quota_contexts.transient(spec)?
+        };
+        if self
+            .quota_contexts
+            .ready(&id, &permit.binding.account_fingerprint, now, elapsed)
+        {
+            return Ok(());
+        }
+        let _ = self.quota_contexts.request(&id, now, elapsed)?;
+        if let Some(wake) = &self.quota_wakeup {
+            let _ = wake.try_send(());
+        }
+        Err(crate::api_error::Error::new(
+            "quota_wait",
+            "Waiting for fresh matching configured-account quota evidence",
+        )
+        .into())
+    }
+    pub fn quota_reserve_derived_reader(&mut self, receipt: &str) -> Result<()> {
+        if self.shutting_down {
+            return Err(
+                crate::api_error::Error::new("host_stopping", "Host is shutting down").into(),
+            );
+        }
+        self.quota_contexts.reserve_derived(receipt)
+    }
+    pub fn quota_launch_done(&mut self, receipt: &str) {
+        self.quota_contexts.release_derived(receipt);
     }
     pub fn quota_read_started(&mut self, program: Program) -> bool {
         if self.shutting_down {
@@ -255,7 +443,8 @@ impl State {
     }
     pub fn observe_codex_quota(&mut self, observation: usage::CodexObservation) {
         let previous_identity = self
-            .quota_views()
+            .provider_quota
+            .view(now_millis(), crate::event_log::monotonic_millis())
             .into_iter()
             .find(|view| view.program == Program::Codex)
             .map(|view| (view.context_id, view.account_fingerprint));
@@ -275,7 +464,8 @@ impl State {
         };
         self.provider_quota.apply_codex(observation);
         let identity = self
-            .quota_views()
+            .provider_quota
+            .view(now_millis(), crate::event_log::monotonic_millis())
             .into_iter()
             .find(|view| view.program == Program::Codex)
             .map(|view| (view.context_id, view.account_fingerprint));
@@ -307,8 +497,19 @@ impl State {
         self.refresh_quota_projection();
     }
     fn quota_views(&mut self) -> Vec<crate::provider_quota::View> {
-        self.provider_quota
-            .view(now_millis(), crate::event_log::monotonic_millis())
+        let now = now_millis();
+        let elapsed = crate::event_log::monotonic_millis();
+        let mut views = self.provider_quota.view(now, elapsed);
+        if let Some(id) = self.quota_contexts.ambient().map(str::to_owned)
+            && let Some(view) = self.quota_contexts.view(&id, now, elapsed)
+        {
+            if let Some(current) = views.iter_mut().find(|view| view.program == Program::Codex) {
+                *current = view;
+            } else {
+                views.push(view);
+            }
+        }
+        views
     }
     fn refresh_quota_projection(&mut self) {
         for view in self.quota_views() {
@@ -354,6 +555,19 @@ impl State {
             let program = program.ok_or_else(|| {
                 crate::api_error::Error::new("invalid_argument", "Provider is required")
             })?;
+            if program == Program::Codex
+                && let Some(id) = self.quota_contexts.ambient().map(str::to_owned)
+            {
+                let request = self.quota_contexts.request(
+                    &id,
+                    now_millis(),
+                    crate::event_log::monotonic_millis(),
+                )?;
+                if let Some(wake) = &self.quota_wakeup {
+                    let _ = wake.try_send(());
+                }
+                return Ok(json!({"type":"providerQuota","providers":providers,"refresh":request}));
+            }
             let revision = providers.first().map_or(0, |view| view.revision);
             let control = self
                 .quota_refresh
@@ -718,6 +932,45 @@ impl State {
             }
         }
     }
+    /// Captures native authority before an admitted quota launch starts waiting.
+    /// The global counter is compared only against the bound actor's own epoch:
+    /// an unrelated human session does not revoke coordinatorless owner jobs.
+    pub(crate) fn quota_native_authority_epoch(
+        &self,
+        authority: &crate::caller::Authority,
+    ) -> Result<u64> {
+        let before = self.human_control_epoch;
+        self.quota_native_authority_ready(authority, before)?;
+        Ok(before)
+    }
+    pub(crate) fn quota_native_authority_ready(
+        &self,
+        authority: &crate::caller::Authority,
+        before: u64,
+    ) -> Result<()> {
+        if self.shutting_down {
+            return Err(
+                crate::api_error::Error::new("host_stopping", "Host is shutting down").into(),
+            );
+        }
+        if let Some(actor) = self.actor_session(authority)? {
+            if actor.controller.is_some() || actor.human_control_epoch > before {
+                return Err(crate::api_error::Error::new(
+                    "control_busy",
+                    "Human takeover of the coordinator requires deliberate fresh launch intent",
+                )
+                .into());
+            }
+            if actor.human_input_dirty {
+                return Err(crate::api_error::Error::new(
+                    "unsafe_draft",
+                    "Coordinator editor needs deliberate reconciliation before another automated launch",
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
     pub fn authorize_automation(
         &self,
         authority: &crate::caller::Authority,
@@ -1065,6 +1318,8 @@ impl State {
             "hostId":self.metadata.host_id, "pushNotifications":true, "diagnostics":true, "sessionQueries":true, "programs":self.launchers.capabilities(), "directoryBrowser":true, "gitDiff":true, "advancedLaunch":true, "schedules":true, "quotaWake":true, "attention":true, "autoTitles":true, "templates":true, "recovery":true,
             "providerLimits":self.provider_limits});
         event["providerQuotaObservations"] = true.into();
+        event["providerQuotaContexts"] = true.into();
+        event["jobQuotaAdmission"] = self.event_log.is_some().into();
         event["domainEvents"] = self.event_log.is_some().into();
         event["operationReceipts"] = self.event_log.is_some().into();
         event["promptReceipts"] = self.event_log.is_some().into();
@@ -2219,7 +2474,37 @@ impl State {
                 spec.allowed_nesvo_tools.as_deref().unwrap_or_default(),
             )
         });
+        if let Some(context) = &spec.quota_launch {
+            ensure!(
+                spec.program == Program::Codex,
+                "Quota admission requires Codex"
+            );
+            self.quota_launch_ready(
+                &context.permit,
+                &context.receipt_id,
+                &cwd,
+                context.derived_worktree,
+            )?;
+        }
         let mut command = self.launchers.command(spec.program, &cwd)?;
+        if let Some(context) = &spec.quota_launch {
+            let reader = self
+                .quota_contexts
+                .spec_for_context(
+                    &context.permit.binding.context_id,
+                    now_millis(),
+                    crate::event_log::monotonic_millis(),
+                )
+                .ok_or_else(|| {
+                    crate::api_error::Error::new(
+                        "quota_wait",
+                        "The approved reader context changed before native launch",
+                    )
+                })?;
+            if let Some(home) = reader.home {
+                command.env("CODEX_HOME", home);
+            }
+        }
         let selection = crate::launch_profile::Selection {
             model: spec.model.clone(),
             effort: spec.effort.clone(),
@@ -2449,7 +2734,15 @@ impl State {
                     request_id,
                 );
             }
-            Command::GetProviderQuota { program, refresh } => {
+            Command::GetProviderQuota {
+                program,
+                refresh,
+                directory,
+            } => {
+                ensure!(
+                    directory.is_none(),
+                    "Context quota queries require asynchronous transport resolution"
+                );
                 let result = self.provider_quota_query(program, refresh)?;
                 self.respond(client_id, result, request_id);
             }
@@ -3451,6 +3744,100 @@ mod tests {
     use super::*;
 
     #[test]
+    fn quota_native_launch_fence_retains_human_takeover_and_scope_revocation() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            metadata,
+            Launchers::discover(),
+        );
+        state.set_caller_url("ws://127.0.0.1:1".into());
+        let (events, _output) = mpsc::channel(128);
+        let id = state
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Owned quota authority fixture".into(),
+                    role: crate::caller::Role::Coordinator,
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        let authority = crate::caller::Authority::Session {
+            id: id.clone(),
+            scope_id: state.sessions[&id]
+                .caller_context
+                .as_ref()
+                .unwrap()
+                .scope_id
+                .clone(),
+        };
+        let before = state.quota_native_authority_epoch(&authority).unwrap();
+        state.acquire(71, &id, 80, 24, true, false).unwrap();
+        state.release_all(71);
+        assert!(state.sessions[&id].controller.is_none());
+        let refused = state
+            .quota_native_authority_ready(&authority, before)
+            .unwrap_err();
+        assert_eq!(
+            refused
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "control_busy"
+        );
+        let fresh = state.quota_native_authority_epoch(&authority).unwrap();
+        state.sessions.get_mut(&id).unwrap().human_input_dirty = true;
+        let refused = state
+            .quota_native_authority_ready(&authority, fresh)
+            .unwrap_err();
+        assert_eq!(
+            refused
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "unsafe_draft"
+        );
+        state.sessions.get_mut(&id).unwrap().human_input_dirty = false;
+        state
+            .sessions
+            .get_mut(&id)
+            .unwrap()
+            .caller_context
+            .as_mut()
+            .unwrap()
+            .scope_id = "revoked-fixture".into();
+        let refused = state
+            .quota_native_authority_ready(&authority, fresh)
+            .unwrap_err();
+        assert_eq!(
+            refused
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "scope_revoked"
+        );
+        state
+            .quota_native_authority_ready(&crate::caller::Authority::Owner, before)
+            .unwrap();
+        state.begin_shutdown();
+        let refused = state
+            .quota_native_authority_ready(&crate::caller::Authority::Owner, fresh)
+            .unwrap_err();
+        assert_eq!(
+            refused
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "host_stopping"
+        );
+        assert_eq!(state.sessions.len(), 1);
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
     fn shutdown_admission_fence_preserves_sessions_but_refuses_late_paste_and_enter() {
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
         let mut state = State::new(
@@ -3880,6 +4267,7 @@ mod tests {
                 context: Some(usage::ReaderContext {
                     codex_home: "private-fixture-home".into(),
                     context_id: "private-fixture-context".into(),
+                    route: usage::RouteObservation::unknown("fixture_route_unknown"),
                 }),
                 outcome: usage::ReadOutcome::Snapshot(usage::CodexSnapshot {
                     account_id: Some(account.into()),

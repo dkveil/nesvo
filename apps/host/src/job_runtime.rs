@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow};
 use futures_util::FutureExt;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 
 fn shutdown_requested(stop: &watch::Receiver<bool>) -> bool {
     *stop.borrow() || stop.has_changed().is_err()
@@ -20,6 +20,53 @@ async fn stopping(stop: &mut watch::Receiver<bool>) {
     while !shutdown_requested(stop) {
         if stop.changed().await.is_err() {
             return;
+        }
+    }
+}
+
+/// Only rejected quota admission is retried. A parked continuation retains its
+/// original claim and completed phases, but gives back active dispatch capacity.
+async fn quota_step<T, F, G>(
+    slots: &Arc<Semaphore>,
+    permit: &mut Option<OwnedSemaphorePermit>,
+    mut changed: watch::Receiver<u64>,
+    mut shutdown: watch::Receiver<bool>,
+    mut action: F,
+) -> Result<T>
+where
+    F: FnMut() -> G,
+    G: std::future::Future<Output = Result<T>>,
+{
+    loop {
+        if shutdown_requested(&shutdown) {
+            return Err(crate::api_error::Error::new(
+                "host_stopping",
+                "Job runtime is shutting down",
+            )
+            .into());
+        }
+        if permit.is_none() {
+            *permit = Some(tokio::select! {
+                _ = stopping(&mut shutdown) => return Err(crate::api_error::Error::new("host_stopping", "Job runtime is shutting down").into()),
+                permit=slots.clone().acquire_owned()=>permit.map_err(|_|anyhow!("Job dispatch capacity is closed"))?,
+            });
+        }
+        // Subscribe/consume before the store read so its release event cannot
+        // be lost between a refusal and parking.
+        changed.borrow_and_update();
+        match action().await {
+            Err(error)
+                if error
+                    .downcast_ref::<crate::api_error::Error>()
+                    .is_some_and(|error| error.code == "quota_wait") =>
+            {
+                drop(permit.take());
+                tokio::select! {
+                    _ = stopping(&mut shutdown) => return Err(crate::api_error::Error::new("host_stopping", "Job runtime is shutting down").into()),
+                    changed=changed.changed()=>changed.map_err(|_|anyhow!("Job quota journal is closed"))?,
+                }
+            }
+            result => return result,
         }
     }
 }
@@ -117,6 +164,7 @@ struct Runner {
     events: mpsc::Sender<PtyEvent>,
     log: Service,
     shutdown: watch::Receiver<bool>,
+    slots: Arc<Semaphore>,
 }
 fn owner() -> Actor {
     Actor {
@@ -137,30 +185,45 @@ impl Runner {
     }
     async fn workflow(
         &self,
+        permit: &mut Option<OwnedSemaphorePermit>,
         dispatch: &crate::job_attempts::Dispatch,
         request: Value,
     ) -> Result<Value> {
         self.admission_open()?;
-        match self
-            .log
-            .jobs(Work::Prepare {
-                dispatch: dispatch.clone(),
-                request: serde_json::from_value(request)?,
-            })
-            .await?
+        let request: Box<crate::orchestration::Request> = serde_json::from_value(request)?;
+        match quota_step(
+            &self.slots,
+            permit,
+            self.log.subscribe(),
+            self.shutdown.clone(),
+            || {
+                self.log.jobs(Work::Prepare {
+                    dispatch: dispatch.clone(),
+                    request: request.clone(),
+                })
+            },
+        )
+        .await?
         {
             Reply::Prepared(view) => Ok(view),
             _ => Err(anyhow!("Job metadata preparation was not confirmed")),
         }
     }
-    async fn dispatch(&self, claim: Claim) -> Result<()> {
+    async fn dispatch(&self, claim: Claim, permit: OwnedSemaphorePermit) -> Result<()> {
         self.admission_open()?;
-        match self
-            .log
-            .jobs(Work::BeginPrecheck {
-                dispatch: claim.dispatch.clone(),
-            })
-            .await?
+        let mut permit = Some(permit);
+        match quota_step(
+            &self.slots,
+            &mut permit,
+            self.log.subscribe(),
+            self.shutdown.clone(),
+            || {
+                self.log.jobs(Work::BeginPrecheck {
+                    dispatch: claim.dispatch.clone(),
+                })
+            },
+        )
+        .await?
         {
             Reply::Precheck(Some(command)) => {
                 let (stop_tx, stop_rx) = tokio::sync::watch::channel(None);
@@ -198,13 +261,13 @@ impl Runner {
         };
         let result=async {
             self.admission_open()?;
-            let run=self.workflow(&claim.dispatch,json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
+            let run=self.workflow(&mut permit,&claim.dispatch,json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
             let run_id=run["run"]["id"].as_str().ok_or_else(||anyhow!("Job run identity was not confirmed"))?;
             self.admission_open()?;
-            self.log.jobs(Work::BindRun{dispatch:claim.dispatch.clone(),run:run_id.into()}).await?;
-            let plan=self.workflow(&claim.dispatch,json!({"action":"setPlan","key":format!("{prefix}:plan"),"runId":run_id,"expectedRevision":run["run"]["revision"],"tasks":[{"key":"job","title":claim.spec.title,"instruction":claim.spec.instruction}]})).await?;
-            let limits=self.workflow(&claim.dispatch,json!({"action":"runBudget","request":{"action":"set","key":format!("{prefix}:budget"),"runId":run_id,"expectedRevision":plan["run"]["revision"],"limits":{"maxParallel":1,"maxAttemptsPerTask":1,"maxElapsedMs":claim.spec.max_elapsed_ms}}})).await?;
-            let active=self.workflow(&claim.dispatch,json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run_id,"expectedRevision":limits["run"]["revision"]})).await?;
+            quota_step(&self.slots,&mut permit,self.log.subscribe(),self.shutdown.clone(),||self.log.jobs(Work::BindRun{dispatch:claim.dispatch.clone(),run:run_id.into()})).await?;
+            let plan=self.workflow(&mut permit,&claim.dispatch,json!({"action":"setPlan","key":format!("{prefix}:plan"),"runId":run_id,"expectedRevision":run["run"]["revision"],"tasks":[{"key":"job","title":claim.spec.title,"instruction":claim.spec.instruction}]})).await?;
+            let limits=self.workflow(&mut permit,&claim.dispatch,json!({"action":"runBudget","request":{"action":"set","key":format!("{prefix}:budget"),"runId":run_id,"expectedRevision":plan["run"]["revision"],"limits":{"maxParallel":1,"maxAttemptsPerTask":1,"maxElapsedMs":claim.spec.max_elapsed_ms}}})).await?;
+            let active=self.workflow(&mut permit,&claim.dispatch,json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run_id,"expectedRevision":limits["run"]["revision"]})).await?;
             let request=serde_json::from_value(json!({"action":"start","key":format!("{prefix}:executor"),"runId":run_id,"expectedRevision":active["run"]["revision"],"spec":{"tasks":[{"taskId":plan["tasks"][0]["id"],"profile":claim.spec.profile}],"retryFailed":false}}))?;
             self.admission_open()?;
             native_requested=true;
@@ -237,6 +300,7 @@ async fn run(
         events,
         log,
         shutdown: shutdown.clone(),
+        slots: Arc::new(Semaphore::new(4)),
     };
     let mut delay = 1;
     let mut dispatches = tokio::task::JoinSet::new();
@@ -349,24 +413,38 @@ async fn run(
             if shutdown_requested(&shutdown) {
                 break;
             }
+            if !crate::provider_quota_runtime::publish(&runner.state, &runner.log).await {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
+            // Parked claims do not occupy these four permits. The separate
+            // retained-task bound follows the 64-definition storage capacity.
+            let mut reserved = Vec::new();
+            while reserved.len() < 4 && dispatches.len() + reserved.len() < 64 {
+                match runner.slots.clone().try_acquire_owned() {
+                    Ok(permit) => reserved.push(permit),
+                    Err(_) => break,
+                }
+            }
             match runner
                 .log
                 .jobs(Work::Poll {
-                    slots: 4u8.saturating_sub(dispatches.len() as u8),
+                    slots: reserved.len() as u8,
                 })
                 .await
             {
                 Ok(Reply::Claims(claims)) => {
                     delay = 1;
-                    for claim in claims {
+                    for (claim, permit) in claims.into_iter().zip(reserved) {
                         // At most four durable claims per tick. The executor owns
                         // bounded provider readiness/input; no model heartbeat.
                         let runner = runner.clone();
                         dispatches.spawn(async move {
                             let dispatch = claim.dispatch.clone();
-                            let result = std::panic::AssertUnwindSafe(runner.dispatch(claim))
-                                .catch_unwind()
-                                .await;
+                            let result =
+                                std::panic::AssertUnwindSafe(runner.dispatch(claim, permit))
+                                    .catch_unwind()
+                                    .await;
                             if !matches!(result, Ok(Ok(()))) {
                                 runner.log.jobs(Work::Interrupted { dispatch }).await?;
                             }
@@ -431,6 +509,79 @@ async fn run(
 mod tests {
     use super::*;
     use crate::job_prechecks::{Outcome, OutcomeState};
+
+    #[tokio::test]
+    async fn parked_quota_step_releases_capacity_and_rechecks_only_after_change() {
+        let slots = Arc::new(Semaphore::new(1));
+        let mut permit = Some(slots.clone().acquire_owned().await.unwrap());
+        let (journal, changed) = watch::channel(0);
+        let (_host, shutdown) = watch::channel(false);
+        let calls = std::cell::Cell::new(0);
+        let step = quota_step(&slots, &mut permit, changed, shutdown, || {
+            let count = calls.get() + 1;
+            calls.set(count);
+            std::future::ready(if count == 1 {
+                Err(crate::api_error::Error::new("quota_wait", "Fixture permission held").into())
+            } else {
+                Ok("same phase and claim")
+            })
+        });
+        tokio::pin!(step);
+        assert!(futures_util::poll!(&mut step).is_pending());
+        assert_eq!(calls.get(), 1);
+        assert_eq!(slots.available_permits(), 1);
+        assert!(futures_util::poll!(&mut step).is_pending());
+        assert_eq!(calls.get(), 1, "Polling alone cannot repeat admission");
+        let other = slots.clone().try_acquire_owned().unwrap();
+        journal.send(1).unwrap();
+        assert!(futures_util::poll!(&mut step).is_pending());
+        assert_eq!(
+            calls.get(),
+            1,
+            "Release still needs active dispatch capacity"
+        );
+        drop(other);
+        assert_eq!(step.await.unwrap(), "same phase and claim");
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[tokio::test]
+    async fn quota_release_during_rejected_read_is_not_lost_and_shutdown_stops_parking() {
+        let slots = Arc::new(Semaphore::new(1));
+        let mut permit = Some(slots.clone().acquire_owned().await.unwrap());
+        let (journal, changed) = watch::channel(0);
+        let (host, shutdown) = watch::channel(false);
+        let calls = std::cell::Cell::new(0);
+        let step = quota_step(&slots, &mut permit, changed, shutdown, || {
+            let count = calls.get() + 1;
+            calls.set(count);
+            if count == 1 {
+                journal.send(1).unwrap();
+            }
+            std::future::ready(Err::<(), _>(
+                crate::api_error::Error::new("quota_wait", "Fixture permission held").into(),
+            ))
+        });
+        tokio::pin!(step);
+        assert!(futures_util::poll!(&mut step).is_pending());
+        assert_eq!(
+            calls.get(),
+            2,
+            "An event during the store read triggers a fresh read"
+        );
+        assert_eq!(slots.available_permits(), 1);
+        host.send(true).unwrap();
+        let error = step.await.unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "host_stopping"
+        );
+        assert_eq!(calls.get(), 2);
+        assert_eq!(slots.available_permits(), 1);
+    }
 
     #[tokio::test]
     async fn slow_store_guard_cannot_suspend_the_owned_check_deadline() {

@@ -52,6 +52,19 @@ pub enum Work {
         actor: Actor,
         request: Request,
     },
+    /// Retains an effective native workspace under the sole live receipt claim.
+    /// This is internal evidence, never a replayable launch instruction.
+    PreparedWorkspace {
+        operation_id: String,
+        token: String,
+        spec: Box<LaunchSpec>,
+        derived_worktree: bool,
+    },
+    QuotaHold {
+        operation_id: String,
+        token: String,
+        reason: Option<String>,
+    },
     Finish {
         attempt_id: String,
         receipt_id: String,
@@ -63,6 +76,7 @@ pub struct Dispatch {
     pub receipt: Receipt,
     pub coordinator: Option<String>,
     pub attempt_id: String,
+    pub quota: Option<crate::job_quota::Permit>,
 }
 pub enum Reply {
     Prepared {
@@ -80,6 +94,18 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     drop(query);
     if !columns.iter().any(|name| name == "profile") {
         connection.execute_batch("ALTER TABLE workflow_launches ADD COLUMN profile TEXT;")?;
+    }
+    for (name, declaration) in [
+        ("prepared_spec", "TEXT"),
+        ("prepared_at", "INTEGER"),
+        ("derived_worktree", "INTEGER"),
+        ("quota_hold_reason", "TEXT"),
+    ] {
+        if !columns.iter().any(|column| column == name) {
+            connection.execute_batch(&format!(
+                "ALTER TABLE workflow_launches ADD COLUMN {name} {declaration};"
+            ))?;
+        }
     }
     Ok(())
 }
@@ -107,14 +133,18 @@ fn event(
 }
 pub fn summary(connection: &Connection, attempt: &str) -> Result<Value> {
     let row = connection.query_row(
-        "SELECT l.operation_id,l.operation_key,o.phase,o.session_id,l.workspace,l.created_at,o.result,l.profile FROM workflow_launches l JOIN operation_receipts o ON o.id=l.operation_id WHERE l.attempt_id=?1",
+        "SELECT l.operation_id,l.operation_key,o.phase,o.session_id,l.workspace,l.created_at,o.result,l.profile,l.prepared_spec,l.prepared_at,l.derived_worktree,l.quota_hold_reason FROM workflow_launches l JOIN operation_receipts o ON o.id=l.operation_id WHERE l.attempt_id=?1",
         [attempt],
         |row| Ok((
             json!({"attemptId":attempt,"receiptId":row.get::<_,String>(0)?,"operationKey":row.get::<_,String>(1)?,"phase":row.get::<_,String>(2)?,"sessionId":row.get::<_,String>(3)?,"workspace":row.get::<_,String>(4)?,"createdAt":row.get::<_,i64>(5)?}),
             row.get::<_,String>(6)?, row.get::<_,Option<String>>(7)?,
+            row.get::<_,Option<String>>(8)?, row.get::<_,Option<i64>>(9)?,
+            row.get::<_,Option<bool>>(10)?, row.get::<_,Option<String>>(11)?,
         )),
     ).optional()?;
-    let Some((mut view, result, profile)) = row else {
+    let Some((mut view, result, profile, prepared, prepared_at, derived_worktree, quota_hold)) =
+        row
+    else {
         return Ok(Value::Null);
     };
     let result: Value = serde_json::from_str(&result)?;
@@ -125,6 +155,14 @@ pub fn summary(connection: &Connection, attempt: &str) -> Result<Value> {
     for key in ["code", "effectStarted", "directory"] {
         view[key] = result[key].clone();
     }
+    view["preparedWorkspace"] = match prepared {
+        Some(spec) => {
+            let spec: LaunchSpec = serde_json::from_str(&spec)?;
+            json!({"directory":spec.cwd,"derivedWorktree":derived_worktree,"preparedAt":prepared_at})
+        }
+        None => Value::Null,
+    };
+    view["quotaHoldReason"] = quota_hold.into();
     Ok(view)
 }
 
@@ -149,6 +187,10 @@ pub fn recover(connection: &mut Connection) -> Result<()> {
         transaction.execute(
             "UPDATE workflow_attempts SET state=?2 WHERE id=?1",
             params![attempt, state],
+        )?;
+        transaction.execute(
+            "UPDATE workflow_launches SET quota_hold_reason=NULL WHERE attempt_id=?1",
+            [&attempt],
         )?;
         transaction.execute(
             "UPDATE workflow_runs SET revision=revision+1 WHERE id=?1",
@@ -194,6 +236,10 @@ fn prepare(
     }
     if let Some(guard) = &executor {
         crate::workflow_executor::guard_run(&transaction, guard, &actor.issuer, &request.run_id)?;
+    }
+    let quota = crate::job_quota::permit_for_run(&transaction, &request.run_id)?;
+    if let Some(permit) = &quota {
+        crate::job_quota::guard_permit(&transaction, permit, crate::event_log::monotonic_millis())?;
     }
     orchestration::mutation_capacity(&transaction)?;
     if current["revision"] != request.expected_revision {
@@ -289,6 +335,9 @@ fn prepare(
     }
     transaction.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES(?1,?2,?3,?4,'launching')",params![attempt,request.task_id,ordinal,accepted.receipt.session_id])?;
     transaction.execute("INSERT INTO workflow_launches(attempt_id,operation_id,operation_key,workspace,created_at,profile) VALUES(?1,?2,?3,?4,?5,?6)",params![attempt,accepted.receipt.id,native_key,if spec.worktree {"worktree"} else {"shared"},now as i64,serde_json::to_string(&request.profile)?])?;
+    if quota.is_some() {
+        crate::workflow_context::freeze(&transaction, &request.run_id, &accepted.receipt.id)?;
+    }
     crate::job_timeouts::arm(
         &transaction,
         &request.run_id,
@@ -329,9 +378,123 @@ fn prepare(
             receipt: accepted.receipt,
             coordinator,
             attempt_id: attempt,
+            quota,
         })),
     })
 }
+fn live_claim(
+    transaction: &Transaction<'_>,
+    operation: &str,
+    token: &str,
+) -> Result<(String, String)> {
+    let (attempt, run): (String, String) = transaction
+        .query_row(
+            "SELECT l.attempt_id,t.run_id FROM workflow_launches l
+             JOIN workflow_attempts a ON a.id=l.attempt_id
+             JOIN workflow_tasks t ON t.id=a.task_id
+             JOIN operation_receipts o ON o.id=l.operation_id
+             WHERE l.operation_id=?1 AND o.claim_token=?2 AND o.phase='dispatching'
+               AND o.operation='create' AND a.state='launching' AND a.session_id=o.session_id
+               AND a.ordinal=(SELECT MAX(latest.ordinal) FROM workflow_attempts latest WHERE latest.task_id=a.task_id)",
+            params![operation, token],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            anyhow::Error::from(Error::new(
+                "launch_claim_conflict",
+                "The original native launch claim is no longer live; no continuation was replayed",
+            ))
+        })?;
+    Ok((attempt, run))
+}
+
+fn prepared_workspace(
+    connection: &mut Connection,
+    operation: &str,
+    token: &str,
+    spec: &LaunchSpec,
+    derived_worktree: bool,
+    now: u64,
+) -> Result<Reply> {
+    let directory = spec.cwd.as_deref().ok_or_else(|| {
+        Error::new(
+            "invalid_argument",
+            "Prepared launch requires its resolved directory",
+        )
+    })?;
+    if spec.worktree
+        || directory.is_empty()
+        || directory.len() > 4096
+        || directory.chars().any(char::is_control)
+        || !std::path::Path::new(directory).is_absolute()
+    {
+        return Err(Error::new(
+            "invalid_argument",
+            "Prepared launch must retain one absolute resolved workspace without another Git setup",
+        )
+        .into());
+    }
+    let encoded = serde_json::to_string(spec)?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let (attempt, run) = live_claim(&transaction, operation, token)?;
+    let prior: (Option<String>, Option<bool>) = transaction.query_row(
+        "SELECT prepared_spec,derived_worktree FROM workflow_launches WHERE operation_id=?1",
+        [operation],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if let Some(prior_spec) = prior.0 {
+        if prior_spec != encoded || prior.1 != Some(derived_worktree) {
+            return Err(Error::new(
+                "launch_workspace_conflict",
+                "The original prepared workspace is immutable; another setup was refused",
+            )
+            .into());
+        }
+    } else {
+        transaction.execute(
+            "UPDATE workflow_launches SET prepared_spec=?2,prepared_at=?3,derived_worktree=?4 WHERE operation_id=?1",
+            params![operation, encoded, i64::try_from(now)?, derived_worktree],
+        )?;
+        event(&transaction, &run, &attempt, "run.workspace_prepared", now)?;
+    }
+    transaction.commit()?;
+    Ok(Reply::Done)
+}
+
+fn quota_hold(
+    connection: &mut Connection,
+    operation: &str,
+    token: &str,
+    reason: Option<&str>,
+    now: u64,
+) -> Result<Reply> {
+    if reason.is_some_and(|reason| !matches!(reason, "quota_wait" | "native_run_busy")) {
+        return Err(Error::new("invalid_argument", "Invalid native quota hold reason").into());
+    }
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let (attempt, run) = live_claim(&transaction, operation, token)?;
+    // Recording already prepared workspace facts above remains legal after a
+    // constraint change. Releasing a continuation never renews old provenance.
+    let session: String = transaction.query_row(
+        "SELECT session_id FROM operation_receipts WHERE id=?1",
+        [operation],
+        |row| row.get(0),
+    )?;
+    crate::workflow_context::guard_native(&transaction, &session, operation)?;
+    let changed = transaction.execute(
+        "UPDATE workflow_launches SET quota_hold_reason=?2 WHERE operation_id=?1 AND quota_hold_reason IS NOT ?2",
+        params![operation, reason],
+    )?;
+    if changed != 0 {
+        event(&transaction, &run, &attempt, "run.quota_hold_changed", now)?;
+    }
+    transaction.commit()?;
+    Ok(Reply::Done)
+}
+
 pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
     match work {
         Work::Prepare { actor, request } => prepare(connection, actor, request, now, None),
@@ -340,6 +503,24 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             request,
             guard,
         } => prepare(connection, actor, request, now, Some(guard)),
+        Work::PreparedWorkspace {
+            operation_id,
+            token,
+            spec,
+            derived_worktree,
+        } => prepared_workspace(
+            connection,
+            &operation_id,
+            &token,
+            &spec,
+            derived_worktree,
+            now,
+        ),
+        Work::QuotaHold {
+            operation_id,
+            token,
+            reason,
+        } => quota_hold(connection, &operation_id, &token, reason.as_deref(), now),
         Work::Finish {
             attempt_id,
             receipt_id,
@@ -370,6 +551,10 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             let changed = transaction.execute(
                 "UPDATE workflow_attempts SET state=?2 WHERE id=?1 AND state='launching'",
                 params![attempt_id, state],
+            )?;
+            transaction.execute(
+                "UPDATE workflow_launches SET quota_hold_reason=NULL WHERE attempt_id=?1",
+                [&attempt_id],
             )?;
             if changed > 0 {
                 transaction.execute(

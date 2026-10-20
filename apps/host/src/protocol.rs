@@ -84,6 +84,8 @@ pub enum Command {
         program: Option<crate::launchers::Program>,
         #[serde(default)]
         refresh: bool,
+        #[serde(default)]
+        directory: Option<String>,
     },
     GetDiagnostics {
         session_id: Option<String>,

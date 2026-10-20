@@ -137,6 +137,9 @@ mod job_launch_resolutions_tests;
 #[path = "job_prechecks_tests.rs"]
 mod job_prechecks_tests;
 #[cfg(test)]
+#[path = "job_quota_tests.rs"]
+mod job_quota_tests;
+#[cfg(test)]
 #[path = "job_retries_tests.rs"]
 mod job_retries_tests;
 #[cfg(test)]
@@ -178,6 +181,9 @@ mod workflow_executor_tests;
 #[cfg(test)]
 #[path = "workflow_inbox_tests.rs"]
 mod workflow_inbox_tests;
+#[cfg(test)]
+#[path = "workflow_launch_quota_tests.rs"]
+mod workflow_launch_quota_tests;
 #[cfg(test)]
 #[path = "workflow_launches_tests.rs"]
 mod workflow_launches_tests;
@@ -848,10 +854,11 @@ impl Service {
                             let _ = reply.send(result);
                         }
                         Work::Jobs { work, reply } => {
-                            let result = crate::job_definitions::work(
+                            let result = crate::job_definitions::work_at(
                                 &mut store.0,
                                 work,
                                 crate::status::now_millis(),
+                                monotonic_millis(),
                             );
                             record_storage_failure(&result, &worker_failures, &changed_tx);
                             notify_head(&store, &changed_tx);
