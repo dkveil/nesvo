@@ -799,8 +799,14 @@ pub fn work(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> 
         Work::Poll { slots } => i64::from((*slots).min(4)),
         _ => 4,
     };
-    let transaction =
-        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let behavior = if matches!(&work, Work::CancelRequested { .. } | Work::CalendarDue) {
+        // These branches only read. Repeated supervision/calendar queries must
+        // not compete for SQLite's single writer or delay native state locks.
+        rusqlite::TransactionBehavior::Deferred
+    } else {
+        rusqlite::TransactionBehavior::Immediate
+    };
+    let transaction = connection.transaction_with_behavior(behavior)?;
     let reply = match work {
         Work::CancelRequested { occurrence } => Reply::CancelRequested(
             crate::job_cancellations::requested(&transaction, &occurrence)?,

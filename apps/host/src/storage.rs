@@ -69,15 +69,35 @@ impl MetadataStore {
     }
     pub fn claim_schedule(&mut self) -> Result<Option<(String, crate::jobs::LaunchSpec)>> {
         use rusqlite::OptionalExtension;
-        let transaction = self.connection.transaction()?;
         let now = chrono::Utc::now().timestamp();
+        // Quiet legacy ticks share this database with the event journal. A WAL
+        // reader needs no writer reservation or wait under the session-state lock.
+        let due: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schedules WHERE state='pending' AND due<=?1)",
+            [now],
+            |row| row.get(0),
+        )?;
+        if !due {
+            return Ok(None);
+        }
+        // The preflight is only a hint. Re-read after reserving the writer so a
+        // competing claim or cancellation cannot launch stale pending work.
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         transaction.execute("UPDATE schedules SET state='missed',result='Host was unavailable at the scheduled time.' WHERE state='pending' AND due < ?1", [now - 60])?;
         let job: Option<(String,String)> = transaction.query_row("SELECT id,spec FROM schedules WHERE state='pending' AND due<=?1 ORDER BY due LIMIT 1", [now], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
         let job = job
             .map(|(id, spec)| -> Result<_> { Ok((id, serde_json::from_str(&spec)?)) })
             .transpose()?;
         if let Some((id, _)) = &job {
-            transaction.execute("UPDATE schedules SET state='starting' WHERE id=?1", [id])?;
+            ensure!(
+                transaction.execute(
+                    "UPDATE schedules SET state='starting' WHERE id=?1 AND state='pending' AND due<=?2",
+                    params![id, now],
+                )? == 1,
+                "Schedule is no longer claimable."
+            );
         }
         transaction.commit()?;
         Ok(job)
@@ -101,6 +121,7 @@ impl MetadataStore {
             CREATE TABLE IF NOT EXISTS host_identity (id INTEGER PRIMARY KEY CHECK(id=1), public_id TEXT NOT NULL);
             INSERT OR IGNORE INTO host_identity VALUES(1,lower(hex(randomblob(16))));
             CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, due INTEGER NOT NULL, spec TEXT NOT NULL, state TEXT NOT NULL, result TEXT);
+            CREATE INDEX IF NOT EXISTS schedules_pending_due ON schedules(due) WHERE state='pending';
             UPDATE schedules SET state='interrupted', result='Host stopped during launch; inspect sessions before scheduling again.' WHERE state='starting';
             CREATE TABLE IF NOT EXISTS metadata (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
             INSERT OR IGNORE INTO metadata(id,revision) VALUES(1,0);
@@ -261,6 +282,143 @@ impl MetadataStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    };
+
+    static QUIET_BUSY_CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn refuse_writer_wait(_: i32) -> bool {
+        QUIET_BUSY_CALLS.fetch_add(1, Ordering::SeqCst);
+        false
+    }
+
+    struct ClaimBarrier {
+        observed: mpsc::SyncSender<()>,
+        release: mpsc::Receiver<()>,
+    }
+    static CLAIM_BARRIER: Mutex<Option<ClaimBarrier>> = Mutex::new(None);
+    fn wait_for_competing_cancellation(_: i32) -> bool {
+        let barrier = CLAIM_BARRIER.lock().unwrap().take().unwrap();
+        barrier.observed.send(()).unwrap();
+        barrier.release.recv_timeout(Duration::from_secs(2)).is_ok()
+    }
+
+    #[test]
+    fn a_quiet_schedule_tick_reads_through_a_wal_writer_without_waiting_or_writing() {
+        let path = std::env::temp_dir().join(format!(
+            "nesvo-quiet-scheduler-{}.sqlite3",
+            hex::encode(crate::wire::random::<12>())
+        ));
+        let mut store = MetadataStore::open(&path).unwrap();
+        store
+            .connection
+            .execute_batch("PRAGMA journal_mode=WAL;")
+            .unwrap();
+        let future = store
+            .add_schedule(
+                &crate::jobs::LaunchSpec::default(),
+                chrono::Utc::now().timestamp() + 3600,
+            )
+            .unwrap();
+        store
+            .connection
+            .busy_handler(Some(refuse_writer_wait))
+            .unwrap();
+        let before = store.connection.total_changes();
+        let mut competing = Connection::open(&path).unwrap();
+        let writer = competing
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        QUIET_BUSY_CALLS.store(0, Ordering::SeqCst);
+        assert!(store.claim_schedule().unwrap().is_none());
+        assert_eq!(QUIET_BUSY_CALLS.load(Ordering::SeqCst), 0);
+        assert_eq!(store.connection.total_changes(), before);
+        assert!(
+            store
+                .schedules()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == future && row["state"] == "pending")
+        );
+        // Positive control: the other writer is still live and this handler
+        // would detect any attempted writer reservation on the idle path.
+        assert!(
+            store
+                .connection
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .is_err()
+        );
+        assert_eq!(QUIET_BUSY_CALLS.load(Ordering::SeqCst), 1);
+        writer.rollback().unwrap();
+        drop(competing);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_due_preflight_cannot_claim_a_schedule_canceled_before_writer_reservation() {
+        let path = std::env::temp_dir().join(format!(
+            "nesvo-scheduler-cancel-{}.sqlite3",
+            hex::encode(crate::wire::random::<12>())
+        ));
+        let mut store = MetadataStore::open(&path).unwrap();
+        store
+            .connection
+            .execute_batch("PRAGMA journal_mode=WAL;")
+            .unwrap();
+        let id = store
+            .add_schedule(
+                &crate::jobs::LaunchSpec::default(),
+                chrono::Utc::now().timestamp(),
+            )
+            .unwrap();
+        store
+            .connection
+            .busy_handler(Some(wait_for_competing_cancellation))
+            .unwrap();
+        let mut competing = Connection::open(&path).unwrap();
+        let writer = competing
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        writer
+            .execute("UPDATE schedules SET state='cancelled' WHERE id=?1", [&id])
+            .unwrap();
+        let (observed, blocked) = mpsc::sync_channel(1);
+        let (release, resumed) = mpsc::channel();
+        *CLAIM_BARRIER.lock().unwrap() = Some(ClaimBarrier {
+            observed,
+            release: resumed,
+        });
+        let pending = std::thread::spawn(move || {
+            store
+                .claim_schedule()
+                .map(|claimed| claimed.map(|(id, _)| id))
+        });
+        // WAL preflight sees the earlier pending state. Only writer reservation
+        // waits, allowing the competing cancellation to commit before recheck.
+        let reservation = blocked.recv_timeout(Duration::from_secs(2));
+        writer.commit().unwrap();
+        let _ = release.send(());
+        let claimed = pending.join().unwrap();
+        *CLAIM_BARRIER.lock().unwrap() = None;
+        assert!(
+            reservation.is_ok(),
+            "Expected a controlled writer reservation wait: {claimed:?}"
+        );
+        assert!(claimed.unwrap().is_none());
+        assert_eq!(
+            competing
+                .query_row("SELECT state FROM schedules WHERE id=?1", [&id], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "cancelled"
+        );
+        drop(competing);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn groups_persist_with_revisions_and_rejected_edits_do_not_mutate() {

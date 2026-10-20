@@ -76,3 +76,42 @@ fn receipt_acceptance_reserves_write_access_before_reading_a_competing_snapshot(
     drop(store);
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn pure_job_supervision_and_calendar_reads_do_not_request_the_writer_lock() {
+    let path = std::env::temp_dir().join(format!(
+        "nesvo-job-read-{}.sqlite",
+        hex::encode(crate::wire::random::<12>())
+    ));
+    let mut store = Store::open(&path).unwrap();
+    let mut other = Connection::open(&path).unwrap();
+    let writer = other
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    writer
+        .execute("UPDATE domain_event_cursor SET head=head WHERE id=1", [])
+        .unwrap();
+    // Any attempted writer reservation fails immediately. WAL snapshot reads
+    // must still succeed while a different connection owns the writer.
+    store.0.busy_timeout(Duration::ZERO).unwrap();
+    let before = store.0.total_changes();
+    assert!(matches!(
+        crate::job_definitions::work(
+            &mut store.0,
+            crate::job_definitions::Work::CancelRequested {
+                occurrence: "missing".into()
+            },
+            0
+        )
+        .unwrap(),
+        crate::job_definitions::Reply::CancelRequested(false)
+    ));
+    assert!(
+        matches!(crate::job_definitions::work(&mut store.0,crate::job_definitions::Work::CalendarDue,0).unwrap(),crate::job_definitions::Reply::Calendars(rows) if rows.is_empty())
+    );
+    assert_eq!(store.0.total_changes(), before);
+    writer.rollback().unwrap();
+    drop(other);
+    drop(store);
+    std::fs::remove_file(path).unwrap();
+}

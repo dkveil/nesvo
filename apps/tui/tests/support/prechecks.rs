@@ -106,8 +106,16 @@ async fn now(owner: &RunningService<RoleClient, ()>, job: &Value, key: &str) -> 
     )
 }
 async fn state(owner: &RunningService<RoleClient, ()>, job: &Value, wanted: &str) -> Result<Value> {
+    state_within(owner, job, wanted, Duration::from_secs(20)).await
+}
+async fn state_within(
+    owner: &RunningService<RoleClient, ()>,
+    job: &Value,
+    wanted: &str,
+    budget: Duration,
+) -> Result<Value> {
     let mut last = Value::Null;
-    let observed = timeout(Duration::from_secs(20), async {
+    let observed = timeout(budget, async {
         loop {
             let history =
                 data(call(owner, "nesvo_get_job_history", json!({"jobId":job["id"]})).await?)?;
@@ -536,12 +544,9 @@ async fn slow_prechecks_do_not_starve_unrelated_due_jobs_or_free_all_dispatch_ca
         }
         let due = chrono::Utc::now() + chrono::Duration::seconds(1);
         let fast = create(&owner, "independent-clock", None, due).await?;
-        let report = timeout(
-            Duration::from_secs(8),
-            state(&owner, &fast, "needsValidation"),
-        )
-        .await
-        .context("Slow prechecks must not block an unrelated scheduled job")??;
+        let report = state_within(&owner, &fast, "needsValidation", Duration::from_secs(8))
+            .await
+            .context("Slow prechecks must not block an unrelated scheduled job")?;
         assert!(report["data"]["occurrence"]["precheck"].is_null());
         std::fs::write(directory.join("release"), "explicit fixture release")?;
         run_checkpoints::schema(vec![report]).await?;
