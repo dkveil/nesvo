@@ -101,6 +101,9 @@ pub(crate) fn append_transaction(
 
 struct Store(Connection);
 #[cfg(test)]
+#[path = "journal_concurrency_tests.rs"]
+mod journal_concurrency_tests;
+#[cfg(test)]
 #[path = "orchestration_tests.rs"]
 mod orchestration_tests;
 #[cfg(test)]

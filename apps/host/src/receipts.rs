@@ -53,7 +53,8 @@ fn valid_key(key: &str) -> Result<()> {
 pub fn initialize(connection: &mut Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS operation_receipts(id TEXT PRIMARY KEY,issuer TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,operation TEXT NOT NULL,phase TEXT NOT NULL,session_id TEXT NOT NULL,result TEXT NOT NULL,claim_token TEXT,UNIQUE(issuer,key));
       CREATE INDEX IF NOT EXISTS operation_receipts_phase ON operation_receipts(phase);")?;
-    let transaction = connection.transaction()?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let pending: Vec<String> = {
         let mut statement = transaction.prepare(
             "SELECT id FROM operation_receipts WHERE phase IN ('accepted','dispatching','received','started','waiting') OR (operation='send' AND phase='delivered' AND COALESCE(json_extract(result,'$.correlation'),'launchHook')!='unavailable') LIMIT 256",
@@ -112,7 +113,8 @@ pub fn accept(
         return Err(Error::new("invalid_argument", "Operation request exceeds 24 KiB").into());
     }
     let digest = hex::encode(ring::digest::digest(&ring::digest::SHA256, &request).as_ref());
-    let transaction = connection.transaction()?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let existing: Option<(String, String, String)> = transaction
         .query_row(
             "SELECT id,digest,operation FROM operation_receipts WHERE issuer=?1 AND key=?2",
@@ -159,7 +161,8 @@ pub fn accept(
     })
 }
 pub fn claim(connection: &mut Connection, id: &str, issuer: &str) -> Result<Option<Claim>> {
-    let transaction = connection.transaction()?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let token = hex::encode(crate::wire::random::<16>());
     if transaction.execute("UPDATE operation_receipts SET phase='dispatching',claim_token=?3 WHERE id=?1 AND issuer=?2 AND phase='accepted'",params![id,issuer,token])?!=1 {return Ok(None);}
     let receipt = read_record(&transaction, id, Some(issuer))?
@@ -197,7 +200,8 @@ pub fn finish(
         result.is_object(),
         "Operation result must be metadata object"
     );
-    let transaction = connection.transaction()?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let mut receipt = read_record(&transaction, id, Some(issuer))?
         .ok_or_else(|| Error::new("operation_not_found", "Operation no longer exists"))?;
     let stored_token: Option<String> = transaction.query_row(

@@ -781,5 +781,22 @@ and commit IDs here, then pushes its branch. No automatic main merge or PR.
   warnings denied, 128 TUI + 102 host + 3 wire unit tests, all three official
   SDK/native integrations and all 26 host/sync/CLI integration checks. Controlled
   host receipt-to-publication p95 is 252.207 ms over 26 batches, excluding native
-  helper/model/network latency. Inbox cross-platform CI remains unverified until
-  its own published run completes.
+  helper/model/network latency. Inbox commit `b5c85af` passed all jobs in
+  39347001213, including native SDK checks on Windows, Linux and macOS.
+
+### Durable writer-admission regression
+
+- The journal and existing metadata store share a SQLite file through separate
+  connections. A deterministic competing-writer test reproduces an immediate
+  `database is locked` read-to-write upgrade with the former deferred receipt
+  transaction. Immediate writer admission passes the same barrier test and
+  retains same-key replay, without sleeps or native/model effects.
+- Receipt initialization/accept/claim/finish and workflow/inbox mutations now
+  reserve write access before reading mutable state. Pure reads retain ordinary
+  read transactions. Existing bounded journal queues and contention timeout stay
+  in place; no automatic input or effect retry is added. See
+  [transaction contract](harness-transactions.md).
+- A native coordinator fixture previously returned `operation_unconfirmed` once
+  and passed its bounded isolated rerun. That occurrence had no SQL error code,
+  so its exact cause remains unclassified; the new regression proves the writer
+  conflict separately instead of declaring every earlier flake fixed.

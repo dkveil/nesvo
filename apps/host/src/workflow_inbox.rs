@@ -340,7 +340,8 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
                 )
                 .as_ref(),
             );
-            let transaction = connection.transaction()?;
+            let transaction =
+                connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             if let Some(previous) = orchestration::replay(&transaction, &actor, key, &digest)? {
                 return Ok(previous);
             }
@@ -384,7 +385,8 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
             {
                 return Err(invalid("ACK needs 1–32 distinct bounded message IDs"));
             }
-            let transaction = connection.transaction()?;
+            let transaction =
+                connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let mut mailbox = resolve(
                 &transaction,
                 &actor,

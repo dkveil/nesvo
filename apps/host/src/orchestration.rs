@@ -334,7 +334,8 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
     let digest = hex::encode(
         ring::digest::digest(&ring::digest::SHA256, &serde_json::to_vec(&request)?).as_ref(),
     );
-    let transaction = connection.transaction()?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     // Recheck the run boundary even when recovering a historical mutation.
     if let Request::SetPlan { run_id, .. }
     | Request::Activate { run_id, .. }
