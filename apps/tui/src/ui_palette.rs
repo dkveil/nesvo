@@ -127,7 +127,7 @@ pub fn category_areas(size: Rect, app: &App) -> Vec<(usize, Rect)> {
         .collect()
 }
 
-pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
+pub fn render(frame: &mut Frame, app: &App, query: &str, target: Option<&crate::palette::Target>) {
     let layout = for_app(frame.area(), app);
     frame.render_widget(Clear, layout.panel);
     let inline = !app.palette_expanded && frame.area().width >= 65;
@@ -201,15 +201,16 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
     }
     let scope_label = crate::model::search_scope(query).0.label();
     let matches = app.palette_results(query);
+    let selected = target.and_then(|target| matches.iter().position(|row| &row.target == target));
     let row_height = row_height(app, frame.area());
-    let start = offset(selected, layout.results.height / row_height);
+    let start = offset(selected.unwrap_or(0), layout.results.height / row_height);
     for (index, result) in matches
         .iter()
         .enumerate()
         .skip(start)
         .take((layout.results.height / row_height) as usize)
     {
-        let active = index == selected;
+        let active = Some(index) == selected;
         frame.render_widget(
             Block::default().style(Style::default().bg(if active {
                 app.theme.selection()
@@ -276,7 +277,7 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, selected: usize) {
         );
     }
     if !layout.preview.is_empty()
-        && let Some(result) = matches.get(selected)
+        && let Some(result) = selected.and_then(|index| matches.get(index))
     {
         frame.render_widget(
             Block::default()
@@ -424,7 +425,9 @@ mod tests {
         let mut app = App::new(1);
         app.palette_expanded = true;
         let mut terminal = Terminal::new(TestBackend::new(100, 32)).unwrap();
-        terminal.draw(|f| render(f, &app, "", 0)).unwrap();
+        terminal
+            .draw(|f| render(f, &app, "", Some(&crate::palette::Target::Command('n'))))
+            .unwrap();
         let layout = for_app(Rect::new(0, 0, 100, 32), &app);
         for y in layout.results.y..layout.results.y + 1 {
             for x in layout.results.x..layout.results.right() {
@@ -449,7 +452,14 @@ mod tests {
         for (width, height) in [(132, 36), (80, 24), (30, 10), (8, 4)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal
-                .draw(|frame| render(frame, &app, "api", 0))
+                .draw(|frame| {
+                    render(
+                        frame,
+                        &app,
+                        "api",
+                        Some(&crate::palette::Target::Session("one".into())),
+                    )
+                })
                 .unwrap();
             let layout = geometry(Rect::new(0, 0, width, height), app.sessions.len());
             assert!(layout.panel.right() <= width && layout.panel.bottom() <= height);
@@ -474,6 +484,33 @@ mod tests {
         }
     }
     #[test]
+    fn absent_cursor_does_not_highlight_or_preview_a_substitute_result() {
+        let mut app = App::new(1);
+        app.palette_expanded = true;
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"one","name":"Review API","cwd":"/api","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        let mut preview = crate::terminal::TerminalState::new(24, 80);
+        preview.process("Unexpected replacement preview", false);
+        app.terminals.insert("one".into(), preview);
+        let mut terminal = Terminal::new(TestBackend::new(150, 44)).unwrap();
+        terminal
+            .draw(|frame| render(frame, &app, "api", None))
+            .unwrap();
+        let layout = for_app(Rect::new(0, 0, 150, 44), &app);
+        assert!((layout.results.x..layout.results.right()).all(|x| {
+            terminal.backend().buffer()[(x, layout.results.y)].bg != app.theme.selection()
+        }));
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(!text.contains("Unexpected replacement preview"));
+    }
+    #[test]
     fn single_line_provider_project_and_status_do_not_overlap() {
         let mut app = App::new(1);
         app.palette_expanded = true;
@@ -484,7 +521,14 @@ mod tests {
         let layout = for_app(size, &app);
         let mut terminal = Terminal::new(TestBackend::new(150, 44)).unwrap();
         terminal
-            .draw(|frame| render(frame, &app, "工程", 0))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &app,
+                    "工程",
+                    Some(&crate::palette::Target::Session("one".into())),
+                )
+            })
             .unwrap();
         let line: String = (layout.results.x..layout.results.right())
             .map(|x| terminal.backend().buffer()[(x, layout.results.y)].symbol())
@@ -496,7 +540,14 @@ mod tests {
         assert_eq!(row_height(&app, size), 1);
         app.ascii_icons = true;
         terminal
-            .draw(|frame| render(frame, &app, "工程", 0))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &app,
+                    "工程",
+                    Some(&crate::palette::Target::Session("one".into())),
+                )
+            })
             .unwrap();
         assert_eq!(
             terminal.backend().buffer()[(layout.results.x + 1, layout.results.y)].symbol(),

@@ -146,9 +146,13 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                 enabled: true,
             });
         }
-        let count = app.palette_results(query).len();
+        let results = app.palette_results(query);
+        let count = results.len();
+        let selected = selected
+            .as_ref()
+            .and_then(|target| results.iter().position(|row| &row.target == target));
         let row_height = ui_palette::row_height(app, area);
-        let offset = ui_palette::offset(*selected, layout.results.height / row_height);
+        let offset = ui_palette::offset(selected.unwrap_or(0), layout.results.height / row_height);
         for index in offset..count.min(offset + usize::from(layout.results.height / row_height)) {
             output.push(Control {
                 area: Rect::new(
@@ -461,6 +465,10 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
+    if matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
+        // The palette draws its rows and categories; their controls only hit-test.
+        return;
+    }
     let footer_has_submit = matches!(
         app.dialog,
         Some(
@@ -597,7 +605,7 @@ mod tests {
         );
         app.dialog = Some(Dialog::QuickSwitch {
             query: "web".into(),
-            selected: 0,
+            selected: Some(crate::palette::Target::Session("two".into())),
         });
         let palette = ui_palette::for_app(area, &app);
         assert_eq!(

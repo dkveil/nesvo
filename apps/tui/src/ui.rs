@@ -1039,7 +1039,7 @@ pub fn dialog_area(size: Rect, dialog: &Dialog) -> Option<Rect> {
 
 fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
     if let Dialog::QuickSwitch { query, selected } = dialog {
-        ui_palette::render(frame, app, query, *selected);
+        ui_palette::render(frame, app, query, selected.as_ref());
         return;
     }
     let Some(area) = dialog_area(frame.area(), dialog) else {
@@ -1503,7 +1503,7 @@ mod tests {
         assert!(heading.contains("Search sessions"));
         app.dialog = Some(Dialog::QuickSwitch {
             query: "docs".into(),
-            selected: 0,
+            selected: None,
         });
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let palette = crate::ui_palette::for_app(area, &app);
@@ -1970,7 +1970,7 @@ mod tests {
             Dialog::Menu,
             Dialog::QuickSwitch {
                 query: String::new(),
-                selected: 0,
+                selected: None,
             },
             Dialog::Settings { selected: 0 },
             Dialog::NewGroup {

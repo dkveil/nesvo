@@ -98,10 +98,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
             {
                 app.mode = Mode::Navigate;
                 app.palette_expanded = true;
-                app.dialog = Some(Dialog::QuickSwitch {
-                    query: String::new(),
-                    selected: 0,
-                });
+                app.begin_palette(String::new());
             } else if app.dialog.is_some() {
                 dialog_key(app, key, &mut outcome);
             } else if key.code == KeyCode::F(app.shortcuts.keys[0]) && key.modifiers.is_empty() {
@@ -196,12 +193,16 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         }
         Event::Paste(text) => {
             if let Some(Dialog::QuickSwitch { query, selected }) = &mut app.dialog {
+                let previous = query.clone();
                 query.extend(
                     text.chars()
                         .filter(|c| !c.is_control())
                         .take(120usize.saturating_sub(query.chars().count())),
                 );
-                *selected = 0;
+                if *query != previous {
+                    *selected = None;
+                    app.select_palette(0);
+                }
             } else if let Some(Dialog::FolderPicker {
                 query, selected, ..
             }) = &mut app.dialog
@@ -301,19 +302,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                         (*selected + 1).min(choices.len().saturating_sub(1))
                     };
                 } else if matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
-                    let count = app
-                        .palette_results(match &app.dialog {
-                            Some(Dialog::QuickSwitch { query, .. }) => query,
-                            _ => unreachable!(),
-                        })
-                        .len();
-                    if let Some(Dialog::QuickSwitch { selected, .. }) = &mut app.dialog {
-                        *selected = if up {
-                            selected.saturating_sub(1)
-                        } else {
-                            (*selected + 1).min(count.saturating_sub(1))
-                        };
-                    }
+                    app.move_palette(up);
                 } else if app.dialog.is_none() {
                     if ui::tree_content(geometry.tree).contains((mouse.column, mouse.row).into()) {
                         app.selected = if up {
@@ -362,11 +351,11 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
             None
         };
     }
-    if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
-        let id = app
-            .palette_results(query)
-            .get(*selected)
-            .and_then(|row| row.target.session_id().map(str::to_owned));
+    app.reconcile_palette();
+    if let Some(Dialog::QuickSwitch { selected, .. }) = &app.dialog {
+        let id = selected
+            .as_ref()
+            .and_then(|target| target.session_id().map(str::to_owned));
         if let Some(id) = id
             && (app.active_id() != Some(id.as_str()) || !app.subscribed.contains(&id))
         {
@@ -469,14 +458,10 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
         }
         Action::PaletteCategory(index) => {
             app.palette_category = index;
-            if let Some(Dialog::QuickSwitch { selected, .. }) = &mut app.dialog {
-                *selected = 0;
-            }
+            app.select_palette(0);
         }
         Action::QuickChoice(index) => {
-            if let Some(Dialog::QuickSwitch { selected, .. }) = &mut app.dialog {
-                *selected = index;
-            }
+            app.select_palette(index);
         }
         Action::FocusMenu => {
             app.mode = Mode::Navigate;
@@ -488,10 +473,7 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
                 app.mode = Mode::Navigate;
                 app.palette_expanded = false;
                 app.palette_category = 0;
-                app.dialog = Some(Dialog::QuickSwitch {
-                    query: String::new(),
-                    selected: 0,
-                });
+                app.begin_palette(String::new());
             }
         }
         Action::OpenRow(index) => {
@@ -585,9 +567,13 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         return;
     }
     if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
-        let count = app.palette_results(query).len();
+        let results = app.palette_results(query);
+        let index = selected
+            .as_ref()
+            .and_then(|target| results.iter().position(|row| &row.target == target));
         let mut next_query = query.clone();
-        let mut next_selected = *selected;
+        let mut next_selected = selected.clone();
+        let mut reset_selection = false;
         match key.code {
             KeyCode::Enter => {
                 open_quick_choice(app, outcome);
@@ -596,30 +582,34 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             KeyCode::Up | KeyCode::Char('p')
                 if key.code == KeyCode::Up || key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                next_selected = next_selected.saturating_sub(1)
+                next_selected = results
+                    .get(index.map_or(results.len().saturating_sub(1), |index| {
+                        index.saturating_sub(1)
+                    }))
+                    .map(|row| row.target.clone());
             }
             KeyCode::F(2) => app.palette_expanded = true,
             KeyCode::Tab if app.palette_expanded => {
                 app.palette_category = (app.palette_category + 1) % 4;
-                next_selected = 0;
+                reset_selection = true;
             }
             KeyCode::BackTab if app.palette_expanded => {
                 app.palette_category = (app.palette_category + 3) % 4;
-                next_selected = 0;
+                reset_selection = true;
             }
             KeyCode::Tab => app.palette_expanded = true,
             KeyCode::Down | KeyCode::Char('n')
                 if key.code == KeyCode::Down || key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                next_selected = (next_selected + 1).min(count.saturating_sub(1))
+                next_selected = results
+                    .get(index.map_or(0, |index| (index + 1).min(results.len().saturating_sub(1))))
+                    .map(|row| row.target.clone());
             }
             KeyCode::Backspace => {
                 next_query.pop();
-                next_selected = 0;
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 next_query.clear();
-                next_selected = 0;
             }
             KeyCode::Char(c)
                 if !key
@@ -629,22 +619,16 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
                     && next_query.chars().count() < 120 =>
             {
                 next_query.push(c);
-                next_selected = 0;
             }
             _ => {}
         }
+        reset_selection |= next_query != *query;
         app.dialog = Some(Dialog::QuickSwitch {
             query: next_query,
             selected: next_selected,
         });
-        if let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog {
-            let id = app
-                .palette_results(query)
-                .get(*selected)
-                .and_then(|row| row.target.session_id().map(str::to_owned));
-            if let Some(id) = id {
-                outcome.commands.extend(app.preview_session(&id));
-            }
+        if reset_selection {
+            app.select_palette(0);
         }
         return;
     }
@@ -1097,14 +1081,13 @@ fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
 }
 
 fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
-    let Some(Dialog::QuickSwitch { query, selected }) = &app.dialog else {
+    app.reconcile_palette();
+    let Some(Dialog::QuickSwitch { selected, .. }) = &app.dialog else {
         return;
     };
-    let target = app
-        .palette_results(query)
-        .get(*selected)
-        .map(|row| row.target.clone());
+    let target = selected.clone();
     let Some(target) = target else {
+        app.notice = "Choose a search result before opening it.".into();
         return;
     };
     app.dialog = None;
@@ -1170,10 +1153,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             outcome.quit = true;
         } else if matches!(key.code, KeyCode::Char('k' | 'K' | '\u{0b}')) {
             app.palette_expanded = true;
-            app.dialog = Some(Dialog::QuickSwitch {
-                query: String::new(),
-                selected: 0,
-            });
+            app.begin_palette(String::new());
         }
         return;
     }
@@ -1181,10 +1161,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Char('/' | '\u{0b}') => {
             app.palette_expanded = true;
             app.palette_category = 0;
-            app.dialog = Some(Dialog::QuickSwitch {
-                query: String::new(),
-                selected: 0,
-            })
+            app.begin_palette(String::new())
         }
         KeyCode::Char('w') => {
             if let Some(session) = app.active_session()
@@ -1219,10 +1196,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             if app.selected == 0 {
                 app.palette_expanded = false;
                 app.palette_category = 0;
-                app.dialog = Some(Dialog::QuickSwitch {
-                    query: String::new(),
-                    selected: 0,
-                });
+                app.begin_palette(String::new());
             }
             preview_selected_session(app, outcome);
         }
@@ -1552,6 +1526,217 @@ mod tests {
     use super::*;
     use crossterm::event::MouseEvent;
 
+    fn stable_search_snapshot() -> Value {
+        json!({"type":"sessions","revision":1,"groups":[{"id":"g","name":"工程","parentId":null,"order":0}],"sessions":[
+            {"id":"anchor","name":"Anchor","cwd":"/repo","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"b","name":"工程 duplicate","cwd":"/repo","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"c","name":"工程 duplicate","cwd":"/repo","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})
+    }
+
+    fn stable_search_app(query: &str, target: crate::palette::Target) -> App {
+        let mut app = App::new(1);
+        app.event(stable_search_snapshot()).unwrap();
+        app.palette_expanded = true;
+        app.dialog = Some(Dialog::QuickSwitch {
+            query: query.into(),
+            selected: Some(target),
+        });
+        app
+    }
+
+    fn search_target(app: &App) -> Option<crate::palette::Target> {
+        match &app.dialog {
+            Some(Dialog::QuickSwitch { selected, .. }) => selected.clone(),
+            _ => None,
+        }
+    }
+
+    fn search_key(app: &mut App, code: KeyCode) -> Outcome {
+        event(
+            app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            Rect::new(0, 0, 150, 44),
+        )
+    }
+
+    #[test]
+    fn search_opens_the_saved_identity_after_insert_reorder_rename_and_attention_changes() {
+        let target = crate::palette::Target::Session("b".into());
+        let mut app = stable_search_app("", target.clone());
+        let before = app.palette_index();
+        let mut update = stable_search_snapshot();
+        update["revision"] = json!(2);
+        update["sessions"][1]["name"] = json!("ZZ renamed");
+        update["sessions"][2]["status"] = json!({"state":"question","source":"hook","updatedAt":2});
+        let inserted = json!({"id":"new","name":"AAA inserted","cwd":"/repo","program":"codex","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null});
+        update["sessions"].as_array_mut().unwrap().reverse();
+        update["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, inserted);
+        app.event(update).unwrap();
+        assert_eq!(search_target(&app), Some(target));
+        assert_ne!(app.palette_index(), before);
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert!(app.recent_sessions.is_empty());
+        let outcome = search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), Some("b"));
+        assert_eq!(app.recent_sessions.first().map(String::as_str), Some("b"));
+        assert!(
+            outcome
+                .commands
+                .iter()
+                .any(|command| command["type"] == "acquireControl" && command["sessionId"] == "b")
+        );
+    }
+
+    #[test]
+    fn search_deleted_target_is_not_replaced_even_when_its_id_reappears() {
+        let mut app = stable_search_app("工程", crate::palette::Target::Session("b".into()));
+        let mut update = stable_search_snapshot();
+        update["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|session| session["id"] != "b");
+        app.event(update).unwrap();
+        assert_eq!(search_target(&app), None);
+        app.event(stable_search_snapshot()).unwrap();
+        search_key(&mut app, KeyCode::F(2));
+        let outcome = search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert!(app.recent_sessions.is_empty());
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::QuickSwitch { selected: None, .. })
+        ));
+        assert!(
+            !outcome
+                .commands
+                .iter()
+                .any(|command| command["type"] == "acquireControl")
+        );
+        search_key(&mut app, KeyCode::Down);
+        let selected = search_target(&app).unwrap();
+        search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), selected.session_id());
+    }
+
+    #[test]
+    fn search_rename_that_stops_matching_does_not_open_the_duplicate() {
+        let mut app = stable_search_app("工程", crate::palette::Target::Session("b".into()));
+        let mut snapshot = stable_search_snapshot();
+        snapshot["sessions"][1]["name"] = json!("Renamed away");
+        app.event(snapshot).unwrap();
+        assert_eq!(search_target(&app), None);
+        assert!(
+            app.palette_results("工程")
+                .iter()
+                .any(|row| row.target.session_id() == Some("c"))
+        );
+        search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::QuickSwitch { selected: None, .. })
+        ));
+    }
+
+    #[test]
+    fn search_filter_removal_requires_new_query_or_navigation_before_enter() {
+        let mut app = stable_search_app("", crate::palette::Target::Session("b".into()));
+        app.status_filters.insert(usize::MAX);
+        search_key(&mut app, KeyCode::F(2));
+        assert_eq!(search_target(&app), None);
+        app.status_filters.clear();
+        search_key(&mut app, KeyCode::F(2));
+        search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert_eq!(search_target(&app), None);
+        event(
+            &mut app,
+            Event::Paste("工程".into()),
+            Rect::new(0, 0, 150, 44),
+        );
+        assert!(search_target(&app).is_some());
+        assert!(matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query == "工程"));
+        let selected = search_target(&app).unwrap();
+        search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), selected.session_id());
+    }
+
+    #[test]
+    fn search_provider_hint_output_cannot_replace_the_selected_session() {
+        let mut app = stable_search_app("", crate::palette::Target::Session("b".into()));
+        let mut snapshot = stable_search_snapshot();
+        snapshot["sessions"][1]["program"] = json!("shell");
+        app.event(snapshot).unwrap();
+        app.event(json!({"type":"subscribed","sessionId":"b","cols":80,"rows":24}))
+            .unwrap();
+        app.event(json!({"type":"output","sessionId":"b","data":"Claude Code v2.1.305\r\n"}))
+            .unwrap();
+        app.dialog = Some(Dialog::QuickSwitch {
+            query: "claude".into(),
+            selected: Some(crate::palette::Target::Session("b".into())),
+        });
+        app.event(
+            json!({"type":"output","sessionId":"b","data":"\u{1b}[2J\u{1b}[HPS C:\\work>\r\n"}),
+        )
+        .unwrap();
+        assert_eq!(search_target(&app), None);
+        assert!(!app.palette_results("claude").is_empty());
+        let outcome = search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert!(
+            !outcome
+                .commands
+                .iter()
+                .any(|command| command["type"] == "acquireControl")
+        );
+    }
+
+    #[test]
+    fn search_expansion_preserves_unicode_duplicate_identity_and_preview_does_not_change_mru() {
+        let target = crate::palette::Target::Session("c".into());
+        let mut app = stable_search_app("工程", target.clone());
+        app.palette_expanded = false;
+        let focused = app.focused;
+        let history = app.recent_sessions.clone();
+        let outcome = search_key(&mut app, KeyCode::F(2));
+        assert!(app.palette_expanded);
+        assert_eq!(search_target(&app), Some(target));
+        assert!(matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query == "工程"));
+        assert_eq!(app.focused, focused);
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert_eq!(app.recent_sessions, history);
+        assert!(!outcome.commands.iter().any(|command| matches!(
+            command["type"].as_str(),
+            Some("acquireControl" | "releaseControl")
+        )));
+    }
+
+    #[test]
+    fn search_group_and_command_identities_are_not_replaced_by_matching_sessions() {
+        let mut app = stable_search_app("工程", crate::palette::Target::Group("g".into()));
+        app.event(stable_search_snapshot()).unwrap();
+        search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert!(
+            matches!(app.selected_row().map(|row| row.kind), Some(RowKind::Group(id)) if id == "g")
+        );
+        app.dialog = Some(Dialog::QuickSwitch {
+            query: "new".into(),
+            selected: Some(crate::palette::Target::Command('g')),
+        });
+        let mut snapshot = stable_search_snapshot();
+        snapshot["sessions"][1]["name"] = json!("New session");
+        app.event(snapshot).unwrap();
+        search_key(&mut app, KeyCode::Enter);
+        assert!(matches!(app.dialog, Some(Dialog::NewGroup { .. })));
+        assert_eq!(app.active_id(), Some("anchor"));
+        assert!(app.recent_sessions.is_empty());
+    }
+
     fn click(app: &mut App, area: Rect, action: Action) -> Outcome {
         let target = ui_controls::controls(app, area)
             .into_iter()
@@ -1597,7 +1782,7 @@ mod tests {
         app.palette_expanded = true;
         app.dialog = Some(Dialog::QuickSwitch {
             query: "test".into(),
-            selected: 9,
+            selected: Some(crate::palette::Target::Session("old-target".into())),
         });
         click(
             &mut app,
@@ -1606,7 +1791,7 @@ mod tests {
         );
         assert_eq!(app.palette_category, 2);
         assert!(
-            matches!(&app.dialog, Some(Dialog::QuickSwitch { query, selected: 0 }) if query == "test")
+            matches!(&app.dialog, Some(Dialog::QuickSwitch { query, selected: None }) if query == "test")
         );
     }
 

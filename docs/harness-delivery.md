@@ -55,7 +55,7 @@ not evidence that the expanded acceptance criteria pass.
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Partial: signed loopback HTTP, durable admission, GitHub adapter and owner CLI/MCP implemented; native Windows fixtures pass; publication/platform and external-account deployment gates separate     |
 | F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: history, no-effect retry, overlap, cancellation, execution timeouts and owner no-effect launch resolution; broader retry, uncertain effects, cleanup and job UI pending                      |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                                                                                      |
-| F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Pending                                                                                                                                                                                               |
+| F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Partial: exact target cursor and Enter validation; full attention/unread/MRU ranking pending                                                                                                          |
 | F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                                                                               |
 | F32 | Incremental preview and process/turn times      | Partial: bounded replay and monotonic process age             | Implemented distinct process/turn times and bounded passive read; device matrix pending                                                                                                               |
 | F33 | Revision-bound diff feedback                    | Missing                                                       | Pending                                                                                                                                                                                               |
@@ -3187,3 +3187,22 @@ Exact source, binary hashes and raw reports are retained outside Git. The
 instrumented candidate passed 685 Windows workspace units, locked build and
 warnings-denied all-target Clippy before the later serial-conformance test split.
 This is a measurement checkpoint, not implemented pooling or hibernation.
+
+### F30 stable search cursor
+
+Quick and expanded search now retain one optional session/group/command target,
+with its current row index derived for rendering and hit-testing. Insertions,
+reordering, rename, attention changes and provider hints cannot silently replace
+the Enter target. Disappearance or loss of eligibility clears selection without
+choosing a replacement, including when the old ID subsequently returns. Explicit
+navigation, query/category changes or a click can select again. Expansion keeps
+query and identity; passive previews do not update MRU or take terminal control.
+
+Nine regressions cover those transitions, duplicate names/Unicode, group/command
+identity, scope/filter matching and unselected rendering. Existing focus, PTY
+input, mouse geometry and small-terminal checks remain unchanged. The final
+Windows TUI run passes 197 units with only the explicit design exporter ignored;
+warnings-denied all-target TUI Clippy and formatting pass. Direct identity
+revalidation and label-free palette controls avoid redundant full-list sorting
+on each host event/redraw. This fixes selection safety without changing the
+approved layout; richer attention/unread/MRU ranking remains a separate F30 gate.

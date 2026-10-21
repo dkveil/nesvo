@@ -16,6 +16,20 @@ fn fuzzy_contains(haystack: &str, needle: &str) -> bool {
         .all(|character| chars.any(|candidate| candidate == character))
 }
 
+struct SessionSearch {
+    scope: SearchScope,
+    words: Vec<String>,
+}
+impl SessionSearch {
+    fn new(query: &str) -> Self {
+        let (scope, query) = search_scope(query);
+        Self {
+            scope,
+            words: query.split_whitespace().map(str::to_lowercase).collect(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -194,7 +208,7 @@ pub enum Dialog {
     Menu,
     QuickSwitch {
         query: String,
-        selected: usize,
+        selected: Option<crate::palette::Target>,
     },
     ExitConfirm {
         from_menu: bool,
@@ -453,6 +467,70 @@ impl App {
         crate::palette::results(self, query)
     }
 
+    pub fn begin_palette(&mut self, query: String) {
+        let selected = self
+            .palette_results(&query)
+            .first()
+            .map(|row| row.target.clone());
+        self.dialog = Some(Dialog::QuickSwitch { query, selected });
+    }
+
+    pub fn palette_index(&self) -> Option<usize> {
+        let Some(Dialog::QuickSwitch {
+            query,
+            selected: Some(target),
+        }) = &self.dialog
+        else {
+            return None;
+        };
+        self.palette_results(query)
+            .iter()
+            .position(|row| &row.target == target)
+    }
+
+    pub fn select_palette(&mut self, index: usize) {
+        let target = match &self.dialog {
+            Some(Dialog::QuickSwitch { query, .. }) => self
+                .palette_results(query)
+                .get(index)
+                .map(|row| row.target.clone()),
+            _ => return,
+        };
+        if let Some(Dialog::QuickSwitch { selected, .. }) = &mut self.dialog {
+            *selected = target;
+        }
+    }
+
+    pub fn move_palette(&mut self, up: bool) {
+        let count = match &self.dialog {
+            Some(Dialog::QuickSwitch { query, .. }) => self.palette_results(query).len(),
+            _ => return,
+        };
+        let index = match self.palette_index() {
+            Some(index) if up => index.saturating_sub(1),
+            Some(index) => (index + 1).min(count.saturating_sub(1)),
+            None if up => count.saturating_sub(1),
+            None => 0,
+        };
+        self.select_palette(index);
+    }
+
+    pub fn reconcile_palette(&mut self) {
+        let Some(Dialog::QuickSwitch {
+            query,
+            selected: Some(target),
+        }) = &self.dialog
+        else {
+            return;
+        };
+        if !crate::palette::eligible(self, query, target) {
+            if let Some(Dialog::QuickSwitch { selected, .. }) = &mut self.dialog {
+                *selected = None;
+            }
+            self.notice = "Selected result is no longer available. Choose another result.".into();
+        }
+    }
+
     pub fn matches_status(&self, session: &Session) -> bool {
         self.status_filters.is_empty()
             || self
@@ -461,56 +539,13 @@ impl App {
     }
 
     pub fn quick_switch_results(&self, query: &str) -> Vec<&Session> {
-        let (scope, query) = search_scope(query);
-        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let search = SessionSearch::new(query);
         let mut matches: Vec<(&Session, u32)> = self
             .sessions
             .iter()
             .filter_map(|session| {
-                if !self.matches_status(session) {
-                    return None;
-                }
-                let program = self.effective_program(session);
-                if (scope == SearchScope::Agents && program == Program::Shell)
-                    || (scope == SearchScope::Terminals && program != Program::Shell)
-                    || (scope == SearchScope::Attention && session.attention_priority() == 0)
-                {
-                    return None;
-                }
-                let mut terms = format!(
-                    "{} {} {}",
-                    session.name,
-                    session.cwd,
-                    self.effective_program(session).label()
-                );
-                let mut parent = session.group_id.as_deref();
-                let mut seen = HashSet::new();
-                while let Some(id) = parent {
-                    if !seen.insert(id) {
-                        break;
-                    }
-                    let Some(group) = self.groups.iter().find(|group| group.id == id) else {
-                        break;
-                    };
-                    terms.push(' ');
-                    terms.push_str(&group.name);
-                    parent = group.parent_id.as_deref();
-                }
-                let haystack = terms.to_lowercase();
-                let mut score = 0;
-                for word in &words {
-                    if session.name.to_lowercase().starts_with(word) {
-                        score += 6;
-                    } else if haystack.contains(word) {
-                        score += 3;
-                    } else if fuzzy_contains(&haystack, word) {
-                        score += 1;
-                    } else {
-                        return None;
-                    }
-                }
-                score += u32::from(session.attention_priority() > 0);
-                Some((session, score))
+                self.session_search_score(session, &search)
+                    .map(|score| (session, score))
             })
             .collect();
         matches.sort_by(|(a, a_score), (b, b_score)| {
@@ -520,6 +555,65 @@ impl App {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         matches.into_iter().map(|(session, _)| session).collect()
+    }
+
+    pub(crate) fn session_search_matches(&self, id: &str, query: &str) -> bool {
+        self.session(id).is_some_and(|session| {
+            self.session_search_score(session, &SessionSearch::new(query))
+                .is_some()
+        })
+    }
+
+    fn session_search_score(&self, session: &Session, search: &SessionSearch) -> Option<u32> {
+        if !self.matches_status(session)
+            || (search.scope == SearchScope::Attention && session.attention_priority() == 0)
+        {
+            return None;
+        }
+        let program = if matches!(search.scope, SearchScope::Agents | SearchScope::Terminals)
+            || !search.words.is_empty()
+        {
+            Some(self.effective_program(session))
+        } else {
+            None
+        };
+        if (search.scope == SearchScope::Agents && program == Some(Program::Shell))
+            || (search.scope == SearchScope::Terminals && program != Some(Program::Shell))
+        {
+            return None;
+        }
+        let mut score = u32::from(session.attention_priority() > 0);
+        if search.words.is_empty() {
+            return Some(score);
+        }
+        let mut terms = format!("{} {} {}", session.name, session.cwd, program?.label());
+        let mut parent = session.group_id.as_deref();
+        let mut seen = HashSet::new();
+        while let Some(id) = parent {
+            if !seen.insert(id) {
+                break;
+            }
+            let Some(group) = self.groups.iter().find(|group| group.id == id) else {
+                break;
+            };
+            terms.push(' ');
+            terms.push_str(&group.name);
+            parent = group.parent_id.as_deref();
+        }
+        let haystack = terms.to_lowercase();
+        let name = session.name.to_lowercase();
+        for word in &search.words {
+            if name.starts_with(word) {
+                score += 6;
+            } else if haystack.contains(word) {
+                score += 3;
+            } else if fuzzy_contains(&haystack, word) {
+                score += 1;
+            } else {
+                return None;
+            }
+        }
+        Some(score)
     }
 
     pub fn group_attention(&self, group_id: &str) -> Option<&Status> {
@@ -781,14 +875,6 @@ impl App {
                 }
             }
             "sessions" => {
-                let palette_target =
-                    if let Some(Dialog::QuickSwitch { query, selected }) = &self.dialog {
-                        self.palette_results(query)
-                            .get(*selected)
-                            .map(|row| row.target.clone())
-                    } else {
-                        None
-                    };
                 let selected = self
                     .pending_selection
                     .as_ref()
@@ -836,18 +922,6 @@ impl App {
                     .unwrap_or(self.selected.min(tree.len().saturating_sub(1)));
                 if self.selected == 0 && tree.len() > 1 {
                     self.selected = 1;
-                }
-                if let Some(target) = palette_target
-                    && let Some(Dialog::QuickSwitch { query, .. }) = &self.dialog
-                {
-                    let index = self
-                        .palette_results(query)
-                        .iter()
-                        .position(|row| row.target == target)
-                        .unwrap_or(0);
-                    if let Some(Dialog::QuickSwitch { selected, .. }) = &mut self.dialog {
-                        *selected = index;
-                    }
                 }
             }
             "schedules" => {
@@ -1014,6 +1088,7 @@ impl App {
             }
             _ => {}
         }
+        self.reconcile_palette();
         Ok(commands)
     }
 
@@ -1269,28 +1344,37 @@ impl App {
     pub fn group_choices(&self, exclude: Option<&str>) -> Vec<(Option<String>, String)> {
         let mut choices = vec![(None, "Root / ungrouped".into())];
         for group in &self.groups {
-            let mut cursor = Some(group.id.as_str());
-            let mut path = Vec::new();
-            let mut seen = HashSet::new();
-            let mut valid = true;
-            while let Some(id) = cursor {
-                if Some(id) == exclude || !seen.insert(id) {
-                    valid = false;
-                    break;
-                }
-                let Some(parent) = self.groups.iter().find(|g| g.id == id) else {
-                    break;
-                };
-                path.push(parent.name.as_str());
-                cursor = parent.parent_id.as_deref();
-            }
-            if valid {
-                path.reverse();
-                choices.push((Some(group.id.clone()), path.join(" / ")));
+            if let Some(path) = self.group_path(group, exclude) {
+                choices.push((Some(group.id.clone()), path));
             }
         }
         choices[1..].sort_by(|a, b| a.1.cmp(&b.1));
         choices
+    }
+
+    pub(crate) fn group_search_path(&self, id: &str) -> Option<String> {
+        self.groups
+            .iter()
+            .find(|group| group.id == id)
+            .and_then(|group| self.group_path(group, None))
+    }
+
+    fn group_path(&self, group: &Group, exclude: Option<&str>) -> Option<String> {
+        let mut cursor = Some(group.id.as_str());
+        let mut path = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(id) = cursor {
+            if Some(id) == exclude || !seen.insert(id) {
+                return None;
+            }
+            let Some(parent) = self.groups.iter().find(|group| group.id == id) else {
+                break;
+            };
+            path.push(parent.name.as_str());
+            cursor = parent.parent_id.as_deref();
+        }
+        path.reverse();
+        Some(path.join(" / "))
     }
 }
 
