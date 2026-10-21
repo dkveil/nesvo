@@ -52,6 +52,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         crate::notes_controller::begin_capture(app);
         return Outcome::default();
     }
+    if app.worktrees.dialog.is_some() {
+        return crate::worktree_actions::event(app, event);
+    }
     if app.session_kind.is_some() {
         return session_kind_event(app, event, area);
     }
@@ -446,6 +449,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     outcome
         .commands
         .extend(crate::projects_controller::sync(app));
+    outcome.commands.extend(crate::worktree_actions::sync(app));
     for command in &outcome.commands {
         if command["type"] == "acquireControl" {
             app.pending_input = command["sessionId"].as_str().map(str::to_owned);
@@ -1315,6 +1319,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Char('J') => crate::jobs_controller::open(app, outcome),
         KeyCode::Char('W') => crate::runs_controller::open(app, outcome),
         KeyCode::Char('P') => crate::projects_controller::open(app, outcome),
+        KeyCode::Char('K') => crate::worktree_actions::open(app),
         KeyCode::Char('O') => crate::overview::open(app, area.width),
         KeyCode::Char('Y') => outcome.commands.extend(crate::git_pane::open(app, true)),
         KeyCode::Char('T') => outcome

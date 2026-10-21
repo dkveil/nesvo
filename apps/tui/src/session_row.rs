@@ -212,6 +212,28 @@ impl Widget for SessionRow<'_> {
     }
 }
 
+const BADGE_WIDTH: u16 = 6;
+
+pub fn badge_area(area: Rect) -> Option<Rect> {
+    if area.width < 30 {
+        return None;
+    }
+    let status_x = area.right().saturating_sub(11).max(area.x);
+    let x = status_x.saturating_sub(BADGE_WIDTH + 1).max(area.x);
+    Some(Rect::new(x, area.y, BADGE_WIDTH, 1))
+}
+
+pub fn paint_badge(area: Rect, buffer: &mut Buffer, label: &StatusLabel) {
+    let Some(slot) = badge_area(area) else {
+        return;
+    };
+    Paragraph::new(" ".repeat(usize::from(BADGE_WIDTH))).render(slot, buffer);
+    Paragraph::new(clipped(label.text, BADGE_WIDTH))
+        .right_aligned()
+        .style(Style::default().fg(label.color))
+        .render(slot, buffer);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +268,46 @@ mod tests {
                 assert!(line.contains("2h14m"), "{width}: {line}");
             }
             assert_eq!(buffer[(area.right(), 2)].symbol(), " ");
+        }
+    }
+    #[test]
+    fn worktree_badge_replaces_the_runtime_column_and_keeps_the_status() {
+        for width in [20, 30, 32, 42, 66] {
+            let area = Rect::new(3, 2, width, 1);
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 110, 5));
+            SessionRow {
+                name: "Feature work",
+                icon: "✳",
+                icon_color: TEXT,
+                status: StatusLabel {
+                    text: "idle",
+                    color: SUCCESS,
+                },
+                runtime: "2h14m",
+                project: None,
+                indent: 0,
+                query: "",
+                accent: TEXT,
+            }
+            .render(area, &mut buffer);
+            paint_badge(
+                area,
+                &mut buffer,
+                &StatusLabel {
+                    text: "setup…",
+                    color: WARNING,
+                },
+            );
+            let line: String = (area.x..area.right())
+                .map(|x| buffer[(x, 2)].symbol())
+                .collect();
+            assert!(line.ends_with("idle "), "{width}: {line}");
+            if width >= 30 {
+                assert!(line.contains("setup…"), "{width}: {line}");
+                assert!(!line.contains("2h14m"), "{width}: {line}");
+            } else {
+                assert!(!line.contains("setup"), "{width}: {line}");
+            }
         }
     }
     #[test]

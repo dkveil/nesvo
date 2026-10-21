@@ -485,6 +485,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     crate::ui_git::render(frame, app);
     crate::ui_notes::render(frame, app);
     crate::toolbox::render(frame, app);
+    crate::ui_worktree_actions::render(frame, app);
     if let Some(picker) = &app.session_kind {
         crate::ui_session_kind::render(frame, app, picker);
     }
@@ -846,6 +847,9 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                     },
                     entry,
                 );
+                if let Some(badge) = crate::ui_worktree_actions::badge(app, id) {
+                    crate::session_row::paint_badge(entry, frame.buffer_mut(), &badge);
+                }
             }
         }
         if selected
@@ -959,8 +963,11 @@ fn render_pane(
             } else {
                 "view · i to control"
             };
+            let worktree = crate::worktree_actions::header(app, &session.id)
+                .map(|label| format!("{label} · "))
+                .unwrap_or_default();
             format!(
-                "{control} · {}×{} · {}",
+                "{worktree}{control} · {}×{} · {}",
                 session.cols, session.rows, session.cwd
             )
         })

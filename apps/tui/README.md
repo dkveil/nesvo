@@ -65,6 +65,7 @@ The start menu initially observes the first session without taking control. Ente
 | u in Overview         | Usage panel: provider quota, freshness, quota wake      |
 | Y                     | Read-only Git view of the session repository (`Git`)    |
 | T / Ctrl+T            | Project notes view / quick line into today's note       |
+| K                     | Worktree actions: run, cancel, archive, setup/run logs  |
 | S                     | Scheduled sessions: r refresh, x cancel a pending one   |
 | f                     | Filter sessions by status; empty selection means all    |
 | u                     | Mute / unmute attention alerts of the active session    |

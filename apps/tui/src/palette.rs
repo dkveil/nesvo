@@ -24,7 +24,7 @@ pub struct ResultRow {
     pub context: String,
 }
 pub const CATEGORIES: [&str; 4] = ["All", "Sessions", "Groups", "Commands"];
-pub const COMMANDS: [(char, &str); 18] = [
+pub const COMMANDS: [(char, &str); 19] = [
     ('n', "New session"),
     ('N', "New session kind"),
     ('L', "Layouts"),
@@ -39,6 +39,7 @@ pub const COMMANDS: [(char, &str); 18] = [
     ('O', "Overview"),
     ('Y', "Git"),
     ('T', "Notes"),
+    ('K', "Worktree actions"),
     ('H', "Getting started"),
     ('p', "Pair phone"),
     ('z', "Toggle focus mode"),

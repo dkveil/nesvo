@@ -97,6 +97,9 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
             app,
             "",
         );
+        if form.worktree {
+            crate::ui_worktree_actions::render_setup_check(frame, app, row(area, 4));
+        }
         input_row(
             frame,
             row(area, 6),

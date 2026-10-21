@@ -58,6 +58,7 @@ mod ui_projects;
 mod ui_review;
 mod ui_runs;
 mod ui_session_kind;
+mod ui_worktree_actions;
 mod usage_panel;
 mod workflow;
 mod workflow_budget;
@@ -71,6 +72,7 @@ mod workflow_inbox;
 mod workflow_launches;
 mod workflow_wakes;
 mod workspace_layout;
+mod worktree_actions;
 
 use anyhow::{Context, Result, ensure};
 use clap::Parser;

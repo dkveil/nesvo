@@ -466,6 +466,7 @@ pub struct App {
     pub reviews: crate::review_session::ReviewSessions,
     pub files: crate::files_controller::FilesState,
     pub notes: crate::notes_controller::NotesState,
+    pub worktrees: crate::worktree_actions::Worktrees,
     pub client_id: u64,
     pub sessions: Vec<Session>,
     pub groups: Vec<Group>,
@@ -522,6 +523,7 @@ impl App {
             reviews: Default::default(),
             files: Default::default(),
             notes: Default::default(),
+            worktrees: Default::default(),
             overlay: None,
             palette_expanded: false,
             palette_category: 0,
@@ -583,7 +585,10 @@ impl App {
         for session in &mut self.sessions {
             changed |= session.refresh_time(now);
         }
-        changed | crate::jobs_controller::tick(self) | crate::overview::tick(self, now)
+        changed
+            | crate::jobs_controller::tick(self)
+            | crate::overview::tick(self, now)
+            | crate::worktree_actions::expire(self)
     }
 
     pub fn session(&self, id: &str) -> Option<&Session> {
@@ -1209,7 +1214,9 @@ impl App {
 
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
-        let kind = if let Some(next) = crate::git_pane::host_event(self, &event) {
+        let kind = if crate::worktree_actions::host_event(self, &event) {
+            ""
+        } else if let Some(next) = crate::git_pane::host_event(self, &event) {
             commands.extend(next);
             ""
         } else if let Some(next) = crate::projects_controller::host_event(self, &event) {
@@ -1503,6 +1510,7 @@ impl App {
         commands.extend(crate::review_session::pump(self));
         commands.extend(crate::files_controller::sync(self));
         commands.extend(crate::notes_controller::sync(self));
+        commands.extend(crate::worktree_actions::sync(self));
         self.reconcile_palette();
         Ok(commands)
     }
@@ -1520,6 +1528,7 @@ impl App {
         self.reviews.picking = None;
         self.reviews.focused = false;
         self.notes.disconnected();
+        crate::worktree_actions::disconnect(self);
         self.notice = if self.capabilities.is_none() {
             "Host disconnected during setup; update nesvo-host and reconnect.".into()
         } else {
@@ -1584,6 +1593,7 @@ impl App {
                 .next()
                 .or_else(|| crate::git_pane::tick(self))
                 .or_else(|| crate::usage_panel::tick(self))
+                .or_else(|| crate::worktree_actions::tick(self))
         }
     }
 
