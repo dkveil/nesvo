@@ -775,6 +775,7 @@ pub(crate) struct CreateContext {
     authority: crate::caller::Authority,
     task_tools: Option<Vec<String>>,
     quota: Option<crate::job_quota::Permit>,
+    run_fenced: bool,
 }
 impl CreateContext {
     fn ordinary(authority: crate::caller::Authority) -> Self {
@@ -782,6 +783,7 @@ impl CreateContext {
             authority,
             task_tools: None,
             quota: None,
+            run_fenced: false,
         }
     }
     pub(crate) fn task(
@@ -793,6 +795,7 @@ impl CreateContext {
             authority,
             task_tools,
             quota,
+            run_fenced: true,
         }
     }
 }
@@ -1107,6 +1110,7 @@ pub(crate) async fn dispatch_create(
             .finish(issuer, claim.receipt.id, claim.token, phase.into(), result)
             .await;
     }
+    let derived_worktree = spec.worktree;
     let validation = state.lock().unwrap().resolve_task_launch(
         &context.authority,
         &mut spec,
@@ -1117,6 +1121,19 @@ pub(crate) async fn dispatch_create(
             .await
             .map(|()| directory),
         Err(error) => Err(error),
+    };
+    let validation = match validation {
+        Ok(directory) if !context.run_fenced => crate::quota_gate::admit(
+            &state,
+            &claim.receipt.id,
+            "operation",
+            spec.program,
+            None,
+            |_| {},
+        )
+        .await
+        .map(|()| directory),
+        other => other,
     };
     let (phase, result) = match validation {
         Err(error) => (
@@ -1155,6 +1172,17 @@ pub(crate) async fn dispatch_create(
                     );
                     match launched {
                         Ok(id) => ("created", json!({"sessionId":id,"taskResult":null})),
+                        Err(error)
+                            if !derived_worktree
+                                && error
+                                    .downcast_ref::<crate::api_error::Error>()
+                                    .is_some_and(|error| error.code == "quota_hold") =>
+                        {
+                            (
+                                "failed",
+                                json!({"code":"quota_hold","message":error.to_string(),"effectStarted":false,"reservedSessionId":claim.receipt.session_id}),
+                            )
+                        }
                         Err(_) => (
                             "unknown",
                             json!({"code":"launch_unconfirmed","message":"Inspect sessions and recovery before creating a new operation","reservedSessionId":claim.receipt.session_id,"directory":spec.cwd}),

@@ -807,3 +807,145 @@ fn disk_reopen_preserves_accepted_bytes_and_pauses_unclaimed_quota_work() {
     assert_eq!(poll(&mut reopened, 4, NOW, ELAPSED).len(), 1);
     assert_eq!(count(&reopened, "workflow_runs"), 0);
 }
+
+fn gate(revision: u64, program: &str, hold: Option<(&str, u64)>) -> Observation {
+    Observation {
+        source_id: format!("gate_{program}"),
+        revision,
+        binding: None,
+        expires_elapsed_ms: hold.map_or(ELAPSED, |(_, expires)| expires),
+        eligible: hold.is_none(),
+        reason: hold.map_or("allow", |(reason, _)| reason).into(),
+    }
+}
+fn program_spec(program: &str) -> Value {
+    let mut value = spec(None);
+    value["profile"]["program"] = program.into();
+    value
+}
+
+#[test]
+fn host_gate_hold_keeps_unpolicied_jobs_queued_until_a_newer_publication() {
+    let mut store = store();
+    let (_, codex) = queued(&mut store, "gate-codex", spec(None));
+    let (_, claude) = queued(&mut store, "gate-claude", program_spec("claude"));
+    publish(
+        &mut store,
+        gate(1, "codex", Some(("quota_exhausted", ELAPSED + 60_000))),
+    );
+    let held = quota(&store, &codex, ELAPSED);
+    assert_eq!(held["state"], "held");
+    assert_eq!(held["reason"], "quota_exhausted");
+    assert!(held["resetsAt"].as_u64().is_some());
+    code(
+        job_quota::guard_gate(&store.0, crate::launchers::Program::Codex, ELAPSED),
+        "quota_wait",
+    );
+    job_quota::guard_gate(&store.0, crate::launchers::Program::Claude, ELAPSED).unwrap();
+    let claims = poll(&mut store, 4, NOW, ELAPSED);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].id, claude);
+    let untouched: (String, Option<String>) = store
+        .0
+        .query_row(
+            "SELECT state,current_job_attempt_id FROM harness_job_occurrences WHERE id=?1",
+            [&codex],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(untouched, ("queued".into(), None));
+    let before = count(&store, "domain_events");
+    publish(
+        &mut store,
+        gate(1, "codex", Some(("quota_exhausted", ELAPSED + 60_000))),
+    );
+    assert_eq!(count(&store, "domain_events"), before);
+    assert!(poll(&mut store, 4, NOW, ELAPSED + 59_999).is_empty());
+    publish(&mut store, gate(2, "codex", None));
+    assert_eq!(quota(&store, &codex, ELAPSED)["state"], "notRequired");
+    assert_eq!(poll(&mut store, 4, NOW, ELAPSED)[0].id, codex);
+}
+
+#[test]
+fn host_gate_reset_expiry_releases_and_untimed_holds_have_no_reset() {
+    let mut store = store();
+    let (_, id) = queued(&mut store, "gate-expiry", program_spec("claude"));
+    publish(
+        &mut store,
+        gate(1, "claude", Some(("quota_exhausted", ELAPSED + 5_000))),
+    );
+    assert!(poll(&mut store, 4, NOW, ELAPSED + 4_999).is_empty());
+    assert_eq!(quota(&store, &id, ELAPSED + 5_000)["state"], "notRequired");
+    publish(
+        &mut store,
+        gate(
+            2,
+            "claude",
+            Some(("awaiting_observation", crate::quota_gate::UNTIMED_EXPIRY)),
+        ),
+    );
+    let untimed = quota(&store, &id, ELAPSED + 5_000);
+    assert_eq!(untimed["state"], "held");
+    assert!(untimed["resetsAt"].is_null());
+    let mut bound = gate(3, "claude", None);
+    bound.binding = Some(binding());
+    bound.expires_elapsed_ms = ELAPSED + 10_000;
+    publish(&mut store, bound);
+    assert_eq!(
+        quota(&store, &id, ELAPSED)["reason"],
+        "invalid_observation",
+        "a gate row cannot carry configured-account authority"
+    );
+    publish(&mut store, gate(4, "claude", None));
+    assert_eq!(poll(&mut store, 4, NOW, ELAPSED + 5_000)[0].id, id);
+}
+
+#[test]
+fn configured_account_policy_is_unchanged_by_the_host_gate() {
+    let mut store = store();
+    let (_, id) = queued(&mut store, "gate-policy", spec(Some(&binding())));
+    publish(
+        &mut store,
+        gate(1, "codex", Some(("quota_exhausted", ELAPSED + 60_000))),
+    );
+    assert_eq!(quota(&store, &id, ELAPSED)["state"], "waiting");
+    publish(&mut store, observation(1, Some(binding()), true));
+    assert_eq!(quota(&store, &id, ELAPSED)["state"], "eligible");
+    assert_eq!(poll(&mut store, 4, NOW, ELAPSED)[0].id, id);
+}
+
+#[test]
+fn restart_discards_gate_holds_and_keeps_per_occurrence_reauthorization() {
+    let mut store = store();
+    let (job, policy) = queued(&mut store, "restart-policy", spec(Some(&binding())));
+    let (_, plain) = queued(&mut store, "restart-plain", program_spec("claude"));
+    publish(
+        &mut store,
+        gate(1, "claude", Some(("quota_exhausted", ELAPSED + 60_000))),
+    );
+    publish(&mut store, observation(1, Some(binding()), true));
+    job_definitions::recover(&mut store.0, NOW + 1).unwrap();
+    assert_eq!(count(&store, "harness_job_quota_sources"), 0);
+    assert_eq!(quota(&store, &plain, ELAPSED)["state"], "notRequired");
+    publish(
+        &mut store,
+        gate(
+            1,
+            "claude",
+            Some(("awaiting_observation", crate::quota_gate::UNTIMED_EXPIRY)),
+        ),
+    );
+    publish(&mut store, observation(1, Some(binding()), true));
+    assert_eq!(quota(&store, &plain, ELAPSED)["state"], "held");
+    assert_eq!(
+        quota(&store, &policy, ELAPSED)["reason"],
+        "owner_authorization_required"
+    );
+    assert!(poll(&mut store, 4, NOW + 1, ELAPSED).is_empty());
+    request(
+        &mut store,
+        authorize(&job, &policy, &binding(), &binding(), "restart-gate"),
+    )
+    .unwrap();
+    assert_eq!(poll(&mut store, 4, NOW + 1, ELAPSED)[0].id, policy);
+}

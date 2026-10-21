@@ -67,8 +67,10 @@ pub struct Observation {
 /// Outer occurrence alias is `o`; parameter three is the current elapsed clock.
 /// Filtering here, before LIMIT, prevents held work from occupying claim slots.
 pub const ELIGIBLE_SQL: &str = "(
-    json_type(o.spec,'$.quotaPolicy') IS NULL
-    OR json_type(o.spec,'$.quotaPolicy')='null'
+    ((json_type(o.spec,'$.quotaPolicy') IS NULL OR json_type(o.spec,'$.quotaPolicy')='null')
+     AND NOT EXISTS(SELECT 1 FROM harness_job_quota_sources quota_gate
+        WHERE quota_gate.source_id='gate_'||json_extract(o.spec,'$.profile.program')
+          AND quota_gate.eligible=0 AND quota_gate.expires_elapsed_ms>?3))
     OR (json_extract(o.spec,'$.quotaPolicy.mode')='wait' AND EXISTS(
         SELECT 1 FROM harness_job_quota_sources quota_source
         LEFT JOIN harness_job_quota_authorizations quota_auth ON quota_auth.occurrence_id=o.id
@@ -101,6 +103,72 @@ pub fn initialize(connection: &Connection) -> Result<()> {
         );",
     )?;
     Ok(())
+}
+
+const GATE_PREFIX: &str = "gate_";
+const GATE_STATES: [&str; 4] = ["queued", "retryWaiting", "dispatching", "prechecking"];
+
+pub fn gate_source(program: Program) -> String {
+    let name = match program {
+        Program::Shell => "shell",
+        Program::Claude => "claude",
+        Program::Gemini => "gemini",
+        Program::Codex => "codex",
+    };
+    format!("{GATE_PREFIX}{name}")
+}
+
+fn gate_hold(
+    connection: &Connection,
+    source: &str,
+    elapsed: u64,
+) -> Result<Option<(i64, String, i64)>> {
+    Ok(connection
+        .query_row(
+            "SELECT revision,reason,expires_elapsed_ms FROM harness_job_quota_sources
+             WHERE source_id=?1 AND eligible=0 AND expires_elapsed_ms>?2",
+            params![source, i64::try_from(elapsed)?],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?)
+}
+
+pub fn guard_gate(connection: &Connection, program: Program, elapsed: u64) -> Result<()> {
+    if program != Program::Shell && gate_hold(connection, &gate_source(program), elapsed)?.is_some()
+    {
+        return Err(Error::new(
+            "quota_wait",
+            "Provider quota is held at a known limit; the launch waits for a newer read or the reset",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn gate_view(connection: &Connection, occurrence: &str, elapsed: u64) -> Result<Value> {
+    let (state, program): (String, Option<String>) = connection.query_row(
+        "SELECT state,json_extract(spec,'$.profile.program') FROM harness_job_occurrences WHERE id=?1",
+        [occurrence],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let hold = match program {
+        Some(program) if GATE_STATES.contains(&state.as_str()) => {
+            gate_hold(connection, &format!("{GATE_PREFIX}{program}"), elapsed)?
+        }
+        _ => None,
+    };
+    let Some((revision, reason, expires)) = hold else {
+        return Ok(
+            json!({"state":"notRequired","reason":null,"contextId":null,"accountFingerprint":null,"sourceRevision":null}),
+        );
+    };
+    let resets_at = u64::try_from(expires)
+        .ok()
+        .filter(|expires| *expires != crate::quota_gate::UNTIMED_EXPIRY)
+        .map(|expires| crate::status::now_millis().saturating_add(expires.saturating_sub(elapsed)));
+    Ok(
+        json!({"state":"held","reason":reason,"resetsAt":resets_at,"contextId":null,"accountFingerprint":null,"sourceRevision":revision}),
+    )
 }
 
 fn hex64(value: &str) -> bool {
@@ -173,10 +241,13 @@ pub fn publish(tx: &Transaction<'_>, observation: &Observation) -> Result<bool> 
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
     let valid =
         safe_reason && expires.is_some() && binding.is_some() == observation.binding.is_some();
-    let eligible = valid && observation.eligible && binding.is_some() && expires != Some(0);
+    let gate = observation.source_id.starts_with(GATE_PREFIX);
+    let valid = valid && (!gate || observation.binding.is_none());
+    let eligible =
+        valid && observation.eligible && (gate || (binding.is_some() && expires != Some(0)));
     let reason = if !valid {
         "invalid_observation"
-    } else if observation.eligible && binding.is_none() {
+    } else if observation.eligible && binding.is_none() && !gate {
         "binding_unavailable"
     } else {
         observation.reason.as_str()
@@ -227,9 +298,7 @@ fn effective_binding(connection: &Connection, occurrence: &str) -> Result<Option
 
 pub fn view(connection: &Connection, occurrence: &str, elapsed: u64) -> Result<Value> {
     let Some((binding, paused)) = effective_binding(connection, occurrence)? else {
-        return Ok(
-            json!({"state":"notRequired","reason":null,"contextId":null,"accountFingerprint":null,"sourceRevision":null}),
-        );
+        return gate_view(connection, occurrence, elapsed);
     };
     let elapsed = i64::try_from(elapsed)?;
     let source: Option<(i64, bool, i64, String)> = connection
@@ -264,7 +333,10 @@ pub fn view(connection: &Connection, occurrence: &str, elapsed: u64) -> Result<V
 }
 
 pub fn guard_occurrence(connection: &Connection, occurrence: &str, elapsed: u64) -> Result<()> {
-    if view(connection, occurrence, elapsed)?["state"] == "waiting" {
+    if matches!(
+        view(connection, occurrence, elapsed)?["state"].as_str(),
+        Some("waiting" | "held")
+    ) {
         return Err(Error::new(
             "quota_wait",
             "Configured provider quota permission is unavailable; inspect quota and occurrence authorization",

@@ -262,8 +262,17 @@ fn prepare(
         crate::workflow_executor::guard_run(&transaction, guard, &actor.issuer, &request.run_id)?;
     }
     let quota = crate::job_quota::permit_for_run(&transaction, &request.run_id)?;
-    if let Some(permit) = &quota {
-        crate::job_quota::guard_permit(&transaction, permit, crate::event_log::monotonic_millis())?;
+    match &quota {
+        Some(permit) => crate::job_quota::guard_permit(
+            &transaction,
+            permit,
+            crate::event_log::monotonic_millis(),
+        )?,
+        None => crate::job_quota::guard_gate(
+            &transaction,
+            request.profile.program,
+            crate::event_log::monotonic_millis(),
+        )?,
     }
     orchestration::mutation_capacity(&transaction)?;
     if current["revision"] != request.expected_revision {

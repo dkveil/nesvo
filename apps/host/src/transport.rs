@@ -446,12 +446,17 @@ pub async fn handle(
                         }
                         if let Command::Launch { mut spec } = command {
                             let directory = state.lock().unwrap().validate_launch(&spec);
-                            let permit = git_gate.clone().try_acquire_owned();
+                            let git_gate = git_gate.clone();
                             let state = state.clone();
                             let events = pty_events.clone();
                             let reserved = hex::encode(wire::random::<16>());
                             let log = state.lock().unwrap().event_log().ok();
+                            let client_cancel = cancelled.clone();
                             tokio::spawn(async move {
+                                if directory.is_ok() && crate::quota_gate::admit_launch(&state, id, &reserved, spec.program, request_id.as_deref(), client_cancel).await.is_err() {
+                                    return;
+                                }
+                                let permit = git_gate.try_acquire_owned();
                                 let result = match (directory, permit) {
                                     (Ok(directory), Ok(permit)) => {
                                         if spec.worktree {

@@ -177,6 +177,7 @@ pub struct State {
     quota_wakeup: Option<mpsc::Sender<()>>,
     quota_publications: Vec<crate::job_quota::Observation>,
     quota_refresh: Vec<crate::provider_quota_runtime::RefreshControl>,
+    pub(crate) quota_gate: crate::quota_gate::Gate,
     limits_read_at: i64,
     schedule_watchers: HashSet<u64>,
     review_watchers: HashSet<u64>,
@@ -276,6 +277,13 @@ impl State {
             quota_salt,
         );
         let provider_versions = launchers.pending_versions();
+        let quota_gate = crate::quota_gate::Gate::new(
+            quota_salt,
+            &provider_limits
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+        );
         Self {
             human_control_epoch: 0,
             budget: crate::budgets::defaults(),
@@ -302,6 +310,7 @@ impl State {
             quota_wakeup: None,
             quota_publications: Vec::new(),
             quota_refresh: Vec::new(),
+            quota_gate,
             limits_read_at: 0,
             schedule_watchers: HashSet::new(),
             review_watchers: HashSet::new(),
@@ -377,6 +386,7 @@ impl State {
         for observation in observations {
             self.retain_quota_observation(observation);
         }
+        crate::quota_gate::sync(self);
     }
     pub fn retain_quota_observation(&mut self, observation: crate::job_quota::Observation) {
         if let Some(current) = self
@@ -587,6 +597,7 @@ impl State {
     }
     fn refresh_quota_projection(&mut self) {
         for view in self.quota_views() {
+            crate::quota_gate::observe_codex_view(&mut self.quota_gate, &view);
             let current = view.freshness == "fresh";
             if view.program == Program::Codex && !current {
                 self.limits_read_at = 0;
@@ -640,7 +651,12 @@ impl State {
                 if let Some(wake) = &self.quota_wakeup {
                     let _ = wake.try_send(());
                 }
-                return Ok(json!({"type":"providerQuota","providers":providers,"refresh":request}));
+                let gate = self
+                    .quota_gate
+                    .view(now_millis(), crate::event_log::monotonic_millis());
+                return Ok(
+                    json!({"type":"providerQuota","providers":providers,"refresh":request,"gate":gate}),
+                );
             }
             let revision = providers.first().map_or(0, |view| view.revision);
             let control = self
@@ -672,7 +688,10 @@ impl State {
         } else {
             Value::Null
         };
-        Ok(json!({"type":"providerQuota","providers":providers,"refresh":request}))
+        let gate = self
+            .quota_gate
+            .view(now_millis(), crate::event_log::monotonic_millis());
+        Ok(json!({"type":"providerQuota","providers":providers,"refresh":request,"gate":gate}))
     }
     pub fn set_caller_url(&mut self, url: String) {
         self.caller_url = Some(url);
@@ -1445,6 +1464,7 @@ impl State {
             "providerLimits":self.provider_limits});
         event["providerQuotaObservations"] = true.into();
         event["providerQuotaContexts"] = true.into();
+        event["quotaGate"] = true.into();
         event["jobQuotaAdmission"] = self.event_log.is_some().into();
         event["durableQuotaWake"] = self.event_log.is_some().into();
         event["domainEvents"] = self.event_log.is_some().into();
@@ -1758,6 +1778,7 @@ impl State {
                 info["rateLimited"] = json!(session.status.rate_limited());
                 info["wakeAt"] = json!(session.wake_at);
                 info["quotaWakeId"] = json!(session.quota_wake.as_ref().map(|arm| &arm.id));
+                info["quotaUnverified"] = self.quota_gate.unverified(&session.info.id);
                 if let Some(gate) = &session.resume {
                     info["resume"] = json!(gate.verification());
                 }
@@ -2719,6 +2740,10 @@ impl State {
                 context.derived_worktree,
             )?;
         }
+        let quota_unverified = match spec.quota_launch {
+            Some(_) => None,
+            None => crate::quota_gate::admit_now(&self.quota_gate, spec.program)?,
+        };
         let mut command = self.launchers.command(spec.program, &cwd)?;
         if let Some(context) = &spec.quota_launch {
             let reader = self
@@ -2830,6 +2855,9 @@ impl State {
         }
         self.repository.register(session.repository_binding.clone());
         self.sessions.insert(id.clone(), session);
+        if let Some(reason) = quota_unverified {
+            self.quota_gate.mark_unverified(&id, reason);
+        }
         self.emit(
             Some(&id),
             "session.created",
@@ -3415,6 +3443,7 @@ impl State {
                 self.admit_launch(program, crate::caller::Role::Worker)?;
                 let cwd = working_directory(&self.workspace, cwd.as_deref())?;
                 self.admit_metadata(&name, &cwd)?;
+                let quota_unverified = crate::quota_gate::admit_now(&self.quota_gate, program)?;
                 let command = self.launchers.command(program, &cwd)?;
                 let mut session = spawn_session(
                     &name,
@@ -3447,6 +3476,9 @@ impl State {
                 }
                 self.repository.register(session.repository_binding.clone());
                 self.sessions.insert(session_id.clone(), session);
+                if let Some(reason) = quota_unverified {
+                    self.quota_gate.mark_unverified(&session_id, reason);
+                }
                 self.emit(
                     Some(&session_id),
                     "session.created",

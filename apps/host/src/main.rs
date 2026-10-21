@@ -52,6 +52,7 @@ mod provider_quota;
 mod provider_quota_runtime;
 mod pty;
 mod quota_contexts;
+mod quota_gate;
 mod quota_wake_runtime;
 mod quota_wakes;
 mod readiness;

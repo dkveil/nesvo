@@ -20,6 +20,7 @@ pub(crate) struct RefreshControl {
 }
 
 pub(crate) struct Runtime {
+    state: Arc<Mutex<State>>,
     stop: watch::Sender<bool>,
     tasks: tokio::task::JoinSet<()>,
 }
@@ -27,14 +28,20 @@ impl Runtime {
     pub fn start(state: Arc<Mutex<State>>) -> Self {
         let (stop, _) = watch::channel(false);
         let mut tasks = tokio::task::JoinSet::new();
-        if let Some((_command, _cwd, mut refresh)) =
-            state.lock().unwrap().quota_reader(Program::Claude)
-        {
+        let claude = state.lock().unwrap().quota_reader(Program::Claude);
+        if let Some((_command, _cwd, mut refresh)) = claude {
+            state.lock().unwrap().quota_gate.register(
+                Program::Claude,
+                "claudeStatusline",
+                crate::event_log::monotonic_millis(),
+            );
             let mut stopped = stop.subscribe();
             let state = state.clone();
             tasks.spawn(async move {
                 let mut timer = tokio::time::interval(Duration::from_secs(15));
                 timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let account_paths = crate::quota_gate::claude_account_paths();
+                let mut revision = 0u64;
                 loop {
                     tokio::select! {
                         biased;
@@ -60,15 +67,37 @@ impl Runtime {
                     }
                     let start = crate::event_log::monotonic_millis();
                     let observation = crate::usage::read_claude_observation().await;
+                    let account = crate::quota_gate::read_claude_account(&account_paths).await;
                     let finish = crate::event_log::monotonic_millis();
-                    state
-                        .lock()
-                        .unwrap()
-                        .observe_claude_quota(observation, start, finish);
+                    revision += 1;
+                    let log = {
+                        let mut state = state.lock().unwrap();
+                        let fingerprint = account.map(|(id, organization)| {
+                            state.quota_gate.fingerprint(&[&id, &organization])
+                        });
+                        let admission = crate::quota_gate::claude_admission(
+                            &observation,
+                            fingerprint,
+                            revision,
+                            start,
+                        );
+                        state.quota_gate.observe(Program::Claude, admission, finish);
+                        state.observe_claude_quota(observation, start, finish);
+                        state.event_log().ok()
+                    };
+                    if let Some(log) = log {
+                        let _ = publish(&state, &log).await;
+                    }
                 }
             });
         }
-        if let Some(mut refresh) = state.lock().unwrap().codex_readers() {
+        let codex = state.lock().unwrap().codex_readers();
+        if let Some(mut refresh) = codex {
+            state.lock().unwrap().quota_gate.register(
+                Program::Codex,
+                "codexAppServer",
+                crate::event_log::monotonic_millis(),
+            );
             let mut stopped = stop.subscribe();
             let state = state.clone();
             tasks.spawn(async move {
@@ -86,10 +115,13 @@ impl Runtime {
                 }
             });
         }
-        Self { stop, tasks }
+        Self { state, stop, tasks }
     }
     pub fn request_shutdown(&self) {
         let _ = self.stop.send(true);
+        if let Ok(mut state) = self.state.lock() {
+            state.quota_gate.close();
+        }
     }
     pub async fn shutdown(mut self) -> bool {
         self.request_shutdown();
