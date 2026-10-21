@@ -103,7 +103,8 @@ linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
 The tool count is the length of the [catalog](harness-mcp-tools.json). Task instruction intents use
-`nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
+`nesvo_deliver_task` and `nesvo_cancel_task_delivery`; optional `sessionId` reuses
+the task's own settled worker with the same refusals as `run deliver --session`; see
 [guarded task delivery](harness-task-delivery.md).
 
 `runRecovery` adds read-only `nesvo_recover_run_context {runId?,offset?,expectedDigest?}`.

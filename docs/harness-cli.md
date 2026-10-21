@@ -509,6 +509,13 @@ task, context, report and validate add explicit worker attempts/results. See
 [workflow identities, DAG and recovery](harness-workflows.md). These metadata
 commands do not start agents or infer task outcomes from idle.
 
+`run deliver RUN_ID --task ID --key KEY --revision REV [--session ID]` queues the
+task's immutable instruction once. With `--session` it reuses the task's own
+settled, idle worker for a new attempt and returns `delivery.reuse`; an unsafe
+session is refused with `session_busy`, `session_foreign`, `identity_mismatch`,
+`attempt_unsettled` or `resume_pending` and nothing is queued. See
+[guarded task delivery](harness-task-delivery.md#reusing-the-tasks-own-worker-session).
+
 `run inbox read|send|ack` adds scoped durable messages when `workflowInbox` is
 advertised. Read/ACK never send terminal input or validate tasks. See the
 [inbox contract and exact-ID recovery](harness-inbox.md). Launch-local instruction

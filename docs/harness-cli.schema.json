@@ -2645,6 +2645,21 @@
               "type": "object"
             }
           }
+        },
+        "reuse": {
+          "type": ["object", "null"],
+          "required": ["previousAttemptId", "sessionId", "createdAt"],
+          "properties": {
+            "previousAttemptId": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "createdAt": {
+              "$ref": "#/definitions/cursor"
+            }
+          }
         }
       }
     },

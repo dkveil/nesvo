@@ -75,6 +75,43 @@ Cancellation needs the current revision and an unclaimed `queued` intent. It
 cannot undo bytes or interrupt a claimed/sent operation. Inspect current task
 and receipt first; native session/run controls remain separate.
 
+## Reusing the task's own worker session
+
+`--session SESSION_ID` (MCP `sessionId`) asks for a new attempt of the same task
+on the worker that ran its previous attempt, instead of a fresh worker. It is an
+explicit choice; the host never falls back to a fresh worker or another session.
+
+```powershell
+nesvo run deliver RUN_ID --task TASK_ID --key retry-1 --revision RUN_REV --session WORKER_ID --json
+```
+
+Reuse is accepted only when all of the following hold at admission:
+
+- the session's latest attempt is this run's and task's latest attempt, the task
+  is not job-owned and the session is an agent, not a shell (`session_foreign`);
+- that attempt is settled (`failed` after validation, or `stopped`), its
+  instruction delivery is not `queued`, `dispatching` or `unknown`, and no native
+  receipt on the session is unresolved (`attempt_unsettled`); an accepted
+  result keeps `attempt_state_conflict`;
+- the process is live, ready and idle, with no human lease, draft or pending
+  input (`session_busy`); an unverified exact resume is `resume_pending`;
+- the provider conversation the session reports now equals the one recorded when
+  the previous instruction was claimed (`identity_mismatch`, also for a failed
+  resume or a delivery with no recorded conversation).
+
+A refusal commits nothing. An accepted reuse inserts the next attempt ordinal on
+the same session, counted by the retry, parallel and elapsed budgets, records
+`workflow_session_reuses` and a `run.session_reused` journal event, and queues
+an ordinary intent. `attempt.delivery.reuse` shows `previousAttemptId`,
+`sessionId` and `createdAt`; it is `null` for fresh workers. The waiter uses the
+same fenced readiness/paste/Enter path and rechecks the recorded conversation at
+claim, failing with `identity_mismatch` if it changed. The prompt is built from
+the current task instruction and constraints under a new native receipt key; the
+previous attempt's receipt, prompt and result are never replayed. A session owns
+at most one open attempt; older attempts remain in history, and run stop/cancel
+targets only the session's latest attempt. Owner rebinding of a different session
+to the task is not available.
+
 ## Restart and remaining execution work
 
 Restart pauses unclaimed intents without allocating a receipt. A committed
@@ -95,11 +132,12 @@ Explicit worker reports still require independent validation.
 
 ## MCP and authenticated wire
 
-`nesvo_deliver_task`: `{key,runId,taskId,expectedRevision,timeoutMs?}`.
+`nesvo_deliver_task`: `{key,runId,taskId,expectedRevision,timeoutMs?,sessionId?}`.
 `nesvo_cancel_task_delivery`: `{key,runId,deliveryId,expectedRevision}`.
 The authenticated workflow envelope contains
 `{action:"delivery",request:{action:"queue"|"cancel",...}}`.
-Worker/foreign-run access and extra prompt/session/authority fields fail closed.
+Worker/foreign-run access and extra prompt/authority fields fail closed; hosts
+without session reuse refuse `sessionId` as an unknown field.
 Older hosts fail capability checks without falling back to ordinary send.
 
 Storage tests cover replay, exclusive claim, transactional native rollback,
