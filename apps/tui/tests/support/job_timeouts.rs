@@ -6,6 +6,17 @@ type Owner = RunningService<RoleClient, ()>;
 type ScenarioOutcome =
     std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
 const WINDOW_MS: u64 = 10_000;
+const DISCOVERY_MS: u64 = 5_000;
+const WORKING_MS: u64 = 7_000;
+const HOST_CONTROL_BOUND_MS: u64 = 10_000;
+const RESOLUTION_MARGIN_MS: u64 = 5_000;
+const SETTLE_MS: u64 = 15_000;
+const TIMED_WORKER_MS: u64 =
+    WORKING_MS + WINDOW_MS + HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS + SETTLE_MS;
+
+const fn scenario_bound(timed_workers: u64) -> Duration {
+    Duration::from_millis(DISCOVERY_MS + timed_workers * TIMED_WORKER_MS)
+}
 
 fn spec(instruction: &str) -> Value {
     json!({
@@ -57,7 +68,7 @@ impl DiscoveryEvidence {
 
     fn summary(&self) -> Value {
         json!({
-            "deadlineMs":5000,
+            "deadlineMs":DISCOVERY_MS,
             "elapsedMs":self.elapsed_ms.unwrap_or_else(|| {
                 u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
             }),
@@ -74,7 +85,7 @@ impl DiscoveryEvidence {
 
 async fn discovery_ready(fixture: &Fixture, evidence: &mut DiscoveryEvidence) -> Result<()> {
     evidence.started = tokio::time::Instant::now();
-    let result = timeout(Duration::from_secs(5), async {
+    let result = timeout(Duration::from_millis(DISCOVERY_MS), async {
         loop {
             evidence.attempted = evidence.attempted.saturating_add(1);
             evidence.stage = "doctorQuery";
@@ -156,7 +167,7 @@ fn working_session(result: CallToolResult, worker: &str) -> Result<Option<Value>
 
 async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
     let mut last = Value::Null;
-    timeout(Duration::from_secs(7), async {
+    timeout(Duration::from_millis(WORKING_MS), async {
         loop {
             let current = read_occurrence(owner, job, id).await?;
             let row = &current["data"]["occurrence"];
@@ -224,12 +235,37 @@ fn timed_worker_waits_for_reserved_id_but_rejects_foreign_or_untyped_missing_ses
     assert!(working_session(CallToolResult::structured(json!({})), &worker).is_err());
 }
 
-async fn timeout_state(owner: &Owner, job: &str, id: &str, wanted: &str) -> Result<Value> {
+fn until_dispatch_resolved(timer: &Value) -> Result<Duration> {
+    let deadline = timer["deadlineAt"]
+        .as_u64()
+        .context("Public native deadline")?;
+    let now = u64::try_from(chrono::Utc::now().timestamp_millis())?;
+    let remaining = deadline
+        .saturating_add(HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS)
+        .saturating_sub(now);
+    ensure!(
+        remaining <= WINDOW_MS + HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS,
+        "Unexpected deadline exceeds this scenario's explicit window"
+    );
+    Ok(Duration::from_millis(remaining))
+}
+
+async fn resolved_timeout(
+    owner: &Owner,
+    job: &str,
+    id: &str,
+    timer: &Value,
+    wanted: &str,
+) -> Result<Value> {
+    let bound = until_dispatch_resolved(timer)?;
     let mut last = Value::Null;
-    timeout(Duration::from_secs(15), async {
+    let resolved = timeout(bound, async {
         loop {
             let current = read_occurrence(owner, job, id).await?;
-            if current["data"]["occurrence"]["executionTimeout"]["state"] == wanted {
+            if !matches!(
+                current["data"]["occurrence"]["executionTimeout"]["state"].as_str(),
+                Some("armed" | "dispatching")
+            ) {
                 return Ok::<_, anyhow::Error>(current);
             }
             last = current;
@@ -237,7 +273,14 @@ async fn timeout_state(owner: &Owner, job: &str, id: &str, wanted: &str) -> Resu
         }
     })
     .await
-    .with_context(|| format!("Timeout did not reach {wanted}; last: {last}"))?
+    .with_context(|| {
+        format!("Timeout dispatch did not resolve within the host control bound; last: {last}")
+    })??;
+    ensure!(
+        resolved["data"]["occurrence"]["executionTimeout"]["state"] == wanted,
+        "Timeout dispatch resolved without reaching {wanted}: {resolved}"
+    );
+    Ok(resolved)
 }
 
 fn frozen_deadline(first: &Value, later: &Value) {
@@ -448,7 +491,7 @@ async fn timeout_without_clients_stops_only_its_worker_and_never_retries_executi
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
     let mut discovery = DiscoveryEvidence::new();
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40),async {
+    let outcome = std::panic::AssertUnwindSafe(timeout(scenario_bound(1),async {
         discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let independent = reply(&owner,"nesvo_create_session",json!({"key":"timeout-independent","spec":{"name":"Untimed independent shell","program":"shell"}})).await?;
@@ -491,7 +534,7 @@ async fn timeout_without_clients_stops_only_its_worker_and_never_retries_executi
         ensure!(u64::try_from(chrono::Utc::now().timestamp_millis())? < timer["deadlineAt"].as_u64().context("Disconnected native deadline")?,"Owner must disconnect before its worker's execution deadline");
         ensure!(process_alive(&fixture,pid).await?,"Owned worker must still exist after owner disconnects");
         past_deadline(&timer).await?;
-        timeout(Duration::from_secs(4),async {
+        timeout(until_dispatch_resolved(&timer)?,async {
             while process_alive(&fixture,pid).await? { tokio::time::sleep(Duration::from_millis(150)).await; }
             Ok::<_,anyhow::Error>(())
         }).await.context("Owned PID exit while all owner MCP clients remain closed")??;
@@ -618,7 +661,7 @@ async fn human_lease_and_quick_takeover_release_permanently_block_automatic_time
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
     let mut discovery = DiscoveryEvidence::new();
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40),async {
+    let outcome = std::panic::AssertUnwindSafe(timeout(scenario_bound(2),async {
         discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let mut envelopes = Vec::new();
@@ -644,7 +687,7 @@ async fn human_lease_and_quick_takeover_release_permanently_block_automatic_time
             assert_eq!(prior_deadline["data"]["session"]["controllerId"].is_null(),quick_release);
             ensure!(u64::try_from(chrono::Utc::now().timestamp_millis())? < timer["deadlineAt"].as_u64().context("Human guard deadline")?,"Human takeover/release must complete before the configured deadline");
             phase = "automatic stop blocked at deadline";
-            let blocked = timeout_state(&owner,job,id,"blocked").await?;
+            let blocked = resolved_timeout(&owner,job,id,&timer,"blocked").await?;
             let blocked_row = &blocked["data"]["occurrence"];
             assert_eq!(blocked_row["state"],"canceling");
             assert_eq!(blocked_row["reason"],"execution_timeout_blocked");

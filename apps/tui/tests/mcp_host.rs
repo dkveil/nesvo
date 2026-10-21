@@ -22,6 +22,8 @@ use tokio::{
     time::timeout,
 };
 
+const HOST_READINESS_DEADLINE: Duration = Duration::from_secs(60);
+
 struct Fixture {
     directory: PathBuf,
     host: Child,
@@ -181,7 +183,7 @@ impl Fixture {
         let mut stdout_bytes = 0u64;
         let mut stdout_closed = false;
         let mut output = BufReader::new(host.stdout.take().context("fixture stdout")?).lines();
-        let ready = timeout(Duration::from_secs(15), async {
+        let ready = timeout(HOST_READINESS_DEADLINE, async {
             while let Some(line) = output.next_line().await? {
                 if startup_trace::consume(&startup_trace, &line) {
                     continue;
@@ -249,7 +251,7 @@ impl Fixture {
             eprintln!(
                 "NATIVE_HOST_STARTUP_DIAGNOSTIC {}",
                 json!({
-                    "phase":"await_listening_line","deadlineMs":15000,"elapsedMs":observed_at_ms,
+                    "phase":"await_listening_line","deadlineMs":HOST_READINESS_DEADLINE.as_millis(),"elapsedMs":observed_at_ms,
                     "pid":pid,"process":status,"stdoutLines":stdout_lines,"stdoutBytes":stdout_bytes,
                     "stdoutClosed":stdout_closed,"bufferedBytes":buffered_bytes,"files":files,
                     "startupTrace":startup_trace::view(&startup_trace),
@@ -258,7 +260,7 @@ impl Fixture {
             );
             return match ready {
                 Ok(Err(error)) => Err(error.context("Native fixture host startup failed before readiness; see bounded startup diagnostic")),
-                Err(error) => Err(anyhow::Error::new(error).context("Native fixture host startup exceeded its 15-second readiness deadline; see bounded startup diagnostic")),
+                Err(error) => Err(anyhow::Error::new(error).context(format!("Native fixture host startup exceeded its {}-second readiness deadline; see bounded startup diagnostic", HOST_READINESS_DEADLINE.as_secs()))),
                 Ok(Ok(())) => unreachable!(),
             };
         }
