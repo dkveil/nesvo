@@ -69,7 +69,6 @@ mod model_profiles;
 mod native_tool_permissions;
 #[path = "support/prechecks.rs"]
 mod prechecks;
-#[cfg(windows)]
 #[path = "../../../crates/nesvo-process-fixture/src/locate.rs"]
 mod process_fixture;
 #[path = "support/provider_quota.rs"]
