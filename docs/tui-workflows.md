@@ -27,6 +27,7 @@ F4 opens Git review directly from terminal input as well as navigation; F4 or Es
 | `n`, then `F2`            | New session and advanced launch options                |
 | `N`                       | Session kind: agent with profile, terminal or review   |
 | `L`                       | Layouts: apply, save, rename, delete, set default      |
+| `1` / `2`, `F`            | Files sidebar: preview, paste path, pin `o`, find `#`  |
 | `S`                       | Scheduled sessions; refresh or cancel a pending launch |
 | `J`                       | Jobs: list, details, history, form                     |
 | `H`                       | Replay onboarding                                      |

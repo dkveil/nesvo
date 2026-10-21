@@ -47,7 +47,7 @@ impl Role {
     pub fn view_hint(self, review_key: u8) -> String {
         match self {
             Self::Review => format!("Press F{review_key} to review the active session's changes"),
-            Self::Files => "Files view arrives with a later slice".into(),
+            Self::Files => "Press 2 to browse files".into(),
             Self::Jobs => "Press J to open Jobs".into(),
             Self::Overview => "Overview arrives with a later slice".into(),
             Self::Agent | Self::Terminal | Self::Empty => "Press n to start a session".into(),
@@ -626,6 +626,7 @@ pub fn apply(app: &mut App, layout: &NamedLayout, width: u16) -> Result<Vec<Valu
     let assigned = assign(&layout.tree.slots(), &app.layout_candidates());
     app.set_pane_layout(layout.tree.clone());
     app.sidebar_width = layout.sidebar_width;
+    crate::files_controller::apply_layout(app, &layout.sidebar_mode);
     let mut commands = Vec::new();
     for (index, id) in assigned.iter().enumerate() {
         if let Some(id) = id {

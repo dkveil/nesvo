@@ -201,6 +201,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 }
             } else if app.review.visible && app.review.focused {
                 review_key(app, key, area, &mut outcome);
+            } else if crate::files_controller::key(app, key, area, &mut outcome) {
             } else if key.code == KeyCode::Esc {
                 app.dialog = Some(Dialog::ExitConfirm {
                     from_menu: false,
@@ -335,7 +336,14 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 } else if matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
                     app.move_palette(up);
                 } else if app.dialog.is_none() {
-                    if ui::tree_content(geometry.tree).contains((mouse.column, mouse.row).into()) {
+                    if crate::files_controller::sidebar_shows_files(app)
+                        && ui::tree_content(geometry.tree)
+                            .contains((mouse.column, mouse.row).into())
+                    {
+                        crate::files_controller::scroll(app, up);
+                    } else if ui::tree_content(geometry.tree)
+                        .contains((mouse.column, mouse.row).into())
+                    {
                         app.selected = if up {
                             app.selected
                                 .saturating_sub(1)
@@ -409,6 +417,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     {
         app.notice.clear();
     }
+    outcome.commands.extend(crate::files_controller::sync(app));
     for command in &outcome.commands {
         if command["type"] == "acquireControl" {
             app.pending_input = command["sessionId"].as_str().map(str::to_owned);
@@ -1204,6 +1213,8 @@ fn open_quick_choice(app: &mut App, area: Rect, outcome: &mut Outcome) {
                 .unwrap_or(0);
         }
         crate::palette::Target::Command('D') => toggle_review(app, area, outcome),
+        crate::palette::Target::Command('F') => crate::files_controller::toggle_mode(app),
+        crate::palette::Target::File(path) => crate::files_controller::open_found(app, &path),
         crate::palette::Target::Command(key) => navigation_key(
             app,
             KeyEvent::new(

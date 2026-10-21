@@ -322,7 +322,7 @@ mod tests {
             let buffer = draw(&app, width, height);
             let view = region(&buffer, geometry.views[1]);
             assert!(view.contains("Files"), "{width}x{height}: {view}");
-            assert!(view.contains("later"), "{width}x{height}: {view}");
+            assert!(view.contains("browse files"), "{width}x{height}: {view}");
             assert_eq!(app.active_id(), Some("agent"));
         }
     }

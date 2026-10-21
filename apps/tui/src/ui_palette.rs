@@ -258,6 +258,7 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, target: Option<&crate::
             crate::palette::Target::Group(_) => "/",
             crate::palette::Target::Command(_) => ">",
             crate::palette::Target::Session(_) => "·",
+            crate::palette::Target::File(_) => "#",
         };
         let mut spans = vec![Span::styled(
             format!(" {kind} "),

@@ -25,6 +25,7 @@ pub struct Geometry {
     pub views: [Rect; MAX_LEAVES],
     pub footer: Rect,
     pub review: Rect,
+    pub files_preview: Rect,
 }
 
 pub fn immersive(app: &App) -> bool {
@@ -144,6 +145,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         && content.width >= crate::review_session::DOCK_COLUMNS)
         .then(|| pane_tree.position(Role::Review))
         .flatten();
+    let mut files_preview = Rect::default();
     let (content, review) = if review_leaf.is_some() {
         (content, Rect::default())
     } else if reviewing {
@@ -163,6 +165,10 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
             .areas(content);
             (terminal, review)
         }
+    } else if crate::files_controller::preview_docked(app) {
+        let (terminal, preview) = crate::ui_files::dock(content);
+        files_preview = preview;
+        (terminal, Rect::default())
     } else {
         (content, Rect::default())
     };
@@ -191,6 +197,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         views,
         footer,
         review,
+        files_preview,
     }
 }
 
@@ -278,7 +285,8 @@ fn limit_label(minutes: u32) -> String {
 
 pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize> {
     let content = tree_content(area);
-    if !content.contains((column, row).into()) {
+    if !content.contains((column, row).into()) || crate::files_controller::sidebar_shows_files(app)
+    {
         return None;
     }
     let rows = app.tree();
@@ -291,6 +299,9 @@ pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize
 }
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
+    if let Some(copy) = crate::ui_files::footer_copy(app) {
+        return copy;
+    }
     if app.reviews.has_focus() && app.mode == Mode::Navigate {
         return (" REVIEW ", " Esc navigate · q close · F4 hide");
     }
@@ -528,6 +539,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
                 .style(Style::default().fg(crate::theme::BRAND_MUTED).bg(SURFACE)),
             layout.sidebar_header,
         );
+        crate::ui_files::render_mode(frame, app, layout.sidebar_header);
         let tab_strip = Rect::new(
             layout.tree.right(),
             layout.header.y,
@@ -573,7 +585,11 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
                 add,
             );
         }
-        render_tree(frame, app, layout.tree);
+        if crate::files_controller::sidebar_shows_files(app) {
+            crate::ui_files::render_sidebar(frame, app, layout.tree);
+        } else {
+            render_tree(frame, app, layout.tree);
+        }
     }
     let slots = app.pane_tree().slots();
     for (index, slot) in slots.iter().enumerate().take(MAX_LEAVES) {
@@ -684,6 +700,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
         );
     }
     render_review(frame, app, geometry(area, app).review);
+    crate::ui_files::render_preview(frame, app, layout.files_preview);
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, app, dialog);
     }
@@ -826,6 +843,9 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_view(frame: &mut Frame, app: &App, role: Role, area: Rect) {
     if area.width == 0 || area.height == 0 {
+        return;
+    }
+    if role == Role::Files && crate::ui_files::render_leaf(frame, app, area) {
         return;
     }
     let content = pane_content(area, false);
@@ -1491,6 +1511,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("S  J", "Scheduled sessions / jobs"),
             ("F2 / F3", "New session: options / save template"),
             ("v  Tab  L", "Split / change pane / layouts"),
+            ("1  2  F", "Sessions / files sidebar"),
             ("i  t  x", "Type / take control / release"),
         ],
         &[

@@ -64,6 +64,7 @@ The start menu initially observes the first session without taking control. Ente
 | d                     | Confirm deleting a session / deleting an empty group    |
 | v / Tab               | Toggle two panes / change the focused pane              |
 | L                     | Layouts: apply, save, rename, delete, set the default   |
+| 1 / 2 or F            | Sidebar: sessions / files; p pastes a path, Ctrl+P find |
 | Page Up / Page Down   | Scroll local terminal history                           |
 | ?                     | Open help                                               |
 | F1                    | Return to the start menu                                |

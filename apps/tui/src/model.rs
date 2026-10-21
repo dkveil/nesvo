@@ -281,6 +281,7 @@ pub enum SearchScope {
     Agents,
     Terminals,
     Attention,
+    Files,
 }
 
 impl SearchScope {
@@ -290,6 +291,7 @@ impl SearchScope {
             Self::Agents => "agents",
             Self::Terminals => "terminals",
             Self::Attention => "needs you",
+            Self::Files => "files",
         }
     }
 }
@@ -300,6 +302,7 @@ pub fn search_scope(query: &str) -> (SearchScope, &str) {
         ('@', SearchScope::Agents),
         ('$', SearchScope::Terminals),
         ('!', SearchScope::Attention),
+        ('#', SearchScope::Files),
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
             return (scope, rest.trim_start());
@@ -433,6 +436,7 @@ pub struct App {
     pub host_features: Value,
     pub review: crate::review::ReviewState,
     pub reviews: crate::review_session::ReviewSessions,
+    pub files: crate::files_controller::FilesState,
     pub client_id: u64,
     pub sessions: Vec<Session>,
     pub groups: Vec<Group>,
@@ -487,6 +491,7 @@ impl App {
             toast: None,
             review: Default::default(),
             reviews: Default::default(),
+            files: Default::default(),
             overlay: None,
             palette_expanded: false,
             palette_category: 0,
@@ -687,7 +692,7 @@ impl App {
         crate::layouts::NamedLayout {
             name: name.into(),
             tree: tree.with_slots(&slots),
-            sidebar_mode: crate::layouts::SIDEBAR_SESSIONS.into(),
+            sidebar_mode: self.files.mode.key().into(),
             sidebar_width: self.sidebar_width,
             min_columns: 0,
         }
@@ -861,6 +866,7 @@ impl App {
 
     fn session_search_score(&self, session: &Session, search: &SessionSearch) -> Option<u32> {
         if !self.matches_status(session)
+            || search.scope == SearchScope::Files
             || (search.scope == SearchScope::Attention && session.attention_priority() == 0)
         {
             return None;
@@ -1414,10 +1420,13 @@ impl App {
                     }
                 }
                 commands.extend(crate::jobs_controller::host_event(self, &event));
+                crate::files_controller::host_error(self, &event);
             }
+            "entries" | "file" | "files" => crate::files_controller::host_event(self, &event),
             _ => {}
         }
         commands.extend(crate::review_session::pump(self));
+        commands.extend(crate::files_controller::sync(self));
         self.reconcile_palette();
         Ok(commands)
     }
