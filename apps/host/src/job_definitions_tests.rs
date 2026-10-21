@@ -462,7 +462,10 @@ fn owner_only_validation_and_transaction_failure_leave_no_partial_definitions() 
                 issuer: "session:scoped".into(),
                 scope,
             },
-            Request::List { offset: 0 },
+            Request::List {
+                offset: 0,
+                page: None,
+            },
             NOW,
         );
         code(result, "forbidden");

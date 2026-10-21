@@ -40,10 +40,57 @@ impl MetadataStore {
                 [token],
             )?;
         } else {
+            self.push_kind_table()?;
+            self.connection
+                .execute("DELETE FROM push_device_kinds WHERE token=?1", [token])?;
             self.connection
                 .execute("DELETE FROM push_devices WHERE token=?1", [token])?;
         }
         Ok(())
+    }
+    fn push_kind_table(&self) -> Result<()> {
+        self.connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS push_device_kinds (token TEXT PRIMARY KEY, kinds TEXT NOT NULL);",
+        )?;
+        Ok(())
+    }
+    pub fn set_push_kinds(&self, token: &str, kinds: &[String]) -> Result<Vec<String>> {
+        let mut chosen: Vec<String> = Vec::new();
+        for kind in kinds {
+            ensure!(
+                crate::attention_inbox::PUSH_KINDS.contains(&kind.as_str()),
+                "Unknown notification kind"
+            );
+            if !chosen.contains(kind) {
+                chosen.push(kind.clone());
+            }
+        }
+        ensure!(
+            self.push_tokens()?.iter().any(|known| known == token),
+            "Register the phone before choosing notification kinds"
+        );
+        self.push_kind_table()?;
+        self.connection.execute(
+            "INSERT INTO push_device_kinds(token,kinds) VALUES(?1,?2) ON CONFLICT(token) DO UPDATE SET kinds=excluded.kinds",
+            rusqlite::params![token, serde_json::to_string(&chosen)?],
+        )?;
+        Ok(chosen)
+    }
+    pub fn push_tokens_for(&self, kind: &str) -> Result<Vec<String>> {
+        self.push_kind_table()?;
+        let rows = self
+            .connection
+            .prepare("SELECT d.token,k.kinds FROM push_devices d JOIN push_device_kinds k ON k.token=d.token LIMIT 8")?
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .filter(|(_, kinds)| {
+                serde_json::from_str::<Vec<String>>(kinds)
+                    .is_ok_and(|kinds| kinds.iter().any(|known| known == kind))
+            })
+            .map(|(token, _)| token)
+            .collect())
     }
 }
 
@@ -51,9 +98,26 @@ pub struct Job {
     pub token: String,
     pub session_id: String,
     pub sequence: u64,
+    pub item: Option<String>,
     payload: Value,
 }
 impl Job {
+    pub fn inbox(token: String, host_id: String, kind: &'static str, item: String) -> Self {
+        let body = if kind == crate::attention_inbox::PUSH_DECISION {
+            "An agent asked a question. Open the inbox to decide."
+        } else {
+            "A job result is ready to review."
+        };
+        let payload = json!({"to":token,"title":"nesvo","body":body,"sound":"default","channelId":"attention","ttl":3600,
+            "data":{"hostId":host_id,"kind":kind,"itemId":item}});
+        Self {
+            token,
+            session_id: String::new(),
+            sequence: 0,
+            item: Some(item),
+            payload,
+        }
+    }
     pub fn new(token: String, host_id: String, session_id: String, event: Event) -> Self {
         let body = match event.kind {
             "done" if event.subject == Some("response") => {
@@ -74,6 +138,7 @@ impl Job {
             token,
             session_id,
             sequence: event.sequence,
+            item: None,
             payload,
         }
     }

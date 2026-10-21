@@ -123,6 +123,8 @@ pub enum Command {
     RegisterPush {
         token: String,
         enabled: bool,
+        #[serde(default)]
+        kinds: Option<Vec<String>>,
     },
     ListTemplates,
     SaveTemplate {
@@ -203,6 +205,25 @@ pub enum Command {
         discard: bool,
     },
     ListWorktrees,
+    AttentionInbox {
+        #[serde(default)]
+        page: Option<u16>,
+        #[serde(default)]
+        limit: Option<u16>,
+    },
+    AcknowledgeInbox {
+        items: Vec<crate::attention_inbox::Mark>,
+    },
+    Decisions {
+        #[serde(default)]
+        page: Option<u16>,
+    },
+    Decide {
+        decision_id: String,
+        choice: String,
+        #[serde(default)]
+        note: Option<String>,
+    },
     Create {
         name: String,
         cwd: Option<String>,

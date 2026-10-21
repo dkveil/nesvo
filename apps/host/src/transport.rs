@@ -524,6 +524,11 @@ pub async fn handle(
                             tokio::spawn(crate::files::serve(state.clone(), id, command, request_id, permit));
                             continue;
                         }
+                        if crate::attention_inbox::handles(&command) {
+                            let permit = event_gate.clone().try_acquire_owned().ok();
+                            tokio::spawn(crate::attention_inbox::serve(state.clone(), id, command, request_id, permit));
+                            continue;
+                        }
                         if crate::worktrees::handles(&command) {
                             let permit = event_gate.clone().try_acquire_owned().ok();
                             tokio::spawn(crate::worktrees::serve(state.clone(), id, authority.clone(), command, request_id, permit));

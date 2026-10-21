@@ -54,6 +54,14 @@ pub enum Request {
         expected_revision: u64,
         reason: String,
     },
+    Pending {
+        page: Option<u16>,
+    },
+    Decide {
+        decision_id: String,
+        choice: String,
+        note: Option<String>,
+    },
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_decisions(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,run_id TEXT NOT NULL REFERENCES workflow_runs(id),attempt_id TEXT NOT NULL REFERENCES workflow_attempts(id),revision INTEGER NOT NULL,state TEXT NOT NULL,data TEXT NOT NULL);
@@ -194,6 +202,132 @@ fn expire(
     transaction.commit()?;
     Ok(())
 }
+pub(crate) fn expire_due(connection: &mut Connection, now: u64) -> Result<()> {
+    let mut statement = connection.prepare("SELECT DISTINCT run_id FROM workflow_decisions WHERE state='pending' AND json_extract(data,'$.expiresAt')<=?1")?;
+    let runs = statement
+        .query_map([now as i64], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    for run in runs {
+        expire(connection, &json!({ "id": run }), None, now)?;
+    }
+    Ok(())
+}
+pub(crate) fn inbox_id(run_id: &str, decision_id: &str) -> String {
+    format!("decision:{run_id}:{decision_id}")
+}
+fn owner_only(actor: &Actor) -> Result<()> {
+    if matches!(actor.scope, Scope::Owner) {
+        Ok(())
+    } else {
+        Err(Error::new("forbidden", "Only the owner can read or decide across runs").into())
+    }
+}
+const PENDING_PAGE: usize = 8;
+fn pending(connection: &mut Connection, actor: &Actor, page: u16, now: u64) -> Result<Value> {
+    owner_only(actor)?;
+    if page > 512 {
+        return Err(invalid("Decision page exceeds retention"));
+    }
+    expire_due(connection, now)?;
+    let total: i64 = connection.query_row(
+        "SELECT count(*) FROM workflow_decisions WHERE state='pending'",
+        [],
+        |r| r.get(0),
+    )?;
+    let mut statement = connection.prepare("SELECT d.id,d.run_id,r.title,r.state FROM workflow_decisions d JOIN workflow_runs r ON r.id=d.run_id WHERE d.state='pending' ORDER BY d.sequence LIMIT ?1 OFFSET ?2")?;
+    let rows = statement
+        .query_map(
+            params![
+                (PENDING_PAGE + 1) as i64,
+                (usize::from(page) * PENDING_PAGE) as i64
+            ],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    let more = rows.len() > PENDING_PAGE;
+    let decisions = rows
+        .into_iter()
+        .take(PENDING_PAGE)
+        .map(|(id, run_id, title, state)| {
+            let mut decision = load(connection, &run_id, &id)?;
+            decision["inboxId"] = inbox_id(&run_id, &id).into();
+            decision["run"] = json!({"id":run_id,"title":title,"state":state});
+            Ok(decision)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(json!({"decisions":decisions,"page":page,"nextPage":more.then_some(page+1),"total":total}))
+}
+fn decide(
+    connection: &mut Connection,
+    actor: Actor,
+    decision_id: String,
+    choice: String,
+    note: Option<String>,
+    now: u64,
+) -> Result<Value> {
+    owner_only(&actor)?;
+    let run_id: String = connection
+        .query_row(
+            "SELECT run_id FROM workflow_decisions WHERE id=?1",
+            [&decision_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| Error::new("decision_not_found", "Decision is unavailable"))?;
+    expire(connection, &json!({ "id": run_id }), None, now)?;
+    let current = load(connection, &run_id, &decision_id)?;
+    match current["state"].as_str() {
+        Some("pending") => {}
+        Some("expired") => {
+            return Err(Error::new(
+                "decision_expired",
+                "Decision expired before an answer was recorded",
+            )
+            .into());
+        }
+        _ => {
+            return Err(Error::new(
+                "decision_resolved",
+                "Decision was already answered or canceled",
+            )
+            .into());
+        }
+    }
+    let answer = match note.as_deref().map(str::trim) {
+        Some(note) if !note.is_empty() => format!(
+            "{choice}
+
+{note}"
+        ),
+        _ => choice,
+    };
+    let revision = current["revision"]
+        .as_u64()
+        .ok_or_else(|| invalid("Missing decision revision"))?;
+    let mut result = execute(
+        connection,
+        actor,
+        Request::Answer {
+            key: format!("decide:{decision_id}:{revision}"),
+            run_id: run_id.clone(),
+            decision_id: decision_id.clone(),
+            expected_revision: revision,
+            answer,
+        },
+        now,
+    )?;
+    result["inboxId"] = inbox_id(&run_id, &decision_id).into();
+    Ok(result)
+}
 pub fn summary(connection: &Connection, attempt: &str) -> Result<Value> {
     let (total,pending,unresolved):(i64,i64,i64) = connection.query_row("SELECT count(*),COALESCE(SUM(state='pending'),0),COALESCE(SUM(state!='answered'),0) FROM workflow_decisions WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
     Ok(
@@ -260,6 +394,15 @@ pub fn execute(
     request: Request,
     now: u64,
 ) -> Result<Value> {
+    let request = match request {
+        Request::Pending { page } => return pending(connection, &actor, page.unwrap_or(0), now),
+        Request::Decide {
+            decision_id,
+            choice,
+            note,
+        } => return decide(connection, actor, decision_id, choice, note, now),
+        request => request,
+    };
     // Derive the run/attempt before any expiration or message side effect.
     let (run_id, filter) = match &request {
         Request::Ask { attempt_id, .. } => {
@@ -272,6 +415,7 @@ pub fn execute(
                 Some(attempt_id.clone()),
             )
         }
+        Request::Pending { .. } | Request::Decide { .. } => unreachable!(),
         Request::List {
             run_id, attempt_id, ..
         } => (run_id.clone(), attempt_id.clone()),

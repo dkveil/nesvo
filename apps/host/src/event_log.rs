@@ -113,6 +113,9 @@ pub(crate) fn append_transaction(
 
 struct Store(Connection);
 #[cfg(test)]
+#[path = "attention_inbox_tests.rs"]
+mod attention_inbox_tests;
+#[cfg(test)]
 #[path = "budget_tests.rs"]
 mod budget_tests;
 #[cfg(test)]

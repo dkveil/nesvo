@@ -2,6 +2,7 @@ mod agent_context;
 mod agent_events;
 mod api_error;
 mod attention;
+mod attention_inbox;
 mod attention_projection;
 mod budgets;
 mod caller;
@@ -491,6 +492,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         job_runtime::Runtime::start(state.clone(), event_tx.clone(), event_log.clone());
     tokio::spawn(job_timeout_runtime::run(state.clone(), event_log.clone()));
     tokio::spawn(notifications::run(state.clone()));
+    tokio::spawn(attention_inbox::watch(state.clone(), event_log.clone()));
     let quota_runtime = provider_quota_runtime::Runtime::start(state.clone());
     let quota_wake_runtime = quota_wake_runtime::Runtime::start(state.clone(), event_log.clone());
     let repository_runtime = session_repository::Runtime::start(state.clone());

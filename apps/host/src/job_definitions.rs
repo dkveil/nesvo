@@ -125,6 +125,8 @@ pub enum Request {
     List {
         #[serde(default)]
         offset: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        page: Option<u16>,
     },
     Update {
         key: String,
@@ -147,6 +149,8 @@ pub enum Request {
         job_id: String,
         #[serde(default)]
         offset: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        page: Option<u16>,
     },
     Occurrence {
         job_id: String,
@@ -474,6 +478,20 @@ pub(crate) fn occurrence(
         crate::event_log::monotonic_millis(),
     )
 }
+fn paged(offset: u16, page: Option<u16>, size: u16) -> Result<u16> {
+    match page {
+        None => Ok(offset),
+        Some(page) if offset == 0 && page <= 4096 / size => Ok(page * size),
+        Some(_) => Err(invalid("Use either page or offset within retention")),
+    }
+}
+fn with_page(mut view: Value, page: Option<u16>, more: bool) -> Value {
+    if let Some(page) = page {
+        view["page"] = page.into();
+        view["nextPage"] = more.then_some(page + 1).into();
+    }
+    view
+}
 pub(crate) fn occurrence_at(
     connection: &Connection,
     job_id: &str,
@@ -722,7 +740,8 @@ pub fn execute_at(
                 json!({"occurrence":occurrence_at(connection,job_id,occurrence_id,true,elapsed)?}),
             );
         }
-        Request::List { offset } => {
+        Request::List { offset, page } => {
+            let offset = &paged(*offset, *page, 16)?;
             if *offset > 4096 {
                 return Err(invalid("Invalid job page offset"));
             }
@@ -736,11 +755,18 @@ pub fn execute_at(
                 .take(16)
                 .map(|id| job(connection, id, false))
                 .collect::<Result<Vec<_>>>()?;
-            return Ok(
+            return Ok(with_page(
                 json!({"jobs":rows,"nextOffset":if ids.len()>16{Some(*offset+16)}else{None}}),
-            );
+                *page,
+                ids.len() > 16,
+            ));
         }
-        Request::History { job_id, offset } => {
+        Request::History {
+            job_id,
+            offset,
+            page,
+        } => {
+            let offset = &paged(*offset, *page, 8)?;
             job(connection, job_id, false)?;
             if *offset > 4096 {
                 return Err(invalid("Invalid occurrence page offset"));
@@ -754,9 +780,11 @@ pub fn execute_at(
                 .take(8)
                 .map(|id| occurrence_at(connection, job_id, id, false, elapsed))
                 .collect::<Result<Vec<_>>>()?;
-            return Ok(
+            return Ok(with_page(
                 json!({"occurrences":rows,"nextOffset":if ids.len()>8{Some(*offset+8)}else{None}}),
-            );
+                *page,
+                ids.len() > 8,
+            ));
         }
         _ => {}
     }

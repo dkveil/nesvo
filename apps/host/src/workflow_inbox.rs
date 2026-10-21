@@ -58,6 +58,17 @@ pub enum Request {
         attempt_id: Option<String>,
         ids: Vec<String>,
     },
+    Attention {
+        page: Option<u16>,
+        limit: Option<u16>,
+        #[serde(skip)]
+        sessions: Vec<crate::attention_inbox::SessionItem>,
+    },
+    AcknowledgeAttention {
+        items: Vec<crate::attention_inbox::Mark>,
+        #[serde(skip)]
+        sessions: Vec<crate::attention_inbox::SessionItem>,
+    },
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_messages(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,run_id TEXT NOT NULL REFERENCES workflow_runs(id),recipient TEXT NOT NULL,data TEXT NOT NULL,acked_at INTEGER,acked_by TEXT);
@@ -322,6 +333,20 @@ fn read(
 }
 pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> Result<Value> {
     match request {
+        Request::Attention {
+            page,
+            limit,
+            sessions,
+        } => crate::attention_inbox::read(
+            connection,
+            &actor,
+            crate::attention_inbox::Window::new(page, limit)?,
+            sessions,
+            now_millis(),
+        ),
+        Request::AcknowledgeAttention { items, sessions } => {
+            crate::attention_inbox::acknowledge(connection, &actor, items, sessions, now_millis())
+        }
         Request::Read {
             run_id,
             attempt_id,

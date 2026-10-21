@@ -180,6 +180,7 @@ pub struct State {
     limits_read_at: i64,
     schedule_watchers: HashSet<u64>,
     review_watchers: HashSet<u64>,
+    attention_watchers: HashSet<u64>,
     native_run_gates: HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
 }
 
@@ -304,6 +305,7 @@ impl State {
             limits_read_at: 0,
             schedule_watchers: HashSet::new(),
             review_watchers: HashSet::new(),
+            attention_watchers: HashSet::new(),
             native_run_gates: HashMap::new(),
         }
     }
@@ -1421,6 +1423,9 @@ impl State {
         event["controlReceipts"] = self.event_log.is_some().into();
         event["sessionLineage"] = true.into();
         event["conversationResume"] = true.into();
+        event["attentionInbox"] = self.event_log.is_some().into();
+        event["decisions"] = self.event_log.is_some().into();
+        event["jobPages"] = self.event_log.is_some().into();
         event["coordinatorScopes"] = true.into();
         event["workflowAttempts"] = self.event_log.is_some().into();
         event["workflowInbox"] = self.event_log.is_some().into();
@@ -1844,16 +1849,18 @@ impl State {
 
     pub fn next_push(&mut self) -> Option<crate::notifications::Job> {
         while let Some(job) = self.push_queue.pop_front() {
-            if self.sessions.get(&job.session_id).is_some_and(|s| {
-                !s.attention.muted
-                    && s.attention
-                        .event
-                        .as_ref()
-                        .is_some_and(|e| e.unread && e.sequence == job.sequence)
-            }) && self
-                .metadata
-                .push_tokens()
-                .is_ok_and(|tokens| tokens.contains(&job.token))
+            if (job.item.is_some()
+                || self.sessions.get(&job.session_id).is_some_and(|s| {
+                    !s.attention.muted
+                        && s.attention
+                            .event
+                            .as_ref()
+                            .is_some_and(|e| e.unread && e.sequence == job.sequence)
+                }))
+                && self
+                    .metadata
+                    .push_tokens()
+                    .is_ok_and(|tokens| tokens.contains(&job.token))
             {
                 return Some(job);
             }
@@ -1910,6 +1917,7 @@ impl State {
             }
         }
         if !alerts.is_empty() {
+            self.notify_attention("session", None);
             match self.metadata.push_tokens() {
                 Ok(tokens) => {
                     for (id, event) in alerts {
@@ -1985,6 +1993,7 @@ impl State {
         self.repository_notify();
         self.schedule_watchers.remove(&client_id);
         self.review_watchers.remove(&client_id);
+        self.attention_watchers.remove(&client_id);
         for session in self.sessions.values_mut() {
             session.subscribers.remove(&client_id);
         }
@@ -2850,6 +2859,81 @@ impl State {
         self.review_watchers.iter().copied()
     }
 
+    pub(crate) fn watch_attention(&mut self, client_id: u64) {
+        self.attention_watchers.insert(client_id);
+    }
+
+    pub(crate) fn notify_attention(&self, reason: &str, item: Option<&str>) {
+        for id in &self.attention_watchers {
+            let mut event = json!({"type":"attentionInboxChanged","reason":reason});
+            if let Some(item) = item {
+                event["itemId"] = item.into();
+            }
+            self.send(*id, event);
+        }
+    }
+
+    pub(crate) fn attention_signal(&mut self, signal: crate::attention_inbox::Signal) {
+        self.notify_attention(signal.reason, signal.item.as_deref());
+        let (Some(kind), Some(item)) = (signal.push, signal.item) else {
+            return;
+        };
+        match self.metadata.push_tokens_for(kind) {
+            Ok(tokens) => {
+                for token in tokens {
+                    if self.push_queue.len() < 64 {
+                        self.push_queue.push_back(crate::notifications::Job::inbox(
+                            token,
+                            self.metadata.host_id.clone(),
+                            kind,
+                            item.clone(),
+                        ));
+                    }
+                }
+            }
+            Err(_) => eprintln!("Could not load notification registrations"),
+        }
+    }
+
+    pub(crate) fn attention_sessions(&self) -> Vec<crate::attention_inbox::SessionItem> {
+        self.sessions
+            .values()
+            .filter(|s| !s.attention.muted && s.info.program != Program::Shell)
+            .filter_map(|s| {
+                let projection = s.current_attention();
+                let unread = s.attention.event.as_ref().filter(|e| e.unread);
+                let event_priority = unread.map_or(0, |e| match e.kind {
+                    "question" => 3,
+                    "permission" | "limit" => 2,
+                    _ => 1,
+                });
+                let (priority, reason) = match (projection.priority, projection.reason, unread) {
+                    (priority, Some(reason), _) if priority >= event_priority && priority > 0 => {
+                        (priority, reason)
+                    }
+                    (_, _, Some(event)) => (event_priority, event.kind),
+                    _ => return None,
+                };
+                Some(crate::attention_inbox::SessionItem {
+                    session_id: s.info.id.clone(),
+                    name: s.info.name.clone(),
+                    program: s.info.program,
+                    priority,
+                    reason,
+                    revision: s.attention.event.as_ref().map_or(0, |e| e.sequence),
+                    at: s.attention.event.as_ref().map_or(0, |e| e.at),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn acknowledge_session_attention(&mut self, session_id: &str, sequence: u64) {
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            session.attention.acknowledge(sequence);
+            self.broadcast_list();
+        }
+    }
+
     pub fn context_report(&self, id: &str) -> Option<PathBuf> {
         self.sessions
             .get(id)?
@@ -3088,6 +3172,12 @@ impl State {
             | Command::ListWorktrees => {
                 return Err(anyhow!("Worktrees require asynchronous dispatch."));
             }
+            Command::AttentionInbox { .. }
+            | Command::AcknowledgeInbox { .. }
+            | Command::Decisions { .. }
+            | Command::Decide { .. } => {
+                return Err(anyhow!("Attention inbox requires asynchronous dispatch."));
+            }
             Command::AcknowledgeAttention {
                 session_id,
                 sequence,
@@ -3110,13 +3200,24 @@ impl State {
                 }
                 self.broadcast_list();
             }
-            Command::RegisterPush { token, enabled } => {
-                self.metadata.register_push(&token, enabled)?;
-                self.respond(
-                    client_id,
-                    json!({"type":"pushRegistered","enabled":enabled}),
-                    request_id,
+            Command::RegisterPush {
+                token,
+                enabled,
+                kinds,
+            } => {
+                ensure!(
+                    kinds.as_ref().is_none_or(|kinds| kinds.len() <= 8
+                        && kinds.iter().all(|kind| {
+                            crate::attention_inbox::PUSH_KINDS.contains(&kind.as_str())
+                        })),
+                    "Unknown notification kind"
                 );
+                self.metadata.register_push(&token, enabled)?;
+                let mut event = json!({"type":"pushRegistered","enabled":enabled});
+                if let Some(kinds) = kinds.filter(|_| enabled) {
+                    event["kinds"] = json!(self.metadata.set_push_kinds(&token, &kinds)?);
+                }
+                self.respond(client_id, event, request_id);
             }
             Command::ListTemplates => self.respond(
                 client_id,
@@ -4682,6 +4783,122 @@ mod tests {
         for worker in workers {
             worker.join().unwrap();
         }
+    }
+
+    #[test]
+    fn attention_inbox_events_and_pushes_reach_only_opted_in_clients_and_phones() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        let capabilities = state.capabilities_event();
+        for flag in ["attentionInbox", "decisions", "jobPages"] {
+            assert_eq!(capabilities[flag], false);
+        }
+        let mut receivers = Vec::new();
+        for id in [1, 2] {
+            let (events, receiver) = mpsc::channel(8);
+            let (cancelled, _) = watch::channel(false);
+            state.clients.insert(
+                id,
+                Client {
+                    events,
+                    cancelled,
+                    authority: Default::default(),
+                },
+            );
+            receivers.push(receiver);
+        }
+        let (pty_events, _) = mpsc::channel(1);
+        let legacy = "ExpoPushToken[legacyphone01]";
+        let current = "ExpoPushToken[currentphone1]";
+        state
+            .command(
+                1,
+                Command::RegisterPush {
+                    token: legacy.into(),
+                    enabled: true,
+                    kinds: None,
+                },
+                None,
+                &pty_events,
+            )
+            .unwrap();
+        let legacy_reply = receivers[0].try_recv().unwrap();
+        assert_eq!(legacy_reply["type"], "pushRegistered");
+        assert!(legacy_reply.get("kinds").is_none());
+        let signal = || crate::attention_inbox::Signal {
+            reason: "decision",
+            item: Some("decision:run:question".into()),
+            push: Some(crate::attention_inbox::PUSH_DECISION),
+        };
+        state.attention_signal(signal());
+        state.notify_attention("session", None);
+        assert!(receivers[0].try_recv().is_err());
+        assert!(receivers[1].try_recv().is_err());
+        assert!(state.next_push().is_none());
+        state
+            .command(
+                2,
+                Command::RegisterPush {
+                    token: current.into(),
+                    enabled: true,
+                    kinds: Some(vec![
+                        crate::attention_inbox::PUSH_DECISION.into(),
+                        crate::attention_inbox::PUSH_DECISION.into(),
+                    ]),
+                },
+                None,
+                &pty_events,
+            )
+            .unwrap();
+        assert_eq!(
+            receivers[1].try_recv().unwrap()["kinds"],
+            json!([crate::attention_inbox::PUSH_DECISION])
+        );
+        assert!(
+            state
+                .command(
+                    2,
+                    Command::RegisterPush {
+                        token: current.into(),
+                        enabled: true,
+                        kinds: Some(vec!["everything".into()]),
+                    },
+                    None,
+                    &pty_events,
+                )
+                .is_err()
+        );
+        state.watch_attention(2);
+        state.attention_signal(signal());
+        let changed = receivers[1].try_recv().unwrap();
+        assert_eq!(changed["type"], "attentionInboxChanged");
+        assert_eq!(changed["itemId"], "decision:run:question");
+        assert!(receivers[0].try_recv().is_err());
+        let job = state.next_push().unwrap();
+        assert_eq!(job.token, current);
+        assert_eq!(job.item.as_deref(), Some("decision:run:question"));
+        assert!(state.next_push().is_none());
+        state.attention_signal(crate::attention_inbox::Signal {
+            reason: "result",
+            item: Some("result:occurrence".into()),
+            push: Some(crate::attention_inbox::PUSH_RESULT),
+        });
+        assert!(state.next_push().is_none());
+        assert!(
+            state
+                .command(
+                    2,
+                    Command::AttentionInbox {
+                        page: None,
+                        limit: None,
+                    },
+                    None,
+                    &pty_events,
+                )
+                .is_err()
+        );
+        state.disconnect(2);
+        assert!(!state.attention_watchers.contains(&2));
     }
 
     #[test]
