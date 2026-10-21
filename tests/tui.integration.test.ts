@@ -344,19 +344,19 @@ test(
           assert.equal(next.code, 0, next.stderr);
           assert.equal(JSON.parse(next.stdout).data.page.fromCursor, page.nextCursor);
           for (const [command, code, kind] of [
-            [['session', 'get', 'absent', '--json'], 5, 'session_not_found'],
-            [['session', 'current', '--json'], 2, 'no_current_session'],
+            [['session', 'get', 'absent', '--json'], 1, 'session_not_found'],
+            [['session', 'current', '--json'], 1, 'no_current_session'],
             [
               ['session', 'read', created.sessionId, '--max-bytes', '8193', '--json'],
-              2,
+              1,
               'invalid_argument',
             ],
             [
               ['session', 'read', created.sessionId, '--after', '9007199254740991', '--json'],
-              6,
+              1,
               'invalid_cursor',
             ],
-            [['session', 'diff', created.sessionId, '--json'], 6, 'git_unavailable'],
+            [['session', 'diff', created.sessionId, '--json'], 4, 'git_unavailable'],
           ] as const) {
             const result = await runTui(tuiBinary, pairingPath, runningTuis, [...command], {
               NESVO_SESSION_ID: undefined,
@@ -461,7 +461,7 @@ test(
             'list',
             '--json',
           ]);
-          assert.equal(rejected.code, 4);
+          assert.equal(rejected.code, 2);
           assert.equal(JSON.parse(rejected.stdout).error.code, 'host_unavailable');
           assertNoSecret(rejected, [pairing.key, capability.key]);
           assert.equal((await snapshot()).sessions[0]?.controllerId, null);
@@ -594,7 +594,7 @@ test(
             'cli-key',
             '--json',
           ]);
-          assert.equal(ambiguous.code, 2, 'receipt selectors are mutually exclusive');
+          assert.equal(ambiguous.code, 1, 'receipt selectors are mutually exclusive');
           const current = await snapshot();
           assert.equal(current.sessions.filter(s => s.id === receipt.sessionId).length, 1);
           assert.equal(
@@ -657,7 +657,7 @@ test(
             queryOutput(unsupported.stdout);
             assert.equal(
               unsupported.code,
-              8,
+              4,
               'shell delivery cannot imply provider response completion',
             );
           }
@@ -681,7 +681,7 @@ test(
               input,
             );
             queryOutput(rejected.stdout);
-            assert.equal(rejected.code, 6, 'shell prompts fail validation, never execute');
+            assert.equal(rejected.code, 4, 'shell prompts fail validation, never execute');
             assert.ok(JSON.parse(rejected.stdout).error.receipt, rejected.stdout);
             assert.equal(JSON.parse(rejected.stdout).error.receipt.phase, 'failed');
             assert.equal(JSON.parse(rejected.stdout).error.receipt.result.effectStarted, false);
@@ -698,7 +698,7 @@ test(
             '--json',
           ]);
           queryOutput(large.stdout);
-          assert.equal(large.code, 2);
+          assert.equal(large.code, 1);
           const absent = await runTui(tuiBinary, pairingPath, runningTuis, [
             'operation',
             '--key',
@@ -706,7 +706,7 @@ test(
             '--json',
           ]);
           queryOutput(absent.stdout);
-          assert.equal(absent.code, 5, 'oversized input never creates a receipt');
+          assert.equal(absent.code, 1, 'oversized input never creates a receipt');
           for (const [operation, phase] of [
             ['interrupt', 'delivered'],
             ['stop', 'stopRequested'],
@@ -834,7 +834,7 @@ test(
             '--json',
           ]);
           queryOutput(malformed.stdout);
-          assert.equal(malformed.code, 2);
+          assert.equal(malformed.code, 1);
           const activated = await invoke([
             'activate',
             created.run.id,
@@ -989,12 +989,12 @@ test(
           ]);
           assert.deepEqual(historic, drained);
           assert.equal((await invoke(['get', id])).run.state, 'active');
-          for (const [index, contents] of [
-            JSON.stringify({ ...limits, maxParallel: 0 }),
-            JSON.stringify({ ...limits, maxElapsedMs: 999 }),
-            JSON.stringify({ ...limits, role: 'owner' }),
-            JSON.stringify({ maxParallel: 2, maxAttemptsPerTask: 3 }),
-            'x'.repeat(4097),
+          for (const [index, [contents, code]] of [
+            [JSON.stringify({ ...limits, maxParallel: 0 }), 'invalid_argument'],
+            [JSON.stringify({ ...limits, maxElapsedMs: 999 }), 'invalid_argument'],
+            [JSON.stringify({ ...limits, role: 'owner' }), 'invalid_argument'],
+            [JSON.stringify({ maxParallel: 2, maxAttemptsPerTask: 3 }), 'invalid_argument'],
+            ['x'.repeat(4097), 'input_too_large'],
           ].entries()) {
             await writeFile(file, contents);
             const denied = await runTui(tuiBinary, pairingPath, runningTuis, [
@@ -1011,7 +1011,8 @@ test(
               '--json',
             ]);
             queryOutput(denied.stdout);
-            assert.equal(JSON.parse(denied.stdout).error.code, 'invalid_argument');
+            assert.equal(JSON.parse(denied.stdout).error.code, code);
+            assert.equal(denied.code, 1, denied.stdout);
           }
           assert.equal((await invoke(['budget', 'get', id])).run.revision, 6);
           assert.deepEqual(stableSnapshot(await snapshot()), stableSnapshot(expected));
@@ -1144,7 +1145,7 @@ test(
               ...flags,
               '--json',
             ]);
-            assert.equal(invalid.code, 2, 'one explicit workspace mode is required');
+            assert.equal(invalid.code, 1, 'one explicit workspace mode is required');
           }
           const accepted = await invoke([...args, '--shared']);
           assert.equal(accepted.launch.phase, 'accepted');
@@ -1341,7 +1342,7 @@ test(
               '--json',
             ]);
             queryOutput(malformed.stdout);
-            assert.equal(malformed.code, 2);
+            assert.equal(malformed.code, 1);
           } finally {
             const current = await invoke(['get']);
             await writeFile(path, JSON.stringify(original.budget.limits));
