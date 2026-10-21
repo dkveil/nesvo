@@ -2161,6 +2161,45 @@ async fn registry(store: &Store, live: impl Fn(&str) -> bool) -> Result<Value> {
     Ok(json!({"type":"worktreeRegistry","worktrees":worktrees}))
 }
 
+pub(crate) struct ProjectWorktree {
+    pub repository: String,
+    pub session_id: String,
+    pub created_at: u64,
+    pub open: bool,
+}
+
+pub(crate) fn project_worktrees() -> Vec<ProjectWorktree> {
+    STORE.get().map_or_else(Vec::new, |store| {
+        store
+            .records()
+            .into_iter()
+            .map(|record| ProjectWorktree {
+                open: record.archived_at.is_none(),
+                repository: record.repository,
+                session_id: record.session_id,
+                created_at: record.created_at,
+            })
+            .collect()
+    })
+}
+
+pub(crate) async fn project_setup(root: &str) -> Value {
+    let Some(store) = STORE.get() else {
+        return json!({"available":false});
+    };
+    let open = store
+        .records()
+        .iter()
+        .filter(|record| record.repository == root && record.archived_at.is_none())
+        .count();
+    match describe(store, root).await {
+        Ok(described) => json!({"available":true,"configured":described["configured"],
+            "digest":described["digest"],"approved":described["approved"],"openWorktrees":open}),
+        Err(error) => json!({"available":true,"configured":false,"openWorktrees":open,
+            "error":{"code":error_code(&error).unwrap_or("worktree_unavailable"),"message":error.to_string()}}),
+    }
+}
+
 fn error_event(error: &anyhow::Error) -> Value {
     match error_code(error) {
         Some(code) => json!({"type":"error","code":code,"message":error.to_string()}),

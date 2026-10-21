@@ -545,6 +545,11 @@ pub async fn handle(
                             tokio::spawn(crate::workflow_templates::serve(state.clone(), pty_events.clone(), id, authority.clone(), command, request_id, permit));
                             continue;
                         }
+                        if crate::projects::handles(&command) {
+                            let permit = event_gate.clone().try_acquire_owned().ok();
+                            tokio::spawn(crate::projects::serve(state.clone(), id, authority.clone(), command, request_id, permit));
+                            continue;
+                        }
                         if matches!(command, Command::ListCommits { .. }) {
                             let permit = files_gate.clone().try_acquire_owned().ok();
                             tokio::spawn(crate::commits::serve(state.clone(), id, command, request_id, permit));

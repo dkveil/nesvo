@@ -255,6 +255,21 @@ pub enum Command {
         name: String,
         key: String,
     },
+    ListProjects,
+    PinProject {
+        root: String,
+    },
+    UnpinProject {
+        root: String,
+    },
+    ProjectDefaults {
+        root: String,
+    },
+    SetProjectLayout {
+        root: String,
+        #[serde(default)]
+        layout: Option<String>,
+    },
     Create {
         name: String,
         cwd: Option<String>,

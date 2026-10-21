@@ -69,7 +69,7 @@ fn assert_ready(context: &Value, repository: &str, branch: &str) {
     let fields = context
         .as_object()
         .expect("Actual repository metadata object");
-    assert_eq!(fields.len(), 6, "Frozen additive repositoryContext DTO");
+    assert_eq!(fields.len(), 7, "Frozen additive repositoryContext DTO");
     for field in [
         "source",
         "state",
@@ -77,6 +77,7 @@ fn assert_ready(context: &Value, repository: &str, branch: &str) {
         "branch",
         "observedAt",
         "revision",
+        "root",
     ] {
         assert!(
             fields.contains_key(field),
@@ -87,6 +88,14 @@ fn assert_ready(context: &Value, repository: &str, branch: &str) {
     assert_eq!(context["state"], "ready");
     assert_eq!(context["name"], repository);
     assert_eq!(context["branch"], branch);
+    let root = context["root"].as_str().expect("Repository root path");
+    assert!(std::path::Path::new(root).is_absolute());
+    assert_eq!(
+        std::path::Path::new(root)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some(repository)
+    );
     for field in ["observedAt", "revision"] {
         let value = context[field]
             .as_u64()

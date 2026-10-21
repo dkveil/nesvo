@@ -1,6 +1,6 @@
 //! Bounded builtin-only repository labels; no diff, hooks, network or models.
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     sync::{Arc, OnceLock},
     time::Duration,
@@ -15,6 +15,7 @@ use tokio::{
 const DISCOVERY_BYTES: usize = 8194;
 const BRANCH_BYTES: usize = 512;
 const STDERR_BYTES: usize = 2048;
+pub(crate) const ROOT_BYTES: usize = 4096;
 
 #[cfg(windows)]
 #[path = "git_repository_helper.rs"]
@@ -28,8 +29,15 @@ pub(crate) fn helper_stdio() -> i32 {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Outcome {
-    Ready { name: String, branch: String },
-    Detached { name: String },
+    Ready {
+        name: String,
+        branch: String,
+        root: String,
+    },
+    Detached {
+        name: String,
+        root: String,
+    },
     NotRepository,
     Unavailable,
 }
@@ -37,13 +45,20 @@ pub(crate) enum Outcome {
 fn label(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
 }
+fn root_label(value: &str) -> bool {
+    label(value, ROOT_BYTES) && Path::new(value).is_absolute()
+}
 impl Outcome {
     pub(crate) fn validated(self) -> Self {
         match &self {
-            Self::Ready { name, branch } if !label(name, 128) || !label(branch, 256) => {
+            Self::Ready { name, branch, root }
+                if !label(name, 128) || !label(branch, 256) || !root_label(root) =>
+            {
                 Self::Unavailable
             }
-            Self::Detached { name } if !label(name, 128) => Self::Unavailable,
+            Self::Detached { name, root } if !label(name, 128) || !root_label(root) => {
+                Self::Unavailable
+            }
             _ => self,
         }
     }
@@ -335,7 +350,7 @@ fn records(bytes: &[u8], count: usize) -> Option<Vec<&str>> {
         .collect::<Vec<_>>();
     (records.len() == count && records.iter().all(|line| label(line, 4096))).then_some(records)
 }
-fn repository_name(bytes: &[u8]) -> Option<String> {
+fn repository_name(bytes: &[u8]) -> Option<(String, PathBuf)> {
     let records = records(bytes, 2)?;
     let root = Path::new(records[0]);
     let common = Path::new(records[1]);
@@ -348,7 +363,13 @@ fn repository_name(bytes: &[u8]) -> Option<String> {
         root
     };
     let name = label_path.file_name()?.to_str()?;
-    label(name, 128).then(|| name.to_owned())
+    label(name, 128).then(|| (name.to_owned(), label_path.to_owned()))
+}
+async fn canonical_root(main_checkout: &Path) -> String {
+    let resolved = tokio::fs::canonicalize(main_checkout)
+        .await
+        .unwrap_or_else(|_| main_checkout.to_owned());
+    crate::process::display_path(&resolved)
 }
 fn branch(bytes: &[u8]) -> Option<String> {
     let records = records(bytes, 1)?;
@@ -398,9 +419,10 @@ pub(crate) async fn inspect(directory: &Path, stopped: &mut watch::Receiver<bool
     if !discovery.status.success() || !discovery.stderr.is_empty() {
         return Outcome::Unavailable;
     }
-    let Some(name) = repository_name(&discovery.stdout) else {
+    let Some((name, main_checkout)) = repository_name(&discovery.stdout) else {
         return Outcome::Unavailable;
     };
+    let root = canonical_root(&main_checkout).await;
     let Ok((symbolic, _slot)) = run(
         directory,
         &["symbolic-ref", "--quiet", "HEAD"],
@@ -417,7 +439,7 @@ pub(crate) async fn inspect(directory: &Path, stopped: &mut watch::Receiver<bool
         return Outcome::Unavailable;
     }
     if symbolic.status.code() == Some(1) && symbolic.stdout.is_empty() {
-        return Outcome::Detached { name };
+        return Outcome::Detached { name, root }.validated();
     }
     if !symbolic.status.success() {
         return Outcome::Unavailable;
@@ -425,7 +447,7 @@ pub(crate) async fn inspect(directory: &Path, stopped: &mut watch::Receiver<bool
     let Some(branch) = branch(&symbolic.stdout) else {
         return Outcome::Unavailable;
     };
-    Outcome::Ready { name, branch }.validated()
+    Outcome::Ready { name, branch, root }.validated()
 }
 
 #[cfg(test)]
@@ -487,7 +509,8 @@ mod tests {
         assert_eq!(branch(b"refs/heads/main\r\n").as_deref(), Some("main"));
         assert_eq!(
             Outcome::Detached {
-                name: "ż".repeat(65)
+                name: "ż".repeat(65),
+                root: absolute_root()
             }
             .validated(),
             Outcome::Unavailable
@@ -495,11 +518,32 @@ mod tests {
         assert_eq!(
             Outcome::Ready {
                 name: "repo".into(),
-                branch: "unsafe\u{1b}branch".into()
+                branch: "unsafe\u{1b}branch".into(),
+                root: absolute_root()
             }
             .validated(),
             Outcome::Unavailable
         );
+        for root in [
+            "relative/repo".to_owned(),
+            String::new(),
+            format!("{}\u{7}", absolute_root()),
+            format!("{}{}", absolute_root(), "a".repeat(ROOT_BYTES)),
+        ] {
+            assert_eq!(
+                Outcome::Ready {
+                    name: "repo".into(),
+                    branch: "main".into(),
+                    root
+                }
+                .validated(),
+                Outcome::Unavailable
+            );
+        }
+    }
+
+    fn absolute_root() -> String {
+        crate::process::display_path(&std::env::temp_dir())
     }
 
     #[test]
@@ -656,11 +700,13 @@ mod tests {
         std::fs::create_dir(&nested).unwrap();
         let (_sender, mut stopped) = watch::channel(false);
         let expected_name = fixture.0.file_name().unwrap().to_str().unwrap().to_owned();
+        let root = crate::process::display_path(&fixture.0);
         assert_eq!(
             inspect(&nested, &mut stopped).await,
             Outcome::Ready {
                 name: expected_name.clone(),
-                branch: "feature/żółw".into()
+                branch: "feature/żółw".into(),
+                root: root.clone()
             }
         );
         fixture
@@ -670,7 +716,8 @@ mod tests {
         assert_eq!(
             inspect(&fixture.0, &mut stopped).await,
             Outcome::Detached {
-                name: expected_name
+                name: expected_name,
+                root
             }
         );
         assert!(cleanup_confirmed());
@@ -691,18 +738,21 @@ mod tests {
             .await;
         let (_sender, mut stopped) = watch::channel(false);
         let name = fixture.0.file_name().unwrap().to_str().unwrap().to_owned();
+        let root = crate::process::display_path(&fixture.0);
         assert_eq!(
             inspect(&linked, &mut stopped).await,
             Outcome::Ready {
                 name: name.clone(),
-                branch: "feature/linked".into()
+                branch: "feature/linked".into(),
+                root: root.clone()
             }
         );
         assert_eq!(
             inspect(&fixture.0, &mut stopped).await,
             Outcome::Ready {
                 name,
-                branch: "main".into()
+                branch: "main".into(),
+                root
             }
         );
     }

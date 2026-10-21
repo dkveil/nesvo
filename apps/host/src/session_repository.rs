@@ -35,6 +35,8 @@ pub(crate) struct Context {
     branch: Option<String>,
     observed_at: Option<u64>,
     revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root: Option<String>,
 }
 
 impl Context {
@@ -46,6 +48,7 @@ impl Context {
             branch: None,
             observed_at: None,
             revision,
+            root: None,
         }
     }
     fn stale(&self) -> Self {
@@ -53,6 +56,7 @@ impl Context {
         stale.state = Status::Stale;
         stale.name = None;
         stale.branch = None;
+        stale.root = None;
         stale.revision = stale.revision.saturating_add(1).min(MAX_REVISION);
         stale
     }
@@ -323,14 +327,16 @@ impl Registry {
         let mut context = Context::empty(Status::Unavailable, revision);
         if wall <= MAX_REVISION && now.checked_add(TTL_MS).is_some() {
             match outcome.validated() {
-                crate::git_repository::Outcome::Ready { name, branch } => {
+                crate::git_repository::Outcome::Ready { name, branch, root } => {
                     context.state = Status::Ready;
                     context.name = Some(name);
                     context.branch = Some(branch);
+                    context.root = Some(root);
                 }
-                crate::git_repository::Outcome::Detached { name } => {
+                crate::git_repository::Outcome::Detached { name, root } => {
                     context.state = Status::Detached;
                     context.name = Some(name);
+                    context.root = Some(root);
                 }
                 crate::git_repository::Outcome::NotRepository => {
                     context.state = Status::NotRepository
@@ -345,8 +351,31 @@ impl Registry {
             entry.expires = None;
         }
         entry.cooldown_until = now.checked_add(TTL_MS).or(Some(u64::MAX));
+        if let (Some(root), Some(name)) = (&context.root, &context.name) {
+            crate::projects::observe_launch(
+                crate::projects::Launch {
+                    root,
+                    name,
+                    branch: context.branch.as_deref(),
+                    folder: &work.directory,
+                    sessions: work.bindings.iter().map(|binding| binding.id.as_str()),
+                },
+                wall,
+            );
+        }
         entry.context = Some(context);
         true
+    }
+
+    pub(crate) fn root(&self, id: &str) -> Option<String> {
+        let binding = self.subscriptions.get(id)?;
+        self.entries
+            .get(&binding.directory)?
+            .context
+            .as_ref()
+            .filter(|context| matches!(context.state, Status::Ready | Status::Detached))?
+            .root
+            .clone()
     }
 
     pub(crate) fn seal(&mut self) {
@@ -832,7 +861,11 @@ mod tests {
         Outcome::Ready {
             name: "repo łódź".into(),
             branch: "feature/żółw".into(),
+            root: test_root(),
         }
+    }
+    fn test_root() -> String {
+        crate::process::display_path(&std::env::temp_dir().join("repo łódź"))
     }
     fn observed(outcome: Outcome) -> (Registry, Binding) {
         let mut registry = Registry::default();
@@ -876,6 +909,7 @@ mod tests {
             ready(),
             Outcome::Detached {
                 name: "repo".into(),
+                root: test_root(),
             },
             Outcome::NotRepository,
             Outcome::Unavailable,
@@ -1018,7 +1052,8 @@ mod tests {
         assert!(registry.finish(
             &fresh,
             Outcome::Detached {
-                name: "new observation".into()
+                name: "new observation".into(),
+                root: test_root()
             },
             11,
             11
@@ -1158,6 +1193,7 @@ mod tests {
                 Outcome::Ready {
                     name: "\\".repeat(128),
                     branch: "\"".repeat(256),
+                    root: test_root(),
                 },
                 10,
                 10,
@@ -1189,7 +1225,8 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter_map(|session| session.get("repositoryContext"))
-                .all(|context| context.as_object().unwrap().len() == 6)
+                .all(|context| context.as_object().unwrap().len() == 7
+                    && context["root"] == test_root())
         );
         assert_eq!(serde_json::to_vec(&baseline).unwrap().len(), baseline_bytes);
         assert!(crate::budgets::admit_snapshot_bytes(baseline_bytes, 100).is_ok());
@@ -1211,5 +1248,38 @@ mod tests {
         assert_eq!(stale["sessions"][0]["repositoryContext"]["state"], "stale");
         assert!(stale["sessions"][0]["repositoryContext"]["branch"].is_null());
         assert_eq!(stale["sessions"][0]["repositoryContext"]["observedAt"], 500);
+    }
+
+    #[test]
+    fn projects_root_is_projected_for_resolved_repositories_and_dropped_when_stale() {
+        let (registry, a) = observed(ready());
+        let bindings = HashMap::from([(a.id.clone(), a.incarnation)]);
+        let mut fresh = serde_json::json!({"sessions":[{"id":a.id}]});
+        registry.enrich(&mut fresh, &bindings, 120);
+        assert_eq!(
+            fresh["sessions"][0]["repositoryContext"]["root"],
+            test_root()
+        );
+        assert_eq!(registry.root(&a.id), Some(test_root()));
+        let mut stale = serde_json::json!({"sessions":[{"id":a.id}]});
+        registry.enrich(&mut stale, &bindings, 30_120);
+        assert!(
+            stale["sessions"][0]["repositoryContext"]
+                .get("root")
+                .is_none()
+        );
+        let (outside, b) = observed(Outcome::NotRepository);
+        let mut negative = serde_json::json!({"sessions":[{"id":b.id}]});
+        outside.enrich(
+            &mut negative,
+            &HashMap::from([(b.id.clone(), b.incarnation)]),
+            120,
+        );
+        let context = negative["sessions"][0]["repositoryContext"]
+            .as_object()
+            .unwrap();
+        assert_eq!(context.len(), 6);
+        assert!(!context.contains_key("root"));
+        assert_eq!(outside.root(&b.id), None);
     }
 }

@@ -1499,6 +1499,7 @@ impl State {
         event["notes"] = true.into();
         event["worktrees"] = crate::worktrees::available().into();
         event["workflowTemplates"] = crate::workflow_templates::available().into();
+        event["projects"] = crate::projects::available().into();
         event["git"] = true.into();
         event
     }
@@ -3000,6 +3001,18 @@ impl State {
             .collect()
     }
 
+    pub(crate) fn project_sessions(&self) -> Vec<crate::projects::LiveSession> {
+        self.sessions
+            .iter()
+            .map(|(id, session)| crate::projects::LiveSession {
+                id: id.clone(),
+                directory: session.info.cwd.clone(),
+                root: self.repository.root(id),
+                running: session.info.running,
+            })
+            .collect()
+    }
+
     pub fn session_directory(&self, id: &str) -> Result<PathBuf> {
         self.sessions
             .get(id)
@@ -3213,6 +3226,13 @@ impl State {
             | Command::RevokeWorkflowTemplates { .. }
             | Command::StartWorkflowTemplate { .. } => {
                 return Err(anyhow!("Workflow templates require asynchronous dispatch."));
+            }
+            Command::ListProjects
+            | Command::PinProject { .. }
+            | Command::UnpinProject { .. }
+            | Command::ProjectDefaults { .. }
+            | Command::SetProjectLayout { .. } => {
+                return Err(anyhow!("Projects require asynchronous dispatch."));
             }
             Command::AcknowledgeAttention {
                 session_id,

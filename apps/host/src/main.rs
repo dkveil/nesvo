@@ -46,6 +46,7 @@ mod operations;
 mod orchestration;
 mod process;
 mod program_status;
+mod projects;
 mod protocol;
 mod provider_quota;
 mod provider_quota_runtime;
@@ -438,6 +439,9 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         )
         .await,
     )?;
+    if let Err(error) = projects::configure(&pairing_dir.join("metadata.sqlite3")) {
+        eprintln!("Project registry is unavailable: {error}");
+    }
     let span = trace.begin(Phase::StartupEventAppend);
     span.result(
         event_log

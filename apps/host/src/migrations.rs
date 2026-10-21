@@ -48,6 +48,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "attention_receipts",
         sql: include_str!("../migrations/0008_attention_receipts.sql"),
     },
+    Migration {
+        version: 9,
+        name: "projects",
+        sql: include_str!("../migrations/0009_projects.sql"),
+    },
 ];
 
 const LEGACY_SCHEMA_VERSION: u32 = 7;
