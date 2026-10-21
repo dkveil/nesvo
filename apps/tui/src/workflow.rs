@@ -1660,7 +1660,8 @@ mod tests {
     fn adapters_reject_malformed_shapes_before_host_dispatch() {
         for extra in [
             json!({"prompt":"foreign instruction"}),
-            json!({"sessionId":"foreign"}),
+            json!({"sessionId":7}),
+            json!({"session":"worker"}),
             json!({"owner":true}),
         ] {
             let mut request =
@@ -1671,6 +1672,7 @@ mod tests {
                 .extend(extra.as_object().unwrap().clone());
             assert!(tool("delivery", json!({"request":request})).is_err());
         }
+        assert!(tool("delivery",json!({"request":{"action":"queue","key":"k","runId":"r","taskId":"t","expectedRevision":1,"sessionId":"worker"}})).is_ok());
         for profile in [
             json!({"program":"claude"}),
             json!({"program":"unsupported","workspace":"shared"}),
