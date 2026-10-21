@@ -315,6 +315,134 @@ impl SubmissionStage {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum FenceSubstage {
+    RunGuard,
+    LifecycleRead,
+    QueueAdmission,
+}
+impl FenceSubstage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RunGuard => "runGuard",
+            Self::LifecycleRead => "lifecycleRead",
+            Self::QueueAdmission => "queueAdmission",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FenceReason {
+    SqlBusy,
+    SqlLocked,
+    Io,
+    InvalidData,
+    JoinFailed,
+    QueueFull,
+    QueueClosed,
+    Unknown,
+}
+impl FenceReason {
+    fn label(self) -> &'static str {
+        match self {
+            Self::SqlBusy => "sqlBusy",
+            Self::SqlLocked => "sqlLocked",
+            Self::Io => "io",
+            Self::InvalidData => "invalidData",
+            Self::JoinFailed => "joinFailed",
+            Self::QueueFull => "queueFull",
+            Self::QueueClosed => "queueClosed",
+            Self::Unknown => "unknown",
+        }
+    }
+    fn from_error(error: &anyhow::Error) -> Self {
+        if let Some(error) = error.downcast_ref::<crate::pty::QueueAdmissionError>() {
+            return match error {
+                crate::pty::QueueAdmissionError::Full => Self::QueueFull,
+                crate::pty::QueueAdmissionError::Closed => Self::QueueClosed,
+            };
+        }
+        if let Some(error) = error.downcast_ref::<rusqlite::Error>() {
+            return match error {
+                rusqlite::Error::SqliteFailure(error, _) => match error.code {
+                    rusqlite::ErrorCode::DatabaseBusy => Self::SqlBusy,
+                    rusqlite::ErrorCode::DatabaseLocked => Self::SqlLocked,
+                    rusqlite::ErrorCode::SystemIoFailure | rusqlite::ErrorCode::CannotOpen => {
+                        Self::Io
+                    }
+                    rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase => {
+                        Self::InvalidData
+                    }
+                    _ => Self::Unknown,
+                },
+                _ => Self::InvalidData,
+            };
+        }
+        if error.downcast_ref::<std::io::Error>().is_some() {
+            Self::Io
+        } else if error.downcast_ref::<serde_json::Error>().is_some() {
+            Self::InvalidData
+        } else if error.downcast_ref::<tokio::task::JoinError>().is_some() {
+            Self::JoinFailed
+        } else {
+            Self::Unknown
+        }
+    }
+}
+
+#[derive(Debug)]
+struct FenceDiagnostic {
+    substage: FenceSubstage,
+    reason: FenceReason,
+}
+impl std::fmt::Display for FenceDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Submission fence adapter failed ({}, {})",
+            self.substage.label(),
+            self.reason.label()
+        )
+    }
+}
+impl std::error::Error for FenceDiagnostic {}
+
+fn fence_error(error: anyhow::Error, substage: FenceSubstage) -> anyhow::Error {
+    // Preserve every existing domain code/message and its retry classification.
+    if error.downcast_ref::<crate::api_error::Error>().is_some() {
+        return error;
+    }
+    let reason = FenceReason::from_error(&error);
+    error.context(FenceDiagnostic { substage, reason })
+}
+
+type QueueAdmission = Result<tokio::sync::oneshot::Receiver<bool>>;
+
+/// The actual fence pipeline: no queue call can run before both read guards.
+/// Queue errors stay nested so only the original queue-domain refusals retry.
+async fn fenced_admission<G, L>(
+    guard: G,
+    lifecycle: L,
+    enqueue: impl FnOnce(Option<&crate::agent_events::Batch>) -> QueueAdmission,
+) -> Result<(QueueAdmission, bool)>
+where
+    G: std::future::Future<Output = Result<()>>,
+    L: std::future::Future<Output = Result<Option<crate::agent_events::Batch>>>,
+{
+    guard
+        .await
+        .map_err(|error| fence_error(error, FenceSubstage::RunGuard))?;
+    let latest = lifecycle
+        .await
+        .map_err(|error| fence_error(error, FenceSubstage::LifecycleRead))?;
+    let correlated = latest
+        .as_ref()
+        .is_some_and(|batch| batch.identity.prompt_correlation);
+    let result =
+        enqueue(latest.as_ref()).map_err(|error| fence_error(error, FenceSubstage::QueueAdmission));
+    Ok((result, correlated))
+}
+
 fn submission_failure(
     error: anyhow::Error,
     queued: bool,
@@ -327,10 +455,12 @@ fn submission_failure(
     } else {
         "Inspect the original receipt and terminal before another submission".into()
     };
-    (
-        if queued { "unknown" } else { "failed" },
-        json!({"code":code,"message":message,"effectStarted":queued,"taskResult":null,"submissionStage":stage.label()}),
-    )
+    let mut result = json!({"code":code,"message":message,"effectStarted":queued,"taskResult":null,"submissionStage":stage.label()});
+    if let Some(diagnostic) = error.downcast_ref::<FenceDiagnostic>() {
+        result["submissionFence"] =
+            json!({"substage":diagnostic.substage.label(),"reason":diagnostic.reason.label()});
+    }
+    (if queued { "unknown" } else { "failed" }, result)
 }
 
 /// Retry only rejected admission checks: this queue write accepted no bytes.
@@ -356,21 +486,20 @@ async fn enqueue_fenced(
             .into());
         }
         changed.borrow_and_update();
-        log.guard_run_dispatch(session_id, operation).await?;
-        let latest = fence(path.clone(), session_id).await?;
-        let result =
-            state
-                .lock()
-                .unwrap()
-                .enqueue_submission(session_id, operation, text, latest.as_ref());
+        let (result, correlated) = fenced_admission(
+            log.guard_run_dispatch(session_id, operation),
+            fence(path.clone(), session_id),
+            |latest| {
+                state
+                    .lock()
+                    .unwrap()
+                    .enqueue_submission(session_id, operation, text, latest)
+            },
+        )
+        .await?;
         match result {
             Ok(answer) => {
-                return Ok((
-                    answer,
-                    latest
-                        .as_ref()
-                        .is_some_and(|batch| batch.identity.prompt_correlation),
-                ));
+                return Ok((answer, correlated));
             }
             Err(error)
                 if error
@@ -389,7 +518,7 @@ async fn enqueue_fenced(
             // projections need not emit a journal event. Recheck every guard.
             _=tokio::time::sleep(std::time::Duration::from_millis(50))=>{},
             _=cancellation.changed()=>return Err(Error::new("submission_preempted","Submission was preempted while waiting for lifecycle evidence").into()),
-            result=changed.changed()=>{if result.is_err(){return Err(anyhow!("Host journal closed while waiting for lifecycle evidence"));}},
+            result=changed.changed()=>{if result.is_err(){return Err(fence_error(anyhow!("Host journal closed while waiting for lifecycle evidence"), FenceSubstage::RunGuard));}},
         }
     }
 }
@@ -987,8 +1116,289 @@ pub(crate) async fn dispatch_create(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::time::Duration;
     use tokio::sync::oneshot;
+
+    struct FenceDirectory(std::path::PathBuf);
+    impl FenceDirectory {
+        fn new() -> Self {
+            let directory = std::env::temp_dir().join(format!(
+                "nesvo-submission-fence-{}",
+                hex::encode(crate::wire::random::<16>())
+            ));
+            std::fs::create_dir(&directory).unwrap();
+            Self(directory)
+        }
+    }
+    impl Drop for FenceDirectory {
+        fn drop(&mut self) {
+            // This exact randomly allocated directory belongs only to this test.
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn projected_fence(
+        error: anyhow::Error,
+        queued: bool,
+        substage: &str,
+        reason: &str,
+    ) -> serde_json::Value {
+        let (phase, result) = submission_failure(
+            error,
+            queued,
+            if queued {
+                SubmissionStage::SubmitFence
+            } else {
+                SubmissionStage::PasteFence
+            },
+        );
+        assert_eq!(phase, if queued { "unknown" } else { "failed" });
+        assert_eq!(result["effectStarted"], queued);
+        assert_eq!(result["code"], "submission_unconfirmed");
+        assert_eq!(
+            result["submissionFence"],
+            json!({"substage":substage,"reason":reason})
+        );
+        assert!(!result.to_string().contains("PRIVATE"));
+        result
+    }
+
+    #[tokio::test]
+    async fn closed_run_guard_stops_before_lifecycle_read_and_native_queue() {
+        let directory = FenceDirectory::new();
+        let log = Service::open(directory.0.join("metadata.sqlite3"))
+            .await
+            .unwrap();
+        log.shutdown().await;
+        let reads = Cell::new(0);
+        let queue_calls = Cell::new(0);
+        let mut native_bytes = Vec::new();
+        let error = fenced_admission(
+            log.guard_run_dispatch("session", "operation"),
+            async {
+                reads.set(reads.get() + 1);
+                Ok(None)
+            },
+            |_| {
+                queue_calls.set(queue_calls.get() + 1);
+                native_bytes.extend_from_slice(b"PRIVATE_PROMPT");
+                let (_, answer) = oneshot::channel();
+                Ok(answer)
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(reads.get(), 0);
+        assert_eq!(queue_calls.get(), 0);
+        assert!(native_bytes.is_empty());
+        projected_fence(error, false, "runGuard", "unknown");
+    }
+
+    #[tokio::test]
+    async fn busy_real_lifecycle_fence_cannot_reach_native_queue() {
+        let directory = FenceDirectory::new();
+        let report = directory.0.join("context.json");
+        crate::agent_events::initialize(&report, "host-session").unwrap();
+        let blocker = rusqlite::Connection::open(report.with_file_name("events.sqlite3")).unwrap();
+        blocker.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        let queue_calls = Cell::new(0);
+        let mut native_bytes = Vec::new();
+        let error = fenced_admission(
+            async { Ok(()) },
+            fence(Some(report), "host-session"),
+            |_| {
+                queue_calls.set(queue_calls.get() + 1);
+                native_bytes.extend_from_slice(b"PRIVATE_PROMPT");
+                let (_, answer) = oneshot::channel();
+                Ok(answer)
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(queue_calls.get(), 0);
+        assert!(native_bytes.is_empty());
+        projected_fence(error, false, "lifecycleRead", "sqlBusy");
+        blocker.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[tokio::test]
+    async fn canceled_lifecycle_worker_is_classified_without_queue_admission() {
+        let worker = tokio::spawn(std::future::pending::<()>());
+        worker.abort();
+        let join = worker.await.unwrap_err();
+        let queue_calls = Cell::new(0);
+        let error = fenced_admission(async { Ok(()) }, async { Err(join.into()) }, |_| {
+            queue_calls.set(queue_calls.get() + 1);
+            let (_, answer) = oneshot::channel();
+            Ok(answer)
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(queue_calls.get(), 0);
+        projected_fence(error, false, "lifecycleRead", "joinFailed");
+    }
+
+    #[tokio::test]
+    async fn queue_failure_preserves_pre_paste_and_post_paste_effect_semantics() {
+        for (failure, reason) in [
+            (crate::pty::QueueAdmissionError::Full, "queueFull"),
+            (crate::pty::QueueAdmissionError::Closed, "queueClosed"),
+        ] {
+            for queued in [false, true] {
+                let calls = Cell::new(0);
+                let (result, correlated) =
+                    fenced_admission(async { Ok(()) }, async { Ok(None) }, |_| {
+                        calls.set(calls.get() + 1);
+                        Err(failure.into())
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(calls.get(), 1, "A failed queue admission is not replayed");
+                assert!(!correlated);
+                projected_fence(result.unwrap_err(), queued, "queueAdmission", reason);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_queue_refusals_stay_nested_but_typed_run_refusals_stay_outer() {
+        let (result, _) = fenced_admission(async { Ok(()) }, async { Ok(None) }, |_| {
+            Err(
+                crate::api_error::Error::new("lifecycle_pending", "Existing safe queue refusal")
+                    .into(),
+            )
+        })
+        .await
+        .unwrap();
+        let error = result.unwrap_err();
+        assert!(error.downcast_ref::<FenceDiagnostic>().is_none());
+        let (_, result) = submission_failure(error, false, SubmissionStage::PasteFence);
+        assert_eq!(result["code"], "lifecycle_pending");
+        assert_eq!(result["message"], "Existing safe queue refusal");
+        assert!(result.get("submissionFence").is_none());
+        let calls = Cell::new(0);
+        let error = fenced_admission(
+            async {
+                Err(
+                    crate::api_error::Error::new("lifecycle_pending", "Existing safe run refusal")
+                        .into(),
+                )
+            },
+            async { Ok(None) },
+            |_| {
+                calls.set(calls.get() + 1);
+                let (_, answer) = oneshot::channel();
+                Ok(answer)
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(calls.get(), 0);
+        assert!(error.downcast_ref::<FenceDiagnostic>().is_none());
+        assert_eq!(
+            error
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "lifecycle_pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn adapter_causes_are_fixed_and_unknown_errors_never_retain_payloads() {
+        for (code, reason) in [
+            (5, "sqlBusy"),
+            (6, "sqlLocked"),
+            (10, "io"),
+            (11, "invalidData"),
+        ] {
+            let error = rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                Some("PRIVATE_SQL_PATH_PAYLOAD".into()),
+            );
+            let failure = fenced_admission(async { Ok(()) }, async { Err(error.into()) }, |_| {
+                unreachable!("No queue after failed read")
+            })
+            .await
+            .unwrap_err();
+            projected_fence(failure, false, "lifecycleRead", reason);
+        }
+        let (result, _) = fenced_admission(async { Ok(()) }, async { Ok(None) }, |_| {
+            Err(anyhow!("PRIVATE_QUEUE_PATH_PROMPT"))
+        })
+        .await
+        .unwrap();
+        projected_fence(result.unwrap_err(), false, "queueAdmission", "unknown");
+        let mut written = Vec::new();
+        let (result, _) = fenced_admission(async { Ok(()) }, async { Ok(None) }, |_| {
+            written.extend_from_slice(b"accepted once");
+            let (_, answer) = oneshot::channel();
+            Ok(answer)
+        })
+        .await
+        .unwrap();
+        assert!(result.is_ok());
+        assert_eq!(
+            written, b"accepted once",
+            "The seam still admits a successful queue exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn fixed_fence_diagnostic_survives_durable_receipt_replay() {
+        let directory = FenceDirectory::new();
+        let log = Service::open(directory.0.join("metadata.sqlite3"))
+            .await
+            .unwrap();
+        let request =
+            json!({"sessionId":"1234567890abcdef1234567890abcdef","prompt":"PRIVATE_PROMPT"});
+        let accepted = log
+            .accept_send("owner".into(), "fence-once".into(), request.clone())
+            .await
+            .unwrap();
+        let claim = log
+            .claim("owner".into(), accepted.receipt.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let queue_calls = Cell::new(0);
+        let error = fenced_admission(
+            async { Ok(()) },
+            async { Err(std::io::Error::other("PRIVATE_PATH_OR_ERROR").into()) },
+            |_| {
+                queue_calls.set(queue_calls.get() + 1);
+                let (_, answer) = oneshot::channel();
+                Ok(answer)
+            },
+        )
+        .await
+        .unwrap_err();
+        let result = projected_fence(error, false, "lifecycleRead", "io");
+        let finished = log
+            .finish(
+                "owner".into(),
+                claim.receipt.id,
+                claim.token,
+                "failed".into(),
+                result.clone(),
+            )
+            .await
+            .unwrap();
+        let replay = log
+            .accept_send("owner".into(), "fence-once".into(), request)
+            .await
+            .unwrap();
+        assert!(!replay.is_new);
+        assert_eq!(replay.receipt.id, finished.id);
+        assert_eq!(replay.receipt.result, result);
+        assert_eq!(
+            queue_calls.get(),
+            0,
+            "Receipt replay must not dispatch the failed input"
+        );
+        log.shutdown().await;
+    }
 
     #[tokio::test]
     async fn native_write_confirmation_distinguishes_true_false_closed_and_timeout() {

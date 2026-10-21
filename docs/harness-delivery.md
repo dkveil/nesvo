@@ -3474,3 +3474,22 @@ proof of this invocation. Existing helper/scenario deadlines, cleanup and
 production code are unchanged. Windows warnings-denied all-target Clippy and
 the exact controlled native capture case pass (10.26 seconds). This is an
 evidence improvement, not a proven fix for CI's earlier empty stdout.
+
+### F03/F17 submission-fence adapter diagnostics
+
+Untyped input-admission failures now retain the fixed adapter substage and
+allowlisted cause under the optional `result.submissionFence` object. This
+distinguishes the run guard, lifecycle read and queue admission without retaining
+SQL, prompts, paths or raw errors. Existing public codes/messages, guard order,
+domain-refusal retries, deadlines and conservative partial-input semantics are
+unchanged. The exact diagnostic survives durable receipt replay.
+
+Eight tests cover a closed real journal service, a real SQLite EXCLUSIVE lock at
+the lifecycle read, canceled read worker, full/closed channels, native write
+confirmation, typed-refusal separation, privacy and durable replay. Failed guards
+cannot reach the queue; queue failure cannot write bytes. Windows verification
+of the combined candidate with the following conformance seam passes formatting,
+warnings-denied all-target Clippy, 745 workspace units (210 TUI, 532 host, 3 wire),
+locked build and all three exact process checks. The complete 63-case serial
+SDK/native-host cohort passes in 469.30 seconds. This improves failure evidence;
+it does not establish the cause of CI's earlier untyped submission failure.

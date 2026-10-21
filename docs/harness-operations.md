@@ -135,6 +135,18 @@ outcomes remain unchanged, and a later producer observation does not rewrite an
 already retained terminal send outcome. Interrupt/stop write classification is
 unchanged.
 
+Untyped adapter failures at either submission fence may additionally retain
+`submissionFence:{substage,reason}`. `substage` is `runGuard`, `lifecycleRead` or
+`queueAdmission`; fixed reasons are `sqlBusy`, `sqlLocked`, `io`, `invalidData`,
+`joinFailed`, `queueFull`, `queueClosed` or `unknown`. They identify the failing
+adapter boundary without serializing SQL, paths, prompts or raw error strings.
+Domain refusals keep their existing code/message and omit this diagnostic. The
+public `submission_unconfirmed` code, conservative effect/phase classification,
+two-second fence deadline and queue-only refusal retries remain unchanged.
+Lookup/replay returns the same retained diagnostic and never retries input.
+An absent field on older receipts does not identify which boundary failed;
+event-journal health alone does not cover the separate lifecycle journal read.
+
 The private Claude hook journal records only SHA-256 prompt fingerprints. The
 `claude-hooks-v3` adapter adds the optional whole-paste fingerprint. Matching
 normalizes line endings and surrounding whitespace; it does not rewrite sent

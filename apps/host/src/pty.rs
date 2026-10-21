@@ -45,6 +45,34 @@ enum Confirmation {
     Receipt(oneshot::Sender<bool>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum QueueAdmissionError {
+    Full,
+    Closed,
+}
+impl std::fmt::Display for QueueAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Keep the existing adapter message; only its private type is new.
+        f.write_str("Terminal input queue is full or closed. Input was not queued.")
+    }
+}
+impl std::error::Error for QueueAdmissionError {}
+
+fn confirmed_enqueue(
+    data: String,
+    enqueue: impl FnOnce(
+        String,
+        Option<Confirmation>,
+    ) -> std::result::Result<(), sync_mpsc::TrySendError<Input>>,
+) -> Result<oneshot::Receiver<bool>> {
+    let (sender, answer) = oneshot::channel();
+    enqueue(data, Some(Confirmation::Receipt(sender))).map_err(|error| match error {
+        sync_mpsc::TrySendError::Full(_) => QueueAdmissionError::Full,
+        sync_mpsc::TrySendError::Disconnected(_) => QueueAdmissionError::Closed,
+    })?;
+    Ok(answer)
+}
+
 fn write_input(writer: &mut impl Write, input: Input) -> bool {
     #[cfg(test)]
     if let Some(trace) = &input.trace {
@@ -196,12 +224,7 @@ impl Pty {
 
     /// Acknowledges native write+flush only, never provider pickup or completion.
     pub fn send_confirmed(&self, data: String) -> Result<oneshot::Receiver<bool>> {
-        let (sender, answer) = oneshot::channel();
-        self.enqueue(data, Some(Confirmation::Receipt(sender)))
-            .map_err(|_| {
-                anyhow!("Terminal input queue is full or closed. Input was not queued.")
-            })?;
-        Ok(answer)
+        confirmed_enqueue(data, |data, confirmation| self.enqueue(data, confirmation))
     }
     fn enqueue(
         &self,
@@ -258,6 +281,63 @@ impl Pty {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirmed_admission_distinguishes_full_and_closed_without_queuing_bytes() {
+        let (sender, inputs) = sync_mpsc::sync_channel(0);
+        let error = confirmed_enqueue("PRIVATE_INPUT".into(), |data, confirmation| {
+            sender.try_send(Input {
+                data,
+                confirmation,
+                trace: None,
+            })
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<QueueAdmissionError>(),
+            Some(&QueueAdmissionError::Full)
+        );
+        assert!(matches!(
+            inputs.try_recv(),
+            Err(sync_mpsc::TryRecvError::Empty)
+        ));
+        let mut writer = Vec::new();
+        assert!(
+            writer.is_empty(),
+            "Rejected input must not reach the native writer"
+        );
+        drop(inputs);
+        let error = confirmed_enqueue("PRIVATE_INPUT".into(), |data, confirmation| {
+            sender.try_send(Input {
+                data,
+                confirmation,
+                trace: None,
+            })
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<QueueAdmissionError>(),
+            Some(&QueueAdmissionError::Closed)
+        );
+        assert_eq!(
+            error.to_string(),
+            "Terminal input queue is full or closed. Input was not queued."
+        );
+        assert!(!error.to_string().contains("PRIVATE_INPUT"));
+        // A separate accepted input still exercises the unchanged real writer.
+        let (sender, inputs) = sync_mpsc::sync_channel(1);
+        let _answer = confirmed_enqueue("accepted once".into(), |data, confirmation| {
+            sender.try_send(Input {
+                data,
+                confirmation,
+                trace: None,
+            })
+        })
+        .unwrap();
+        assert!(write_input(&mut writer, inputs.recv().unwrap()));
+        assert_eq!(writer, b"accepted once");
+    }
+
     struct Writer {
         bytes: Vec<u8>,
         flush_fails: bool,
