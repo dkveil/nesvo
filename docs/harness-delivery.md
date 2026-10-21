@@ -3288,3 +3288,19 @@ intervals include stabilization/reconnection and are separate from CPU sampling.
 The counters substantiate less work; the roughly 13% CPU reduction is one paired
 observation, not a stable performance guarantee, leak verdict or diagnosis of
 historical 100% CPU. MCP pooling and resumable hibernation remain unimplemented.
+
+### Third process-conformance gate
+
+On publication `4e43dfa`, the Windows workspace run reached the malformed-profile
+fixture's two-second read deadline rather than its intended invalid-frame result.
+Its 490 other host units passed; the retention fixture took roughly 90 seconds.
+The timeout does not prove a cleanup failure or establish its scheduling cause.
+MacOS passed the same workspace test, while its native SDK cohort remained in
+progress when this repair was prepared.
+
+The malformed-profile case now joins the two existing mandatory exact serial
+process checks on every native CI platform. Its framing assertion, two-second
+read bound and cleanup remain unchanged. An archive of the exact staged tree,
+excluding concurrent diagnostic implementation, passes workspace formatting,
+warnings-denied all-target Clippy and the exact ignored case in 0.13 seconds on
+Windows. This records a serial conformance result, not saturation robustness.

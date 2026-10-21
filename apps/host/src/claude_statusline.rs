@@ -1007,6 +1007,7 @@ mod tests {
         assert_eq!(slots.available_permits(), 1);
     }
     #[tokio::test]
+    #[ignore = "serial native process conformance; explicitly run by CI"]
     async fn invalid_profile_frame_is_refused_with_confirmed_cleanup() {
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let slot = slots.clone().acquire_owned().await.unwrap();

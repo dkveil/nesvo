@@ -28,7 +28,7 @@ CI builds and tests the Rust programs natively on Windows, macOS and Linux. Chec
 
 ### Declared statusline process conformance
 
-Two declared-display tests start real system processes and check exact input,
+Three declared-display tests start real system processes and check exact input,
 output, exit status and pipe behavior within short deadlines. CI runs them
 explicitly and serially after parallel workspace units, before the native SDK
 scenarios. They are ignored by the default unit run; their assertions, deadlines
@@ -37,6 +37,7 @@ and owned cleanup still apply in the required conformance steps.
 On every native CI platform:
 
 ```text
+cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::invalid_profile_frame_is_refused_with_confirmed_cleanup -- --ignored --exact --test-threads=1
 cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::capture_failure_does_not_change_input_stdout_or_display_exit -- --ignored --exact --test-threads=1
 ```
 
