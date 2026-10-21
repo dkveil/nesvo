@@ -79,6 +79,87 @@ pub enum Command {
         #[command(subcommand)]
         command: ReviewCommand,
     },
+    #[command(
+        about = "Owner-only worktree setup approval, on-demand run steps, cancellation and archive"
+    )]
+    Worktree {
+        #[command(subcommand)]
+        command: WorktreeCommand,
+    },
+}
+#[derive(Subcommand)]
+pub enum WorktreeCommand {
+    #[command(
+        about = "Show the committed nesvo.toml of a repository with its digest and approval; runs nothing"
+    )]
+    Describe {
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(
+        about = "Approve one inspected setup digest; its steps then run before each worktree agent launch"
+    )]
+    ApproveSetup {
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(
+        about = "Revoke an approved setup digest; later worktree launches using it are refused"
+    )]
+    RevokeSetup {
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Start the approved run steps in a session's host-created worktree")]
+    Run {
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Cancel the active setup or run steps of a session's worktree")]
+    Cancel {
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(
+        about = "Remove a session's worktree and branch; refuses dirty, unpushed or conflicted work unless --discard"
+    )]
+    Archive {
+        session: String,
+        #[arg(long)]
+        discard: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List host-created worktrees with their sessions, setup and run states")]
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+}
+impl WorktreeCommand {
+    fn machine(&self) -> bool {
+        match self {
+            Self::Describe { json, .. }
+            | Self::ApproveSetup { json, .. }
+            | Self::RevokeSetup { json, .. }
+            | Self::Run { json, .. }
+            | Self::Cancel { json, .. }
+            | Self::Archive { json, .. }
+            | Self::List { json } => *json,
+        }
+    }
 }
 #[derive(Subcommand)]
 pub enum ReviewCommand {
@@ -353,7 +434,8 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
         | "message_not_found"
         | "decision_not_found"
         | "control_not_found"
-        | "attempt_not_found" => 5,
+        | "attempt_not_found"
+        | "worktree_not_found" => 5,
         "job_not_found" | "occurrence_not_found" => 5,
         "timeout" => 7,
         "unsupported" => 8,
@@ -367,6 +449,7 @@ impl Command {
             Self::Run { command } => command.machine(),
             Self::Job { command } => command.machine(),
             Self::Budget { command } => command.machine(),
+            Self::Worktree { command } => command.machine(),
             Self::Review { command } => match command {
                 ReviewCommand::Open { json, .. } | ReviewCommand::Deliver { json, .. } => *json,
             },
@@ -455,6 +538,16 @@ pub(crate) async fn request(
         ),
         Some("sendOperation" | "deliverReview") => Duration::from_secs(15),
         Some("openReview") => Duration::from_secs(130),
+        Some("createOperation") if command["spec"]["worktree"] == true => {
+            Duration::from_secs(WORKTREE_LAUNCH_WAIT_S)
+        }
+        Some("archiveWorktree") => Duration::from_secs(90),
+        Some(
+            "listWorktrees"
+            | "describeWorktreeSetup"
+            | "approveWorktreeSetup"
+            | "revokeWorktreeSetup",
+        ) => Duration::from_secs(30),
         _ => Duration::from_secs(10),
     };
     let id = format!("cli-{}", hex::encode(nesvo_wire::random::<8>()));
@@ -888,6 +981,108 @@ pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<
     Ok(caps)
 }
 const REVIEW_TEXT_LIMIT: usize = 32 * 1024;
+const WORKTREE_LAUNCH_WAIT_S: u64 = 3630;
+
+pub(crate) fn worktree_setup_query(
+    action: &str,
+    directory: &str,
+    digest: Option<&str>,
+) -> Result<(Value, &'static str)> {
+    if !bounded(directory, 4096) {
+        return Err(failure(
+            "invalid_argument",
+            "Use an absolute host folder inside a Git repository",
+        ));
+    }
+    if let Some(digest) = digest
+        && (digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(failure(
+            "invalid_argument",
+            "Use the 64-character digest reported by describe",
+        ));
+    }
+    let (kind, response) = match (action, digest) {
+        ("describe", None) => ("describeWorktreeSetup", "worktreeSetup"),
+        ("approve", Some(_)) => ("approveWorktreeSetup", "worktreeSetupApproved"),
+        ("revoke", Some(_)) => ("revokeWorktreeSetup", "worktreeSetupRevoked"),
+        _ => {
+            return Err(failure(
+                "invalid_argument",
+                "Invalid worktree setup request",
+            ));
+        }
+    };
+    let mut query = json!({"type":kind,"directory":directory});
+    if let Some(digest) = digest {
+        query["digest"] = digest.into();
+    }
+    Ok((query, response))
+}
+
+pub(crate) fn worktree_session_query(
+    action: &str,
+    session: &str,
+    discard: bool,
+) -> Result<(Value, &'static str)> {
+    valid_id(session)?;
+    Ok(match (action, discard) {
+        ("run", false) => (
+            json!({"type":"runWorktree","sessionId":session}),
+            "worktreeRunStarted",
+        ),
+        ("cancel", false) => (
+            json!({"type":"cancelWorktree","sessionId":session}),
+            "worktreeCancelled",
+        ),
+        ("archive", discard) => (
+            json!({"type":"archiveWorktree","sessionId":session,"discard":discard}),
+            "worktreeArchived",
+        ),
+        _ => return Err(failure("invalid_argument", "Invalid worktree request")),
+    })
+}
+
+pub(crate) async fn worktree_capability(connection: &mut Connection) -> Result<()> {
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["worktrees"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support worktree setup, run and archive; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+
+async fn worktree(command: WorktreeCommand, connection: &mut Connection) -> Result<()> {
+    let machine = command.machine();
+    let (query, kind) = match &command {
+        WorktreeCommand::Describe { directory, .. } => {
+            worktree_setup_query("describe", directory, None)?
+        }
+        WorktreeCommand::ApproveSetup {
+            directory, digest, ..
+        } => worktree_setup_query("approve", directory, Some(digest))?,
+        WorktreeCommand::RevokeSetup {
+            directory, digest, ..
+        } => worktree_setup_query("revoke", directory, Some(digest))?,
+        WorktreeCommand::Run { session, .. } => worktree_session_query("run", session, false)?,
+        WorktreeCommand::Cancel { session, .. } => {
+            worktree_session_query("cancel", session, false)?
+        }
+        WorktreeCommand::Archive {
+            session, discard, ..
+        } => worktree_session_query("archive", session, *discard)?,
+        WorktreeCommand::List { .. } => (json!({"type":"listWorktrees"}), "worktreeRegistry"),
+    };
+    worktree_capability(connection).await?;
+    print_data(machine, request(connection, query, kind).await?)
+}
 
 fn bounded(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
@@ -1322,6 +1517,7 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
             ));
         }
         Command::Review { command } => return review(command, connection).await,
+        Command::Worktree { command } => return worktree(command, connection).await,
         Command::Operation {
             id,
             receipt_id,
@@ -1514,6 +1710,114 @@ mod quota_tests;
 #[cfg(test)]
 #[path = "quota_wake_cli_tests.rs"]
 mod quota_wake_tests;
+
+#[cfg(test)]
+mod worktree_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Command,
+    }
+
+    #[test]
+    fn worktree_cli_builds_strict_owner_requests() {
+        let digest = "a".repeat(64);
+        assert_eq!(
+            worktree_setup_query("describe", "/repo", None).unwrap(),
+            (
+                json!({"type":"describeWorktreeSetup","directory":"/repo"}),
+                "worktreeSetup"
+            )
+        );
+        assert_eq!(
+            worktree_setup_query("approve", "/repo", Some(&digest)).unwrap(),
+            (
+                json!({"type":"approveWorktreeSetup","directory":"/repo","digest":digest}),
+                "worktreeSetupApproved"
+            )
+        );
+        assert_eq!(
+            worktree_session_query("archive", "s", true).unwrap(),
+            (
+                json!({"type":"archiveWorktree","sessionId":"s","discard":true}),
+                "worktreeArchived"
+            )
+        );
+        assert_eq!(
+            worktree_session_query("run", "s", false).unwrap().1,
+            "worktreeRunStarted"
+        );
+        for (action, directory, digest) in [
+            ("approve", "/repo", None),
+            ("describe", "/repo", Some(digest.as_str())),
+            ("approve", "/repo", Some("short")),
+            ("approve", "", Some(digest.as_str())),
+            ("revoke", "bad\npath", Some(digest.as_str())),
+            ("delete", "/repo", None),
+        ] {
+            assert!(worktree_setup_query(action, directory, digest).is_err());
+        }
+        assert!(worktree_session_query("run", "s", true).is_err());
+        assert!(worktree_session_query("archive", "bad\nid", false).is_err());
+        let parsed =
+            Cli::try_parse_from(["nesvo", "worktree", "archive", "s", "--discard", "--json"])
+                .unwrap();
+        assert!(parsed.command.machine());
+        let Command::Worktree {
+            command: WorktreeCommand::Archive { discard, .. },
+        } = parsed.command
+        else {
+            panic!("archive parses as a worktree command");
+        };
+        assert!(discard);
+        for valid in [
+            vec!["nesvo", "worktree", "describe", "--directory", "/repo"],
+            vec![
+                "nesvo",
+                "worktree",
+                "approve-setup",
+                "--directory",
+                "/repo",
+                "--digest",
+                &digest,
+            ],
+            vec!["nesvo", "worktree", "run", "s"],
+            vec!["nesvo", "worktree", "cancel", "s"],
+            vec!["nesvo", "worktree", "list", "--json"],
+        ] {
+            assert!(Cli::try_parse_from(valid).is_ok());
+        }
+        for invalid in [
+            vec!["nesvo", "worktree", "approve-setup", "--directory", "/repo"],
+            vec!["nesvo", "worktree", "run"],
+            vec!["nesvo", "worktree", "run", "s", "--discard"],
+        ] {
+            assert!(Cli::try_parse_from(invalid).is_err());
+        }
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
+        let published: Vec<&str> = schema["oneOf"][1]["properties"]["data"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|variant| variant["properties"]["type"]["const"].as_str())
+            .collect();
+        for kind in [
+            "worktreeSetup",
+            "worktreeSetupApproved",
+            "worktreeSetupRevoked",
+            "worktreeRunStarted",
+            "worktreeCancelled",
+            "worktreeArchived",
+            "worktreeRegistry",
+        ] {
+            assert!(published.contains(&kind), "{kind}");
+        }
+    }
+}
 
 #[cfg(test)]
 mod review_tests {

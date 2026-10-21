@@ -1377,6 +1377,373 @@
                   "$ref": "#/definitions/resumeVerification"
                 }
               }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "repository",
+                "configured",
+                "config",
+                "digest",
+                "approved",
+                "policy"
+              ],
+              "properties": {
+                "type": {
+                  "const": "worktreeSetup"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "configured": {
+                  "type": "boolean"
+                },
+                "config": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "required": ["setup", "run", "envFiles", "timeoutS"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "setup": {
+                          "type": "array",
+                          "maxItems": 32,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          }
+                        },
+                        "run": {
+                          "type": "array",
+                          "maxItems": 32,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          }
+                        },
+                        "envFiles": {
+                          "type": "array",
+                          "maxItems": 32,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512
+                          }
+                        },
+                        "timeoutS": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 3600
+                        }
+                      }
+                    }
+                  ]
+                },
+                "digest": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  ]
+                },
+                "approved": {
+                  "type": "boolean"
+                },
+                "policy": {
+                  "type": "object",
+                  "required": ["version", "shell", "source", "logLimit"],
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "shell": {
+                      "const": "platform-shell-v1"
+                    },
+                    "source": {
+                      "const": "HEAD:nesvo.toml"
+                    },
+                    "logLimit": {
+                      "const": 65536
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "repository", "digest", "approvedAt"],
+              "properties": {
+                "type": {
+                  "const": "worktreeSetupApproved"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "approvedAt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "repository", "digest", "revoked"],
+              "properties": {
+                "type": {
+                  "const": "worktreeSetupRevoked"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "revoked": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "sessionId", "worktree", "log"],
+              "properties": {
+                "type": {
+                  "const": "worktreeRunStarted"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "worktree": {
+                  "type": "string"
+                },
+                "log": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "sessionId", "cancelled"],
+              "properties": {
+                "type": {
+                  "const": "worktreeCancelled"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "cancelled": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "sessionId",
+                "worktree",
+                "branch",
+                "discarded",
+                "blockers",
+                "branchDeleted"
+              ],
+              "properties": {
+                "type": {
+                  "const": "worktreeArchived"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "worktree": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": ["string", "null"]
+                },
+                "discarded": {
+                  "type": "boolean"
+                },
+                "blockers": {
+                  "type": "array",
+                  "items": {
+                    "enum": ["conflicts", "dirty", "unpushed", "unborn"]
+                  }
+                },
+                "branchDeleted": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "worktrees"],
+              "properties": {
+                "type": {
+                  "const": "worktreeRegistry"
+                },
+                "worktrees": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "sessionId",
+                      "worktree",
+                      "branch",
+                      "repository",
+                      "createdAt",
+                      "digest",
+                      "setup",
+                      "run",
+                      "envFiles",
+                      "archivedAt",
+                      "discarded",
+                      "present",
+                      "sessionLive",
+                      "active"
+                    ],
+                    "properties": {
+                      "sessionId": {
+                        "$ref": "#/definitions/id"
+                      },
+                      "worktree": {
+                        "type": "string"
+                      },
+                      "branch": {
+                        "type": ["string", "null"]
+                      },
+                      "repository": {
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "digest": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        ]
+                      },
+                      "setup": {
+                        "type": "object",
+                        "required": ["state", "log", "startedAt", "finishedAt"],
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "notConfigured",
+                              "running",
+                              "passed",
+                              "failed",
+                              "timedOut",
+                              "cancelled",
+                              "interrupted"
+                            ]
+                          },
+                          "log": {
+                            "type": ["string", "null"]
+                          },
+                          "startedAt": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "finishedAt": {
+                            "type": ["integer", "null"],
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "run": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "required": ["state", "log", "startedAt", "finishedAt"],
+                            "properties": {
+                              "state": {
+                                "enum": [
+                                  "notConfigured",
+                                  "running",
+                                  "passed",
+                                  "failed",
+                                  "timedOut",
+                                  "cancelled",
+                                  "interrupted"
+                                ]
+                              },
+                              "log": {
+                                "type": ["string", "null"]
+                              },
+                              "startedAt": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "finishedAt": {
+                                "type": ["integer", "null"],
+                                "minimum": 0
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "envFiles": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["path", "sha256"],
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          }
+                        }
+                      },
+                      "archivedAt": {
+                        "type": ["integer", "null"],
+                        "minimum": 0
+                      },
+                      "discarded": {
+                        "type": "boolean"
+                      },
+                      "present": {
+                        "type": "boolean"
+                      },
+                      "sessionLive": {
+                        "type": "boolean"
+                      },
+                      "active": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
             }
           ]
         }

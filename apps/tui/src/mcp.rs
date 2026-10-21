@@ -147,6 +147,8 @@ fn catalog() -> Vec<Tool> {
     let cursor = json!({"type":"integer","minimum":0,"maximum":9_007_199_254_740_991_u64});
     let key = json!({"type":"string","minLength":1,"maxLength":128});
     let revision = json!({"type":"integer","minimum":1});
+    let worktree_directory = json!({"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host folder inside the Git repository"});
+    let worktree_digest = json!({"type":"string","pattern":"^[0-9a-fA-F]{64}$","description":"Digest returned by nesvo_describe_worktree_setup"});
     let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
@@ -742,6 +744,60 @@ fn catalog() -> Vec<Tool> {
             false,
         ),
         (
+            "nesvo_describe_worktree_setup",
+            "Owner-only: read the committed nesvo.toml [worktree] table of a repository (HEAD), its normalized setup/run/env_files/timeout_s, digest and approval state. Runs nothing; requires host worktrees:true.",
+            object(
+                json!({"directory":worktree_directory.clone()}),
+                &["directory"],
+            ),
+            true,
+        ),
+        (
+            "nesvo_approve_worktree_setup",
+            "Owner-only: approve exactly one inspected setup digest for a repository. Approval authorizes the declared commands to run with the host user's permissions in each new worktree before its agent starts; a changed nesvo.toml needs a new approval. Never auto-approves repository files.",
+            object(
+                json!({"directory":worktree_directory.clone(),"digest":worktree_digest.clone()}),
+                &["directory", "digest"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_revoke_worktree_setup",
+            "Owner-only: revoke an approved setup digest. Later worktree launches with that setup are refused before any worktree is created; running steps are not stopped.",
+            object(
+                json!({"directory":worktree_directory,"digest":worktree_digest}),
+                &["directory", "digest"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_run_worktree",
+            "Owner-only: start the approved run steps of a session's host-created worktree after a passed setup. Replies worktreeRunStarted with the log path; the result is a worktreeRan event and the registry run state, not task success.",
+            object(json!({"sessionId":id}), &["sessionId"]),
+            false,
+        ),
+        (
+            "nesvo_cancel_worktree",
+            "Owner-only: cancel the active setup or run steps of a session's worktree. Terminates the step process tree; a cancelled setup never starts the agent.",
+            object(json!({"sessionId":id}), &["sessionId"]),
+            false,
+        ),
+        (
+            "nesvo_archive_worktree",
+            "Owner-only: remove a closed session's host-created worktree and its nesvo/ branch. Refuses dirty, unpushed or conflicted work unless discard is true; discarding deletes that work permanently.",
+            object(
+                json!({"sessionId":id,"discard":{"type":"boolean","default":false,"description":"Explicitly delete unsaved work; never set without the owner's decision"}}),
+                &["sessionId"],
+            ),
+            false,
+        ),
+        (
+            "nesvo_list_worktrees",
+            "Owner-only: list host-created worktrees (newest 128) with session, branch, presence, setup and run states, logs and archive facts.",
+            object(json!({}), &[]),
+            true,
+        ),
+        (
             "nesvo_read_events",
             "Read durable metadata events after a domain cursor. Preserve nextCursor; gap is incomplete history, never success. No terminal transcript.",
             object(
@@ -914,7 +970,7 @@ fn catalog() -> Vec<Tool> {
         ),
     ];
     definitions.into_iter().map(|(name,description,schema,read_only)| {
-        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only || name == "nesvo_get_provider_quota"))
+        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_archive_worktree"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only || name == "nesvo_get_provider_quota"))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
     }).chain(crate::job_trigger_tools::catalog()).chain(crate::session_recovery::catalog()).collect()
 }
@@ -922,6 +978,121 @@ fn catalog() -> Vec<Tool> {
 #[cfg(test)]
 #[path = "quota_mcp_tests.rs"]
 mod quota_tests;
+
+#[cfg(test)]
+mod worktree_tests {
+    use super::*;
+
+    #[test]
+    fn worktree_mcp_matches_cli_wire_and_refuses_extra_arguments() {
+        let digest = "b".repeat(64);
+        assert_eq!(
+            command(
+                "nesvo_approve_worktree_setup",
+                json!({"directory":"/repo","digest":digest})
+            )
+            .unwrap(),
+            cli::worktree_setup_query("approve", "/repo", Some(&digest)).unwrap()
+        );
+        assert_eq!(
+            command(
+                "nesvo_describe_worktree_setup",
+                json!({"directory":"/repo"})
+            )
+            .unwrap(),
+            cli::worktree_setup_query("describe", "/repo", None).unwrap()
+        );
+        assert_eq!(
+            command(
+                "nesvo_archive_worktree",
+                json!({"sessionId":"s","discard":true})
+            )
+            .unwrap(),
+            cli::worktree_session_query("archive", "s", true).unwrap()
+        );
+        assert_eq!(
+            command("nesvo_archive_worktree", json!({"sessionId":"s"})).unwrap(),
+            cli::worktree_session_query("archive", "s", false).unwrap()
+        );
+        assert_eq!(
+            command("nesvo_run_worktree", json!({"sessionId":"s"})).unwrap(),
+            cli::worktree_session_query("run", "s", false).unwrap()
+        );
+        assert_eq!(
+            command("nesvo_list_worktrees", json!({})).unwrap(),
+            (json!({"type":"listWorktrees"}), "worktreeRegistry")
+        );
+        for (name, value) in [
+            ("nesvo_describe_worktree_setup", json!({})),
+            (
+                "nesvo_describe_worktree_setup",
+                json!({"directory":"/repo","digest":digest}),
+            ),
+            ("nesvo_approve_worktree_setup", json!({"directory":"/repo"})),
+            (
+                "nesvo_approve_worktree_setup",
+                json!({"directory":"/repo","digest":"x"}),
+            ),
+            (
+                "nesvo_revoke_worktree_setup",
+                json!({"directory":"/repo","digest":digest,"all":true}),
+            ),
+            (
+                "nesvo_run_worktree",
+                json!({"sessionId":"s","discard":false}),
+            ),
+            ("nesvo_cancel_worktree", json!({})),
+            (
+                "nesvo_archive_worktree",
+                json!({"sessionId":"s","force":true}),
+            ),
+            (
+                "nesvo_archive_worktree",
+                json!({"sessionId":"s","discard":"yes"}),
+            ),
+            ("nesvo_list_worktrees", json!({"repository":"/repo"})),
+        ] {
+            assert!(command(name, value.clone()).is_err(), "{name} {value}");
+        }
+    }
+
+    #[test]
+    fn worktree_catalog_marks_reads_and_the_destructive_archive() {
+        for (name, read_only, destructive) in [
+            ("nesvo_describe_worktree_setup", true, false),
+            ("nesvo_approve_worktree_setup", false, false),
+            ("nesvo_revoke_worktree_setup", false, false),
+            ("nesvo_run_worktree", false, false),
+            ("nesvo_cancel_worktree", false, false),
+            ("nesvo_archive_worktree", false, true),
+            ("nesvo_list_worktrees", true, false),
+        ] {
+            let tool = serde_json::to_value(
+                catalog()
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+            assert_eq!(tool["annotations"]["readOnlyHint"], read_only);
+            assert_eq!(tool["annotations"]["destructiveHint"], destructive);
+            assert!(
+                tool["description"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Owner-only")
+            );
+            assert_eq!(
+                published_tools()
+                    .iter()
+                    .filter(|tool| tool.as_str() == name)
+                    .count(),
+                1
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod quota_wake_tests {
@@ -1014,8 +1185,8 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 100);
-        assert_eq!(published_tools().len(), 100);
+        assert_eq!(catalog().len(), 107);
+        assert_eq!(published_tools().len(), 107);
     }
 }
 
@@ -1067,6 +1238,21 @@ struct DeliverReview {
     text: String,
     key: Option<String>,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorktreeSetup {
+    directory: String,
+    digest: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorktreeSession {
+    session_id: String,
+    discard: Option<bool>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Empty {}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Events {
@@ -1607,6 +1793,36 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "reviewDelivered",
             )
         }
+        "nesvo_describe_worktree_setup"
+        | "nesvo_approve_worktree_setup"
+        | "nesvo_revoke_worktree_setup" => {
+            let a: WorktreeSetup = parse(arguments)?;
+            let action = match name {
+                "nesvo_describe_worktree_setup" => "describe",
+                "nesvo_approve_worktree_setup" => "approve",
+                _ => "revoke",
+            };
+            cli::worktree_setup_query(action, &a.directory, a.digest.as_deref())?
+        }
+        "nesvo_run_worktree" | "nesvo_cancel_worktree" | "nesvo_archive_worktree" => {
+            let a: WorktreeSession = parse(arguments)?;
+            let action = match name {
+                "nesvo_run_worktree" => "run",
+                "nesvo_cancel_worktree" => "cancel",
+                _ => "archive",
+            };
+            if action != "archive" && a.discard.is_some() {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Only archive accepts discard",
+                ));
+            }
+            cli::worktree_session_query(action, &a.session_id, a.discard.unwrap_or(false))?
+        }
+        "nesvo_list_worktrees" => {
+            let _: Empty = parse(arguments)?;
+            (json!({"type":"listWorktrees"}), "worktreeRegistry")
+        }
         "nesvo_read_events" => {
             let a: Events = parse(arguments)?;
             if let Some(id) = &a.session_id {
@@ -1804,6 +2020,8 @@ impl HostTools {
             cli::prompt_capability(&mut connection).await?;
         } else if matches!(kind, "reviewOpened" | "reviewDelivered") {
             cli::review_capability(&mut connection).await?;
+        } else if kind.starts_with("worktree") {
+            cli::worktree_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
             if name == "nesvo_create_session"
@@ -2460,7 +2678,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 100);
+        assert_eq!(catalog().len(), 107);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {
