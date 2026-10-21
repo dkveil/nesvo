@@ -1442,6 +1442,7 @@ impl State {
             crate::launch_profile::capabilities(&self.provider_versions);
         event["workflowPlans"] = true.into();
         event["reviews"] = true.into();
+        event["files"] = true.into();
         event
     }
 
@@ -2993,6 +2994,9 @@ impl State {
             | Command::ReviewContext { .. }
             | Command::DeliverReview { .. } => {
                 return Err(anyhow!("Reviews require asynchronous dispatch."));
+            }
+            Command::ListEntries { .. } | Command::ReadFile { .. } | Command::FindFiles { .. } => {
+                return Err(anyhow!("Files require asynchronous dispatch."));
             }
             Command::AcknowledgeAttention {
                 session_id,

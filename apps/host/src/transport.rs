@@ -273,6 +273,7 @@ pub async fn handle(
     let mut rate_start = Instant::now();
     let mut rate_count = 0u32;
     let event_gate = Arc::new(tokio::sync::Semaphore::new(4));
+    let files_gate = Arc::new(tokio::sync::Semaphore::new(2));
     let mut domain_subscription = EventSubscription(None);
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     heartbeat.tick().await;
@@ -504,6 +505,11 @@ pub async fn handle(
                             let gate = if matches!(command, Command::DeliverReview { .. }) { &event_gate } else { &git_gate };
                             let permit = gate.clone().try_acquire_owned().ok();
                             tokio::spawn(crate::review::serve(state.clone(), pty_events.clone(), id, command, request_id, permit));
+                            continue;
+                        }
+                        if matches!(command, Command::ListEntries { .. } | Command::ReadFile { .. } | Command::FindFiles { .. }) {
+                            let permit = files_gate.clone().try_acquire_owned().ok();
+                            tokio::spawn(crate::files::serve(state.clone(), id, command, request_id, permit));
                             continue;
                         }
                         let mut state = state.lock().unwrap();

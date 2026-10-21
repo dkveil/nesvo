@@ -19,6 +19,7 @@ hex.workspace = true
 http-body-util = "=0.1.5"
 hyper = { version = "=1.12.0", default-features = false, features = ["server", "http1"] }
 hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
+ignore = "0.4.33"
 nesvo-wire.workspace = true
 portable-pty = "0.9.0"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

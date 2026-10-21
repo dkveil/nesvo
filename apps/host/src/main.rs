@@ -11,6 +11,7 @@ mod claude_statusline;
 mod codex_context;
 mod command_scope;
 mod event_log;
+mod files;
 mod git;
 mod git_repository;
 mod groups;

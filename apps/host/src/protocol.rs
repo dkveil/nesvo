@@ -154,6 +154,24 @@ pub enum Command {
     ListDirectories {
         path: Option<String>,
     },
+    ListEntries {
+        directory: String,
+        #[serde(default)]
+        show_hidden: bool,
+    },
+    ReadFile {
+        path: String,
+        #[serde(default)]
+        offset: Option<u64>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    FindFiles {
+        root: String,
+        query: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
     Create {
         name: String,
         cwd: Option<String>,
