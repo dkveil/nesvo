@@ -68,6 +68,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "job_retry_classes",
         sql: include_str!("../migrations/0012_job_retry_classes.sql"),
     },
+    Migration {
+        version: 13,
+        name: "wake_delivery",
+        sql: include_str!("../migrations/0013_wake_delivery.sql"),
+    },
 ];
 
 const LEGACY_SCHEMA_VERSION: u32 = 7;

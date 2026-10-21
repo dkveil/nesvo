@@ -17,7 +17,33 @@ type PolicyRow = (
     String,
     Option<String>,
     i64,
+    String,
+    bool,
 );
+type BatchSummaryRow = (
+    String,
+    String,
+    Option<String>,
+    i64,
+    Option<String>,
+    i64,
+    String,
+);
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Delivery {
+    Delta,
+    Full,
+}
+impl Delivery {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Delta => "delta",
+            Self::Full => "full",
+        }
+    }
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
@@ -36,6 +62,22 @@ pub enum Request {
         key: String,
         run_id: String,
         expected_revision: u64,
+    },
+    Pause {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    Resume {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+    },
+    SetDelivery {
+        key: String,
+        run_id: String,
+        expected_revision: u64,
+        delivery: Delivery,
     },
     Get {
         run_id: String,
@@ -63,6 +105,8 @@ pub struct Policy {
     pub phase: String,
     pub reason: Option<String>,
     pub created_at: u64,
+    pub delivery: String,
+    pub held: bool,
 }
 pub struct Snapshot {
     pub policy: Policy,
@@ -116,9 +160,9 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     Ok(())
 }
 pub fn read(connection: &Connection, run: &str) -> Result<Option<Policy>> {
-    let row:Option<PolicyRow>=connection.query_row("SELECT id,coordinator_id,issuer,enabled,generation,phase,reason,created_at FROM workflow_wake_policies WHERE run_id=?1",[run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).optional()?;
+    let row:Option<PolicyRow>=connection.query_row("SELECT id,coordinator_id,issuer,enabled,generation,phase,reason,created_at,delivery,held FROM workflow_wake_policies WHERE run_id=?1",[run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional()?;
     row.map(
-        |(id, coordinator, issuer, enabled, generation, phase, reason, at)| {
+        |(id, coordinator, issuer, enabled, generation, phase, reason, at, delivery, held)| {
             Ok(Policy {
                 id,
                 run_id: run.into(),
@@ -129,13 +173,45 @@ pub fn read(connection: &Connection, run: &str) -> Result<Option<Policy>> {
                 phase,
                 reason,
                 created_at: u64::try_from(at)?,
+                delivery,
+                held: enabled && held,
             })
         },
     )
     .transpose()
 }
+fn batches(connection: &Connection, run: &str) -> Result<Vec<Value>> {
+    let mut query = connection.prepare("SELECT b.id,b.phase,b.reason,b.created_at,b.delivery,(SELECT count(*) FROM workflow_wake_notices n WHERE n.batch_id=b.id),o.phase FROM workflow_wake_batches b JOIN workflow_wake_policies p ON p.id=b.policy_id JOIN operation_receipts o ON o.id=b.operation_id WHERE p.run_id=?1 ORDER BY b.rowid DESC LIMIT 8")?;
+    let rows = query
+        .query_map([run], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<BatchSummaryRow>>>()?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, phase, reason, at, delivery, notices, native)| {
+            json!({"id":id,"phase":phase,"reason":reason,"createdAt":at,"delivery":delivery.unwrap_or_else(|| "delta".into()),"noticeCount":notices,"native":{"phase":native}})
+        })
+        .collect())
+}
+pub fn delivered_through(connection: &Connection, run: &str) -> Result<u64> {
+    let sequence: i64 = connection.query_row(
+        "SELECT COALESCE(MAX(sequence),0) FROM workflow_wake_notices WHERE run_id=?1 AND batch_id IS NOT NULL",
+        [run],
+        |row| row.get(0),
+    )?;
+    Ok(u64::try_from(sequence)?)
+}
 pub fn guard(connection: &Connection, expected: &Guard, issuer: &str) -> Result<Policy> {
-    let run:Option<String>=connection.query_row("SELECT run_id FROM workflow_wake_policies WHERE id=?1 AND generation=?2 AND issuer=?3 AND enabled=1",params![expected.id,expected.generation as i64,issuer],|row|row.get(0)).optional()?;
+    let run:Option<String>=connection.query_row("SELECT run_id FROM workflow_wake_policies WHERE id=?1 AND generation=?2 AND issuer=?3 AND enabled=1 AND held=0",params![expected.id,expected.generation as i64,issuer],|row|row.get(0)).optional()?;
     let run = run.ok_or_else(|| {
         Error::new(
             "wake_paused",
@@ -202,9 +278,10 @@ fn view(connection: &Connection, actor: &Actor, run: &str, after: u64) -> Result
         |row| row.get(0),
     )?;
     Ok(
-        json!({"run":run_view,"wakePolicy":read(connection,run)?,"notices":notices,"pendingCount":pending,"nextCursor":next,"more":more}),
+        json!({"run":run_view,"wakePolicy":read(connection,run)?,"notices":notices,"pendingCount":pending,"nextCursor":next,"more":more,"deliveredThrough":delivered_through(connection,run)?,"batches":batches(connection,run)?}),
     )
 }
+
 fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64) -> Result<Reply> {
     match &request {
         Request::Get { run_id, after } => {
@@ -222,19 +299,46 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
         }
         _ => {}
     }
-    let (key, run, revision, enable) = match &request {
+    let (key, run, revision) = match &request {
         Request::Enable {
             key,
             run_id,
             expected_revision,
-        } => (key, run_id, *expected_revision, true),
-        Request::Disable {
+        }
+        | Request::Disable {
             key,
             run_id,
             expected_revision,
-        } => (key, run_id, *expected_revision, false),
+        }
+        | Request::Pause {
+            key,
+            run_id,
+            expected_revision,
+        }
+        | Request::Resume {
+            key,
+            run_id,
+            expected_revision,
+        }
+        | Request::SetDelivery {
+            key,
+            run_id,
+            expected_revision,
+            ..
+        } => (key, run_id, *expected_revision),
         _ => return Err(anyhow!("Unexpected wake command")),
     };
+    if matches!(
+        request,
+        Request::Pause { .. } | Request::Resume { .. } | Request::SetDelivery { .. }
+    ) && !matches!(actor.scope, orchestration::Scope::Owner)
+    {
+        return Err(Error::new(
+            "forbidden",
+            "Only the owner may hold, resume or change wake delivery",
+        )
+        .into());
+    }
     orchestration::validate_key(key)?;
     orchestration::run(connection, &actor, run)?;
     crate::workflow_budget::refresh(connection, run, now)?;
@@ -260,7 +364,12 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
         .into());
     }
     let previous = read(&transaction, run)?;
-    let id = if enable {
+    let enable = matches!(request, Request::Enable { .. });
+    let id = if let Some(id) =
+        hold_or_deliver(&transaction, &actor, &request, &current, &previous, now)?
+    {
+        id
+    } else if enable {
         run_guard(&transaction, run, now)?;
         let coordinator = current["coordinatorSessionId"].as_str().ok_or_else(|| {
             Error::new(
@@ -291,7 +400,7 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
                 )
                 .into());
             }
-            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
+            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
             previous.id.clone()
         } else {
             let count: i64 = transaction.query_row(
@@ -323,13 +432,76 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
     let mut result = view(&transaction, &actor, run, 0)?;
     result["cursor"] = cursor.into();
     let policy = read(&transaction, run)?.ok_or_else(|| anyhow!("Missing wake policy"))?;
-    let pump = enable.then_some(Guard {
+    let pump = (enable || matches!(request, Request::Resume { .. })).then_some(Guard {
         id: policy.id,
         generation: policy.generation,
     });
     orchestration::remember(&transaction, &actor, key, &digest, &result)?;
     transaction.commit()?;
     Ok(Reply::Managed { view: result, pump })
+}
+fn hold_or_deliver(
+    transaction: &Transaction<'_>,
+    actor: &Actor,
+    request: &Request,
+    current: &Value,
+    previous: &Option<Policy>,
+    now: u64,
+) -> Result<Option<String>> {
+    if !matches!(
+        request,
+        Request::Pause { .. } | Request::Resume { .. } | Request::SetDelivery { .. }
+    ) {
+        return Ok(None);
+    }
+    let previous = previous
+        .as_ref()
+        .ok_or_else(|| Error::new("wake_not_found", "Run has no wake policy"))?;
+    match request {
+        Request::Pause { .. } => {
+            if !previous.enabled || previous.held {
+                return Err(Error::new(
+                    "wake_state_conflict",
+                    "Only enabled, delivering wakes can be held; inspect the policy",
+                )
+                .into());
+            }
+            transaction.execute("UPDATE workflow_wake_policies SET held=1,generation=generation+1,phase='held',reason='owner_held' WHERE id=?1",[&previous.id])?;
+        }
+        Request::Resume { .. } => {
+            if !previous.held {
+                return Err(Error::new(
+                    "wake_state_conflict",
+                    "Only held wakes can resume; enable a paused or disabled policy instead",
+                )
+                .into());
+            }
+            run_guard(transaction, &previous.run_id, now)?;
+            if current["coordinatorSessionId"].as_str() != Some(previous.coordinator.as_str()) {
+                return Err(Error::new(
+                    "scope_revoked",
+                    "Coordinator adoption needs explicit recovery",
+                )
+                .into());
+            }
+            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
+        }
+        Request::SetDelivery { delivery, .. } => {
+            if previous.delivery == delivery.as_str() {
+                return Err(Error::new(
+                    "wake_state_conflict",
+                    "Wake delivery already uses this mode",
+                )
+                .into());
+            }
+            transaction.execute(
+                "UPDATE workflow_wake_policies SET delivery=?2 WHERE id=?1",
+                params![previous.id, delivery.as_str()],
+            )?;
+        }
+        _ => unreachable!(),
+    }
+    Ok(Some(previous.id.clone()))
 }
 pub fn recover(connection: &mut Connection) -> Result<()> {
     let transaction =

@@ -651,3 +651,286 @@ fn notice_retention_refusal_rolls_back_report_and_invalid_boundaries_leave_no_ef
     assert!(workflow_wakes::guard(&store.0, &guard, "coordinator").is_ok());
     assert_eq!(count(&store, "operation_receipts"), 0);
 }
+
+fn owner_change(
+    store: &mut Store,
+    run: &Value,
+    request: Value,
+) -> anyhow::Result<(Value, Option<Guard>)> {
+    let mut request = request;
+    request["runId"] = run["run"]["id"].clone();
+    request["expectedRevision"] = current(store, run)["run"]["revision"].clone();
+    manage(store, true, request)
+}
+fn settle(store: &mut Store, dispatch: &crate::workflow_wakes::Dispatch, at: u64) {
+    store
+        .0
+        .execute(
+            "UPDATE operation_receipts SET phase='settled',result='{}' WHERE id=?1",
+            [&dispatch.receipt.id],
+        )
+        .unwrap();
+    workflow_wakes::execute(
+        &mut store.0,
+        Work::Finish {
+            batch_id: dispatch.batch_id.clone(),
+        },
+        at,
+    )
+    .unwrap();
+}
+fn claim_as(
+    store: &mut Store,
+    guard: &Guard,
+    issuer: &str,
+    at: u64,
+) -> Option<crate::workflow_wakes::Dispatch> {
+    match workflow_wakes::execute(
+        &mut store.0,
+        Work::Claim {
+            guard: guard.clone(),
+            issuer: issuer.into(),
+        },
+        at,
+    )
+    .unwrap()
+    {
+        Reply::Claimed(dispatch) => dispatch,
+        _ => panic!("Missing claim reply"),
+    }
+}
+fn batch(store: &mut Store, run: &Value, id: &str) -> Value {
+    manage(
+        store,
+        true,
+        json!({"action":"batch","runId":run["run"]["id"],"batchId":id}),
+    )
+    .unwrap()
+    .0["wakeBatch"]
+        .clone()
+}
+fn sequences(batch: &Value) -> Vec<u64> {
+    batch["notices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|notice| notice["sequence"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn held_delivery_buffers_and_each_batch_carries_only_deltas_since_the_last_checkpoint() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = prepare(&mut store);
+    let (_, guard) = enable(&mut store, &run);
+    for n in 0..3 {
+        send(&mut store, &run, &format!("before-{n}"), "question");
+    }
+    let at = first_at(&store) + 1000;
+    let first = claim(&mut store, &guard, at).unwrap();
+    let first_batch = batch(&mut store, &run, &first.batch_id);
+    assert_eq!(first_batch["afterSequence"], 0);
+    assert_eq!(first_batch["delivery"], "delta");
+    assert_eq!(sequences(&first_batch).len(), 3);
+    settle(&mut store, &first, at);
+    let revision = current(&mut store, &run)["run"]["revision"].clone();
+    error(
+        manage(
+            &mut store,
+            false,
+            json!({"action":"pause","key":"coordinator-hold","runId":run["run"]["id"],"expectedRevision":revision}),
+        )
+        .map(|_| ()),
+        "forbidden",
+    );
+    let (held, pump) =
+        owner_change(&mut store, &run, json!({"action":"pause","key":"hold-1"})).unwrap();
+    assert!(pump.is_none());
+    assert_eq!(held["wakePolicy"]["held"], true);
+    assert_eq!(held["wakePolicy"]["enabled"], true);
+    assert_eq!(held["wakePolicy"]["phase"], "held");
+    let delivered = *sequences(&first_batch).last().unwrap();
+    assert_eq!(held["deliveredThrough"], delivered);
+    let head = store.cursors().unwrap();
+    let (replay, _) = manage(
+        &mut store,
+        true,
+        json!({"action":"pause","key":"hold-1","runId":run["run"]["id"],"expectedRevision":revision}),
+    )
+    .unwrap();
+    assert_eq!(replay, held);
+    assert_eq!(store.cursors().unwrap(), head);
+    error(
+        owner_change(&mut store, &run, json!({"action":"pause","key":"hold-2"})).map(|_| ()),
+        "wake_state_conflict",
+    );
+    error(
+        workflow_wakes::execute(
+            &mut store.0,
+            Work::Claim {
+                guard: guard.clone(),
+                issuer: "coordinator".into(),
+            },
+            at + 1000,
+        )
+        .map(|_| ()),
+        "wake_paused",
+    );
+    for n in 0..10 {
+        send(&mut store, &run, &format!("held-{n}"), "question");
+    }
+    let buffered = current(&mut store, &run);
+    assert_eq!(buffered["pendingCount"], 10);
+    assert_eq!(count(&store, "operation_receipts"), 1);
+    let checkpoint = execute(
+        &mut store,
+        None,
+        json!({"action":"checkpoints","request":{"action":"save","key":"checkpoint-1","runId":run["run"]["id"],"expectedRevision":buffered["run"]["revision"],"summary":null}}),
+    )
+    .unwrap();
+    let checkpoint_id = checkpoint["checkpoint"]["id"].clone();
+    let (resumed, pump) = owner_change(
+        &mut store,
+        &run,
+        json!({"action":"resume","key":"resume-1"}),
+    )
+    .unwrap();
+    let resumed_guard = pump.unwrap();
+    assert_eq!(resumed["wakePolicy"]["held"], false);
+    assert_eq!(resumed["wakePolicy"]["issuer"], "owner");
+    error(
+        owner_change(
+            &mut store,
+            &run,
+            json!({"action":"resume","key":"resume-2"}),
+        )
+        .map(|_| ()),
+        "wake_state_conflict",
+    );
+    assert!(workflow_wakes::guard(&store.0, &guard, "coordinator").is_err());
+    let later = at + 5000;
+    let second = claim_as(&mut store, &resumed_guard, "owner", later).unwrap();
+    let second_batch = batch(&mut store, &run, &second.batch_id);
+    assert_eq!(second_batch["afterSequence"], delivered);
+    assert_eq!(second_batch["baseline"]["checkpointId"], checkpoint_id);
+    assert_eq!(sequences(&second_batch).len(), 8);
+    assert!(sequences(&second_batch).iter().all(|s| *s > delivered));
+    assert!(!second.prompt.contains("Full delivery"));
+    settle(&mut store, &second, later);
+    let third = claim_as(&mut store, &resumed_guard, "owner", later + 1000).unwrap();
+    let third_batch = batch(&mut store, &run, &third.batch_id);
+    assert_eq!(
+        third_batch["afterSequence"],
+        *sequences(&second_batch).last().unwrap()
+    );
+    assert_eq!(sequences(&third_batch).len(), 2);
+    settle(&mut store, &third, later + 1000);
+    assert!(claim_as(&mut store, &resumed_guard, "owner", later + 2000).is_none());
+    let summary = current(&mut store, &run);
+    assert_eq!(summary["pendingCount"], 0);
+    assert_eq!(summary["batches"].as_array().unwrap().len(), 3);
+    assert_eq!(summary["batches"][0]["id"], third.batch_id.as_str());
+    assert_eq!(summary["batches"][0]["noticeCount"], 2);
+}
+
+#[test]
+fn held_buffering_stays_within_the_existing_notice_retention() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = prepare(&mut store);
+    enable(&mut store, &run);
+    owner_change(&mut store, &run, json!({"action":"pause","key":"hold"})).unwrap();
+    store.0.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<8191) INSERT INTO workflow_wake_notices(id,run_id,source_key,kind,data,created_at) SELECT 'retention-'||i,?1,'fixture-retention-'||i,'question','{}',1 FROM n", [run["run"]["id"].as_str().unwrap()]).unwrap();
+    send(&mut store, &run, "last-buffered", "question");
+    assert_eq!(count(&store, "workflow_wake_notices"), 8192);
+    let messages = count(&store, "workflow_messages");
+    error(
+        worker(
+            &mut store,
+            "worker-1",
+            json!({"action":"inbox","request":{"action":"send","key":"over-retention","runId":run["run"]["id"],"correlationId":"c","kind":"question","body":"refused"}}),
+        )
+        .map(|_| ()),
+        "busy",
+    );
+    assert_eq!(count(&store, "workflow_messages"), messages);
+    assert_eq!(count(&store, "workflow_wake_notices"), 8192);
+    assert_eq!(count(&store, "operation_receipts"), 0);
+}
+
+#[test]
+fn full_delivery_adds_the_current_context_digest_without_resending_claimed_notices() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = prepare(&mut store);
+    let (_, guard) = enable(&mut store, &run);
+    let revision = current(&mut store, &run)["run"]["revision"].clone();
+    error(
+        manage(
+            &mut store,
+            false,
+            json!({"action":"setDelivery","key":"coordinator-full","runId":run["run"]["id"],"expectedRevision":revision,"delivery":"full"}),
+        )
+        .map(|_| ()),
+        "forbidden",
+    );
+    let (full, pump) = owner_change(
+        &mut store,
+        &run,
+        json!({"action":"setDelivery","key":"full-1","delivery":"full"}),
+    )
+    .unwrap();
+    assert!(pump.is_none());
+    assert_eq!(full["wakePolicy"]["delivery"], "full");
+    assert!(workflow_wakes::guard(&store.0, &guard, "coordinator").is_ok());
+    error(
+        owner_change(
+            &mut store,
+            &run,
+            json!({"action":"setDelivery","key":"full-2","delivery":"full"}),
+        )
+        .map(|_| ()),
+        "wake_state_conflict",
+    );
+    send(&mut store, &run, "first", "question");
+    send(&mut store, &run, "second", "error");
+    let digest = crate::workflow_checkpoints::current(
+        &store.0,
+        &actor(true),
+        run["run"]["id"].as_str().unwrap(),
+        0,
+        None,
+    )
+    .unwrap()["context"]["digest"]
+        .clone();
+    let at = first_at(&store) + 1000;
+    let dispatch = claim(&mut store, &guard, at).unwrap();
+    assert!(dispatch.prompt.contains("Full delivery"));
+    assert!(dispatch.prompt.contains(digest.as_str().unwrap()));
+    assert!(dispatch.prompt.contains("implement assigned"));
+    assert!(!dispatch.prompt.contains("PRIVATE_UNTRUSTED_BODY"));
+    assert!(dispatch.prompt.len() < 4096);
+    let first = batch(&mut store, &run, &dispatch.batch_id);
+    assert_eq!(first["delivery"], "full");
+    assert_eq!(first["baseline"]["contextDigest"], digest);
+    assert_eq!(first["baseline"]["pendingInbox"], 2);
+    assert_eq!(sequences(&first).len(), 2);
+    settle(&mut store, &dispatch, at);
+    send(&mut store, &run, "third", "question");
+    let next = claim(&mut store, &guard, at + 5000).unwrap();
+    let second = batch(&mut store, &run, &next.batch_id);
+    assert_eq!(sequences(&second).len(), 1);
+    assert_eq!(second["afterSequence"], *sequences(&first).last().unwrap());
+    settle(&mut store, &next, at + 5000);
+    owner_change(
+        &mut store,
+        &run,
+        json!({"action":"setDelivery","key":"delta-1","delivery":"delta"}),
+    )
+    .unwrap();
+    send(&mut store, &run, "fourth", "question");
+    let delta = claim(&mut store, &guard, at + 10_000).unwrap();
+    assert!(!delta.prompt.contains("Full delivery"));
+    assert_eq!(
+        batch(&mut store, &run, &delta.batch_id)["delivery"],
+        "delta"
+    );
+}

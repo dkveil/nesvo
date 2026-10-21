@@ -669,3 +669,79 @@ fn running_blocker_changes_and_resolution_publish_once_without_heartbeat_events(
         assert_eq!(count(&store), before + index as i64 + 1);
     }
 }
+#[test]
+fn every_earlier_job_record_shape_reads_unchanged_so_no_schedule_migration_exists() {
+    const ORIGINAL_ONCE: &str = concat!(
+        r#"{"title":"Original once","instruction":"Report result","profile":{"name":null,"cwd":null,"program":"claude","workspace":"shared","harness":true},"#,
+        r#""schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"},"misfire":"catchUp","graceMs":60000,"overlap":"skip","maxElapsedMs":300000}"#
+    );
+    const ORIGINAL_CRON: &str = concat!(
+        r#"{"title":"Original cron","instruction":"Report result","profile":{"name":null,"cwd":null,"program":"codex","workspace":"worktree","harness":true},"#,
+        r#""schedule":{"kind":"cron","expression":"0 9 * * MON-FRI","timeZone":"Europe/Warsaw"},"misfire":"skip","graceMs":60000,"overlap":"queue","maxElapsedMs":300000}"#
+    );
+    for original in [ORIGINAL_ONCE, ORIGINAL_CRON] {
+        let parsed: job_definitions::Spec = serde_json::from_str(original).unwrap();
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), original);
+    }
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let due = chrono::DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
+        .unwrap()
+        .timestamp_millis();
+    store.0.execute("INSERT INTO harness_jobs(id,spec,revision,enabled,next_due,created_at) VALUES('original-once',?1,1,1,?2,?3),('original-cron',?4,2,0,?5,?3)",rusqlite::params![ORIGINAL_ONCE,due,NOW as i64,ORIGINAL_CRON,(NOW+86_400_000) as i64]).unwrap();
+    store.0.execute("INSERT INTO harness_job_occurrences(id,job_id,job_revision,spec,trigger_key,trigger_kind,due_at,created_at,state,reason,finished_at) VALUES('original-skip','original-once',1,?1,'schedule:1','schedule',?2,?2,'skipped','missed_window',?2)",rusqlite::params![ORIGINAL_ONCE,(NOW-60_000) as i64]).unwrap();
+    store.0.execute("INSERT INTO harness_job_mutations(issuer,key,digest,view) VALUES('owner','original-create','00',?1)",[format!(r#"{{"job":{{"id":"original-once","revision":1,"spec":{ORIGINAL_ONCE}}}}}"#)]).unwrap();
+    let head = store.cursors().unwrap();
+    job_definitions::recover(&mut store.0, NOW).unwrap();
+    let once = request(
+        &mut store,
+        json!({"action":"get","jobId":"original-once"}),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        once["job"]["spec"],
+        serde_json::from_str::<Value>(ORIGINAL_ONCE).unwrap()
+    );
+    assert_eq!(once["job"]["calendarState"], "ready");
+    let cron = request(
+        &mut store,
+        json!({"action":"get","jobId":"original-cron"}),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(cron["job"]["schedule"]["timeZone"], "Europe/Warsaw");
+    let list = request(&mut store, json!({"action":"list"}), NOW).unwrap();
+    assert_eq!(list["jobs"].as_array().unwrap().len(), 2);
+    let history = request(
+        &mut store,
+        json!({"action":"history","jobId":"original-once"}),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(history["occurrences"][0]["trigger"], "schedule");
+    assert!(history["occurrences"][0]["jobAttemptId"].is_null());
+    let replay = request(
+        &mut store,
+        json!({"action":"mutation","key":"original-create"}),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(replay["job"]["id"], "original-once");
+    let stored: Vec<String> = store
+        .0
+        .prepare("SELECT spec FROM harness_jobs ORDER BY created_at,id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(stored, [ORIGINAL_CRON, ORIGINAL_ONCE]);
+    assert_eq!(store.cursors().unwrap(), head);
+    let edited = request(
+        &mut store,
+        json!({"action":"update","key":"edit-original","jobId":"original-cron","expectedRevision":2,"spec":serde_json::from_str::<Value>(ORIGINAL_CRON).unwrap()}),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(edited["job"]["revision"], 3);
+}

@@ -1492,6 +1492,7 @@ impl State {
         event["runDelivery"] = self.event_log.is_some().into();
         event["runExecutor"] = self.event_log.is_some().into();
         event["runWakes"] = self.event_log.is_some().into();
+        event["runWakeDelivery"] = self.event_log.is_some().into();
         event["runCheckpoints"] = self.event_log.is_some().into();
         event["runRecovery"] = self.event_log.is_some().into();
         event["runCoordinatorRecovery"] = self.event_log.is_some().into();
