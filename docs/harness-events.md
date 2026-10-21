@@ -23,6 +23,9 @@ monotonic `sequence`, nullable `sessionId`, `kind`, host observation time `at`,
 and a bounded metadata object `payload`. Current kinds include `host.started`,
 `session.created`, `session.closed`, `process.exited`, `agent.lifecycle` and
 `response.settled`. A response event references its turn and has no task outcome.
+Durable receipts add `operation.changed` (`operationId`, `operation`, `phase`) and
+workflow mutations add `run.*` events (`runId`, `revision`) whose subject is the
+run's coordinator session.
 Prompts, response text and tool arguments are not journaled here.
 
 The default/maximum page is 32 events, each with at most 1024 encoded payload
@@ -77,3 +80,12 @@ watch cursor prints its gap page followed by `cursor_expired` and exits nonzero.
 Without `--watch`, the single page's `gap` is available for explicit reconciliation.
 Inside a managed process, the same CLI uses its private context automatically.
 The output schema is shared with the other CLI queries.
+
+## MCP
+
+`nesvo mcp` exposes the same pages as `nesvo://events` resources and forwards a
+dedicated `subscribeEvents` stream per subscribed URI as
+`notifications/resources/updated` with the delta's `after`, `nextCursor` and
+`readUri` in `_meta["nesvo/events"]`. Subject authority, bounds, gaps and
+at-least-once delivery are unchanged. See the
+[MCP event resources](harness-mcp.md#event-resources-and-subscriptions).

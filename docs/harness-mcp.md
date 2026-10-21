@@ -268,6 +268,82 @@ exit. The session and output remain available. Repeating a key through CLI/MCP
 does not signal twice, including after the process exits. Run-level cancel/drain
 and durable run permissions remain separate policy boundaries.
 
+## Event resources and subscriptions
+
+The adapter advertises `resources` with `subscribe:true` so an orchestrating agent
+can wait for host [domain events](harness-events.md) instead of polling
+`nesvo_read_events`. No tool was added; the tool catalog is unchanged.
+
+| Resource URI                  | Host page                                                |
+| ----------------------------- | -------------------------------------------------------- |
+| `nesvo://events`              | `readEvents` for every subject this caller may read      |
+| `nesvo://events/operations`   | the same page keeping only `operation.changed` receipts  |
+| `nesvo://events/session/{id}` | `readEvents` with `sessionId`, filtered by the host      |
+| `nesvo://events/run/{runId}`  | the caller's page keeping `run.*` events of that `runId` |
+
+`resources/list` returns the first two; `resources/templates/list` returns the
+session and run templates. Each URI accepts `?after=CURSOR&limit=1-32` (default
+`after=0`, `limit=32`); IDs are 1–128 ASCII letters, digits, `-` or `_`. Any other
+URI, duplicate or unknown query key fails with `-32002` resource not found.
+`resources/read` makes one bounded `readEvents` request through a fresh
+authenticated connection and returns one `application/json` text content:
+`{schemaVersion:1,ok:true,data}` with the host page fields (`events`, `nextCursor`,
+`headCursor`, `floorCursor`, `gap`, `more`, `health`) plus `resource`. Run and
+operation filtering happens after the host's subject authorization, so a page can
+be empty with `more:true`; keep reading from `nextCursor`. Reads share the four
+host-call slots, honor request cancellation and are never cached (`ttlMs:0`,
+private scope). Host refusals keep their stable code in the JSON-RPC error `data`.
+
+Subscribing opens one dedicated host `subscribeEvents` stream per URI. Without
+`after` the stream starts at the current journal head; with `after` it resumes
+from that cursor. Scoped callers get exactly the `readEvents` authority: a worker
+defaults to its own subject and a foreign `sessionId` is refused. Protocol
+`2026-07-28` clients use `subscriptions/listen` with `resourceSubscriptions`;
+only valid event URIs, at most four, are acknowledged. The SDK acknowledges before
+the host streams open, so a refusal of any URI arrives as the listen request's
+error response and opens nothing.
+Initialize-era clients (`2025-11-25` and older) use `resources/subscribe` and
+`resources/unsubscribe`; subscribing again to the same URI replaces its stream.
+At most four streams are active per adapter process; a fifth fails with `busy`.
+
+Each change is a `notifications/resources/updated` for the subscribed URI whose
+`params._meta["nesvo/events"]` is:
+
+```json
+{
+  "schemaVersion": 1,
+  "resource": "nesvo://events/operations",
+  "readUri": "nesvo://events/operations?after=41",
+  "after": 41,
+  "nextCursor": 44,
+  "headCursor": 44,
+  "sequences": [42, 44],
+  "dropped": 0,
+  "gap": false,
+  "ready": false
+}
+```
+
+The first notification has `ready:true` and no sequences; changes after its
+`after` cursor are always delivered. Later notifications are sent only when a
+page contains matching events. `after` is the cursor before the first
+undelivered match, so reading `readUri` (then `nextCursor` while `more`) returns
+exactly the delta. The bridge keeps one pending delta per stream and never stops
+reading the host: while the client is slow, deltas coalesce, `after` keeps the
+oldest undelivered cursor, at most 32 `sequences` are listed and `dropped` counts
+older listed sequences that were removed. A dropped sequence is still covered by
+`after`; nothing is lost while the journal retains it. `gap:true` means the
+host retention expired before the cursor; the final notification then carries
+`closed:{code:"cursor_expired"}` and the client must reconcile authoritative state
+before subscribing again. Host loss (`disconnected`), expired process authority
+(`scope_revoked`) and other stream errors also end that stream with a final
+`closed` notification; resubscribe with `?after=` from the last notified cursor.
+Delivery is at least once; deduplicate by domain sequence.
+
+Cancelling a `subscriptions/listen` request, `resources/unsubscribe` and stdin EOF
+release the host subscription by closing its connection. Notifications are
+change hints, never task results, acknowledgements or permission to replay input.
+
 ## Protocol, bounds and dependencies
 
 The official `rmcp 3.5.1` SDK declares Rust 1.88, matching the workspace. It handles
@@ -339,6 +415,13 @@ events and terminal markers require one send, no interrupt/stop/failure, and one
 natural settlement. The scenario keeps a ten-second acceptance deadline; this is
 controlled PTY coverage, not an original-model or general protocol conformance claim.
 
-Actual provider prompt-correlation coverage, MCP event streaming,
-full durable run recovery and actual provider-to-child orchestration remain F10/F17
+The event resource scenario (`support/mcp_events.rs`) drives one `2026-07-28`
+discover client and one `2025-11-25` initialize client against a controlled host.
+It checks the resource catalog, not-found URIs, bounded reads, acknowledgment of
+valid URIs only, the `ready` cursor, a create receipt's `operation.changed`
+notification on both paths, delta reads from `readUri` and `nextCursor`, and
+stream release after `resources/unsubscribe`. Notifications are awaited with
+deadlines, never fixed sleeps. Live-provider event streams remain unverified.
+
+Actual provider prompt-correlation coverage, full durable run recovery and actual provider-to-child orchestration remain F10/F17
 gates. A model-driven evaluation corpus for those workflows is also pending.
