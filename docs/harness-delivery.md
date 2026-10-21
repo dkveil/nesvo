@@ -56,7 +56,7 @@ not evidence that the expanded acceptance criteria pass.
 | F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: history, no-effect retry, overlap, cancellation, execution timeouts and owner no-effect launch resolution; broader retry, uncertain effects, cleanup and job UI pending                      |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                                                                                      |
 | F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Implemented shared attention/unread/MRU ranking and exact target safety; current native/platform verification pending                                                                                 |
-| F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                                                                               |
+| F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Partial: validated repository/branch client search and schema; bounded host source and native acceptance pending                                                                                      |
 | F32 | Incremental preview and process/turn times      | Partial: bounded replay and monotonic process age             | Implemented distinct process/turn times and bounded passive read; device matrix pending                                                                                                               |
 | F33 | Revision-bound diff feedback                    | Missing                                                       | Pending                                                                                                                                                                                               |
 | F34 | Verified session/turn edit provenance           | Partial: agent edit folder context only                       | Pending                                                                                                                                                                                               |
@@ -3593,3 +3593,21 @@ seconds serially. They preserve immutable timer identity, actual exit/report
 proof, independent-session safety and active/quick human takeover protection.
 The other three observed CI boundaries remain unproven causes; this test-race
 fix does not claim to resolve them.
+
+### F31 additive client search contract
+
+Validated optional launch-directory repository/branch metadata now extends the
+existing shared quick-search/palette matcher. Stale or malformed evidence adds
+no terms. Deliberate search entry and a correlated local create request one
+existing list refresh; typing, paste, expansion, output and rendering do not.
+Same-revision metadata updates preserve the exact target, and losing a branch-only
+match cannot substitute a sibling under Enter. The approved layout, ranking
+weights, PTY shortcuts and sixteen-session transport ceiling remain unchanged.
+
+Windows warnings-denied all-target Clippy, 26 model and 42 controller tests pass.
+The complete 30 client contracts, TypeScript, ESLint, four architecture tests and
+repository formatting pass. These include the published additive JSON schema's
+legacy/valid-state/contradictory-state boundaries. No dependency, Expo API or SDK
+changes. Host inspection/runtime and real Git/SDK acceptance remain a separate
+F31 slice; client fixtures are not evidence of available host metadata or a
+physical-phone test. See [contract](harness-contextual-search.md).

@@ -191,6 +191,28 @@ credentials never appear in snapshots. This is API authorization, not an OS sand
 
 ## Sessions and groups
 
+Session snapshots and query output may include optional
+`repositoryContext:{source,state,name,branch,observedAt,revision}`. Omission is
+valid for older hosts or optional snapshot-byte clipping. All six inner fields
+are required when present. `source` is exactly `launchDirectory`: the canonical
+directory passed to the native launch, independently of later agent cwd or review
+selection. States are `checking|ready|detached|notRepository|unavailable|stale`.
+Repository/branch labels are nullable, nonempty, control-free UTF-8 strings of
+at most 128/256 bytes. `ready` has both labels; `detached` has only a repository
+name. Other states have null labels. Ready/detached/notRepository have a
+nonnegative JavaScript-safe Unix-millisecond observation time; stale retains the
+original time. Checking/unavailable have null observation time. `revision` is a
+JavaScript-safe metadata revision, independent of workspace revision or native
+conversation generation. This advisory object grants no authority or readiness,
+commit or task-result proof. See [contextual search](harness-contextual-search.md).
+
+The TUI ignores malformed optional context without rejecting a legacy session;
+mobile keeps its existing strict optional-field rule and rejects malformed-present
+context with the fixed validation error. Both accept omission and preserve the
+original snapshot. Neither inspects local Git. The existing default admission
+budget is eight retained sessions and the hard ceiling is sixteen; optional
+context changes neither budget nor the authenticated plaintext limit.
+
 `domainEvents:true` adds `readEvents`, `subscribeEvents` and `unsubscribeEvents`.
 Their bounded durable cursors, retention gaps, subject authorization and health
 contract are defined in `harness-events.md`. These domain cursors cannot be used

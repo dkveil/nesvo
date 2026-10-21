@@ -77,6 +77,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         _ => {}
     }
     let dialog_before = app.dialog.as_ref().map(std::mem::discriminant);
+    let search_was_open = matches!(app.dialog, Some(Dialog::QuickSwitch { .. }));
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => {
             if app.dialog.is_none()
@@ -350,6 +351,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         } else {
             None
         };
+    }
+    if !search_was_open && matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) && app.connected {
+        outcome.commands.push(json!({"type":"list"}));
     }
     app.reconcile_palette();
     if let Some(Dialog::QuickSwitch { selected, .. }) = &app.dialog {
@@ -1588,6 +1592,191 @@ mod tests {
                 .commands
                 .iter()
                 .any(|command| command["type"] == "acquireControl" && command["sessionId"] == "b")
+        );
+    }
+
+    fn repository_search_snapshot() -> Value {
+        let mut value = stable_search_snapshot();
+        for index in [1, 2] {
+            value["sessions"][index]["repositoryContext"] = json!({
+                "source":"launchDirectory", "state":"ready", "name":"répertoire",
+                "branch":"feature/zażółć", "observedAt":7, "revision":1
+            });
+        }
+        value
+    }
+
+    #[test]
+    fn repository_updates_preserve_the_exact_search_target_at_the_same_workspace_revision() {
+        let target = crate::palette::Target::Session("b".into());
+        let mut app = App::new(1);
+        app.event(repository_search_snapshot()).unwrap();
+        app.dialog = Some(Dialog::QuickSwitch {
+            query: "feature/zażółć".into(),
+            selected: Some(target.clone()),
+        });
+        let mut update = repository_search_snapshot();
+        update["sessions"][2]["repositoryContext"]["revision"] = json!(2);
+        update["sessions"][2]["repositoryContext"]["name"] = json!("other repository");
+        update["sessions"].as_array_mut().unwrap().reverse();
+        app.event(update).unwrap();
+        assert_eq!(app.revision, 1);
+        assert_eq!(search_target(&app), Some(target.clone()));
+        let focus = app.focused;
+        let expanded = search_key(&mut app, KeyCode::F(2));
+        assert_eq!(search_target(&app), Some(target));
+        assert_eq!(app.focused, focus);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query == "feature/zażółć")
+        );
+        assert!(
+            expanded
+                .commands
+                .iter()
+                .all(|command| command["type"] != "list")
+        );
+        search_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.active_id(), Some("b"));
+        assert_eq!(app.recent_sessions, ["b"]);
+    }
+
+    #[test]
+    fn lost_repository_only_match_clears_target_without_selecting_a_matching_sibling() {
+        for loss in ["stale", "unavailable", "changed", "omitted", "invalid"] {
+            let mut app = App::new(1);
+            app.event(repository_search_snapshot()).unwrap();
+            app.dialog = Some(Dialog::QuickSwitch {
+                query: "feature/zażółć".into(),
+                selected: Some(crate::palette::Target::Session("b".into())),
+            });
+            let mut update = repository_search_snapshot();
+            if loss == "omitted" {
+                update["sessions"][1]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("repositoryContext");
+            } else {
+                let context = &mut update["sessions"][1]["repositoryContext"];
+                match loss {
+                    "stale" | "unavailable" => {
+                        context["state"] = json!(loss);
+                        context["name"] = Value::Null;
+                        context["branch"] = Value::Null;
+                        if loss == "unavailable" {
+                            context["observedAt"] = Value::Null;
+                        }
+                    }
+                    "changed" => context["branch"] = json!("feature/other"),
+                    "invalid" => context["revision"] = json!(-1),
+                    _ => unreachable!(),
+                }
+            }
+            app.event(update).unwrap();
+            assert_eq!(app.revision, 1);
+            assert_eq!(search_target(&app), None, "Context loss {loss}");
+            assert!(
+                app.palette_results("feature/zażółć")
+                    .iter()
+                    .any(|row| row.target.session_id() == Some("c"))
+            );
+            // Even later restored evidence does not substitute or resurrect the old cursor.
+            app.event(repository_search_snapshot()).unwrap();
+            search_key(&mut app, KeyCode::F(2));
+            let outcome = search_key(&mut app, KeyCode::Enter);
+            assert_eq!(app.active_id(), Some("anchor"));
+            assert_eq!(search_target(&app), None);
+            assert!(app.recent_sessions.is_empty());
+            assert!(
+                outcome
+                    .commands
+                    .iter()
+                    .all(|command| command["type"] != "acquireControl")
+            );
+        }
+    }
+
+    #[test]
+    fn deliberate_search_entry_requests_one_list_but_typing_paste_and_f2_do_not() {
+        let mut app = App::new(1);
+        app.event(repository_search_snapshot()).unwrap();
+        let opened = search_key(&mut app, KeyCode::Char('/'));
+        assert_eq!(
+            opened
+                .commands
+                .iter()
+                .filter(|command| command["type"] == "list")
+                .count(),
+            1
+        );
+        for key in [
+            KeyCode::Char('z'),
+            KeyCode::Backspace,
+            KeyCode::F(2),
+            KeyCode::Down,
+        ] {
+            let outcome = search_key(&mut app, key);
+            assert!(
+                outcome
+                    .commands
+                    .iter()
+                    .all(|command| command["type"] != "list")
+            );
+        }
+        let pasted = event(
+            &mut app,
+            Event::Paste("工程".into()),
+            Rect::new(0, 0, 150, 44),
+        );
+        assert!(
+            pasted
+                .commands
+                .iter()
+                .all(|command| command["type"] != "list")
+        );
+        search_key(&mut app, KeyCode::Esc);
+        let reopened = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            Rect::new(0, 0, 150, 44),
+        );
+        assert_eq!(
+            reopened
+                .commands
+                .iter()
+                .filter(|command| command["type"] == "list")
+                .count(),
+            1
+        );
+        search_key(&mut app, KeyCode::Esc);
+        app.disconnect("offline".into());
+        assert!(
+            search_key(&mut app, KeyCode::Char('/'))
+                .commands
+                .iter()
+                .all(|command| command["type"] != "list")
+        );
+    }
+
+    #[test]
+    fn repository_metadata_does_not_take_control_k_away_from_the_owned_pty() {
+        let mut app = App::new(1);
+        let mut value = repository_search_snapshot();
+        value["sessions"][0]["controllerId"] = json!(1);
+        app.event(value).unwrap();
+        app.leases.insert("anchor".into(), "owned".into());
+        app.terminals
+            .insert("anchor".into(), crate::terminal::TerminalState::new(24, 80));
+        app.mode = Mode::Input;
+        let outcome = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            Rect::new(0, 0, 150, 44),
+        );
+        assert!(app.dialog.is_none());
+        assert!(matches!(app.mode, Mode::Input));
+        assert_eq!(
+            outcome.commands,
+            [json!({"type":"input","sessionId":"anchor","leaseId":"owned","data":"\u{000b}"})]
         );
     }
 

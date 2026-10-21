@@ -1,3 +1,5 @@
+import { Buffer } from 'buffer';
+
 import type { ServerMessage } from './types';
 
 type RecordValue = Record<string, unknown>;
@@ -159,11 +161,42 @@ function attentionSummary(value: unknown): boolean {
         Number(value.highest.priority) > 0)
   );
 }
+function repositoryLabel(value: unknown, maxBytes: number): boolean {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    !/[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/u.test(value) &&
+    Buffer.byteLength(value, 'utf8') <= maxBytes
+  );
+}
+function repositoryContext(value: unknown): boolean {
+  if (!record(value) || value.source !== 'launchDirectory' || !integer(value.revision))
+    return false;
+  switch (value.state) {
+    case 'ready':
+      return (
+        repositoryLabel(value.name, 128) &&
+        repositoryLabel(value.branch, 256) &&
+        integer(value.observedAt)
+      );
+    case 'detached':
+      return repositoryLabel(value.name, 128) && value.branch === null && integer(value.observedAt);
+    case 'notRepository':
+    case 'stale':
+      return value.name === null && value.branch === null && integer(value.observedAt);
+    case 'checking':
+    case 'unavailable':
+      return value.name === null && value.branch === null && value.observedAt === null;
+    default:
+      return false;
+  }
+}
 function session(value: unknown): value is RecordValue {
   return (
     record(value) &&
     text(value.id) &&
     text(value.name, 320) &&
+    (value.repositoryContext === undefined || repositoryContext(value.repositoryContext)) &&
     (value.parentSessionId === undefined || nullableId(value.parentSessionId)) &&
     (value.role === undefined || value.role === 'worker' || value.role === 'coordinator') &&
     (value.uptimeSeconds === undefined || integer(value.uptimeSeconds)) &&

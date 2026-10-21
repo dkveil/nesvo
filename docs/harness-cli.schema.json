@@ -961,10 +961,21 @@
               "additionalProperties": false,
               "required": ["type", "sessionId", "quotaWake"],
               "properties": {
-                "type": { "const": "quotaWake" },
-                "sessionId": { "$ref": "#/definitions/id" },
+                "type": {
+                  "const": "quotaWake"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
                 "quotaWake": {
-                  "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/quotaWake" }]
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/definitions/quotaWake"
+                    }
+                  ]
                 }
               }
             },
@@ -973,11 +984,25 @@
               "additionalProperties": false,
               "required": ["type", "sessionId", "wakeAt", "quotaWake"],
               "properties": {
-                "type": { "const": "wakeConfigured" },
-                "sessionId": { "$ref": "#/definitions/id" },
-                "wakeAt": { "type": ["integer", "null"], "minimum": 1 },
+                "type": {
+                  "const": "wakeConfigured"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "wakeAt": {
+                  "type": ["integer", "null"],
+                  "minimum": 1
+                },
                 "quotaWake": {
-                  "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/quotaWake" }]
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/definitions/quotaWake"
+                    }
+                  ]
                 }
               }
             },
@@ -2056,6 +2081,9 @@
               "$ref": "#/definitions/harnessConfiguration"
             }
           ]
+        },
+        "repositoryContext": {
+          "$ref": "#/definitions/repositoryContext"
         }
       }
     },
@@ -4509,27 +4537,64 @@
         "operationPhase"
       ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
-        "sessionId": { "$ref": "#/definitions/id" },
-        "launchId": { "$ref": "#/definitions/id" },
-        "generation": { "type": "integer", "minimum": 1 },
-        "phase": { "enum": ["armed", "dispatching", "paused"] },
-        "reason": { "type": ["string", "null"] },
-        "predecessorId": { "type": ["string", "null"], "maxLength": 128 },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/id"
+        },
+        "launchId": {
+          "$ref": "#/definitions/id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase": {
+          "enum": ["armed", "dispatching", "paused"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "predecessorId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
         "source": {
           "type": "object",
           "additionalProperties": false,
           "required": ["readerId", "contextId", "accountFingerprint", "revision", "resetAt"],
           "properties": {
-            "readerId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
-            "contextId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-            "accountFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-            "revision": { "type": "integer", "minimum": 1 },
-            "resetAt": { "type": "integer", "minimum": 1 }
+            "readerId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "contextId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "accountFingerprint": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "resetAt": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         },
-        "operationId": { "type": ["string", "null"], "maxLength": 128 },
-        "operationPhase": { "type": ["string", "null"] }
+        "operationId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "operationPhase": {
+          "type": ["string", "null"]
+        }
       }
     },
     "providerQuotaWindow": {
@@ -4931,6 +4996,108 @@
         }
       },
       "description": "Additive retained quota admission evidence. Historical accepted envelopes may omit it. Waiting does not imply a native effect or authorize retry; reader eligibility does not guarantee provider acceptance."
+    },
+    "repositoryContext": {
+      "type": "object",
+      "required": ["source", "state", "name", "branch", "observedAt", "revision"],
+      "properties": {
+        "source": {
+          "const": "launchDirectory"
+        },
+        "state": {
+          "enum": ["checking", "ready", "detached", "notRepository", "unavailable", "stale"]
+        },
+        "name": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\u0000-\u001f-]+$",
+          "description": "Nonempty repository/worktree label, at most 128 UTF-8 bytes; runtime validation enforces byte length."
+        },
+        "branch": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\u0000-\u001f-]+$",
+          "description": "Actual symbolic branch label, at most 256 UTF-8 bytes; runtime validation enforces byte length."
+        },
+        "observedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "state": {
+              "const": "ready"
+            },
+            "name": {
+              "type": "string"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "observedAt": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "properties": {
+            "state": {
+              "const": "detached"
+            },
+            "name": {
+              "type": "string"
+            },
+            "branch": {
+              "type": "null"
+            },
+            "observedAt": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "properties": {
+            "state": {
+              "enum": ["notRepository", "stale"]
+            },
+            "name": {
+              "type": "null"
+            },
+            "branch": {
+              "type": "null"
+            },
+            "observedAt": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "properties": {
+            "state": {
+              "enum": ["checking", "unavailable"]
+            },
+            "name": {
+              "type": "null"
+            },
+            "branch": {
+              "type": "null"
+            },
+            "observedAt": {
+              "type": "null"
+            }
+          }
+        }
+      ]
     }
   }
 }

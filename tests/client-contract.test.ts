@@ -1,5 +1,7 @@
+import Ajv from 'ajv';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -34,6 +36,54 @@ const session = {
   groupId: 'child',
   controllerId: null,
 };
+
+test('published session schema keeps repository context optional and rejects contradictory states', () => {
+  const validate = new Ajv().compile(
+    JSON.parse(readFileSync(new URL('../docs/harness-cli.schema.json', import.meta.url), 'utf8')),
+  );
+  const envelope = (context?: unknown) => ({
+    schemaVersion: 1,
+    ok: true,
+    data: {
+      type: 'session',
+      session: {
+        ...session,
+        id: '1'.repeat(32),
+        ...(context === undefined ? {} : { repositoryContext: context }),
+      },
+    },
+  });
+  assert.equal(validate(envelope()), true);
+  const ready = {
+    source: 'launchDirectory',
+    state: 'ready',
+    name: 'répertoire工程',
+    branch: 'feature/zażółć',
+    observedAt: 7,
+    revision: 2,
+  };
+  for (const context of [
+    ready,
+    { ...ready, state: 'detached', branch: null },
+    { ...ready, state: 'notRepository', name: null, branch: null },
+    { ...ready, state: 'stale', name: null, branch: null },
+    { ...ready, state: 'checking', name: null, branch: null, observedAt: null },
+    { ...ready, state: 'unavailable', name: null, branch: null, observedAt: null },
+  ])
+    assert.equal(validate(envelope(context)), true);
+  for (const context of [
+    null,
+    { ...ready, state: 'guessed' },
+    { ...ready, branch: null },
+    { ...ready, observedAt: null },
+    { ...ready, source: 'reviewFolder' },
+    { ...ready, state: 'stale' },
+    { ...ready, name: 'PRIVATE\nLABEL' },
+    { ...ready, revision: 9007199254740992 },
+    { ...ready, name: undefined },
+  ])
+    assert.equal(validate(envelope(context)), false);
+});
 
 function retainedSnapshot(count: number) {
   return {
@@ -456,6 +506,139 @@ test('optional host session uptime is bounded and legacy snapshots still decode'
       () => decodeServerMessage({ ...snapshot, sessions: [{ ...session, uptimeSeconds }] }),
       /Invalid host message/,
     );
+});
+
+const repositoryContext = {
+  source: 'launchDirectory',
+  state: 'ready',
+  name: 'répertoire工程',
+  branch: 'feature/zażółć',
+  observedAt: 1_792_545_000_000,
+  revision: 2,
+} as const;
+
+test('optional launch-directory repository context preserves legacy and Unicode snapshots', () => {
+  const legacy = retainedSnapshot(16);
+  assert.equal(decodeServerMessage(legacy), legacy);
+  assert.equal(Object.hasOwn(legacy.sessions[0] ?? {}, 'repositoryContext'), false);
+  const contexts = [
+    repositoryContext,
+    { ...repositoryContext, state: 'detached', branch: null },
+    { ...repositoryContext, state: 'notRepository', name: null, branch: null },
+    { ...repositoryContext, state: 'stale', name: null, branch: null },
+    {
+      ...repositoryContext,
+      state: 'checking',
+      name: null,
+      branch: null,
+      observedAt: null,
+    },
+    {
+      ...repositoryContext,
+      state: 'unavailable',
+      name: null,
+      branch: null,
+      observedAt: null,
+    },
+  ];
+  for (const context of contexts) {
+    const snapshot = {
+      ...legacy,
+      sessions: legacy.sessions.map(item => ({ ...item, repositoryContext: context })),
+    };
+    const before = structuredClone(snapshot);
+    assert.equal(decodeServerMessage(snapshot), snapshot);
+    assert.deepEqual(snapshot, before, 'Context validation cannot rewrite the host snapshot');
+    const key = new Uint8Array(32).fill(9);
+    const challenge = 'b'.repeat(64);
+    const frame = encodeFrame(snapshot, key, challenge, 'host-to-client', 1, randomBytes);
+    assert.deepEqual(
+      decodeServerMessage(decodeFrame(frame, key, challenge, 'host-to-client', 1)),
+      snapshot,
+    );
+  }
+});
+
+test('repository context labels use UTF-8 byte bounds and safe metadata integers', () => {
+  for (const context of [
+    { ...repositoryContext, name: 'é'.repeat(64), branch: '界'.repeat(85) },
+    {
+      ...repositoryContext,
+      name: '🎯'.repeat(32),
+      branch: '🎯'.repeat(64),
+      observedAt: Number.MAX_SAFE_INTEGER,
+      revision: Number.MAX_SAFE_INTEGER,
+    },
+    { ...repositoryContext, observedAt: 0, revision: 0 },
+  ]) {
+    const snapshot = {
+      type: 'sessions',
+      groups,
+      sessions: [{ ...session, repositoryContext: context }],
+      revision: 4,
+    };
+    assert.equal(decodeServerMessage(snapshot), snapshot);
+  }
+});
+
+test('malformed present repository context is refused privately without mutating other session data', () => {
+  const invalid: unknown[] = [null, false, [], {}, 'launchDirectory'];
+  for (const [field, bad] of [
+    ['source', 'agentDirectory'],
+    ['state', 'unknown'],
+    ['name', null],
+    ['name', ''],
+    ['name', 'é'.repeat(65)],
+    ['name', '🎯'.repeat(33)],
+    ['name', 'PRIVATE_REPOSITORY_NAME\x1b'],
+    ['branch', null],
+    ['branch', ''],
+    ['branch', '界'.repeat(86)],
+    ['branch', '🎯'.repeat(65)],
+    ['branch', 'feature/PRIVATE_BRANCH\n'],
+    ['branch', 'feature/\x85'],
+    ['branch', '\ud800'],
+    ['observedAt', null],
+    ['observedAt', -1],
+    ['observedAt', 1.5],
+    ['observedAt', Number.MAX_SAFE_INTEGER + 1],
+    ['revision', -1],
+    ['revision', 1.5],
+    ['revision', '2'],
+    ['revision', Number.MAX_SAFE_INTEGER + 1],
+  ] as const)
+    invalid.push({ ...repositoryContext, [field]: bad });
+  for (const field of ['source', 'state', 'name', 'branch', 'observedAt', 'revision']) {
+    const missing: Record<string, unknown> = { ...repositoryContext };
+    delete missing[field];
+    invalid.push(missing);
+  }
+  for (const state of ['checking', 'detached', 'notRepository', 'unavailable', 'stale'])
+    invalid.push({ ...repositoryContext, state });
+  for (const state of ['checking', 'unavailable'])
+    invalid.push({ ...repositoryContext, state, name: null, branch: null });
+  for (const state of ['detached', 'notRepository', 'stale'])
+    invalid.push({
+      ...repositoryContext,
+      state,
+      name: state === 'detached' ? repositoryContext.name : null,
+      branch: null,
+      observedAt: null,
+    });
+  for (const context of invalid) {
+    const snapshot = {
+      type: 'sessions',
+      groups,
+      sessions: [{ ...session, repositoryContext: context }],
+      revision: 4,
+    };
+    const before = structuredClone(snapshot);
+    assert.throws(() => decodeServerMessage(snapshot), {
+      name: 'Error',
+      message: 'Invalid host message.',
+    });
+    assert.deepEqual(snapshot, before);
+  }
 });
 
 test('optional process lineage is validated independently from groups and authority', () => {

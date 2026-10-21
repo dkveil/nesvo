@@ -93,7 +93,17 @@ export type SessionControl = {
   rows: number;
 };
 
+export type RepositoryContext = {
+  source: 'launchDirectory';
+  state: 'checking' | 'ready' | 'detached' | 'notRepository' | 'unavailable' | 'stale';
+  name: string | null;
+  branch: string | null;
+  observedAt: number | null;
+  revision: number;
+};
+
 export type TerminalSession = {
+  repositoryContext?: RepositoryContext;
   role?: 'worker' | 'coordinator';
   parentSessionId?: string | null;
   currentAttention?: CurrentAttention;

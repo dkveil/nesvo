@@ -59,10 +59,101 @@ impl SessionSearchRank<'_> {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RepositoryContext {
+    source: String,
+    state: RepositoryState,
+    #[serde(deserialize_with = "required_nullable")]
+    name: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    branch: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    observed_at: Option<u64>,
+    revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RepositoryState {
+    Checking,
+    Ready,
+    Detached,
+    NotRepository,
+    Unavailable,
+    Stale,
+}
+
+fn required_nullable<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+impl RepositoryContext {
+    fn valid(&self) -> bool {
+        const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+        let label = |value: &Option<String>, max| {
+            value.as_ref().is_some_and(|text| {
+                !text.is_empty() && text.len() <= max && !text.chars().any(char::is_control)
+            })
+        };
+        if self.source != "launchDirectory"
+            || self.revision > MAX_SAFE_INTEGER
+            || self.observed_at.is_some_and(|at| at > MAX_SAFE_INTEGER)
+        {
+            return false;
+        }
+        match self.state {
+            RepositoryState::Ready => {
+                label(&self.name, 128) && label(&self.branch, 256) && self.observed_at.is_some()
+            }
+            RepositoryState::Detached => {
+                label(&self.name, 128) && self.branch.is_none() && self.observed_at.is_some()
+            }
+            RepositoryState::NotRepository | RepositoryState::Stale => {
+                self.name.is_none() && self.branch.is_none() && self.observed_at.is_some()
+            }
+            RepositoryState::Checking | RepositoryState::Unavailable => {
+                self.name.is_none() && self.branch.is_none() && self.observed_at.is_none()
+            }
+        }
+    }
+
+    fn append_search_terms(&self, terms: &mut String) {
+        if matches!(
+            self.state,
+            RepositoryState::Ready | RepositoryState::Detached
+        ) {
+            for label in [&self.name, &self.branch].into_iter().flatten() {
+                terms.push(' ');
+                terms.push_str(label);
+            }
+        }
+    }
+}
+
+fn repository_context<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<RepositoryContext>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    // Optional metadata cannot make an otherwise valid legacy snapshot unusable.
+    Ok(serde_json::from_value::<RepositoryContext>(value)
+        .ok()
+        .filter(RepositoryContext::valid))
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Session {
     pub id: String,
     pub name: String,
     pub cwd: String,
+    #[serde(default, deserialize_with = "repository_context")]
+    pub repository_context: Option<RepositoryContext>,
     #[serde(default)]
     pub program: Program,
     pub cols: u16,
@@ -644,6 +735,9 @@ impl App {
             return Some(score);
         }
         let mut terms = format!("{} {} {}", session.name, session.cwd, program?.label());
+        if let Some(context) = &session.repository_context {
+            context.append_search_terms(&mut terms);
+        }
         let mut parent = session.group_id.as_deref();
         let mut seen = HashSet::new();
         while let Some(id) = parent {
@@ -1055,6 +1149,7 @@ impl App {
                     self.pending_create = None;
                     self.pending_create_form = None;
                     self.notice = "Session created. Starting terminal…".into();
+                    commands.push(json!({"type":"list"}));
                 }
             }
             "subscribed" => {
@@ -1580,6 +1675,183 @@ mod tests {
         assert_eq!(app.quick_switch_results("codex")[0].id, "codex");
         assert_eq!(app.quick_switch_results("wrkspace")[0].id, "claude");
         assert!(app.quick_switch_results("missing").is_empty());
+    }
+
+    fn repository_projection(state: &str) -> Value {
+        json!({
+            "source":"launchDirectory", "state":state,
+            "name":if matches!(state, "ready" | "detached") { json!("répertoire工程") } else { Value::Null },
+            "branch":if state == "ready" { json!("feature/zażółć") } else { Value::Null },
+            "observedAt":if matches!(state, "checking" | "unavailable") { Value::Null } else { json!(7) },
+            "revision":2
+        })
+    }
+
+    #[test]
+    fn repository_search_shares_unicode_provider_group_and_branch_eligibility() {
+        let mut value = snapshot();
+        value["sessions"][0]["program"] = json!("codex");
+        value["groups"][1]["name"] = json!("工程API");
+        value["sessions"][0]["repositoryContext"] = repository_projection("ready");
+        let mut app = App::new(1);
+        app.event(value).unwrap();
+        let target = crate::palette::Target::Session("s".into());
+        for query in [
+            "répertoire工程",
+            "feature/zażółć",
+            "@ codex feature/zażółć",
+            "工程API répertoire工程",
+        ] {
+            assert_eq!(app.quick_switch_results(query)[0].id, "s");
+            assert!(app.session_search_matches("s", query));
+            assert!(crate::palette::eligible(&app, query, &target));
+            assert!(
+                app.palette_results(query)
+                    .iter()
+                    .any(|row| row.target == target)
+            );
+        }
+        assert!(app.quick_switch_results("$ feature/zażółć").is_empty());
+        assert!(app.quick_switch_results("! feature/zażółć").is_empty());
+        assert!(app.recent_sessions.is_empty());
+    }
+
+    #[test]
+    fn only_current_ready_or_detached_repository_labels_are_search_evidence() {
+        for state in [
+            "ready",
+            "detached",
+            "checking",
+            "notRepository",
+            "unavailable",
+            "stale",
+        ] {
+            let mut value = snapshot();
+            value["sessions"][0]["repositoryContext"] = repository_projection(state);
+            let mut app = App::new(1);
+            app.event(value).unwrap();
+            assert!(
+                app.sessions[0].repository_context.is_some(),
+                "Valid {state} projection"
+            );
+            assert_eq!(
+                app.session_search_matches("s", "répertoire工程"),
+                matches!(state, "ready" | "detached"),
+                "Repository state {state}"
+            );
+            assert_eq!(
+                app.session_search_matches("s", "feature/zażółć"),
+                state == "ready"
+            );
+        }
+        let mut legacy = App::new(1);
+        legacy.event(snapshot()).unwrap();
+        assert!(legacy.sessions[0].repository_context.is_none());
+        assert!(legacy.session_search_matches("s", "API"));
+        assert!(!legacy.session_search_matches("s", "répertoire工程"));
+    }
+
+    #[test]
+    fn malformed_optional_repository_context_cannot_reject_legacy_sessions_or_add_terms() {
+        let valid = repository_projection("ready");
+        let mut invalid = vec![Value::Null, json!(false), json!([]), json!({})];
+        for (field, bad) in [
+            ("source", json!("agentDirectory")),
+            ("state", json!("unknown")),
+            ("name", Value::Null),
+            ("name", json!("")),
+            ("name", json!("private\u{001b}sentinel")),
+            ("name", json!("é".repeat(65))),
+            ("branch", Value::Null),
+            ("branch", json!("界".repeat(86))),
+            ("observedAt", Value::Null),
+            ("observedAt", json!(-1)),
+            ("observedAt", json!(9_007_199_254_740_992_u64)),
+            ("revision", json!(0.5)),
+            ("revision", json!(9_007_199_254_740_992_u64)),
+        ] {
+            let mut context = valid.clone();
+            context[field] = bad;
+            invalid.push(context);
+        }
+        for field in [
+            "source",
+            "state",
+            "name",
+            "branch",
+            "observedAt",
+            "revision",
+        ] {
+            let mut context = valid.clone();
+            context.as_object_mut().unwrap().remove(field);
+            invalid.push(context);
+        }
+        for state in [
+            "detached",
+            "checking",
+            "notRepository",
+            "unavailable",
+            "stale",
+        ] {
+            let mut context = repository_projection(state);
+            context["branch"] = json!("feature/zażółć");
+            invalid.push(context);
+        }
+        for context in invalid {
+            let mut value = snapshot();
+            value["sessions"][0]["repositoryContext"] = context;
+            let mut app = App::new(1);
+            app.event(value).unwrap();
+            assert_eq!(app.sessions[0].id, "s");
+            assert!(app.sessions[0].repository_context.is_none());
+            assert!(app.session_search_matches("s", "API"));
+            assert!(!app.session_search_matches("s", "feature/zażółć"));
+        }
+    }
+
+    #[test]
+    fn repository_context_bounds_are_utf8_bytes_and_checked_safe_integers() {
+        let mut context = repository_projection("ready");
+        context["name"] = json!("é".repeat(64));
+        context["branch"] = json!("界".repeat(85));
+        context["observedAt"] = json!(9_007_199_254_740_991_u64);
+        context["revision"] = json!(9_007_199_254_740_991_u64);
+        let mut value = snapshot();
+        value["sessions"][0]["repositoryContext"] = context;
+        let mut app = App::new(1);
+        app.event(value).unwrap();
+        assert!(app.sessions[0].repository_context.is_some());
+        assert!(app.session_search_matches("s", &"é".repeat(64)));
+        assert!(app.session_search_matches("s", &"界".repeat(85)));
+    }
+
+    #[test]
+    fn only_correlated_successful_create_requests_repository_refresh_once() {
+        let mut app = App::new(1);
+        let request = app.request(json!({"type":"create","name":"same"}));
+        let accepted = json!({"type":"created","sessionId":"s","requestId":request["requestId"]});
+        assert!(
+            app.event(json!({"type":"created","sessionId":"s","requestId":"foreign"}))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            app.event(accepted.clone()).unwrap(),
+            [json!({"type":"list"})]
+        );
+        assert!(app.event(accepted).unwrap().is_empty());
+        assert!(
+            app.event(snapshot())
+                .unwrap()
+                .iter()
+                .all(|command| command["type"] != "list")
+        );
+        assert!(
+            app.event(json!({"type":"output","sessionId":"s","data":"idle"}))
+                .unwrap()
+                .iter()
+                .all(|command| command["type"] != "list")
+        );
     }
 
     #[test]
