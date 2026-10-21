@@ -1,19 +1,8 @@
 use super::*;
 use crate::worktrees::ProjectWorktree;
-use rusqlite::TransactionBehavior;
-
-fn migrate(connection: &mut Connection) {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .unwrap();
-    crate::migrations::apply_pending(&transaction).unwrap();
-    transaction.commit().unwrap();
-}
 
 fn store() -> Store {
-    let mut connection = Connection::open_in_memory().unwrap();
-    migrate(&mut connection);
-    Store::with(connection).unwrap()
+    Store::with(crate::migrations::migrated_database()).unwrap()
 }
 
 fn root(name: &str) -> String {
@@ -146,7 +135,7 @@ fn projects_registry_persists_pins_layouts_and_folders_across_reopen() {
     ));
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join("metadata.sqlite3");
-    migrate(&mut Connection::open(&path).unwrap());
+    drop(crate::migrations::migrated_database_at(&path));
     {
         let mut store = Store::open(&path).unwrap();
         store

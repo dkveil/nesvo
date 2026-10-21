@@ -221,33 +221,55 @@ fn normalize(sql: &str) -> String {
 }
 
 #[cfg(test)]
+fn migrate(connection: &mut Connection, target: u32) -> Result<Vec<u32>> {
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let applied = apply_through(&transaction, target)?;
+    transaction.commit()?;
+    Ok(applied)
+}
+
+#[cfg(test)]
+fn booted(mut connection: Connection) -> Connection {
+    connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    crate::receipts::initialize(&mut connection).unwrap();
+    crate::quota_wakes::initialize(&connection).unwrap();
+    connection
+}
+
+#[cfg(test)]
+fn migrated_through(mut connection: Connection, version: u32) -> Connection {
+    assert_eq!(
+        migrate(&mut connection, version).unwrap(),
+        (1..=version).collect::<Vec<_>>()
+    );
+    connection
+}
+
+#[cfg(test)]
+pub(crate) fn startup_connection() -> Connection {
+    booted(Connection::open_in_memory().unwrap())
+}
+
+#[cfg(test)]
+pub(crate) fn database_at(version: u32) -> Connection {
+    migrated_through(startup_connection(), version)
+}
+
+#[cfg(test)]
+pub(crate) fn migrated_database() -> Connection {
+    database_at(latest_version())
+}
+
+#[cfg(test)]
+pub(crate) fn migrated_database_at(path: &std::path::Path) -> Connection {
+    migrated_through(booted(Connection::open(path).unwrap()), latest_version())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::TransactionBehavior;
-
-    fn migrate(connection: &mut Connection, target: u32) -> Result<Vec<u32>> {
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let applied = apply_through(&transaction, target)?;
-        transaction.commit()?;
-        Ok(applied)
-    }
-
-    fn startup_connection() -> Connection {
-        let mut connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        crate::receipts::initialize(&mut connection).unwrap();
-        crate::quota_wakes::initialize(&connection).unwrap();
-        connection
-    }
-
-    pub(crate) fn database_at(version: u32) -> Connection {
-        let mut connection = startup_connection();
-        assert_eq!(
-            migrate(&mut connection, version).unwrap(),
-            (1..=version).collect::<Vec<_>>()
-        );
-        connection
-    }
 
     fn ledger(connection: &Connection) -> Vec<(i64, String)> {
         recorded(connection).unwrap()
