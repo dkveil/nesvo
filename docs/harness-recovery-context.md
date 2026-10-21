@@ -111,13 +111,18 @@ launch description (`spec.resume {provider, conversationId}`), and keeps it
 across a host restart. Restoring with an explicit resume request starts a new
 process with `claude --resume ID` or `codex resume ID` in the saved folder. It
 sends no prompt and never opens a picker, picks the latest conversation or forks.
-Gemini is refused with a visible reason.
+Gemini is refused with a visible reason. An exact resume is also refused with
+`resume_unverifiable` when the provider's lifecycle hooks will not be installed
+(for example Codex without a supported Codex version), because the resumed
+conversation could not be verified.
 
 The new session stays closed to automated input (`resume_pending`) until its
 first root session-start hook reports source `resume` and the expected ID. A
 different ID, another source, process exit or no hook within 60 seconds marks it
 `resume.state:"resumeFailed"` with the reason; automated input is then refused
-(`resume_failed`) and the session never poses as a continuation. The saved record
+(`resume_failed`) and the session never poses as a continuation. The deadline and
+the exit check also run for a session whose hook evidence is no longer observed,
+so an unconfirmed resume never stays pending. The saved record
 keeps the original conversation ID for another attempt. See the
 [CLI](harness-cli.md#saved-session-recovery) and [MCP](harness-mcp.md#current-tools)
 surfaces.
