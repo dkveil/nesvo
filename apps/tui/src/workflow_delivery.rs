@@ -13,6 +13,11 @@ pub struct Deliver {
     revision: u64,
     #[arg(long, value_parser=clap::value_parser!(u64).range(1..=300_000))]
     timeout_ms: Option<u64>,
+    #[arg(
+        long,
+        help = "Reuse this task's own settled idle worker session for a new attempt"
+    )]
+    session: Option<String>,
     #[arg(long)]
     pub json: bool,
 }
@@ -41,6 +46,8 @@ pub enum Request {
         task_id: String,
         expected_revision: u64,
         timeout_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     Cancel {
         key: String,
@@ -57,6 +64,7 @@ impl Deliver {
             task_id: self.task,
             expected_revision: self.revision,
             timeout_ms: self.timeout_ms,
+            session_id: self.session,
         }
     }
 }

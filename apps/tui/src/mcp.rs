@@ -513,9 +513,9 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_deliver_task",
-            "Queue the immutable instruction of a current assigned task once. Host waits up to timeoutMs (default 60000, max 300000) for idle and ready, with no human control/draft or decision gate. No prompt is accepted from the caller. Acceptance is not delivery or task success. Inspect task attempt.delivery and its native receipt; unknown effects are never retried. Client disconnect keeps this intent, host restart pauses it without replay. Agent sessions only.",
+            "Queue the immutable instruction of a current assigned task once. Host waits up to timeoutMs (default 60000, max 300000) for idle and ready, with no human control/draft or decision gate. No prompt is accepted from the caller. Acceptance is not delivery or task success. Inspect task attempt.delivery and its native receipt; unknown effects are never retried. Client disconnect keeps this intent, host restart pauses it without replay. Agent sessions only. Optional sessionId reuses this task's own worker for a new attempt only when its previous attempt and native input are settled, it is idle and ready with no human control or draft, and its conversation is the one recorded for the task; otherwise session_busy, session_foreign, identity_mismatch, attempt_unsettled or resume_pending is returned and nothing is queued.",
             object(
-                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"timeoutMs":{"type":"integer","minimum":1,"maximum":300000}}),
+                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"timeoutMs":{"type":"integer","minimum":1,"maximum":300000},"sessionId":id}),
                 &["key", "runId", "taskId", "expectedRevision"],
             ),
             false,

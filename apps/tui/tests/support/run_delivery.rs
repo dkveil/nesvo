@@ -104,3 +104,116 @@ async fn queued_task_instruction_delivers_once_and_never_resumes_over_human_cont
         }
     }
 }
+async fn attempt_state(
+    owner: &RunningService<RoleClient, ()>,
+    run: &str,
+    task: &Value,
+    index: usize,
+    field: &str,
+    expected: &str,
+) -> Result<Value> {
+    timeout(Duration::from_secs(8), async {
+        loop {
+            let view = data(
+                call(
+                    owner,
+                    "nesvo_get_task_attempts",
+                    json!({"runId":run,"taskId":task}),
+                )
+                .await?,
+            )?;
+            let attempt = &view["data"]["attempts"][index];
+            let current = if field == "delivery" {
+                &attempt["delivery"]["phase"]
+            } else {
+                &attempt[field]
+            };
+            if current == expected {
+                return Ok::<_, anyhow::Error>(view);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("Expected task attempt state")?
+}
+fn refusal(result: CallToolResult) -> Result<String> {
+    ensure!(
+        result.is_error == Some(true),
+        "Reuse was unexpectedly accepted"
+    );
+    Ok(
+        result.structured_content.context("refusal")?["error"]["code"]
+            .as_str()
+            .context("refusal code")?
+            .to_owned(),
+    )
+}
+#[tokio::test]
+#[ignore = "requires native binaries and Node; reuses one controlled worker for a new task attempt through real PTYs"]
+async fn settled_worker_session_is_reused_for_a_new_attempt_once_and_refused_when_unsafe()
+-> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome=std::panic::AssertUnwindSafe(async{
+        timeout(Duration::from_secs(5),async{loop{let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;if doctor["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        let owner=client(&fixture.pairing()).await?;
+        let root=data(call(&owner,"nesvo_create_session",json!({"key":"reuse-root","spec":{"name":"Reuse coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;session_ready(&owner,root_id).await?;
+        let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
+        let coordinator=scoped_client(&context,root_id).await?;
+        let created=data(call(&coordinator,"nesvo_create_run",json!({"key":"reuse-run","spec":{"title":"Session reuse","goal":"Reuse one settled worker"}})).await?)?;
+        let run=created["data"]["run"]["id"].as_str().context("run")?;
+        let plan=data(call(&coordinator,"nesvo_set_run_plan",json!({"key":"reuse-plan","runId":run,"expectedRevision":1,"tasks":[{"key":"task-0","title":"Task 0","instruction":"report-task"}]})).await?)?;
+        data(call(&coordinator,"nesvo_activate_run",json!({"key":"reuse-active","runId":run,"expectedRevision":2})).await?)?;
+        let task=&plan["data"]["tasks"][0]["id"];
+        let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
+        let launched=data(call(&coordinator,"nesvo_launch_task",json!({"key":"reuse-launch","runId":run,"taskId":task,"expectedRevision":current["data"]["run"]["revision"],"profile":{"program":"claude","workspace":"shared","harness":true}})).await?)?;
+        let worker=launched["data"]["launch"]["sessionId"].as_str().context("worker")?.to_owned();session_ready(&owner,&worker).await?;
+        let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
+        let revision=current["data"]["run"]["revision"].as_u64().unwrap().to_string();
+        inbox::scoped_cli(&context,&["run","deliver",run,"--task",task.as_str().unwrap(),"--key","first-instruction","--revision",&revision,"--json"]).await?;
+        attempt_state(&owner,run,task,0,"delivery","sent").await?;
+        let reported=attempt_state(&owner,run,task,0,"state","reported").await?;
+        let first=reported["data"]["attempts"][0]["id"].clone();
+        let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
+        let early=call(&coordinator,"nesvo_deliver_task",json!({"key":"reuse-early","runId":run,"taskId":task,"expectedRevision":current["data"]["run"]["revision"],"sessionId":worker})).await?;
+        assert_eq!(refusal(early)?,"attempt_unsettled");
+        data(call(&coordinator,"nesvo_validate_task_result",json!({"key":"reject-first","runId":run,"attemptId":first,"expectedRevision":current["data"]["run"]["revision"],"validation":{"passed":false,"summary":"Retry on the same worker","checks":[{"name":"review","outcome":"failed","details":"Controlled rejection"}]}})).await?)?;
+        session_ready(&owner,&worker).await?;
+        let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
+        let foreign=call(&coordinator,"nesvo_deliver_task",json!({"key":"reuse-foreign","runId":run,"taskId":task,"expectedRevision":current["data"]["run"]["revision"],"sessionId":root_id})).await?;
+        assert_eq!(refusal(foreign)?,"session_foreign");
+        let mut human=human_control(&fixture.pairing(),&worker).await?;
+        let busy=call(&coordinator,"nesvo_deliver_task",json!({"key":"reuse-busy","runId":run,"taskId":task,"expectedRevision":current["data"]["run"]["revision"],"sessionId":worker})).await?;
+        assert_eq!(refusal(busy)?,"session_busy");
+        drop(human.stdin.take());ensure!(timeout(Duration::from_secs(8),human.wait()).await??.success(),"Human release fixture");
+        let unchanged=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;
+        assert_eq!(unchanged["data"]["attempts"].as_array().map(Vec::len),Some(1));
+        let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
+        let revision=current["data"]["run"]["revision"].as_u64().unwrap().to_string();
+        let accepted=inbox::scoped_cli(&context,&["run","deliver",run,"--task",task.as_str().unwrap(),"--key","reuse-instruction","--revision",&revision,"--session",&worker,"--json"]).await?;
+        assert_eq!(accepted["data"]["delivery"]["phase"],"queued");assert!(accepted["data"]["delivery"]["receiptId"].is_null());
+        assert_eq!(accepted["data"]["delivery"]["reuse"]["previousAttemptId"],first);
+        let replay=data(call(&coordinator,"nesvo_deliver_task",json!({"key":"reuse-instruction","runId":run,"taskId":task,"expectedRevision":current["data"]["run"]["revision"],"sessionId":worker})).await?)?;
+        assert_eq!(replay["data"],accepted["data"]);
+        let sent=attempt_state(&owner,run,task,1,"delivery","sent").await?;
+        let second=&sent["data"]["attempts"][1];
+        assert_eq!(second["ordinal"],2);assert_eq!(second["sessionId"],worker.as_str());assert_ne!(second["delivery"]["receiptId"],sent["data"]["attempts"][0]["delivery"]["receiptId"]);
+        attempt_state(&owner,run,task,1,"state","reported").await?;
+        let output=data(call(&owner,"nesvo_read_session",json!({"sessionId":worker,"maxBytes":8192})).await?)?;
+        assert_eq!(output["data"]["page"]["data"].as_str().unwrap().matches("FIXTURE_RESPONSE report-task").count(),2);
+        let sessions=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;for session in sessions["data"]["sessions"].as_array().unwrap(){assert!(session["controllerId"].is_null());}
+        coordinator.cancel().await?;owner.cancel().await?;Ok::<_,anyhow::Error>(())
+    }).catch_unwind().await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}

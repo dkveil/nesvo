@@ -353,7 +353,9 @@ function reportTask(outcome = 'succeeded') {
     'report',
     context.data.attempt.id,
     '--key',
-    'fixture-result',
+    context.data.attempt.ordinal > 1
+      ? `fixture-result-${context.data.attempt.ordinal}`
+      : 'fixture-result',
     '--file',
     file,
     '--json',
