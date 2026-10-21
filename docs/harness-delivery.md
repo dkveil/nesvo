@@ -3694,3 +3694,25 @@ measurement, whose PATH contains no Git. A controlled Windows ConPTY attempt
 stopped at its Unicode search-input observation; its private report is retained.
 Interactive acceptance remains pending while the harness observer/input and
 cleanup boundaries are investigated; it is not reported as a passing smoke test.
+
+### F31 native Windows AltGr acceptance
+
+The actual pinned Crossterm/ConPTY probe identified the missing Unicode frontier:
+`żółć` arrives as character Press/Release pairs with CTRL|ALT. The text filters
+treated those as control chords. A Windows-only normalization now removes that
+combination for non-ASCII printable scalars, optionally preserving SHIFT, before
+UI/PTY routing. Release suppression, ASCII shortcuts, other modifier combinations,
+focus rules and existing PTY encoding remain unchanged. Four regressions pass,
+as do warnings-denied all-target Clippy and all 223 ordinary TUI tests; one opt-in
+probe remains ignored. No dependency or shipped key logging is introduced.
+
+The controlled ConPTY smoke subsequently passes Unicode branch search, F2 query
+preservation, exact native-session Unicode marker execution, switching to a second
+session, input after 80x24/100x32/150x44 resizes, clean detach and terminal
+alternate-screen/cursor restoration. Both shells survive TUI exit. Exact job
+emptiness, native/outer reader joins, socket/ConPTY closure and host/bridge exits
+are observed without force. Earlier failed reports are retained. The fixture also
+corrected its own CRLF bridge gate, whose extra Ctrl+J was independently observed
+by the decoder probe; one CR completes that console frame. This harness change
+is separate from the proved production AltGr filter fix. These checks do not claim
+physical Windows Terminal, original models, mouse or native-phone acceptance.

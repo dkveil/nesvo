@@ -1,5 +1,23 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+/// Windows console layouts report AltGr text as Ctrl+Alt plus its Unicode scalar.
+/// Normalize that otherwise unencodable text before shortcuts or PTY encoding.
+/// ASCII control chords, other modifier combinations and release kinds stay intact.
+pub fn normalize_key(key: KeyEvent) -> KeyEvent {
+    normalize_altgr(key, cfg!(windows))
+}
+
+fn normalize_altgr(mut key: KeyEvent, windows: bool) -> KeyEvent {
+    if windows
+        && key.modifiers & !KeyModifiers::SHIFT == KeyModifiers::CONTROL | KeyModifiers::ALT
+        && matches!(key.code, KeyCode::Char(c) if !c.is_ascii() && !c.is_control())
+    {
+        key.modifiers
+            .remove(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    }
+    key
+}
+
 /// Encode key events for the inner PTY, honoring its cursor-key mode.
 pub fn encode_key(key: KeyEvent, screen: &vt100::Screen) -> Option<String> {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -130,6 +148,76 @@ pub fn encode_wheel(screen: &vt100::Screen, up: bool, col: u16, row: u16) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_altgr_preserves_unicode_shift_kind_and_state_without_escape_or_control_bytes() {
+        use crossterm::event::{KeyEventKind, KeyEventState};
+        let parser = vt100::Parser::new(24, 80, 0);
+        for (character, shift) in [('ż', KeyModifiers::NONE), ('Ó', KeyModifiers::SHIFT)] {
+            for kind in [
+                KeyEventKind::Press,
+                KeyEventKind::Repeat,
+                KeyEventKind::Release,
+            ] {
+                let mut key = KeyEvent::new_with_kind(
+                    KeyCode::Char(character),
+                    KeyModifiers::CONTROL | KeyModifiers::ALT | shift,
+                    kind,
+                );
+                key.state = KeyEventState::CAPS_LOCK;
+                let normalized = normalize_altgr(key, true);
+                assert_eq!(normalized.code, key.code);
+                assert_eq!(normalized.kind, kind);
+                assert_eq!(normalized.state, key.state);
+                assert_eq!(normalized.modifiers, shift);
+                assert_eq!(
+                    encode_key(normalized, parser.screen()),
+                    Some(character.to_string())
+                );
+                assert_eq!(normalize_altgr(key, false), key);
+            }
+        }
+    }
+
+    #[test]
+    fn altgr_normalization_preserves_ascii_shortcuts_and_distinct_modifier_combinations() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        for (code, modifiers) in [
+            (KeyCode::Char('q'), KeyModifiers::CONTROL),
+            (
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+            (KeyCode::Char('ż'), KeyModifiers::CONTROL),
+            (KeyCode::Char('ż'), KeyModifiers::ALT),
+            (
+                KeyCode::Char('ż'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+            ),
+            (
+                KeyCode::Char('\u{85}'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+            (KeyCode::F(4), KeyModifiers::CONTROL | KeyModifiers::ALT),
+            (KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::ALT),
+        ] {
+            let key = KeyEvent::new(code, modifiers);
+            assert_eq!(normalize_altgr(key, true), key);
+        }
+        assert_eq!(
+            encode_key(
+                normalize_altgr(
+                    KeyEvent::new(
+                        KeyCode::Char('a'),
+                        KeyModifiers::CONTROL | KeyModifiers::ALT
+                    ),
+                    true
+                ),
+                parser.screen()
+            ),
+            Some("\x1b\x01".into()),
+        );
+    }
 
     #[test]
     fn encodes_controls_and_application_arrows() {

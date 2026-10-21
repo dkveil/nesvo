@@ -32,6 +32,10 @@ impl Default for Outcome {
 }
 
 pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
+    let event = match event {
+        Event::Key(key) => Event::Key(input::normalize_key(key)),
+        other => other,
+    };
     // A later deliberate interaction supersedes an outstanding request to type.
     if matches!(&event, Event::Key(k) if k.kind != KeyEventKind::Release)
         || matches!(&event, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
@@ -2767,6 +2771,95 @@ mod tests {
         );
         event(&mut app, Event::Key(key), Rect::new(0, 0, 100, 30));
         assert!(app.dialog.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_altgr_query_press_release_pairs_keep_the_unicode_target_without_duplicate_text() {
+        let mut app = App::new(1);
+        app.event(repository_search_snapshot()).unwrap();
+        app.begin_palette(String::new());
+        let original_active = app.active_id().map(str::to_owned);
+        let area = Rect::new(0, 0, 150, 44);
+        for character in "feature/zażółć".chars() {
+            let modifiers = if character.is_ascii() {
+                KeyModifiers::NONE
+            } else {
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            };
+            for kind in [KeyEventKind::Press, KeyEventKind::Release] {
+                let outcome = event(
+                    &mut app,
+                    Event::Key(KeyEvent::new_with_kind(
+                        KeyCode::Char(character),
+                        modifiers,
+                        kind,
+                    )),
+                    area,
+                );
+                assert!(outcome.commands.iter().all(|command| matches!(
+                    command["type"].as_str(),
+                    Some("subscribe" | "unsubscribe")
+                )));
+                assert_eq!(app.active_id(), original_active.as_deref());
+            }
+        }
+        assert!(
+            matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query == "feature/zażółć")
+        );
+        assert_eq!(
+            search_target(&app),
+            Some(crate::palette::Target::Session("b".into()))
+        );
+        search_key(&mut app, KeyCode::F(2));
+        assert!(
+            matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query == "feature/zażółć")
+        );
+        assert!(matches!(app.mode, Mode::Navigate));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_altgr_reaches_the_owned_pty_once_and_control_q_still_leaves_input() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"s","name":"shell","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]})).unwrap();
+        app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
+            .unwrap();
+        app.activate_session("s");
+        app.event(json!({"type":"control","sessionId":"s","controllerId":1,"cols":80,"rows":24,"leaseId":"altgr-owned"})).unwrap();
+        let area = Rect::new(0, 0, 100, 32);
+        assert!(matches!(app.mode, Mode::Input));
+        let text = event(
+            &mut app,
+            Event::Key(KeyEvent::new(
+                KeyCode::Char('ż'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            )),
+            area,
+        );
+        assert_eq!(
+            text.commands,
+            [json!({"type":"input","sessionId":"s","leaseId":"altgr-owned","data":"ż"})]
+        );
+        let release = event(
+            &mut app,
+            Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('ż'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+                KeyEventKind::Release,
+            )),
+            area,
+        );
+        assert!(release.commands.is_empty());
+        let leave = event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            area,
+        );
+        assert!(leave.commands.is_empty());
+        assert!(matches!(app.mode, Mode::Navigate));
     }
 
     #[test]

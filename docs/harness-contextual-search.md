@@ -32,8 +32,10 @@ The client matcher, request intentions, DTO validation, schema and bounded host
 source are implemented. Controlled native Windows acceptance covers the actual
 host/helper/Git path, official MCP SDK, owner CLI and one real cooldown/reconnect
 boundary. Ordinary Git fixtures additionally cover linked worktrees, detached
-HEAD and a non-repository. This evidence does not establish physical-phone or
-interactive macOS/Linux acceptance. The source remains the launch directory;
+HEAD and a non-repository. Controlled Windows ConPTY also verifies Unicode
+keyboard search, F2, exact-session input, three window sizes and terminal
+restoration. This evidence does not establish physical-phone, physical terminal
+application or interactive macOS/Linux acceptance. The source remains the launch directory;
 current provider cwd tracking is a separate limitation. No dependency, Expo API,
 SDK, launch authority or provider configuration is changed.
 
@@ -63,6 +65,26 @@ blocked runtime also drops its adapter future; native Git cleanup is established
 by the separate command-scope conformance test. No production counter, extra
 polling, environment hook or additional task is introduced. This is admission
 proof, not measured Git subprocess counts during the CPU benchmark.
+
+### Windows AltGr input
+
+A real probe linked to the pinned Crossterm decoder observed `żółć` as Unicode
+Press/Release pairs with CTRL|ALT. The former shortcut filters discarded those
+characters. The platform input boundary now removes that combination only from
+Windows non-ASCII printable characters, optionally preserving SHIFT. Release
+events stay ignored; ASCII control chords, other modifiers and the PTY encoder
+are unchanged. The same literal text reaches search, form inputs and owned PTYs.
+No shipped key logger, dependency, clipboard/paste substitution or global setting
+is added. ASCII AltGr ambiguities are outside this normalization.
+
+Four regressions cover the observed key shape, exact target/query preservation,
+one owned-PTY write, release suppression and ordinary shortcuts. A contained
+ConPTY smoke types a Unicode branch, expands with F2, executes an assembled
+Unicode marker only in the selected native shell, selects another exact session,
+resizes to 80x24, 100x32 and 150x44 and checks input after each resize. Clean detach
+emits alternate-screen leave/cursor restoration and preserves both shells; host,
+job and ConPTY resources then close with observed cleanup and no force. This is
+controlled PowerShell evidence, not original-provider or physical-phone coverage.
 
 Inspection uses literal `rev-parse --path-format=absolute --show-toplevel
 --git-common-dir` and `symbolic-ref --quiet HEAD` builtins, no shell composition,
