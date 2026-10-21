@@ -45,7 +45,7 @@ export function ConnectSheet({
       setScanning(false);
       onConnect(pairing);
     } catch {
-      setError('Nieprawidłowy kod. Wklej cały kod parowania wygenerowany na komputerze.');
+      setError('Invalid code. Paste the whole pairing code generated on the computer.');
       setScanning(false);
     }
   }
@@ -53,7 +53,7 @@ export function ConnectSheet({
     Keyboard.dismiss();
     if (Platform.OS === 'web') {
       setError(
-        'W podglądzie przeglądarkowym wklej kod. Skaner QR jest dostępny w aplikacji na telefonie.',
+        'In the browser preview, paste the code. The QR scanner is available in the phone app.',
       );
       return;
     }
@@ -63,9 +63,7 @@ export function ConnectSheet({
       scanConsumed.current = false;
       setScanning(true);
     } else
-      setError(
-        'Aparat nie ma uprawnień. Możesz wkleić kod lub przyznać dostęp w ustawieniach telefonu.',
-      );
+      setError('The camera has no permission. Paste the code or allow access in phone settings.');
   }
   return (
     <Modal
@@ -86,9 +84,9 @@ export function ConnectSheet({
           >
             <View style={s.header}>
               <Text accessibilityRole="header" style={s.heading}>
-                Połącz komputer
+                Connect a computer
               </Text>
-              <IconButton name="close" label="Zamknij parowanie" onPress={close} />
+              <IconButton name="close" label="Close pairing" onPress={close} />
             </View>
             {/* iOS measures keyboard overlap inside the sheet in native screen coordinates. */}
             <ScrollView
@@ -101,13 +99,13 @@ export function ConnectSheet({
               indicatorStyle="white"
             >
               <Text style={s.body}>
-                Połącz telefon bezpośrednio z hostem nesvo w tej samej sieci lub prywatnym VPN.
+                Connect your phone directly to a nesvo host on the same network or a private VPN.
               </Text>
               <View style={s.steps}>
                 <View style={s.step}>
                   <Text style={s.stepNumber}>1</Text>
                   <View style={s.stepContent}>
-                    <Text style={s.title}>Uruchom host na komputerze</Text>
+                    <Text style={s.title}>Start the host on your computer</Text>
                     <Text selectable style={s.code}>
                       cargo run --manifest-path apps/host/Cargo.toml -- --lan
                     </Text>
@@ -116,15 +114,15 @@ export function ConnectSheet({
                 <View style={s.step}>
                   <Text style={s.stepNumber}>2</Text>
                   <View style={s.stepContent}>
-                    <Text style={s.title}>Otwórz kod QR</Text>
-                    <Text style={s.body}>Otwórz plik pairing.svg wskazany przez hosta.</Text>
+                    <Text style={s.title}>Open the QR code</Text>
+                    <Text style={s.body}>Open the pairing.svg file the host points to.</Text>
                   </View>
                 </View>
                 <View style={s.step}>
                   <Text style={s.stepNumber}>3</Text>
                   <View style={s.stepContent}>
-                    <Text style={s.title}>Zeskanuj kod telefonem</Text>
-                    <Text style={s.body}>Połączenie pojawi się na ekranie Komputery.</Text>
+                    <Text style={s.title}>Scan the code with your phone</Text>
+                    <Text style={s.body}>The connection appears on the Computers screen.</Text>
                   </View>
                 </View>
               </View>
@@ -141,22 +139,22 @@ export function ConnectSheet({
                       }}
                     />
                   </View>
-                  <Button label="Anuluj skanowanie" secondary onPress={() => setScanning(false)} />
+                  <Button label="Cancel scanning" secondary onPress={() => setScanning(false)} />
                 </View>
               ) : (
-                <Button label="Zeskanuj kod QR" icon="scan-outline" onPress={scan} />
+                <Button label="Scan QR code" icon="scan-outline" onPress={scan} />
               )}
               <View style={s.divider}>
                 <View style={s.line} />
-                <Text style={s.dividerLabel}>lub wklej kod</Text>
+                <Text style={s.dividerLabel}>or paste the code</Text>
                 <View style={s.line} />
               </View>
               <View style={s.manual}>
                 <TextInput
-                  accessibilityLabel="Kod parowania JSON"
+                  accessibilityLabel="Pairing code JSON"
                   value={value}
                   onChangeText={setValue}
-                  placeholder="Kod parowania z komputera"
+                  placeholder="Pairing code from the computer"
                   placeholderTextColor={c.faint}
                   selectionColor={c.accent}
                   autoCorrect={false}
@@ -172,14 +170,14 @@ export function ConnectSheet({
                   style={s.input}
                 />
                 <Button
-                  label="Wklej ze schowka"
+                  label="Paste from clipboard"
                   secondary
                   icon="clipboard-outline"
                   onPress={async () => {
                     try {
                       setValue(await Clipboard.getStringAsync());
                     } catch {
-                      setError('Nie udało się odczytać schowka. Wklej kod ręcznie.');
+                      setError('Could not read the clipboard. Paste the code manually.');
                     }
                   }}
                 />
@@ -189,18 +187,17 @@ export function ConnectSheet({
                   </Text>
                 )}
                 <Button
-                  label="Połącz z hostem"
+                  label="Connect to host"
                   disabled={!value.trim()}
                   icon="arrow-forward"
                   onPress={() => connect()}
                 />
                 <Text style={s.helper}>
-                  Kod daje dostęp do Twojego terminala. Zachowaj go dla siebie.
+                  The code grants access to your terminal. Keep it to yourself.
                 </Text>
               </View>
               <Text style={s.footnote}>
-                Wszystko działa na Twoim komputerze. Claude Code i Codex używają Twojego logowania w
-                terminalu.
+                Everything runs on your computer. Claude Code and Codex use your terminal sign-in.
               </Text>
             </ScrollView>
           </KeyboardAvoidingView>

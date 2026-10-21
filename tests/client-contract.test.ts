@@ -237,8 +237,8 @@ test('readiness is independent from legacy agent state and validates at the wire
   } as const;
   const snapshot = { type: 'sessions', groups, sessions: [{ ...session, readiness }], revision: 0 };
   assert.equal(decodeServerMessage(snapshot).type, 'sessions');
-  assert.equal(sessionReadinessLabel(readiness), 'Uruchamianie');
-  assert.equal(sessionReadinessLabel({ ...readiness, phase: 'timedOut' }), 'Błąd startu');
+  assert.equal(sessionReadinessLabel(readiness), 'Starting');
+  assert.equal(sessionReadinessLabel({ ...readiness, phase: 'timedOut' }), 'Startup failed');
   assert.equal(sessionReadinessLabel(undefined), undefined);
   assert.throws(() =>
     decodeServerMessage({
@@ -336,7 +336,7 @@ test('group navigation includes descendants, preserves sibling ordering and neve
     ],
   );
   assert.equal(groupPath(groups, 'grandchild'), 'Workspace / Mobile / iPhone');
-  assert.equal(groupPath(groups, null), 'Bez grupy');
+  assert.equal(groupPath(groups, null), 'No group');
   assert.deepEqual(groups, before);
   assert.equal(validGroupName('  東京  '), true);
   assert.equal(validGroupName('🎯'.repeat(80)), true);

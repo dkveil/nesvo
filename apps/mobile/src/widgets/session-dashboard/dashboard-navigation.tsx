@@ -4,9 +4,9 @@ import { colors, mono } from '@shared/theme';
 import { Icon } from '@shared/ui';
 
 export const DASHBOARD_ITEMS = [
-  { id: 'sessions', icon: 'terminal-outline', label: 'Sesje' },
-  { id: 'hosts', icon: 'desktop-outline', label: 'Komputery' },
-  { id: 'settings', icon: 'settings-outline', label: 'Ustawienia' },
+  { id: 'sessions', icon: 'terminal-outline', label: 'Sessions' },
+  { id: 'hosts', icon: 'desktop-outline', label: 'Computers' },
+  { id: 'settings', icon: 'settings-outline', label: 'Settings' },
 ] as const;
 
 export type DashboardTab = (typeof DASHBOARD_ITEMS)[number]['id'];
@@ -19,7 +19,7 @@ export function DashboardNavigation({
   onSelect: (tab: DashboardTab) => void;
 }) {
   return (
-    <View accessibilityRole="tablist" accessibilityLabel="Nawigacja główna" style={s.bar}>
+    <View accessibilityRole="tablist" accessibilityLabel="Main navigation" style={s.bar}>
       {DASHBOARD_ITEMS.filter(item => item.id !== 'settings').map(item => (
         <Pressable
           key={item.id}

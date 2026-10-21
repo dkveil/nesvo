@@ -58,7 +58,7 @@ const terminal = new Terminal({
 const fit = new FitAddon();
 terminal.loadAddon(fit);
 terminal.open(container);
-terminal.textarea?.setAttribute('aria-label', 'Terminal sesji');
+terminal.textarea?.setAttribute('aria-label', 'Session terminal');
 terminal.textarea?.setAttribute('autocapitalize', 'off');
 terminal.textarea?.setAttribute('autocorrect', 'off');
 terminal.textarea?.setAttribute('spellcheck', 'false');

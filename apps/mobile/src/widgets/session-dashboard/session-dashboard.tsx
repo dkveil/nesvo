@@ -103,12 +103,12 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
   const showStartMenu = tab === 'sessions' && sessions.length === 0;
   const connectionLabel =
     mode === 'demo'
-      ? 'Tryb demo'
+      ? 'Demo mode'
       : connected
-        ? 'Połączono'
+        ? 'Connected'
         : connecting
-          ? 'Łączenie…'
-          : 'Rozłączono';
+          ? 'Connecting…'
+          : 'Disconnected';
   const visible = sessions.filter(
     session =>
       (selectedGroup === 'all' ||
@@ -137,7 +137,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
       <View style={s.header}>
-        <IconButton name="menu-outline" label="Otwórz menu" onPress={() => setMenuOpen(true)} />
+        <IconButton name="menu-outline" label="Open menu" onPress={() => setMenuOpen(true)} />
         <View style={s.headerTitle}>
           <NesvoLogo width={96} />
         </View>
@@ -151,7 +151,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         ) : null}
         <IconButton
           name="add"
-          label={tab === 'hosts' ? 'Dodaj komputer' : 'Nowa sesja'}
+          label={tab === 'hosts' ? 'Add a computer' : 'New session'}
           onPress={tab === 'hosts' ? () => setConnectOpen(true) : newSession}
         />
       </View>
@@ -172,18 +172,16 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         {tab === 'sessions' && (
           <>
             <View style={s.homeIntro}>
-              <Text style={s.homeTitle}>Twoja przestrzeń</Text>
+              <Text style={s.homeTitle}>Your workspace</Text>
               <Text style={s.homeSummary}>
-                {sessions.length} {sessions.length === 1 ? 'sesja' : 'sesji'}
-                {attentionCount ? ` · ${attentionCount} wymagają uwagi` : ''}
+                {sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}
+                {attentionCount ? ` · ${attentionCount} need you` : ''}
               </Text>
             </View>
-            <Text style={s.eyebrow}>KOMPUTER</Text>
+            <Text style={s.eyebrow}>COMPUTER</Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={
-                mode === 'demo' ? 'Połącz swój komputer' : 'Zarządzaj połączeniem'
-              }
+              accessibilityLabel={mode === 'demo' ? 'Connect your computer' : 'Manage connection'}
               onPress={() => (mode === 'demo' ? setConnectOpen(true) : navigateTo('hosts'))}
               style={({ pressed }) => [s.connection, pressed && s.pressed]}
             >
@@ -197,10 +195,10 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               <View style={s.grow}>
                 <Text style={s.connectionTitle}>
                   {mode === 'demo'
-                    ? 'Twój komputer'
+                    ? 'Your computer'
                     : pairing
                       ? new URL(pairing.url).hostname
-                      : 'Połącz komputer'}
+                      : 'Connect a computer'}
                 </Text>
                 <View style={s.connectionState}>
                   <View
@@ -216,7 +214,9 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                     ]}
                   />
                   <Text style={s.meta}>
-                    {mode === 'demo' ? 'Tryb demo · sesje poniżej są przykładowe' : connectionLabel}
+                    {mode === 'demo'
+                      ? 'Demo mode · the sessions below are samples'
+                      : connectionLabel}
                   </Text>
                 </View>
               </View>
@@ -224,7 +224,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
             </Pressable>
             {mode === 'live' && connected && providerLimits.length > 0 ? (
               <View style={s.providerSection}>
-                <Text style={s.eyebrow}>LIMITY DOSTAWCÓW</Text>
+                <Text style={s.eyebrow}>PROVIDER LIMITS</Text>
                 {providerLimits.map(provider => (
                   <View key={provider.id} style={s.providerRow}>
                     <Text style={s.providerName}>
@@ -261,18 +261,18 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                     ) : (
                       <Text style={s.providerHint}>
                         {provider.status === 'checking'
-                          ? 'Odczytywanie…'
+                          ? 'Reading…'
                           : provider.id === 'claude'
-                            ? 'Sprawdź w Claude: /usage'
+                            ? 'Check in Claude: /usage'
                             : provider.id === 'gemini'
-                              ? 'Sprawdź w Gemini: /stats model'
-                              : 'Limit niedostępny w Codex'}
+                              ? 'Check in Gemini: /stats model'
+                              : 'Limit unavailable in Codex'}
                       </Text>
                     )}
                   </View>
                 ))}
                 {providerLimits.some(provider => provider.status === 'ready') ? (
-                  <Text style={s.providerCaption}>Wykorzystano z limitu</Text>
+                  <Text style={s.providerCaption}>Limit used</Text>
                 ) : null}
               </View>
             ) : null}
@@ -298,7 +298,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                 />
                 {mode === 'demo' && !!pairing && (
                   <Button
-                    label="Wróć do swojego komputera"
+                    label="Back to your computer"
                     secondary
                     onPress={() => void connect(pairing)}
                   />
@@ -307,23 +307,23 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
             )}
             {mode === 'live' && !connected && (
               <View style={s.reconnect}>
-                <Text style={common.body}>Sesje czekają na komputerze, dopóki działa host.</Text>
+                <Text style={common.body}>Sessions wait on the computer while the host runs.</Text>
                 <Button
-                  label={pairing ? 'Połącz ponownie' : 'Sparuj komputer'}
+                  label={pairing ? 'Reconnect' : 'Pair a computer'}
                   disabled={connecting}
                   onPress={() => (pairing ? void connect(pairing) : setConnectOpen(true))}
                 />
               </View>
             )}
             <View style={s.sessionListHeading}>
-              <Text style={s.eyebrow}>SESJE</Text>
+              <Text style={s.eyebrow}>SESSIONS</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Zarządzaj grupami"
+                accessibilityLabel="Manage groups"
                 onPress={() => navigateTo('groups')}
                 style={s.groupsLink}
               >
-                <Text style={s.groupsLinkText}>Grupy</Text>
+                <Text style={s.groupsLinkText}>Groups</Text>
                 <Icon name="chevron-forward" size={14} color={c.muted} />
               </Pressable>
             </View>
@@ -331,20 +331,16 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               <View style={s.search}>
                 <Icon name="search-outline" size={18} />
                 <TextInput
-                  accessibilityLabel="Szukaj sesji"
+                  accessibilityLabel="Search sessions"
                   value={query}
                   onChangeText={setQuery}
-                  placeholder="Szukaj sesji"
+                  placeholder="Search sessions"
                   placeholderTextColor={c.faint}
                   selectionColor={c.accent}
                   style={s.searchInput}
                 />
                 {!!query && (
-                  <IconButton
-                    name="close"
-                    label="Wyczyść wyszukiwanie"
-                    onPress={() => setQuery('')}
-                  />
+                  <IconButton name="close" label="Clear search" onPress={() => setQuery('')} />
                 )}
               </View>
             )}
@@ -359,7 +355,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                   style={[s.filter, filter === value && s.activeFilter]}
                 >
                   <Text style={[s.filterText, filter === value && s.activeFilterText]}>
-                    {value === 'all' ? 'Wszystkie' : 'Wymagają uwagi'}
+                    {value === 'all' ? 'All' : 'Need you'}
                   </Text>
                 </Pressable>
               ))}
@@ -379,7 +375,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                     <Pressable
                       key={session.id}
                       accessibilityRole="button"
-                      accessibilityLabel={`Otwórz sesję ${session.name}`}
+                      accessibilityLabel={`Open session ${session.name}`}
                       onPress={() => openSession(session.id)}
                       style={({ pressed }) => [s.sessionRow, pressed && s.pressed]}
                     >
@@ -425,12 +421,12 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                 <View style={s.empty}>
                   <Icon name="terminal-outline" size={28} />
                   <Text style={s.sectionTitle}>
-                    {sessions.length ? 'Brak pasujących sesji' : 'Miejsce na pierwszą sesję'}
+                    {sessions.length ? 'No matching sessions' : 'Room for your first session'}
                   </Text>
                   <Text style={[common.body, s.center]}>
                     {sessions.length
-                      ? 'Zmień filtr lub wpisane hasło.'
-                      : 'Otwórz nową sesję, żeby zacząć pracę na komputerze.'}
+                      ? 'Change the filter or search text.'
+                      : 'Open a new session to start working on your computer.'}
                   </Text>
                 </View>
               )}
@@ -440,9 +436,9 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         {tab === 'hosts' && (
           <>
             <View style={s.intro}>
-              <Text style={s.title}>Komputery</Text>
+              <Text style={s.title}>Computers</Text>
             </View>
-            <Text style={s.eyebrow}>POŁĄCZENIA</Text>
+            <Text style={s.eyebrow}>CONNECTIONS</Text>
             {pairing ? (
               <View style={s.hostCard}>
                 <View style={s.hostCardHeader}>
@@ -467,12 +463,12 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                 </Text>
                 <View style={s.hostActions}>
                   <Button
-                    label={connected ? 'Rozłącz' : 'Połącz'}
+                    label={connected ? 'Disconnect' : 'Connect'}
                     secondary
                     disabled={connecting}
                     onPress={() => (connected ? client.disconnect() : void connect(pairing))}
                   />
-                  <Button label="Zapomnij" secondary onPress={() => void forget()} />
+                  <Button label="Forget" secondary onPress={() => void forget()} />
                 </View>
               </View>
             ) : (
@@ -482,15 +478,15 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                     <Icon name="desktop-outline" size={22} color={c.text} />
                   </View>
                   <View style={s.grow}>
-                    <Text style={s.sectionTitle}>Brak połączonego komputera</Text>
-                    <Text style={s.meta}>Sparuj hosta nesvo kodem QR.</Text>
+                    <Text style={s.sectionTitle}>No connected computer</Text>
+                    <Text style={s.meta}>Pair a nesvo host with a QR code.</Text>
                   </View>
                 </View>
               </View>
             )}
-            <Text style={s.eyebrow}>SZYBKIE DZIAŁANIA</Text>
+            <Text style={s.eyebrow}>QUICK ACTIONS</Text>
             <Button
-              label="Sparuj komputer"
+              label="Pair a computer"
               icon="scan-outline"
               onPress={() => setConnectOpen(true)}
             />
@@ -499,42 +495,42 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         {tab === 'settings' && (
           <>
             <View style={s.intro}>
-              <Text style={s.title}>Konfiguracja</Text>
+              <Text style={s.title}>Settings</Text>
             </View>
             <View style={s.settingsGroup}>
               <NotificationSettings />
             </View>
             <View style={s.settingsGroup}>
-              <Text style={s.sectionTitle}>Podgląd aplikacji</Text>
-              <Text style={common.body}>Wypróbuj sesje i terminal na przykładowych danych.</Text>
+              <Text style={s.sectionTitle}>App preview</Text>
+              <Text style={common.body}>Try sessions and the terminal with sample data.</Text>
               <Button
-                label={mode === 'demo' ? 'Odtwórz sesje demo' : 'Włącz tryb demo'}
+                label={mode === 'demo' ? 'Restore demo sessions' : 'Turn on demo mode'}
                 secondary
                 onPress={resetDemo}
               />
               {!!pairing && (
-                <Button label="Wróć do swojego hosta" onPress={() => void connect(pairing)} />
+                <Button label="Back to your host" onPress={() => void connect(pairing)} />
               )}
             </View>
             <View style={s.plainSection}>
-              <Text style={s.sectionTitle}>Twoje narzędzia i subskrypcje</Text>
+              <Text style={s.sectionTitle}>Your tools and subscriptions</Text>
               <Text style={common.body}>
-                Uruchamiaj Claude Code lub Codex i loguj się na komputerze. Aplikacja nie wymaga
-                kluczy API do modeli.
+                Run Claude Code or Codex and sign in on your computer. The app needs no model API
+                keys.
               </Text>
             </View>
             <View style={s.plainSection}>
-              <Text style={s.sectionTitle}>Projekt open source</Text>
-              <Text style={common.body}>nesvo · rozwijane otwarcie, na licencji MIT.</Text>
+              <Text style={s.sectionTitle}>Open source project</Text>
+              <Text style={common.body}>nesvo · developed in the open under the MIT license.</Text>
               <Button
-                label="Kod na GitHubie"
+                label="Code on GitHub"
                 icon="logo-github"
                 secondary
                 onPress={() => void Linking.openURL('https://github.com/dkveil/nesvo')}
               />
             </View>
             <Text style={s.footnote}>
-              Wczesna wersja · 0.1{'\n'}Prawdziwy terminal działa po połączeniu z komputerem.
+              Early version · 0.1{'\n'}The real terminal works after connecting a computer.
             </Text>
           </>
         )}
@@ -542,7 +538,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
       {!!notice && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Ukryj komunikat"
+          accessibilityLabel="Dismiss message"
           onPress={() => setNotice('')}
           style={s.notice}
         >
@@ -561,7 +557,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
           <SafeAreaView style={s.menuOverlay} edges={['top', 'bottom', 'left', 'right']}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Zamknij menu"
+              accessibilityLabel="Close menu"
               onPress={() => setMenuOpen(false)}
               style={StyleSheet.absoluteFill}
             />
@@ -572,14 +568,14 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                 </View>
                 <IconButton
                   name="close"
-                  label="Zamknij nawigację"
+                  label="Close navigation"
                   onPress={() => setMenuOpen(false)}
                 />
               </View>
               <ScrollView style={s.menuScroll} contentContainerStyle={s.menuContent}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Grupy i podgrupy"
+                  accessibilityLabel="Groups and subgroups"
                   onPress={() => {
                     setMenuOpen(false);
                     navigateTo('groups');
@@ -587,7 +583,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                   style={s.menuItem}
                 >
                   <Icon name="folder-outline" color={c.text} size={21} />
-                  <Text style={s.menuLabel}>Grupy i podgrupy</Text>
+                  <Text style={s.menuLabel}>Groups and subgroups</Text>
                 </Pressable>
                 {inbox.supported ? (
                   <Pressable
@@ -619,7 +615,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                 ) : null}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Ustawienia"
+                  accessibilityLabel="Settings"
                   onPress={() => {
                     setMenuOpen(false);
                     navigateTo('settings');
@@ -627,14 +623,14 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                   style={({ pressed }) => [s.menuItem, pressed && s.pressed]}
                 >
                   <Icon name="settings-outline" color={c.text} size={21} />
-                  <Text style={s.menuLabel}>Ustawienia</Text>
+                  <Text style={s.menuLabel}>Settings</Text>
                 </Pressable>
-                {!!sessions.length && <Text style={s.menuSection}>Ostatnie sesje</Text>}
+                {!!sessions.length && <Text style={s.menuSection}>Recent sessions</Text>}
                 {sessions.slice(0, 8).map(session => (
                   <Pressable
                     key={session.id}
                     accessibilityRole="button"
-                    accessibilityLabel={`Przejdź do sesji ${session.name}`}
+                    accessibilityLabel={`Go to session ${session.name}`}
                     onPress={() => {
                       setMenuOpen(false);
                       openSession(session.id);
@@ -679,7 +675,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               </ScrollView>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Połącz komputer z menu"
+                accessibilityLabel="Connect a computer from the menu"
                 onPress={() => {
                   setMenuOpen(false);
                   setConnectOpen(true);
@@ -688,7 +684,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
               >
                 <Icon name="laptop-outline" size={21} />
                 <View style={s.grow}>
-                  <Text style={s.menuLabel}>Połącz komputer</Text>
+                  <Text style={s.menuLabel}>Connect a computer</Text>
                   <Text style={s.meta}>{connectionLabel}</Text>
                 </View>
                 <Icon name="chevron-forward" size={16} />

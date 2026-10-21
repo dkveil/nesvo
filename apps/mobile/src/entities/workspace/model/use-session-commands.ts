@@ -40,7 +40,7 @@ export function useSessionCommands(options: SessionCommandsOptions) {
         if (event.type === 'disconnected') {
           if (pending.current)
             setCreateError(
-              'Połączenie zostało przerwane. Połącz host i sprawdź listę sesji przed ponowną próbą.',
+              'The connection dropped. Connect the host and check the session list before retrying.',
             );
           pending.current = null;
           setCreating(false);
@@ -79,7 +79,7 @@ export function useSessionCommands(options: SessionCommandsOptions) {
     setCreateError('');
     if (mode === 'live') {
       if (!connected) {
-        setCreateError('Połącz host przed utworzeniem sesji.');
+        setCreateError('Connect a host before creating a session.');
         return;
       }
       if (
@@ -87,7 +87,7 @@ export function useSessionCommands(options: SessionCommandsOptions) {
           program => program.id === request.program && program.available,
         )
       ) {
-        setCreateError('Wybrane narzędzie nie jest dostępne na połączonym komputerze.');
+        setCreateError('The selected tool is not available on the connected computer.');
         return;
       }
       const requestId = client.requestId();
@@ -99,7 +99,7 @@ export function useSessionCommands(options: SessionCommandsOptions) {
       });
     } else {
       if (request.program !== 'shell') {
-        setCreateError('Połącz komputer, aby uruchomić wybrane CLI.');
+        setCreateError('Connect a computer to run the selected CLI.');
         return;
       }
       const example: Session = {
@@ -107,10 +107,10 @@ export function useSessionCommands(options: SessionCommandsOptions) {
         name,
         agent: 'Terminal',
         project: 'workspace',
-        host: 'Podgląd',
+        host: 'Preview',
         cwd: '~/projects/workspace',
         status: 'idle',
-        preview: 'Przykładowy terminal — wpisz help',
+        preview: 'Sample terminal — type help',
         groupId: request.groupId,
       };
       setExamples(current => [example, ...current]);

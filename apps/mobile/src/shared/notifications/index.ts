@@ -43,18 +43,19 @@ export async function saveRegistration(value: Registration | null) {
   else await SecureStore.deleteItemAsync(KEY);
 }
 export async function requestPushToken(): Promise<string> {
-  if (!pushAvailable) throw new Error('Powiadomienia wymagają natywnej wersji nesvo.');
+  if (!pushAvailable) throw new Error('Notifications need the native nesvo build.');
   const notifications = await import('expo-notifications');
   if (Platform.OS === 'android')
     await notifications.setNotificationChannelAsync('attention', {
-      name: 'Sesje wymagające uwagi',
+      name: 'Sessions that need you',
       importance: notifications.AndroidImportance.DEFAULT,
     });
   let permission = await notifications.getPermissionsAsync();
   if (!permission.granted) permission = await notifications.requestPermissionsAsync();
-  if (!permission.granted) throw new Error('Zezwól na powiadomienia w ustawieniach telefonu.');
+  if (!permission.granted) throw new Error('Allow notifications in phone settings.');
   const projectId = Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
-  if (typeof projectId !== 'string') throw new Error('Brak konfiguracji powiadomień tej wersji.');
+  if (typeof projectId !== 'string')
+    throw new Error('This build has no notification configuration.');
   return (await notifications.getExpoPushTokenAsync({ projectId })).data;
 }
 export async function observePush(

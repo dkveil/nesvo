@@ -5,6 +5,7 @@ This is a proposed sequence for nesvo, not a promise to implement every capabili
 ## Product boundaries
 
 - The terminal is the default session view. An optional structured view may complement it later without adding permanent conversation tabs or taking space away from the terminal.
+- The app ships English-only, without a localization library; a locale layer is a later iteration.
 - Keep Sessions and Computers as primary navigation. Put attention items behind an inbox action with a count; keep settings secondary. An open terminal needs a session switcher and a compact input toolbar, not the entire dashboard navigation.
 - Retain the Ultraviolet identity, quiet surfaces and compact rows. Application appearance and terminal content colors are separate settings. Motion communicates state and feedback; it must not animate the terminal grid.
 - Processes and agent integrations run on the host. Keep the original CLI subscription login; do not add model API keys, extract provider credentials or use a model to interpret terminal output.

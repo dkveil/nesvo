@@ -13,7 +13,7 @@ export function GroupPicker({
   onChange,
   disabled,
   excluded,
-  rootLabel = 'Bez grupy',
+  rootLabel = 'No group',
 }: {
   groups: SessionGroup[];
   value: string | null;
@@ -31,7 +31,7 @@ export function GroupPicker({
         <Pressable
           key={group.id ?? 'root'}
           accessibilityRole="radio"
-          accessibilityLabel={`Grupa: ${group.name}`}
+          accessibilityLabel={`Group: ${group.name}`}
           aria-checked={value === group.id}
           accessibilityState={{ checked: value === group.id, disabled }}
           disabled={disabled}

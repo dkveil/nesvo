@@ -87,8 +87,8 @@ export function NewSessionSheet() {
           <SafeAreaView style={s.modalSafe} edges={['top', 'left', 'right']}>
             <SafeAreaView style={s.sheet} edges={['bottom']} accessibilityViewIsModal>
               <View style={s.headingRow}>
-                <Text style={common.heading}>Nowa sesja</Text>
-                <IconButton name="close" label="Anuluj nową sesję" onPress={close} />
+                <Text style={common.heading}>New session</Text>
+                <IconButton name="close" label="Cancel new session" onPress={close} />
               </View>
               <ScrollView
                 style={s.scroll}
@@ -98,10 +98,10 @@ export function NewSessionSheet() {
               >
                 <Text style={s.explanation}>
                   {demo
-                    ? 'Tryb demo · tylko fikcyjny terminal. Połącz komputer, aby uruchamiać swoje CLI.'
-                    : 'Wybierz narzędzie i katalog na połączonym komputerze.'}
+                    ? 'Demo mode · fictional terminal only. Connect a computer to run your CLIs.'
+                    : 'Choose a tool and a directory on the connected computer.'}
                 </Text>
-                <View style={s.programs} accessibilityLabel="Narzędzie sesji">
+                <View style={s.programs} accessibilityLabel="Session tool">
                   {PROGRAMS.map(id => {
                     const agentColor = sessionAgentColor(programAgents[id]);
                     const capability = hostCapabilities?.programs.find(item => item.id === id);
@@ -110,15 +110,15 @@ export function NewSessionSheet() {
                       : connected && capability?.available === true;
                     const status = demo
                       ? id === 'shell'
-                        ? 'Podgląd demo'
-                        : 'Połącz komputer'
+                        ? 'Demo preview'
+                        : 'Connect a computer'
                       : !connected
-                        ? 'Host rozłączony'
+                        ? 'Host disconnected'
                         : !hostCapabilities
-                          ? 'Sprawdzanie…'
+                          ? 'Checking…'
                           : available
-                            ? 'Dostępne'
-                            : 'Nie znaleziono';
+                            ? 'Available'
+                            : 'Not found';
                     return (
                       <Pressable
                         key={id}
@@ -155,14 +155,14 @@ export function NewSessionSheet() {
                   })}
                 </View>
                 <View style={s.field}>
-                  <Text style={s.label}>Katalog roboczy</Text>
+                  <Text style={s.label}>Working directory</Text>
                   <TextInput
-                    accessibilityLabel="Katalog roboczy"
+                    accessibilityLabel="Working directory"
                     value={cwd}
                     onChangeText={setCwdDraft}
                     editable={!demo && !creating}
                     placeholder={
-                      connected ? 'Ścieżka do folderu na komputerze' : 'Najpierw połącz komputer'
+                      connected ? 'Folder path on the computer' : 'Connect a computer first'
                     }
                     placeholderTextColor={c.faint}
                     selectionColor={c.accent}
@@ -175,16 +175,16 @@ export function NewSessionSheet() {
                   />
                   <Text style={s.hint}>
                     {demo
-                      ? 'To przykładowa ścieżka, bez dostępu do plików.'
-                      : 'Podaj ścieżkę istniejącego folderu. Ścieżki względne są liczone od katalogu hosta.'}
+                      ? 'This is a sample path without file access.'
+                      : 'Enter an existing folder path. Relative paths start from the host directory.'}
                   </Text>
                 </View>
                 <View style={s.field}>
                   <Text style={s.label}>
-                    Nazwa sesji <Text style={s.optional}>· opcjonalnie</Text>
+                    Session name <Text style={s.optional}>· optional</Text>
                   </Text>
                   <TextInput
-                    accessibilityLabel="Nazwa sesji"
+                    accessibilityLabel="Session name"
                     value={name}
                     onChangeText={setName}
                     editable={!creating}
@@ -200,7 +200,7 @@ export function NewSessionSheet() {
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Wybierz grupę nowej sesji"
+                  accessibilityLabel="Choose a group for the new session"
                   onPress={() => setChooseGroup(!chooseGroup)}
                   style={s.groupChoice}
                 >
@@ -222,15 +222,15 @@ export function NewSessionSheet() {
                   </Text>
                 )}
                 <Button
-                  label={creating ? 'Tworzenie sesji…' : 'Utwórz sesję'}
+                  label={creating ? 'Creating session…' : 'Create session'}
                   icon="add"
                   onPress={submit}
                   disabled={!canCreate}
                 />
                 {!demo && (
                   <Text style={s.hint}>
-                    Lista pochodzi z hosta. Po instalacji nowego CLI uruchom host ponownie.
-                    Logowanie odbywa się w oryginalnym CLI.
+                    The list comes from the host. Restart the host after installing a new CLI.
+                    Sign-in happens in the original CLI.
                   </Text>
                 )}
               </ScrollView>

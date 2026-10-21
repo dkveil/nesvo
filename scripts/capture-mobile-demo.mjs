@@ -24,29 +24,27 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(process.env.APP_URL || 'http://localhost:8082', { waitUntil: 'networkidle' });
-  await page.getByText('Tryb demo · sesje poniżej są przykładowe', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: /^Otwórz sesję/ }).count(), 7);
+  await page.getByText('Demo mode · the sessions below are samples', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^Open session/ }).count(), 7);
   await page.evaluate(() => document.fonts.ready);
   await mkdir(assets, { recursive: true });
   await page.screenshot({ path: resolve(assets, 'mobile-sessions.png'), animations: 'disabled' });
 
-  await page.getByRole('button', { name: 'Zarządzaj grupami', exact: true }).click();
-  await page
-    .getByText('Grupy przykładowe · zmiany pozostają w tym podglądzie.', { exact: true })
-    .waitFor();
+  await page.getByRole('button', { name: 'Manage groups', exact: true }).click();
+  await page.getByText('Sample groups · changes stay in this preview.', { exact: true }).waitFor();
 
   // Exercise the public controls to illustrate nesting. All changes disappear
   // with this isolated demo context; no host is connected or modified.
   async function addGroup(name, parent) {
     await page
       .getByRole('button', {
-        name: parent ? `Dodaj podgrupę do ${parent}` : 'Dodaj grupę',
+        name: parent ? `Add a subgroup to ${parent}` : 'Add group',
         exact: true,
       })
       .click();
-    await page.getByLabel('Nazwa grupy', { exact: true }).fill(name);
-    await page.getByRole('button', { name: 'Utwórz grupę', exact: true }).click();
-    await page.getByRole('button', { name: `Pokaż grupę ${name}`, exact: true }).waitFor();
+    await page.getByLabel('Group name', { exact: true }).fill(name);
+    await page.getByRole('button', { name: 'Create group', exact: true }).click();
+    await page.getByRole('button', { name: `Show group ${name}`, exact: true }).waitFor();
   }
   await addGroup('Backend', 'Workspace');
   await addGroup('Host Rust', 'Backend');
@@ -54,7 +52,7 @@ try {
   await addGroup('Strona internetowa', 'Projekty poboczne');
   await addGroup('Eksperymenty', 'Projekty poboczne');
   await page
-    .getByText('Grupy przykładowe · zmiany pozostają w tym podglądzie.', { exact: true })
+    .getByText('Sample groups · changes stay in this preview.', { exact: true })
     .scrollIntoViewIfNeeded();
   assert.deepEqual(errors, []);
   await page.screenshot({ path: resolve(assets, 'mobile-groups.png'), animations: 'disabled' });

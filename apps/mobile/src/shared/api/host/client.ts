@@ -134,8 +134,7 @@ export class HostClient {
           ) {
             this.emit({
               type: 'error',
-              message:
-                'Ten host wymaga aktualizacji. Uruchom najnowszą wersję hosta Rust i połącz się ponownie.',
+              message: 'This host needs an update. Run the latest Rust host and reconnect.',
             });
             socket.close();
             return;
@@ -155,8 +154,7 @@ export class HostClient {
             if (message.protocolVersion !== 2 || !Number.isSafeInteger(message.clientId)) {
               this.emit({
                 type: 'error',
-                message:
-                  'Ten host wymaga aktualizacji. Uruchom najnowszą wersję hosta Rust i połącz się ponownie.',
+                message: 'This host needs an update. Run the latest Rust host and reconnect.',
               });
               socket.close();
               return;

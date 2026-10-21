@@ -24,7 +24,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
     useImperativeHandle(ref, () => bridge.handle);
 
     return (
-      <View style={styles.container} accessibilityLabel="Terminal sesji">
+      <View style={styles.container} accessibilityLabel="Session terminal">
         <WebView<unknown>
           ref={webView}
           source={HTML_SOURCE}
@@ -56,15 +56,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
           setBuiltInZoomControls={false}
           renderError={() => (
             <View style={styles.loading}>
-              <Text style={styles.error}>
-                Nie udało się otworzyć terminala. Otwórz sesję ponownie.
-              </Text>
+              <Text style={styles.error}>Could not open the terminal. Open the session again.</Text>
             </View>
           )}
         />
         {!bridge.isReady && (
           <View style={styles.loading} pointerEvents="none">
-            <ActivityIndicator color={colors.accent} accessibilityLabel="Ładowanie terminala" />
+            <ActivityIndicator color={colors.accent} accessibilityLabel="Loading terminal" />
           </View>
         )}
       </View>

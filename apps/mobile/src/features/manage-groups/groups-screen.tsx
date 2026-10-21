@@ -75,16 +75,16 @@ export function GroupsScreen() {
       <View style={s.header}>
         <IconButton
           name="chevron-back"
-          label="Wróć do sesji"
+          label="Back to sessions"
           onPress={() => {
             Keyboard.dismiss();
             navigateTo('sessions');
           }}
         />
-        <Text style={s.title}>Grupy</Text>
+        <Text style={s.title}>Groups</Text>
         <IconButton
           name="add"
-          label="Nowa grupa"
+          label="New group"
           onPress={() => edit({ id: null, name: '', parentId: null, order: 0 })}
         />
       </View>
@@ -95,18 +95,18 @@ export function GroupsScreen() {
       >
         <Text style={common.body}>
           {mode === 'demo'
-            ? 'Grupy przykładowe · zmiany pozostają w tym podglądzie.'
-            : 'Ten sam porządek sesji na telefonie i komputerze.'}
+            ? 'Sample groups · changes stay in this preview.'
+            : 'The same session order on your phone and computer.'}
         </Text>
-        {!canEdit && <Text style={s.hint}>Połącz host, aby zmieniać grupy.</Text>}
+        {!canEdit && <Text style={s.hint}>Connect a host to change groups.</Text>}
         {editor ? (
           <View style={s.form}>
             <Text style={s.formTitle}>
-              {editor.id ? 'Edytuj grupę' : editor.parentId ? 'Nowa podgrupa' : 'Nowa grupa'}
+              {editor.id ? 'Edit group' : editor.parentId ? 'New subgroup' : 'New group'}
             </Text>
             <TextInput
-              accessibilityLabel="Nazwa grupy"
-              placeholder="np. Projekty"
+              accessibilityLabel="Group name"
+              placeholder="e.g. Projects"
               placeholderTextColor={c.faint}
               selectionColor={c.accent}
               autoFocus
@@ -119,7 +119,7 @@ export function GroupsScreen() {
             />
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Wybierz grupę nadrzędną"
+              accessibilityLabel="Choose a parent group"
               onPress={() => setShowParents(!showParents)}
               style={s.parent}
             >
@@ -127,7 +127,7 @@ export function GroupsScreen() {
               <Text style={s.growText}>
                 {editor.parentId
                   ? groups.find(group => group.id === editor.parentId)?.name
-                  : 'Na głównym poziomie'}
+                  : 'At the top level'}
               </Text>
               <Icon name={showParents ? 'chevron-up' : 'chevron-down'} />
             </Pressable>
@@ -137,16 +137,16 @@ export function GroupsScreen() {
                 value={editor.parentId}
                 onChange={parentId => setEditor({ ...editor, parentId })}
                 excluded={editor.id ? groupDescendants(groups, editor.id) : undefined}
-                rootLabel="Na głównym poziomie"
+                rootLabel="At the top level"
               />
             )}
             <Button
-              label={editor.id ? 'Zapisz grupę' : 'Utwórz grupę'}
+              label={editor.id ? 'Save group' : 'Create group'}
               disabled={!canEdit || !validGroupName(editor.name)}
               onPress={save}
             />
             <Button
-              label="Anuluj edycję grupy"
+              label="Cancel group editing"
               secondary
               onPress={() => {
                 Keyboard.dismiss();
@@ -156,7 +156,7 @@ export function GroupsScreen() {
             {!!editor.id && (
               <>
                 <Button
-                  label="Usuń pustą grupę"
+                  label="Delete empty group"
                   secondary
                   disabled={!canEdit || !empty}
                   onPress={() => {
@@ -165,7 +165,7 @@ export function GroupsScreen() {
                 />
                 {!empty && (
                   <Text style={s.hint}>
-                    Przenieś sesje i usuń podgrupy, zanim usuniesz tę grupę.
+                    Move sessions and delete subgroups before deleting this group.
                   </Text>
                 )}
               </>
@@ -174,8 +174,8 @@ export function GroupsScreen() {
         ) : (
           <>
             {[
-              { id: 'all', name: 'Wszystkie sesje' },
-              { id: null, name: 'Bez grupy' },
+              { id: 'all', name: 'All sessions' },
+              { id: null, name: 'No group' },
             ].map(item => (
               <Pressable
                 key={item.id ?? 'ungrouped'}
@@ -204,7 +204,7 @@ export function GroupsScreen() {
               >
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Pokaż grupę ${group.name}`}
+                  accessibilityLabel={`Show group ${group.name}`}
                   onPress={() => select(group.id)}
                   style={s.groupSelect}
                 >
@@ -227,23 +227,23 @@ export function GroupsScreen() {
                 </Pressable>
                 <IconButton
                   name="add"
-                  label={`Dodaj podgrupę do ${group.name}`}
+                  label={`Add a subgroup to ${group.name}`}
                   onPress={() => edit({ id: null, name: '', parentId: group.id, order: 0 })}
                 />
                 <IconButton
                   name="ellipsis-horizontal"
-                  label={`Edytuj grupę ${group.name}`}
+                  label={`Edit group ${group.name}`}
                   onPress={() => edit(group)}
                 />
               </View>
             ))}
             {!groups.length && (
               <Text style={s.hint}>
-                Utwórz pierwszą grupę, a potem dodaj do niej podgrupy i sesje.
+                Create a first group, then add subgroups and sessions to it.
               </Text>
             )}
             <Button
-              label="Dodaj grupę"
+              label="Add group"
               icon="add"
               secondary
               disabled={!canEdit}
@@ -254,7 +254,7 @@ export function GroupsScreen() {
         {!!notice && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Ukryj komunikat"
+            accessibilityLabel="Dismiss message"
             onPress={() => setNotice('')}
           >
             <Text style={s.hint}>{notice}</Text>

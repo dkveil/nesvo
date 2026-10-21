@@ -1,8 +1,8 @@
 import type { Session, SessionStatus, SessionStatusSource } from './session';
 
 export function sessionReadinessLabel(readiness: Session['readiness']): string | undefined {
-  if (readiness?.phase === 'starting') return 'Uruchamianie';
-  if (readiness?.phase === 'timedOut') return 'Błąd startu';
+  if (readiness?.phase === 'starting') return 'Starting';
+  if (readiness?.phase === 'timedOut') return 'Startup failed';
   return undefined;
 }
 
@@ -16,25 +16,25 @@ export function statusNeedsAttention(
 
 /** Activity reports terminal I/O, not an agent's internal progress. */
 export function sessionStatusLabel(status: SessionStatus, source?: SessionStatusSource): string {
-  if (source === 'activity' && status === 'working') return 'Otwarta';
-  if (source === 'activity' && status === 'idle') return 'Cisza';
+  if (source === 'activity' && status === 'working') return 'Open';
+  if (source === 'activity' && status === 'idle') return 'Quiet';
   return {
-    working: 'Pracuje',
-    idle: 'Bezczynna',
-    done: 'Zakończona',
-    blocked: 'Blokada',
-    question: 'Pytanie',
-    failed: 'Błąd',
-    unknown: 'Nieznany',
+    working: 'Working',
+    idle: 'Idle',
+    done: 'Done',
+    blocked: 'Blocked',
+    question: 'Question',
+    failed: 'Failed',
+    unknown: 'Unknown',
   }[status];
 }
 
 export function sessionStatusDetail(status: SessionStatus, source?: SessionStatusSource): string {
   if (source === 'activity')
-    return status === 'working' ? 'Ostatnio używany terminal' : 'Brak sygnału pracy agenta';
-  if (source === 'screen') return 'Stan przybliżony, wywnioskowany z treści terminala';
-  if (source === 'hook') return 'Stan potwierdzony zdarzeniem agenta';
-  if (source === 'program') return 'Stan zgłoszony przez program w terminalu';
-  if (source === 'process') return 'Stan procesu na komputerze';
-  return 'Brak informacji o stanie agenta';
+    return status === 'working' ? 'Recently used terminal' : 'No agent work signal';
+  if (source === 'screen') return 'Approximate state inferred from terminal content';
+  if (source === 'hook') return 'State confirmed by an agent event';
+  if (source === 'program') return 'State reported by the program in the terminal';
+  if (source === 'process') return 'Process state on the computer';
+  return 'No agent state information';
 }

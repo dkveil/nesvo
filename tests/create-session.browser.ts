@@ -116,8 +116,10 @@ async function main() {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
-    await page.getByRole('button', { name: 'Nowa sesja', exact: true }).waitFor({ timeout: 60000 });
-    await page.getByRole('button', { name: 'Nowa sesja', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'New session', exact: true })
+      .waitFor({ timeout: 60000 });
+    await page.getByRole('button', { name: 'New session', exact: true }).click();
     assert.equal(
       await page.getByRole('radio', { name: 'Terminal', exact: true }).getAttribute('aria-checked'),
       'true',
@@ -130,24 +132,26 @@ async function main() {
       );
     }
     assert.notEqual(
-      await page.getByLabel('Katalog roboczy', { exact: true }).getAttribute('readonly'),
+      await page.getByLabel('Working directory', { exact: true }).getAttribute('readonly'),
       null,
     );
     await page.screenshot({ path: 'artifacts/new-session-demo.png' });
-    await page.getByRole('button', { name: 'Anuluj nową sesję', exact: true }).click();
-    await page.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
-    await page.getByLabel('Kod parowania JSON').fill(
+    await page.getByRole('button', { name: 'Cancel new session', exact: true }).click();
+    await page.getByRole('button', { name: 'Connect your computer', exact: true }).click();
+    await page.getByLabel('Pairing code JSON').fill(
       JSON.stringify({
         version: 1,
         url: `ws://localhost:${address.port}`,
         key: key.toString('hex'),
       }),
     );
-    await page.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
-    await page.getByText('Połączono', { exact: true }).filter({ visible: true }).waitFor();
-    await page.getByRole('button', { name: 'Nowa sesja z menu startowego', exact: true }).click();
+    await page.getByRole('button', { name: 'Connect to host', exact: true }).click();
+    await page.getByText('Connected', { exact: true }).filter({ visible: true }).waitFor();
+    await page
+      .getByRole('button', { name: 'New session from the start menu', exact: true })
+      .click();
     assert.equal(
-      await page.getByLabel('Katalog roboczy', { exact: true }).inputValue(),
+      await page.getByLabel('Working directory', { exact: true }).inputValue(),
       '/workspace',
     );
     assert.equal(
@@ -163,36 +167,36 @@ async function main() {
     await page.screenshot({ path: 'artifacts/new-session-live.png' });
     await page.setViewportSize({ width: 320, height: 400 });
     const closeBounds = await page
-      .getByRole('button', { name: 'Anuluj nową sesję', exact: true })
+      .getByRole('button', { name: 'Cancel new session', exact: true })
       .boundingBox();
     assert.ok(
       closeBounds && closeBounds.y >= 0 && closeBounds.y + closeBounds.height <= 400,
       'Create sheet close button stays above a compact keyboard viewport',
     );
-    await page.getByLabel('Katalog roboczy', { exact: true }).fill('/workspace/missing');
-    await page.getByLabel('Nazwa sesji', { exact: true }).fill('Retry task');
-    await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
+    await page.getByLabel('Working directory', { exact: true }).fill('/workspace/missing');
+    await page.getByLabel('Session name', { exact: true }).fill('Retry task');
+    await page.getByRole('button', { name: 'Create session', exact: true }).click();
     await page
       .getByRole('alert')
       .filter({ hasText: 'Working directory does not exist.' })
       .waitFor();
     assert.equal(
-      await page.getByLabel('Nazwa sesji', { exact: true }).inputValue(),
+      await page.getByLabel('Session name', { exact: true }).inputValue(),
       'Retry task',
       'Host errors must preserve the editable draft',
     );
     assert.equal(
-      await page.getByLabel('Katalog roboczy', { exact: true }).inputValue(),
+      await page.getByLabel('Working directory', { exact: true }).inputValue(),
       '/workspace/missing',
     );
     await page.screenshot({ path: 'artifacts/new-session-compact.png' });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByLabel('Katalog roboczy', { exact: true }).fill('/workspace/mobile');
-    await page.getByLabel('Nazwa sesji', { exact: true }).fill('');
-    await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
-    await page.frameLocator('iframe[title="Terminal sesji"]').locator('.xterm-screen').waitFor();
+    await page.getByLabel('Working directory', { exact: true }).fill('/workspace/mobile');
+    await page.getByLabel('Session name', { exact: true }).fill('');
+    await page.getByRole('button', { name: 'Create session', exact: true }).click();
+    await page.frameLocator('iframe[title="Session terminal"]').locator('.xterm-screen').waitFor();
     assert.equal(await page.getByRole('tab', { name: /^(Terminal|Rozmowa)$/ }).count(), 0);
-    await page.getByRole('button', { name: 'Ukryj klawiaturę', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Hide keyboard', exact: true }).waitFor();
     assert.equal(requests.length, 2);
     assert.equal(requests[1]?.cwd, '/workspace/mobile');
     assert.equal(requests[1]?.program, 'claude');
@@ -203,16 +207,16 @@ async function main() {
     );
     assert.notEqual(requests[0]?.requestId, requests[1]?.requestId);
     // Snapshot status changes are visible without reopening or recreating the session.
-    await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to sessions', exact: true }).click();
     assert.ok(session);
     for (const [state, source, label] of [
-      ['working', 'activity', 'Otwarta'],
-      ['idle', 'activity', 'Cisza'],
-      ['question', 'screen', 'Pytanie'],
-      ['blocked', 'screen', 'Blokada'],
-      ['done', 'process', 'Zakończona'],
-      ['failed', 'process', 'Błąd'],
-      ['unknown', 'screen', 'Nieznany'],
+      ['working', 'activity', 'Open'],
+      ['idle', 'activity', 'Quiet'],
+      ['question', 'screen', 'Question'],
+      ['blocked', 'screen', 'Blocked'],
+      ['done', 'process', 'Done'],
+      ['failed', 'process', 'Failed'],
+      ['unknown', 'screen', 'Unknown'],
     ] as const) {
       session = { ...session, status: { state, source, updatedAt: Date.now() } };
       for (const snapshot of snapshots) snapshot();

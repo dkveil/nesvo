@@ -21,13 +21,13 @@ export default function SessionRoute() {
   if (!session) {
     return (
       <View style={styles.empty}>
-        <Text style={common.heading}>Sesja niedostępna</Text>
+        <Text style={common.heading}>Session unavailable</Text>
         <Text style={common.body}>
-          Wróć do listy i połącz właściwy host. Sesja mogła zostać zakończona lub nie jest zapisana
-          w tym podglądzie.
+          Go back to the list and connect the right host. The session may have ended or is not saved
+          in this preview.
         </Text>
         <Link href="/" replace style={styles.link}>
-          Wróć do sesji
+          Back to sessions
         </Link>
       </View>
     );

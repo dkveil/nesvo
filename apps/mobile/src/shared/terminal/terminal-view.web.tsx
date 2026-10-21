@@ -31,13 +31,13 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
     }, []);
 
     return (
-      <View style={styles.container} accessibilityLabel="Terminal sesji">
+      <View style={styles.container} accessibilityLabel="Session terminal">
         <iframe
           ref={iframe}
           inert={props.interactive === false}
           tabIndex={props.interactive === false ? -1 : 0}
           srcDoc={TERMINAL_HTML}
-          title="Terminal sesji"
+          title="Session terminal"
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"
           style={{
@@ -51,7 +51,7 @@ export const TerminalView = forwardRef<TerminalHandle, TerminalViewProps>(
         />
         {!bridge.isReady && (
           <View style={styles.loading} pointerEvents="none">
-            <ActivityIndicator color={colors.accent} accessibilityLabel="Ładowanie terminala" />
+            <ActivityIndicator color={colors.accent} accessibilityLabel="Loading terminal" />
           </View>
         )}
       </View>

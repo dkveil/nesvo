@@ -30,7 +30,7 @@ export function SessionLaunchpad({
     onCreate(name.trim());
   }
   return (
-    <View style={s.root} accessibilityLabel="Menu startowe">
+    <View style={s.root} accessibilityLabel="Start menu">
       <View
         style={s.logo}
         onLayout={event =>
@@ -41,15 +41,15 @@ export function SessionLaunchpad({
       </View>
       <View style={s.context}>
         <Text style={s.path} numberOfLines={1} ellipsizeMode="middle">
-          {workspace || (demo ? '~/nesvo' : 'Katalog hosta')}
+          {workspace || (demo ? '~/nesvo' : 'Host directory')}
         </Text>
         <Text style={s.contextMode}>{demo ? 'demo' : 'workspace'}</Text>
       </View>
       <View style={[s.composer, focused && s.composerFocused]}>
         <View style={s.composerRail} aria-hidden pointerEvents="none" />
         <TextInput
-          accessibilityLabel="Nazwa nowej sesji"
-          placeholder="Nazwij nową sesję…"
+          accessibilityLabel="New session name"
+          placeholder="Name a new session…"
           placeholderTextColor={c.muted}
           selectionColor={c.accent}
           value={name}
@@ -64,7 +64,7 @@ export function SessionLaunchpad({
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Nowa sesja z menu startowego"
+          accessibilityLabel="New session from the start menu"
           onPress={create}
           style={({ pressed }) => [s.create, pressed && s.pressed]}
         >
@@ -73,8 +73,8 @@ export function SessionLaunchpad({
       </View>
       <Text style={s.hint}>
         {demo
-          ? 'Podgląd demo. Połącz komputer, aby uruchomić CLI.'
-          : 'Dalej wybierzesz CLI i katalog.'}
+          ? 'Demo preview. Connect a computer to run a CLI.'
+          : 'Next you choose the CLI and directory.'}
       </Text>
     </View>
   );

@@ -58,7 +58,7 @@ export function useHostConnection(mode: WorkspaceMode) {
         if (event.code && SCREEN_HANDLED_ERRORS.has(event.code)) return;
         setNotice(
           event.code === 'revision_conflict'
-            ? 'Grupy zmieniły się na innym urządzeniu. Lista została odświeżona; ponów zmianę.'
+            ? 'Groups changed on another device. The list was refreshed; try your change again.'
             : event.message,
         );
         if (event.code === 'revision_conflict') client.listSessions();
@@ -68,7 +68,7 @@ export function useHostConnection(mode: WorkspaceMode) {
           ...session,
           agent: programAgents[session.program ?? 'shell'],
           project: session.cwd.split(/[\\/]/).filter(Boolean).at(-1) || session.cwd,
-          host: pairingRef.current ? new URL(pairingRef.current.url).hostname : 'Komputer',
+          host: pairingRef.current ? new URL(pairingRef.current.url).hostname : 'Computer',
           status: session.status?.state ?? 'unknown',
           statusSource:
             session.status?.confirmedSource === 'osc7501'
@@ -77,9 +77,7 @@ export function useHostConnection(mode: WorkspaceMode) {
                 ? 'hook'
                 : session.status?.source,
           statusUpdatedAt: session.status?.updatedAt,
-          preview: session.running
-            ? 'Sesja działa na Twoim komputerze'
-            : 'Proces terminala zakończony',
+          preview: session.running ? 'Session runs on your computer' : 'Terminal process ended',
           live: true,
         }));
         setSnapshot({ sessions, groups: event.groups, revision: event.revision });
@@ -122,7 +120,7 @@ export function useHostConnection(mode: WorkspaceMode) {
         }
       })
       .catch(() => {
-        if (active) setNotice('Nie udało się odczytać zapisanego hosta. Sparuj go ponownie.');
+        if (active) setNotice('Could not read the saved host. Pair it again.');
       });
     return () => {
       active = false;
@@ -152,9 +150,7 @@ export function useHostConnection(mode: WorkspaceMode) {
       try {
         await SecureStore.setItemAsync(SAVED_HOST, JSON.stringify(value));
       } catch {
-        setNotice(
-          'Klucz nie został zapisany. Po ponownym uruchomieniu aplikacji sparuj host ponownie.',
-        );
+        setNotice('The key was not saved. Pair the host again after restarting the app.');
       }
     }
   }
@@ -170,7 +166,7 @@ export function useHostConnection(mode: WorkspaceMode) {
       try {
         await SecureStore.deleteItemAsync(SAVED_HOST);
       } catch {
-        setNotice('Nie udało się usunąć klucza z magazynu. Spróbuj ponownie.');
+        setNotice('Could not remove the key from storage. Try again.');
       }
     }
   }

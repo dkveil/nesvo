@@ -43,7 +43,7 @@ export function groupPath(groups: SessionGroup[], groupId: string | null | undef
     names.unshift(group.name);
     groupId = group.parentId;
   }
-  return names.join(' / ') || 'Bez grupy';
+  return names.join(' / ') || 'No group';
 }
 
 export function validGroupName(name: string): boolean {

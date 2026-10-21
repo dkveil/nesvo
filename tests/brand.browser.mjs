@@ -42,18 +42,18 @@ try {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
   });
-  await page.getByText('Tryb demo · sesje poniżej są przykładowe', { exact: true }).waitFor();
+  await page.getByText('Demo mode · the sessions below are samples', { exact: true }).waitFor();
   assert.equal(await mark.count(), 0, 'A populated workspace starts with its session list');
-  const sessions = page.getByRole('button', { name: /^Otwórz sesję/ });
+  const sessions = page.getByRole('button', { name: /^Open session/ });
   assert.equal(await sessions.count(), 7);
   // Remove only the fictional sessions in this fresh browser context through
   // the normal UI. The empty-workspace logo must not require a test-only route.
   for (let remaining = 7; remaining > 0; remaining--) {
     await sessions.first().click();
-    await page.frameLocator('iframe[title="Terminal sesji"]').locator('.xterm-screen').waitFor();
-    await page.getByRole('button', { name: 'Zakończ sesję', exact: true }).click();
-    await page.getByRole('button', { name: 'Zostaw otwartą', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Zakończ sesję', exact: true }).last().click();
+    await page.frameLocator('iframe[title="Session terminal"]').locator('.xterm-screen').waitFor();
+    await page.getByRole('button', { name: 'End session', exact: true }).click();
+    await page.getByRole('button', { name: 'Keep it open', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'End session', exact: true }).last().click();
     await page.waitForURL(url => url.pathname === '/');
     assert.equal(await sessions.count(), remaining - 1);
   }
@@ -76,13 +76,13 @@ try {
   });
   const bounds = await mark.boundingBox();
   assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 320, JSON.stringify(bounds));
-  await page.getByLabel('Nazwa nowej sesji', { exact: true }).fill('Ultraviolet task');
-  await page.getByRole('button', { name: 'Nowa sesja z menu startowego', exact: true }).click();
+  await page.getByLabel('New session name', { exact: true }).fill('Ultraviolet task');
+  await page.getByRole('button', { name: 'New session from the start menu', exact: true }).click();
   assert.equal(
-    await page.getByLabel('Nazwa sesji', { exact: true }).inputValue(),
+    await page.getByLabel('Session name', { exact: true }).inputValue(),
     'Ultraviolet task',
   );
-  await page.getByRole('button', { name: 'Anuluj nową sesję', exact: true }).click();
+  await page.getByRole('button', { name: 'Cancel new session', exact: true }).click();
   await page.screenshot({ path: 'artifacts/ultraviolet-compact.png' });
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -112,12 +112,12 @@ try {
     delete document.visibilityState;
     document.dispatchEvent(new Event('visibilitychange'));
   });
-  await page.getByRole('button', { name: 'Otwórz menu', exact: true }).click();
+  await page.getByRole('button', { name: 'Open menu', exact: true }).click();
   await assertStill('A covered dashboard stops logo frames');
-  await page.getByRole('button', { name: 'Zamknij nawigację', exact: true }).click();
+  await page.getByRole('button', { name: 'Close navigation', exact: true }).click();
   await page.setViewportSize({ width: 320, height: 250 });
   await page
-    .getByText('Otwórz nową sesję, żeby zacząć pracę na komputerze.', { exact: true })
+    .getByText('Open a new session to start working on your computer.', { exact: true })
     .scrollIntoViewIfNeeded();
   const logoIntersects = await mark.evaluate(
     node =>

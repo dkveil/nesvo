@@ -61,45 +61,45 @@ async function main() {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
-    await page.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
-    await page.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
-    await page.getByText('Połączono', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByRole('button', { name: 'Connect your computer', exact: true }).click();
+    await page.getByLabel('Pairing code JSON').fill(JSON.stringify(pairing));
+    await page.getByRole('button', { name: 'Connect to host', exact: true }).click();
+    await page.getByText('Connected', { exact: true }).filter({ visible: true }).waitFor();
     // Organize on one client and observe the authoritative hierarchy on another.
-    await page.getByRole('button', { name: 'Zarządzaj grupami', exact: true }).click();
-    await page.getByRole('button', { name: 'Dodaj grupę', exact: true }).click();
-    await page.getByLabel('Nazwa grupy', { exact: true }).fill('Live workspace');
-    await page.getByRole('button', { name: 'Utwórz grupę', exact: true }).click();
+    await page.getByRole('button', { name: 'Manage groups', exact: true }).click();
+    await page.getByRole('button', { name: 'Add group', exact: true }).click();
+    await page.getByLabel('Group name', { exact: true }).fill('Live workspace');
+    await page.getByRole('button', { name: 'Create group', exact: true }).click();
     await page
-      .getByRole('button', { name: 'Dodaj podgrupę do Live workspace', exact: true })
+      .getByRole('button', { name: 'Add a subgroup to Live workspace', exact: true })
       .click();
-    await page.getByLabel('Nazwa grupy', { exact: true }).fill('Phone');
-    await page.getByRole('button', { name: 'Utwórz grupę', exact: true }).click();
-    await page.getByRole('button', { name: 'Pokaż grupę Phone', exact: true }).click();
+    await page.getByLabel('Group name', { exact: true }).fill('Phone');
+    await page.getByRole('button', { name: 'Create group', exact: true }).click();
+    await page.getByRole('button', { name: 'Show group Phone', exact: true }).click();
     const observer = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     observer.on('pageerror', error => errors.push(error.message));
     await observer.goto(appUrl, { waitUntil: 'domcontentloaded' });
-    await observer.getByRole('button', { name: 'Połącz swój komputer', exact: true }).click();
-    await observer.getByLabel('Kod parowania JSON').fill(JSON.stringify(pairing));
-    await observer.getByRole('button', { name: 'Połącz z hostem', exact: true }).click();
-    await observer.getByRole('button', { name: 'Zarządzaj grupami', exact: true }).click();
-    await observer.getByRole('button', { name: 'Pokaż grupę Phone', exact: true }).waitFor();
+    await observer.getByRole('button', { name: 'Connect your computer', exact: true }).click();
+    await observer.getByLabel('Pairing code JSON').fill(JSON.stringify(pairing));
+    await observer.getByRole('button', { name: 'Connect to host', exact: true }).click();
+    await observer.getByRole('button', { name: 'Manage groups', exact: true }).click();
+    await observer.getByRole('button', { name: 'Show group Phone', exact: true }).waitFor();
     await observer.screenshot({ path: 'artifacts/groups-live.png' });
     // Selecting a parent includes sessions in its descendants.
-    await observer.getByRole('button', { name: 'Pokaż grupę Live workspace', exact: true }).click();
-    await page.getByRole('button', { name: 'Nowa sesja', exact: true }).click();
-    await page.getByLabel('Nazwa sesji', { exact: true }).fill('Rust live verification');
-    await page.getByRole('button', { name: 'Utwórz sesję', exact: true }).click();
-    const terminal = page.frameLocator('iframe[title="Terminal sesji"]');
+    await observer.getByRole('button', { name: 'Show group Live workspace', exact: true }).click();
+    await page.getByRole('button', { name: 'New session', exact: true }).click();
+    await page.getByLabel('Session name', { exact: true }).fill('Rust live verification');
+    await page.getByRole('button', { name: 'Create session', exact: true }).click();
+    const terminal = page.frameLocator('iframe[title="Session terminal"]');
     await terminal.locator('.xterm-screen').waitFor();
-    await page.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).click();
+    await page.getByRole('button', { name: 'Take control', exact: true }).click();
     await observer
-      .getByRole('button', { name: 'Otwórz sesję Rust live verification', exact: true })
+      .getByRole('button', { name: 'Open session Rust live verification', exact: true })
       .click();
-    const observerTerminal = observer.frameLocator('iframe[title="Terminal sesji"]');
+    const observerTerminal = observer.frameLocator('iframe[title="Session terminal"]');
     await observerTerminal.locator('.xterm-screen').waitFor();
     assert.notEqual(
-      await observer.getByLabel('Polecenie terminala', { exact: true }).getAttribute('readonly'),
+      await observer.getByLabel('Terminal command', { exact: true }).getAttribute('readonly'),
       null,
       'passive terminal must not accept input',
     );
@@ -108,13 +108,13 @@ async function main() {
       process.platform === 'win32'
         ? "Write-Output ('RUST_BROWSER_' + 'EXECUTED')"
         : "printf '%s%s\\n' RUST_BROWSER_ EXECUTED";
-    await page.getByLabel('Polecenie terminala', { exact: true }).fill(command);
+    await page.getByLabel('Terminal command', { exact: true }).fill(command);
     assert.equal(
-      await page.getByLabel('Polecenie terminala', { exact: true }).inputValue(),
+      await page.getByLabel('Terminal command', { exact: true }).inputValue(),
       command,
       'composer must contain the complete command before sending',
     );
-    await page.getByRole('button', { name: 'Wyślij', exact: true }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
     await terminal
       .locator('.xterm-rows')
       .filter({ hasText: 'RUST_BROWSER_EXECUTED' })
@@ -123,54 +123,54 @@ async function main() {
       .locator('.xterm-rows')
       .filter({ hasText: 'RUST_BROWSER_EXECUTED' })
       .waitFor();
-    await observer.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).click();
-    await page.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).waitFor();
+    await observer.getByRole('button', { name: 'Take control', exact: true }).click();
+    await page.getByRole('button', { name: 'Take control', exact: true }).waitFor();
     assert.notEqual(
-      await page.getByLabel('Polecenie terminala', { exact: true }).getAttribute('readonly'),
+      await page.getByLabel('Terminal command', { exact: true }).getAttribute('readonly'),
       null,
       'takeover disables the previous controller',
     );
     await observer
-      .getByLabel('Polecenie terminala', { exact: true })
+      .getByLabel('Terminal command', { exact: true })
       .fill(
         process.platform === 'win32'
           ? "Write-Output ('DESKTOP_' + 'TAKEOVER')"
           : "printf '%s%s\\n' DESKTOP_ TAKEOVER",
       );
-    await observer.getByRole('button', { name: 'Wyślij', exact: true }).click();
+    await observer.getByRole('button', { name: 'Send', exact: true }).click();
     await terminal.locator('.xterm-rows').filter({ hasText: 'DESKTOP_TAKEOVER' }).waitFor();
     // Moving a live session changes its group on both devices without replacing its process.
-    await observer.getByRole('button', { name: 'Przenieś sesję do grupy', exact: true }).click();
-    await observer.getByRole('radio', { name: 'Grupa: Live workspace', exact: true }).click();
-    await observer.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
+    await observer.getByRole('button', { name: 'Move session to a group', exact: true }).click();
+    await observer.getByRole('radio', { name: 'Group: Live workspace', exact: true }).click();
+    await observer.getByRole('button', { name: 'Back to sessions', exact: true }).click();
     await observer.close();
     await page.screenshot({ path: 'artifacts/terminal-live.png' });
-    await page.getByRole('button', { name: 'Wróć do sesji', exact: true }).click();
-    await page.getByRole('tab', { name: 'Komputery', exact: true }).click();
-    await page.getByRole('button', { name: 'Rozłącz', exact: true }).click();
-    await page.getByText('Rozłączono', { exact: true }).filter({ visible: true }).waitFor();
-    await page.getByRole('button', { name: 'Połącz', exact: true }).click();
-    await page.getByText('Połączono', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByRole('button', { name: 'Back to sessions', exact: true }).click();
+    await page.getByRole('tab', { name: 'Computers', exact: true }).click();
+    await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+    await page.getByText('Disconnected', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByText('Connected', { exact: true }).filter({ visible: true }).waitFor();
     await page
-      .getByRole('button', { name: 'Otwórz sesję Rust live verification', exact: true })
+      .getByRole('button', { name: 'Open session Rust live verification', exact: true })
       .click();
     await terminal.locator('.xterm-rows').filter({ hasText: 'RUST_BROWSER_EXECUTED' }).waitFor();
-    await page.getByRole('button', { name: 'Przejmij sterowanie', exact: true }).click();
+    await page.getByRole('button', { name: 'Take control', exact: true }).click();
     await page
-      .getByLabel('Polecenie terminala', { exact: true })
+      .getByLabel('Terminal command', { exact: true })
       .fill(
         process.platform === 'win32'
           ? "Write-Output ('AFTER_' + 'RECONNECT_OK')"
           : "printf '%s%s\\n' AFTER_ RECONNECT_OK",
       );
-    await page.getByRole('button', { name: 'Wyślij', exact: true }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
     await terminal.locator('.xterm-rows').filter({ hasText: 'AFTER_RECONNECT_OK' }).waitFor();
-    await page.getByRole('button', { name: 'Zakończ sesję', exact: true }).click();
-    await page.getByRole('button', { name: 'Zakończ sesję', exact: true }).last().click();
+    await page.getByRole('button', { name: 'End session', exact: true }).click();
+    await page.getByRole('button', { name: 'End session', exact: true }).last().click();
     await page.waitForTimeout(600);
     await page.screenshot({ path: 'artifacts/session-closed.png' });
     await page
-      .getByText('Miejsce na pierwszą sesję', { exact: true })
+      .getByText('Room for your first session', { exact: true })
       .filter({ visible: true })
       .waitFor();
     assert.deepEqual(errors, [], 'No browser runtime errors in live session');

@@ -31,7 +31,7 @@ const bundle = await build({
             stats.writes++;
             stats.maxChunk = Math.max(stats.maxChunk, command.data.length);
             stats.characters += command.data.length;
-            stats.overflowNotice ||= command.data.includes('Podgląd pominął starsze dane');
+            stats.overflowNotice ||= command.data.includes('Preview skipped older data');
           } else if (command.type === 'reset') stats.resets++;
           iframe.current.contentWindow.postMessage(command, '*');
         });

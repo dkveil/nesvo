@@ -1,15 +1,15 @@
 const DEMO_PATH = '/home/demo/projects/workspace';
 const PROMPT = '\x1b[38;2;214;214;214mdemo\x1b[0m \x1b[90mworkspace\x1b[0m $ ';
 const HELP = [
-  'Dostępne polecenia demonstracyjne:',
-  '  ls          przykładowe pliki',
-  '  pwd         fikcyjny katalog',
-  '  echo tekst  wyświetl tekst',
-  '  git status  przykładowy stan projektu',
-  '  clear       wyczyść widok',
-  '  help        ta lista',
+  'Available demo commands:',
+  '  ls          sample files',
+  '  pwd         fictional directory',
+  '  echo text   print text',
+  '  git status  sample project state',
+  '  clear       clear the view',
+  '  help        this list',
   '',
-  'To lokalna symulacja. Nie łączy się z komputerem ani AI.',
+  'This is a local simulation. It does not connect to a computer or AI.',
 ].join('\r\n');
 
 export function createDemoShell(write: (text: string) => void, onClear?: () => void) {
@@ -45,10 +45,10 @@ export function createDemoShell(write: (text: string) => void, onClear?: () => v
       else write('\x1b[2J\x1b[3J\x1b[H');
     } else if (command === 'git status') {
       write(
-        'Przykładowy stan repozytorium (DEMO):\r\nNa gałęzi main\r\nBrak zmian w katalogu roboczym.\r\n',
+        'Sample repository state (DEMO):\r\nOn branch main\r\nNothing to commit, working tree clean.\r\n',
       );
     } else {
-      write('To polecenie nie jest dostępne w demo. Wpisz help.\r\n');
+      write('This command is not available in the demo. Type help.\r\n');
     }
     prompt();
   }
@@ -56,8 +56,8 @@ export function createDemoShell(write: (text: string) => void, onClear?: () => v
   function start() {
     if (started) return;
     started = true;
-    write('\x1b[38;2;214;214;214mDEMO · fikcyjny terminal\x1b[0m\r\n');
-    write('Brak połączenia z komputerem lub AI.\r\nWpisz help, aby wypróbować polecenia.\r\n\r\n');
+    write('\x1b[38;2;214;214;214mDEMO · fictional terminal\x1b[0m\r\n');
+    write('Not connected to a computer or AI.\r\nType help to try the commands.\r\n\r\n');
     prompt();
   }
 

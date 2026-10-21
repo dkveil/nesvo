@@ -7,29 +7,30 @@ export const demoConversations: Record<string, DemoMessage[]> = {
   'demo-codex': [
     {
       role: 'system',
-      content: 'Fikcyjna rozmowa pokazująca interfejs. Żaden agent nie pracuje w tle.',
+      content:
+        'A fictional conversation that shows the interface. No agent is working in the background.',
     },
-    { role: 'user', content: 'Przygotuj czytelną listę sesji do obsługi jedną ręką.' },
+    { role: 'user', content: 'Prepare a readable session list for one-handed use.' },
     {
       role: 'assistant',
       content:
-        'Na tym przykładowym ekranie pytania wymagające Twojej uwagi trafiają na początek. Czy zakończone zadania mają pozostać na liście?',
+        'On this sample screen, questions that need you go to the top. Should finished tasks stay on the list?',
     },
   ],
   'demo-claude': [
-    { role: 'system', content: 'Przykładowa rozmowa. Nie wykonano poleceń ani zmian w plikach.' },
-    { role: 'user', content: 'Podsumuj zmiany w ekranie terminala.' },
+    { role: 'system', content: 'Sample conversation. No commands ran and no files changed.' },
+    { role: 'user', content: 'Summarize the changes to the terminal screen.' },
     {
       role: 'assistant',
       content:
-        'Przykładowe podsumowanie: terminal ma pasek klawiszy specjalnych, a polecenia można wygodnie wpisać w większym polu. Następny krok to test klawiatury na telefonie.',
+        'Sample summary: the terminal has a special-key bar, and commands are easy to type in a larger field. Next step: test the keyboard on a phone.',
     },
   ],
   'demo-terminal': [
     {
       role: 'system',
       content:
-        'Fikcyjny terminal działa tylko w pamięci aplikacji. Wpisz help, aby zobaczyć dostępne polecenia.',
+        'This fictional terminal runs only in app memory. Type help to see the available commands.',
     },
   ],
 };

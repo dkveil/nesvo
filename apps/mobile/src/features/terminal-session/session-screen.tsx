@@ -141,13 +141,13 @@ export function SessionScreen({
         {!!session.live && !!hostCapabilities?.attention && (
           <IconButton
             name={session.muted ? 'notifications-off-outline' : 'notifications-outline'}
-            label={session.muted ? 'Włącz alerty sesji' : 'Wycisz alerty sesji'}
+            label={session.muted ? 'Unmute session alerts' : 'Mute session alerts'}
             onPress={() => client.muteSession(session.id, !session.muted)}
           />
         )}
         <IconButton
           name="chevron-back"
-          label="Wróć do sesji"
+          label="Back to sessions"
           onPress={() => {
             dismissKeyboard();
             onBack();
@@ -164,7 +164,7 @@ export function SessionScreen({
         </Pressable>
         <IconButton
           name="folder-outline"
-          label="Przenieś sesję do grupy"
+          label="Move session to a group"
           onPress={() => {
             dismissKeyboard();
             setGroupOpen(true);
@@ -172,7 +172,7 @@ export function SessionScreen({
         />
         <IconButton
           name="close"
-          label="Zakończ sesję"
+          label="End session"
           onPress={() => {
             dismissKeyboard();
             setConfirmClose(true);
@@ -201,17 +201,17 @@ export function SessionScreen({
           {!!showControl && (
             <Text style={s.controlLabel} numberOfLines={1}>
               {controlling
-                ? '● Sterujesz tą sesją'
+                ? '● You control this session'
                 : control?.controllerId != null
-                  ? '○ Podgląd · steruje inne urządzenie'
-                  : '○ Podgląd · możesz przejąć sterowanie'}
+                  ? '○ Viewing · another device is in control'
+                  : '○ Viewing · you can take control'}
             </Text>
           )}
         </View>
         {!!showControl && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={controlling ? 'Oddaj sterowanie' : 'Przejmij sterowanie'}
+            accessibilityLabel={controlling ? 'Release control' : 'Take control'}
             disabled={!watching}
             onPress={() => {
               if (controlling) client.releaseControl(session.id);
@@ -225,7 +225,7 @@ export function SessionScreen({
             }}
             style={s.controlButton}
           >
-            <Text style={s.controlAction}>{controlling ? 'Oddaj' : 'Przejmij'}</Text>
+            <Text style={s.controlAction}>{controlling ? 'Release' : 'Take over'}</Text>
           </Pressable>
         )}
       </View>
@@ -260,7 +260,7 @@ export function SessionScreen({
       {!!notice && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Ukryj informację"
+          accessibilityLabel="Dismiss notice"
           onPress={() => setNotice('')}
           style={s.notice}
         >
@@ -287,7 +287,7 @@ export function SessionScreen({
             <Pressable
               key={key.label}
               accessibilityRole="button"
-              accessibilityLabel={`Klawisz ${key.label}`}
+              accessibilityLabel={`Key ${key.label}`}
               disabled={!canType}
               onPress={() => input(key.value)}
               style={({ pressed }) => [s.key, !canType && s.inactive, pressed && s.keyPressed]}
@@ -300,7 +300,7 @@ export function SessionScreen({
         </ScrollView>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Ukryj klawiaturę"
+          accessibilityLabel="Hide keyboard"
           onPress={dismissKeyboard}
           style={({ pressed }) => [s.hideKeyboard, pressed && s.keyPressed]}
         >
@@ -315,8 +315,8 @@ export function SessionScreen({
           </Text>
           <TextInput
             ref={composerInput}
-            accessibilityLabel="Polecenie terminala"
-            placeholder={!canType ? 'Przejmij sterowanie, aby pisać' : 'Wpisz polecenie'}
+            accessibilityLabel="Terminal command"
+            placeholder={!canType ? 'Take control to type' : 'Type a command'}
             placeholderTextColor={c.muted}
             selectionColor={c.accent}
             value={draft}
@@ -337,7 +337,7 @@ export function SessionScreen({
           <Pressable
             disabled={!draft.trim() || !canType}
             accessibilityRole="button"
-            accessibilityLabel="Wyślij"
+            accessibilityLabel="Send"
             onPress={submit}
             style={({ pressed }) => [
               s.send,
@@ -359,10 +359,10 @@ export function SessionScreen({
           <SafeAreaView style={s.groupOverlay}>
             <View style={s.groupSheet} accessibilityViewIsModal>
               <View style={s.groupHeader}>
-                <Text style={s.name}>Przenieś sesję</Text>
+                <Text style={s.name}>Move session</Text>
                 <IconButton
                   name="close"
-                  label="Zamknij wybór grupy"
+                  label="Close group picker"
                   onPress={() => setGroupOpen(false)}
                 />
               </View>
@@ -387,18 +387,18 @@ export function SessionScreen({
         transparent
         animationType={Platform.OS !== 'web' && motionAllowed ? 'fade' : 'none'}
         onRequestClose={() => setConfirmClose(false)}
-        accessibilityLabel="Potwierdzenie zakończenia sesji"
+        accessibilityLabel="Confirm ending the session"
       >
         <ScrollView contentContainerStyle={s.confirm} keyboardShouldPersistTaps="handled">
           <View style={s.confirmContent} accessibilityViewIsModal>
-            <Text style={s.name}>Zakończyć sesję?</Text>
+            <Text style={s.name}>End the session?</Text>
             <Text style={common.body}>
               {session.live
-                ? 'Proces terminala zostanie zatrzymany. Użyj strzałki wstecz, aby pozostawić go działającego.'
-                : 'Usuniesz tę przykładową sesję z listy.'}
+                ? 'The terminal process will stop. Use the back arrow to leave it running.'
+                : 'This removes the sample session from the list.'}
             </Text>
-            <Button label="Zakończ sesję" onPress={onClose} />
-            <Button label="Zostaw otwartą" secondary onPress={() => setConfirmClose(false)} />
+            <Button label="End session" onPress={onClose} />
+            <Button label="Keep it open" secondary onPress={() => setConfirmClose(false)} />
           </View>
         </ScrollView>
       </Modal>

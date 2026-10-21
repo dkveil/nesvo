@@ -68,7 +68,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
         if (active) setRegistration(value);
       })
       .catch(() => {
-        if (active) setStatus('Nie udało się odczytać ustawień powiadomień.');
+        if (active) setStatus('Could not read notification settings.');
       });
     void observePush(value => {
       if (active) {
@@ -81,7 +81,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
         else cleanup();
       })
       .catch(() => {
-        if (active) setStatus('Powiadomienia niedostępne w tej wersji.');
+        if (active) setStatus('Notifications are unavailable in this build.');
       });
     return () => {
       active = false;
@@ -103,13 +103,11 @@ export function NotificationProvider({ children }: PropsWithChildren) {
               setRegistration(value);
               if (request.silent) return;
               setStatus(
-                request.enabled
-                  ? 'Powiadomienia włączone dla tego hosta.'
-                  : 'Powiadomienia wyłączone.',
+                request.enabled ? 'Notifications are on for this host.' : 'Notifications are off.',
               );
             })
             .catch(() =>
-              setStatus('Host zmienił ustawienie, ale telefon nie zapisał go. Spróbuj ponownie.'),
+              setStatus('The host changed the setting, but the phone did not save it. Try again.'),
             )
             .finally(() => setBusy(false));
         } else if (
@@ -118,7 +116,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
         ) {
           pending.current = null;
           setBusy(false);
-          if (!request.silent) setStatus('Nie potwierdzono zmiany na hoście. Spróbuj ponownie.');
+          if (!request.silent) setStatus('The host did not confirm the change. Try again.');
         }
       }),
     [client],
@@ -135,7 +133,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     if (!hostId || !snapshotReady) return;
     handledTarget.current = target;
     if (target.target.hostId !== hostId) {
-      setNotice('To powiadomienie pochodzi z innego hosta.');
+      setNotice('This notification comes from another host.');
       return;
     }
     if (target.type === 'inbox') {
@@ -147,7 +145,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       openSession(sessionId);
       client.acknowledgeAttention(sessionId, sequence);
     } else {
-      setNotice('Sesja z powiadomienia jest już niedostępna.');
+      setNotice('The session from this notification is no longer available.');
     }
   }, [
     target,
@@ -189,7 +187,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       operation.current += 1;
       pending.current = null;
       setBusy(false);
-      setStatus('Upłynął czas oczekiwania. Sprawdź połączenie i spróbuj ponownie.');
+      setStatus('Timed out. Check the connection and try again.');
     }, 30000);
     return () => clearTimeout(timer);
   }, [busy]);
@@ -199,19 +197,19 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     const generation = ++operation.current;
     try {
       if (registration && registration.hostId !== hostId)
-        throw new Error('Najpierw połącz poprzedni host i wyłącz jego powiadomienia.');
+        throw new Error('Connect the previous host first and turn off its notifications.');
       const value =
         enabled && registration ? registration : { hostId, token: await requestPushToken() };
       const id = `push-${Date.now()}`;
       if (generation !== operation.current || !client.isConnected)
-        throw new Error('Połączenie zmieniło się podczas konfiguracji. Spróbuj ponownie.');
+        throw new Error('The connection changed during setup. Try again.');
       pending.current = { id, registration: value, enabled: !enabled };
       client.registerPush(value.token, !enabled, id);
-      setStatus('Zapisywanie na hoście…');
+      setStatus('Saving on the host…');
     } catch (error) {
       pending.current = null;
       setBusy(false);
-      setStatus(error instanceof Error ? error.message : 'Nie udało się włączyć powiadomień.');
+      setStatus(error instanceof Error ? error.message : 'Could not turn on notifications.');
     }
   };
   return (
@@ -225,10 +223,10 @@ export function NotificationSettings() {
   const { connected, hostCapabilities } = useWorkspace();
   return (
     <View style={{ gap: 12 }}>
-      <Text style={common.heading}>Powiadomienia sesji</Text>
+      <Text style={common.heading}>Session notifications</Text>
       <Text style={common.body}>
-        Pytania, zgody, zakończenie pracy i limity. Przez Expo, bez treści terminala. Dotknięcie
-        otwiera właściwą sesję.
+        Questions, permissions, finished work and limits. Sent through Expo without terminal
+        content. Tapping opens the right session.
       </Text>
       {hostCapabilities?.decisions ? (
         <Text style={common.body}>
@@ -238,13 +236,13 @@ export function NotificationSettings() {
       ) : null}
       {!pushAvailable ? (
         <Text style={common.body}>
-          Dostępne w natywnej wersji nesvo, poza Expo Go i przeglądarką.
+          Available in the native nesvo build, not in Expo Go or the browser.
         </Text>
       ) : (
         <Button
           secondary
           disabled={busy || !connected || !hostCapabilities?.pushNotifications}
-          label={busy ? 'Zapisywanie…' : enabled ? 'Wyłącz powiadomienia' : 'Włącz powiadomienia'}
+          label={busy ? 'Saving…' : enabled ? 'Turn off notifications' : 'Turn on notifications'}
           onPress={toggle}
         />
       )}

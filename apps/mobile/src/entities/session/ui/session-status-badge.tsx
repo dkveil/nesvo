@@ -99,15 +99,15 @@ export function SessionStatusBadge({
   const startup = sessionReadinessLabel(readiness);
   const issue = currentAttention && currentAttention.priority > 0 ? currentAttention.reason : null;
   const reasons = {
-    permission: 'Zgoda',
-    question: 'Pytanie',
-    auth: 'Logowanie',
+    permission: 'Permission',
+    question: 'Question',
+    auth: 'Sign-in',
     quota: 'Limit',
-    setup: 'Konfiguracja',
-    unknown: 'Wymaga uwagi',
-    startup: 'Błąd startu',
-    failure: 'Błąd',
-    child: 'Podagent czeka',
+    setup: 'Setup',
+    unknown: 'Needs attention',
+    startup: 'Startup failed',
+    failure: 'Failed',
+    child: 'Subagent waiting',
   };
   const label = startup ?? (issue ? reasons[issue] : sessionStatusLabel(status, source));
   const indicator = currentAttention?.status;
@@ -117,7 +117,7 @@ export function SessionStatusBadge({
       : statusColor(indicator?.state ?? status, indicator?.source ?? source);
   return (
     <View
-      accessibilityLabel={`${label}. ${demo ? 'Stan przykładowy' : startup ? readiness?.reason : sessionStatusDetail(indicator?.state ?? status, indicator?.source ?? source)}`}
+      accessibilityLabel={`${label}. ${demo ? 'Sample state' : startup ? readiness?.reason : sessionStatusDetail(indicator?.state ?? status, indicator?.source ?? source)}`}
       style={variant === 'plain' ? styles.plain : [styles.badge, { borderColor: `${tone}55` }]}
     >
       {variant === 'badge' && (

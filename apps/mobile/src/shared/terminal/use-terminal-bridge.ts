@@ -14,7 +14,7 @@ const CHUNK_SIZE = 64 * 1024;
 const MAX_PENDING_SEGMENTS = 1024;
 type OutputSegment = { data: string; allowResponses: boolean };
 const OVERFLOW_NOTICE =
-  '\r\n\x1b[33m[Podgląd pominął starsze dane: wyjście napływało zbyt szybko.]\x1b[0m\r\n';
+  '\r\n\x1b[33m[Preview skipped older data: output arrived too fast.]\x1b[0m\r\n';
 
 /** Batch terminal bytes without making every output packet a React render. */
 export function useTerminalBridge(
