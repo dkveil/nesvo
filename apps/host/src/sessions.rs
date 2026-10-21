@@ -85,6 +85,7 @@ struct Session {
     resume: Option<crate::resume::Gate>,
     lifecycle_cursor: u64,
     lifecycle_gap: bool,
+    freshness: crate::freshness::Tracker,
     status_latency: crate::status_latency::Tracker,
     info: SessionInfo,
     status: StatusTracker,
@@ -182,6 +183,7 @@ pub struct State {
     schedule_watchers: HashSet<u64>,
     review_watchers: HashSet<u64>,
     attention_watchers: HashSet<u64>,
+    freshness_watchers: HashSet<u64>,
     native_run_gates: HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
 }
 
@@ -315,6 +317,7 @@ impl State {
             schedule_watchers: HashSet::new(),
             review_watchers: HashSet::new(),
             attention_watchers: HashSet::new(),
+            freshness_watchers: HashSet::new(),
             native_run_gates: HashMap::new(),
         }
     }
@@ -1346,7 +1349,7 @@ impl State {
                 }
                 None
             }
-            Command::List | Command::GetCapabilities => return Ok(()),
+            Command::List | Command::GetCapabilities { .. } => return Ok(()),
             Command::GetSession { session_id } | Command::ReadSession { session_id, .. } => {
                 Some(session_id.as_str())
             }
@@ -1525,6 +1528,8 @@ impl State {
         .into();
         event["projects"] = crate::projects::available().into();
         event["git"] = true.into();
+        event["sessionFreshness"] = true.into();
+        event["sessionFreshnessBounds"] = crate::freshness::capability();
         event
     }
 
@@ -1739,6 +1744,7 @@ impl State {
                 value
             })
             .collect();
+        let now = now_millis();
         let sessions: Vec<Value> = sessions
             .into_iter()
             .map(|session| {
@@ -1760,6 +1766,10 @@ impl State {
                         .as_secs()
                 );
                 info["status"] = json!(session.status.status());
+                crate::freshness::attach(
+                    &mut info,
+                    session.freshness.project(session.status.status(), now),
+                );
                 info["readiness"] = json!(session.readiness.snapshot());
                 info["lifecycle"] = json!({"process":{"running":session.info.running,"pid":session.pty.process_id()},
                     "agent":session.status.agent_projection(),"turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())),"task":null});
@@ -1814,6 +1824,12 @@ impl State {
     }
 
     fn project_event(&self, client_id: u64, event: Value) -> Option<Value> {
+        let mut event = self.project_scoped_event(client_id, event)?;
+        crate::freshness::publish(&mut event, self.freshness_watchers.contains(&client_id));
+        Some(event)
+    }
+
+    fn project_scoped_event(&self, client_id: u64, event: Value) -> Option<Value> {
         let Ok(Some(id)) = self.caller_session(client_id) else {
             return Some(
                 if self.clients.get(&client_id).is_some_and(|c| {
@@ -1934,6 +1950,7 @@ impl State {
         let mut alerts = Vec::new();
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
+            changed |= session.freshness.refresh(session.status.status(), now);
             changed |= session
                 .turn
                 .observe_idle(session.status.status().state, session.started.elapsed());
@@ -2052,6 +2069,7 @@ impl State {
         self.schedule_watchers.remove(&client_id);
         self.review_watchers.remove(&client_id);
         self.attention_watchers.remove(&client_id);
+        self.freshness_watchers.remove(&client_id);
         for session in self.sessions.values_mut() {
             session.subscribers.remove(&client_id);
         }
@@ -3378,8 +3396,11 @@ impl State {
                 self.repository_view_requested(client_id)?;
                 self.respond(client_id, self.list(), request_id);
             }
-            Command::GetCapabilities => {
-                self.respond(client_id, self.capabilities_event(), request_id)
+            Command::GetCapabilities { session_freshness } => {
+                self.respond(client_id, self.capabilities_event(), request_id);
+                if session_freshness && self.freshness_watchers.insert(client_id) {
+                    self.send(client_id, self.list());
+                }
             }
             Command::ListDirectories { path } => {
                 let directory = match path.as_deref().filter(|value| !value.is_empty()) {
@@ -3838,6 +3859,7 @@ fn spawn_session(
         lifecycle_cursor: 0,
         status_latency: Default::default(),
         lifecycle_gap: false,
+        freshness: Default::default(),
         status: StatusTracker::new(program, 24, 80, now_millis()),
         readiness: crate::readiness::Tracker::new(program),
         turn: Default::default(),
@@ -3979,9 +4001,10 @@ async fn flush_submission_updates(state: &Arc<Mutex<State>>) {
 
 fn lifecycle_eligible(session: &Session) -> bool {
     session.info.running
-        || session
-            .elapsed_at_exit
-            .is_some_and(|at| session.started.elapsed().saturating_sub(at) < Duration::from_secs(2))
+        || session.elapsed_at_exit.is_some_and(|at| {
+            session.started.elapsed().saturating_sub(at)
+                < Duration::from_millis(crate::freshness::LIFECYCLE_DRAIN_MS)
+        })
 }
 
 pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receiver<PtyEvent>) {
@@ -3989,7 +4012,9 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
     // File I/O runs independently of PTY dispatch and outside the host mutex.
     let lifecycle_task = tokio::spawn(async move {
         let mut observers = HashMap::<String, crate::agent_events::Observer>::new();
-        let mut tick = tokio::time::interval(Duration::from_millis(500));
+        let mut tick = tokio::time::interval(Duration::from_millis(
+            crate::freshness::JOURNAL_READ_INTERVAL_MS,
+        ));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
@@ -4110,6 +4135,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         == batch.identity.provider_session_id.as_ref()
                             });
                             session.lifecycle_gap |= batch.gap;
+                            session.freshness.journal_read(now_millis());
                             if batch.gap {
                                 session.turn.gap(elapsed);
                                 if let Some(pending) = &session.pending_input {
@@ -4189,6 +4215,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         now_millis(),
                                     ) {
                                         session.status_latency.received(std::time::Instant::now());
+                                        session.freshness.hook(now_millis());
                                         session.status.record_hook_reason(&event.name, event.state);
                                         session.status_projection_dirty = true;
                                         if let Some(log) = &event_log {
@@ -4317,6 +4344,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     session.info.running = false;
                     session.elapsed_at_exit = Some(session.started.elapsed());
                     session.status.exited(code);
+                    session.freshness.exited(now_millis());
                     session.turn.process_exit(session.started.elapsed());
                     session.program_status.end_program();
                     let data = match code {
@@ -5771,6 +5799,109 @@ mod tests {
             );
             assert!(state.command(1, command, None, &events).is_err());
         }
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
+
+    fn freshness_command(state: &mut State, client: u64, payload: Value) {
+        let (pty_events, _) = mpsc::channel(1);
+        state
+            .command(
+                client,
+                serde_json::from_value(payload).unwrap(),
+                None,
+                &pty_events,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn freshness_is_negotiated_per_client_and_a_lost_journal_projects_last_known_state() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            metadata,
+            Launchers::discover_with_fixture_shell(),
+        );
+        let (events, _output) = mpsc::channel(128);
+        let spec = crate::jobs::LaunchSpec {
+            name: "Freshness fixture".into(),
+            ..Default::default()
+        };
+        let id = state.launch(&spec, &events).unwrap();
+        let delivered = now_millis() - 10_000;
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.info.program = Program::Claude;
+        session.status = StatusTracker::new(Program::Claude, 24, 80, delivered);
+        session.status.lifecycle_ordered(
+            crate::agent_context::LifecycleReport {
+                state: crate::status::StatusState::Working,
+                sequence: 1,
+            },
+            delivered,
+        );
+        session.freshness.hook(delivered);
+        session.status.refresh(delivered);
+        let mut legacy = review_client(&mut state, 1);
+        let mut current = review_client(&mut state, 2);
+        let opt_in = json!({"type":"getCapabilities","sessionFreshness":true});
+        freshness_command(&mut state, 2, opt_in.clone());
+        let capabilities = current.try_recv().unwrap();
+        assert_eq!(capabilities["sessionFreshness"], true);
+        assert_eq!(
+            capabilities["sessionFreshnessBounds"][0]["staleAfterMs"],
+            crate::freshness::bound(crate::freshness::Source::Hook).unwrap()
+        );
+        let snapshot = current.try_recv().unwrap();
+        let status = &snapshot["sessions"][0]["status"];
+        assert_eq!(status["state"], "unknown");
+        assert_eq!(status["evidence"], "hook");
+        assert_eq!(status["freshness"]["source"], "journal");
+        assert_eq!(status["freshness"]["stale"], true);
+        assert_eq!(
+            status["freshness"]["lastKnown"],
+            json!({"state":"working","observedAt":delivered})
+        );
+        freshness_command(&mut state, 2, opt_in);
+        assert_eq!(current.try_recv().unwrap()["type"], "capabilities");
+        assert!(
+            current.try_recv().is_err(),
+            "a repeated opt-in sends no extra snapshot"
+        );
+        freshness_command(&mut state, 1, json!({"type":"getCapabilities"}));
+        assert_eq!(legacy.try_recv().unwrap()["type"], "capabilities");
+        assert!(legacy.try_recv().is_err());
+
+        state.broadcast_list();
+        let old = legacy.try_recv().unwrap();
+        assert_eq!(old["sessions"][0]["status"]["state"], "working");
+        assert!(old["sessions"][0]["status"].get("freshness").is_none());
+        let new = current.try_recv().unwrap();
+        assert_eq!(new["sessions"][0]["status"]["state"], "unknown");
+        assert!(new["sessions"][0]["lifecycle"]["agent"]["current"].is_null());
+
+        state.refresh_status();
+        while current.try_recv().is_ok() {}
+        while legacy.try_recv().is_ok() {}
+        state.refresh_status();
+        assert!(
+            current.try_recv().is_err(),
+            "an unchanged projection is not rebroadcast"
+        );
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.freshness.journal_read(now_millis());
+        state.refresh_status();
+        let restored = current.try_recv().unwrap();
+        let status = &restored["sessions"][0]["status"];
+        assert_eq!(status["state"], "working");
+        assert_eq!(status["freshness"]["source"], "hook");
+        assert_eq!(status["freshness"]["stale"], false);
+        assert!(status["freshness"]["lastKnown"].is_null());
+        let old = legacy.try_recv().unwrap();
+        assert!(old["sessions"][0]["status"].get("freshness").is_none());
+        state.disconnect(2);
+        assert!(!state.freshness_watchers.contains(&2));
         for worker in state.shutdown() {
             worker.join().unwrap();
         }

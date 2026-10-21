@@ -1,4 +1,23 @@
-import type { Session, SessionStatus, SessionStatusSource } from './session';
+import type { SessionFreshness } from '@shared/api/host';
+
+import type { Session, SessionStateFreshness, SessionStatus, SessionStatusSource } from './session';
+
+export function sessionStateFreshness(
+  freshness: SessionFreshness | undefined,
+  receivedAt: number,
+): SessionStateFreshness | undefined {
+  if (!freshness || freshness.source === 'unknown') return undefined;
+  return {
+    observedAt: receivedAt - freshness.ageMs,
+    stale: freshness.stale,
+    lastKnown: freshness.lastKnown?.state ?? null,
+  };
+}
+
+export function sessionLastKnownLabel(freshness: SessionStateFreshness | undefined) {
+  if (!freshness?.lastKnown) return undefined;
+  return `Last known ${sessionStatusLabel(freshness.lastKnown).toLowerCase()}`;
+}
 
 export function sessionReadinessLabel(readiness: Session['readiness']): string | undefined {
   if (readiness?.phase === 'starting') return 'Starting';

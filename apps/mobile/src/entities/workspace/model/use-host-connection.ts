@@ -4,7 +4,7 @@ import { AppState, Platform } from 'react-native';
 
 import * as SecureStore from 'expo-secure-store';
 
-import { programAgents, type Session } from '@entities/session';
+import { programAgents, type Session, sessionStateFreshness } from '@entities/session';
 
 import { type HostCapabilities, HostClient, type Pairing, parsePairing } from '@shared/api/host';
 
@@ -64,6 +64,7 @@ export function useHostConnection(mode: WorkspaceMode) {
         if (event.code === 'revision_conflict') client.listSessions();
       } else if (event.type === 'sessions') {
         setSnapshotReady(true);
+        const receivedAt = Date.now();
         const sessions: Session[] = event.sessions.map(session => ({
           ...session,
           agent: programAgents[session.program ?? 'shell'],
@@ -77,6 +78,7 @@ export function useHostConnection(mode: WorkspaceMode) {
                 ? 'hook'
                 : session.status?.source,
           statusUpdatedAt: session.status?.updatedAt,
+          statusFreshness: sessionStateFreshness(session.status?.freshness, receivedAt),
           preview: session.running ? 'Session runs on your computer' : 'Terminal process ended',
           live: true,
         }));

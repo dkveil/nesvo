@@ -28,7 +28,9 @@ import {
   withoutItems,
 } from '../apps/mobile/src/entities/inbox/model/inbox-items';
 import {
+  sessionLastKnownLabel,
   sessionReadinessLabel,
+  sessionStateFreshness,
   statusNeedsAttention,
 } from '../apps/mobile/src/entities/session/model/status-presentation';
 import { HostClient } from '../apps/mobile/src/shared/api/host/client';
@@ -1245,4 +1247,110 @@ test('inbox fixtures used by the client match the published host schema', () => 
     inboxId: 'decision:run-1:question-1',
   };
   assert.equal(validate(envelope(decided)), true, JSON.stringify(validate.errors));
+});
+
+const hookFreshness = {
+  source: 'hook',
+  observedAt: 1_792_783_000_000,
+  ageMs: 2_000,
+  stale: false,
+  boundMs: 4000,
+  lastKnown: null,
+} as const;
+const lostFreshness = {
+  source: 'journal',
+  observedAt: 1_792_783_000_000,
+  ageMs: 754_000,
+  stale: true,
+  boundMs: 4000,
+  lastKnown: { state: 'working', observedAt: 1_792_783_000_000 },
+} as const;
+
+test('session freshness decodes additively and rejects guessed live states after a disconnect', () => {
+  const snapshot = { type: 'sessions', groups, sessions: [session], revision: 4 };
+  const status = { state: 'working', source: 'screen', evidence: 'hook', updatedAt: 1 };
+  for (const accepted of [
+    status,
+    { ...status, freshness: hookFreshness },
+    { ...status, state: 'unknown', freshness: lostFreshness },
+    {
+      state: 'done',
+      source: 'process',
+      updatedAt: 2,
+      freshness: { ...hookFreshness, source: 'process', boundMs: null },
+    },
+    {
+      state: 'idle',
+      source: 'screen',
+      updatedAt: 3,
+      freshness: { ...hookFreshness, source: 'unknown', boundMs: null },
+    },
+  ]) {
+    const message = { ...snapshot, sessions: [{ ...session, status: accepted }] };
+    assert.deepEqual(decodeServerMessage(message), message);
+  }
+  for (const freshness of [
+    { ...lostFreshness, stale: 'yes' },
+    { ...hookFreshness, source: 'guess' },
+    { ...hookFreshness, stale: true },
+    { ...hookFreshness, ageMs: -1 },
+    { ...hookFreshness, observedAt: 'now' },
+    { ...hookFreshness, boundMs: undefined },
+    { ...lostFreshness, lastKnown: { state: 'succeeded', observedAt: 1 } },
+    { ...lostFreshness, source: 'hook' },
+    null,
+  ])
+    assert.throws(
+      () =>
+        decodeServerMessage({
+          ...snapshot,
+          sessions: [{ ...session, status: { ...status, state: 'unknown', freshness } }],
+        }),
+      /Invalid host message/,
+    );
+  assert.throws(
+    () =>
+      decodeServerMessage({
+        ...snapshot,
+        sessions: [{ ...session, status: { ...status, freshness: lostFreshness } }],
+      }),
+    /Invalid host message/,
+    'a disconnected projection cannot keep a live state',
+  );
+});
+
+test('session freshness feeds the shared badge clock and stays absent for legacy hosts', () => {
+  const receivedAt = 1_800_000_000_000;
+  const fresh = sessionStateFreshness(hookFreshness, receivedAt);
+  assert.deepEqual(fresh, { observedAt: receivedAt - 2_000, stale: false, lastKnown: null });
+  assert.equal(formatAge(fresh!.observedAt, receivedAt), 'just now');
+  assert.equal(sessionLastKnownLabel(fresh), undefined);
+  const lost = sessionStateFreshness(lostFreshness, receivedAt);
+  assert.deepEqual(lost, { observedAt: receivedAt - 754_000, stale: true, lastKnown: 'working' });
+  assert.equal(formatAge(lost!.observedAt, receivedAt), '12 min ago');
+  assert.equal(sessionLastKnownLabel(lost), 'Last known working');
+  assert.equal(
+    sessionStateFreshness({ ...hookFreshness, source: 'unknown', boundMs: null }, receivedAt),
+    undefined,
+  );
+  assert.equal(sessionStateFreshness(undefined, receivedAt), undefined);
+  assert.equal(sessionLastKnownLabel(undefined), undefined);
+});
+
+test('the client opts into session freshness and accepts the advertised flag', () => {
+  const peer = connectInboxPeer();
+  try {
+    assert.deepEqual(
+      peer.commands().find(command => command.type === 'getCapabilities'),
+      { type: 'getCapabilities', sessionFreshness: true },
+    );
+    const capabilities = { ...inboxCapabilities, sessionFreshness: true };
+    assert.deepEqual(decodeServerMessage(capabilities), capabilities);
+    assert.throws(
+      () => decodeServerMessage({ ...inboxCapabilities, sessionFreshness: 'yes' }),
+      /Invalid host message/,
+    );
+  } finally {
+    peer.cleanup();
+  }
 });

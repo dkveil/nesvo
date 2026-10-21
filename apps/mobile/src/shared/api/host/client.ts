@@ -322,7 +322,7 @@ export class HostClient {
     this.send({ type: 'list' });
   }
   requestCapabilities(): void {
-    this.send({ type: 'getCapabilities' });
+    this.send({ type: 'getCapabilities', sessionFreshness: true });
   }
   createSession(
     name: string,

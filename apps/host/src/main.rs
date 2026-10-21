@@ -14,6 +14,7 @@ mod command_scope;
 mod commits;
 mod event_log;
 mod files;
+mod freshness;
 mod gemini_adapter;
 mod git;
 mod git_repository;

@@ -9,6 +9,11 @@ import type {
 
 export type SessionStatus = SessionStatusState;
 export type SessionStatusSource = HostSessionStatusSource;
+export type SessionStateFreshness = {
+  observedAt: number;
+  stale: boolean;
+  lastKnown: SessionStatus | null;
+};
 
 export const programLabels: Record<SessionProgram, string> = {
   shell: 'Terminal',
@@ -38,6 +43,7 @@ export type Session = {
   status: SessionStatus;
   statusSource?: SessionStatusSource;
   statusUpdatedAt?: number;
+  statusFreshness?: SessionStateFreshness;
   preview: string;
   cwd: string;
   groupId?: string | null;

@@ -4,12 +4,22 @@ export type SessionProgram = 'shell' | 'claude' | 'gemini' | 'codex';
 export type SessionStatusState =
   'working' | 'idle' | 'done' | 'blocked' | 'question' | 'failed' | 'unknown';
 export type SessionStatusSource = 'activity' | 'screen' | 'hook' | 'program' | 'process';
+export type SessionFreshnessSource = 'hook' | 'process' | 'journal' | 'unknown';
+export type SessionFreshness = {
+  source: SessionFreshnessSource;
+  observedAt: number;
+  ageMs: number;
+  stale: boolean;
+  boundMs: number | null;
+  lastKnown: { state: SessionStatusState; observedAt: number } | null;
+};
 export type SessionStatus = {
   state: SessionStatusState;
   source: SessionStatusSource;
   evidence?: 'hook';
   confirmedSource?: 'osc7501';
   updatedAt: number;
+  freshness?: SessionFreshness;
 };
 export type SessionReadiness = {
   phase: 'notApplicable' | 'starting' | 'waiting' | 'ready' | 'timedOut' | 'exited';
@@ -70,6 +80,7 @@ export type HostCapabilities = {
   attentionInbox?: boolean;
   decisions?: boolean;
   jobPages?: boolean;
+  sessionFreshness?: boolean;
   workspace: string;
   programs: { id: SessionProgram; label: string; available: boolean }[];
   providerLimits?: ProviderLimit[];
@@ -223,7 +234,7 @@ export type ClientCommand =
   | { type: 'muteSession'; sessionId: string; muted: boolean }
   | { type: 'auth'; clientNonce: string }
   | { type: 'list' }
-  | { type: 'getCapabilities'; requestId?: string }
+  | { type: 'getCapabilities'; sessionFreshness?: boolean; requestId?: string }
   | ({
       type: 'create';
       name: string;

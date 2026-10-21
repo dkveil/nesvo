@@ -2,7 +2,7 @@
 use crate::{
     launch::Program,
     model::Session,
-    status::{Source, State},
+    status::{EvidenceSource, Source, State},
     theme::{DANGER, MUTED, SUCCESS, TEXT, WARNING},
 };
 use ratatui::{
@@ -72,6 +72,19 @@ pub fn status_label(session: &Session, program: Program) -> StatusLabel {
             label("unknown", MUTED)
         };
     };
+    if let Some(freshness) = status.freshness.as_ref().filter(|f| f.stale) {
+        return label(
+            match freshness.last_known.as_ref().map(|known| known.state) {
+                Some(State::Working) => "?working",
+                Some(State::Idle) => "?idle",
+                Some(State::Question | State::Blocked) => "?needs you",
+                Some(State::Done) => "?done",
+                Some(State::Failed) => "?failed",
+                Some(State::Unknown) | None => "?stale",
+            },
+            MUTED,
+        );
+    }
     if status.source == Source::Activity {
         return if program == Program::Shell && session.running {
             label("terminal", MUTED)
@@ -108,12 +121,44 @@ pub fn status_source(session: &Session) -> &'static str {
     }
 }
 
+fn state_word(state: State) -> &'static str {
+    match state {
+        State::Working => "working",
+        State::Idle => "idle",
+        State::Done => "done",
+        State::Blocked => "blocked",
+        State::Question => "question",
+        State::Failed => "failed",
+        State::Unknown => "unknown",
+    }
+}
+
+pub fn freshness_header(session: &Session) -> Option<String> {
+    let freshness = session.status.as_ref()?.freshness.as_ref()?;
+    let label = if session.freshness_label.is_empty() {
+        freshness.age_label(0)
+    } else {
+        session.freshness_label.clone()
+    };
+    let age = label.trim_start_matches('!');
+    Some(match (freshness.source, freshness.last_known.as_ref()) {
+        (_, Some(known)) if freshness.stale => {
+            format!("stale · last {} {age} ago", state_word(known.state))
+        }
+        (EvidenceSource::Hook, _) => format!("hook {age}"),
+        (EvidenceSource::Process, _) => format!("exit {age} ago"),
+        (EvidenceSource::Journal, _) => format!("journal {age}"),
+        (EvidenceSource::Unknown, _) => return None,
+    })
+}
+
 pub struct SessionRow<'a> {
     pub name: &'a str,
     pub icon: &'a str,
     pub icon_color: Color,
     pub status: StatusLabel,
     pub runtime: &'a str,
+    pub freshness: &'a str,
     pub project: Option<&'a str>,
     pub indent: u16,
     pub query: &'a str,
@@ -140,6 +185,12 @@ impl Widget for SessionRow<'_> {
         }
         let status_width = if area.width >= 20 { 10 } else { 0 };
         let age_width = if area.width >= 30 { 6 } else { 0 };
+        let freshness_width = if area.width >= 40 && !self.freshness.is_empty() {
+            5
+        } else {
+            0
+        };
+        let stale = self.freshness.starts_with('!');
         let project_width = if area.width >= 60 && self.project.is_some() {
             14
         } else {
@@ -147,12 +198,13 @@ impl Widget for SessionRow<'_> {
         };
         let indent = self.indent.min(
             area.width
-                .saturating_sub(status_width + age_width + project_width + 10),
+                .saturating_sub(status_width + age_width + freshness_width + project_width + 10),
         );
         let prefix = (indent + 3).min(area.width);
         let status_x = area.right().saturating_sub(status_width + 1).max(area.x);
         let age_x = status_x.saturating_sub(age_width + 1).max(area.x);
-        let project_x = age_x.saturating_sub(project_width).max(area.x);
+        let freshness_x = age_x.saturating_sub(freshness_width).max(area.x);
+        let project_x = freshness_x.saturating_sub(project_width).max(area.x);
         let name_width = project_x.saturating_sub(area.x + prefix + 1);
         Paragraph::new(self.icon)
             .style(Style::default().fg(self.icon_color))
@@ -198,10 +250,24 @@ impl Widget for SessionRow<'_> {
                 .render(Rect::new(status_x, area.y, status_width, 1), buffer);
         }
         if age_width > 0 {
-            Paragraph::new(clipped(self.runtime, age_width))
+            let (runtime, color) = if stale && freshness_width == 0 {
+                (self.freshness, WARNING)
+            } else {
+                (self.runtime, MUTED)
+            };
+            Paragraph::new(clipped(runtime, age_width))
                 .right_aligned()
-                .style(Style::default().fg(MUTED))
+                .style(Style::default().fg(color))
                 .render(Rect::new(age_x, area.y, age_width, 1), buffer);
+        }
+        if freshness_width > 0 {
+            Paragraph::new(clipped(self.freshness, freshness_width - 1))
+                .right_aligned()
+                .style(Style::default().fg(if stale { WARNING } else { MUTED }))
+                .render(
+                    Rect::new(freshness_x, area.y, freshness_width - 1, 1),
+                    buffer,
+                );
         }
         if project_width > 0 {
             Paragraph::new(clipped(self.project.unwrap_or_default(), project_width - 2))
@@ -252,6 +318,7 @@ mod tests {
                     color: WARNING,
                 },
                 runtime: "2h14m",
+                freshness: "",
                 project: Some("project"),
                 indent: 8,
                 query: "工程",
@@ -284,6 +351,7 @@ mod tests {
                     color: SUCCESS,
                 },
                 runtime: "2h14m",
+                freshness: "",
                 project: None,
                 indent: 0,
                 query: "",
@@ -333,5 +401,91 @@ mod tests {
             "unknown",
             "legacy hosts remain honest"
         );
+    }
+
+    fn freshness_snapshot() -> serde_json::Value {
+        json!({"type":"sessions","revision":0,"groups":[],"sessions":[
+            {"id":"fresh","name":"Fresh task","cwd":".","cols":80,"rows":24,"running":true,
+             "program":"claude","groupId":null,"controllerId":null,
+             "status":{"state":"working","source":"screen","evidence":"hook","updatedAt":1,
+                "freshness":{"source":"hook","observedAt":1,"ageMs":120_000,"stale":false,"boundMs":4000,"lastKnown":null}}},
+            {"id":"lost","name":"Lost task","cwd":".","cols":80,"rows":24,"running":true,
+             "program":"codex","groupId":null,"controllerId":null,
+             "status":{"state":"unknown","source":"screen","evidence":"hook","updatedAt":1,
+                "freshness":{"source":"journal","observedAt":1,"ageMs":754_000,"stale":true,"boundMs":4000,
+                    "lastKnown":{"state":"working","observedAt":1}}}},
+            {"id":"legacy","name":"Legacy task","cwd":".","cols":80,"rows":24,"running":true,
+             "program":"gemini","groupId":null,"controllerId":null,
+             "status":{"state":"idle","source":"screen","evidence":"hook","updatedAt":1}}
+        ]})
+    }
+
+    #[test]
+    fn stale_sessions_show_the_last_known_state_as_a_marker_not_a_live_state() {
+        let mut app = crate::model::App::new(1);
+        app.event(freshness_snapshot()).unwrap();
+        app.refresh_session_times(std::time::Instant::now());
+        let fresh = app.session("fresh").unwrap();
+        let lost = app.session("lost").unwrap();
+        let legacy = app.session("legacy").unwrap();
+        assert_eq!(status_label(fresh, Program::Claude).text, "working");
+        assert_eq!(status_label(lost, Program::Codex).text, "?working");
+        assert_eq!(status_label(legacy, Program::Gemini).text, "idle");
+        assert_eq!(fresh.freshness_label, "2m");
+        assert_eq!(lost.freshness_label, "!12m");
+        assert!(legacy.freshness_label.is_empty());
+        assert_eq!(freshness_header(fresh).as_deref(), Some("hook 2m"));
+        assert_eq!(
+            freshness_header(lost).as_deref(),
+            Some("stale · last working 12m ago")
+        );
+        assert_eq!(freshness_header(legacy), None);
+    }
+
+    #[test]
+    fn rows_and_pane_header_show_evidence_age_and_stale_marker_at_supported_sizes() {
+        use ratatui::{Terminal, backend::TestBackend};
+        for (width, height) in [(80, 24), (100, 32), (150, 44)] {
+            let mut app = crate::model::App::new(1);
+            app.event(freshness_snapshot()).unwrap();
+            app.refresh_session_times(std::time::Instant::now());
+            app.panes[0] = Some("lost".into());
+            let area = Rect::new(0, 0, width, height);
+            let layout = crate::ui::geometry(area, &app);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::render(frame, &app, 0))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let line = |y: u16, from: u16, to: u16| -> String {
+                (from..to).map(|x| buffer[(x, y)].symbol()).collect()
+            };
+            let tree = crate::ui::tree_content(layout.tree);
+            let rows: Vec<String> = (tree.y..tree.bottom())
+                .map(|y| line(y, tree.x, tree.right()))
+                .collect();
+            let row = |name: &str| {
+                rows.iter()
+                    .find(|row| row.contains(name))
+                    .unwrap_or_else(|| panic!("{width}x{height}: {name} missing in {rows:?}"))
+                    .clone()
+            };
+            let lost = row("Lost t");
+            assert!(lost.contains("?working"), "{width}x{height}: {lost}");
+            assert!(lost.contains("!12m"), "{width}x{height}: {lost}");
+            let fresh = row("Fresh");
+            assert!(fresh.contains("working") && !fresh.contains("?working"));
+            if tree.width >= 40 {
+                assert!(fresh.contains("2m "), "{width}x{height}: {fresh}");
+            }
+            let legacy = row("Legacy");
+            assert!(legacy.contains("idle") && !legacy.contains('!'), "{legacy}");
+            let pane = layout.panes[0];
+            let footer = line(pane.bottom() - 1, pane.x, pane.right());
+            assert!(
+                footer.contains("stale · last working 12m ago"),
+                "{width}x{height}: {footer}"
+            );
+        }
     }
 }

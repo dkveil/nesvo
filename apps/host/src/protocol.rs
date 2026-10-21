@@ -109,7 +109,10 @@ pub enum Command {
         #[serde(default)]
         lease_id: Option<String>,
     },
-    GetCapabilities,
+    GetCapabilities {
+        #[serde(default)]
+        session_freshness: bool,
+    },
     GetProviderQuota {
         program: Option<crate::launchers::Program>,
         #[serde(default)]

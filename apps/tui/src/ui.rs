@@ -840,6 +840,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                         icon_color: program_color(program),
                         status: crate::session_row::status_label(session, program),
                         runtime: &session.runtime_label,
+                        freshness: &session.freshness_label,
                         project: None,
                         indent: (row.depth.min(4) * 2) as u16,
                         query: "",
@@ -966,8 +967,11 @@ fn render_pane(
             let worktree = crate::worktree_actions::header(app, &session.id)
                 .map(|label| format!("{label} · "))
                 .unwrap_or_default();
+            let freshness = crate::session_row::freshness_header(session)
+                .map(|label| format!("{label} · "))
+                .unwrap_or_default();
             format!(
-                "{worktree}{control} · {}×{} · {}",
+                "{freshness}{worktree}{control} · {}×{} · {}",
                 session.cols, session.rows, session.cwd
             )
         })
@@ -1969,6 +1973,7 @@ mod tests {
             state: State::Working,
             source: Source::Screen,
             _updated_at: 2,
+            freshness: None,
         });
         assert_eq!(
             crate::session_row::status_label(

@@ -27,6 +27,54 @@ The wire contract remains compatible with older v2 clients: confirmed reports us
 
 References: [Claude hooks](https://code.claude.com/docs/en/hooks), [Gemini hook reference](https://geminicli.com/docs/hooks/reference/).
 
+## Freshness
+
+Every projected session state carries a freshness record for clients that
+negotiate it: `observedAt` (host epoch milliseconds at which the selected
+evidence was received), `ageMs` at projection time, `source`, `stale`,
+`boundMs` and `lastKnown`. The bounds live in one table, `BOUNDS` in
+`apps/host/src/freshness.rs`, which capabilities also advertise as
+`sessionFreshnessBounds`.
+
+| Source    | Selected state                                      | Measured from                       | Stale after                                                                |
+| --------- | --------------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
+| `hook`    | provider lifecycle hook (Claude, Codex, Gemini)     | last successful launch-journal read | 4000 ms: twice the 2 s lifecycle drain bound; the reader runs every 500 ms |
+| `process` | observed process exit                               | exit observation                    | never; exit is final                                                       |
+| `journal` | last hook record once the journal is no longer read | that record's host receipt          | 4000 ms, so a disconnected projection is always stale                      |
+| `unknown` | screen rule, OSC 7501 report or terminal I/O        | last state transition               | no bound; no freshness claim                                               |
+
+Providers send no heartbeat. Agent silence while the journal is still read is
+not staleness: a long tool call stays `working` with a growing age, consistent
+with the rule that silence never clears confirmed work.
+
+Disconnect policy: when the host has not confirmed the launch journal for longer
+than the hook bound (read failure, unreadable or removed journal, stalled
+reader), the projection switches to `source: journal`, `state: unknown` and
+`stale: true`, and keeps the previous state as `lastKnown {state, observedAt}`.
+`lifecycle.agent.current` becomes null with `freshness: unknown`. No progress,
+idle or completion is inferred. The next successful read restores the hook
+projection with the last record or a newer one. Process exit always wins.
+Attention, readiness and turn tracking keep their own rules and are not changed
+by this projection.
+
+Negotiation: a client sends `getCapabilities {sessionFreshness:true}`. The host
+advertises `sessionFreshness:true`, sends that client one fresh snapshot after
+its first opt-in, and adds the record only to that connection's snapshots.
+Clients that do not opt in receive the previous shape and state unchanged; older
+hosts ignore the field.
+
+The TUI marks a stale row `?working` (the last known state) and shows the
+evidence age (`!12m` when stale); the pane footer reads `hook 2m`,
+`exit 3m ago` or `stale · last working 12m ago`. The mobile dashboard reuses
+the freshness badge with `Last known working`, and renders as before when the
+record is absent or its source is `unknown`.
+
+Host tests cover the bounds, transitions and disconnect policy with Claude,
+Codex and Gemini hook payloads through the production state mappers. The live
+lifecycle matrix with real provider hook delivery (prompt, approval, interrupt,
+clear, exit and journal loss, compared against `nesvo session explain`) has not
+been run and stays with the owner.
+
 ## Codex native adapter boundary
 
 For a successfully probed Codex 0.156.0, the host adds a launch-local inline

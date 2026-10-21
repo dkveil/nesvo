@@ -241,6 +241,7 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, target: Option<&crate::
                     icon_color: crate::ui::program_color(program),
                     status: crate::session_row::status_label(session, program),
                     runtime: &session.runtime_label,
+                    freshness: &session.freshness_label,
                     project: (!inline).then_some(project),
                     indent: 0,
                     query: crate::model::search_scope(query).1,

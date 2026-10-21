@@ -22,6 +22,7 @@ import { groupDescendants, groupPath } from '@entities/group';
 import { useInbox } from '@entities/inbox';
 import {
   sessionAgentColor,
+  sessionLastKnownLabel,
   SessionStatusBadge,
   SessionStatusDot,
   statusNeedsAttention,
@@ -30,7 +31,7 @@ import { useWorkspace } from '@entities/workspace';
 
 import { NesvoLogo, useMotionPreference } from '@shared/brand';
 import { colors as c, mono } from '@shared/theme';
-import { Button, common, Icon, IconButton } from '@shared/ui';
+import { Button, common, FreshnessBadge, Icon, IconButton } from '@shared/ui';
 
 import { DashboardNavigation, type DashboardTab } from './dashboard-navigation';
 import { SessionLaunchpad } from './session-launchpad';
@@ -412,6 +413,19 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                             {session.cwd}
                           </Text>
                         </View>
+                        {session.statusFreshness ? (
+                          <View style={s.sessionFreshness}>
+                            <FreshnessBadge
+                              receivedAt={session.statusFreshness.observedAt}
+                              connected={session.statusFreshness.stale ? false : connected}
+                            />
+                            {session.statusFreshness.lastKnown ? (
+                              <Text style={s.sessionLastKnown}>
+                                {sessionLastKnownLabel(session.statusFreshness)}
+                              </Text>
+                            ) : null}
+                          </View>
+                        ) : null}
                       </View>
                     </Pressable>
                   ))}
@@ -851,6 +865,14 @@ const s = StyleSheet.create({
     flex: 1,
   },
   sessionMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  sessionFreshness: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  sessionLastKnown: { color: c.faint, fontFamily: mono, fontSize: 12 },
   sessionAgent: { fontSize: 12, lineHeight: 18, fontWeight: '500' },
   sessionCwd: {
     flex: 1,

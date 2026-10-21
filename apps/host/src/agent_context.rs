@@ -576,7 +576,7 @@ pub struct LifecycleReport {
     pub state: crate::status::StatusState,
     pub sequence: u64,
 }
-fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
+pub(crate) fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
     use crate::status::StatusState::*;
     // A subagent finishing must not mark the owning conversation idle.
     if is_child(value) {

@@ -21,8 +21,34 @@ function dimensions(value: RecordValue): boolean {
 function program(value: unknown): boolean {
   return value === 'shell' || value === 'claude' || value === 'gemini' || value === 'codex';
 }
+const STATUS_STATES = ['working', 'idle', 'done', 'blocked', 'question', 'failed', 'unknown'];
+function freshness(value: unknown, state: unknown): boolean {
+  if (
+    !record(value) ||
+    !integer(value.observedAt) ||
+    !integer(value.ageMs) ||
+    typeof value.stale !== 'boolean' ||
+    !(value.boundMs === null || integer(value.boundMs))
+  )
+    return false;
+  if (value.lastKnown !== null) {
+    const lastKnown = value.lastKnown;
+    return (
+      value.source === 'journal' &&
+      state === 'unknown' &&
+      record(lastKnown) &&
+      typeof lastKnown.state === 'string' &&
+      STATUS_STATES.includes(lastKnown.state) &&
+      integer(lastKnown.observedAt)
+    );
+  }
+  if (value.source === 'hook' || value.source === 'process' || value.source === 'unknown')
+    return !value.stale;
+  return value.source === 'journal';
+}
 function sessionStatus(value: unknown): boolean {
   if (!record(value) || !integer(value.updatedAt)) return false;
+  if (value.freshness !== undefined && !freshness(value.freshness, value.state)) return false;
   if (
     value.confirmedSource !== undefined &&
     (value.confirmedSource !== 'osc7501' || value.source !== 'screen')
@@ -88,6 +114,7 @@ function capabilities(value: RecordValue): boolean {
       (typeof value.hostId === 'string' && /^[a-f0-9]{32}$/.test(value.hostId))) &&
     (value.pushNotifications === undefined || typeof value.pushNotifications === 'boolean') &&
     (value.attention === undefined || typeof value.attention === 'boolean') &&
+    (value.sessionFreshness === undefined || typeof value.sessionFreshness === 'boolean') &&
     INBOX_FLAGS.every(flag => value[flag] === undefined || typeof value[flag] === 'boolean') &&
     text(value.workspace, 32768) &&
     Array.isArray(programs) &&

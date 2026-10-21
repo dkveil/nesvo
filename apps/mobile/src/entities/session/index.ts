@@ -2,10 +2,13 @@ export {
   programAgents,
   programLabels,
   type Session,
+  type SessionStateFreshness,
   type SessionStatus,
   type SessionStatusSource,
 } from './model/session';
 export {
+  sessionLastKnownLabel,
+  sessionStateFreshness,
   sessionStatusLabel,
   sessionStatusDetail,
   statusNeedsAttention,

@@ -30,6 +30,40 @@ pub struct Status {
     pub source: Source,
     // Preserve the required wire field without introducing wall-clock reads in rendering.
     pub _updated_at: u64,
+    pub freshness: Option<Freshness>,
+}
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EvidenceSource {
+    Hook,
+    Process,
+    Journal,
+    Unknown,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct LastKnown {
+    pub state: State,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Freshness {
+    pub source: EvidenceSource,
+    pub age_ms: u64,
+    pub stale: bool,
+    #[serde(default)]
+    pub last_known: Option<LastKnown>,
+}
+impl Freshness {
+    pub fn age_label(&self, elapsed_ms: u64) -> String {
+        let seconds = self.age_ms.saturating_add(elapsed_ms) / 1000;
+        let age = match seconds {
+            0..60 => format!("{seconds}s"),
+            60..3600 => format!("{}m", seconds / 60),
+            3600..86400 => format!("{}h", seconds / 3600),
+            _ => format!("{}d", seconds / 86400),
+        };
+        if self.stale { format!("!{age}") } else { age }
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Readiness {
@@ -101,6 +135,8 @@ struct WireStatus {
     confirmed_source: Option<String>,
     #[serde(rename = "updatedAt")]
     updated_at: u64,
+    #[serde(default)]
+    freshness: Option<Freshness>,
 }
 impl From<WireStatus> for Status {
     fn from(wire: WireStatus) -> Self {
@@ -116,6 +152,7 @@ impl From<WireStatus> for Status {
                 wire.source
             },
             _updated_at: wire.updated_at,
+            freshness: wire.freshness,
         }
     }
 }

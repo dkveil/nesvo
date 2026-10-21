@@ -197,6 +197,8 @@ pub struct Session {
     pub runtime_label: String,
     #[serde(skip)]
     pub turn_runtime_label: String,
+    #[serde(skip)]
+    pub freshness_label: String,
     #[serde(default)]
     pub rate_limited: bool,
     #[serde(default)]
@@ -277,9 +279,22 @@ impl Session {
                 )
             })
             .unwrap_or_default();
-        let changed = self.runtime_label != label || self.turn_runtime_label != turn_label;
+        let freshness_label = self
+            .status
+            .as_ref()
+            .and_then(|status| status.freshness.as_ref())
+            .filter(|freshness| freshness.source != crate::status::EvidenceSource::Unknown)
+            .map(|freshness| {
+                freshness
+                    .age_label(now.saturating_duration_since(self.received_at).as_millis() as u64)
+            })
+            .unwrap_or_default();
+        let changed = self.runtime_label != label
+            || self.turn_runtime_label != turn_label
+            || self.freshness_label != freshness_label;
         self.runtime_label = label;
         self.turn_runtime_label = turn_label;
+        self.freshness_label = freshness_label;
         changed
     }
 }

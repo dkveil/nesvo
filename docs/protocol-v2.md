@@ -463,6 +463,20 @@ The shared `nesvo-wire` crate exports `nesvo_wire::{encode_client,decode_host}` 
 
 Session status may include additive `evidence: "hook"` alongside `source: "screen"`. Updated clients can display this as confirmed lifecycle evidence; older clients continue to accept the status as inferred. The source enum sent to legacy clients is unchanged. See [agent session status](agent-session-status.md).
 
+`sessionFreshness:true` in capabilities advertises an opt-in freshness record.
+A client that sends `getCapabilities {sessionFreshness:true}` (older hosts ignore
+the field) receives one fresh snapshot and, from then on, each session's
+`status.freshness:{source,observedAt,ageMs,stale,boundMs,lastKnown}`. `source`
+is `hook`, `process`, `journal` or `unknown`; `observedAt` is host epoch
+milliseconds; `ageMs` is measured by the host at projection, so clients add only
+their own elapsed time; `boundMs` is the source's stale bound or null. When
+`lastKnown:{state,observedAt}` is present the source is `journal`, `stale` is
+true, `status.state` is `unknown` and `lifecycle.agent.current` is null with
+`freshness:"unknown"`: the host stopped confirming hook evidence and does not keep
+a guessed live state. `sessionFreshnessBounds` lists `{source,staleAfterMs,
+measuredFrom}`. Connections without the opt-in receive the previous fields and
+values. See [agent session status](agent-session-status.md#freshness).
+
 Program Status Protocol reports use `source:"screen"` with additive
 `confirmedSource:"osc7501"` (not a new legacy source/evidence enum). A session may
 also include `programStatus:{root,childCount,blockedChildren,blockedChildApps}`.

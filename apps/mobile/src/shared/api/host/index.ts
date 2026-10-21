@@ -18,6 +18,8 @@ export type {
   PushKind,
   ServerMessage,
   SessionControl,
+  SessionFreshness,
+  SessionFreshnessSource,
   SessionGroup,
   SessionLaunchOptions,
   SessionLifecycle,

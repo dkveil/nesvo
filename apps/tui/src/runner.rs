@@ -124,7 +124,7 @@ pub fn run(
     send_or_disconnect(
         &mut app,
         connection,
-        vec![json!({"type":"getCapabilities"})],
+        vec![json!({"type":"getCapabilities","sessionFreshness":true})],
     );
     let layout_path = preferences_path.as_ref().and_then(|path| {
         Pairing::load(pairing_path, override_url)
@@ -284,7 +284,7 @@ pub fn run(
                         send_or_disconnect(
                             &mut app,
                             connection,
-                            vec![json!({"type":"getCapabilities"})],
+                            vec![json!({"type":"getCapabilities","sessionFreshness":true})],
                         );
                         dirty = true;
                     }
