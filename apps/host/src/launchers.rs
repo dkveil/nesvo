@@ -542,6 +542,21 @@ pub fn resume_arguments(program: Program) -> Result<&'static [&'static str]> {
     }
 }
 
+pub fn conversation_resume_arguments(
+    program: Program,
+    target: &crate::resume::Target,
+) -> Result<Vec<String>> {
+    crate::resume::check_target(program, target)?;
+    let command = match program {
+        Program::Claude => "--resume",
+        Program::Codex => "resume",
+        Program::Gemini | Program::Shell => {
+            return Err(anyhow!("Exact conversation resume is unsupported"));
+        }
+    };
+    Ok(vec![command.to_owned(), target.conversation_id.clone()])
+}
+
 #[cfg(test)]
 mod resume_tests {
     use super::*;
@@ -551,5 +566,39 @@ mod resume_tests {
         assert_eq!(resume_arguments(Program::Codex).unwrap(), ["resume"]);
         assert!(resume_arguments(Program::Shell).is_err());
         assert!(resume_arguments(Program::Gemini).is_err());
+    }
+
+    #[test]
+    fn resume_exact_id_arguments_per_provider_never_open_a_picker_or_latest() {
+        let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        let target = |provider| crate::resume::Target {
+            provider,
+            conversation_id: id.into(),
+        };
+        assert_eq!(
+            conversation_resume_arguments(Program::Claude, &target(Program::Claude)).unwrap(),
+            ["--resume", id]
+        );
+        assert_eq!(
+            conversation_resume_arguments(Program::Codex, &target(Program::Codex)).unwrap(),
+            ["resume", id]
+        );
+        let gemini =
+            conversation_resume_arguments(Program::Gemini, &target(Program::Gemini)).unwrap_err();
+        assert_eq!(
+            gemini
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "unsupported"
+        );
+        assert!(gemini.to_string().contains("Gemini"));
+        assert!(conversation_resume_arguments(Program::Shell, &target(Program::Shell)).is_err());
+        assert!(conversation_resume_arguments(Program::Codex, &target(Program::Claude)).is_err());
+        let latest = crate::resume::Target {
+            provider: Program::Claude,
+            conversation_id: "--continue".into(),
+        };
+        assert!(conversation_resume_arguments(Program::Claude, &latest).is_err());
     }
 }

@@ -1344,6 +1344,39 @@
                   ]
                 }
               }
+            },
+            {
+              "type": "object",
+              "required": ["type", "records", "nextOffset"],
+              "properties": {
+                "type": {
+                  "const": "recovery"
+                },
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/recoveryRecord"
+                  }
+                },
+                "nextOffset": {
+                  "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/cursor" }]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "sessionId"],
+              "properties": {
+                "type": {
+                  "const": "created"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "resume": {
+                  "$ref": "#/definitions/resumeVerification"
+                }
+              }
             }
           ]
         }
@@ -2261,6 +2294,87 @@
         },
         "repositoryContext": {
           "$ref": "#/definitions/repositoryContext"
+        },
+        "resume": {
+          "$ref": "#/definitions/resumeVerification"
+        }
+      }
+    },
+    "resumeTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "conversationId"],
+      "properties": {
+        "provider": {
+          "enum": ["claude", "codex", "gemini"]
+        },
+        "conversationId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        }
+      }
+    },
+    "resumeVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "conversationId"],
+      "properties": {
+        "state": {
+          "enum": ["pending", "verified", "resumeFailed"]
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": {
+          "state": {
+            "const": "resumeFailed"
+          }
+        }
+      },
+      "then": {
+        "required": ["reason"]
+      },
+      "else": {
+        "not": {
+          "required": ["reason"]
+        }
+      }
+    },
+    "recoveryRecord": {
+      "type": "object",
+      "required": ["id", "state", "spec"],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "state": {
+          "enum": ["saved", "starting", "interrupted"]
+        },
+        "spec": {
+          "type": "object",
+          "required": ["name", "program", "prompt"],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": ["string", "null"]
+            },
+            "program": {
+              "enum": ["shell", "claude", "codex", "gemini"]
+            },
+            "prompt": {
+              "const": ""
+            },
+            "resume": {
+              "$ref": "#/definitions/resumeTarget"
+            }
+          }
         }
       }
     },

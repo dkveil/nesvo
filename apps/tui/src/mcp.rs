@@ -916,7 +916,7 @@ fn catalog() -> Vec<Tool> {
     definitions.into_iter().map(|(name,description,schema,read_only)| {
         Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only || name == "nesvo_get_provider_quota"))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
-    }).chain(crate::job_trigger_tools::catalog()).collect()
+    }).chain(crate::job_trigger_tools::catalog()).chain(crate::session_recovery::catalog()).collect()
 }
 
 #[cfg(test)]
@@ -1014,8 +1014,8 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 97);
-        assert_eq!(published_tools().len(), 97);
+        assert_eq!(catalog().len(), 100);
+        assert_eq!(published_tools().len(), 100);
     }
 }
 
@@ -1121,6 +1121,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
     }
     if let Some(request) = crate::job_trigger_tools::command(name, &arguments) {
         return request.map(|request| (request, "workflow"));
+    }
+    if let Some(request) = crate::session_recovery::command(name, &arguments) {
+        return request;
     }
     Ok(match name {
         "nesvo_set_quota_wake" => {
@@ -1793,6 +1796,8 @@ impl HostTools {
             }
         } else if kind == "workflow" {
             crate::workflow::capability(&mut connection, &command).await?;
+        } else if crate::session_recovery::TOOLS.contains(&name) {
+            crate::session_recovery::capability(&mut connection, &command).await?;
         } else if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
             cli::control_capability(&mut connection).await?;
         } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
@@ -2455,7 +2460,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 97);
+        assert_eq!(catalog().len(), 100);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

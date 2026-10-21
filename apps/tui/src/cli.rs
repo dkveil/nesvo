@@ -193,6 +193,13 @@ pub enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "List, restore or forget saved sessions from previous host runs; never replays input"
+    )]
+    Recover {
+        #[command(subcommand)]
+        command: crate::session_recovery::Command,
+    },
 }
 
 #[derive(clap::Args)]
@@ -379,6 +386,7 @@ impl Command {
                 | SessionCommand::Read { json, .. }
                 | SessionCommand::Diff { json, .. }
                 | SessionCommand::Explain { json, .. } => *json,
+                SessionCommand::Recover { command } => command.machine(),
             },
         }
     }
@@ -816,6 +824,7 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
             )
         }
         SessionCommand::Explain { .. }
+        | SessionCommand::Recover { .. }
         | SessionCommand::Wake { .. }
         | SessionCommand::Interrupt(_)
         | SessionCommand::Stop(_)
@@ -1395,6 +1404,9 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
             valid_id(&id)?;
             (Some(id), json)
         }
+        Command::Session {
+            command: SessionCommand::Recover { command },
+        } => return crate::session_recovery::run(command, connection).await,
         Command::Session { command } => return session_query(command, connection).await,
     };
     let capabilities = request(

@@ -175,6 +175,11 @@ pub fn event(app: &mut App, event: Event, screen: Rect) -> Outcome {
                 KeyCode::Char('r') => outcome
                     .commands
                     .push(json!({"type":if recovery {"listRecovery"} else {"listTemplates"}})),
+                KeyCode::Char('e') if recovery => {
+                    if let Some(row) = rows.get(selected).cloned() {
+                        resume_conversation(app, &row);
+                    }
+                }
                 KeyCode::Enter | KeyCode::Char('c') => {
                     if code == KeyCode::Char('c') && !recovery {
                         return outcome;
@@ -391,6 +396,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                         .filter(|path| !path.is_empty())
                         .unwrap_or("Host workspace"),
                 ));
+                if recovery && let Some(label) = conversation_row(row) {
+                    lines.push(Line::from(label));
+                }
             }
             lines.push(Line::from(app.notice.as_str()));
             (
@@ -401,7 +409,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 },
                 lines,
                 if recovery {
-                    "Enter restart · c conversations · x forget · ] next · r first · Esc"
+                    "Enter restart · e resume conversation · c conversations · x forget · ] next · r first · Esc"
                 } else {
                     "↑↓ select · Enter edit · x delete · r refresh · Esc close"
                 },
@@ -587,4 +595,110 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 pub fn schedule_identity(jobs: &[Value], selected: usize) -> Option<&str> {
     jobs.get(selected)?.get("id")?.as_str()
+}
+
+fn recorded_conversation(row: &Value) -> Option<&str> {
+    row["spec"]["resume"]["conversationId"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+}
+
+fn conversation_row(row: &Value) -> Option<String> {
+    let id = recorded_conversation(row)?;
+    Some(if row["spec"]["program"] == "gemini" {
+        "Resume conversation: not supported for Gemini".to_owned()
+    } else {
+        format!("Resume conversation {id}")
+    })
+}
+
+fn resume_conversation(app: &mut App, row: &Value) {
+    let Some(id) = recorded_conversation(row) else {
+        app.notice = "No provider conversation was recorded for this session.".into();
+        return;
+    };
+    if row["spec"]["program"] == "gemini" {
+        app.notice = "Gemini cannot resume an exact conversation; Enter starts a new one.".into();
+        return;
+    }
+    if row["state"] != "saved" {
+        app.notice =
+            "Interrupted restart: inspect live sessions before forgetting this record.".into();
+        return;
+    }
+    app.overlay = None;
+    app.dialog = Some(crate::model::Dialog::Confirm {
+        title: "Resume conversation?".into(),
+        detail: format!(
+            "Starts the provider in the saved folder with conversation {id}. Nothing is sent until the provider confirms that exact conversation; otherwise the session is marked resume failed."
+        ),
+        command: json!({"type":"restoreSession","id":row["id"],"exact":true}),
+    });
+    app.dialog_button = Some(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    const ID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
+
+    fn app(program: &str, resume: bool) -> App {
+        let mut app = App::new(1);
+        let mut spec = json!({"name":"Prior session","cwd":"/repo","program":program});
+        if resume {
+            spec["resume"] = json!({"provider":program,"conversationId":ID});
+        }
+        app.recoveries = vec![json!({"id":"old","state":"saved","spec":spec})];
+        app.overlay = Some(Overlay::Recipes(true, 0));
+        app
+    }
+    fn press(app: &mut App, code: KeyCode) -> Outcome {
+        crate::controller::event(
+            app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            Rect::new(0, 0, 150, 44),
+        )
+    }
+    fn screen(app: &App) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(150, 44)).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn toolbox_recovery_offers_resume_conversation_only_for_a_recorded_id() {
+        let mut app = app("claude", true);
+        assert!(screen(&app).contains(&format!("Resume conversation {ID}")));
+        assert!(press(&mut app, KeyCode::Char('e')).commands.is_empty());
+        assert!(matches!(
+            &app.dialog,
+            Some(crate::model::Dialog::Confirm { command, .. })
+                if command == &json!({"type":"restoreSession","id":"old","exact":true})
+        ));
+        assert_eq!(app.dialog_button, Some(1));
+
+        let mut plain = super::tests::app("codex", false);
+        assert!(!screen(&plain).contains("Resume conversation"));
+        press(&mut plain, KeyCode::Char('e'));
+        assert!(plain.dialog.is_none());
+        assert!(plain.notice.contains("No provider conversation"));
+    }
+
+    #[test]
+    fn toolbox_recovery_explains_that_gemini_cannot_resume_a_conversation() {
+        let mut app = app("gemini", true);
+        assert!(screen(&app).contains("not supported for Gemini"));
+        press(&mut app, KeyCode::Char('e'));
+        assert!(app.dialog.is_none());
+        assert!(app.notice.contains("Gemini"));
+    }
 }

@@ -51,6 +51,8 @@ pub struct LaunchSpec {
     pub muted: bool,
     #[serde(default)]
     pub resume_picker: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<crate::resume::Target>,
     // Internal admission context is never accepted from serialized launch input.
     #[serde(skip)]
     pub(crate) quota_launch: Option<crate::quota_contexts::LaunchContext>,
@@ -145,8 +147,19 @@ mod tests {
             ..spec
         };
         assert_eq!(
-            serde_json::to_value(child).unwrap()["parentSessionId"],
+            serde_json::to_value(&child).unwrap()["parentSessionId"],
             "parent"
+        );
+        let resumed = LaunchSpec {
+            resume: Some(crate::resume::Target {
+                provider: Program::Claude,
+                conversation_id: "0f8fad5b-d9cb-469f-a165-70867728950e".into(),
+            }),
+            ..child
+        };
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap()["resume"],
+            serde_json::json!({"provider":"claude","conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e"})
         );
     }
     #[test]

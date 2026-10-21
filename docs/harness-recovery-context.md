@@ -103,6 +103,25 @@ this bounded file outside the state lock/render path, without a model heartbeat.
 Reports live beside the exact private scoped context; the writer does not assume
 the provider hook's `TEMP`/`TMP` is the host's original temporary directory.
 
+## Exact conversation resume
+
+Session recovery is separate from run context recovery. The host records the
+provider conversation ID observed by the lifecycle hooks in the session's saved
+launch description (`spec.resume {provider, conversationId}`), and keeps it
+across a host restart. Restoring with an explicit resume request starts a new
+process with `claude --resume ID` or `codex resume ID` in the saved folder. It
+sends no prompt and never opens a picker, picks the latest conversation or forks.
+Gemini is refused with a visible reason.
+
+The new session stays closed to automated input (`resume_pending`) until its
+first root session-start hook reports source `resume` and the expected ID. A
+different ID, another source, process exit or no hook within 60 seconds marks it
+`resume.state:"resumeFailed"` with the reason; automated input is then refused
+(`resume_failed`) and the session never poses as a continuation. The saved record
+keeps the original conversation ID for another attempt. See the
+[CLI](harness-cli.md#saved-session-recovery) and [MCP](harness-mcp.md#current-tools)
+surfaces.
+
 ## Verification and remaining integration
 
 Storage cases cover unbound/unique/ambiguous lookup, bounded choices, exact scope,

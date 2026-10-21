@@ -30,6 +30,7 @@ mod review_session;
 mod runner;
 mod selection;
 mod session_kind;
+mod session_recovery;
 mod session_row;
 mod shortcuts;
 mod status;

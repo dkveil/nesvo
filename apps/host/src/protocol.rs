@@ -139,6 +139,8 @@ pub enum Command {
         id: String,
         #[serde(default)]
         resume: bool,
+        #[serde(default)]
+        exact: bool,
     },
     ForgetRecovery {
         id: String,

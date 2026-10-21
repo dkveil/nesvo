@@ -377,6 +377,26 @@ global stack limits nor command semantics. A small-caller-stack regression check
 top-level/nested help and the native wait grammar; real CLI integration checks
 also cover a timeout retaining its receipt and exit code 7.
 
+## Saved session recovery
+
+Owner `session recover list [--offset N]` pages saved launch descriptions of
+sessions that are not running (`type:"recovery"`, `records`, `nextOffset`).
+`session recover restore ID [--resume]` starts one new process from a saved
+record and returns `type:"created"` with the new `sessionId`. Old prompts and
+worktree creation are never replayed, and a claimed record cannot start twice.
+`--resume` requires `conversationResume` and a recorded `spec.resume`; it asks
+the provider for that exact conversation and adds `resume:{state:"pending"}`.
+Inspect `session get` until `resume.state` is `verified` or `resumeFailed` with
+its `reason`. Gemini and records without a conversation return `unsupported` and
+`resume_unavailable` and leave the record saved. `session recover forget ID`
+removes only the description. See [exact conversation resume](harness-recovery-context.md#exact-conversation-resume).
+
+```powershell
+nesvo session recover list --json
+nesvo session recover restore SAVED_ID --resume --json
+nesvo session recover forget SAVED_ID --json
+```
+
 ## Interrupt and stop
 
 `session interrupt SESSION_ID --key KEY` writes one Ctrl+C through the confirmed

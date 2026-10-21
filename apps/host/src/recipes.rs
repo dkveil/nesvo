@@ -137,6 +137,56 @@ mod tests {
         assert!(store.recoveries().unwrap().is_empty());
     }
     #[test]
+    fn recovery_keeps_the_conversation_identity_across_a_store_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "nesvo-recovery-{}.sqlite",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        let target = crate::resume::Target {
+            provider: crate::launchers::Program::Claude,
+            conversation_id: "0f8fad5b-d9cb-469f-a165-70867728950e".into(),
+        };
+        {
+            let store = MetadataStore::open(&path).unwrap();
+            store
+                .save_recovery(
+                    "old",
+                    &LaunchSpec {
+                        name: "Resumable".into(),
+                        program: crate::launchers::Program::Claude,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            store
+                .save_recovery(
+                    "old",
+                    &LaunchSpec {
+                        name: "Resumable".into(),
+                        program: crate::launchers::Program::Claude,
+                        prompt: "never stored".into(),
+                        resume: Some(target.clone()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+        let store = MetadataStore::open(&path).unwrap();
+        let listed = store.recoveries().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0]["spec"]["resume"],
+            json!({"provider":"claude","conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e"})
+        );
+        let restored = store.claim_recovery("old").unwrap();
+        assert_eq!(restored.resume, Some(target));
+        assert!(restored.prompt.is_empty());
+        store.finish_recovery("old", false).unwrap();
+        assert_eq!(store.recoveries().unwrap()[0]["state"], "saved");
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+    #[test]
     fn templates_cannot_overflow_a_wire_frame() {
         let store = MetadataStore::open(std::path::Path::new(":memory:")).unwrap();
         let spec = LaunchSpec {

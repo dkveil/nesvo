@@ -102,7 +102,7 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The current [catalog](harness-mcp-tools.json) contains 95 tools. Task instruction intents use
+The current [catalog](harness-mcp-tools.json) contains 100 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 
@@ -197,6 +197,14 @@ These native flags are documented in the official
 | nesvo_interrupt_session   | durable single Ctrl+C without taking human control |
 | nesvo_stop_session        | durable native process stop request                |
 | nesvo_get_operation       | lookup by operation ID or original caller key      |
+| nesvo_list_recovery       | owner-only page of saved session descriptions      |
+| nesvo_restore_session     | owner-only new process, optional exact resume      |
+| nesvo_forget_recovery     | owner-only removal of one saved description        |
+
+`conversationResume` adds `resume:true` to `nesvo_restore_session`. The session
+accepts no automated input until the provider confirms the exact conversation;
+otherwise `resume.state` becomes `resumeFailed` with a reason. See
+[exact conversation resume](harness-recovery-context.md#exact-conversation-resume).
 
 Tools declare input/output schemas and effect hints. Results include text and
 `structuredContent` with `schemaVersion:1`, `ok`, and `data` or `error`. Host/tool

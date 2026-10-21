@@ -453,7 +453,10 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
                 },
                 &entry?,
             )? {
-                Some(sequence) => sequence,
+                Some(sequence) => {
+                    let _ = crate::resume::record_start(report, &value);
+                    sequence
+                }
                 None => return Ok(()),
             }
         } else {
@@ -697,6 +700,46 @@ mod tests {
             value["turn_id"] = "reused-native-turn".into();
         }
         emit(report, value, codex).unwrap();
+    }
+
+    #[tokio::test]
+    async fn resume_fixture_hook_feeds_the_verification_gate_for_claude_and_codex() {
+        let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        let other = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+        for (codex, source, provider, verified) in [
+            (false, "resume", id, true),
+            (true, "resume", id, true),
+            (false, "resume", other, false),
+            (true, "startup", id, false),
+        ] {
+            let tracker =
+                Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+            let report = tracker.report();
+            emit(
+                &report,
+                json!({"hook_event_name":"SessionStart", "session_id":provider, "source":source}),
+                codex,
+            )
+            .unwrap();
+            let start = crate::resume::read_start(&report).await;
+            let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+            let mut gate = crate::resume::Gate::new(crate::resume::Target {
+                provider: if codex {
+                    crate::launchers::Program::Codex
+                } else {
+                    crate::launchers::Program::Claude
+                },
+                conversation_id: id.into(),
+            });
+            assert!(gate.observe(crate::resume::Evidence {
+                start: start.as_ref(),
+                bound: batch.identity.provider_session_id.as_deref(),
+                running: true,
+                elapsed: std::time::Duration::ZERO,
+            }));
+            assert_eq!(gate.verified(), verified, "{codex} {source} {provider}");
+            assert_eq!(gate.refusal().is_none(), verified);
+        }
     }
 
     #[test]
