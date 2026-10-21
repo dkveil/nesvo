@@ -182,6 +182,9 @@ mod workflow_decisions_tests;
 #[path = "workflow_delivery_tests.rs"]
 mod workflow_delivery_tests;
 #[cfg(test)]
+#[path = "workflow_digest_tests.rs"]
+mod workflow_digest_tests;
+#[cfg(test)]
 #[path = "workflow_executor_tests.rs"]
 mod workflow_executor_tests;
 #[cfg(test)]

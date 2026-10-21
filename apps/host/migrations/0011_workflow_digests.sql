@@ -1,0 +1,1 @@
+CREATE TABLE workflow_digests(run_id TEXT PRIMARY KEY NOT NULL REFERENCES workflow_runs(id),source_revision INTEGER NOT NULL,state TEXT NOT NULL,produced_at INTEGER NOT NULL,journal_cursor INTEGER NOT NULL,fingerprint TEXT NOT NULL,body TEXT NOT NULL);

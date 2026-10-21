@@ -1495,6 +1495,7 @@ impl State {
         event["runRecovery"] = self.event_log.is_some().into();
         event["runCoordinatorRecovery"] = self.event_log.is_some().into();
         event["runConstraints"] = self.event_log.is_some().into();
+        event["runDigests"] = self.event_log.is_some().into();
         event["sessionHarness"] = true.into();
         event["sessionToolPermissions"] = true.into();
         event["childToolPolicy"] = true.into();

@@ -121,6 +121,9 @@ pub enum Request {
     Get {
         run_id: String,
     },
+    Digest {
+        run_id: String,
+    },
     Mutation {
         key: String,
     },
@@ -493,6 +496,9 @@ fn execute_inner(
         authorize_history(connection, &actor, &result)?;
         return Ok(result);
     }
+    if let Request::Digest { run_id } = &request {
+        return crate::workflow_digest::read(connection, &actor, run_id, now);
+    }
     if let Request::Get { run_id } = &request {
         run(connection, &actor, run_id)?;
         crate::workflow_budget::refresh(connection, run_id, now)?;
@@ -661,6 +667,7 @@ fn execute_inner(
             payload: json!({"runId":id,"revision":result["run"]["revision"]}),
         }],
     )?;
+    crate::workflow_digest::settle(&transaction, &id, now)?;
     let mut result = result;
     if let Request::Validate {
         host_attestation: Some(checks),

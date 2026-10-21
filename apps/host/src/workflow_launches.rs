@@ -598,6 +598,7 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
                 )?;
                 crate::workflow_budget::settle_drain(&transaction, &run)?;
                 event(&transaction, &run, &attempt_id, "run.launch_observed", now)?;
+                crate::workflow_digest::settle(&transaction, &run, now)?;
             }
             transaction.commit()?;
             Ok(Reply::Done)

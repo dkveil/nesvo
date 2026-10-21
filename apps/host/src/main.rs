@@ -91,6 +91,7 @@ mod workflow_coordinator_runtime;
 mod workflow_decisions;
 mod workflow_delivery;
 mod workflow_delivery_runtime;
+mod workflow_digest;
 mod workflow_executor;
 mod workflow_executor_runtime;
 mod workflow_host_checks;

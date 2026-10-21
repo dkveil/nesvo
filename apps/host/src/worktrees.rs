@@ -2215,6 +2215,13 @@ pub(crate) struct ProjectWorktree {
     pub open: bool,
 }
 
+pub(crate) fn session_branch(session_id: &str) -> Option<(String, Option<String>)> {
+    STORE
+        .get()?
+        .find(session_id)
+        .map(|record| (record.worktree, record.branch))
+}
+
 pub(crate) fn project_worktrees() -> Vec<ProjectWorktree> {
     STORE.get().map_or_else(Vec::new, |store| {
         store

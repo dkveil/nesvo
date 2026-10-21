@@ -276,6 +276,7 @@ fn settle(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<()> {
             }
             transaction.execute("UPDATE workflow_attempts SET state='stopped' WHERE task_id IN (SELECT id FROM workflow_tasks WHERE run_id=?1) AND (state IN ('assigned','launching','launchUnknown') OR (?2='cancel' AND state='reported')) AND (?3=0 OR id IN (SELECT attempt_id FROM workflow_control_targets WHERE control_id=?4))",params![run_id,kind,timeout,id])?;
             event(transaction, &run_id, id, "run.control_completed", now)?;
+            crate::workflow_digest::settle(transaction, &run_id, now)?;
         }
     }
     Ok(())

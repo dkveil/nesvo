@@ -40,6 +40,8 @@ pub struct ResultSpec {
     pub artifacts: Vec<String>,
     pub checks: Vec<Check>,
     pub limitations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -178,7 +180,7 @@ pub fn context(
         run["state"].as_str().unwrap_or("unknown"),
     )?;
     Ok(
-        json!({"run":run,"task":{"id":task_id,"key":spec.key,"title":spec.title,"instruction":spec.instruction},"attempt":a,"constraints":{"policy":crate::workflow_context::summary(connection,&run_id)?,"records":crate::workflow_context::records(connection,&run_id)?}}),
+        json!({"run":run,"task":{"id":task_id,"key":spec.key,"title":spec.title,"instruction":spec.instruction},"attempt":a,"constraints":{"policy":crate::workflow_context::summary(connection,&run_id)?,"records":crate::workflow_context::records(connection,&run_id)?},"workingState":crate::workflow_digest::inherited(connection,&run_id,task_id)?}),
     )
 }
 pub fn history(
@@ -361,12 +363,14 @@ pub fn mutate(
                 || result.files.len() > 32
                 || result.artifacts.len() > 16
                 || result.limitations.len() > 16
+                || result.next_steps.len() > 8
                 || !checks_valid(&result.checks)
                 || result
                     .files
                     .iter()
                     .chain(&result.artifacts)
                     .chain(&result.limitations)
+                    .chain(&result.next_steps)
                     .any(|v| !plain(v, 1024))
                 || serde_json::to_vec(result)?.len() > 4096
             {
