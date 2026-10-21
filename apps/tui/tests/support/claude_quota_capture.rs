@@ -255,8 +255,12 @@ async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::proce
     }
     let status = result.with_context(|| {
         format!(
-            "Actual generated command timeout; owned stderr: {}",
-            String::from_utf8_lossy(&diagnostic)
+            "Actual generated command timeout: {}",
+            json!({
+                "stderrBytes": diagnostic.len(),
+                "stderrClass": stderr_class(&diagnostic),
+                "stderrPrefixTruncated": diagnostic.len() > 4096
+            })
         )
     })??;
     Ok(std::process::Output {
@@ -264,6 +268,25 @@ async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::proce
         stdout: output,
         stderr: diagnostic,
     })
+}
+
+fn stderr_class(bytes: &[u8]) -> &'static str {
+    if bytes.is_empty() {
+        return "empty";
+    }
+    let prefix = &bytes[..bytes.len().min(4096)];
+    let contains = |needle: &[u8]| prefix.windows(needle.len()).any(|part| part == needle);
+    match (
+        contains(
+            b"nesvo declared status-line forwarding is unavailable; inspect the launch profile",
+        ),
+        contains(b"nesvo quota capture diagnostics are unavailable"),
+    ) {
+        (true, true) => "bothKnownWarnings",
+        (true, false) => "forwardingUnavailable",
+        (false, true) => "captureDiagnosticsUnavailable",
+        (false, false) => "other",
+    }
 }
 #[cfg(windows)]
 fn base64(bytes: &[u8]) -> String {
@@ -542,7 +565,20 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
             "Storage recovery reads the original receipt, not new backend evidence");
         assert_eq!(recovered["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["outcome"], "storageUnavailable",
             "Historical storage failure remains distinct from a healthy current reader");
-        assert_eq!(generated(command, &input, &fixture.directory).await?.stdout, expected_input);
+        let started = tokio::time::Instant::now();
+        let wrapped = generated(command, &input, &fixture.directory).await?;
+        assert!(wrapped.status.code() == Some(7) && wrapped.stdout == expected_input,
+            "Post-restore forwarding failed: {}", json!({
+                "phase": "postJournalRestore",
+                "elapsedMs": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "exitCode": wrapped.status.code(),
+                "stdoutBytes": wrapped.stdout.len(),
+                "expectedStdoutBytes": expected_input.len(),
+                "stdoutMatches": wrapped.stdout == expected_input,
+                "stderrBytes": wrapped.stderr.len(),
+                "stderrClass": stderr_class(&wrapped.stderr),
+                "stderrPrefixTruncated": wrapped.stderr.len() > 4096
+            }));
         let recovered = completed_capture(&owner, id, "recorded").await?;
         assert!(recovered["claudeQuotaCapture"]["delivery"]["latestCompleted"]["attemptSequence"]
             .as_u64().context("Recovered capture attempt")? > rejected_attempt);

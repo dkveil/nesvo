@@ -3460,3 +3460,17 @@ single-session assertions, with no production or timeout change. The exact
 controlled native SDK case passes on Windows in 14.41 seconds. This repairs the
 test race; it does not explain the separate CI capture, submission or startup
 failures, or close original-provider quota acceptance.
+
+### F03 capture forwarding failure evidence
+
+The post-journal-restore SDK check now retains the actual wrapper result and
+requires both exit code 7 and exact stdout bytes. Failure-only evidence includes
+its phase, monotonic elapsed time, exit code, byte counts and a fixed stderr
+class. Classification inspects at most a 4096-byte prefix and never prints that
+prefix or callback content. The generated-command timeout uses the same safe
+classification. Empty stderr is inconclusive because the Windows production
+wrapper suppresses helper stderr. No historical display receipt is presented as
+proof of this invocation. Existing helper/scenario deadlines, cleanup and
+production code are unchanged. Windows warnings-denied all-target Clippy and
+the exact controlled native capture case pass (10.26 seconds). This is an
+evidence improvement, not a proven fix for CI's earlier empty stdout.
