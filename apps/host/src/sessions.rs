@@ -1519,6 +1519,10 @@ impl State {
         event["notes"] = true.into();
         event["worktrees"] = crate::worktrees::available().into();
         event["workflowTemplates"] = crate::workflow_templates::available().into();
+        event["workflowHostChecks"] = (self.event_log.is_some()
+            && crate::workflow_templates::available()
+            && crate::worktrees::available())
+        .into();
         event["projects"] = crate::projects::available().into();
         event["git"] = true.into();
         event

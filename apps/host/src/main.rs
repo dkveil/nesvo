@@ -92,6 +92,7 @@ mod workflow_delivery;
 mod workflow_delivery_runtime;
 mod workflow_executor;
 mod workflow_executor_runtime;
+mod workflow_host_checks;
 mod workflow_inbox;
 mod workflow_launch_runtime;
 mod workflow_launches;

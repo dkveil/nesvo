@@ -29,7 +29,7 @@ const LOG_CONTENT_LIMIT: usize = LOG_LIMIT - 64;
 const STEP_LIMIT: usize = 32;
 const STEP_BYTES: usize = 4096;
 const ENV_FILE_BYTES: u64 = 1024 * 1024;
-const DEFAULT_TIMEOUT_S: u64 = 600;
+pub(crate) const DEFAULT_TIMEOUT_S: u64 = 600;
 const MAX_TIMEOUT_S: u64 = 3600;
 const APPROVAL_LIMIT: usize = 256;
 const RECORD_LIMIT: usize = 512;
@@ -40,7 +40,7 @@ const REMOVE_DEADLINE: Duration = Duration::from_secs(60);
 const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
 const POLICY: &str = "platform-shell-v1";
 const STATE_DIR: &str = ".nesvo";
-static SLOTS: Semaphore = Semaphore::const_new(4);
+pub(crate) static SLOTS: Semaphore = Semaphore::const_new(4);
 static STORE: OnceLock<Store> = OnceLock::new();
 
 #[derive(Debug)]
@@ -390,7 +390,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn valid_step(step: &str) -> bool {
+pub(crate) fn valid_step(step: &str) -> bool {
     !step.trim().is_empty()
         && step.len() <= STEP_BYTES
         && !step.chars().any(|c| c.is_control() && c != '\t')
@@ -529,7 +529,7 @@ pub struct Record {
     pub created_at: u64,
     pub digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    config: Option<Config>,
+    pub(crate) config: Option<Config>,
     pub setup: Phase,
     pub run: Option<Phase>,
     env_files: Vec<Copied>,
@@ -658,7 +658,7 @@ impl Store {
             .map_err(|_| anyhow!("Worktree registry is unavailable"))?;
         Ok(view(&document))
     }
-    fn approved(&self, repository: &str, digest: &str) -> bool {
+    pub(crate) fn approved(&self, repository: &str, digest: &str) -> bool {
         self.read(|document| {
             document
                 .approvals
@@ -736,7 +736,7 @@ impl Store {
         })
         .await
     }
-    fn find(&self, session_id: &str) -> Option<Record> {
+    pub(crate) fn find(&self, session_id: &str) -> Option<Record> {
         self.read(|document| {
             document
                 .worktrees
@@ -791,6 +791,16 @@ impl Store {
             })
             .unwrap_or(false)
     }
+    pub(crate) fn hold(&self, session_id: &str) -> Result<(Activity<'_>, watch::Receiver<bool>)> {
+        let cancel = self.begin(session_id)?;
+        Ok((
+            Activity {
+                store: self,
+                session_id: session_id.into(),
+            },
+            cancel,
+        ))
+    }
     fn running(&self, session_id: &str) -> bool {
         self.active
             .lock()
@@ -799,7 +809,7 @@ impl Store {
     }
 }
 
-struct Activity<'a> {
+pub(crate) struct Activity<'a> {
     store: &'a Store,
     session_id: String,
 }
@@ -811,6 +821,10 @@ impl Drop for Activity<'_> {
 
 pub fn available() -> bool {
     STORE.get().is_some()
+}
+
+pub(crate) fn store() -> Option<&'static Store> {
+    STORE.get()
 }
 
 pub fn configure(directory: &Path) -> Result<()> {
@@ -1038,7 +1052,7 @@ fn copy_env_files(root: &Path, worktree: &Path, files: &[String]) -> Result<Vec<
     Ok(copied)
 }
 
-async fn state_dir(worktree: &Path) -> std::io::Result<PathBuf> {
+pub(crate) async fn state_dir(worktree: &Path) -> std::io::Result<PathBuf> {
     let directory = worktree.join(STATE_DIR);
     tokio::fs::create_dir_all(&directory).await?;
     tokio::fs::write(directory.join(".gitignore"), "*\n").await?;
@@ -1245,31 +1259,54 @@ impl Outcome {
     }
 }
 
-struct Log {
+pub(crate) struct Log {
     file: tokio::fs::File,
     written: usize,
     truncated: bool,
+    tail: Vec<u8>,
+    tail_limit: usize,
+    tail_seen: usize,
 }
 
 impl Log {
-    async fn create(path: &Path) -> std::io::Result<Self> {
+    pub(crate) async fn create(path: &Path) -> std::io::Result<Self> {
+        Self::tailed(path, 0).await
+    }
+    pub(crate) async fn tailed(path: &Path, tail_limit: usize) -> std::io::Result<Self> {
         Ok(Self {
             file: tokio::fs::File::create(path).await?,
             written: 0,
             truncated: false,
+            tail: Vec::new(),
+            tail_limit,
+            tail_seen: 0,
         })
     }
-    async fn write(&mut self, bytes: &[u8]) {
+    async fn append(&mut self, bytes: &[u8]) {
         let take = bytes.len().min(LOG_CONTENT_LIMIT - self.written);
         if take > 0 && self.file.write_all(&bytes[..take]).await.is_ok() {
             self.written += take;
         }
         self.truncated |= take < bytes.len();
     }
-    async fn line(&mut self, text: &str) {
-        self.write(format!("{text}\n").as_bytes()).await;
+    async fn write(&mut self, bytes: &[u8]) {
+        self.append(bytes).await;
+        if self.tail_limit > 0 {
+            self.tail_seen += bytes.len();
+            self.tail.extend_from_slice(bytes);
+            let excess = self.tail.len().saturating_sub(self.tail_limit);
+            self.tail.drain(..excess);
+        }
     }
-    async fn finish(mut self) {
+    pub(crate) fn take_tail(&mut self) -> (Vec<u8>, bool) {
+        let truncated = self.tail_seen > self.tail.len();
+        self.tail_seen = 0;
+        (std::mem::take(&mut self.tail), truncated)
+    }
+    pub(crate) async fn line(&mut self, text: &str) {
+        self.append(format!("{text}\n").as_bytes()).await;
+    }
+    pub(crate) async fn finish(mut self) {
         if self.truncated {
             let _ = self
                 .file
@@ -1486,7 +1523,7 @@ async fn forward(mut pipe: impl AsyncRead + Unpin, output: mpsc::Sender<Vec<u8>>
     }
 }
 
-async fn cancelled(cancel: &mut watch::Receiver<bool>) {
+pub(crate) async fn cancelled(cancel: &mut watch::Receiver<bool>) {
     loop {
         if *cancel.borrow_and_update() {
             return;
@@ -1511,16 +1548,26 @@ async fn step(
     cancel: &mut watch::Receiver<bool>,
     log: &mut Log,
 ) -> Outcome {
+    step_status(text, cwd, deadline, cancel, log).await.0
+}
+
+pub(crate) async fn step_status(
+    text: &str,
+    cwd: &Path,
+    deadline: Instant,
+    cancel: &mut watch::Receiver<bool>,
+    log: &mut Log,
+) -> (Outcome, Option<i32>) {
     let Ok(command) = step_command(text) else {
         log.line("the platform shell is unavailable").await;
-        return Outcome::Failed;
+        return (Outcome::Failed, None);
     };
     let mut command = tokio::process::Command::from(command);
     command.current_dir(cwd).kill_on_drop(true);
     command_scope::configure(&mut command);
     let Ok(child) = command.spawn() else {
         log.line("the step could not be started").await;
-        return Outcome::Failed;
+        return (Outcome::Failed, None);
     };
     let mut owned = Owned {
         child,
@@ -1531,7 +1578,7 @@ async fn step(
         Ok(scope) => owned.scope = Some(scope),
         Err(_) => {
             log.line("the step could not be contained").await;
-            return Outcome::Failed;
+            return (Outcome::Failed, None);
         }
     }
     if !matches!(
@@ -1539,7 +1586,7 @@ async fn step(
         Ok(Ok(()))
     ) {
         log.line("the step could not be started").await;
-        return Outcome::Failed;
+        return (Outcome::Failed, None);
     }
     let (sender, mut output) = mpsc::channel(8);
     let mut readers = Vec::new();
@@ -1580,7 +1627,7 @@ async fn step(
     }
     let status = tokio::time::timeout(DRAIN_DEADLINE, owned.child.wait()).await;
     match (ended, status) {
-        (Ended::Exited, Ok(Ok(status))) if status.success() => Outcome::Passed,
+        (Ended::Exited, Ok(Ok(status))) if status.success() => (Outcome::Passed, status.code()),
         (Ended::Exited, Ok(Ok(status))) => {
             log.line(&format!(
                 "step failed with exit code {}",
@@ -1589,19 +1636,19 @@ async fn step(
                     .map_or_else(|| "unknown".into(), |code| code.to_string())
             ))
             .await;
-            Outcome::Failed
+            (Outcome::Failed, status.code())
         }
         (Ended::Exited | Ended::Lost, _) => {
             log.line("the step exit could not be observed").await;
-            Outcome::Failed
+            (Outcome::Failed, None)
         }
         (Ended::TimedOut, _) => {
             log.line("the step timed out and was terminated").await;
-            Outcome::TimedOut
+            (Outcome::TimedOut, None)
         }
         (Ended::Cancelled, _) => {
             log.line("the step was cancelled and terminated").await;
-            Outcome::Cancelled
+            (Outcome::Cancelled, None)
         }
     }
 }

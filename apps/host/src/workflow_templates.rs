@@ -33,6 +33,9 @@ const APPROVAL_LIMIT: usize = 256;
 const STORE_LIMIT: u64 = 1024 * 1024;
 const STORE_FILE: &str = "workflow-templates.json";
 const MAX_ELAPSED_MS: u64 = 604_800_000;
+pub(crate) const CHECK_LIMIT: usize = 8;
+pub(crate) const CHECK_BYTES: usize = 256;
+const BINDING_LIMIT: usize = 1024;
 
 static STORE: OnceLock<Store> = OnceLock::new();
 
@@ -63,6 +66,8 @@ pub(crate) struct Task {
     pub(crate) workspace: String,
     pub(crate) harness: Option<bool>,
     pub(crate) allowed_nesvo_tools: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) checks: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -116,6 +121,7 @@ struct TaskDraft {
     workspace: Option<String>,
     harness: Option<bool>,
     allowed_nesvo_tools: Option<Vec<String>>,
+    checks: Vec<String>,
 }
 
 #[derive(Default)]
@@ -302,6 +308,18 @@ impl TaskDraft {
                 }
                 self.allowed_nesvo_tools = Some(tools);
             }
+            ("checks", Item::List(checks)) => {
+                if checks.len() > CHECK_LIMIT
+                    || !checks
+                        .iter()
+                        .all(|check| check.len() <= CHECK_BYTES && worktrees::valid_step(check))
+                {
+                    return Err(format!(
+                        "checks must list at most {CHECK_LIMIT} nonempty single-line commands of at most {CHECK_BYTES} bytes"
+                    ));
+                }
+                self.checks = checks;
+            }
             (
                 "key"
                 | "title"
@@ -310,7 +328,8 @@ impl TaskDraft {
                 | "program"
                 | "workspace"
                 | "harness"
-                | "allowed_nesvo_tools",
+                | "allowed_nesvo_tools"
+                | "checks",
                 _,
             ) => return Err(format!("{key} has the wrong value type")),
             _ => return Err(format!("unsupported task key {key}")),
@@ -329,6 +348,7 @@ impl TaskDraft {
             workspace: self.workspace.ok_or_else(|| missing("a workspace"))?,
             harness: self.harness,
             allowed_nesvo_tools: self.allowed_nesvo_tools,
+            checks: self.checks,
             key,
         })
     }
@@ -468,11 +488,40 @@ struct Approval {
     approved_at: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskChecks {
+    pub(crate) key: String,
+    pub(crate) commands: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunChecks {
+    pub(crate) run_id: String,
+    pub(crate) repository: String,
+    pub(crate) template: String,
+    pub(crate) digest: String,
+    pub(crate) tasks: Vec<TaskChecks>,
+    pub(crate) bound_at: u64,
+}
+
+impl RunChecks {
+    pub(crate) fn commands(&self, task_key: &str) -> &[String] {
+        self.tasks
+            .iter()
+            .find(|task| task.key == task_key)
+            .map_or(&[], |task| task.commands.as_slice())
+    }
+}
+
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Document {
     version: u32,
     approvals: Vec<Approval>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    runs: Vec<RunChecks>,
 }
 
 pub(crate) struct Store {
@@ -562,10 +611,66 @@ impl Store {
             document.approvals.len() != before
         })
     }
+
+    pub(crate) fn bind(&self, binding: RunChecks) -> Result<()> {
+        if self.binding(&binding.run_id).is_some_and(|existing| {
+            existing.repository == binding.repository
+                && existing.template == binding.template
+                && existing.digest == binding.digest
+                && existing.tasks == binding.tasks
+        }) {
+            return Ok(());
+        }
+        self.update(|document| {
+            document.runs.retain(|run| run.run_id != binding.run_id);
+            document.runs.push(binding);
+            let excess = document.runs.len().saturating_sub(BINDING_LIMIT);
+            document.runs.drain(..excess);
+        })
+    }
+
+    pub(crate) fn binding(&self, run_id: &str) -> Option<RunChecks> {
+        self.document.lock().ok().and_then(|document| {
+            document
+                .runs
+                .iter()
+                .find(|run| run.run_id == run_id)
+                .cloned()
+        })
+    }
 }
 
 pub fn available() -> bool {
     STORE.get().is_some()
+}
+
+pub(crate) fn store() -> Option<&'static Store> {
+    STORE.get()
+}
+
+pub(crate) fn run_checks(
+    source: &Source,
+    template: &Template,
+    digest: &str,
+    run_id: &str,
+) -> Option<RunChecks> {
+    let tasks: Vec<TaskChecks> = template
+        .tasks
+        .iter()
+        .filter(|task| !task.checks.is_empty())
+        .map(|task| TaskChecks {
+            key: task.key.clone(),
+            commands: task.checks.clone(),
+        })
+        .collect();
+    (!tasks.is_empty()).then(|| RunChecks {
+        run_id: run_id.into(),
+        repository: source.repository.clone(),
+        template: template.name.clone(),
+        digest: digest.into(),
+        tasks,
+        bound_at: crate::status::now_millis(),
+    })
 }
 
 pub fn configure(directory: &Path) -> Result<()> {
@@ -921,7 +1026,14 @@ async fn start(
             }
         })
     };
-    start_with(execute, &source, template, &digest, key).await
+    let started = start_with(execute, &source, template, &digest, key).await?;
+    if let Some(binding) = started["run"]["id"]
+        .as_str()
+        .and_then(|run_id| run_checks(&source, template, &digest, run_id))
+    {
+        store.bind(binding)?;
+    }
+    Ok(started)
 }
 
 pub async fn serve(

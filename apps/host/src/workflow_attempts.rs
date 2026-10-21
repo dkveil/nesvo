@@ -64,6 +64,28 @@ fn checks_valid(checks: &[Check]) -> bool {
             .iter()
             .all(|c| plain(&c.name, 128) && plain(&c.details, 1024))
 }
+pub(crate) fn validation_bounds(validation: &ValidationSpec, host_checks: bool) -> Result<()> {
+    if !plain(&validation.summary, 1024)
+        || !checks_valid(&validation.checks)
+        || serde_json::to_vec(validation)?.len() > 2048
+    {
+        return Err(invalid(
+            "Validation exceeds its text, checks or 2 KiB bounds",
+        ));
+    }
+    if validation.passed
+        && ((validation.checks.is_empty() && !host_checks)
+            || validation
+                .checks
+                .iter()
+                .any(|c| !matches!(c.outcome, CheckOutcome::Passed)))
+    {
+        return Err(invalid(
+            "Accepting success requires a succeeded report and explicit passed validation checks",
+        ));
+    }
+    Ok(())
+}
 pub(crate) fn task(connection: &Connection, run_id: &str, task_id: &str) -> Result<TaskSpec> {
     let source: Option<String> = connection
         .query_row(
@@ -385,6 +407,8 @@ pub fn mutate(
             attempt_id,
             expected_revision,
             validation,
+            host_checks,
+            host_attestation,
             ..
         } => {
             crate::job_cancellations::guard_run(connection, run_id)?;
@@ -409,27 +433,36 @@ pub fn mutate(
                 )
                 .into());
             }
-            if !plain(&validation.summary, 1024)
-                || !checks_valid(&validation.checks)
-                || serde_json::to_vec(validation)?.len() > 2048
-            {
-                return Err(invalid(
-                    "Validation exceeds its text, checks or 2 KiB bounds",
-                ));
-            }
-            if validation.passed
-                && (a["result"]["outcome"] != "succeeded"
-                    || validation.checks.is_empty()
-                    || validation
-                        .checks
-                        .iter()
-                        .any(|c| !matches!(c.outcome, CheckOutcome::Passed)))
-            {
+            validation_bounds(validation, *host_checks)?;
+            if validation.passed && a["result"]["outcome"] != "succeeded" {
                 return Err(invalid(
                     "Accepting success requires a succeeded report and explicit passed validation checks",
                 ));
             }
+            let host = match (*host_checks, host_attestation) {
+                (false, _) => None,
+                (true, Some(checks))
+                    if checks.attempt_id == *attempt_id
+                        && a["sessionId"] == checks.session_id.as_str() =>
+                {
+                    Some(checks)
+                }
+                (true, _) => {
+                    return Err(Error::new(
+                        "host_checks_unavailable",
+                        "Host checks did not run for this exact attempt",
+                    )
+                    .into());
+                }
+            };
+            let accepted = validation.passed && host.is_none_or(|checks| checks.passed);
             let mut evidence = serde_json::to_value(validation)?;
+            if let Some(checks) = host {
+                evidence["hostChecks"] = serde_json::to_value(checks)?;
+                if validation.passed && !accepted {
+                    evidence["refusedBy"] = "hostChecks".into();
+                }
+            }
             evidence["source"] = if matches!(actor.scope, Scope::Owner) {
                 "ownerAttestation"
             } else {
@@ -444,11 +477,7 @@ pub fn mutate(
                 "UPDATE workflow_attempts SET state=?2,validation=?3 WHERE id=?1",
                 params![
                     attempt_id,
-                    if validation.passed {
-                        "succeeded"
-                    } else {
-                        "failed"
-                    },
+                    if accepted { "succeeded" } else { "failed" },
                     serde_json::to_string(&evidence)?
                 ],
             )?;

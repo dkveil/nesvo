@@ -164,6 +164,10 @@ pub enum Request {
         attempt_id: String,
         expected_revision: u64,
         validation: crate::workflow_attempts::ValidationSpec,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        host_checks: bool,
+        #[serde(skip)]
+        host_attestation: Option<crate::workflow_host_checks::HostChecks>,
     },
     Inbox {
         request: crate::workflow_inbox::Request,
@@ -658,6 +662,13 @@ fn execute_inner(
         }],
     )?;
     let mut result = result;
+    if let Request::Validate {
+        host_attestation: Some(checks),
+        ..
+    } = &request
+    {
+        result["hostChecks"] = serde_json::to_value(checks)?;
+    }
     result["cursor"] = cursor.into();
     remember(&transaction, &actor, key, &digest, &result)?;
     transaction.commit()?;

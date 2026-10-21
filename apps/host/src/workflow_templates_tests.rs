@@ -102,6 +102,7 @@ fn workflow_templates_parse_the_declared_subset_and_reject_everything_else() {
                 "nesvo_get_current_task".into(),
                 "nesvo_report_task_result".into()
             ]),
+            checks: Vec::new(),
         }
     );
     assert_eq!(review.tasks[1].dependencies, ["implement"]);

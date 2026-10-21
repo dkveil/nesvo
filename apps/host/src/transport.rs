@@ -373,6 +373,7 @@ pub async fn handle(
                                             crate::orchestration::Request::Delivery {request}=>crate::workflow_delivery_runtime::execute(state.clone(),log,actor,authority,request).await,
                                             crate::orchestration::Request::Launch {request}=>crate::workflow_launch_runtime::execute(state.clone(),events,log,actor,authority,request).await,
                                             crate::orchestration::Request::Control {request}=>crate::workflow_control_runtime::execute(state.clone(),log,actor,authority,request).await,
+                                            request @ crate::orchestration::Request::Validate {host_checks:true,..}=>crate::workflow_host_checks::validate(log,actor,request).await,
                                             request=>log.workflow(actor,request).await,
                                         };
                                         let mut event=match result {
