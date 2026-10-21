@@ -53,6 +53,12 @@ Use conventional commit subjects, such as `fix: preserve terminal input after re
 
 Commits and pull request descriptions must not include AI attribution, `Co-Authored-By: Codex` trailers, “Generated with Codex” footers or `Codex-Session` links.
 
+## Releases
+
+Set the version in the root `Cargo.toml` `[workspace.package]`, merge it, then push the tag `v<version>` (for example `v0.1.0`) on that commit.
+The `Release` workflow checks that the tag matches the workspace version, builds `nesvo-host` and `nesvo` for Windows, Linux and macOS, packages each with `README.md`, `LICENSE` and `THIRD_PARTY_NOTICES.md`, and publishes a GitHub release with `SHA256SUMS.txt` and a changelog grouped from conventional commit subjects since the previous tag.
+Running the workflow manually with a version is a dry run: it uploads the same packages, checksums and notes as workflow artifacts without publishing.
+
 ## Issue reports
 
 For a bug report, include the app version, host operating system, phone model, phone OS version and short reproduction steps. Remove pairing keys and private data from attachments. For security issues, do not publish a working key or information that grants access to the host; contact the project maintainer privately first.

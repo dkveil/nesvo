@@ -239,3 +239,28 @@ The controlled native SDK regression delays editor redraw by 600 ms and verifies
 one literal paste/Enter across same-key replay. A second process shows a working
 footer after paste: Enter remains refused even when its editor later returns idle.
 This checks the real PTY/event loop without calling a model or taking user control.
+
+## Backup and restore
+
+The pairing directory (see [host configuration](../apps/host/README.md)) holds the durable
+state: `metadata.sqlite3` (journal, receipts, runs, jobs and session metadata in WAL mode),
+`pairing.json` (the pairing key) and, once worktrees exist, `worktrees.json`. In WAL mode
+committed transactions may still sit in `metadata.sqlite3-wal`; `-shm` is a rebuildable index.
+
+1. Stop the host. A crashed host is acceptable: its committed writes are in the WAL.
+2. Fold the WAL into the main file: `sqlite3 metadata.sqlite3 "PRAGMA wal_checkpoint(TRUNCATE);"`
+   must print `0` in the first column, and `PRAGMA integrity_check;` must print `ok`.
+3. Copy `metadata.sqlite3`, `pairing.json` and `worktrees.json` when present. Never copy the main
+   file alone while a non-empty `-wal` exists, and never copy `-shm`.
+4. To restore, place the copies in an empty directory and start the host with `--pairing-dir`
+   pointing at it. Startup applies pending migrations in order and refuses a database recorded
+   by a newer host. Restoring `pairing.json` keeps paired clients working; omitting it issues a
+   new key.
+
+Receipts, run and job definitions and their keyed mutation replays come back unchanged, so a
+same-key retry replays rather than repeating. Receipts unsettled at backup time become unknown,
+as after any restart; processes never survive. The `apps/host/tests/journal_drill.rs` drill
+kills a host after writing a run, a job and an operation receipt, follows this procedure and
+asserts every record, the key replay and the `schema_migrations` ledger on the restored host.
+Run it with `cargo test -p nesvo-host --test journal_drill -- --ignored`; the weekly
+`Journal drill` workflow runs it on Linux and Windows.

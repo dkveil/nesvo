@@ -148,6 +148,8 @@ cargo nextest run --workspace --locked --profile ci
 
 Install nextest with `cargo install cargo-nextest --locked`; `cargo test --workspace --locked` is acceptable locally. CI runs nextest with a five-minute limit per test on Windows, macOS and Linux, and the `Native nightly` workflow runs the ignored native scenarios daily. See [testing](docs/testing.md#local-checks) for real-host, browser and TUI integration checks.
 
+Each `v*` tag publishes prebuilt `nesvo-host` and `nesvo` packages with checksums on the [releases page](https://github.com/dkveil/nesvo/releases); see [contributing](CONTRIBUTING.md#releases) for how to cut one.
+
 ## license
 
 [MIT](LICENSE). Dependencies retain their own licenses and notices.
