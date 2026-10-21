@@ -1245,8 +1245,8 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 111);
-        assert_eq!(published_tools().len(), 111);
+        assert_eq!(catalog().len(), 113);
+        assert_eq!(published_tools().len(), 113);
     }
 }
 
@@ -2757,7 +2757,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 111);
+        assert_eq!(catalog().len(), 113);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

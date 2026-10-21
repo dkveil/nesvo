@@ -691,7 +691,7 @@ pub(crate) async fn request(
             | "listWorkflowTemplates"
             | "approveWorkflowTemplates"
             | "revokeWorkflowTemplates"
-            | "startWorkflowTemplate",
+            | "startWorkflowTemplate"
             | "projectDefaults",
         ) => Duration::from_secs(30),
         _ => Duration::from_secs(10),

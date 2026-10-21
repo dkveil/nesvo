@@ -56,7 +56,7 @@ fn quota_tool_advertises_strict_explicit_refresh_and_no_session_authority() {
     assert_eq!(value["annotations"]["readOnlyHint"], true);
     assert_eq!(value["annotations"]["destructiveHint"], false);
     assert_eq!(value["annotations"]["openWorldHint"], true);
-    assert_eq!(catalog().len(), 111);
+    assert_eq!(catalog().len(), 113);
     assert_eq!(
         published_tools()
             .iter()

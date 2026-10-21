@@ -574,7 +574,7 @@ async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_ge
                 .len(),
             2
         );
-        assert_eq!(published_tool_count(), 111);
+        assert_eq!(published_tool_count(), 113);
         envelopes.extend(vec![
             created.clone(),
             admitted.clone(),
