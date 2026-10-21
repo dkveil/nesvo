@@ -188,6 +188,8 @@ These native flags are documented in the official
 | nesvo_read_session        | bounded terminal replay with byte cursors          |
 | nesvo_explain_session     | status/readiness/provider diagnostics              |
 | nesvo_read_diff           | host-side read-only diff with an explicit scope    |
+| nesvo_open_review         | owner-only local or GitHub pull request review     |
+| nesvo_deliver_review      | owner-only review feedback with one receipt        |
 | nesvo_read_events         | bounded durable metadata page with domain cursors  |
 | nesvo_create_session      | durable idempotent background create               |
 | nesvo_send_prompt         | durable literal prompt submission without control  |

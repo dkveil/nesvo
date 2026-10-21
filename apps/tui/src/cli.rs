@@ -74,6 +74,46 @@ pub enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    #[command(about = "Open host-side review sessions and deliver review feedback to an agent")]
+    Review {
+        #[command(subcommand)]
+        command: ReviewCommand,
+    },
+}
+#[derive(Subcommand)]
+pub enum ReviewCommand {
+    #[command(
+        about = "Open the local changes of a session or folder, or fetch a GitHub pull request into a host review checkout"
+    )]
+    Open {
+        #[arg(long, conflicts_with = "pull", required_unless_present_any = ["pull", "directory"])]
+        session: Option<String>,
+        #[arg(long, conflicts_with = "pull")]
+        directory: Option<String>,
+        #[arg(long)]
+        pull: Option<String>,
+        #[arg(long)]
+        base: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(
+        about = "Deliver review text to an agent session with one receipt; never takes control"
+    )]
+    Deliver {
+        #[arg(long)]
+        review: String,
+        #[arg(long)]
+        session: String,
+        #[arg(long, conflicts_with = "text", required_unless_present = "text")]
+        file: Option<std::path::PathBuf>,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 #[derive(Subcommand)]
 pub enum SessionCommand {
@@ -320,6 +360,9 @@ impl Command {
             Self::Run { command } => command.machine(),
             Self::Job { command } => command.machine(),
             Self::Budget { command } => command.machine(),
+            Self::Review { command } => match command {
+                ReviewCommand::Open { json, .. } | ReviewCommand::Deliver { json, .. } => *json,
+            },
             Self::Doctor { json }
             | Self::Quota { json, .. }
             | Self::Events { json, .. }
@@ -402,7 +445,8 @@ pub(crate) async fn request(
         Some("waitOperation") => Duration::from_millis(
             command["timeoutMs"].as_u64().unwrap_or(30_000).min(60_000) + 5_000,
         ),
-        Some("sendOperation") => Duration::from_secs(15),
+        Some("sendOperation" | "deliverReview") => Duration::from_secs(15),
+        Some("openReview") => Duration::from_secs(130),
         _ => Duration::from_secs(10),
     };
     let id = format!("cli-{}", hex::encode(nesvo_wire::random::<8>()));
@@ -834,6 +878,161 @@ pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<
     }
     Ok(caps)
 }
+const REVIEW_TEXT_LIMIT: usize = 32 * 1024;
+
+fn bounded(value: &str, limit: usize) -> bool {
+    !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
+}
+
+pub(crate) fn open_review_query(
+    session: Option<&str>,
+    directory: Option<&str>,
+    pull: Option<&str>,
+    base: Option<&str>,
+) -> Result<Value> {
+    if let Some(session) = session {
+        valid_id(session)?;
+    }
+    if directory.is_some_and(|directory| !bounded(directory, 4096))
+        || pull.is_some_and(|url| !bounded(url, 512))
+        || base.is_some_and(|base| !bounded(base, 256) || base.starts_with('-'))
+    {
+        return Err(failure("invalid_argument", "Invalid review source or base"));
+    }
+    let source = match (session, directory, pull) {
+        (None, None, Some(url)) => json!({"kind":"pull","url":url}),
+        (session, directory, None) if session.is_some() || directory.is_some() => {
+            let mut source = json!({"kind":"local"});
+            if let Some(session) = session {
+                source["sessionId"] = session.into();
+            }
+            if let Some(directory) = directory {
+                source["directory"] = directory.into();
+            }
+            source
+        }
+        _ => {
+            return Err(failure(
+                "invalid_argument",
+                "Choose a session or directory, or exactly one pull request URL",
+            ));
+        }
+    };
+    let mut query = json!({"type":"openReview","source":source});
+    if let Some(base) = base {
+        query["base"] = base.into();
+    }
+    Ok(query)
+}
+
+pub(crate) fn deliver_review_query(
+    review: &str,
+    session: &str,
+    text: &str,
+    key: Option<&str>,
+) -> Result<Value> {
+    valid_id(review)?;
+    valid_id(session)?;
+    if let Some(key) = key {
+        valid_id(key)?;
+    }
+    if text.trim().is_empty()
+        || text.len() > REVIEW_TEXT_LIMIT
+        || text
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err(failure(
+            "invalid_argument",
+            "Review text must be nonempty UTF-8, at most 32768 bytes, without terminal controls",
+        ));
+    }
+    let mut query =
+        json!({"type":"deliverReview","reviewId":review,"sessionId":session,"text":text});
+    if let Some(key) = key {
+        query["key"] = key.into();
+    }
+    Ok(query)
+}
+
+fn read_review_file(path: &Path) -> Result<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)
+        .map_err(|_| failure("invalid_argument", "Cannot read the review file"))?;
+    let mut text = String::new();
+    file.take(REVIEW_TEXT_LIMIT as u64 + 1)
+        .read_to_string(&mut text)
+        .map_err(|_| failure("invalid_argument", "Review file must contain UTF-8 text"))?;
+    Ok(text)
+}
+
+pub(crate) async fn review_capability(connection: &mut Connection) -> Result<()> {
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["reviews"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support review sessions; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+
+async fn review(command: ReviewCommand, connection: &mut Connection) -> Result<()> {
+    let (query, kind, machine) = match command {
+        ReviewCommand::Open {
+            session,
+            directory,
+            pull,
+            base,
+            json,
+        } => (
+            open_review_query(
+                session.as_deref(),
+                directory.as_deref(),
+                pull.as_deref(),
+                base.as_deref(),
+            )?,
+            "reviewOpened",
+            json,
+        ),
+        ReviewCommand::Deliver {
+            review,
+            session,
+            file,
+            text,
+            key,
+            json,
+        } => {
+            let text = match (text, file) {
+                (Some(text), None) => text,
+                (None, Some(path)) => read_review_file(&path)?,
+                _ => {
+                    return Err(failure(
+                        "invalid_argument",
+                        "Pass exactly one of --text or --file",
+                    ));
+                }
+            };
+            (
+                deliver_review_query(&review, &session, &text, key.as_deref())?,
+                "reviewDelivered",
+                json,
+            )
+        }
+    };
+    review_capability(connection).await?;
+    let response = request(connection, query, kind).await?;
+    if kind == "reviewDelivered" {
+        check_receipt(&response)?;
+    }
+    print_data(machine, response)
+}
+
 fn read_prompt(
     literal: Option<String>,
     file: Option<std::path::PathBuf>,
@@ -1113,6 +1312,7 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
                 "MCP uses its own stdio entrypoint",
             ));
         }
+        Command::Review { command } => return review(command, connection).await,
         Command::Operation {
             id,
             receipt_id,
@@ -1302,3 +1502,86 @@ mod quota_tests;
 #[cfg(test)]
 #[path = "quota_wake_cli_tests.rs"]
 mod quota_wake_tests;
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Command,
+    }
+
+    #[test]
+    fn review_cli_builds_bounded_open_and_deliver_requests() {
+        assert_eq!(
+            open_review_query(Some("s"), None, None, Some("main")).unwrap(),
+            json!({"type":"openReview","source":{"kind":"local","sessionId":"s"},"base":"main"})
+        );
+        assert_eq!(
+            open_review_query(None, None, Some("https://github.com/a/b/pull/1"), None).unwrap(),
+            json!({"type":"openReview","source":{"kind":"pull","url":"https://github.com/a/b/pull/1"}})
+        );
+        for (session, directory, pull, base) in [
+            (None, None, None, None),
+            (Some("s"), None, Some("https://github.com/a/b/pull/1"), None),
+            (Some("s"), None, None, Some("--upload-pack=x")),
+            (Some("bad\nid"), None, None, None),
+            (None, Some(""), None, None),
+        ] {
+            assert!(open_review_query(session, directory, pull, base).is_err());
+        }
+        assert_eq!(
+            deliver_review_query("r", "s", "line\n\tnext", Some("k")).unwrap(),
+            json!({"type":"deliverReview","reviewId":"r","sessionId":"s","text":"line\n\tnext","key":"k"})
+        );
+        let long = "x".repeat(REVIEW_TEXT_LIMIT + 1);
+        for text in ["", " ", "\u{1b}[201~", long.as_str()] {
+            assert!(deliver_review_query("r", "s", text, None).is_err());
+        }
+        let parsed = Cli::try_parse_from([
+            "nesvo",
+            "review",
+            "deliver",
+            "--review",
+            "r",
+            "--session",
+            "s",
+            "--text",
+            "x",
+            "--json",
+        ])
+        .unwrap();
+        assert!(parsed.command.machine());
+        for invalid in [
+            vec!["nesvo", "review", "open"],
+            vec!["nesvo", "review", "open", "--session", "s", "--pull", "u"],
+            vec![
+                "nesvo",
+                "review",
+                "deliver",
+                "--review",
+                "r",
+                "--session",
+                "s",
+                "--text",
+                "x",
+                "--file",
+                "f",
+            ],
+            vec![
+                "nesvo",
+                "review",
+                "deliver",
+                "--review",
+                "r",
+                "--session",
+                "s",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(invalid).is_err());
+        }
+    }
+}

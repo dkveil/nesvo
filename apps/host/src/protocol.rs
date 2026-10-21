@@ -77,10 +77,36 @@ pub enum Command {
         id: String,
     },
     GetDiff {
-        session_id: String,
+        #[serde(default)]
+        session_id: Option<String>,
         scope: String,
         #[serde(default)]
         directory: Option<String>,
+        #[serde(default)]
+        review_id: Option<String>,
+        #[serde(default)]
+        base: Option<String>,
+        #[serde(default)]
+        from: Option<String>,
+        #[serde(default)]
+        to: Option<String>,
+    },
+    OpenReview {
+        source: crate::review::SourceRequest,
+        #[serde(default)]
+        base: Option<String>,
+    },
+    ReviewContext {
+        review_id: String,
+    },
+    DeliverReview {
+        review_id: String,
+        session_id: String,
+        text: String,
+        #[serde(default)]
+        key: Option<String>,
+        #[serde(default)]
+        lease_id: Option<String>,
     },
     GetCapabilities,
     GetProviderQuota {

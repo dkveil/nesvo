@@ -215,6 +215,138 @@ fn extract(value: &Value) -> Option<Context> {
         source: source.into(),
     })
 }
+const EDIT_LEDGER: &str = "edits.jsonl";
+const EDIT_LEDGER_LIMIT: u64 = 256 * 1024;
+const EDIT_LEDGER_ENTRIES: usize = 4096;
+pub(crate) const EDIT_HASH_LIMIT: u64 = 4 * 1024 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub path: String,
+    pub hash: Option<String>,
+    pub at: i64,
+    pub turn: u32,
+    pub subagent: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ledger {
+    pub edits: Vec<Edit>,
+    pub turns: u32,
+    pub complete: bool,
+}
+
+pub(crate) fn content_hash(path: &Path, limit: u64) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= limit)
+        .then(|| hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()))
+}
+
+fn edited_path(value: &Value) -> Option<&str> {
+    if value["hook_event_name"] != "PostToolUse" {
+        return None;
+    }
+    let input = &value["tool_input"];
+    match value["tool_name"].as_str()? {
+        "Edit" | "Write" | "MultiEdit" => input["file_path"].as_str(),
+        "NotebookEdit" => input["notebook_path"].as_str(),
+        _ => None,
+    }
+}
+
+fn provenance_record(value: &Value) -> Option<Value> {
+    let at = chrono::Utc::now().timestamp_millis();
+    if value["hook_event_name"] == "UserPromptSubmit" && !is_child(value) {
+        return Some(json!({"k":"turn","at":at}));
+    }
+    let path = edited_path(value)
+        .filter(|path| path.len() <= 4096 && !path.chars().any(char::is_control))
+        .map(Path::new)
+        .filter(|path| path.is_absolute())?;
+    Some(
+        json!({"k":"edit","p":path,"h":content_hash(path, EDIT_HASH_LIMIT),"at":at,"sub":is_child(value)}),
+    )
+}
+
+fn record_provenance(report: &Path, value: &Value) -> Result<()> {
+    use std::io::Write;
+    let Some(record) = provenance_record(value) else {
+        return Ok(());
+    };
+    let mut line = serde_json::to_vec(&record)?;
+    line.push(b'\n');
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(report.with_file_name(EDIT_LEDGER))?;
+    let length = file.metadata()?.len();
+    let reserve = EDIT_LEDGER_LIMIT - 64;
+    if length + line.len() as u64 <= reserve {
+        file.write_all(&line)?;
+    } else if length <= reserve {
+        file.write_all(b"{\"k\":\"full\"}\n")?;
+    }
+    Ok(())
+}
+
+fn parse_ledger(text: &str) -> Ledger {
+    let mut ledger = Ledger {
+        complete: true,
+        ..Ledger::default()
+    };
+    for value in text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+    {
+        match value["k"].as_str() {
+            Some("turn") => ledger.turns = ledger.turns.saturating_add(1),
+            Some("full") => ledger.complete = false,
+            Some("edit") if ledger.edits.len() < EDIT_LEDGER_ENTRIES => {
+                if let (Some(path), Some(at)) = (value["p"].as_str(), value["at"].as_i64()) {
+                    ledger.edits.push(Edit {
+                        path: path.into(),
+                        hash: value["h"].as_str().map(str::to_owned),
+                        at,
+                        turn: ledger.turns,
+                        subagent: value["sub"] == true,
+                    });
+                }
+            }
+            Some("edit") => ledger.complete = false,
+            _ => {}
+        }
+    }
+    ledger
+}
+
+pub async fn edit_ledger(report: &Path) -> Option<Ledger> {
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(report.with_file_name(EDIT_LEDGER))
+        .await
+        .ok()?;
+    let mut bytes = Vec::new();
+    file.take(EDIT_LEDGER_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    let mut ledger = parse_ledger(&String::from_utf8_lossy(&bytes));
+    ledger.complete &= bytes.len() as u64 <= EDIT_LEDGER_LIMIT;
+    Some(ledger)
+}
+
 pub fn receive(report: &Path) -> Result<()> {
     receive_adapter(report, std::io::stdin(), false)
 }
@@ -267,6 +399,13 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
         return Ok(());
     }
     let value: Value = serde_json::from_slice(&bytes)?;
+    if !codex
+        && descriptor
+            .as_ref()
+            .is_some_and(crate::scoped_context::Descriptor::journal_backed)
+    {
+        let _ = record_provenance(report, &value);
+    }
     if is_child(&value) {
         return Ok(());
     }
@@ -1399,11 +1538,49 @@ mod tests {
         assert_eq!(context.directory, root);
         let report = std::fs::read_to_string(tracker.report()).unwrap();
         assert!(!report.contains("SECRET"));
-        let diff = crate::git::review(&context.directory, "untracked")
+        let diff = crate::git::review(&context.directory, &crate::git::Scope::Untracked)
             .await
             .unwrap();
         assert_eq!(diff.files[0].path, "changed.txt");
         receive_from(&tracker.report(), b"{invalid".as_slice()).unwrap_err();
         assert_eq!(std::fs::read_to_string(tracker.report()).unwrap(), report);
+    }
+    #[tokio::test]
+    async fn edit_ledger_records_paths_hashes_turns_and_subagents_without_tool_content() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        root_start(&report, "provider", false);
+        let first = tracker.0.join("first.txt");
+        let second = tracker.0.join("second.txt");
+        std::fs::write(&first, "agent").unwrap();
+        std::fs::write(&second, "sub").unwrap();
+        assert!(edit_ledger(&report).await.is_none());
+        let write = json!({"hook_event_name":"PostToolUse","session_id":"provider","tool_name":"Write","tool_input":{"file_path":first,"content":"SECRET NOT STORED"}});
+        emit(&report, write.clone(), false).unwrap();
+        root_prompt(&report, "provider", false);
+        emit(&report, json!({"hook_event_name":"PostToolUse","session_id":"provider","agent_id":"child","tool_name":"MultiEdit","tool_input":{"file_path":second}}), false).unwrap();
+        emit(&report, json!({"hook_event_name":"PostToolUse","session_id":"provider","tool_name":"Bash","tool_input":{"command":"echo > x"}}), false).unwrap();
+        emit(&report, json!({"hook_event_name":"PostToolUse","session_id":"provider","tool_name":"Edit","tool_input":{"file_path":"relative.txt"}}), false).unwrap();
+        let ledger = edit_ledger(&report).await.unwrap();
+        assert!(ledger.complete);
+        assert_eq!(ledger.turns, 1);
+        assert_eq!(ledger.edits.len(), 2);
+        assert_eq!(ledger.edits[0].path, first.display().to_string());
+        assert_eq!(ledger.edits[0].turn, 0);
+        assert_eq!(ledger.edits[0].hash, content_hash(&first, EDIT_HASH_LIMIT));
+        assert!(!ledger.edits[0].subagent);
+        assert_eq!(ledger.edits[1].turn, 1);
+        assert!(ledger.edits[1].subagent);
+        let stored = std::fs::read_to_string(report.with_file_name(EDIT_LEDGER)).unwrap();
+        assert!(!stored.contains("SECRET") && !stored.contains("echo"));
+        std::fs::write(
+            report.with_file_name(EDIT_LEDGER),
+            vec![b' '; EDIT_LEDGER_LIMIT as usize - 70],
+        )
+        .unwrap();
+        emit(&report, write, false).unwrap();
+        let full = edit_ledger(&report).await.unwrap();
+        assert!(!full.complete);
+        assert!(full.edits.is_empty());
     }
 }

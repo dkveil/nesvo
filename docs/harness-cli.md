@@ -41,6 +41,9 @@ nesvo --pairing C:\private\pairing.json session explain SESSION_ID --json
 nesvo --pairing C:\private\pairing.json session read SESSION_ID --max-bytes 4096 --json
 nesvo --pairing C:\private\pairing.json session read SESSION_ID --after CURSOR --json
 nesvo --pairing C:\private\pairing.json session diff SESSION_ID --scope unstaged --json
+nesvo --pairing C:\private\pairing.json review open --session SESSION_ID --base main --json
+nesvo --pairing C:\private\pairing.json review open --pull https://github.com/OWNER/REPO/pull/12 --json
+nesvo --pairing C:\private\pairing.json review deliver --review REVIEW_ID --session SESSION_ID --file C:\private\review.md --json
 nesvo --pairing C:\private\pairing.json session current --json
 nesvo --pairing C:\private\pairing.json session create "Review" --key review-1 --program claude --prompt-file C:\private\prompt.txt --json
 nesvo --pairing C:\private\pairing.json operation --key review-1 --json
@@ -224,6 +227,51 @@ not execute ANSI/OSC from the remote program in the caller's terminal. A bounded
 tail cannot promise a complete screen or transcript. Use the TUI for interactive
 terminal viewing. Diff runs at the host, using its session/edit context and an
 explicit staged, unstaged or untracked scope.
+
+## Review sessions
+
+`review open` creates or refreshes a host-owned review and returns version 1
+`reviewOpened` data. `--session SESSION_ID` reviews that session's automatic edit
+context (or `--directory PATH`, absolute or relative to the session folder);
+`--directory` alone needs an absolute host folder. `--pull URL` accepts only
+`https://github.com/OWNER/REPO/pull/NUMBER`. The host runs `gh pr view` and
+fetches the pull request head and base with `git fetch --filter=blob:none` into
+`<config>/nesvo/reviews/<owner>-<repo>-<number>` (`%LOCALAPPDATA%` on Windows,
+`$XDG_CONFIG_HOME` or `~/.config` elsewhere), reusing that checkout when present.
+The whole fetch is capped at 120 seconds with bounded output; one pull request
+fetch runs at a time. Credentials come from `gh auth git-credential`; nothing is
+pushed, merged or committed. `--base REF` overrides the base: the repository
+default branch for local reviews, the pull request base otherwise.
+
+`reviewOpened` carries `reviewId` (stable for the same session and repository, or
+`pull-<owner>-<repo>-<number>`), `directory`, `source`, `base`
+(`ref`, `oid`, `mergeBase` or null), `head` (`ref`, `oid`), `scope` (`branch` when a
+base resolves, otherwise `unstaged`), `revision` and, for pull requests, `checks`
+(the GitHub check rollup counted at `headOid`). The host broadcasts the same event
+to other owner clients. Reviews live in host memory (64 most recent); reopen one
+after a host restart. Scoped agent callers cannot open, inspect or deliver reviews.
+
+Protocol `getDiff` accepts `reviewId` instead of `sessionId`, scope `branch`
+(merge base of `base` against the working tree, including untracked files) and
+scope `commits` with `from` and optional `to` (default `HEAD`). Every review
+carries `revision`: the head tree id plus a hash of the bounded diff, unchanged
+while the diff is unchanged. `reviewContext{reviewId}` returns readiness (clean or
+dirty counts, conflicts, upstream ahead/behind, base ahead/behind and merge
+conflicts, pushed, `blockers`, `worktreeRevision`) and per-file edit provenance for
+session sources from the private Claude hook ledger: `agent`, `otherAgent`,
+`uncertain` (content changed after the recorded edit or unreadable) or
+`unattributed`, with `thisTurn` only for verified edits in the current turn.
+
+`review deliver --review ID --session ID` takes `--text TEXT` or `--file PATH`
+(nonempty UTF-8, at most 32768 bytes, no terminal controls) and an optional
+`--key KEY` (derived from review, session and text when omitted). It returns
+`reviewDelivered` with `path` and one `receipt`. Without a human lease the host
+uses the durable send path (8192 bytes, same refusals and same-key replay as
+`session send`). When the calling client holds the session's control lease the
+host writes one bracketed paste through that lease and returns a `paste` receipt;
+nothing is submitted. Another client's lease, a shell, an exited process or an
+agent that is not ready and idle are refused with `control_busy`, `unsupported`,
+`process_exited` or `agent_not_ready`.
 
 ## Remaining delivery gates
 

@@ -1167,12 +1167,16 @@
             },
             {
               "type": "object",
-              "required": ["type", "sessionId", "review"],
+              "required": ["type", "review"],
+              "anyOf": [{ "required": ["sessionId"] }, { "required": ["reviewId"] }],
               "properties": {
                 "type": {
                   "const": "diff"
                 },
                 "sessionId": {
+                  "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/id" }]
+                },
+                "reviewId": {
                   "$ref": "#/definitions/id"
                 },
                 "review": {
@@ -1183,7 +1187,32 @@
                       "type": "string"
                     },
                     "scope": {
-                      "enum": ["staged", "unstaged", "untracked"]
+                      "enum": ["staged", "unstaged", "untracked", "branch", "commits"]
+                    },
+                    "revision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "head": {
+                      "type": ["string", "null"]
+                    },
+                    "base": {
+                      "type": "object",
+                      "required": ["ref", "oid", "mergeBase"],
+                      "properties": {
+                        "ref": { "type": "string" },
+                        "oid": { "type": "string" },
+                        "mergeBase": { "type": "string" }
+                      }
+                    },
+                    "range": {
+                      "type": "object",
+                      "required": ["from", "to"],
+                      "properties": {
+                        "from": { "type": "string" },
+                        "to": { "type": "string" }
+                      }
                     },
                     "files": {
                       "type": "array"
@@ -1192,6 +1221,127 @@
                       "type": "boolean"
                     }
                   }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "reviewId",
+                "directory",
+                "source",
+                "base",
+                "head",
+                "scope",
+                "revision"
+              ],
+              "properties": {
+                "type": {
+                  "const": "reviewOpened"
+                },
+                "reviewId": {
+                  "$ref": "#/definitions/id"
+                },
+                "directory": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "object",
+                  "required": ["kind"],
+                  "properties": {
+                    "kind": { "enum": ["local", "pull"] },
+                    "sessionId": { "type": ["string", "null"] },
+                    "context": { "type": "string" },
+                    "url": { "type": "string" },
+                    "owner": { "type": "string" },
+                    "repo": { "type": "string" },
+                    "number": { "type": "integer", "minimum": 1 },
+                    "title": { "type": "string", "maxLength": 1024 },
+                    "state": { "type": "string" },
+                    "headRef": { "type": "string" },
+                    "baseRef": { "type": "string" },
+                    "headOid": { "type": "string" }
+                  }
+                },
+                "base": {
+                  "anyOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["ref", "oid", "mergeBase"],
+                      "properties": {
+                        "ref": { "type": "string" },
+                        "oid": { "type": "string" },
+                        "mergeBase": { "type": "string" }
+                      }
+                    }
+                  ]
+                },
+                "head": {
+                  "type": "object",
+                  "required": ["ref", "oid"],
+                  "properties": {
+                    "ref": { "type": ["string", "null"] },
+                    "oid": { "type": ["string", "null"] }
+                  }
+                },
+                "scope": {
+                  "enum": ["branch", "unstaged"]
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "checks": {
+                  "anyOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["headOid", "total", "passed", "failed", "pending"],
+                      "properties": {
+                        "headOid": { "type": "string" },
+                        "total": { "type": "integer", "minimum": 0 },
+                        "passed": { "type": "integer", "minimum": 0 },
+                        "failed": { "type": "integer", "minimum": 0 },
+                        "pending": { "type": "integer", "minimum": 0 }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "reviewId", "sessionId", "path", "bytes", "receipt"],
+              "properties": {
+                "type": {
+                  "const": "reviewDelivered"
+                },
+                "reviewId": {
+                  "$ref": "#/definitions/id"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "path": {
+                  "enum": ["operation", "paste"]
+                },
+                "key": {
+                  "type": ["string", "null"],
+                  "maxLength": 128
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 32768
+                },
+                "receipt": {
+                  "anyOf": [
+                    { "$ref": "#/definitions/receipt" },
+                    { "$ref": "#/definitions/pasteReceipt" }
+                  ]
                 }
               }
             }
@@ -2006,6 +2156,33 @@
         },
         "result": {
           "type": "object"
+        }
+      }
+    },
+    "pasteReceipt": {
+      "type": "object",
+      "required": ["id", "operation", "phase", "sessionId", "result"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "operation": {
+          "const": "paste"
+        },
+        "phase": {
+          "const": "pasted"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/id"
+        },
+        "result": {
+          "type": "object",
+          "required": ["bytes", "submitted"],
+          "properties": {
+            "bytes": { "type": "integer", "minimum": 1 },
+            "submitted": { "const": false }
+          }
         }
       }
     },

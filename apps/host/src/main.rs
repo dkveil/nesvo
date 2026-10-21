@@ -51,6 +51,7 @@ mod readiness;
 mod receipts;
 mod recipes;
 mod replay;
+mod review;
 mod scoped_context;
 mod session_repository;
 mod sessions;

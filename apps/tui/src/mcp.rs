@@ -724,6 +724,24 @@ fn catalog() -> Vec<Tool> {
             true,
         ),
         (
+            "nesvo_open_review",
+            "Owner-only: open a host review of a session's or absolute folder's local changes, or fetch a GitHub pull request with gh into a host review checkout (120 s cap, reused when present). Exactly one source: sessionId and/or directory, or pullUrl. Replies reviewOpened with a stable reviewId, base, head and diff revision. Never edits, commits, merges or pushes.",
+            object(
+                json!({"sessionId":id,"directory":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host folder, or relative to the session folder"},"pullUrl":{"type":"string","minLength":1,"maxLength":512,"description":"https://github.com/OWNER/REPO/pull/NUMBER"},"base":{"type":"string","minLength":1,"maxLength":256,"description":"Base ref for the branch scope; defaults to the repository default branch or the pull request base"}}),
+                &[],
+            ),
+            false,
+        ),
+        (
+            "nesvo_deliver_review",
+            "Owner-only: deliver review feedback for an open reviewId to a ready idle agent session with one receipt. Without a human lease this is a durable send for a stable key (8192 bytes); a client holding control receives a bracketed paste instead. Never takes control; reuse the same key after uncertainty.",
+            object(
+                json!({"reviewId":id,"sessionId":id,"text":{"type":"string","minLength":1,"maxLength":20480,"description":"Literal review text; MCP arguments are capped at 24 KiB. No terminal controls."},"key":{"type":"string","minLength":1,"maxLength":128,"description":"Idempotency key; derived from review, session and text when omitted"}}),
+                &["reviewId", "sessionId", "text"],
+            ),
+            false,
+        ),
+        (
             "nesvo_read_events",
             "Read durable metadata events after a domain cursor. Preserve nextCursor; gap is incomplete history, never success. No terminal transcript.",
             object(
@@ -996,8 +1014,8 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 95);
-        assert_eq!(published_tools().len(), 95);
+        assert_eq!(catalog().len(), 97);
+        assert_eq!(published_tools().len(), 97);
     }
 }
 
@@ -1032,6 +1050,22 @@ struct Read {
 struct Diff {
     session_id: String,
     scope: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpenReview {
+    session_id: Option<String>,
+    directory: Option<String>,
+    pull_url: Option<String>,
+    base: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeliverReview {
+    review_id: String,
+    session_id: String,
+    text: String,
+    key: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1551,6 +1585,25 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "diff",
             )
         }
+        "nesvo_open_review" => {
+            let a: OpenReview = parse(arguments)?;
+            (
+                cli::open_review_query(
+                    a.session_id.as_deref(),
+                    a.directory.as_deref(),
+                    a.pull_url.as_deref(),
+                    a.base.as_deref(),
+                )?,
+                "reviewOpened",
+            )
+        }
+        "nesvo_deliver_review" => {
+            let a: DeliverReview = parse(arguments)?;
+            (
+                cli::deliver_review_query(&a.review_id, &a.session_id, &a.text, a.key.as_deref())?,
+                "reviewDelivered",
+            )
+        }
         "nesvo_read_events" => {
             let a: Events = parse(arguments)?;
             if let Some(id) = &a.session_id {
@@ -1744,6 +1797,8 @@ impl HostTools {
             cli::control_capability(&mut connection).await?;
         } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {
             cli::prompt_capability(&mut connection).await?;
+        } else if matches!(kind, "reviewOpened" | "reviewDelivered") {
+            cli::review_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
             if name == "nesvo_create_session"
@@ -1818,6 +1873,7 @@ impl HostTools {
                 | "nesvo_send_prompt"
                 | "nesvo_interrupt_session"
                 | "nesvo_stop_session"
+                | "nesvo_deliver_review"
         ) {
             cli::check_receipt(&result)?;
         }
@@ -2399,7 +2455,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 95);
+        assert_eq!(catalog().len(), 97);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {
@@ -2742,6 +2798,51 @@ mod tests {
             )
             .is_err()
         );
+        let (open, kind) = command(
+            "nesvo_open_review",
+            json!({"pullUrl":"https://github.com/a/b/pull/1","base":"main"}),
+        )
+        .unwrap();
+        assert_eq!(kind, "reviewOpened");
+        assert_eq!(
+            open,
+            cli::open_review_query(
+                None,
+                None,
+                Some("https://github.com/a/b/pull/1"),
+                Some("main")
+            )
+            .unwrap()
+        );
+        let (deliver, kind) = command(
+            "nesvo_deliver_review",
+            json!({"reviewId":"r","sessionId":"s","text":"see a.rs:3"}),
+        )
+        .unwrap();
+        assert_eq!(kind, "reviewDelivered");
+        assert_eq!(
+            deliver,
+            cli::deliver_review_query("r", "s", "see a.rs:3", None).unwrap()
+        );
+        for (name, arguments) in [
+            ("nesvo_open_review", json!({})),
+            (
+                "nesvo_open_review",
+                json!({"sessionId":"s","pullUrl":"https://github.com/a/b/pull/1"}),
+            ),
+            ("nesvo_open_review", json!({"sessionId":"s","owner":true})),
+            (
+                "nesvo_deliver_review",
+                json!({"reviewId":"r","sessionId":"s","text":"\u{1b}[201~"}),
+            ),
+            (
+                "nesvo_deliver_review",
+                json!({"reviewId":"r","sessionId":"s","text":"x","leaseId":"stolen"}),
+            ),
+            ("nesvo_deliver_review", json!({"reviewId":"r","text":"x"})),
+        ] {
+            assert!(command(name, arguments).is_err(), "{name}");
+        }
         let (literal, kind) = command(
             "nesvo_create_session",
             json!({"key":"k","spec":{"name":"n","prompt":"$(literal) `literal` łódź"}}),

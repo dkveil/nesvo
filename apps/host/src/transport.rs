@@ -500,42 +500,10 @@ pub async fn handle(
                             });
                             continue;
                         }
-                        if let Command::GetDiff { session_id, scope, directory } = command {
-                            let pinned = directory.as_ref().is_some_and(|path| !path.is_empty());
-                            let report = state.lock().unwrap().context_report(&session_id);
-                            let directory = state.lock().unwrap().session_directory(&session_id).and_then(|session_dir| {
-                                match directory {
-                                    Some(path) if !path.is_empty() => {
-                                        anyhow::ensure!(path.len() <= 4096 && !path.chars().any(char::is_control), "Invalid review folder");
-                                        let path = std::path::PathBuf::from(path);
-                                        Ok(if path.is_absolute() { path } else { session_dir.join(path) })
-                                    },
-                                    _ => Ok(session_dir),
-                                }
-                            });
-                            let permit = git_gate.clone().try_acquire_owned();
-                            let state = state.clone();
-                            tokio::spawn(async move {
-                                let result = match (directory, permit) {
-                                    (Ok(directory), Ok(_permit)) => {
-                                        let context = if pinned {
-                                            crate::agent_context::Context { directory, source: "Pinned".into() }
-                                        } else { crate::agent_context::resolve(directory, report, Some(session_id.clone())).await };
-                                        crate::git::review(&context.directory, &scope).await.map_err(|error| anyhow!("{} · {}: {error}", context.source, context.directory.display())).map(|mut review| {
-                                            review.source = Some(context.source);
-                                            review
-                                        })
-                                    },
-                                    (Err(error), _) => Err(error),
-                                    (_, Err(_)) => Err(anyhow!("A Git inspection is already running.")),
-                                };
-                                let mut event = match result {
-                                    Ok(review) => json!({"type":"diff", "sessionId":session_id, "review":review}),
-                                    Err(error) => json!({"type":"diff", "sessionId":session_id, "error":error.to_string()}),
-                                };
-                                if let Some(request_id) = request_id { event["requestId"] = request_id.into(); }
-                                if let Ok(state) = state.lock() { state.send(id, event); }
-                            });
+                        if matches!(command, Command::GetDiff { .. } | Command::OpenReview { .. } | Command::ReviewContext { .. } | Command::DeliverReview { .. }) {
+                            let gate = if matches!(command, Command::DeliverReview { .. }) { &event_gate } else { &git_gate };
+                            let permit = gate.clone().try_acquire_owned().ok();
+                            tokio::spawn(crate::review::serve(state.clone(), pty_events.clone(), id, command, request_id, permit));
                             continue;
                         }
                         let mut state = state.lock().unwrap();

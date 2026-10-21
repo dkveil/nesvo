@@ -165,6 +165,7 @@ pub struct State {
     cleanup_workers: Vec<thread::JoinHandle<()>>,
     shutting_down: bool,
     pub clients: HashMap<u64, Client>,
+    pub reviews: crate::review::Registry,
     pub(crate) metadata: MetadataStore,
     push_queue: std::collections::VecDeque<crate::notifications::Job>,
     launchers: Launchers,
@@ -287,6 +288,7 @@ impl State {
             cleanup_workers: Vec::new(),
             shutting_down: false,
             clients: HashMap::new(),
+            reviews: Default::default(),
             metadata,
             push_queue: Default::default(),
             launchers,
@@ -1321,8 +1323,9 @@ impl State {
                 session_id: Some(session_id),
             } => Some(session_id.as_str()),
             Command::GetDiff {
-                session_id,
+                session_id: Some(session_id),
                 directory: None,
+                review_id: None,
                 ..
             } => Some(session_id.as_str()),
             _ => None,
@@ -1438,6 +1441,7 @@ impl State {
         event["launchProfileSupport"] =
             crate::launch_profile::capabilities(&self.provider_versions);
         event["workflowPlans"] = true.into();
+        event["reviews"] = true.into();
         event
     }
 
@@ -2783,6 +2787,36 @@ impl State {
             .map(|tracker| tracker.report())
     }
 
+    pub fn delivery_target(&self, id: &str) -> Option<crate::review::Target> {
+        let session = self.sessions.get(id)?;
+        Some(crate::review::Target {
+            agent: session.info.program != Program::Shell,
+            running: session.info.running,
+            controller: session.controller.as_ref().map(|lease| lease.client_id),
+            ready: matches!(
+                session.status.status().state,
+                crate::status::StatusState::Idle | crate::status::StatusState::Done
+            ) && session.readiness.snapshot().phase == crate::readiness::Phase::Ready,
+            bracketed_paste: session.status.bracketed_paste(),
+        })
+    }
+
+    pub fn context_reports(&self) -> Vec<(String, Program, Option<PathBuf>)> {
+        self.sessions
+            .iter()
+            .map(|(id, session)| {
+                (
+                    id.clone(),
+                    session.info.program,
+                    session
+                        .agent_context
+                        .as_ref()
+                        .map(|tracker| tracker.report()),
+                )
+            })
+            .collect()
+    }
+
     pub fn session_directory(&self, id: &str) -> Result<PathBuf> {
         self.sessions
             .get(id)
@@ -2955,6 +2989,11 @@ impl State {
                 self.broadcast_schedules();
             }
             Command::GetDiff { .. } => return Err(anyhow!("Diff requires asynchronous dispatch.")),
+            Command::OpenReview { .. }
+            | Command::ReviewContext { .. }
+            | Command::DeliverReview { .. } => {
+                return Err(anyhow!("Reviews require asynchronous dispatch."));
+            }
             Command::AcknowledgeAttention {
                 session_id,
                 sequence,
