@@ -7,8 +7,8 @@ use std::{
     ffi::OsStr,
     io::Read,
     path::{Path, PathBuf},
-    sync::OnceLock,
-    time::SystemTime,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant, SystemTime},
 };
 
 pub const VERIFIED_VERSION: &str = "0.65.0";
@@ -33,7 +33,64 @@ const EVENTS: [&str; 6] = [
 ];
 const SESSION_SELECTION_FLAGS: [&str; 4] = ["--session-id", "--resume", "-r", "--session-file"];
 
+fn selects_session(arg: &OsStr) -> bool {
+    let arg = arg.to_string_lossy();
+    SESSION_SELECTION_FLAGS.iter().any(|flag| {
+        arg.strip_prefix(flag)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('='))
+    })
+}
+
+const EXTENSION_REFRESH: Duration = Duration::from_secs(2);
+
 static PREPARED: OnceLock<Prepared> = OnceLock::new();
+static EXTENSION: Mutex<ExtensionCache> = Mutex::new(ExtensionCache::empty());
+
+struct ExtensionCache {
+    observed: Option<(PathBuf, &'static str, Instant)>,
+    refreshing: bool,
+}
+
+impl ExtensionCache {
+    const fn empty() -> Self {
+        Self {
+            observed: None,
+            refreshing: false,
+        }
+    }
+    fn claim(&mut self, home: &Path, now: Instant) -> (Option<&'static str>, bool) {
+        let current = self.observed.as_ref().filter(|(cached, ..)| cached == home);
+        let state = current.map(|(_, state, _)| *state);
+        let stale = current
+            .is_none_or(|(_, _, at)| now.saturating_duration_since(*at) >= EXTENSION_REFRESH);
+        let refresh = stale && !self.refreshing;
+        self.refreshing |= refresh;
+        (state, refresh)
+    }
+    fn store(&mut self, home: PathBuf, state: &'static str, at: Instant) {
+        self.observed = Some((home, state, at));
+        self.refreshing = false;
+    }
+}
+
+fn refresh_extension(prepared: &Prepared, home: PathBuf) {
+    let state = extension_state(prepared, &home);
+    EXTENSION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .store(home, state, Instant::now());
+}
+
+fn cached_extension(prepared: &'static Prepared, home: PathBuf) -> &'static str {
+    let (state, refresh) = EXTENSION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .claim(&home, Instant::now());
+    if refresh {
+        std::thread::spawn(move || refresh_extension(prepared, home));
+    }
+    state.unwrap_or("checking")
+}
 
 #[derive(Clone, Debug)]
 pub struct Prepared {
@@ -57,6 +114,13 @@ pub fn prepare(directory: &Path) -> Result<PathBuf> {
     let prepared = prepare_for(directory, &std::env::current_exe()?)?;
     let root = prepared.root.clone();
     let _ = PREPARED.set(prepared);
+    if let (Some(prepared), Some(home)) = (PREPARED.get(), gemini_home()) {
+        EXTENSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .claim(&home, Instant::now());
+        refresh_extension(prepared, home);
+    }
     Ok(root)
 }
 
@@ -238,7 +302,13 @@ pub struct Gate {
 }
 
 pub fn gate(version: Option<&Version>) -> Gate {
-    evaluate(version, PREPARED.get(), gemini_home().as_deref())
+    let prepared = PREPARED.get();
+    let extension = match (prepared, gemini_home()) {
+        (None, _) => "sourceUnavailable",
+        (Some(_), None) => "homeUnavailable",
+        (Some(prepared), Some(home)) => cached_extension(prepared, home),
+    };
+    assemble(version, prepared, extension)
 }
 
 fn gemini_home() -> Option<PathBuf> {
@@ -248,12 +318,21 @@ fn gemini_home() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+#[cfg(test)]
 fn evaluate(version: Option<&Version>, prepared: Option<&Prepared>, home: Option<&Path>) -> Gate {
     let extension = match (prepared, home) {
         (None, _) => "sourceUnavailable",
         (Some(_), None) => "homeUnavailable",
         (Some(prepared), Some(home)) => extension_state(prepared, home),
     };
+    assemble(version, prepared, extension)
+}
+
+fn assemble(
+    version: Option<&Version>,
+    prepared: Option<&Prepared>,
+    extension: &'static str,
+) -> Gate {
     let observed = version.and_then(|v| v.version.clone());
     let reason = match version {
         None => "Gemini CLI is not available on this host".to_owned(),
@@ -277,6 +356,7 @@ fn evaluate(version: Option<&Version>, prepared: Option<&Prepared>, home: Option
             ),
             "sourceChanged" => "nesvo Gemini extension source differs from this host".to_owned(),
             "homeUnavailable" => "Gemini home directory is unknown".to_owned(),
+            "checking" => "nesvo Gemini extension link is being checked".to_owned(),
             "sourceUnavailable" => "nesvo Gemini extension source was not prepared".to_owned(),
             _ => "Gemini extension metadata is unreadable".to_owned(),
         },
@@ -356,9 +436,7 @@ pub fn configure(command: &mut CommandBuilder, report: &Path) -> Result<String> 
         .position(|arg| arg == "--prompt-interactive")
         .unwrap_or(argv.len());
     ensure!(
-        !argv[..index]
-            .iter()
-            .any(|arg| SESSION_SELECTION_FLAGS.iter().any(|flag| arg == *flag)),
+        !argv[..index].iter().any(|arg| selects_session(arg)),
         "Gemini lifecycle hooks require a fresh native session"
     );
     argv.splice(
@@ -555,6 +633,52 @@ mod tests {
         let mut resumed = CommandBuilder::new("gemini");
         resumed.args(["--resume", "latest"]);
         assert!(configure(&mut resumed, report).is_err());
+    }
+
+    #[test]
+    fn gemini_launch_refuses_session_selection_in_the_equals_form() {
+        let report = Path::new("C:/private/nesvo-context-fixture/context.json");
+        for selection in [
+            "--session-id=0f8fad5b-d9cb-469f-a165-70867728950e",
+            "--resume=latest",
+            "-r=latest",
+            "--session-file=C:/saved.json",
+        ] {
+            let mut command = CommandBuilder::new("gemini");
+            command.arg(selection);
+            assert!(configure(&mut command, report).is_err(), "{selection}");
+        }
+        for unrelated in ["--resumed", "--session-identity", "-rf"] {
+            assert!(!selects_session(OsStr::new(unrelated)), "{unrelated}");
+        }
+    }
+
+    #[test]
+    fn gemini_extension_cache_refreshes_at_most_every_two_seconds_per_home() {
+        let mut cache = ExtensionCache::empty();
+        let home = Path::new("C:/home/owner");
+        let start = Instant::now();
+        assert_eq!(cache.claim(home, start), (None, true));
+        assert_eq!(cache.claim(home, start), (None, false));
+        cache.store(home.to_path_buf(), "linked", start);
+        let within = start + EXTENSION_REFRESH - Duration::from_millis(1);
+        assert_eq!(cache.claim(home, within), (Some("linked"), false));
+        let due = start + EXTENSION_REFRESH;
+        assert_eq!(cache.claim(home, due), (Some("linked"), true));
+        assert_eq!(cache.claim(home, due), (Some("linked"), false));
+        cache.store(home.to_path_buf(), "notLinked", due);
+        assert_eq!(cache.claim(home, due), (Some("notLinked"), false));
+        assert_eq!(cache.claim(Path::new("C:/home/other"), due), (None, true));
+        assert!(!assemble(None, None, "checking").ready);
+        assert!(
+            assemble(
+                Some(&version("ready", Some(VERIFIED_VERSION))),
+                None,
+                "checking"
+            )
+            .reason
+            .contains("being checked")
+        );
     }
 
     #[test]
