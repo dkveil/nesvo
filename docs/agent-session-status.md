@@ -72,20 +72,20 @@ passes the provider's ownership checks, and `GEMINI_CLI_HOME` moves login,
 trust and history together. The adapter therefore ships one extension,
 `nesvo-lifecycle`, that the owner links once. At startup the host writes its
 source to `gemini-extension/` in the private pairing directory and rewrites
-only bytes that differ from the constant definition. The host never links or
+only bytes that differ from the expected definition. The host never links or
 enables it, never passes `--consent` or `-e`, and never edits Gemini settings,
 trust or approval policy. Owner step:
 `gemini extensions link <pairing>/gemini-extension`, then accept the provider's
 hook review.
 
 The extension subscribes to SessionStart, BeforeAgent, AfterAgent, BeforeTool,
-AfterTool and Notification with one constant command. It runs the helper named
-by `NESVO_GEMINI_HOOK` only when that variable is set, so other Gemini sessions
-start a shell and receive nothing. The helper reads stdin, appends to the launch
-journal named by `NESVO_LIFECYCLE_REPORT`, prints `{}` and exits 0. It never
-writes stderr, blocks, denies, retries or adds context; failures leave only the
-constant diagnostic marker. A test pipes Unicode and quoted payloads through the
-provider's own PowerShell/bash hook form to the built helper.
+AfterTool and Notification with one command naming the host's canonical path
+and pairing directory, never the environment (project `.env` files can add to
+it; exact-name `advanced.excludedEnvVars` skips `.gemini/.env`). A moved host
+rewrites the source and reports `stale` until the owner relinks once (uninstall
+`nesvo-lifecycle`, then link). The helper appends only as the recorded executable
+for an existing launch scope there named by `NESVO_LIFECYCLE_REPORT`; it always
+prints `{}`, exits 0, never writes stderr and leaves only a constant failure marker.
 
 Hooks are configured only for exactly 0.65.0 (previews and other releases are
 unsupported, with the probed version in the reason) and only while the

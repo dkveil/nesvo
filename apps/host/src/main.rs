@@ -263,9 +263,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if args.gemini_context_hook {
-        if let Some(path) = std::env::var_os("NESVO_LIFECYCLE_REPORT") {
-            let _ = agent_context::receive_gemini(Path::new(&path));
-        }
+        gemini_adapter::receive_hook(args.pairing_dir.as_deref());
         println!("{{}}");
         return Ok(());
     }

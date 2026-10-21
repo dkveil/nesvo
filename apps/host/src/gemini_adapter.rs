@@ -4,17 +4,23 @@ use portable_pty::CommandBuilder;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
+    ffi::OsStr,
     io::Read,
     path::{Path, PathBuf},
     sync::OnceLock,
+    time::SystemTime,
 };
 
 pub const VERIFIED_VERSION: &str = "0.65.0";
 pub const EXTENSION_NAME: &str = "nesvo-lifecycle";
 pub const HOOK_FLAG: &str = "--gemini-context-hook";
-pub const HELPER_ENV: &str = "NESVO_GEMINI_HOOK";
+const PAIRING_FLAG: &str = "--pairing-dir";
+const LEGACY_HELPER_ENV: &str = "NESVO_GEMINI_HOOK";
 const REPORT_ENV: &str = "NESVO_LIFECYCLE_REPORT";
+const REPORT_FILE: &str = "context.json";
 const SOURCE_DIRECTORY: &str = "gemini-extension";
+const LAUNCH_DIRECTORY: &str = "gemini-launches";
+const HOST_RECORD: &str = "gemini-host.json";
 const INSTALL_METADATA: &str = ".gemini-extension-install.json";
 const METADATA_LIMIT: u64 = 4096;
 const EVENTS: [&str; 6] = [
@@ -27,22 +33,92 @@ const EVENTS: [&str; 6] = [
 ];
 const SESSION_SELECTION_FLAGS: [&str; 4] = ["--session-id", "--resume", "-r", "--session-file"];
 
-static SOURCE: OnceLock<PathBuf> = OnceLock::new();
+static PREPARED: OnceLock<Prepared> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+pub struct Prepared {
+    root: PathBuf,
+    launches: PathBuf,
+    pairing: PathBuf,
+    executable: PathBuf,
+}
+
+impl Prepared {
+    pub fn launches(&self) -> &Path {
+        &self.launches
+    }
+}
 
 pub fn supported(version: &str) -> bool {
     version == VERIFIED_VERSION
 }
 
 pub fn prepare(directory: &Path) -> Result<PathBuf> {
-    let root = directory.join(SOURCE_DIRECTORY);
-    write_source(&root)?;
-    let _ = SOURCE.set(root.clone());
+    let prepared = prepare_for(directory, &std::env::current_exe()?)?;
+    let root = prepared.root.clone();
+    let _ = PREPARED.set(prepared);
     Ok(root)
 }
 
-fn write_source(root: &Path) -> Result<bool> {
+pub fn prepared() -> Result<&'static Prepared> {
+    PREPARED
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("nesvo Gemini extension source was not prepared"))
+}
+
+fn prepare_for(directory: &Path, executable: &Path) -> Result<Prepared> {
+    let pairing = directory.canonicalize()?;
+    let executable = executable.canonicalize()?;
+    ensure!(
+        [&pairing, &executable]
+            .iter()
+            .all(|path| literal(&crate::process::display_path(path))),
+        "Gemini hook paths must not contain quotes, dollar signs, backticks or control characters"
+    );
+    let prepared = Prepared {
+        root: pairing.join(SOURCE_DIRECTORY),
+        launches: pairing.join(LAUNCH_DIRECTORY),
+        pairing,
+        executable,
+    };
+    reset_launches(&prepared.launches)?;
+    crate::private_write(
+        &prepared.pairing.join(HOST_RECORD),
+        &serde_json::to_vec(
+            &json!({ "executable": crate::process::display_path(&prepared.executable) }),
+        )?,
+    )?;
+    write_source(&prepared)?;
+    Ok(prepared)
+}
+
+fn literal(path: &str) -> bool {
+    !path
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\'' | '"' | '`' | '$' | '\u{2018}'..='\u{201F}'))
+}
+
+fn reset_launches(launches: &Path) -> Result<()> {
+    std::fs::create_dir_all(launches)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(launches, std::fs::Permissions::from_mode(0o700))?;
+    }
+    for entry in std::fs::read_dir(launches)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir()
+            && crate::agent_context::launch_directory_name(&entry.file_name())
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn write_source(prepared: &Prepared) -> Result<bool> {
     let mut written = false;
-    for (path, bytes) in source_files(root)? {
+    for (path, bytes) in source_files(prepared)? {
         if std::fs::read(&path).ok().as_deref() == Some(bytes.as_slice()) {
             continue;
         }
@@ -55,15 +131,15 @@ fn write_source(root: &Path) -> Result<bool> {
     Ok(written)
 }
 
-fn source_files(root: &Path) -> Result<[(PathBuf, Vec<u8>); 2]> {
+fn source_files(prepared: &Prepared) -> Result<[(PathBuf, Vec<u8>); 2]> {
     Ok([
         (
-            root.join("gemini-extension.json"),
+            prepared.root.join("gemini-extension.json"),
             serde_json::to_vec_pretty(&manifest())?,
         ),
         (
-            root.join("hooks").join("hooks.json"),
-            serde_json::to_vec_pretty(&hooks())?,
+            prepared.root.join("hooks").join("hooks.json"),
+            serde_json::to_vec_pretty(&hooks(prepared))?,
         ),
     ])
 }
@@ -76,19 +152,18 @@ fn manifest() -> Value {
     })
 }
 
-fn hook_command() -> String {
-    if cfg!(windows) {
-        format!("if ($env:{HELPER_ENV}) {{ & $env:{HELPER_ENV} {HOOK_FLAG} }}")
-    } else {
-        format!("if [ -n \"${HELPER_ENV}\" ]; then exec \"${HELPER_ENV}\" {HOOK_FLAG}; fi")
-    }
+fn hook_command(prepared: &Prepared) -> String {
+    let executable = crate::process::display_path(&prepared.executable);
+    let pairing = crate::process::display_path(&prepared.pairing);
+    let invoke = if cfg!(windows) { "&" } else { "exec" };
+    format!("{invoke} '{executable}' {HOOK_FLAG} {PAIRING_FLAG} '{pairing}'")
 }
 
-fn hooks() -> Value {
+fn hooks(prepared: &Prepared) -> Value {
     let handler = json!({
         "type": "command",
         "name": EXTENSION_NAME,
-        "command": hook_command(),
+        "command": hook_command(prepared),
         "timeout": 5000
     });
     let events = EVENTS
@@ -96,6 +171,58 @@ fn hooks() -> Value {
         .map(|event| ((*event).to_owned(), json!([{ "hooks": [handler.clone()] }])))
         .collect::<serde_json::Map<_, _>>();
     json!({ "hooks": events })
+}
+
+pub fn receive_hook(pairing: Option<&Path>) {
+    let report = std::env::var_os(REPORT_ENV);
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    if let Some(report) = accepted_report(pairing, &executable, report.as_deref()) {
+        let _ = crate::agent_context::receive_gemini(&report);
+    }
+}
+
+fn accepted_report(
+    pairing: Option<&Path>,
+    executable: &Path,
+    report: Option<&OsStr>,
+) -> Option<PathBuf> {
+    let pairing = pairing?.canonicalize().ok()?;
+    if executable.canonicalize().ok()? != recorded_executable(&pairing)?.canonicalize().ok()? {
+        return None;
+    }
+    let report = Path::new(report?);
+    if !report.is_absolute() || report.file_name()? != REPORT_FILE {
+        return None;
+    }
+    let scope = report.parent()?.canonicalize().ok()?;
+    let launches = pairing.join(LAUNCH_DIRECTORY).canonicalize().ok()?;
+    if scope.parent()? != launches
+        || !crate::agent_context::launch_directory_name(scope.file_name()?)
+    {
+        return None;
+    }
+    let report = scope.join(REPORT_FILE);
+    crate::scoped_context::load(&report)
+        .ok()?
+        .journal_backed()
+        .then_some(report)
+}
+
+fn recorded_executable(pairing: &Path) -> Option<PathBuf> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(pairing.join(HOST_RECORD))
+        .ok()?
+        .take(METADATA_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > METADATA_LIMIT {
+        return None;
+    }
+    serde_json::from_slice::<Value>(&bytes).ok()?["executable"]
+        .as_str()
+        .map(PathBuf::from)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -111,11 +238,7 @@ pub struct Gate {
 }
 
 pub fn gate(version: Option<&Version>) -> Gate {
-    evaluate(
-        version,
-        SOURCE.get().map(PathBuf::as_path),
-        gemini_home().as_deref(),
-    )
+    evaluate(version, PREPARED.get(), gemini_home().as_deref())
 }
 
 fn gemini_home() -> Option<PathBuf> {
@@ -125,11 +248,11 @@ fn gemini_home() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn evaluate(version: Option<&Version>, source: Option<&Path>, home: Option<&Path>) -> Gate {
-    let extension = match (source, home) {
+fn evaluate(version: Option<&Version>, prepared: Option<&Prepared>, home: Option<&Path>) -> Gate {
+    let extension = match (prepared, home) {
         (None, _) => "sourceUnavailable",
         (Some(_), None) => "homeUnavailable",
-        (Some(source), Some(home)) => extension_state(source, home),
+        (Some(prepared), Some(home)) => extension_state(prepared, home),
     };
     let observed = version.and_then(|v| v.version.clone());
     let reason = match version {
@@ -149,6 +272,9 @@ fn evaluate(version: Option<&Version>, source: Option<&Path>, home: Option<&Path
             "linkedElsewhere" => {
                 "an extension with the nesvo name points to a different source".to_owned()
             }
+            "stale" => format!(
+                "nesvo Gemini hook command changed after the extension was linked because the host executable moved; the owner relinks once with gemini extensions uninstall {EXTENSION_NAME} and gemini extensions link"
+            ),
             "sourceChanged" => "nesvo Gemini extension source differs from this host".to_owned(),
             "homeUnavailable" => "Gemini home directory is unknown".to_owned(),
             "sourceUnavailable" => "nesvo Gemini extension source was not prepared".to_owned(),
@@ -163,21 +289,24 @@ fn evaluate(version: Option<&Version>, source: Option<&Path>, home: Option<&Path
         verified_version: VERIFIED_VERSION,
         version: observed,
         extension,
-        extension_source: source.map(crate::process::display_path),
+        extension_source: prepared.map(|prepared| crate::process::display_path(&prepared.root)),
         turn_identity: "unsupported",
         reason,
     }
 }
 
-fn extension_state(source: &Path, home: &Path) -> &'static str {
-    let Ok(files) = source_files(source) else {
+fn extension_state(prepared: &Prepared, home: &Path) -> &'static str {
+    let Ok(files) = source_files(prepared) else {
         return "sourceUnavailable";
     };
-    if files
-        .iter()
-        .any(|(path, bytes)| std::fs::read(path).ok().as_deref() != Some(bytes.as_slice()))
-    {
-        return "sourceChanged";
+    let mut written = SystemTime::UNIX_EPOCH;
+    for (path, bytes) in &files {
+        if std::fs::read(path).ok().as_ref() != Some(bytes) {
+            return "sourceChanged";
+        }
+        if let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified()) {
+            written = written.max(modified);
+        }
     }
     let metadata = home
         .join(".gemini")
@@ -189,6 +318,7 @@ fn extension_state(source: &Path, home: &Path) -> &'static str {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return "notLinked",
         Err(_) => return "unreadable",
     };
+    let linked_at = file.metadata().and_then(|m| m.modified()).ok();
     let mut bytes = Vec::new();
     if file
         .take(METADATA_LIMIT + 1)
@@ -206,15 +336,20 @@ fn extension_state(source: &Path, home: &Path) -> &'static str {
             Path::new(linked)
                 .canonicalize()
                 .ok()
-                .zip(source.canonicalize().ok())
+                .zip(prepared.root.canonicalize().ok())
                 .is_some_and(|(linked, source)| linked == source)
         });
-    if linked { "linked" } else { "linkedElsewhere" }
+    if !linked {
+        "linkedElsewhere"
+    } else if linked_at.is_none_or(|at| at < written) {
+        "stale"
+    } else {
+        "linked"
+    }
 }
 
 pub fn configure(command: &mut CommandBuilder, report: &Path) -> Result<String> {
     let session = session_id();
-    let executable = std::env::current_exe()?;
     let argv = command.get_argv_mut();
     let index = argv
         .iter()
@@ -231,7 +366,7 @@ pub fn configure(command: &mut CommandBuilder, report: &Path) -> Result<String> 
         ["--session-id".into(), session.clone().into()],
     );
     command.env(REPORT_ENV, report);
-    command.env(HELPER_ENV, executable);
+    command.env_remove(LEGACY_HELPER_ENV);
     Ok(session)
 }
 
@@ -297,17 +432,48 @@ mod tests {
         directory
     }
 
+    fn pairing(label: &str) -> (PathBuf, Prepared) {
+        let base = scratch(label);
+        let prepared = prepare_for(&base, &std::env::current_exe().unwrap()).unwrap();
+        (base, prepared)
+    }
+
+    fn install_metadata(home: &Path) -> PathBuf {
+        home.join(".gemini")
+            .join("extensions")
+            .join(EXTENSION_NAME)
+            .join(INSTALL_METADATA)
+    }
+
     fn link(home: &Path, source: &Path, kind: &str) {
-        let directory = home.join(".gemini").join("extensions").join(EXTENSION_NAME);
-        std::fs::create_dir_all(&directory).unwrap();
+        let path = install_metadata(home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
-            directory.join(INSTALL_METADATA),
+            &path,
             serde_json::to_vec(
                 &json!({"source": crate::process::display_path(source), "type": kind}),
             )
             .unwrap(),
         )
         .unwrap();
+    }
+
+    fn set_modified(path: &Path, offset: i64) {
+        let now = SystemTime::now();
+        let delta = std::time::Duration::from_secs(offset.unsigned_abs());
+        let at = if offset < 0 { now - delta } else { now + delta };
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+    }
+
+    fn age_source(prepared: &Prepared, offset: i64) {
+        for (path, _) in source_files(prepared).unwrap() {
+            set_modified(&path, offset);
+        }
     }
 
     fn synthesized_from_hook_reference(event: &str, session: &str, extra: Value) -> Value {
@@ -360,6 +526,7 @@ mod tests {
         let report = Path::new("C:/private/nesvo-context-fixture/context.json");
         let mut first = CommandBuilder::new("gemini");
         first.args(["--prompt-interactive", "--session-id literal ; $x"]);
+        first.env(LEGACY_HELPER_ENV, "C:/hostile/payload.exe");
         let id = configure(&mut first, report).unwrap();
         let argv: Vec<_> = first
             .get_argv()
@@ -381,7 +548,7 @@ mod tests {
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'));
         assert!(!argv.iter().any(|arg| arg.contains("nesvo-context-fixture")));
         assert_eq!(first.get_env(REPORT_ENV).unwrap(), report.as_os_str());
-        assert!(first.get_env(HELPER_ENV).is_some());
+        assert!(first.get_env(LEGACY_HELPER_ENV).is_none());
         let mut second = CommandBuilder::new("gemini");
         assert_ne!(configure(&mut second, report).unwrap(), id);
         assert_eq!(second.get_argv().len(), 3);
@@ -391,8 +558,13 @@ mod tests {
     }
 
     #[test]
-    fn gemini_extension_source_is_constant_inert_and_lists_only_lifecycle_events() {
-        let hooks = hooks();
+    fn gemini_extension_source_runs_the_recorded_absolute_host_and_no_environment_command() {
+        let (base, prepared) = pairing("source");
+        let executable =
+            crate::process::display_path(&std::env::current_exe().unwrap().canonicalize().unwrap());
+        let directory = crate::process::display_path(&base.canonicalize().unwrap());
+        assert!(Path::new(&executable).is_absolute());
+        let hooks = hooks(&prepared);
         let events: Vec<_> = hooks["hooks"]
             .as_object()
             .unwrap()
@@ -402,16 +574,19 @@ mod tests {
         let mut expected: Vec<_> = EVENTS.iter().map(|e| (*e).to_owned()).collect();
         expected.sort();
         assert_eq!(events, expected);
+        let invoke = if cfg!(windows) { "&" } else { "exec" };
         for event in EVENTS {
             let handler = &hooks["hooks"][event][0]["hooks"][0];
             assert_eq!(handler["type"], "command");
             assert_eq!(handler["timeout"], 5000);
             assert!(hooks["hooks"][event][0].get("matcher").is_none());
             let command = handler["command"].as_str().unwrap();
-            assert!(command.contains(HELPER_ENV));
-            assert!(command.contains(HOOK_FLAG));
-            assert!(!command.contains("${"));
-            assert!(!command.contains("$GEMINI_"));
+            assert_eq!(
+                command,
+                format!("{invoke} '{executable}' {HOOK_FLAG} {PAIRING_FLAG} '{directory}'")
+            );
+            assert!(!command.contains('$') && !command.contains("env:"));
+            assert!(!command.contains(LEGACY_HELPER_ENV) && !command.contains(REPORT_ENV));
             assert!(!command.contains("nesvo-context-"));
             assert!(!command.contains("--yolo") && !command.contains("--consent"));
         }
@@ -419,26 +594,38 @@ mod tests {
             assert!(hooks["hooks"].get(absent).is_none());
         }
         assert_eq!(manifest()["name"], EXTENSION_NAME);
-        use clap::Parser;
-        assert!(
-            crate::Args::try_parse_from(["nesvo-host", HOOK_FLAG])
+        let written = std::fs::read(prepared.root.join("hooks").join("hooks.json")).unwrap();
+        assert_eq!(written, serde_json::to_vec_pretty(&hooks).unwrap());
+        assert_eq!(
+            recorded_executable(&base.canonicalize().unwrap())
                 .unwrap()
-                .gemini_context_hook
+                .canonicalize()
+                .unwrap(),
+            std::env::current_exe().unwrap().canonicalize().unwrap()
         );
-        let root = scratch("source").join(SOURCE_DIRECTORY);
-        assert!(write_source(&root).unwrap());
-        assert!(!write_source(&root).unwrap());
-        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+        assert!(prepared.launches().is_dir());
+        use clap::Parser;
+        let parsed =
+            crate::Args::try_parse_from(["nesvo-host", HOOK_FLAG, PAIRING_FLAG, &directory])
+                .unwrap();
+        assert!(parsed.gemini_context_hook);
+        assert_eq!(parsed.pairing_dir.as_deref(), Some(Path::new(&directory)));
+        assert!(!write_source(&prepared).unwrap());
+        let quoted = base.join("it's $HOME");
+        std::fs::create_dir_all(&quoted).unwrap();
+        assert!(prepare_for(&quoted, &std::env::current_exe().unwrap()).is_err());
+        assert!(!quoted.join(SOURCE_DIRECTORY).exists());
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
     fn gemini_gate_requires_the_owner_link_to_the_current_source_and_version() {
-        let base = scratch("gate");
-        let source = base.join(SOURCE_DIRECTORY);
+        let (base, prepared) = pairing("gate");
+        let source = prepared.root.clone();
         let home = base.join("home");
-        write_source(&source).unwrap();
+        age_source(&prepared, -60);
         let verified = version("ready", Some(VERIFIED_VERSION));
-        let missing = evaluate(Some(&verified), Some(&source), Some(&home));
+        let missing = evaluate(Some(&verified), Some(&prepared), Some(&home));
         assert_eq!((missing.ready, missing.extension), (false, "notLinked"));
         assert!(missing.reason.contains("gemini extensions link"));
         assert!(
@@ -449,41 +636,194 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         link(&home, &other, "link");
         assert_eq!(
-            evaluate(Some(&verified), Some(&source), Some(&home)).extension,
+            evaluate(Some(&verified), Some(&prepared), Some(&home)).extension,
             "linkedElsewhere"
         );
         link(&home, &source, "local");
         assert_eq!(
-            evaluate(Some(&verified), Some(&source), Some(&home)).extension,
+            evaluate(Some(&verified), Some(&prepared), Some(&home)).extension,
             "linkedElsewhere"
         );
         link(&home, &source, "link");
-        let ready = evaluate(Some(&verified), Some(&source), Some(&home));
+        let ready = evaluate(Some(&verified), Some(&prepared), Some(&home));
         assert!(ready.ready, "{}", ready.reason);
         assert!(
             !evaluate(
                 Some(&version("ready", Some("0.64.0"))),
-                Some(&source),
+                Some(&prepared),
                 Some(&home)
             )
             .ready
         );
         std::fs::write(source.join("hooks").join("hooks.json"), b"{\"hooks\":{}}").unwrap();
-        let changed = evaluate(Some(&verified), Some(&source), Some(&home));
+        let changed = evaluate(Some(&verified), Some(&prepared), Some(&home));
         assert_eq!((changed.ready, changed.extension), (false, "sourceChanged"));
-        write_source(&source).unwrap();
+        write_source(&prepared).unwrap();
         std::fs::write(
-            home.join(".gemini")
-                .join("extensions")
-                .join(EXTENSION_NAME)
-                .join(INSTALL_METADATA),
+            install_metadata(&home),
             vec![b' '; METADATA_LIMIT as usize + 1],
         )
         .unwrap();
         assert_eq!(
-            evaluate(Some(&verified), Some(&source), Some(&home)).extension,
+            evaluate(Some(&verified), Some(&prepared), Some(&home)).extension,
             "unreadable"
         );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn gemini_link_turns_stale_with_a_reason_when_the_host_executable_path_changes() {
+        let (base, first) = pairing("stale");
+        let home = base.join("home");
+        let verified = version("ready", Some(VERIFIED_VERSION));
+        age_source(&first, -60);
+        link(&home, &first.root, "link");
+        set_modified(&install_metadata(&home), -30);
+        assert!(evaluate(Some(&verified), Some(&first), Some(&home)).ready);
+        let same = prepare_for(&base, &std::env::current_exe().unwrap()).unwrap();
+        assert!(evaluate(Some(&verified), Some(&same), Some(&home)).ready);
+        let moved = base.join("moved").join("nesvo-host.exe");
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, b"fixture").unwrap();
+        let second = prepare_for(&base, &moved).unwrap();
+        let command = hook_command(&second);
+        assert!(command.contains(&crate::process::display_path(
+            &moved.canonicalize().unwrap()
+        )));
+        let stale = evaluate(Some(&verified), Some(&second), Some(&home));
+        assert_eq!((stale.ready, stale.extension), (false, "stale"));
+        assert!(stale.reason.contains("relinks once"));
+        assert!(stale.reason.contains("gemini extensions link"));
+        assert_eq!(
+            evaluate(Some(&verified), Some(&first), Some(&home)).extension,
+            "sourceChanged"
+        );
+        link(&home, &second.root, "link");
+        set_modified(&install_metadata(&home), 30);
+        assert!(evaluate(Some(&verified), Some(&second), Some(&home)).ready);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn gemini_helper_accepts_only_an_existing_launch_report_inside_the_pairing_directory() {
+        let (base, prepared) = pairing("helper");
+        let directory = base.canonicalize().unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let mut command = CommandBuilder::new("gemini");
+        let tracker = crate::agent_context::Tracker::install_gemini_in(
+            &mut command,
+            "host-session",
+            &prepared,
+        )
+        .unwrap();
+        let report = tracker.report();
+        assert_eq!(
+            report
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
+            prepared.launches().canonicalize().unwrap()
+        );
+        assert_eq!(command.get_env(REPORT_ENV).unwrap(), report.as_os_str());
+        let accept = |pairing: Option<&Path>, executable: &Path, report: Option<&OsStr>| {
+            accepted_report(pairing, executable, report)
+        };
+        assert_eq!(
+            accept(Some(&directory), &executable, Some(report.as_os_str())),
+            Some(
+                report
+                    .parent()
+                    .unwrap()
+                    .canonicalize()
+                    .unwrap()
+                    .join(REPORT_FILE)
+            )
+        );
+        let mut outside_command = CommandBuilder::new("claude");
+        let outside =
+            crate::agent_context::Tracker::install_for(&mut outside_command, "host-session")
+                .unwrap();
+        let missing = prepared
+            .launches()
+            .join(format!("nesvo-context-{}", "0".repeat(32)))
+            .join(REPORT_FILE);
+        let unscoped = prepared
+            .launches()
+            .join(format!("nesvo-context-{}", "1".repeat(32)));
+        std::fs::create_dir_all(&unscoped).unwrap();
+        let other = base.join("other.exe");
+        std::fs::write(&other, b"fixture").unwrap();
+        for (pairing, executable, candidate) in [
+            (None, executable.as_path(), Some(report.as_os_str())),
+            (Some(directory.as_path()), executable.as_path(), None),
+            (
+                Some(directory.as_path()),
+                executable.as_path(),
+                Some(outside.report().as_os_str()),
+            ),
+            (
+                Some(directory.as_path()),
+                executable.as_path(),
+                Some(missing.as_os_str()),
+            ),
+            (
+                Some(directory.as_path()),
+                executable.as_path(),
+                Some(unscoped.join(REPORT_FILE).as_os_str()),
+            ),
+            (
+                Some(directory.as_path()),
+                executable.as_path(),
+                Some(report.with_file_name("events.sqlite3").as_os_str()),
+            ),
+            (
+                Some(directory.as_path()),
+                executable.as_path(),
+                Some(OsStr::new("relative/context.json")),
+            ),
+            (
+                Some(directory.as_path()),
+                other.as_path(),
+                Some(report.as_os_str()),
+            ),
+            (
+                Some(base.join("home").as_path()),
+                executable.as_path(),
+                Some(report.as_os_str()),
+            ),
+        ] {
+            assert_eq!(
+                accept(pairing, executable, candidate),
+                None,
+                "{candidate:?}"
+            );
+        }
+        assert!(
+            crate::agent_events::read(&outside.report(), "host-session", 0)
+                .unwrap()
+                .events
+                .is_empty()
+        );
+        drop(outside);
+        drop(tracker);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn gemini_restart_removes_only_previous_launch_directories() {
+        let (base, prepared) = pairing("restart");
+        let stale = prepared
+            .launches()
+            .join(format!("nesvo-context-{}", "a".repeat(32)));
+        let foreign = prepared.launches().join("owner-notes");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::create_dir_all(&foreign).unwrap();
+        prepare_for(&base, &std::env::current_exe().unwrap()).unwrap();
+        assert!(!stale.exists());
+        assert!(foreign.is_dir());
         std::fs::remove_dir_all(base).unwrap();
     }
 
@@ -544,9 +884,14 @@ mod tests {
 
     #[test]
     fn gemini_journal_binds_the_expected_root_and_fences_foreign_and_cleared_sessions() {
+        let (base, prepared) = pairing("journal");
         let mut command = CommandBuilder::new("gemini");
-        let tracker =
-            crate::agent_context::Tracker::install_gemini(&mut command, "host-session").unwrap();
+        let tracker = crate::agent_context::Tracker::install_gemini_in(
+            &mut command,
+            "host-session",
+            &prepared,
+        )
+        .unwrap();
         assert_eq!(tracker.adapter(), "gemini-hooks-v1");
         let root = command.get_argv()[2].to_string_lossy().into_owned();
         let report = tracker.report();
@@ -665,9 +1010,15 @@ mod tests {
                 "lifecycle storage must not keep payload text"
             );
         }
+        drop(tracker);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
-    fn run_like_provider_shell(env: &[(&str, &std::ffi::OsStr)], input: &[u8]) -> (i32, String) {
+    fn run_like_provider_shell(
+        prepared: &Prepared,
+        env: &[(&str, &std::ffi::OsStr)],
+        input: &[u8],
+    ) -> (i32, String) {
         use std::io::Write;
         let mut shell = if cfg!(windows) {
             let mut shell = std::process::Command::new("powershell.exe");
@@ -677,17 +1028,17 @@ mod tests {
                 "-Command",
                 &format!(
                     "{}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}",
-                    hook_command()
+                    hook_command(prepared)
                 ),
             ]);
             shell
         } else {
             let mut shell = std::process::Command::new("bash");
-            shell.args(["-c", &hook_command()]);
+            shell.args(["-c", &hook_command(prepared)]);
             shell
         };
         shell
-            .env_remove(HELPER_ENV)
+            .env_remove(LEGACY_HELPER_ENV)
             .env_remove(REPORT_ENV)
             .envs(env.iter().copied())
             .stdin(std::process::Stdio::piped())
@@ -701,6 +1052,24 @@ mod tests {
             output.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&output.stdout).trim().to_owned(),
         )
+    }
+
+    fn hostile_program(directory: &Path, sentinel: &Path) -> PathBuf {
+        let sentinel = crate::process::display_path(sentinel);
+        if cfg!(windows) {
+            let path = directory.join("hostile.cmd");
+            std::fs::write(&path, format!("@echo off\r\necho hit> \"{sentinel}\"\r\n")).unwrap();
+            path
+        } else {
+            let path = directory.join("hostile.sh");
+            std::fs::write(&path, format!("#!/bin/sh\necho hit > '{sentinel}'\n")).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            path
+        }
     }
 
     #[test]
@@ -723,10 +1092,22 @@ mod tests {
             "build nesvo-host first: {}",
             helper.display()
         );
-        assert_eq!(run_like_provider_shell(&[], b"{}"), (0, String::new()));
+        let base = scratch("shell");
+        let prepared = prepare_for(&base, &helper).unwrap();
+        let sentinel = base.join("hostile-ran");
+        let hostile = hostile_program(&base, &sentinel);
+        let hostile_env = [(LEGACY_HELPER_ENV, hostile.as_os_str())];
+        assert_eq!(
+            run_like_provider_shell(&prepared, &hostile_env, b"{}"),
+            (0, "{}".to_owned())
+        );
         let mut command = CommandBuilder::new("gemini");
-        let tracker =
-            crate::agent_context::Tracker::install_gemini(&mut command, "host-session").unwrap();
+        let tracker = crate::agent_context::Tracker::install_gemini_in(
+            &mut command,
+            "host-session",
+            &prepared,
+        )
+        .unwrap();
         let root = command.get_argv()[2].to_string_lossy().into_owned();
         let report = tracker.report();
         let payload = synthesized_from_hook_reference(
@@ -734,30 +1115,61 @@ mod tests {
             &root,
             json!({"prompt": "zażółć 'quoted' $x ; & spaces"}),
         );
+        let mut outside_command = CommandBuilder::new("claude");
+        let outside =
+            crate::agent_context::Tracker::install_for(&mut outside_command, "host-session")
+                .unwrap();
+        let outside_report = outside.report();
+        let foreign = [
+            (LEGACY_HELPER_ENV, hostile.as_os_str()),
+            (REPORT_ENV, outside_report.as_os_str()),
+        ];
+        assert_eq!(
+            run_like_provider_shell(&prepared, &foreign, payload.to_string().as_bytes()),
+            (0, "{}".to_owned())
+        );
+        assert!(
+            crate::agent_events::read(&outside.report(), "host-session", 0)
+                .unwrap()
+                .events
+                .is_empty()
+        );
         let env = [
-            (HELPER_ENV, helper.as_os_str()),
+            (LEGACY_HELPER_ENV, hostile.as_os_str()),
             (REPORT_ENV, report.as_os_str()),
         ];
         assert_eq!(
-            run_like_provider_shell(&env, payload.to_string().as_bytes()),
+            run_like_provider_shell(&prepared, &env, payload.to_string().as_bytes()),
             (0, "{}".to_owned())
         );
         assert_eq!(
-            run_like_provider_shell(&env, b"not json"),
+            run_like_provider_shell(&prepared, &env, b"not json"),
             (0, "{}".to_owned())
+        );
+        assert!(
+            !sentinel.exists(),
+            "the hook must never run NESVO_GEMINI_HOOK"
         );
         let batch = crate::agent_events::read(&report, "host-session", 0).unwrap();
         assert_eq!(batch.events.len(), 1);
         assert_eq!(batch.events[0].name, "BeforeAgent");
         assert_eq!(batch.events[0].state, StatusState::Working);
         assert!(report.with_file_name("diagnostic.json").exists());
+        drop(outside);
+        drop(tracker);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
     fn gemini_helper_input_failures_are_bounded_and_record_only_a_constant_marker() {
+        let (base, prepared) = pairing("input");
         let mut command = CommandBuilder::new("gemini");
-        let tracker =
-            crate::agent_context::Tracker::install_gemini(&mut command, "host-session").unwrap();
+        let tracker = crate::agent_context::Tracker::install_gemini_in(
+            &mut command,
+            "host-session",
+            &prepared,
+        )
+        .unwrap();
         let report = tracker.report();
         let diagnostic = report.with_file_name("diagnostic.json");
         assert!(
@@ -778,5 +1190,7 @@ mod tests {
                 .events
                 .is_empty()
         );
+        drop(tracker);
+        std::fs::remove_dir_all(base).unwrap();
     }
 }

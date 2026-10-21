@@ -26,6 +26,7 @@ pub struct Tracker(
     Option<Value>,
     Option<crate::claude_quota_diagnostics::Anchor>,
     Option<crate::scoped_context::Descriptor>,
+    PathBuf,
 );
 impl Tracker {
     #[cfg(test)]
@@ -71,7 +72,14 @@ impl Tracker {
         Ok(tracker)
     }
     pub fn install_gemini(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
-        let mut tracker = Self::create(Some(session_id))?;
+        Self::install_gemini_in(command, session_id, crate::gemini_adapter::prepared()?)
+    }
+    pub(crate) fn install_gemini_in(
+        command: &mut CommandBuilder,
+        session_id: &str,
+        prepared: &crate::gemini_adapter::Prepared,
+    ) -> Result<Self> {
+        let mut tracker = Self::create_in(prepared.launches(), Some(session_id))?;
         tracker.1 = Adapter::Gemini;
         let root = crate::gemini_adapter::configure(command, &tracker.hook_report()?)?;
         crate::agent_events::expect_provider(&tracker.report(), &root)?;
@@ -135,7 +143,10 @@ impl Tracker {
         Ok(tracker)
     }
     fn create(session_id: Option<&str>) -> Result<Self> {
-        let directory = std::env::temp_dir().join(format!(
+        Self::create_in(&std::env::temp_dir(), session_id)
+    }
+    fn create_in(parent: &Path, session_id: Option<&str>) -> Result<Self> {
+        let directory = parent.join(format!(
             "nesvo-context-{}",
             hex::encode(crate::wire::random::<16>())
         ));
@@ -145,7 +156,14 @@ impl Tracker {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
-        let mut tracker = Self(directory, Adapter::Claude, None, None, None);
+        let mut tracker = Self(
+            directory,
+            Adapter::Claude,
+            None,
+            None,
+            None,
+            parent.to_owned(),
+        );
         if let Some(session_id) = session_id {
             crate::agent_events::initialize(&tracker.report(), session_id)?;
         }
@@ -166,21 +184,14 @@ impl Tracker {
 impl Drop for Tracker {
     fn drop(&mut self) {
         // Only this randomly allocated session directory is owned by the tracker.
-        let Ok(parent) = std::env::temp_dir().canonicalize() else {
+        let Ok(parent) = self.5.canonicalize() else {
             return;
         };
         let Ok(target) = self.0.canonicalize() else {
             return;
         };
         if target.parent() != Some(parent.as_path())
-            || !target
-                .file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|name| {
-                    name.strip_prefix("nesvo-context-").is_some_and(|suffix| {
-                        suffix.len() == 32 && suffix.bytes().all(|b| b.is_ascii_hexdigit())
-                    })
-                })
+            || !target.file_name().is_some_and(launch_directory_name)
         {
             return;
         }
@@ -198,6 +209,11 @@ impl Drop for Tracker {
             }
         }
     }
+}
+pub(crate) fn launch_directory_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .and_then(|name| name.strip_prefix("nesvo-context-"))
+        .is_some_and(|suffix| suffix.len() == 32 && suffix.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Context {
