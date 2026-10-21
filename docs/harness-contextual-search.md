@@ -6,10 +6,11 @@ and ranking. Both quick search and the expanded palette accept current ready
 repository/branch labels; detached repositories contribute only their name.
 Checking, unavailable, stale, malformed or omitted metadata adds no terms.
 
-The source is explicitly the native launch directory, not an inferred current
-agent directory. A later Edit/Write review location does not become search
-metadata. This first slice does not follow provider cwd changes. No new shortcut,
-layout, icon, sidebar width or ranking weight is introduced.
+The source is the provider's current working directory when the host observed
+one that is fresh and inside the allowed root, otherwise the native launch
+directory. It is never inferred: a later Edit/Write review location does not
+become search metadata. See [current provider cwd](#current-provider-cwd). No new
+shortcut, layout, icon, sidebar width or ranking weight is introduced.
 
 Opening search deliberately emits one existing authenticated `list` request while
 connected. Query edits, paste, F2 expansion, rendering and PTY output do not request
@@ -35,9 +36,48 @@ boundary. Ordinary Git fixtures additionally cover linked worktrees, detached
 HEAD and a non-repository. Controlled Windows ConPTY also verifies Unicode
 keyboard search, F2, exact-session input, three window sizes and terminal
 restoration. This evidence does not establish physical-phone, physical terminal
-application or interactive macOS/Linux acceptance. The source remains the launch directory;
-current provider cwd tracking is a separate limitation. No dependency, Expo API,
-SDK, launch authority or provider configuration is changed.
+application or interactive macOS/Linux acceptance. Current provider cwd
+tracking is proven by fixture hook payloads and registry tests, not by a live
+provider session. No dependency, Expo API, SDK, launch authority or provider
+configuration is changed.
+
+## Current provider cwd
+
+Which hook payloads carry a working directory:
+
+| Provider    | Field | Used | Why                                                                             |
+| ----------- | ----- | ---- | ------------------------------------------------------------------------------- |
+| Claude      | `cwd` | yes  | Every hook input carries the session's current directory.                       |
+| Codex 0.156 | `cwd` | yes  | Required in every hook input schema of the installed `rust-v0.156.0` binary.    |
+| Gemini 0.65 | `cwd` | no   | It is `config.getWorkingDir()`, the fixed startup directory, never a later one. |
+
+Claude `CwdChanged` keeps feeding only the review context; the next lifecycle
+event's `cwd` carries the new directory to search. The hook helper writes the
+cwd, the accepted journal sequence, its wall-clock time and the provider
+conversation to a private `cwd.json` beside the lifecycle journal, only after
+the journal accepted that event. Subagent, foreign-conversation, stale-entry,
+relative, oversized or control-character payloads write nothing. The host reads
+the report with the existing 500 ms lifecycle poll, outside the state lock, and
+canonicalizes it; a missing, malformed or deleted directory is no observation.
+
+The observation is fresh only while the process runs and the report names the
+provider conversation the launch journal currently binds. Rebinding without a
+new hook, process exit and session removal drop it. A lower sequence never
+replaces a newer cwd, and repeating the same path does not renew `observedAt`.
+The allowed root is the launch directory's repository toplevel, the nearest
+ancestor holding a `.git` file or directory (found by one stat per ancestor at
+launch, without Git), or the launch directory itself when no ancestor has one.
+A cwd outside it is recorded as `outsideRoot`; its path is not projected and the
+launch directory stays the search root.
+
+When the root changes, the session's subscription moves to that directory under
+the same sixteen-directory bound, an admitted read of the old directory becomes
+an orphan, and no Git work starts until the next explicit demand. The snapshot's
+`searchRoot` names the source, reason, current path and observation time (see
+[protocol v2](protocol-v2.md#sessions-and-groups)). The TUI adds the current
+path as a search term and shows the selected session's root in the expanded
+palette footer, eliding the path from the left; the compact footer keeps only its
+shortcuts when there is no room.
 
 ## Host inspection contract
 

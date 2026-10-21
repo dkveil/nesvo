@@ -2864,6 +2864,9 @@
         "repositoryContext": {
           "$ref": "#/definitions/repositoryContext"
         },
+        "searchRoot": {
+          "$ref": "#/definitions/searchRoot"
+        },
         "resume": {
           "$ref": "#/definitions/resumeVerification"
         }
@@ -6035,6 +6038,55 @@
         }
       },
       "description": "Additive retained quota admission evidence. Historical accepted envelopes may omit it. Waiting does not imply a native effect or authorize retry; reader eligibility does not guarantee provider acceptance."
+    },
+    "searchRoot": {
+      "type": "object",
+      "required": ["source", "reason", "path", "observedAt"],
+      "properties": {
+        "source": {
+          "enum": ["currentCwd", "launchDirectory"]
+        },
+        "reason": {
+          "enum": ["insideRoot", "outsideRoot", "noCurrentCwd"]
+        },
+        "path": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "observedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "source": { "const": "currentCwd" },
+            "reason": { "const": "insideRoot" },
+            "path": { "type": "string" },
+            "observedAt": { "type": "integer" }
+          }
+        },
+        {
+          "properties": {
+            "source": { "const": "launchDirectory" },
+            "reason": { "const": "outsideRoot" },
+            "path": { "type": "null" },
+            "observedAt": { "type": "integer" }
+          }
+        },
+        {
+          "properties": {
+            "source": { "const": "launchDirectory" },
+            "reason": { "const": "noCurrentCwd" },
+            "path": { "type": "null" },
+            "observedAt": { "type": "null" }
+          }
+        }
+      ],
+      "description": "Additive F31 evidence of the directory contextual search inspects and why. A cwd outside the launch repository toplevel or launch directory is never exposed. Grants no authority."
     },
     "repositoryContext": {
       "type": "object",

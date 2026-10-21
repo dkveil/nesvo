@@ -195,9 +195,10 @@ credentials never appear in snapshots. This is API authorization, not an OS sand
 Session snapshots and query output may include optional
 `repositoryContext:{source,state,name,branch,observedAt,revision}`. Omission is
 valid for older hosts or optional snapshot-byte clipping. All six inner fields
-are required when present. `source` is exactly `launchDirectory`: the canonical
-directory passed to the native launch, independently of later agent cwd or review
-selection. States are `checking|ready|detached|notRepository|unavailable|stale`.
+are required when present. `source` stays exactly `launchDirectory` for
+compatibility with clients that reject other values; the directory actually
+inspected is named by `searchRoot` below. Review selection never changes it.
+States are `checking|ready|detached|notRepository|unavailable|stale`.
 Repository/branch labels are nullable, nonempty, control-free UTF-8 strings of
 at most 128/256 bytes. `ready` has both labels; `detached` has only a repository
 name. Other states have null labels. Ready/detached/notRepository have a
@@ -211,6 +212,28 @@ absolute, canonical top-level path of the repository's main checkout (a linked
 worktree reports the checkout it belongs to), at most 4096 control-free bytes.
 Other states omit it. Clients key per-project state by `root` when present and
 by the repository name otherwise.
+
+An F31-capable host adds optional `searchRoot:{source,reason,path,observedAt}`,
+projected and clipped together with `repositoryContext` from the same optional
+bytes. It states which directory the contextual search inspects and why:
+
+| `source`          | `reason`       | `path`                 | `observedAt` |
+| ----------------- | -------------- | ---------------------- | ------------ |
+| `currentCwd`      | `insideRoot`   | canonical provider cwd | Unix ms      |
+| `launchDirectory` | `outsideRoot`  | `null` (never exposed) | Unix ms      |
+| `launchDirectory` | `noCurrentCwd` | `null`                 | `null`       |
+
+The current cwd comes only from hook payloads that carry one (Claude and Codex
+`cwd`), written by the helper after the launch journal accepted that event.
+The host uses it only while the process runs and the report names the
+currently bound provider conversation; a lower journal sequence never replaces a
+newer cwd, and `observedAt` is the first observation of that path, not renewed
+by repeats. The allowed root is the launch directory's repository toplevel (the
+nearest ancestor holding a `.git` entry, found without running Git) or the
+launch directory itself. A cwd outside it is recorded as `outsideRoot` and not
+used. Moving the root starts no Git work; the next explicit demand inspects it.
+Clients that do not know the field ignore it. See
+[contextual search](harness-contextual-search.md#current-provider-cwd).
 
 The TUI ignores malformed optional context without rejecting a legacy session;
 mobile keeps its existing strict optional-field rule and rejects malformed-present
