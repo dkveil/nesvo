@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-10-19.1",
+  "revision": "2026-10-21.1",
   "rules": [
     {
       "id": "claude_trust_v1",
@@ -109,6 +109,49 @@
       "all": ["allow execution of"],
       "choicesAny": ["allow once", "yes, allow once"],
       "footerAll": ["no, suggest changes (esc)"]
+    },
+    {
+      "id": "gemini_permission_v2",
+      "program": "gemini",
+      "state": "blocked",
+      "reason": "permission",
+      "scope": "tail",
+      "any": ["allow execution of", "apply this change?", "do you want to proceed?"],
+      "choicesAll": ["allow once", "no, suggest changes (esc)"]
+    },
+    {
+      "id": "gemini_trust_v1",
+      "program": "gemini",
+      "state": "blocked",
+      "reason": "folder trust",
+      "scope": "visible",
+      "all": ["do you trust the files in this folder?"],
+      "choicesAll": ["don't trust"]
+    },
+    {
+      "id": "gemini_login_v1",
+      "program": "gemini",
+      "state": "blocked",
+      "reason": "login",
+      "scope": "visible",
+      "all": ["how would you like to authenticate for this project?"],
+      "choicesAll": ["sign in with google", "use gemini api key"]
+    },
+    {
+      "id": "gemini_login_wait_v1",
+      "program": "gemini",
+      "state": "blocked",
+      "reason": "login",
+      "scope": "visible",
+      "all": ["waiting for authentication... (press esc or ctrl+c to cancel)"]
+    },
+    {
+      "id": "gemini_model_selection_v1",
+      "program": "gemini",
+      "state": "question",
+      "reason": "model selection",
+      "scope": "visible",
+      "all": ["select model", "remember model for future sessions:", "(press esc to close)"]
     }
   ]
 }

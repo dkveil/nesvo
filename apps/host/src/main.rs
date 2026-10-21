@@ -13,6 +13,7 @@ mod command_scope;
 mod commits;
 mod event_log;
 mod files;
+mod gemini_adapter;
 mod git;
 mod git_repository;
 mod groups;
@@ -135,6 +136,8 @@ struct Args {
     claude_statusline_profile: bool,
     #[arg(long, hide = true)]
     codex_context_hook: bool,
+    #[arg(long, hide = true)]
+    gemini_context_hook: bool,
     /// Print the source build identity without starting a host.
     #[arg(long)]
     build_id: bool,
@@ -257,6 +260,13 @@ fn main() -> Result<()> {
                 "nesvo Codex hook delivery failed; inspect this session with nesvo session explain"
             );
         }
+        return Ok(());
+    }
+    if args.gemini_context_hook {
+        if let Some(path) = std::env::var_os("NESVO_LIFECYCLE_REPORT") {
+            let _ = agent_context::receive_gemini(Path::new(&path));
+        }
+        println!("{{}}");
         return Ok(());
     }
     if let Some(report) = args.agent_context_hook {
@@ -401,6 +411,9 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
 
     if let Err(error) = worktrees::configure(&pairing_dir) {
         eprintln!("Worktree registry is unavailable: {error}");
+    }
+    if let Err(error) = gemini_adapter::prepare(&pairing_dir) {
+        eprintln!("Gemini lifecycle extension source is unavailable: {error}");
     }
     let span = trace.begin(Phase::MetadataOpen);
     let metadata = span.result(storage::MetadataStore::open(

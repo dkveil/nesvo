@@ -207,4 +207,76 @@ mod tests {
             assert!(detect(Program::Claude, p.screen()).is_none());
         }
     }
+
+    const GEMINI_065_SYNTHESIZED_SCREENS: [(&str, &str, StatusState, &str); 7] = [
+        (
+            "╭──────────────────────────────────────╮\r\n│ ?  Shell  echo fixture                │\r\n│ ╭──────────────╮                      │\r\n│ │ echo fixture │                      │\r\n│ ╰──────────────╯                      │\r\n│ Allow execution of [Shell]?           │\r\n│                                       │\r\n│ ● 1. Allow once                       │\r\n│   2. Allow for this session           │\r\n│   3. No, suggest changes (esc)        │\r\n╰──────────────────────────────────────╯\r\n ~/fixture      no sandbox      auto",
+            "gemini_permission_v",
+            StatusState::Blocked,
+            "permission",
+        ),
+        (
+            "│ ?  WriteFile  fixture.txt              │\r\n│ 1 + fixture line                       │\r\n│ Apply this change?                     │\r\n│ ● 1. Allow once                        │\r\n│   2. Allow for this session            │\r\n│   3. Modify with external editor       │\r\n│   4. No, suggest changes (esc)         │\r\n ~/fixture      no sandbox      auto",
+            "gemini_permission_v2",
+            StatusState::Blocked,
+            "permission",
+        ),
+        (
+            "│ ?  WebFetch  https://example.invalid   │\r\n│ Do you want to proceed?                │\r\n│ ● 1. Allow once                        │\r\n│   2. No, suggest changes (esc)         │\r\n ~/fixture      no sandbox      auto",
+            "gemini_permission_v2",
+            StatusState::Blocked,
+            "permission",
+        ),
+        (
+            "╭──────────────────────────────────────────────╮\r\n│ Do you trust the files in this folder?       │\r\n│ ● 1. Trust folder (fixture)                  │\r\n│   2. Trust parent folder (dev)               │\r\n│   3. Don't trust                             │\r\n╰──────────────────────────────────────────────╯",
+            "gemini_trust_v1",
+            StatusState::Blocked,
+            "folder trust",
+        ),
+        (
+            "╭──────────────────────────────────────────────────────────╮\r\n│ ? Get started                                            │\r\n│ How would you like to authenticate for this project?     │\r\n│ ● 1. Sign in with Google                                 │\r\n│   2. Use Gemini API Key                                  │\r\n│   3. Vertex AI                                           │\r\n│ (Use Enter to select)                                    │\r\n│ Terms of Services and Privacy Notice for Gemini CLI      │\r\n│ https://geminicli.com/docs/resources/tos-privacy/        │\r\n╰──────────────────────────────────────────────────────────╯",
+            "gemini_login_v1",
+            StatusState::Blocked,
+            "login",
+        ),
+        (
+            "╭──────────────────────────────────────────────────────────────────╮\r\n│ ⠋ Waiting for authentication... (Press Esc or Ctrl+C to cancel) │\r\n╰──────────────────────────────────────────────────────────────────╯",
+            "gemini_login_wait_v1",
+            StatusState::Blocked,
+            "login",
+        ),
+        (
+            "╭──────────────────────────────────────────────────────────────────────╮\r\n│ Select Model                                                         │\r\n│ ● 1. Auto                                                            │\r\n│   2. Manual                                                          │\r\n│ Remember model for future sessions: false (Press Tab to toggle)      │\r\n│ > To use a specific Gemini model on startup, use the --model flag.   │\r\n│ (Press Esc to close)                                                 │\r\n╰──────────────────────────────────────────────────────────────────────╯",
+            "gemini_model_selection_v1",
+            StatusState::Question,
+            "model selection",
+        ),
+    ];
+
+    #[test]
+    fn gemini_065_synthesized_login_model_trust_and_approval_screens_match_named_rules() {
+        for (text, id, state, reason) in GEMINI_065_SYNTHESIZED_SCREENS {
+            let mut p = vt100::Parser::new(32, 100, 0);
+            p.process(text.as_bytes());
+            let matched = detect(Program::Gemini, p.screen()).unwrap_or_else(|| panic!("{id}"));
+            assert!(matched.rule.starts_with(id), "{} for {id}", matched.rule);
+            assert_eq!((matched.state, matched.reason), (state, reason));
+            assert_eq!(matched.revision, "2026-10-21.1");
+            assert!(
+                detect(Program::Claude, p.screen()).is_none_or(|m| !m.rule.starts_with("gemini_"))
+            );
+            p.process(b"\x1b[2J\x1b[Hordinary text");
+            assert!(detect(Program::Gemini, p.screen()).is_none());
+        }
+        for partial in [
+            "The model said: Select Model is a dialog.",
+            "Allow execution of [Shell]?\r\n● 1. Allow once",
+            "How would you like to authenticate for this project?",
+            "Do you trust the files in this folder?",
+        ] {
+            let mut p = vt100::Parser::new(32, 100, 0);
+            p.process(partial.as_bytes());
+            assert!(detect(Program::Gemini, p.screen()).is_none(), "{partial}");
+        }
+    }
 }

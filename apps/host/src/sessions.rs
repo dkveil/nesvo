@@ -1371,6 +1371,13 @@ impl State {
                     .is_some_and(crate::codex_context::supported)
         })
     }
+    fn gemini_gate(&self) -> crate::gemini_adapter::Gate {
+        crate::gemini_adapter::gate(
+            self.provider_versions
+                .iter()
+                .find(|version| version.program == Program::Gemini),
+        )
+    }
 
     fn update_provider_limits(
         &mut self,
@@ -2732,6 +2739,7 @@ impl State {
                 role: spec.role,
                 harness: spec.harness == Some(true),
                 codex_hooks: self.codex_hooks_available(),
+                gemini_hooks: spec.program == Program::Gemini && self.gemini_gate().ready,
                 claude_quota_capture: spec.claude_quota_prepared.as_ref(),
                 native_grant: &grant,
                 child_tools: spec
@@ -2913,7 +2921,7 @@ impl State {
         })).collect();
         Ok(
             json!({"schemaVersion":1,"host":{"id":self.metadata.host_id,"buildId":env!("NESVO_BUILD_ID"),"version":env!("CARGO_PKG_VERSION"),"protocolVersion":2},
-            "jobTriggerListener":self.job_trigger_listener(),"programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"launchProfileSupport":crate::launch_profile::capabilities(&self.provider_versions),"eventJournal":self.event_log.as_ref().map(|log|log.health()),"sessions":sessions}),
+            "jobTriggerListener":self.job_trigger_listener(),"programs":self.launchers.capabilities(),"providerVersions":self.provider_versions,"launchProfileSupport":crate::launch_profile::capabilities(&self.provider_versions),"geminiIntegration":self.gemini_gate(),"eventJournal":self.event_log.as_ref().map(|log|log.health()),"sessions":sessions}),
         )
     }
 
@@ -3245,6 +3253,7 @@ impl State {
                         role: crate::caller::Role::Worker,
                         harness: false,
                         codex_hooks: self.codex_hooks_available(),
+                        gemini_hooks: program == Program::Gemini && self.gemini_gate().ready,
                         claude_quota_capture: None,
                         native_grant: &crate::tool_permissions::Grant::owner(&[]),
                         child_tools: &[],
@@ -3528,6 +3537,7 @@ struct SpawnIdentity<'a> {
     role: crate::caller::Role,
     harness: bool,
     codex_hooks: bool,
+    gemini_hooks: bool,
     claude_quota_capture: Option<&'a crate::claude_statusline::Prepared>,
     native_grant: &'a crate::tool_permissions::Grant,
     child_tools: &'a [String],
@@ -3573,6 +3583,11 @@ fn spawn_session(
         )?)
     } else if program == Program::Codex && identity.codex_hooks {
         Some(crate::agent_context::Tracker::install_codex(
+            &mut command,
+            &id,
+        )?)
+    } else if program == Program::Gemini && identity.gemini_hooks {
+        Some(crate::agent_context::Tracker::install_gemini(
             &mut command,
             &id,
         )?)

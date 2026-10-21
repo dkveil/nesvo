@@ -85,6 +85,22 @@ pub fn initialize(report: &Path, session_id: &str) -> Result<()> {
     }
     Ok(())
 }
+pub(crate) fn expect_provider(report: &Path, provider_session: &str) -> Result<()> {
+    ensure!(
+        !provider_session.is_empty()
+            && provider_session.len() <= 128
+            && provider_session
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)),
+        "Invalid provider identity"
+    );
+    let changed = open(report, true)?.execute(
+        "UPDATE scope SET provider_session=?1 WHERE id=1 AND provider_session IS NULL",
+        [provider_session],
+    )?;
+    ensure!(changed == 1, "Lifecycle scope is already bound");
+    Ok(())
+}
 fn open(report: &Path, writable: bool) -> Result<Connection> {
     let flags = if writable {
         OpenFlags::SQLITE_OPEN_READ_WRITE

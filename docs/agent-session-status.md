@@ -21,7 +21,7 @@ The wire contract remains compatible with older v2 clients: confirmed reports us
 - New Claude sessions: lifecycle events, with current-screen fallback. Restarting the Nesvo client alone cannot install hooks into an already running Claude process. Launch a new Claude session for hook support.
 - Existing Claude sessions: current prompt and permission-mode footer identify idle; the interrupt footer identifies work. A real cursor at the prompt is required for idle.
 - Codex 0.156.0: launch-local native lifecycle adapter plus conservative screen inference. Native hooks require the provider's user trust review; configured is separate from observed. Other/unprobed versions retain screen/protocol fallback. See the adapter boundary below.
-- Gemini: existing approval screen inference. Its BeforeAgent/AfterAgent hooks are the preferred future adapter, but require a separate launch-scoped settings implementation; no global settings are overwritten.
+- Gemini 0.65.0: launch-local lifecycle adapter through an extension the owner links once, plus versioned screen rules. Other versions and unlinked installs keep screen inference only. See the adapter boundary below.
 - Agents started manually inside a generic shell do not inherit a dedicated provider adapter.
 - Hooks disabled by user/managed settings fall back to screen inference. Unknown is deliberately retained when there is no trustworthy evidence.
 
@@ -63,6 +63,80 @@ evidence, not permission to manufacture idle or silently enable hooks.
 Sources: [official hooks guide](https://learn.chatgpt.com/docs/hooks),
 [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 Input schemas were checked against the installed release tag `rust-v0.156.0`.
+
+## Gemini native adapter boundary
+
+Gemini CLI 0.65.0 has no per-launch settings overlay. Its settings path
+overrides replace the managed system layers and are skipped unless the file
+passes the provider's ownership checks, and `GEMINI_CLI_HOME` moves login,
+trust and history together. The adapter therefore ships one extension,
+`nesvo-lifecycle`, that the owner links once. At startup the host writes its
+source to `gemini-extension/` in the private pairing directory and rewrites
+only bytes that differ from the constant definition. The host never links or
+enables it, never passes `--consent` or `-e`, and never edits Gemini settings,
+trust or approval policy. Owner step:
+`gemini extensions link <pairing>/gemini-extension`, then accept the provider's
+hook review.
+
+The extension subscribes to SessionStart, BeforeAgent, AfterAgent, BeforeTool,
+AfterTool and Notification with one constant command. It runs the helper named
+by `NESVO_GEMINI_HOOK` only when that variable is set, so other Gemini sessions
+start a shell and receive nothing. The helper reads stdin, appends to the launch
+journal named by `NESVO_LIFECYCLE_REPORT`, prints `{}` and exits 0. It never
+writes stderr, blocks, denies, retries or adds context; failures leave only the
+constant diagnostic marker. A test pipes Unicode and quoted payloads through the
+provider's own PowerShell/bash hook form to the built helper.
+
+Hooks are configured only for exactly 0.65.0 (previews and other releases are
+unsupported, with the probed version in the reason) and only while the
+extension metadata links to this host's unmodified source. Diagnostics report
+this as `geminiIntegration`: ready, version, extension state, source, reason
+and `turnIdentity: unsupported`. Configured is separate from observed: hooks
+disabled in Gemini settings, a disabled extension or strict environment
+sanitization appear as missing delivery, never as idle.
+
+Each launch passes a fresh random `--session-id` and pre-binds the journal to
+it. Callbacks from any other native session are rejected, including child
+Gemini processes that inherit the environment. Only SessionStart `clear` (the
+provider's `/clear` creates a new ID) rebinds and fences the old generation.
+
+| Native event                       | Projection                                            |
+| ---------------------------------- | ----------------------------------------------------- |
+| SessionStart `startup` or `resume` | identity and delivery only; startup can precede login |
+| SessionStart `clear`               | idle                                                  |
+| BeforeAgent, BeforeTool, AfterTool | working                                               |
+| AfterAgent                         | idle: response loop ended, never done or task success |
+| Notification `ToolPermission`      | blocked, permission                                   |
+| SessionEnd, PreCompress, model     | ignored; process exit stays authoritative             |
+
+Gemini hook input has no turn, prompt or agent ID, so turn identity is
+unsupported: no host turn, prompt receipt or settled response is derived, and
+native event names keep other providers' Stop/turn handling from consuming
+them. There is no StopFailure or Interrupt hook. Cancellation, errors and denied
+approvals keep the last state until the next event, a visible screen rule or
+process exit; after an approval, blocked remains until the next tool or agent
+event. Built-in subagents share the session, so tool events only ever mean
+working. AfterAgent precedes other hooks' retry decisions and can be followed by
+more work. Prompts, responses, tool arguments and transcripts are never stored
+or read.
+
+Screen rules (revision 2026-10-21.1) cover the 0.65.0 sign-in choice and
+authentication wait (blocked, rule reason `login`), model selection (question),
+folder trust (blocked, setup) and command, edit, fetch and MCP approvals
+(blocked, permission). Their fixtures are synthesized from strings and layout in
+the installed 0.65.0 package, not captured from a running session. No idle or
+working prompt rule is certified, so readiness stays unconfirmed until the first
+hook state.
+
+No real Gemini hook delivery has been observed yet: the provider has no login on
+this host. Live acceptance needs the owner's login and extension link, then one
+prompt with a tool approval, `/clear` and exit, compared against
+`nesvo session explain`.
+
+Sources: [hook reference](https://geminicli.com/docs/hooks/reference/),
+[extension reference](https://geminicli.com/docs/extensions/reference/). Input
+shapes, hook runner, settings loader and extension loader were checked in the
+installed 0.65.0 package.
 
 ## Program Status Protocol (F01)
 
@@ -142,10 +216,12 @@ the current screen; narrow tail/footer/cursor checks constrain the ordinary
 provider rules. Screen-derived evidence remains inference and never authorizes
 actions. `session explain` exposes the matched rule/revision/reason.
 
-The corpus includes sanitized shapes observed with Claude 2.1.303 and existing
-synthetic Codex/Gemini layouts. The Codex multi-question predicate remains a
-tested code fallback pending catalog migration. Login/model-selection/viewer
-screens and other provider versions are not certified by this initial catalog.
+The corpus includes sanitized shapes observed with Claude 2.1.303, existing
+synthetic Codex layouts and Gemini 0.65.0 login, model-selection, folder-trust
+and approval shapes synthesized from the installed package. The Codex
+multi-question predicate remains a tested code fallback pending catalog
+migration. Other providers' login/model-selection screens, viewer screens and
+other provider versions are not certified by this catalog.
 
 ## Launch and conversation correlation (F05)
 
@@ -162,6 +238,10 @@ parent status/context. Foreign-conversation events are rejected. Rebinding an
 already known conversation requires SessionStart from clear/resume/compact rather
 than a replayed startup. Context reports from a different conversation are also
 ignored. Task/attempt authorization is a later orchestration boundary.
+
+A Gemini journal is pre-bound to the fresh native session ID passed at launch;
+startup or resume callbacks from another ID are rejected and only a provider
+clear rebinds. Gemini supplies no turn identity, so none is inferred.
 
 Journal-backed Claude and Codex helpers capture the host session, launch nonce,
 optional bound provider and generation before reading stdin. The lifecycle write

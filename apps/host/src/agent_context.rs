@@ -12,6 +12,13 @@ enum Adapter {
     Claude,
     ClaudeHarness,
     Codex,
+    Gemini,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dialect {
+    Claude,
+    Codex,
+    Gemini,
 }
 pub struct Tracker(
     PathBuf,
@@ -63,9 +70,17 @@ impl Tracker {
         crate::codex_context::configure(command, &tracker.hook_report()?)?;
         Ok(tracker)
     }
+    pub fn install_gemini(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
+        let mut tracker = Self::create(Some(session_id))?;
+        tracker.1 = Adapter::Gemini;
+        let root = crate::gemini_adapter::configure(command, &tracker.hook_report()?)?;
+        crate::agent_events::expect_provider(&tracker.report(), &root)?;
+        Ok(tracker)
+    }
     pub fn adapter(&self) -> &'static str {
         match self.1 {
             Adapter::Codex => "codex-hooks-v1",
+            Adapter::Gemini => "gemini-hooks-v1",
             Adapter::Claude => "claude-hooks-v3",
             Adapter::ClaudeHarness => "claude-hooks-v4",
         }
@@ -361,8 +376,22 @@ pub fn receive(report: &Path) -> Result<()> {
 pub fn receive_codex(report: &Path) -> Result<()> {
     receive_adapter(report, std::io::stdin(), true)
 }
+pub fn receive_gemini(report: &Path) -> Result<()> {
+    receive_gemini_from(report, std::io::stdin())
+}
+pub(crate) fn receive_gemini_from(report: &Path, input: impl Read) -> Result<()> {
+    receive_reported(report, input, Dialect::Gemini)
+}
 fn receive_adapter(report: &Path, input: impl Read, codex: bool) -> Result<()> {
-    let result = receive_inner(report, input, codex);
+    let dialect = if codex {
+        Dialect::Codex
+    } else {
+        Dialect::Claude
+    };
+    receive_reported(report, input, dialect)
+}
+fn receive_reported(report: &Path, input: impl Read, dialect: Dialect) -> Result<()> {
+    let result = receive_dialect(report, input, dialect);
     let diagnostic = report.with_file_name("diagnostic.json");
     if result.is_err() {
         // Constant metadata only: serde errors can contain supplied payload text.
@@ -376,10 +405,20 @@ fn receive_adapter(report: &Path, input: impl Read, codex: bool) -> Result<()> {
 fn receive_from(report: &Path, input: impl Read) -> Result<()> {
     receive_inner(report, input, false)
 }
+#[cfg(test)]
 fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
+    let dialect = if codex {
+        Dialect::Codex
+    } else {
+        Dialect::Claude
+    };
+    receive_dialect(report, input, dialect)
+}
+fn receive_dialect(report: &Path, input: impl Read, dialect: Dialect) -> Result<()> {
+    let claude = dialect == Dialect::Claude;
     // Immutable mode does not depend on whether the current journal exists.
     let descriptor = crate::scoped_context::load(report).ok();
-    let ticket = if !codex && let Some(descriptor) = &descriptor {
+    let ticket = if claude && let Some(descriptor) = &descriptor {
         crate::scoped_context::begin(report, descriptor)
     } else {
         Ok(None)
@@ -407,7 +446,7 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
         return Ok(());
     }
     let value: Value = serde_json::from_slice(&bytes)?;
-    if !codex
+    if claude
         && descriptor
             .as_ref()
             .is_some_and(crate::scoped_context::Descriptor::journal_backed)
@@ -417,15 +456,15 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
     if is_child(&value) {
         return Ok(());
     }
-    if let Some(state) = if codex {
-        crate::codex_context::state(&value)?
-    } else {
-        lifecycle_state(&value)
+    if let Some(state) = match dialect {
+        Dialect::Claude => lifecycle_state(&value),
+        Dialect::Codex => crate::codex_context::state(&value)?,
+        Dialect::Gemini => crate::gemini_adapter::state(&value)?,
     } {
         let digest = (value["hook_event_name"] == "UserPromptSubmit")
             .then(|| value["prompt"].as_str().and_then(crate::submission::digest))
             .flatten();
-        let paste_digest = (!codex && value["hook_event_name"] == "UserPromptSubmit")
+        let paste_digest = (claude && value["hook_event_name"] == "UserPromptSubmit")
             .then(|| {
                 value["prompt"]
                     .as_str()
@@ -437,17 +476,21 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
                 report,
                 crate::agent_events::SourceEvent {
                     provider_session: value["session_id"].as_str(),
-                    provider_turn: if codex {
+                    provider_turn: if dialect == Dialect::Codex {
                         value["turn_id"].as_str()
                     } else {
                         None
                     },
                     event: value["hook_event_name"].as_str().unwrap_or_default(),
                     state,
-                    allow_rebind: matches!(
-                        value["source"].as_str(),
-                        Some("clear" | "resume" | "compact")
-                    ),
+                    allow_rebind: if dialect == Dialect::Gemini {
+                        crate::gemini_adapter::allow_rebind(&value)
+                    } else {
+                        matches!(
+                            value["source"].as_str(),
+                            Some("clear" | "resume" | "compact")
+                        )
+                    },
                     prompt_digest: digest.as_deref(),
                     paste_digest: paste_digest.as_deref(),
                 },
@@ -477,7 +520,7 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
         }
         result?;
     }
-    if !codex && let Some(context) = extract(&value) {
+    if claude && let Some(context) = extract(&value) {
         // An upgraded helper can still deliver lifecycle events to an old valid
         // journal, but an absent/invalid descriptor never grants context authority.
         let descriptor = descriptor

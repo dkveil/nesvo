@@ -87,6 +87,7 @@ impl Launcher {
             "NESVO_AGENT_CONTEXT",
             "NESVO_AGENT_SKILL",
             "NESVO_CLI",
+            "NESVO_GEMINI_HOOK",
             "NESVO_LIFECYCLE_REPORT",
         ] {
             command.env_remove(key);
