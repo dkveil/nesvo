@@ -43,7 +43,8 @@ npm run dependencies:check
 npm run export
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo nextest run --workspace --locked --profile ci   # per-push CI check; install with: cargo install cargo-nextest --locked
+cargo test --workspace --locked                       # acceptable locally
 ```
 
 From `apps/mobile`, use `npx expo install <package>` instead of npm/yarn/pnpm add for Expo/native dependencies; it resolves SDK-compatible versions. Use `npx expo-doctor` for diagnostics and `npx expo install --fix` when dependency corrections are required. Do not run Expo commands against the root tooling package.

@@ -80,9 +80,10 @@ the native scenario does not invent an observable pre-stdin helper barrier.
 
 ### Native repository search metadata
 
-F31 repository metadata uses a separate Windows process-conformance gate. Run
-only its exact case; the same host test target also contains inert, opt-in helper
-entries intended solely for its contained child processes.
+F31 repository metadata uses a separate Windows process-conformance check that
+`Native nightly` runs. Run only its exact case; the same host test target also
+contains inert, opt-in helper entries intended solely for its contained child
+processes.
 
 ```text
 cargo test --package nesvo-host --bin nesvo-host --locked git_repository::helper::tests::windows_waiting_helper_cancellation_contains_wrapper_descendants_before_releasing_capacity -- --ignored --exact --test-threads=1
@@ -119,7 +120,9 @@ does not identify the scheduling or I/O cause of a startup delay.
 After building the native host/client, the ignored `mcp_host` integration target
 uses the official MCP SDK, actual private hosts and controlled Node PTY workers.
 It does not call a model or change user provider configuration. Run scenarios
-serially; their private fixture teardown owns all created processes.
+serially; their private fixture teardown owns all created processes. The
+`Native nightly` workflow runs the ignored scenarios daily and on manual
+dispatch; the commands below run them locally.
 
 ```powershell
 cargo build --workspace --locked

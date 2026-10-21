@@ -36,8 +36,10 @@ npm run test:architecture
 npm run test:client
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo nextest run --workspace --locked --profile ci
 ```
+
+`cargo nextest run` is the per-push CI check for Rust tests; install it with `cargo install cargo-nextest --locked`. `cargo test --workspace --locked` remains acceptable locally.
 
 Use the repository's Prettier and import-sort configuration; `.editorconfig` sets whitespace and line endings. `arrowParens: "avoid"` applies to JavaScript/TypeScript, while Rustfmt formats Rust. Avoid unrelated dependency changes or broad formatting rewrites.
 
