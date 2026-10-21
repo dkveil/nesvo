@@ -413,7 +413,11 @@ step leads its own process group, which the host keeps unreaped until it has
 signalled the group. When a step exits, times out or is cancelled the host
 terminates the whole job or group, so background processes a step leaves behind
 stop with it. On Unix a process that moves itself to another process group or
-session escapes this.
+session escapes this. The `checks` of a `[[workflow.task]]` run under the same
+containment, step slots and busy fence when `run validate --host-checks` asks for
+them; they are covered by the workflow template digest and its owner approval, not by
+this setup digest, and still refuse `worktree_setup_unapproved` once this worktree's
+setup digest is revoked.
 
 `archive` refuses while the session runs (`session_running`) and refuses
 `worktree_unsaved` when the worktree has uncommitted or untracked files,
@@ -515,6 +519,14 @@ settled, idle worker for a new attempt and returns `delivery.reuse`; an unsafe
 session is refused with `session_busy`, `session_foreign`, `identity_mismatch`,
 `attempt_unsettled` or `resume_pending` and nothing is queued. See
 [guarded task delivery](harness-task-delivery.md#reusing-the-tasks-own-worker-session).
+
+`run validate ... --host-checks` first runs the task's approved `nesvo.toml` checks in
+the worker's host-created worktree and records their exit codes, durations and
+bounded output tails as a `hostChecks` host attestation; a failed check keeps the
+attempt `failed`. It needs `workflowHostChecks:true`, waits up to 3630 seconds for the
+reply and refuses `host_checks_unavailable`, `host_checks_missing`,
+`workflow_templates_unapproved` or `worktree_setup_unapproved` before running anything.
+See [host-run checks](harness-workflows.md#host-run-checks).
 
 `run inbox read|send|ack` adds scoped durable messages when `workflowInbox` is
 advertised. Read/ACK never send terminal input or validate tasks. See the

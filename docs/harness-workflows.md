@@ -90,6 +90,7 @@ program = "claude"             # claude | codex | gemini
 workspace = "worktree"         # shared | worktree
 harness = true                 # optional
 allowed_nesvo_tools = ["nesvo_get_current_task", "nesvo_report_task_result"]
+checks = ["cargo test --locked"] # optional host-run checks, see below
 
 [[workflow.task]]
 key = "review"
@@ -101,14 +102,16 @@ workspace = "shared"
 
 The same strict subset parser as the worktree table reads `HEAD:nesvo.toml`
 (never uncommitted edits); booleans are accepted for `harness`. At most 32
-templates and 64 tasks each; instructions and goals are 8192 bytes. Unknown keys
-or tables, duplicate names or keys, missing, self or duplicate dependencies and
-cycles are refused with `workflow_templates_invalid` and a line number. The worktree
-setup ignores `[[workflow]]` entries and keeps its own digest.
+templates and 64 tasks each; instructions and goals are 8192 bytes. A task declares
+at most 8 `checks`, each a nonempty single-line command of at most 256 bytes for the
+platform shell. Unknown keys or tables, duplicate names or keys, missing, self or
+duplicate dependencies and cycles are refused with `workflow_templates_invalid` and a
+line number. The worktree setup ignores `[[workflow]]` entries and keeps its own digest.
 
 The template digest is the SHA-256 of the normalized templates, so formatting and
-comments do not change it. Approval follows the worktree setup flow: it is an owner
-CLI act stored in `workflow-templates.json` next to the host pairing data, and a
+comments do not change it; declared `checks` are part of it, a template without
+checks keeps its earlier digest. Approval follows the worktree setup flow: it is an
+owner CLI act stored in `workflow-templates.json` next to the host pairing data, and a
 changed template needs a new approval.
 
 ```powershell
@@ -138,7 +141,10 @@ the repository root as `cwd`. `profiles` maps every host task ID to that profile
 ready for `run launch` or `run executor start` on a draft or active run. Repeating
 the same key replays each step; a changed template under an old key fails with
 `idempotency_conflict` at the first changed step, and each step can be recovered with
-`run mutation --key KEY/STEP`. The start key is 1-96 bytes.
+`run mutation --key KEY/STEP`. The start key is 1-96 bytes. When the template declares
+`checks`, start also records the run ID with the repository, template name, approved
+digest and each task's checks in `workflow-templates.json` (newest 1024 runs); host
+checks later run those recorded commands, never a re-read or agent-edited file.
 
 MCP exposes `nesvo_list_workflow_templates` and `nesvo_start_workflow_template`
 with the same owner-only semantics; there is no approval or revocation tool. The
@@ -187,8 +193,9 @@ Only an owner/coordinator can validate the current reported attempt:
 --json`. Validation is `{passed,summary,checks}` within 2 KiB, with a 1024-byte
 summary. Success requires a succeeded report and nonempty passed validation
 checks. The host records explicit `ownerAttestation|coordinatorAttestation`, not
-execution of those checks. Workers cannot validate themselves. Host-run checks
-and revision-bound evidence remain F35 work.
+execution of those checks. Workers cannot validate themselves. Add `--host-checks`
+to have the host run the task's approved checks first (see below); revision-bound
+evidence remains F35 work.
 
 Attempt state: `assigned → reported → succeeded|failed`. A reported success
 still has `taskResult:null` until accepted. Accepted results release dependents;
@@ -201,6 +208,82 @@ Additional MCP tools: `nesvo_activate_run`, `nesvo_assign_task`,
 `nesvo_get_task_attempts`, `nesvo_get_current_task`, `nesvo_report_task_result`,
 `nesvo_validate_task_result`. Task history pages contain four attempts and a
 `nextOffset`; context replies include only the bound task/current attempt.
+
+## Host-run checks
+
+```powershell
+nesvo run validate RUN_ID ATTEMPT_ID --key KEY --revision REV --file VALIDATION.json --host-checks --json
+```
+
+`workflowHostChecks:true` advertises this. Before the validation transaction, the
+host runs the `checks` recorded for the attempt's task when its run was started from
+an approved template, inside the worker's host-created worktree, through the same
+step containment as [worktree setup and run](harness-cli.md#worktree-setup-run-and-archive):
+platform shell, no `NESVO_*`/`POCKET_*` variables, a kill-on-close job on Windows and
+a process group on Unix, one of the four shared step slots and the worktree's busy
+fence (a concurrent setup, run or archive returns `busy`; `nesvo worktree cancel
+SESSION_ID` cancels the checks). All checks share the approved setup `timeout_s`
+(600 s without a declared setup). Checks run in order; after a timeout or
+cancellation the remaining ones are `skipped`. Full output goes to
+`.nesvo/checks.log` in the worktree (64 KiB).
+
+The validation then commits `attempt.validation.hostChecks`, also returned as the
+reply's `hostChecks`:
+
+```json
+{
+  "source": "hostAttestation",
+  "attemptId": "ATTEMPT_ID",
+  "sessionId": "WORKER_ID",
+  "taskKey": "implement",
+  "template": "review",
+  "digest": "TEMPLATE_DIGEST",
+  "worktree": "C:/worktrees/WORKER_ID",
+  "log": "C:/worktrees/WORKER_ID/.nesvo/checks.log",
+  "passed": false,
+  "startedAt": 1761120000000,
+  "finishedAt": 1761120004200,
+  "checks": [
+    {
+      "index": 0,
+      "command": "cargo test --locked",
+      "outcome": "failed",
+      "exitCode": 101,
+      "durationMs": 4100,
+      "tail": "test result: FAILED. 1 failed\n",
+      "tailTruncated": true
+    }
+  ]
+}
+```
+
+Check outcomes are `passed|failed|timedOut|cancelled|skipped`; `exitCode` is null when
+no exit was observed. `tail` is the last 512 bytes of the check's output, lossy
+UTF-8 with carriage returns removed and other control characters shown as `?`; it
+never exceeds that bound. This attestation is separate from the worker's claimed
+`result.checks` and from the owner's or coordinator's own `checks`. With host checks
+the caller's `checks` may be empty. `passed:true` becomes `succeeded` only when every
+host check passed; otherwise the attempt is `failed`, the evidence keeps the caller's
+`passed:true` and adds `refusedBy:"hostChecks"`, and dependents stay blocked.
+
+Refusals happen before any check runs and record nothing: `host_checks_unavailable`
+when the worker has no host-created worktree or the run was not started from a
+template of that repository that declares checks, `host_checks_missing` when the
+task declares none, `workflow_templates_unapproved` when the recorded template digest
+is no longer approved, `worktree_setup_unapproved` when the worktree's recorded setup
+digest was revoked or no longer matches its saved config, `worktree_not_prepared`
+before a passed setup. Approval stays the owner CLI act described above. A repeated
+key replays the committed reply without running the checks again; a refused or lost
+transaction after the checks ran records nothing, so repeat the same key. A
+validation request with `hostChecks:true` that bypasses this runner, or whose
+attestation names another attempt or worker, fails with `host_checks_unavailable`;
+clients cannot supply an attestation. The checks run approved command strings, not
+reviewed scripts: an agent can change what `cargo test` or `npm run lint` executes
+inside its worktree.
+
+MCP parity: `nesvo_validate_task_result` accepts `hostChecks:true` with the same
+semantics and key namespace as the CLI flag. Older hosts fail the capability check
+instead of recording an attestation-only validation.
 
 ## Wire and persistence
 
@@ -226,7 +309,7 @@ Actions: `create {key,spec:{title,goal,coordinatorSessionId?}}`, `list {offset?}
 `assign {key,runId,taskId,sessionId,expectedRevision}`,
 `task {runId,taskId,offset?}`, `context {}`,
 `report {key,attemptId,result}`,
-`validate {key,runId,attemptId,expectedRevision,validation}`.
+`validate {key,runId,attemptId,expectedRevision,validation,hostChecks?}`.
 Replies have `type:"workflow"` and `{run,tasks}`, `{runs,nextOffset}`,
 `{run,task,attempt}`, or `{run,task,attempts,nextOffset}`;
 mutations add the committed domain `cursor`. `requestId` is not an idempotency key.
@@ -281,7 +364,10 @@ coordinator/worker capabilities. CLI integration covers literal Unicode files,
 edits, malformed-file rejection and unchanged native sessions. These tests make
 no model calls. Controlled native workers also discover/report their own task
 through the actual CLI; independent coordinator validation releases a reviewer
-task. Reopen/late-result/history tests cover retry fences. This does not pass
+task. Reopen/late-result/history tests cover retry fences. Host-check tests run
+process-fixture checks that pass, fail and time out in a worktree, refuse unapproved
+or changed digests and tasks without checks, keep tails within their bound and fail
+closed without a host attestation. This does not pass
 the full stage-3 gate: actual provider escalation, decision UI, coordinator adoption
 and unknown-process recovery remain open. [Opt-in host execution](harness-executor.md)
 now supplies automatic DAG selection with explicit native profiles and retained

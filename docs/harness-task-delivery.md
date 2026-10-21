@@ -146,3 +146,21 @@ Controlled official-SDK tests exercise real PTYs, CLI/MCP key parity, literal ta
 delivery, worker reporting, human release without resume, working blockers,
 cancellation and expiry. They call no model and do not prove an original
 provider's readiness/hook integration. No new dependency or UI change is required.
+
+## From sent instruction to validated result
+
+`sent` proves the instruction reached the worker, not that the work is done. The
+worker reports its own claimed result; acceptance stays an owner/coordinator
+validation. For a task started from an approved template that declares `checks`
+and runs in a host-created worktree, validate with host checks:
+
+```powershell
+nesvo run validate RUN_ID ATTEMPT_ID --key validate-1 --revision RUN_REV --file VALIDATION.json --host-checks --json
+```
+
+The host runs the recorded commands in that worktree under the worktree step
+containment and commits a `hostChecks` attestation (exit code, duration and bounded
+output tail per check) next to the caller's validation. A failed, timed-out or
+cancelled check keeps the attempt `failed` even when `VALIDATION.json` says
+`passed:true`. Delivery never runs checks and checks never send input; see
+[host-run checks](harness-workflows.md#host-run-checks).

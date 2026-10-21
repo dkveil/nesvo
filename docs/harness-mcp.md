@@ -144,6 +144,14 @@ commands. Instruction version 2 documents the recovery namespaces, result shape,
 attempt fences and human priority. Older live launches keep their original
 instruction snapshot; they are not silently reconfigured.
 
+`nesvo_validate_task_result` takes an optional `hostChecks:true` when the host
+advertises `workflowHostChecks`. The host then runs the task's approved
+`nesvo.toml` checks in the worker's host-created worktree before the validation
+transaction and commits a `hostChecks` attestation (exit code, duration, bounded
+output tail per check) distinct from the worker's claimed result; a failed check
+refuses success. It adds no tool, and the tool count is unchanged. Callers cannot
+supply the attestation. See [host-run checks](harness-workflows.md#host-run-checks).
+
 `workflowInbox` adds `nesvo_read_inbox`, `nesvo_send_message` and
 `nesvo_ack_messages`. These are durable, scope-checked metadata operations.
 Instruction version 3 covers pending-read recovery and exact-ID ACK, separate
