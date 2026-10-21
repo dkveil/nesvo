@@ -26,6 +26,33 @@ This document separates automated checks from physical-device testing. Unchecked
 
 CI builds and tests the Rust programs natively on Windows, macOS and Linux. Check the relevant commit's workflow result before claiming a particular platform passed. A native CI build does not verify every interactive terminal emulator or a physical phone.
 
+### Declared statusline process conformance
+
+Two declared-display tests start real system processes and check exact input,
+output, exit status and pipe behavior within short deadlines. CI runs them
+explicitly and serially after parallel workspace units, before the native SDK
+scenarios. They are ignored by the default unit run; their assertions, deadlines
+and owned cleanup still apply in the required conformance steps.
+
+On every native CI platform:
+
+```text
+cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::capture_failure_does_not_change_input_stdout_or_display_exit -- --ignored --exact --test-threads=1
+```
+
+On Windows, also run the generated shell command and raw standard-handle check:
+
+```text
+cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::generated_windows_command_inherits_raw_standard_handles -- --ignored --exact --test-threads=1
+```
+
+Use these exact filters rather than selecting all ignored host tests: the host
+target also contains opt-in provider probes and subprocess-holder entry points.
+These controlled conformance checks invoke no model or authentication command.
+They verify process and byte behavior, not performance under CPU saturation. The
+serial `mcp_host` capture scenario separately checks the actual production helper,
+root callback correlation and cleanup of a hanging declared display.
+
 ### Native job execution timeout scenarios
 
 After building the native host/client, the ignored `mcp_host` integration target

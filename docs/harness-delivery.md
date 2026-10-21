@@ -3224,3 +3224,20 @@ of MRU and its original equal-urgency history behavior. Windows workspace checks
 pass 698 units (204 TUI, 491 host, 3 wire), formatting, warnings-denied all-target
 Clippy and locked build. Serial native conformance checks pass separately. Current
 publication CI and interactive/platform gates remain separate evidence.
+
+### Declared-display CI conformance repair
+
+Exact publication `fb047b7` passed app, browser and Linux CI, but failed the macOS
+malformed-profile cleanup assertion and two parallel Windows process/pipe tests.
+The malformed-reader fixture now replaces its shell with the single sleeping
+leader and requires the exact framing refusal before asserting confirmed permit
+release. It no longer accepts an unrelated cleanup error as proof of release;
+production cleanup and conservative capacity retention are unchanged.
+
+Two short-deadline process conformance cases now run as mandatory exact serial CI
+steps after workspace units, with the same assertions, bounds and cleanup. On
+Windows they pass locally in 0.14 and 0.53 seconds after 698 workspace units.
+The SDK capture case also passes in the current serial cohort. This does not
+prove runner contention caused the earlier failures or establish behavior under
+CPU saturation. No deadline was relaxed and no platform result is inferred from
+Windows. See [the exact required commands](testing.md#declared-statusline-process-conformance).

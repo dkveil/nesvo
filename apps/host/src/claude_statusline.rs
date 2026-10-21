@@ -1024,13 +1024,21 @@ mod tests {
         #[cfg(not(windows))]
         let command = {
             let mut command = tokio::process::Command::new("/bin/sh");
-            command.args(["-c", "printf 'bad!'; sleep 30"]);
+            // Match the real profile reader's single-process scope. Replacing
+            // the shell avoids a descendant: this test requires malformed-frame
+            // refusal after confirmed cleanup of the exact reader.
+            command.args(["-c", "printf 'bad!'; exec /bin/sleep 30"]);
             command
         };
-        assert!(read_profile(command, &executable(), slot).await.is_err());
+        let error = match read_profile(command, &executable(), slot).await {
+            Ok(_) => panic!("Malformed profile frame was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.to_string(), "Profile response exceeds its bound");
         assert_eq!(slots.available_permits(), 1);
     }
     #[tokio::test]
+    #[ignore = "serial native process conformance; explicitly run by CI"]
     async fn capture_failure_does_not_change_input_stdout_or_display_exit() {
         let report = std::env::temp_dir()
             .join(format!(
@@ -1066,6 +1074,7 @@ mod tests {
     }
     #[cfg(windows)]
     #[tokio::test]
+    #[ignore = "serial native process conformance; explicitly run by Windows CI"]
     async fn generated_windows_command_inherits_raw_standard_handles() {
         let executable = PathBuf::from(crate::command_scope::system_root().unwrap())
             .join("System32")
