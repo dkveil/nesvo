@@ -524,6 +524,7 @@ pub struct ReviewTab {
     pub status: Option<Status>,
     source: Value,
     opening: Option<String>,
+    expired_open: Option<String>,
     open_pending: Option<Value>,
     data_key: Option<DataKey>,
     requested_key: Option<DataKey>,
@@ -560,6 +561,7 @@ impl ReviewTab {
             status: None,
             source,
             opening: None,
+            expired_open: None,
             open_pending: None,
             data_key: None,
             requested_key: None,
@@ -1197,7 +1199,8 @@ pub fn tick(app: &mut App) -> Vec<Value> {
             GIT_TIMEOUT
         };
         if tab.in_flight() && tab.sent_at.is_some_and(|at| now.duration_since(at) > limit) {
-            if tab.opening.take().is_some() {
+            if let Some(request) = tab.opening.take() {
+                tab.expired_open = Some(request);
                 tab.error = Some("The host did not finish opening this review; r retries.".into());
             }
             tab.diff_request = None;
@@ -1294,10 +1297,9 @@ fn opened(app: &mut App, event: &Value) {
     }
     let request = event["requestId"].as_str();
     let by_request = request.and_then(|id| {
-        app.reviews
-            .tabs
-            .iter()
-            .position(|tab| tab.opening.as_deref() == Some(id))
+        app.reviews.tabs.iter().position(|tab| {
+            tab.opening.as_deref() == Some(id) || tab.expired_open.as_deref() == Some(id)
+        })
     });
     let by_id = app.reviews.by_id(&opened.review_id);
     let index = match (by_request, by_id) {
@@ -1327,6 +1329,7 @@ fn opened(app: &mut App, event: &Value) {
     tab.pull_url = opened.source["url"].as_str().map(str::to_owned);
     tab.review_id = Some(opened.review_id.clone());
     tab.opening = None;
+    tab.expired_open = None;
     tab.open_pending = None;
     tab.stage = None;
     tab.error = None;
@@ -2023,6 +2026,33 @@ mod tests {
             longest_increasing(&[(0, 2), (1, 0), (2, 1)]),
             vec![(1, 0), (2, 1)]
         );
+    }
+
+    #[test]
+    fn review_late_opened_reply_for_a_timed_out_request_reuses_its_tab() {
+        let mut app = App::new(4);
+        app.event(json!({"type":"capabilities","workspace":"/w","gitDiff":true,"reviews":true,"programs":[]}))
+            .unwrap();
+        let url = "https://github.com/o/r/pull/5";
+        let open = open(&mut app, Source::Pull(url.into()));
+        let request = open[0]["requestId"].clone();
+        let expired = Instant::now()
+            .checked_sub(OPEN_TIMEOUT + Duration::from_secs(1))
+            .unwrap();
+        app.reviews.tabs[0].sent_at = Some(expired);
+        tick(&mut app);
+        assert!(!app.reviews.tabs[0].is_opening() && app.reviews.tabs[0].error.is_some());
+        let commands = app
+            .event(json!({"type":"reviewOpened","requestId":request,"reviewId":"pull-o-r-5",
+                "directory":"/cfg/o-r-5","source":{"kind":"pull","url":url,"owner":"o","repo":"r",
+                "number":5,"title":"Fix","state":"OPEN","headRef":"f","baseRef":"main","headOid":"abc"},
+                "base":null,"head":{"ref":"f","oid":"abc"},"scope":"unstaged","revision":"x","checks":null}))
+            .unwrap();
+        assert_eq!(app.reviews.tabs.len(), 1);
+        let tab = &app.reviews.tabs[0];
+        assert_eq!(tab.review_id.as_deref(), Some("pull-o-r-5"));
+        assert!(tab.error.is_none() && tab.expired_open.is_none());
+        assert_eq!(commands[0]["type"], "getDiff");
     }
 
     #[test]

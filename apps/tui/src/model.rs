@@ -1202,6 +1202,9 @@ impl App {
                 }
             }
             "capabilities" => {
+                if event["reviews"] == true && self.host_features["reviews"] != true {
+                    commands.push(json!({"type":"watchReviews"}));
+                }
                 self.host_features = event.clone();
                 self.capabilities = Some(serde_json::from_value(event)?);
             }
@@ -2550,6 +2553,24 @@ mod review_tests {
         let open = review_session::open(app, Source::Local("s".into()));
         let commands = app.event(opened(Some(&open[0]), "local-1", scope)).unwrap();
         commands[0].clone()
+    }
+
+    #[test]
+    fn review_model_opts_into_review_broadcasts_once_when_the_host_advertises_reviews() {
+        let capabilities = |reviews: bool| json!({"type":"capabilities","workspace":"/w","gitDiff":true,"reviews":reviews,"programs":[]});
+        let mut legacy = App::new(3);
+        assert!(legacy.event(capabilities(false)).unwrap().is_empty());
+        let mut app = App::new(3);
+        assert_eq!(
+            app.event(capabilities(true)).unwrap(),
+            [json!({"type":"watchReviews"})]
+        );
+        assert!(app.event(capabilities(true)).unwrap().is_empty());
+        assert!(
+            app.event(json!({"type":"reviewsWatched"}))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

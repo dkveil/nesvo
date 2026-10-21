@@ -18,6 +18,7 @@ const MARKER_RESERVE: usize = 160;
 pub const DEFAULT_PREFIX: &str = "Please address these review comments.";
 const EMPTY_TEXT: &str = "Write something before saving the comment.";
 const FULL_STORE: &str = "Review notes are limited to 64 KiB; shorten or delete a comment.";
+const INVALID_ANCHOR: &str = "That comment location is not valid for this review.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -117,6 +118,9 @@ fn normalized_text(text: &str) -> Result<String, &'static str> {
 
 impl Comments {
     pub fn add(&mut self, anchor: Anchor, text: &str) -> Result<u64, &'static str> {
+        if !anchor.valid() {
+            return Err(INVALID_ANCHOR);
+        }
         let text = normalized_text(text)?;
         let id = self.next_id.max(1);
         let before = self.clone();
@@ -384,6 +388,18 @@ mod tests {
             notes.add(anchor("a.rs", 3, 3, "x"), "  \n "),
             Err(EMPTY_TEXT)
         );
+        for invalid in [
+            anchor("", 1, 1, "x"),
+            anchor("a.rs", 4, 3, "x"),
+            anchor("a\u{1b}.rs", 1, 1, "x"),
+            Anchor {
+                revision: String::new(),
+                ..anchor("a.rs", 1, 1, "x")
+            },
+        ] {
+            assert_eq!(notes.add(invalid, "Text"), Err(INVALID_ANCHOR));
+        }
+        assert!(notes.comments.is_empty());
         let second = notes.add(anchor("b.rs", 1, 2, "y"), "Second").unwrap();
         let first = notes.add(anchor("a.rs", 9, 9, "z"), "First\u{7}").unwrap();
         assert_eq!(notes.comments[0].id, first);
