@@ -1,10 +1,14 @@
 /** Test-only original-process substitute. No user configuration or provider is loaded. */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { chmod, copyFile, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import WebSocket from 'ws';
+
+import { decodeFrame, encodeFrame } from '../apps/mobile/src/shared/api/host/wire';
 
 const exec = promisify(execFile);
 const samePath = (left: string, right: string): boolean =>
@@ -18,6 +22,133 @@ export type HostSample = {
   children: number;
   ownedRoots: number;
 };
+
+const observerCountKeys = [
+  'scopePolls',
+  'databaseOpenAttempts',
+  'databaseOpens',
+  'readTransactionAttempts',
+  'readTransactions',
+  'lifecycleSchemaProbes',
+  'quotaTableProbes',
+  'quotaRows',
+  'quotaDecodes',
+  'lifecycleEventRows',
+  'lifecycleReadFailures',
+  'quotaReadFailures',
+  'blockingTaskFailures',
+] as const;
+type ObserverCounts = Record<(typeof observerCountKeys)[number], number>;
+export type ObserverSnapshot = { sampledAtElapsedMs: number; counts: ObserverCounts };
+
+function observerSnapshot(value: unknown): ObserverSnapshot {
+  assert.ok(
+    value && typeof value === 'object' && !Array.isArray(value),
+    'Observer counters missing',
+  );
+  const snapshot = value as Record<string, unknown>;
+  assert.ok(
+    Number.isSafeInteger(snapshot.sampledAtElapsedMs) && Number(snapshot.sampledAtElapsedMs) >= 0,
+  );
+  assert.ok(
+    snapshot.counts && typeof snapshot.counts === 'object' && !Array.isArray(snapshot.counts),
+  );
+  const counts = snapshot.counts as Record<string, unknown>;
+  assert.ok(Object.keys(counts).length === observerCountKeys.length);
+  const selected = {} as ObserverCounts;
+  for (const key of observerCountKeys) {
+    assert.ok(
+      Number.isSafeInteger(counts[key]) && Number(counts[key]) >= 0,
+      'Invalid observer counter',
+    );
+    selected[key] = Number(counts[key]);
+  }
+  return { sampledAtElapsedMs: Number(snapshot.sampledAtElapsedMs), counts: selected };
+}
+
+/** A temporary owner connection, closed before resolving; only numeric fields escape. */
+export async function readObserverSnapshot(
+  url: string,
+  secret: Uint8Array,
+): Promise<ObserverSnapshot> {
+  return new Promise<ObserverSnapshot>((done, reject) => {
+    const socket = new WebSocket(url);
+    let challenge = '';
+    let outgoing = 0;
+    let incoming = 0;
+    let settled = false;
+    let result: ObserverSnapshot | undefined;
+    const finish = (snapshot?: ObserverSnapshot): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.terminate();
+      if (snapshot) done(snapshot);
+      else reject(new Error('Observer diagnostics request failed'));
+    };
+    const timer = setTimeout(() => finish(), 5000);
+    const send = (command: unknown): void => {
+      socket.send(
+        encodeFrame(command, secret, challenge, 'client-to-host', ++outgoing, randomBytes),
+      );
+    };
+    socket.on('error', () => finish());
+    socket.on('close', () => finish(result));
+    socket.on('message', data => {
+      try {
+        if (!challenge) {
+          const envelope = JSON.parse(data.toString()) as { challenge?: unknown };
+          assert.ok(
+            typeof envelope.challenge === 'string' && /^[a-f0-9]{64}$/.test(envelope.challenge),
+          );
+          challenge = envelope.challenge;
+          send({ type: 'auth', clientNonce: randomBytes(32).toString('hex') });
+          return;
+        }
+        const event = decodeFrame(
+          data.toString(),
+          secret,
+          challenge,
+          'host-to-client',
+          ++incoming,
+        ) as Record<string, unknown>;
+        if (event.type === 'error') throw new Error('Observer diagnostics refused');
+        if (event.type === 'connected')
+          send({ type: 'getDiagnostics', requestId: 'observer-counts' });
+        if (event.type === 'diagnostics' && event.requestId === 'observer-counts') {
+          const report = event.report as Record<string, unknown>;
+          result = observerSnapshot(report.lifecycleObserver);
+          socket.close();
+        }
+      } catch {
+        finish();
+      }
+    });
+  });
+}
+
+export function observerInterval(before: ObserverSnapshot, after: ObserverSnapshot) {
+  assert.ok(after.sampledAtElapsedMs > before.sampledAtElapsedMs);
+  const delta = {} as ObserverCounts;
+  for (const key of observerCountKeys) {
+    assert.ok(after.counts[key] >= before.counts[key], 'Observer counters must be monotonic');
+    delta[key] = after.counts[key] - before.counts[key];
+  }
+  assert.ok(delta.scopePolls > 0 && delta.databaseOpens > 0 && delta.quotaRows > 0);
+  assert.equal(delta.lifecycleReadFailures, 0, 'Lifecycle reads remain healthy');
+  assert.equal(delta.quotaReadFailures, 0, 'Quota reads remain healthy');
+  assert.equal(delta.blockingTaskFailures, 0, 'Observer tasks remain healthy');
+  return {
+    source: 'ownerDiagnostics',
+    elapsedSeconds: (after.sampledAtElapsedMs - before.sampledAtElapsedMs) / 1000,
+    includesCpuInterval: true,
+    includesPreDisconnectStabilizationSeconds: 3,
+    includesConnectionOverhead: true,
+    before,
+    after,
+    delta,
+  };
+}
 
 export async function removeOwnedProbe(root: string): Promise<void> {
   const canonical = await realpath(root);

@@ -7,6 +7,62 @@ use std::{path::Path, time::Duration};
 
 const RETENTION: u64 = 1024;
 const BATCH: u64 = 256;
+
+/// Aggregate observer work only. No launch identity or stored content is retained.
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReadCounts {
+    pub scope_polls: u64,
+    pub database_open_attempts: u64,
+    pub database_opens: u64,
+    pub read_transaction_attempts: u64,
+    pub read_transactions: u64,
+    pub lifecycle_schema_probes: u64,
+    pub quota_table_probes: u64,
+    pub quota_rows: u64,
+    pub quota_decodes: u64,
+    pub lifecycle_event_rows: u64,
+    pub lifecycle_read_failures: u64,
+    pub quota_read_failures: u64,
+    pub blocking_task_failures: u64,
+}
+
+impl ReadCounts {
+    pub fn accumulate(&mut self, other: Self) {
+        self.scope_polls = self.scope_polls.saturating_add(other.scope_polls);
+        self.database_open_attempts = self
+            .database_open_attempts
+            .saturating_add(other.database_open_attempts);
+        self.database_opens = self.database_opens.saturating_add(other.database_opens);
+        self.read_transaction_attempts = self
+            .read_transaction_attempts
+            .saturating_add(other.read_transaction_attempts);
+        self.read_transactions = self
+            .read_transactions
+            .saturating_add(other.read_transactions);
+        self.lifecycle_schema_probes = self
+            .lifecycle_schema_probes
+            .saturating_add(other.lifecycle_schema_probes);
+        self.quota_table_probes = self
+            .quota_table_probes
+            .saturating_add(other.quota_table_probes);
+        self.quota_rows = self.quota_rows.saturating_add(other.quota_rows);
+        self.quota_decodes = self.quota_decodes.saturating_add(other.quota_decodes);
+        self.lifecycle_event_rows = self
+            .lifecycle_event_rows
+            .saturating_add(other.lifecycle_event_rows);
+        self.lifecycle_read_failures = self
+            .lifecycle_read_failures
+            .saturating_add(other.lifecycle_read_failures);
+        self.quota_read_failures = self
+            .quota_read_failures
+            .saturating_add(other.quota_read_failures);
+        self.blocking_task_failures = self
+            .blocking_task_failures
+            .saturating_add(other.blocking_task_failures);
+    }
+}
+
 fn database(report: &Path) -> std::path::PathBuf {
     report.with_file_name("events.sqlite3")
 }
@@ -316,12 +372,37 @@ pub(crate) fn append_root_quota(
     Ok(changed == 1)
 }
 
+#[cfg(test)]
 pub(crate) fn read_root_quota(
     report: &Path,
     expected_session: &str,
 ) -> Result<Option<(RootQuotaTicket, crate::claude_quota::StoredSnapshot)>> {
+    read_root_quota_counted(report, expected_session, &mut ReadCounts::default())
+}
+
+pub(crate) fn read_root_quota_counted(
+    report: &Path,
+    expected_session: &str,
+    counts: &mut ReadCounts,
+) -> Result<Option<(RootQuotaTicket, crate::claude_quota::StoredSnapshot)>> {
+    let result = read_root_quota_inner(report, expected_session, counts);
+    if result.is_err() {
+        counts.quota_read_failures = counts.quota_read_failures.saturating_add(1);
+    }
+    result
+}
+
+fn read_root_quota_inner(
+    report: &Path,
+    expected_session: &str,
+    counts: &mut ReadCounts,
+) -> Result<Option<(RootQuotaTicket, crate::claude_quota::StoredSnapshot)>> {
+    counts.database_open_attempts = counts.database_open_attempts.saturating_add(1);
     let mut connection = open(report, false)?;
+    counts.database_opens = counts.database_opens.saturating_add(1);
+    counts.read_transaction_attempts = counts.read_transaction_attempts.saturating_add(1);
     let transaction = connection.transaction()?;
+    counts.read_transactions = counts.read_transactions.saturating_add(1);
     let (host_session_id, launch_id, provider_session_id, generation) = quota_scope(&transaction)?;
     ensure!(
         host_session_id == expected_session,
@@ -330,6 +411,7 @@ pub(crate) fn read_root_quota(
     let Some(provider_session_id) = provider_session_id else {
         return Ok(None);
     };
+    counts.quota_table_probes = counts.quota_table_probes.saturating_add(1);
     let table_exists: bool = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='root_quota')",
         [],
@@ -349,7 +431,9 @@ pub(crate) fn read_root_quota(
     let Some((sequence, encoded)) = saved else {
         return Ok(None);
     };
+    counts.quota_rows = counts.quota_rows.saturating_add(1);
     ensure!(encoded.len() <= 2048, "Invalid stored quota snapshot");
+    counts.quota_decodes = counts.quota_decodes.saturating_add(1);
     let snapshot: crate::claude_quota::StoredSnapshot = serde_json::from_str(&encoded)
         .map_err(|_| anyhow::anyhow!("Invalid stored quota snapshot"))?;
     snapshot.validate()?;
@@ -396,12 +480,43 @@ fn unsigned(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
     u64::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(index, value))
 }
 pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> {
+    read_counted(report, expected_session, after, &mut ReadCounts::default())
+}
+
+pub(crate) fn read_counted(
+    report: &Path,
+    expected_session: &str,
+    after: u64,
+    counts: &mut ReadCounts,
+) -> Result<Batch> {
+    let result = read_inner(report, expected_session, after, counts);
+    if result.is_err() {
+        counts.lifecycle_read_failures = counts.lifecycle_read_failures.saturating_add(1);
+    }
+    result
+}
+
+fn read_inner(
+    report: &Path,
+    expected_session: &str,
+    after: u64,
+    counts: &mut ReadCounts,
+) -> Result<Batch> {
     ensure!(after <= i64::MAX as u64, "Invalid lifecycle cursor");
+    counts.database_open_attempts = counts.database_open_attempts.saturating_add(1);
     let mut connection = open(report, false)?;
+    counts.database_opens = counts.database_opens.saturating_add(1);
+    counts.read_transaction_attempts = counts.read_transaction_attempts.saturating_add(1);
     let transaction = connection.transaction()?;
+    counts.read_transactions = counts.read_transactions.saturating_add(1);
+    counts.lifecycle_schema_probes = counts.lifecycle_schema_probes.saturating_add(1);
     let prompt_correlation = has_digest_column(&transaction)?;
-    let paste_correlation =
-        prompt_correlation && has_column(&transaction, "events", "paste_digest")?;
+    let paste_correlation = if prompt_correlation {
+        counts.lifecycle_schema_probes = counts.lifecycle_schema_probes.saturating_add(1);
+        has_column(&transaction, "events", "paste_digest")?
+    } else {
+        false
+    };
     let identity = transaction.query_row(
         "SELECT host_session,launch_id,provider_session,generation,rejected FROM scope WHERE id=1",
         [],
@@ -449,6 +564,7 @@ pub fn read(report: &Path, expected_session: &str, after: u64) -> Result<Batch> 
             ))
         })?;
         for row in rows {
+            counts.lifecycle_event_rows = counts.lifecycle_event_rows.saturating_add(1);
             let (sequence, generation, state, name, prompt_digest, paste_digest) = row?;
             ensure!(state.len() <= 32, "Invalid lifecycle state");
             ensure!(
@@ -489,6 +605,83 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         dir.join("context.json")
     }
+
+    #[test]
+    fn observer_counts_measure_separate_reads_and_keep_failed_decode_work() {
+        let report = fixture();
+        initialize(&report, "host-session").unwrap();
+        append(
+            &report,
+            Some("conversation"),
+            "SessionStart",
+            StatusState::Idle,
+            false,
+            None,
+        )
+        .unwrap();
+        let ticket = begin_root_quota(&report).unwrap().unwrap();
+        let snapshot = crate::claude_quota::StoredSnapshot {
+            started_wall_ms: 1000,
+            received_wall_ms: 1001,
+            started_monotonic_ms: 1,
+            received_monotonic_ms: 2,
+            five_hour: None,
+            seven_day: None,
+            reason: crate::claude_quota::Reason::WindowsUnavailable,
+        };
+        assert!(append_root_quota(&report, &ticket, &snapshot).unwrap());
+        let mut counts = ReadCounts::default();
+        let observed = read_root_quota_counted(&report, "host-session", &mut counts)
+            .unwrap()
+            .unwrap();
+        assert_eq!(observed, (ticket, snapshot));
+        let lifecycle = read_counted(&report, "host-session", 0, &mut counts).unwrap();
+        assert_eq!(lifecycle.events.len(), 1);
+        assert_eq!(counts.database_open_attempts, 2);
+        assert_eq!(counts.database_opens, 2);
+        assert_eq!(counts.read_transaction_attempts, 2);
+        assert_eq!(counts.read_transactions, 2);
+        assert_eq!(counts.lifecycle_schema_probes, 2);
+        assert_eq!(counts.quota_table_probes, 1);
+        assert_eq!(counts.quota_rows, 1);
+        assert_eq!(counts.quota_decodes, 1);
+        assert_eq!(counts.lifecycle_event_rows, 1);
+        assert_eq!(counts.lifecycle_read_failures, 0);
+        assert_eq!(counts.quota_read_failures, 0);
+        assert!(
+            read_counted(
+                &report,
+                "host-session",
+                lifecycle.head_sequence,
+                &mut counts
+            )
+            .unwrap()
+            .events
+            .is_empty()
+        );
+        assert_eq!(counts.lifecycle_event_rows, 1);
+        let connection = Connection::open(database(&report)).unwrap();
+        connection
+            .execute("UPDATE root_quota SET snapshot='invalid' WHERE id=1", [])
+            .unwrap();
+        assert!(read_root_quota_counted(&report, "host-session", &mut counts).is_err());
+        assert_eq!(counts.database_opens, 4);
+        assert_eq!(counts.read_transactions, 4);
+        assert_eq!(counts.quota_rows, 2);
+        assert_eq!(counts.quota_decodes, 2);
+        assert_eq!(counts.quota_read_failures, 1);
+        let encoded = serde_json::to_value(&counts).unwrap();
+        assert!(
+            encoded
+                .as_object()
+                .unwrap()
+                .values()
+                .all(serde_json::Value::is_u64)
+        );
+        drop(connection);
+        std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
+    }
+
     #[test]
     fn native_turn_fence_rejects_late_stops_and_duplicate_pickup_without_losing_new_work() {
         let report = fixture();

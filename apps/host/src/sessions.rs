@@ -141,6 +141,7 @@ pub struct State {
     human_control_epoch: u64,
     budget: crate::budgets::Shared,
     event_log: Option<crate::event_log::Service>,
+    lifecycle_observer: crate::agent_events::ReadCounts,
     submission_updates: Vec<crate::submission::Transition>,
     caller_url: Option<String>,
     job_trigger_address: Option<String>,
@@ -197,6 +198,7 @@ impl State {
             human_control_epoch: 0,
             budget: crate::budgets::defaults(),
             event_log: None,
+            lifecycle_observer: Default::default(),
             submission_updates: Vec::new(),
             caller_url: None,
             job_trigger_address: None,
@@ -2713,6 +2715,10 @@ impl State {
                 let mut report = self.diagnostics(session_id.as_deref())?;
                 if self.caller_session(client_id)?.is_none() {
                     report["providerQuota"] = serde_json::to_value(self.quota_views())?;
+                    report["lifecycleObserver"] = json!({
+                        "sampledAtElapsedMs": crate::event_log::monotonic_millis(),
+                        "counts": self.lifecycle_observer,
+                    });
                 }
                 self.respond(
                     client_id,
@@ -3481,15 +3487,39 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 };
                 let expected = id.clone();
                 let batch = tokio::task::spawn_blocking(move || {
+                    let mut counts = crate::agent_events::ReadCounts {
+                        scope_polls: 1,
+                        ..Default::default()
+                    };
                     let quota = if claude {
-                        crate::claude_quota::read(&path, &expected).ok().flatten()
+                        crate::claude_quota::read_counted(&path, &expected, &mut counts)
+                            .ok()
+                            .flatten()
                     } else {
                         None
                     };
-                    (crate::agent_events::read(&path, &expected, after), quota)
+                    let lifecycle =
+                        crate::agent_events::read_counted(&path, &expected, after, &mut counts);
+                    ((lifecycle, quota), counts)
                 })
                 .await;
                 let mut state = state.lock().unwrap();
+                let batch = match batch {
+                    Ok((result, counts)) => {
+                        state.lifecycle_observer.accumulate(counts);
+                        Ok(result)
+                    }
+                    Err(error) => {
+                        state
+                            .lifecycle_observer
+                            .accumulate(crate::agent_events::ReadCounts {
+                                scope_polls: 1,
+                                blocking_task_failures: 1,
+                                ..Default::default()
+                            });
+                        Err(error)
+                    }
+                };
                 let event_log = state.event_log.clone();
                 let mut submission_updates = Vec::new();
                 if let Some(session) = state.sessions.get_mut(&id) {

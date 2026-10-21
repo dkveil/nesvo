@@ -15,7 +15,13 @@ import {
   keyBytes,
   parsePairing,
 } from '../apps/mobile/src/shared/api/host/wire';
-import { ControlledClaudeIdle, type HostSample, removeOwnedProbe } from './controlled-claude-idle';
+import {
+  ControlledClaudeIdle,
+  type HostSample,
+  observerInterval,
+  readObserverSnapshot,
+  removeOwnedProbe,
+} from './controlled-claude-idle';
 import { stopFixtureHost } from './host-fixture-shutdown';
 
 type ControlledSession = {
@@ -252,6 +258,9 @@ async function main(): Promise<void> {
       await diagnose(true);
     }
     if (mode === 'baseline' || controlledFixture) {
+      const observerBefore = controlledFixture
+        ? await readObserverSnapshot(pairing.url, secret)
+        : undefined;
       await delay(3000);
       // Disconnect releases the probe's legacy control lease.
       socket.close();
@@ -289,6 +298,10 @@ async function main(): Promise<void> {
       const after = controlledFixture ? samples.at(-1)! : await sample();
       const elapsedSeconds = (performance.now() - at) / 1000;
       assert.ok(elapsedSeconds >= 60);
+      // Reconnect only after CPU/RSS sampling has ended. Its interval is wider.
+      const observerAfter = controlledFixture
+        ? await readObserverSnapshot(pairing.url, secret)
+        : undefined;
       const report = {
         mode,
         ...(controlledFixture
@@ -309,6 +322,7 @@ async function main(): Promise<void> {
           ? {
               samples,
               sampledPeakMemoryBytes: Math.max(...samples.map(sample => sample.memoryBytes)),
+              counterInterval: observerInterval(observerBefore!, observerAfter!),
             }
           : {}),
       };

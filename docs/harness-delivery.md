@@ -3163,3 +3163,27 @@ This callback remains display evidence, without backend freshness, account
 identity or ordinary-use permission. Claude quota admission/automatic wake,
 other original-provider/platform acceptance, job presentation and the broader
 F01–F44/plugin gates remain open. No dependency was added.
+
+### Measured lifecycle observer counters
+
+Owner diagnostics now expose aggregate numeric `lifecycleObserver` counters.
+Scoped callers receive none of these host-wide metrics. There are no session
+identifiers, paths, callback values or raw errors in the new object. Counters
+include failed work and accumulate once after each blocking read; observation
+order, cadence and quota evidence semantics are unchanged in this checkpoint.
+
+The matched Windows instrumented baseline used eight controlled Claude roots,
+one callback per root and no open clients or model calls. Across 65.532 seconds
+of diagnostic observation it counted 1,048 scope polls, 2,096 database opens,
+2,096 read transactions, 2,096 lifecycle schema probes and 1,048 quota decodes.
+No lifecycle rows or read failures arrived during that interval. This measures
+the duplicated work directly instead of inferring its frequency from source.
+
+The separate CPU interval was 62.021 seconds: 1.940% of one logical core, working
+set 22.51 to 22.68 MiB, stable 17 direct children and eight unchanged root birth
+identities; cleanup passed. Counter sampling includes pre-disconnect
+stabilization and connection overhead, so its interval is explicitly separate.
+Exact source, binary hashes and raw reports are retained outside Git. The
+instrumented candidate passed 685 Windows workspace units, locked build and
+warnings-denied all-target Clippy before the later serial-conformance test split.
+This is a measurement checkpoint, not implemented pooling or hibernation.

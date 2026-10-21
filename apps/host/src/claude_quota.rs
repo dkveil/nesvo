@@ -216,9 +216,21 @@ fn parse_windows(value: &Value, received_wall_ms: u64) -> (Option<Window>, Optio
 /// Returns only this host session's current bound launch generation. Consumers
 /// must check receipt age and each reset; a repeated callback does not establish
 /// a new backend observation, account identity or ordinary-usage permission.
+#[cfg(test)]
 pub(crate) fn read(report: &Path, host_session: &str) -> Result<Option<Observation>> {
     Ok(agent_events::read_root_quota(report, host_session)?
         .map(|(scope, snapshot)| Observation { scope, snapshot }))
+}
+
+pub(crate) fn read_counted(
+    report: &Path,
+    host_session: &str,
+    counts: &mut agent_events::ReadCounts,
+) -> Result<Option<Observation>> {
+    Ok(
+        agent_events::read_root_quota_counted(report, host_session, counts)?
+            .map(|(scope, snapshot)| Observation { scope, snapshot }),
+    )
 }
 
 #[cfg(test)]
