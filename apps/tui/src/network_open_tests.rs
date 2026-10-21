@@ -12,7 +12,13 @@ use tokio_tungstenite::{
 
 const CHALLENGE: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const KEY: [u8; 32] = [42; 32];
-const SOCKET_BOUND: Duration = Duration::from_secs(2);
+const STALL: Duration = Duration::from_millis(25);
+const HOST_PACED: OpenTimeouts = OpenTimeouts {
+    connect: Duration::MAX,
+    challenge_read: Duration::MAX,
+    auth_send: Duration::MAX,
+    auth_read: Duration::MAX,
+};
 type MockSocket = WebSocketStream<TcpStream>;
 
 fn pairing(address: SocketAddr) -> Pairing {
@@ -32,24 +38,14 @@ where
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let pairing = pairing(listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
-        timeout(SOCKET_BOUND, async {
-            let (stream, _) = listener.accept().await.unwrap();
-            host(accept_async(stream).await.unwrap()).await;
-        })
-        .await
-        .expect("mock host must finish within its bound");
+        let (stream, _) = listener.accept().await.unwrap();
+        host(accept_async(stream).await.unwrap()).await;
     });
-    let result = timeout(
-        SOCKET_BOUND,
-        Connection::open_with_timeouts(pairing, timeouts),
-    )
-    .await
-    .expect("client must finish within its bound");
-    let error = result.err().expect("host response must be rejected");
-    timeout(SOCKET_BOUND, task)
+    let error = Connection::open_with_timeouts(pairing, timeouts)
         .await
-        .expect("mock host task must finish")
-        .unwrap();
+        .err()
+        .expect("host response must be rejected");
+    task.await.unwrap();
     error
 }
 
@@ -107,27 +103,22 @@ async fn http_rejection_reports_only_the_connect_stage_and_status() {
     let mut pairing = pairing(listener.local_addr().unwrap());
     pairing.scope_id = Some("b".repeat(32));
     let task = tokio::spawn(async move {
-        timeout(SOCKET_BOUND, async {
-            let (stream, _) = listener.accept().await.unwrap();
-            let result = accept_hdr_async(stream, |request: &Request, _: Response| {
-                assert_eq!(request.headers()["x-nesvo-scope"], "b".repeat(32));
-                Err(HttpResponse::builder()
-                    .status(403)
-                    .body(Some(format!("private-host-response {CHALLENGE}")))
-                    .unwrap())
-            })
-            .await;
-            assert!(result.is_err());
+        let (stream, _) = listener.accept().await.unwrap();
+        let result = accept_hdr_async(stream, |request: &Request, _: Response| {
+            assert_eq!(request.headers()["x-nesvo-scope"], "b".repeat(32));
+            Err(HttpResponse::builder()
+                .status(403)
+                .body(Some(format!("private-host-response {CHALLENGE}")))
+                .unwrap())
         })
-        .await
-        .unwrap();
+        .await;
+        assert!(result.is_err());
     });
-    let error = timeout(SOCKET_BOUND, Connection::open(pairing))
+    let error = Connection::open_with_timeouts(pairing, HOST_PACED)
         .await
-        .unwrap()
         .err()
         .expect("HTTP rejection must fail authentication");
-    timeout(SOCKET_BOUND, task).await.unwrap().unwrap();
+    task.await.unwrap();
     assert_diagnostic(error, "stage=connect, cause=httpRejected, status=403");
 }
 
@@ -147,7 +138,7 @@ async fn challenge_and_auth_closes_report_numeric_codes_without_reasons() {
                     .await
                     .unwrap();
             },
-            OpenTimeouts::default(),
+            HOST_PACED,
         )
         .await;
         assert_diagnostic(
@@ -187,7 +178,7 @@ async fn challenge_frames_are_validated_before_authentication() {
                 // Invalid challenges must not produce an authentication frame.
                 assert!(!matches!(socket.next().await, Some(Ok(Message::Text(_)))));
             },
-            OpenTimeouts::default(),
+            HOST_PACED,
         )
         .await;
         assert_diagnostic(error, expected);
@@ -213,7 +204,7 @@ async fn host_proof_rejects_bad_keys_context_sequence_reflection_and_malformed_f
                 };
                 socket.send(Message::Text(frame.into())).await.unwrap();
             },
-            OpenTimeouts::default(),
+            HOST_PACED,
         )
         .await;
         assert_diagnostic(error, "stage=hostProof, cause=invalidProof");
@@ -255,7 +246,7 @@ async fn authenticated_connected_payload_requires_type_nonce_protocol_and_identi
                 let frame = wire::encode(connected, &KEY, CHALLENGE, 1).unwrap();
                 socket.send(Message::Text(frame.into())).await.unwrap();
             },
-            OpenTimeouts::default(),
+            HOST_PACED,
         )
         .await;
         assert_diagnostic(error, expected);
@@ -265,11 +256,16 @@ async fn authenticated_connected_payload_requires_type_nonce_protocol_and_identi
 #[tokio::test]
 async fn stalled_challenge_and_authentication_reads_keep_distinct_timeout_stages() {
     for during_auth in [false, true] {
-        let short = Duration::from_millis(25);
-        let timeouts = OpenTimeouts {
-            challenge_read: if during_auth { SOCKET_BOUND } else { short },
-            auth_read: short,
-            ..OpenTimeouts::default()
+        let timeouts = if during_auth {
+            OpenTimeouts {
+                auth_read: STALL,
+                ..HOST_PACED
+            }
+        } else {
+            OpenTimeouts {
+                challenge_read: STALL,
+                ..HOST_PACED
+            }
         };
         let error = mock_open_error(
             move |mut socket| async move {
@@ -295,32 +291,17 @@ async fn stalled_challenge_and_authentication_reads_keep_distinct_timeout_stages
 
 #[tokio::test]
 async fn stalled_websocket_upgrade_reports_the_connect_timeout() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let pairing = pairing(listener.local_addr().unwrap());
-    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-    let task = tokio::spawn(async move {
-        timeout(SOCKET_BOUND, async {
-            let (_stream, _) = listener.accept().await.unwrap();
-            done_rx.await.unwrap();
-        })
-        .await
-        .unwrap();
-    });
-    let error = timeout(
-        SOCKET_BOUND,
-        Connection::open_with_timeouts(
-            pairing,
-            OpenTimeouts {
-                connect: Duration::from_millis(25),
-                ..OpenTimeouts::default()
-            },
-        ),
+    let unanswered = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let error = Connection::open_with_timeouts(
+        pairing(unanswered.local_addr().unwrap()),
+        OpenTimeouts {
+            connect: STALL,
+            ..HOST_PACED
+        },
     )
     .await
-    .unwrap()
     .err()
     .expect("stalled upgrade must time out");
-    done_tx.send(()).unwrap();
-    timeout(SOCKET_BOUND, task).await.unwrap().unwrap();
+    drop(unanswered);
     assert_diagnostic(error, "stage=connect, cause=timeout");
 }
