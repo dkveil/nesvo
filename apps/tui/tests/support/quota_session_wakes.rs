@@ -379,7 +379,18 @@ async fn durable_quota_wake_stays_paused_after_takeover_disable_and_fresh_quota(
         assert_eq!(disabled["data"]["quotaWake"], taken_over);
         let current = after_reset(&owner, &fixture, &retained).await?;
         assert_eq!(current["ordinaryUsageEligible"], true);
-        tokio::time::sleep(Duration::from_millis(1300)).await;
+        holds_throughout(Duration::from_millis(1300), async || {
+            ensure!(
+                quota_wake(&owner, &session).await? == taken_over,
+                "Disabled quota wake changed after reset"
+            );
+            ensure!(
+                inputs(&fixture, &session)?.is_empty(),
+                "Disabled quota wake delivered input"
+            );
+            Ok(())
+        })
+        .await?;
         for _ in 0..3 {
             let view = quota_wake(&owner, &session).await?;
             assert_eq!(view, taken_over);

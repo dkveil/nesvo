@@ -164,31 +164,12 @@ async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::proce
             ".generated-command-{}.release",
             hex::encode(nesvo_wire::random::<16>())
         ));
-        // No stdin reads: the root callback's generation ticket must precede
-        // payload consumption. Release only after exact job enrollment.
-        let script = format!(
-            "$timer=[Diagnostics.Stopwatch]::StartNew(); while(-not [System.IO.File]::Exists('{}')){{if($timer.ElapsedMilliseconds -ge 5000){{exit 1}}; [Threading.Thread]::Sleep(10)}}; $s=New-Object System.Diagnostics.ProcessStartInfo; $s.FileName='{}'; $s.Arguments='/d /s /c {}'; $s.UseShellExecute=$false; $s.CreateNoWindow=$true; $s.RedirectStandardError=$true; $p=[System.Diagnostics.Process]::Start($s); $d=$p.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError()); $p.WaitForExit(); [void]$d.GetAwaiter().GetResult(); exit $p.ExitCode",
-            release
-                .to_str()
-                .context("Private release file")?
-                .replace('\'', "''"),
-            system
-                .join("cmd.exe")
-                .to_str()
-                .context("Windows command processor")?
-                .replace('\'', "''"),
-            command.replace('\'', "''")
-        );
-        // UTF16 base64 is pure test encoding; no extra crate/dependency.
-        let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-        let encoded = base64(&bytes);
-        let mut shell = Command::new(
-            system
-                .join("WindowsPowerShell")
-                .join("v1.0")
-                .join("powershell.exe"),
-        );
-        shell.args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded]);
+        let mut shell = Command::new(process_fixture::executable());
+        shell
+            .arg("gate")
+            .arg(&release)
+            .arg(system.join("cmd.exe"))
+            .arg(format!("/d /s /c {command}"));
         (shell, release)
     };
     #[cfg(not(windows))]
@@ -287,33 +268,6 @@ fn stderr_class(bytes: &[u8]) -> &'static str {
         (false, true) => "captureDiagnosticsUnavailable",
         (false, false) => "other",
     }
-}
-#[cfg(windows)]
-fn base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::new();
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        let b = *chunk.get(1).unwrap_or(&0);
-        let c = *chunk.get(2).unwrap_or(&0);
-        for value in [
-            TABLE[(a >> 2) as usize],
-            TABLE[(((a & 3) << 4) | (b >> 4)) as usize],
-            if chunk.len() > 1 {
-                TABLE[(((b & 15) << 2) | (c >> 6)) as usize]
-            } else {
-                b'='
-            },
-            if chunk.len() > 2 {
-                TABLE[(c & 63) as usize]
-            } else {
-                b'='
-            },
-        ] {
-            result.push(char::from(value));
-        }
-    }
-    result
 }
 #[cfg(windows)]
 struct WindowsJob(std::os::windows::io::OwnedHandle);

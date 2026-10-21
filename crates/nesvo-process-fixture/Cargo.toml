@@ -1,0 +1,13 @@
+[package]
+name = "nesvo-process-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Deterministic child process for nesvo process-boundary tests"
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "nesvo-process-fixture"
+path = "src/main.rs"
+test = false

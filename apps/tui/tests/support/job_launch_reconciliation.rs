@@ -491,7 +491,11 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
         let edited = reply(&owner,"nesvo_update_job",json!({"key":"unknown-future-profile","jobId":job,"expectedRevision":1,"spec":future})).await?;
         let queued = reply(&owner,"nesvo_run_job_now",json!({"key":"unknown-separate-occurrence","jobId":job,"expectedRevision":2})).await?;
         let second = queued["data"]["occurrence"]["id"].as_str().context("Unknown-effects queue")?;
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+        holds_throughout(Duration::from_millis(1200), async || {
+            let view = read(&owner,job,second).await?;
+            ensure!(view["data"]["occurrence"]["state"]=="queued" && view["data"]["occurrence"]["sessionId"].is_null(),"Unknown overlap admitted the queued occurrence: {view}");
+            Ok(())
+        }).await?;
         let pending = read(&owner,job,second).await?;
         assert_eq!(pending["data"]["occurrence"]["state"],"queued");
         for field in ["runId","jobAttemptId","attemptId","sessionId","launchReceiptId"] {

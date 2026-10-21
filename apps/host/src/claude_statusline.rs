@@ -20,6 +20,7 @@ const PROFILE_LIMIT: usize = 16 * 1024;
 const INPUT_LIMIT: usize = 256 * 1024;
 const OUTPUT_LIMIT: usize = 64 * 1024;
 const FRAME_LIMIT: usize = 512 * 1024;
+const PROFILE_EXCHANGE_DEADLINE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -287,8 +288,8 @@ async fn read_profile(
     path: &Path,
     slot: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<Prepared> {
-    // Production starts the exchange immediately after enrolling the child.
-    read_started_profile(start_profile_reader(command, slot)?, path).await
+    let reader = start_profile_reader(command, slot)?;
+    read_started_profile(reader, path, PROFILE_EXCHANGE_DEADLINE).await
 }
 fn start_profile_reader(
     mut command: tokio::process::Command,
@@ -316,8 +317,12 @@ fn start_profile_reader(
     owned.scope = Some(scope);
     Ok(owned)
 }
-async fn read_started_profile(mut owned: ProfileReader, path: &Path) -> Result<Prepared> {
-    let result = tokio::time::timeout(Duration::from_secs(2), async {
+async fn read_started_profile(
+    mut owned: ProfileReader,
+    path: &Path,
+    deadline: Duration,
+) -> Result<Prepared> {
+    let result = tokio::time::timeout(deadline, async {
         let child = owned
             .child
             .as_mut()
@@ -810,16 +815,17 @@ pub fn child() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod process_fixture {
+        include!("../../../crates/nesvo-process-fixture/src/locate.rs");
+    }
+    const UNBOUNDED_EXCHANGE: Duration = Duration::from_secs(60);
     fn executable() -> PathBuf {
-        #[cfg(windows)]
-        {
-            PathBuf::from(crate::command_scope::system_root().unwrap())
-                .join("System32/WindowsPowerShell/v1.0/powershell.exe")
-        }
-        #[cfg(not(windows))]
-        {
-            PathBuf::from("/bin/sh")
-        }
+        std::env::current_exe().unwrap()
+    }
+    fn fixture_command(args: &[&str]) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(process_fixture::executable());
+        command.args(args);
+        command
     }
     #[test]
     fn strict_manifest_requires_declared_absolute_executable_and_bounds() {
@@ -989,33 +995,15 @@ mod tests {
         assert!(settings.get("statusLine").is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
-    fn blocked_reader_command() -> tokio::process::Command {
-        #[cfg(windows)]
-        {
-            let mut command = tokio::process::Command::new(executable());
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Start-Sleep -Seconds 30",
-            ]);
-            command
-        }
-        #[cfg(not(windows))]
-        {
-            let mut command = tokio::process::Command::new("/bin/sleep");
-            command.arg("30");
-            command
-        }
-    }
     #[tokio::test]
     async fn blocked_profile_reader_is_killed_and_reaped_before_its_slot_releases() {
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let slot = slots.clone().acquire_owned().await.unwrap();
-        let started = tokio::time::Instant::now();
-        let result = read_profile(blocked_reader_command(), &executable(), slot).await;
-        assert!(result.is_err());
-        assert!(started.elapsed() < Duration::from_secs(5));
+        let error = match read_profile(fixture_command(&["hold"]), &executable(), slot).await {
+            Ok(_) => panic!("Silent profile reader was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.to_string(), "Profile reader timed out");
         assert_eq!(
             slots.available_permits(),
             1,
@@ -1026,14 +1014,14 @@ mod tests {
     async fn canceled_profile_reader_retains_capacity_until_cleanup_observation() {
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let slot = slots.clone().acquire_owned().await.unwrap();
+        let reader = start_profile_reader(fixture_command(&["hold"]), slot).unwrap();
         let task = tokio::spawn(async move {
-            read_profile(blocked_reader_command(), &executable(), slot).await
+            read_started_profile(reader, &executable(), UNBOUNDED_EXCHANGE).await
         });
-        tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(slots.available_permits(), 0);
         task.abort();
-        let _ = task.await;
-        tokio::time::timeout(Duration::from_secs(3), async {
+        assert!(task.await.is_err_and(|error| error.is_cancelled()));
+        tokio::time::timeout(UNBOUNDED_EXCHANGE, async {
             while slots.available_permits() == 0 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -1042,134 +1030,20 @@ mod tests {
         .unwrap();
         assert_eq!(slots.available_permits(), 1);
     }
-    // Native fixture startup is a separate bounded phase. The production
-    // exchange still has its original two-second deadline, and this helper
-    // retains the same child, containment scope and permit throughout the wait.
-    async fn await_profile_fixture_ready_before_framing(
-        mut owned: ProfileReader,
-        ready: &Path,
-        slots: &tokio::sync::Semaphore,
-        deadline: Duration,
-    ) -> Result<ProfileReader> {
-        let observed = tokio::time::timeout(deadline, async {
-            loop {
-                match tokio::fs::read(ready).await {
-                    Ok(bytes) if bytes.as_slice() == b"1" => return Ok::<_, anyhow::Error>(()),
-                    Ok(bytes) if bytes.len() > 1 => {
-                        anyhow::bail!("Profile fixture readiness marker was invalid");
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => anyhow::bail!("Profile fixture readiness marker was unreadable"),
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-        })
-        .await;
-        if matches!(observed, Ok(Ok(()))) {
-            return Ok(owned);
-        }
-        ensure!(
-            owned.cleanup().await,
-            "Profile fixture readiness cleanup unconfirmed"
-        );
-        ensure!(
-            slots.available_permits() == 1,
-            "Profile fixture readiness cleanup did not release its exact permit"
-        );
-        Err(anyhow::anyhow!(
-            "Profile fixture did not become ready before framing"
-        ))
-    }
     #[tokio::test]
-    async fn profile_fixture_readiness_timeout_confirms_cleanup_before_releasing_capacity() {
-        let slots = Arc::new(tokio::sync::Semaphore::new(1));
-        let slot = slots.clone().acquire_owned().await.unwrap();
-        let root = std::env::temp_dir().join(format!(
-            "nesvo-profile-readiness-{}",
-            hex::encode(crate::wire::random::<8>())
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let owned = start_profile_reader(blocked_reader_command(), slot).unwrap();
-        assert_eq!(slots.available_permits(), 0);
-        let result = await_profile_fixture_ready_before_framing(
-            owned,
-            &root.join("never-ready"),
-            &slots,
-            Duration::from_millis(100),
-        )
-        .await;
-        let error = match result {
-            Ok(_) => panic!("Blocked native fixture unexpectedly became ready"),
-            Err(error) => error,
-        };
-        assert_eq!(
-            error.to_string(),
-            "Profile fixture did not become ready before framing"
-        );
-        assert_eq!(slots.available_permits(), 1);
-        std::fs::remove_dir(root).unwrap();
-    }
-    #[tokio::test]
-    #[ignore = "serial native process conformance; explicitly run by CI"]
     async fn invalid_profile_frame_is_refused_with_confirmed_cleanup() {
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let slot = slots.clone().acquire_owned().await.unwrap();
-        let root = std::env::temp_dir().join(format!(
-            "nesvo-profile-malformed-{}",
-            hex::encode(crate::wire::random::<8>())
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let ready = root.join("ready");
-        #[cfg(windows)]
-        let command = {
-            let mut command = tokio::process::Command::new(executable());
-            let script = format!(
-                "[Console]::Out.Write('bad!'); [Console]::Out.Flush(); [System.IO.File]::WriteAllBytes('{}', [byte[]](49)); Start-Sleep -Seconds 30",
-                ready.to_str().unwrap().replace('\'', "''")
-            );
-            command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
-            command
-        };
-        #[cfg(not(windows))]
-        let command = {
-            let mut command = tokio::process::Command::new("/bin/sh");
-            // Match the real profile reader's single-process scope. Replacing
-            // the shell avoids a descendant: this test requires malformed-frame
-            // refusal after confirmed cleanup of the exact reader.
-            command
-                .args([
-                    "-c",
-                    "printf 'bad!'; printf '1' > \"$1\"; exec /bin/sleep 30",
-                    "nesvo-profile-fixture",
-                ])
-                .arg(&ready);
-            command
-        };
-        // Publish READY only after the malformed header has been flushed. A
-        // cold interpreter cannot masquerade as a framing refusal or consume
-        // the exchange deadline. No fixture executable is added to the host.
-        let owned = start_profile_reader(command, slot).unwrap();
-        let mut owned = await_profile_fixture_ready_before_framing(
-            owned,
-            &ready,
-            &slots,
-            Duration::from_secs(5),
-        )
-        .await
-        .expect("Native fixture readiness must precede malformed-frame measurement");
+        let malformed_header = hex::encode(b"bad!");
+        let reader =
+            start_profile_reader(fixture_command(&["emit", &malformed_header]), slot).unwrap();
         assert_eq!(slots.available_permits(), 0);
-        assert!(
-            owned.child.as_mut().unwrap().try_wait().unwrap().is_none(),
-            "Malformed response is supplied by the same still-owned live child"
-        );
-        let error = match read_started_profile(owned, &executable()).await {
+        let error = match read_started_profile(reader, &executable(), UNBOUNDED_EXCHANGE).await {
             Ok(_) => panic!("Malformed profile frame was accepted"),
             Err(error) => error,
         };
         assert_eq!(error.to_string(), "Profile response exceeds its bound");
         assert_eq!(slots.available_permits(), 1);
-        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn unbound_capture_preserves_display_bytes_when_remaining_input_binds_the_root() {
@@ -1234,7 +1108,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "serial native process conformance; explicitly run by CI"]
     async fn capture_failure_does_not_change_input_stdout_or_display_exit() {
         let report = std::env::temp_dir()
             .join(format!(
@@ -1245,23 +1118,11 @@ mod tests {
         let original = b"{\"session_id\":\"unbound\",\"private\":\"literal input\"}";
         let input = collect(&report, std::io::Cursor::new(original)).unwrap();
         assert_eq!(input, original);
-        #[cfg(unix)]
         let declared = Display {
-            program: "/bin/sh".into(),
-            args: vec!["-c".into(), "cat; exit 7".into()],
+            program: process_fixture::executable().to_owned(),
+            args: vec!["echo".into(), "7".into()],
         };
-        #[cfg(windows)]
-        let declared = Display {
-            program: PathBuf::from(crate::command_scope::system_root().unwrap())
-                .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-            args: vec![
-                "-NoProfile".into(),
-                "-NonInteractive".into(),
-                "-Command".into(),
-                "[Console]::Out.Write([Console]::In.ReadToEnd()); exit 7".into(),
-            ],
-        };
-        let output = tokio::time::timeout(Duration::from_secs(3), display(declared, input))
+        let output = tokio::time::timeout(UNBOUNDED_EXCHANGE, display(declared, input))
             .await
             .unwrap()
             .unwrap();
@@ -1270,29 +1131,14 @@ mod tests {
     }
     #[cfg(windows)]
     #[tokio::test]
-    #[ignore = "serial native process conformance; explicitly run by Windows CI"]
+    #[ignore = "real PowerShell statusline wrapper; nightly native cohort only"]
     async fn generated_windows_command_inherits_raw_standard_handles() {
-        let executable = PathBuf::from(crate::command_scope::system_root().unwrap())
-            .join("System32")
-            .join("WindowsPowerShell")
-            .join("v1.0")
-            .join("powershell.exe");
+        let fixture = process_fixture::executable();
         let prefix = "\u{1b}[35mZażółć 日本語\u{1b}[0m\r\n".as_bytes();
-        let original = b"{\"literal\":\"stdin\\nbytes\"}\n";
-        let script = format!(
-            "$m=New-Object System.IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($m); $o=[Console]::OpenStandardOutput(); $b=[Convert]::FromBase64String('{}'); $o.Write($b,0,$b.Length); $b=$m.ToArray(); $o.Write($b,0,$b.Length); $o.Flush(); exit 7",
-            STANDARD.encode(prefix)
-        );
-        let encoded = STANDARD.encode(
-            script
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        );
-        let command_text = inherited_command(
-            executable.to_str().unwrap(),
-            &["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded],
-        );
+        let original = b"{\"literal\":\"stdin\nbytes\"}\n";
+        let encoded_prefix = hex::encode(prefix);
+        let command_text =
+            inherited_command(fixture.to_str().unwrap(), &["echo", "7", &encoded_prefix]);
         let shell = PathBuf::from(crate::command_scope::system_root().unwrap())
             .join("System32")
             .join("cmd.exe");
@@ -1300,23 +1146,12 @@ mod tests {
             "nesvo-capture-shell-{}.release",
             hex::encode(crate::wire::random::<16>())
         ));
-        // This bootstrap cannot start CMD/the generated command until the exact
-        // owned process has been enrolled. It never reads provider input.
-        let bootstrap = format!(
-            "$timer=[Diagnostics.Stopwatch]::StartNew(); while(-not [System.IO.File]::Exists('{}')){{if($timer.ElapsedMilliseconds -ge 5000){{exit 1}}; [Threading.Thread]::Sleep(10)}}; $s=New-Object System.Diagnostics.ProcessStartInfo; $s.FileName='{}'; $s.Arguments='/d /s /c {}'; $s.UseShellExecute=$false; $s.CreateNoWindow=$true; $s.RedirectStandardError=$true; $p=[System.Diagnostics.Process]::Start($s); $d=$p.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError()); $p.WaitForExit(); [void]$d.GetAwaiter().GetResult(); exit $p.ExitCode",
-            release.to_str().unwrap().replace('\'', "''"),
-            shell.to_str().unwrap().replace('\'', "''"),
-            command_text.replace('\'', "''")
-        );
-        let encoded = STANDARD.encode(
-            bootstrap
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        );
-        let mut command = tokio::process::Command::new(executable);
+        let mut command = tokio::process::Command::new(fixture);
         command
-            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+            .arg("gate")
+            .arg(&release)
+            .arg(&shell)
+            .arg(format!("/d /s /c {command_text}"))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1330,7 +1165,7 @@ mod tests {
         let mut stderr = child.stderr.take().unwrap();
         let mut output = Vec::new();
         let mut diagnostic = Vec::new();
-        let result = tokio::time::timeout(Duration::from_secs(8), async {
+        let result = tokio::time::timeout(UNBOUNDED_EXCHANGE, async {
             input.write_all(original).await?;
             input.flush().await?;
             drop(input);
@@ -1342,8 +1177,6 @@ mod tests {
             Ok::<_, std::io::Error>(status)
         })
         .await;
-        // Killing only CMD leaves its PS grandchildren and blocking pipe reads.
-        // Terminate the exact job before any assertion/unwind or final wait.
         let terminated = scope.terminate();
         let reaped = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
         let _ = std::fs::remove_file(release);

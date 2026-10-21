@@ -28,7 +28,11 @@ async fn executor_bounds_known_failure_retries_and_never_retries_unknown_worktre
             data(call(&coordinator,"nesvo_start_run_executor",json!({"key":format!("retry-start-{unknown}"),"runId":run,"expectedRevision":4,"spec":{"tasks":profiles,"retryFailed":true,"retryDelayMs":1000}})).await?)?;
             let observed=timeout(Duration::from_secs(10),async{loop{let view=run_view(&owner,run).await?;let expected=if unknown {"launchUnknown"}else{"launchFailed"};let count=if unknown {1}else{2};if view["tasks"][0]["state"]==expected && view["tasks"][0]["attempts"]==count {return Ok::<_,anyhow::Error>(view);}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
             assert_eq!(observed["run"]["budget"]["activeAttempts"],if unknown {1}else{0});
-            tokio::time::sleep(Duration::from_millis(1100)).await;
+            holds_throughout(Duration::from_millis(1100), async || {
+                let view=run_view(&owner,run).await?;
+                ensure!(view["tasks"][0]["attempts"]==observed["tasks"][0]["attempts"],"Executor retried beyond its bound: {view}");
+                Ok(())
+            }).await?;
             let stable=run_view(&owner,run).await?;assert_eq!(stable["tasks"][0]["attempts"],observed["tasks"][0]["attempts"]);
             if unknown {assert_eq!(stable["tasks"][1]["state"],"planned");}
             let history=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":plan["data"]["tasks"][0]["id"]})).await?)?;
@@ -80,7 +84,12 @@ async fn executor_cannot_send_after_quick_human_takeover_or_rearm_a_paused_instr
         session_ready(&owner,&child).await?;
         mutate(&owner,run,"nesvo_disable_run_executor",json!({"key":"disable-human-engine","runId":run})).await?;
         mutate(&owner,run,"nesvo_enable_run_executor",json!({"key":"resume-human-engine","runId":run})).await?;
-        tokio::time::sleep(Duration::from_millis(1100)).await;
+        holds_throughout(Duration::from_millis(1100), async || {
+            let view=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;
+            let delivery=&view["data"]["attempts"][0]["delivery"];
+            ensure!(delivery["phase"]=="paused" && delivery["receiptId"].is_null(),"Re-enabled executor sent after human takeover: {view}");
+            Ok(())
+        }).await?;
         let current=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;
         assert_eq!(current["data"]["attempts"][0]["delivery"]["id"],paused["data"]["attempts"][0]["delivery"]["id"]);assert_eq!(current["data"]["attempts"][0]["delivery"]["phase"],"paused");assert!(current["data"]["attempts"][0]["delivery"]["receiptId"].is_null());
         let output=data(call(&owner,"nesvo_read_session",json!({"sessionId":child,"maxBytes":8192})).await?)?;assert!(!output["data"]["page"]["data"].as_str().unwrap().contains("UNSENT_AFTER_HUMAN_TAKEOVER"));
@@ -186,8 +195,10 @@ async fn executor_launches_only_ready_tasks_and_waits_for_validation_without_tou
         let disabled=mutate(&coordinator,run,"nesvo_disable_run_executor",json!({"key":"executor-disable","runId":run})).await?;
         assert_eq!(disabled["executor"]["enabled"],false);
         mutate(&coordinator,run,"nesvo_validate_task_result",json!({"key":"executor-validate-implementation","runId":run,"attemptId":implemented["tasks"][0]["currentAttempt"]["id"],"validation":{"passed":true,"summary":"Controlled result independently inspected","checks":[{"name":"fixture","outcome":"passed","details":"Verified actual controlled result and no early reviewer"}]}})).await?;
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        assert_eq!(run_view(&owner,run).await?["tasks"][1]["state"],"planned","Disabled generation cannot admit the now-ready reviewer");
+        holds_throughout(Duration::from_millis(250), async || {
+            ensure!(run_view(&owner,run).await?["tasks"][1]["state"]=="planned","Disabled generation cannot admit the now-ready reviewer");
+            Ok(())
+        }).await?;
         let enabled=mutate(&owner,run,"nesvo_enable_run_executor",json!({"key":"owner-enable-executor","runId":run})).await?;
         assert_eq!(enabled["executor"]["issuer"],"owner");assert!(enabled["executor"]["generation"].as_u64().unwrap()>accepted["data"]["executor"]["generation"].as_u64().unwrap());
         let reviewed=reported(&owner,run,1).await?;

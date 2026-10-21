@@ -319,8 +319,11 @@ async fn new_constraint_after_task_paste_stops_enter_and_ack_never_rearms_the_ol
         let revision=view(&coordinator,&run).await?["run"]["revision"].clone();
         let refused=call(&coordinator,"nesvo_deliver_task",json!({"key":"must-not-rearm-context","runId":run,"taskId":task,"expectedRevision":revision})).await?.structured_content.context("one instruction intent remains retained")?;assert_eq!(refused["error"]["code"],"delivery_exists");
         let refused=call(&coordinator,"nesvo_send_prompt",json!({"key":"must-not-bypass-dirty-context","sessionId":child,"prompt":"MUST_NOT_SUBMIT_WITH_A_NEW_KEY"})).await?.structured_content.context("retained draft refusal")?;assert_eq!(refused["error"]["receipt"]["result"]["code"],"unsafe_draft");
-        tokio::time::sleep(Duration::from_millis(800)).await;
-        let output=data(call(&owner,"nesvo_read_session",json!({"sessionId":child,"maxBytes":8192})).await?)?;assert!(!output["data"]["page"]["data"].as_str().context("screen-only output")?.contains("FIXTURE_RESPONSE"));
+        holds_throughout(Duration::from_millis(800), async || {
+            let output=data(call(&owner,"nesvo_read_session",json!({"sessionId":child,"maxBytes":8192})).await?)?;
+            ensure!(!output["data"]["page"]["data"].as_str().context("screen-only output")?.contains("FIXTURE_RESPONSE"),"Retained dirty draft was submitted");
+            Ok(())
+        }).await?;
         let context=data(call(&owner,"nesvo_read_run_context",json!({"runId":run})).await?)?;
         assert!(context["data"]["parts"].as_array().context("receipt pointer context")?.iter().any(|p|p["kind"]=="nativeOperation"&&p["data"]["receiptId"]==receipt&&p["data"]["phase"]=="unknown"));
         schema(vec![context,native,history]).await?;

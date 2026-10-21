@@ -1355,6 +1355,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nesvo-process-fixture"
+version = "0.1.0"
+
+[[package]]
 name = "nesvo-wire"
 version = "0.1.0"
 dependencies = [

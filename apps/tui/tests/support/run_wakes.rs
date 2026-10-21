@@ -185,15 +185,18 @@ async fn quick_human_takeover_pauses_wakes_and_only_explicit_enable_can_deliver_
         let stopped = paused(&owner, &run).await?;
         assert_eq!(stopped["wakePolicy"]["reason"], "control_busy");
         message(&owner, &run, "human-backlog", "question").await?;
-        tokio::time::sleep(Duration::from_millis(1100)).await;
         let path = fixture
             .directory
             .join("callers")
             .join(format!("{id}.wake-inputs.jsonl"));
-        assert!(
-            !path.exists(),
-            "Releasing a human lease does not rearm automatic input"
-        );
+        holds_throughout(Duration::from_millis(1100), async || {
+            ensure!(
+                !path.exists(),
+                "Releasing a human lease does not rearm automatic input"
+            );
+            Ok(())
+        })
+        .await?;
         let restarted = mutation(
             &owner,
             &run,
@@ -364,8 +367,10 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
         let native_id=received[0]["batch"]["data"]["wakeBatch"]["receiptId"].as_str().context("wake receipt")?;
         timeout(Duration::from_secs(8),async{loop{let receipt=data(call(&coordinator,"nesvo_get_operation",json!({"id":native_id})).await?)?;if receipt["data"]["receipt"]["phase"]=="settled" {return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
         for _ in 0..4 {wake_view(&coordinator,run).await?;}
-        tokio::time::sleep(Duration::from_millis(1100)).await;
-        assert_eq!(waves(&fixture,root_id,1).await?.len(),1,"No unchanged-state model heartbeat");
+        holds_throughout(Duration::from_millis(1100), async || {
+            ensure!(waves(&fixture,root_id,1).await?.len()==1,"No unchanged-state model heartbeat");
+            Ok(())
+        }).await?;
         message(&coordinator,run,"second-delta","question").await?;
         let received=waves(&fixture,root_id,2).await?;assert_eq!(received.len(),2);
         assert_ne!(received[0]["batch"]["data"]["wakeBatch"]["id"],received[1]["batch"]["data"]["wakeBatch"]["id"]);

@@ -69,6 +69,9 @@ mod model_profiles;
 mod native_tool_permissions;
 #[path = "support/prechecks.rs"]
 mod prechecks;
+#[cfg(windows)]
+#[path = "../../../crates/nesvo-process-fixture/src/locate.rs"]
+mod process_fixture;
 #[path = "support/provider_quota.rs"]
 mod provider_quota;
 #[path = "support/quota_native_continuation.rs"]
@@ -540,6 +543,21 @@ fn data(result: CallToolResult) -> Result<Value> {
     result
         .structured_content
         .context("Missing structured result")
+}
+
+async fn holds_throughout(
+    window: Duration,
+    mut probe: impl AsyncFnMut() -> Result<()>,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + window;
+    loop {
+        probe().await?;
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Ok(());
+        }
+        tokio::time::sleep((deadline - now).min(Duration::from_millis(100))).await;
+    }
 }
 
 async fn observed_output(

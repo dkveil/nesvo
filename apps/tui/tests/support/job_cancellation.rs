@@ -267,7 +267,13 @@ async fn bound_job_cancel_stops_the_exact_worker_and_retains_original_pending_ac
         let final_replay = data(call(&owner,"nesvo_cancel_job_occurrence",arguments).await?)?;
         assert_eq!(final_replay["data"],accepted["data"]);
         assert_eq!(final_replay["data"]["occurrence"]["state"],"canceling");
-        tokio::time::sleep(Duration::from_millis(1100)).await;
+        holds_throughout(Duration::from_millis(1100), async || {
+            let view = data(call(&owner,"nesvo_get_run",json!({"runId":run})).await?)?;
+            ensure!(view["data"]["run"]["state"]=="canceled" && view["data"]["tasks"][0]["attempts"]==1,"Canceled job run changed: {view}");
+            let sessions = data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;
+            ensure!(sessions["data"]["sessions"].as_array().is_some_and(|rows|rows.len()==1),"Canceled job started another session: {sessions}");
+            Ok(())
+        }).await?;
         let stable = data(call(&owner,"nesvo_get_run",json!({"runId":run})).await?)?;
         assert_eq!(stable["data"]["run"]["state"],"canceled");
         assert_eq!(stable["data"]["tasks"][0]["attempts"],1);

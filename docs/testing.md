@@ -26,40 +26,25 @@ This document separates automated checks from physical-device testing. Unchecked
 
 CI builds and tests the Rust programs natively on Windows, macOS and Linux. Check the relevant commit's workflow result before claiming a particular platform passed. A native CI build does not verify every interactive terminal emulator or a physical phone.
 
+The per-push `Checks` workflow runs workspace tests with `cargo nextest run --workspace --locked --profile ci`. `.config/nextest.toml` terminates any single test after five minutes, and every job has a timeout. The ignored native cohort below runs only in the daily `Native nightly` workflow, which can also be started manually.
+
 ### Declared statusline process conformance
 
-Three declared-display tests start real system processes and check exact input,
-output, exit status and pipe behavior within short deadlines. CI runs them
-explicitly and serially after parallel workspace units, before the native SDK
-scenarios. They are ignored by the default unit run; their assertions, deadlines
-and owned cleanup still apply in the required conformance steps.
-
-On every native CI platform:
-
-```text
-cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::invalid_profile_frame_is_refused_with_confirmed_cleanup -- --ignored --exact --test-threads=1
-cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::capture_failure_does_not_change_input_stdout_or_display_exit -- --ignored --exact --test-threads=1
-```
-
-On Windows, also run the generated shell command and raw standard-handle check:
+Declared-display process tests spawn the `nesvo-process-fixture` helper, which they
+build on demand, instead of PowerShell or a shell. The per-push run covers malformed
+frames, reader cleanup and display byte/exit forwarding. Only the real Windows
+PowerShell wrapper check stays ignored; `Native nightly` runs it serially:
 
 ```text
 cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::generated_windows_command_inherits_raw_standard_handles -- --ignored --exact --test-threads=1
 ```
 
-Use these exact filters rather than selecting all ignored host tests: the host
+Use this exact filter rather than selecting all ignored host tests: the host
 target also contains opt-in provider probes and subprocess-holder entry points.
 These controlled conformance checks invoke no model or authentication command.
 They verify process and byte behavior, not performance under CPU saturation. The
 serial `mcp_host` capture scenario separately checks the actual production helper,
 root callback correlation and cleanup of a hanging declared display.
-
-The malformed-profile fixture has a separate five-second readiness bound. Its
-same still-owned child signals readiness only after flushing the invalid header;
-the unchanged two-second production exchange then checks framing and confirmed
-cleanup. Readiness failure also requires cleanup and exact permit release. This
-test separates interpreter startup from malformed-frame handling; it does not
-certify cold startup within the production deadline.
 
 The capture case can also be selected directly after the locked native build:
 

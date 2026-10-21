@@ -568,7 +568,12 @@ async fn disabled_receipts_stay_ignored_and_accepted_overlap_queue_waits_for_nat
         assert_eq!(control["data"]["targets"].as_array().context("One canceled target")?.len(),1);
         assert_eq!(control["data"]["targets"][0]["sessionId"],first_session);
         assert_eq!(control["data"]["targets"][0]["phase"],"exited");
-        tokio::time::sleep(Duration::from_millis(1100)).await;
+        holds_throughout(Duration::from_millis(1100), async || {
+            let view=occurrence(&owner,job_id,second_id).await?;
+            ensure!(view["data"]["occurrence"]["state"]=="queued" && view["data"]["occurrence"]["runId"].is_null(),"Accepted overlap left the queue: {view}");
+            ensure!(file_count(&fixture,".launch-argv.json")?==1,"Accepted overlap launched another native worker");
+            Ok(())
+        }).await?;
         let still_queued=occurrence(&owner,job_id,second_id).await?;
         assert_eq!(still_queued["data"]["occurrence"]["state"],"queued");
         assert!(still_queued["data"]["occurrence"]["runId"].is_null());

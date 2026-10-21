@@ -525,7 +525,11 @@ async fn timeout_without_clients_stops_only_its_worker_and_never_retries_executi
         let replay = reply(&owner,"nesvo_run_job_now",arguments).await?;
         assert_eq!(original["data"],admitted["data"]);
         assert_eq!(replay["data"],admitted["data"]);
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        holds_throughout(Duration::from_millis(1500), async || {
+            let view = read_occurrence(&owner,job,id).await?;
+            ensure!(view["data"]["occurrence"]["state"]=="failed","Timed-out occurrence left failed: {view}");
+            Ok(())
+        }).await?;
         let stable = read_occurrence(&owner,job,id).await?;
         assert_eq!(stable["data"]["occurrence"]["state"],"failed");
         envelopes.extend(one_generation(&owner,&stable).await?);
@@ -663,7 +667,11 @@ async fn human_lease_and_quick_takeover_release_permanently_block_automatic_time
             let released = reply(&owner,"nesvo_get_session",json!({"sessionId":worker})).await?;
             assert!(released["data"]["session"]["controllerId"].is_null());
             phase = "human release never authorizes deferred automatic stop";
-            tokio::time::sleep(Duration::from_millis(1100)).await;
+            holds_throughout(Duration::from_millis(1100), async || {
+                let view = read_occurrence(&owner,job,id).await?;
+                ensure!(view["data"]["occurrence"]["executionTimeout"]["state"]=="blocked","Human release unblocked the automatic stop: {view}");
+                Ok(())
+            }).await?;
             let retained = read_occurrence(&owner,job,id).await?;
             let retained_timer = &retained["data"]["occurrence"]["executionTimeout"];
             frozen_deadline(&timer,retained_timer);

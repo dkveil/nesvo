@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/host", "apps/tui", "crates/nesvo-wire"]
+members = ["apps/host", "apps/tui", "crates/nesvo-process-fixture", "crates/nesvo-wire"]
 resolver = "3"
 
 [workspace.package]

@@ -39,9 +39,11 @@ async fn submission_waits_for_fresh_editor_idle_without_repeating_paste() -> Res
         assert_eq!(rejected["error"]["receipt"]["phase"], "unknown");
         assert_eq!(rejected["error"]["receipt"]["result"]["code"], "agent_not_ready");
         assert_eq!(rejected["error"]["receipt"]["result"]["effectStarted"], true);
-        tokio::time::sleep(Duration::from_millis(800)).await;
-        let read=data(call(&owner,"nesvo_read_session",json!({"sessionId":blocked_id,"maxBytes":8192})).await?)?;
-        assert!(!read["data"]["page"]["data"].as_str().context("blocked output")?.contains("FIXTURE_RESPONSE"), "New working evidence stops Enter, even when the editor later returns idle");
+        holds_throughout(Duration::from_millis(800), async || {
+            let read=data(call(&owner,"nesvo_read_session",json!({"sessionId":blocked_id,"maxBytes":8192})).await?)?;
+            ensure!(!read["data"]["page"]["data"].as_str().context("blocked output")?.contains("FIXTURE_RESPONSE"), "New working evidence stops Enter, even when the editor later returns idle");
+            Ok(())
+        }).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
     }).catch_unwind().await;
