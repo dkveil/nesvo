@@ -422,35 +422,97 @@ pub(crate) fn failure(code: &str, message: &str) -> anyhow::Error {
 pub fn emit_failure(machine: bool, code: &str, message: &str) -> i32 {
     emit_failure_receipt(machine, code, message, None)
 }
+pub(crate) const EXIT_BAD_REQUEST: i32 = 1;
+pub(crate) const EXIT_HOST_UNREACHABLE: i32 = 2;
+pub(crate) const EXIT_AUTHORITY: i32 = 3;
+pub(crate) const EXIT_HOST_ERROR: i32 = 4;
+pub(crate) const EXIT_MOVED_ON: i32 = 5;
+
+const BAD_REQUEST_CODES: &[&str] = &[
+    "invalid_argument",
+    "input_too_large",
+    "invalid_cursor",
+    "idempotency_conflict",
+    "no_current_session",
+    "not_repository",
+    "outside_root",
+    "too_large",
+];
+const HOST_UNREACHABLE_CODES: &[&str] = &[
+    "pairing_unavailable",
+    "host_unavailable",
+    "disconnected",
+    "timeout",
+    "host_stopping",
+];
+const AUTHORITY_CODES: &[&str] = &[
+    "forbidden",
+    "scope_revoked",
+    "coordinator_required",
+    "control_busy",
+];
+const MOVED_ON_CODES: &[&str] = &[
+    "revision_conflict",
+    "cursor_expired",
+    "digest_mismatch",
+    "decision_pending",
+    "coordinator_alive",
+    "run_draining",
+    "submission_preempted",
+    "original_submission_closed",
+    "occurrence_conflict",
+    "quota_binding_conflict",
+];
+
+pub(crate) fn exit_code(code: &str) -> i32 {
+    if BAD_REQUEST_CODES.contains(&code)
+        || code.ends_with("_not_found")
+        || code.ends_with("_too_large")
+    {
+        EXIT_BAD_REQUEST
+    } else if HOST_UNREACHABLE_CODES.contains(&code) {
+        EXIT_HOST_UNREACHABLE
+    } else if AUTHORITY_CODES.contains(&code) || code.ends_with("_unauthorized") {
+        EXIT_AUTHORITY
+    } else if MOVED_ON_CODES.contains(&code)
+        || code.starts_with("stale_")
+        || [
+            "_changed",
+            "_state_conflict",
+            "_expired",
+            "_revoked",
+            "_retired",
+        ]
+        .iter()
+        .any(|suffix| code.ends_with(suffix))
+    {
+        EXIT_MOVED_ON
+    } else {
+        EXIT_HOST_ERROR
+    }
+}
+
+fn failure_envelope(code: &str, message: &str, receipt: Option<&Value>) -> Value {
+    let mut envelope = json!({"schemaVersion":1,"ok":false,"error":{"code":code,"message":message,"retryable":matches!(code,"host_unavailable"|"disconnected"|"timeout")}});
+    if let Some(receipt) = receipt {
+        envelope["error"]["receipt"] = receipt.clone();
+    }
+    envelope
+}
+
+pub(crate) fn failure_receipt(code: &str, message: &str, receipt: Option<&Value>) -> Value {
+    let mut envelope = failure_envelope(code, message, receipt);
+    envelope["error"]["exitCode"] = exit_code(code).into();
+    envelope
+}
+
 fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Option<&Value>) -> i32 {
     if machine {
-        let mut error = json!({"schemaVersion":1,"ok":false,"error":{"code":code,"message":message,"retryable":matches!(code,"host_unavailable"|"disconnected"|"timeout")}});
-        if let Some(receipt) = receipt {
-            error["error"]["receipt"] = receipt.clone();
-        }
-        println!("{error}");
+        println!("{}", failure_receipt(code, message, receipt));
     } else {
         eprintln!("{code}: {message}");
     }
-    match code {
-        "invalid_argument" | "no_current_session" => 2,
-        "pairing_unavailable" => 3,
-        "host_unavailable" | "disconnected" => 4,
-        "session_not_found"
-        | "operation_not_found"
-        | "run_not_found"
-        | "mutation_not_found"
-        | "task_not_found"
-        | "message_not_found"
-        | "decision_not_found"
-        | "control_not_found"
-        | "attempt_not_found"
-        | "worktree_not_found" => 5,
-        "job_not_found" | "occurrence_not_found" => 5,
-        "timeout" => 7,
-        "unsupported" => 8,
-        _ => 6,
-    }
+    exit_code(code)
 }
 impl Command {
     fn machine(&self) -> bool {
@@ -500,7 +562,7 @@ pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -
             Ok(()) => 0,
             Err(_) => {
                 eprintln!("MCP transport stopped; no operation was retried");
-                6
+                EXIT_HOST_ERROR
             }
         };
     }
@@ -993,6 +1055,7 @@ pub(crate) async fn operation_capability(connection: &mut Connection) -> Result<
     Ok(caps)
 }
 const REVIEW_TEXT_LIMIT: usize = 32 * 1024;
+const PROMPT_LIMIT: usize = 8192;
 const WORKTREE_LAUNCH_WAIT_S: u64 = 3630;
 
 pub(crate) fn worktree_setup_query(
@@ -1171,15 +1234,32 @@ pub(crate) fn deliver_review_query(
     Ok(query)
 }
 
-fn read_review_file(path: &Path) -> Result<String> {
+pub(crate) const STDIN_SOURCE: &str = "-";
+
+pub(crate) fn read_text_input(path: &Path, limit: usize) -> Result<String> {
+    if path == Path::new(STDIN_SOURCE) {
+        read_bounded_text(std::io::stdin().lock(), limit)
+    } else {
+        let file = std::fs::File::open(path)
+            .map_err(|_| failure("invalid_argument", "Cannot read the text file"))?;
+        read_bounded_text(file, limit)
+    }
+}
+
+pub(crate) fn read_bounded_text(source: impl std::io::Read, limit: usize) -> Result<String> {
     use std::io::Read;
-    let file = std::fs::File::open(path)
-        .map_err(|_| failure("invalid_argument", "Cannot read the review file"))?;
-    let mut text = String::new();
-    file.take(REVIEW_TEXT_LIMIT as u64 + 1)
-        .read_to_string(&mut text)
-        .map_err(|_| failure("invalid_argument", "Review file must contain UTF-8 text"))?;
-    Ok(text)
+    let mut bytes = Vec::new();
+    source
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| failure("invalid_argument", "Cannot read the text input"))?;
+    if bytes.len() > limit {
+        return Err(failure(
+            "input_too_large",
+            &format!("Text input exceeds the {limit}-byte host limit"),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| failure("invalid_argument", "Text input must be UTF-8"))
 }
 
 pub(crate) async fn review_capability(connection: &mut Connection) -> Result<()> {
@@ -1226,7 +1306,7 @@ async fn review(command: ReviewCommand, connection: &mut Connection) -> Result<(
         } => {
             let text = match (text, file) {
                 (Some(text), None) => text,
-                (None, Some(path)) => read_review_file(&path)?,
+                (None, Some(path)) => read_text_input(&path, REVIEW_TEXT_LIMIT)?,
                 _ => {
                     return Err(failure(
                         "invalid_argument",
@@ -1254,28 +1334,19 @@ fn read_prompt(
     file: Option<std::path::PathBuf>,
     stdin: bool,
 ) -> Result<String> {
-    use std::io::Read;
-    let mut prompt = String::new();
-    if let Some(path) = file {
-        let file = std::fs::File::open(path)
-            .map_err(|_| failure("invalid_argument", "Cannot read prompt file"))?;
-        file.take(8193)
-            .read_to_string(&mut prompt)
-            .map_err(|_| failure("invalid_argument", "Prompt file must contain UTF-8 text"))?;
-    } else if stdin {
-        std::io::stdin()
-            .lock()
-            .take(8193)
-            .read_to_string(&mut prompt)
-            .map_err(|_| failure("invalid_argument", "Prompt stdin must contain UTF-8 text"))?;
-    } else if let Some(value) = literal {
-        prompt = value;
-    }
-    if prompt.len() > 8192 || prompt.contains('\0') {
+    let prompt = match (file, stdin) {
+        (Some(path), _) => read_text_input(&path, PROMPT_LIMIT)?,
+        (None, true) => read_text_input(Path::new(STDIN_SOURCE), PROMPT_LIMIT)?,
+        (None, false) => literal.unwrap_or_default(),
+    };
+    if prompt.len() > PROMPT_LIMIT {
         return Err(failure(
-            "invalid_argument",
-            "Prompt exceeds 8192 UTF-8 bytes or contains NUL",
+            "input_too_large",
+            "Prompt exceeds the 8192-byte host limit",
         ));
+    }
+    if prompt.contains('\0') {
+        return Err(failure("invalid_argument", "Prompt must not contain NUL"));
     }
     Ok(prompt)
 }
@@ -1467,13 +1538,7 @@ pub(crate) fn check_receipt(response: &Value) -> Result<()> {
 }
 pub(crate) fn error_value(error: &anyhow::Error) -> Value {
     match error.downcast_ref::<Failure>() {
-        Some(error) => {
-            let mut value = json!({"schemaVersion":1,"ok":false,"error":{"code":error.code,"message":error.message,"retryable":matches!(error.code.as_str(),"host_unavailable"|"disconnected"|"timeout")}});
-            if let Some(receipt) = &error.receipt {
-                value["error"]["receipt"] = receipt.clone();
-            }
-            value
-        }
+        Some(error) => failure_envelope(&error.code, &error.message, error.receipt.as_ref()),
         None => {
             json!({"schemaVersion":1,"ok":false,"error":{"code":"operation_unconfirmed","message":"Look up the same idempotency key before retrying","retryable":false}})
         }
@@ -2444,5 +2509,266 @@ mod review_tests {
         ] {
             assert!(Cli::try_parse_from(invalid).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_convention_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Command,
+    }
+
+    fn code_of(error: &anyhow::Error) -> String {
+        error_value(error)["error"]["code"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn exit_codes_map_representative_host_errors() {
+        for (code, exit) in [
+            ("invalid_argument", 1),
+            ("input_too_large", 1),
+            ("invalid_cursor", 1),
+            ("idempotency_conflict", 1),
+            ("no_current_session", 1),
+            ("session_not_found", 1),
+            ("decision_not_found", 1),
+            ("context_too_large", 1),
+            ("pairing_unavailable", 2),
+            ("host_unavailable", 2),
+            ("disconnected", 2),
+            ("timeout", 2),
+            ("host_stopping", 2),
+            ("forbidden", 3),
+            ("scope_revoked", 3),
+            ("coordinator_required", 3),
+            ("control_busy", 3),
+            ("trigger_unauthorized", 3),
+            ("busy", 4),
+            ("unsupported", 4),
+            ("operation_failed", 4),
+            ("git_unavailable", 4),
+            ("quota_wait", 4),
+            ("request_rejected", 4),
+            ("revision_conflict", 5),
+            ("stale_attempt", 5),
+            ("stale_operation", 5),
+            ("coordinator_changed", 5),
+            ("decision_state_conflict", 5),
+            ("attempt_state_conflict", 5),
+            ("run_state_conflict", 5),
+            ("decision_pending", 5),
+            ("cursor_expired", 5),
+            ("quota_wake_expired", 5),
+            ("context_changed", 5),
+            ("job_generation_retired", 5),
+            ("run_binding_changed", 5),
+        ] {
+            assert_eq!(exit_code(code), exit, "{code}");
+            assert_eq!(emit_failure(false, code, "fixture"), exit, "{code}");
+        }
+    }
+
+    #[test]
+    fn failure_receipts_carry_exit_code_and_stable_code_for_cli_only() {
+        let receipt = json!({"id":"op","phase":"failed"});
+        let value = failure_receipt("revision_conflict", "Revision changed", Some(&receipt));
+        assert_eq!(
+            value,
+            json!({"schemaVersion":1,"ok":false,"error":{"code":"revision_conflict","message":"Revision changed","retryable":false,"exitCode":5,"receipt":receipt}})
+        );
+        assert_eq!(
+            failure_receipt("disconnected", "Closed", None)["error"]["retryable"],
+            true
+        );
+        let mcp = error_value(&failure("forbidden", "No"));
+        assert!(mcp["error"].get("exitCode").is_none());
+        assert_eq!(mcp["error"]["code"], "forbidden");
+    }
+
+    #[test]
+    fn failure_schema_publishes_the_exit_code_contract() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
+        let error = &schema["oneOf"][0]["properties"]["error"];
+        assert_eq!(error["properties"]["exitCode"]["type"], "integer");
+        assert_eq!(
+            error["properties"]["exitCode"]["enum"],
+            json!([1, 2, 3, 4, 5])
+        );
+        assert!(
+            !error["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("exitCode"))
+        );
+        let workflow = schema["oneOf"][1]["properties"]["data"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variant| variant["properties"]["type"]["const"] == "workflow")
+            .unwrap();
+        assert_eq!(
+            workflow["properties"]["signal"]["properties"]["kind"]["enum"],
+            json!(["blocked", "question"])
+        );
+    }
+
+    #[test]
+    fn text_input_reads_stdin_marker_and_files_and_refuses_over_the_cap() {
+        assert_eq!(
+            read_bounded_text(std::io::Cursor::new("line\nnext"), 16).unwrap(),
+            "line\nnext"
+        );
+        assert_eq!(
+            read_bounded_text(std::io::Cursor::new("x".repeat(16)), 16).unwrap(),
+            "x".repeat(16)
+        );
+        let over = read_bounded_text(std::io::Cursor::new("x".repeat(17)), 16).unwrap_err();
+        assert_eq!(code_of(&over), "input_too_large");
+        assert_eq!(exit_code(&code_of(&over)), EXIT_BAD_REQUEST);
+        let split = read_bounded_text(std::io::Cursor::new("ééé"), 5).unwrap_err();
+        assert_eq!(code_of(&split), "input_too_large");
+        let binary = read_bounded_text(std::io::Cursor::new(vec![0xff, 0xfe]), 16).unwrap_err();
+        assert_eq!(code_of(&binary), "invalid_argument");
+        let path = std::env::temp_dir().join(format!(
+            "nesvo-text-input-{}.txt",
+            hex::encode(nesvo_wire::random::<8>())
+        ));
+        std::fs::write(&path, "review text").unwrap();
+        assert_eq!(read_text_input(&path, 64).unwrap(), "review text");
+        assert_eq!(
+            code_of(&read_text_input(&path, 4).unwrap_err()),
+            "input_too_large"
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            code_of(&read_text_input(&path, 64).unwrap_err()),
+            "invalid_argument"
+        );
+        assert_eq!(
+            read_prompt(Some("inline".into()), None, false).unwrap(),
+            "inline"
+        );
+        let long = read_prompt(Some("x".repeat(PROMPT_LIMIT + 1)), None, false).unwrap_err();
+        assert_eq!(code_of(&long), "input_too_large");
+    }
+
+    #[test]
+    fn long_text_arguments_accept_the_stdin_marker_and_keep_inline_forms() {
+        for valid in [
+            vec![
+                "nesvo",
+                "session",
+                "send",
+                "s",
+                "--key",
+                "k",
+                "--prompt-file",
+                "-",
+            ],
+            vec![
+                "nesvo", "session", "send", "s", "--key", "k", "--prompt", "x",
+            ],
+            vec![
+                "nesvo",
+                "session",
+                "create",
+                "n",
+                "--key",
+                "k",
+                "--prompt-file",
+                "-",
+            ],
+            vec![
+                "nesvo",
+                "review",
+                "deliver",
+                "--review",
+                "r",
+                "--session",
+                "s",
+                "--file",
+                "-",
+            ],
+            vec![
+                "nesvo",
+                "run",
+                "create",
+                "t",
+                "--key",
+                "k",
+                "--goal-file",
+                "-",
+            ],
+            vec![
+                "nesvo",
+                "run",
+                "decision",
+                "answer",
+                "r",
+                "d",
+                "--key",
+                "k",
+                "--revision",
+                "1",
+                "--answer-file",
+                "-",
+            ],
+            vec![
+                "nesvo", "run", "blocked", "--run", "r", "--key", "k", "--file", "-",
+            ],
+            vec![
+                "nesvo",
+                "run",
+                "ask",
+                "--run",
+                "r",
+                "--key",
+                "k",
+                "--question",
+                "Which?",
+                "--options",
+                "a,b,c",
+                "--json",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(&valid).is_ok(), "{valid:?}");
+        }
+        for invalid in [
+            vec!["nesvo", "run", "blocked", "--run", "r", "--key", "k"],
+            vec![
+                "nesvo", "run", "blocked", "--run", "r", "--key", "k", "--reason", "x", "--file",
+                "-",
+            ],
+            vec!["nesvo", "run", "ask", "--run", "r", "--key", "k"],
+            vec!["nesvo", "run", "ask", "--key", "k", "--question", "x"],
+        ] {
+            assert!(Cli::try_parse_from(&invalid).is_err(), "{invalid:?}");
+        }
+        assert!(
+            Cli::try_parse_from([
+                "nesvo",
+                "run",
+                "ask",
+                "--run",
+                "r",
+                "--key",
+                "k",
+                "--question",
+                "x",
+                "--json"
+            ])
+            .unwrap()
+            .command
+            .machine()
+        );
     }
 }

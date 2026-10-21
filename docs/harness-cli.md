@@ -1,5 +1,53 @@
 # Harness CLI
 
+## For agents
+
+Pass `--json` and read one envelope from stdout. A failure carries a stable
+`error.code` and `error.exitCode`, and the process exits with that number. One
+mapping in the CLI assigns every code, including codes a newer host adds:
+
+| Exit | Meaning                              | Typical codes                                                                                    | Next step                                                  |
+| ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 0    | Success                              |                                                                                                  | Continue                                                   |
+| 1    | Bad request: arguments or validation | `invalid_argument`, `input_too_large`, `idempotency_conflict`, `invalid_cursor`, `*_not_found`   | Fix the request; never resend it unchanged                 |
+| 2    | Host unreachable                     | `pairing_unavailable`, `host_unavailable`, `disconnected`, `timeout`, `host_stopping`            | Look up the same key or receipt later; never use a new key |
+| 3    | Identity or authority                | `forbidden`, `scope_revoked`, `coordinator_required`, `control_busy`, `*_unauthorized`           | Stop; ask instead of working around the refusal            |
+| 4    | Host error                           | `busy`, `unsupported`, `operation_failed`, `git_unavailable`, any other code                     | Inspect `error.receipt`; report it                         |
+| 5    | The work moved on                    | `revision_conflict`, `stale_*`, `*_changed`, `*_state_conflict`, `*_expired`, `decision_pending` | Re-read current state before deciding again                |
+
+Argument errors exit 1 with or without `--json`. A `timeout` envelope from
+`session wait` keeps its receipt; wait on the same receipt again.
+
+Every file argument reads stdin when its path is `-`: `--prompt-file`,
+`--goal-file`, `--question-file`, `--answer-file`, `--summary-file`,
+`--message-file` and each `--file` (review text, constraints, plans, reports,
+validations, budgets, jobs, `run blocked` and `run ask`). Input above the host cap
+for that field is refused with `input_too_large` and exit 1 before anything is
+sent. Inline forms such as `--prompt TEXT` remain.
+
+Stop instead of guessing. Inside a run, a worker that cannot continue records a
+blocker, and a worker facing a choice that changes the outcome asks:
+
+```powershell
+nesvo run blocked --run RUN_ID --key blocked-1 --reason "Database credentials are missing" --json
+Get-Content question.md | nesvo run ask --run RUN_ID --key ask-1 --file - --options "keep,replace" --json
+```
+
+Both read the caller's exact attempt binding and create an attempt-bound
+[decision](harness-decisions.md), addressed to the owner unless
+`--audience coordinator` is passed. `blocked` records `Blocked: REASON` with the
+single option `acknowledge` and a 24-hour deadline; `ask` records the question
+with up to eight options of at most 64 bytes appended as `Options: a, b`, and a
+five-minute deadline. `--timeout-ms` overrides either deadline. Text with its
+options fits 2048 bytes. The receipt is the decision result plus
+`signal:{kind:"blocked"|"question",options}`. A caller bound to another run gets
+`run_binding_changed` (exit 5); one pending decision per attempt is allowed
+(`decision_pending`). The same key replays the same record. After recording,
+stop and wait for the answer with `run decision get RUN_ID DECISION_ID` or the
+inbox.
+
+## Overview
+
 Headless commands use the same paired, authenticated native host as the TUI.
 Running `nesvo` without a subcommand still opens the existing TUI. Help never
 loads pairing or contacts a host.
@@ -169,21 +217,15 @@ Runtime and argument failures with `--json` return:
   "error": {
     "code": "session_not_found",
     "message": "Session no longer exists",
-    "retryable": false
+    "retryable": false,
+    "exitCode": 1
   }
 }
 ```
 
-| Exit | Meaning                                                           |
-| ---- | ----------------------------------------------------------------- |
-| 0    | Successful query/help or accepted operation receipt               |
-| 2    | Invalid arguments, or missing current process context             |
-| 3    | Missing/invalid private pairing                                   |
-| 4    | Host unavailable, unauthenticated or disconnected                 |
-| 5    | Session/operation/control not found or not visible                |
-| 6    | Host operation rejected, invalid cursor or unavailable Git review |
-| 7    | Request timed out                                                 |
-| 8    | Host lacks the required capability                                |
+Exit statuses follow the [agent table](#for-agents): 0 success, 1 bad request,
+2 host unreachable, 3 identity or authority, 4 host error, 5 the work moved on.
+`exitCode` is CLI-only; MCP tool errors carry the same `code` without it.
 
 Error codes distinguish `invalid_argument`, `no_current_session`, `forbidden`, `scope_revoked`,
 `pairing_unavailable`, `host_unavailable`, `disconnected`, `session_not_found`,
@@ -386,7 +428,7 @@ before accepting an intent. No key, prompt, command or input is retried silently
 receipt and domain cursor after a timeout/reconnect. Create can return accepted
 or dispatching when another connection is already processing that same intent;
 exit 0 does not claim agent readiness. Failed/unknown launch outcomes return exit
-6 with `error.receipt` in version 1 JSON. `idempotency_conflict` means the key was
+4 with `error.receipt` in version 1 JSON. `idempotency_conflict` means the key was
 used for a different request. See [durable operations](harness-operations.md).
 
 `session create NAME --key KEY --parent PARENT_SESSION_ID` creates a normal
@@ -436,6 +478,8 @@ version 3 documents these commands; existing processes keep their own snapshot.
 `workflowDecisions`. Owner-only questions cannot be answered by a coordinator.
 Decision revisions/deadlines are separate from execution revisions, and an answer
 does not type a native provider approval. See [decision contract](harness-decisions.md).
+`run blocked` and `run ask` are worker shortcuts over the same records; see
+[for agents](#for-agents).
 Launch-local instruction version 4 documents this boundary and explicit recovery.
 
 ## Literal send and receipt wait
@@ -455,11 +499,11 @@ deadline includes host wait time plus five seconds. The host waits on the receip
 and exact turn rather than polling current idle. No model call is made.
 
 A reached milestone returns version 1 operation data with receipt, domain cursor
-and `wait:{until,outcome,reached}`. A host wait timeout returns exit 7 and JSON
+and `wait:{until,outcome,reached}`. A host wait timeout returns exit 2 and JSON
 `error.code:"timeout"` with the current `error.receipt`; failed/interrupted/unknown
-before the target milestone returns exit 6 with its receipt. These outcomes do
+before the target milestone returns exit 4 with its receipt. These outcomes do
 not replay or cancel accepted input. Look up the same receipt/key after a lost
-connection. Unsupported provider correlation returns exit 8, including ordinary
+connection. Unsupported provider correlation returns exit 4, including ordinary
 shell writes when waiting beyond delivered. Response settlement is not task
 success. See [operation evidence and safety](harness-operations.md).
 
@@ -470,7 +514,7 @@ smaller OS main stack before any JSON was emitted. No host connection, terminal
 mode or persistent worker starts until parsing completes. This changes neither
 global stack limits nor command semantics. A small-caller-stack regression checks
 top-level/nested help and the native wait grammar; real CLI integration checks
-also cover a timeout retaining its receipt and exit code 7.
+also cover a timeout retaining its receipt and exit code 2.
 
 ## Saved session recovery
 

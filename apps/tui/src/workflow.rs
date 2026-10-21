@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{io::Read, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum Command {
@@ -99,6 +99,10 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::workflow_decisions::Command,
     },
+    /// Stop on a blocker: records a decision with one acknowledge option for this worker's attempt.
+    Blocked(Blocked),
+    /// Stop and ask instead of guessing: records a decision for this worker's attempt.
+    Ask(Ask),
     /// Durable addressed messages. ACK is receipt, never task execution.
     Inbox {
         #[command(subcommand)]
@@ -245,6 +249,8 @@ impl Command {
             Self::Budget { command } => command.machine(),
             Self::Drain { json, .. } | Self::Resume { json, .. } => *json,
             Self::Decision { command } => command.machine(),
+            Self::Blocked(args) => args.json,
+            Self::Ask(args) => args.json,
             Self::HostBudget { command } => command.machine(),
             Self::Inbox { command } => command.machine(),
             Self::Create { json, .. }
@@ -341,6 +347,12 @@ impl Command {
             Self::Decision { command } => Request::Decision {
                 request: command.request()?,
             },
+            Self::Blocked(_) | Self::Ask(_) => {
+                return Err(cli::failure(
+                    "invalid_argument",
+                    "Blocked and ask resolve the worker attempt before dispatch",
+                ));
+            }
             Self::Inbox { command } => Request::Inbox {
                 request: command.request()?,
             },
@@ -467,17 +479,192 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path, limit: usiz
     })
 }
 pub(crate) fn read_file(path: &std::path::Path, limit: usize) -> Result<String> {
-    let mut source = String::new();
-    std::fs::File::open(path)
-        .and_then(|f| f.take(limit as u64 + 1).read_to_string(&mut source))
-        .map_err(|_| cli::failure("invalid_argument", "Cannot read a UTF-8 workflow file"))?;
-    if source.len() > limit {
+    cli::read_text_input(path, limit)
+}
+
+const DECISION_TEXT_LIMIT: usize = 2048;
+const OPTION_LIMIT: usize = 8;
+const OPTION_TEXT_LIMIT: usize = 64;
+const ACKNOWLEDGE_OPTION: &str = "acknowledge";
+
+#[derive(clap::Args)]
+pub struct Blocked {
+    #[arg(long)]
+    run: String,
+    #[arg(long)]
+    key: String,
+    #[arg(long, required_unless_present = "file", conflicts_with = "file")]
+    reason: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long, value_enum, default_value = "owner")]
+    audience: crate::workflow_decisions::Audience,
+    #[arg(long, default_value_t = 86_400_000, value_parser = clap::value_parser!(u64).range(1000..=604_800_000))]
+    timeout_ms: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(clap::Args)]
+pub struct Ask {
+    #[arg(long)]
+    run: String,
+    #[arg(long)]
+    key: String,
+    #[arg(long, required_unless_present = "file", conflicts_with = "file")]
+    question: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long, value_delimiter = ',')]
+    options: Vec<String>,
+    #[arg(long, value_enum, default_value = "owner")]
+    audience: crate::workflow_decisions::Audience,
+    #[arg(long, default_value_t = 300_000, value_parser = clap::value_parser!(u64).range(1000..=604_800_000))]
+    timeout_ms: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+pub(crate) struct WorkerSignal {
+    kind: &'static str,
+    run_id: String,
+    key: String,
+    audience: crate::workflow_decisions::Audience,
+    question: String,
+    options: Vec<String>,
+    timeout_ms: u64,
+}
+
+fn literal_or_file(literal: Option<String>, file: Option<PathBuf>) -> Result<String> {
+    match (literal, file) {
+        (Some(text), None) => Ok(text),
+        (None, Some(path)) => read_file(&path, DECISION_TEXT_LIMIT),
+        _ => Err(cli::failure(
+            "invalid_argument",
+            "Pass exactly one inline text or --file PATH (- reads stdin)",
+        )),
+    }
+}
+
+fn valid_options(options: Vec<String>) -> Result<Vec<String>> {
+    let options: Vec<String> = options.into_iter().map(|o| o.trim().to_owned()).collect();
+    let invalid = options.len() > OPTION_LIMIT
+        || options.iter().enumerate().any(|(index, option)| {
+            option.is_empty()
+                || option.len() > OPTION_TEXT_LIMIT
+                || option.chars().any(char::is_control)
+                || options[..index].contains(option)
+        });
+    if invalid {
         return Err(cli::failure(
             "invalid_argument",
-            "Workflow file exceeds its byte limit",
+            "Options must be 1-8 distinct nonempty labels of at most 64 bytes",
         ));
     }
-    Ok(source)
+    Ok(options)
+}
+
+fn signal_text(heading: Option<&str>, body: &str, options: &[String]) -> Result<String> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Blocked reason or question must be nonempty",
+        ));
+    }
+    let mut text = match heading {
+        Some(heading) => format!("{heading}: {body}"),
+        None => body.to_owned(),
+    };
+    if !options.is_empty() {
+        text.push_str("\n\nOptions: ");
+        text.push_str(&options.join(", "));
+    }
+    if text.len() > DECISION_TEXT_LIMIT {
+        return Err(cli::failure(
+            "input_too_large",
+            "Question with its options exceeds the 2048-byte host limit",
+        ));
+    }
+    Ok(text)
+}
+
+impl Blocked {
+    pub(crate) fn signal(self) -> Result<WorkerSignal> {
+        let options = vec![ACKNOWLEDGE_OPTION.to_owned()];
+        let reason = literal_or_file(self.reason, self.file)?;
+        Ok(WorkerSignal {
+            kind: "blocked",
+            question: signal_text(Some("Blocked"), &reason, &options)?,
+            run_id: self.run,
+            key: self.key,
+            audience: self.audience,
+            options,
+            timeout_ms: self.timeout_ms,
+        })
+    }
+}
+
+impl Ask {
+    pub(crate) fn signal(self) -> Result<WorkerSignal> {
+        let options = valid_options(self.options)?;
+        let question = literal_or_file(self.question, self.file)?;
+        Ok(WorkerSignal {
+            kind: "question",
+            question: signal_text(None, &question, &options)?,
+            run_id: self.run,
+            key: self.key,
+            audience: self.audience,
+            options,
+            timeout_ms: self.timeout_ms,
+        })
+    }
+}
+
+impl WorkerSignal {
+    pub(crate) fn request(&self, context: &Value) -> Result<Value> {
+        if context["run"]["id"].as_str() != Some(self.run_id.as_str()) {
+            return Err(cli::failure(
+                "run_binding_changed",
+                "This worker is bound to another run or none; read run context before asking",
+            ));
+        }
+        let attempt = context["attempt"]["id"].as_str().ok_or_else(|| {
+            cli::failure(
+                "attempt_not_found",
+                "This worker has no assigned attempt to stop on",
+            )
+        })?;
+        wire(Request::Decision {
+            request: crate::workflow_decisions::Request::Ask {
+                key: self.key.clone(),
+                attempt_id: attempt.to_owned(),
+                audience: self.audience.clone(),
+                question: self.question.clone(),
+                timeout_ms: self.timeout_ms,
+            },
+        })
+    }
+    pub(crate) fn receipt(&self, mut response: Value) -> Value {
+        response["signal"] = json!({"kind":self.kind,"options":self.options});
+        response
+    }
+}
+
+async fn signal(signal: WorkerSignal, machine: bool, connection: &mut Connection) -> Result<()> {
+    let caps = cli::request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    let context_request = wire(Request::Context {})?;
+    supported(&caps, &context_request)?;
+    let context = cli::request(connection, context_request, "workflow").await?;
+    let request = signal.request(&context)?;
+    supported(&caps, &request)?;
+    let response = cli::request(connection, request, "workflow").await?;
+    cli::print_data(machine, signal.receipt(response))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -983,6 +1170,11 @@ pub(crate) fn supported(caps: &Value, request: &Value) -> Result<()> {
 }
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let machine = command.machine();
+    let command = match command {
+        Command::Blocked(args) => return signal(args.signal()?, machine, connection).await,
+        Command::Ask(args) => return signal(args.signal()?, machine, connection).await,
+        command => command,
+    };
     let request = wire(command.request()?)?;
     capability(connection, &request).await?;
     cli::print_data(
@@ -1514,5 +1706,139 @@ mod tests {
             tool("list", json!({})).unwrap()["request"]["action"],
             "list"
         );
+    }
+
+    fn blocked(reason: Option<&str>) -> Blocked {
+        Blocked {
+            run: "run-1".into(),
+            key: "blocked-1".into(),
+            reason: reason.map(str::to_owned),
+            file: None,
+            audience: crate::workflow_decisions::Audience::Owner,
+            timeout_ms: 86_400_000,
+            json: true,
+        }
+    }
+
+    fn ask(question: &str, options: &[&str]) -> Ask {
+        Ask {
+            run: "run-1".into(),
+            key: "ask-1".into(),
+            question: Some(question.into()),
+            file: None,
+            options: options.iter().map(|o| (*o).to_owned()).collect(),
+            audience: crate::workflow_decisions::Audience::Coordinator,
+            timeout_ms: 300_000,
+            json: true,
+        }
+    }
+
+    fn worker_context() -> Value {
+        json!({"type":"workflow","run":{"id":"run-1","state":"active"},"task":{"id":"task-1"},"attempt":{"id":"attempt-1","state":"assigned"}})
+    }
+
+    fn code_of(error: &anyhow::Error) -> Value {
+        cli::error_value(error)["error"]["code"].clone()
+    }
+
+    #[test]
+    fn workflow_blocked_records_an_acknowledge_decision_for_the_bound_attempt() {
+        let signal = blocked(Some("  Missing database credentials  "))
+            .signal()
+            .unwrap();
+        assert_eq!(
+            signal.request(&worker_context()).unwrap(),
+            json!({"type":"workflow","request":{"action":"decision","request":{"action":"ask","key":"blocked-1","attemptId":"attempt-1","audience":"owner","question":"Blocked: Missing database credentials\n\nOptions: acknowledge","timeoutMs":86_400_000}}})
+        );
+        let receipt = signal
+            .receipt(json!({"type":"workflow","decision":{"id":"d","state":"pending"},"cursor":7}));
+        assert_eq!(
+            receipt,
+            json!({"type":"workflow","decision":{"id":"d","state":"pending"},"cursor":7,"signal":{"kind":"blocked","options":["acknowledge"]}})
+        );
+        for reason in ["", "   "] {
+            assert_eq!(
+                code_of(&blocked(Some(reason)).signal().err().unwrap()),
+                "invalid_argument"
+            );
+        }
+        let long = "x".repeat(DECISION_TEXT_LIMIT);
+        assert_eq!(
+            code_of(&blocked(Some(&long)).signal().err().unwrap()),
+            "input_too_large"
+        );
+        assert_eq!(
+            code_of(&blocked(None).signal().err().unwrap()),
+            "invalid_argument"
+        );
+    }
+
+    #[test]
+    fn workflow_ask_records_a_question_with_options_and_guards_the_run_binding() {
+        let signal = ask("Which migration order?", &[" up first", "down first "])
+            .signal()
+            .unwrap();
+        let request = signal.request(&worker_context()).unwrap();
+        assert_eq!(
+            request,
+            json!({"type":"workflow","request":{"action":"decision","request":{"action":"ask","key":"ask-1","attemptId":"attempt-1","audience":"coordinator","question":"Which migration order?\n\nOptions: up first, down first","timeoutMs":300_000}}})
+        );
+        assert!(
+            supported(
+                &json!({"workflowPlans":true,"workflowAttempts":true,"workflowDecisions":true}),
+                &request
+            )
+            .is_ok()
+        );
+        assert!(
+            supported(
+                &json!({"workflowPlans":true,"workflowAttempts":true}),
+                &request
+            )
+            .is_err()
+        );
+        assert_eq!(
+            signal.receipt(json!({}))["signal"],
+            json!({"kind":"question","options":["up first","down first"]})
+        );
+        let plain = ask("Proceed?", &[]).signal().unwrap();
+        assert_eq!(
+            plain.request(&worker_context()).unwrap()["request"]["request"]["question"],
+            "Proceed?"
+        );
+        let mut moved = worker_context();
+        moved["run"]["id"] = json!("run-2");
+        let error = plain.request(&moved).unwrap_err();
+        assert_eq!(code_of(&error), "run_binding_changed");
+        assert_eq!(cli::exit_code("run_binding_changed"), cli::EXIT_MOVED_ON);
+        let mut unassigned = worker_context();
+        unassigned["attempt"] = Value::Null;
+        assert_eq!(
+            code_of(&plain.request(&unassigned).unwrap_err()),
+            "attempt_not_found"
+        );
+        let nine: Vec<String> = (0..9).map(|i| i.to_string()).collect();
+        let nine: Vec<&str> = nine.iter().map(String::as_str).collect();
+        for options in [vec!["a", "a"], vec!["a", ""], vec!["bad\ncontrol"], nine] {
+            assert_eq!(
+                code_of(&ask("Which?", &options).signal().err().unwrap()),
+                "invalid_argument",
+                "{options:?}"
+            );
+        }
+        let long = "x".repeat(OPTION_TEXT_LIMIT + 1);
+        assert!(ask("Which?", &[&long]).signal().is_err());
+        let near = "q".repeat(DECISION_TEXT_LIMIT - 5);
+        assert_eq!(
+            code_of(&ask(&near, &["yes", "no"]).signal().err().unwrap()),
+            "input_too_large"
+        );
+    }
+
+    #[test]
+    fn workflow_signal_commands_are_not_plain_wire_requests() {
+        assert!(Command::Blocked(blocked(Some("x"))).request().is_err());
+        assert!(Command::Ask(ask("x", &[])).request().is_err());
+        assert!(Command::Ask(ask("x", &[])).machine());
     }
 }

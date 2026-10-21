@@ -30,6 +30,10 @@
             "retryable": {
               "type": "boolean"
             },
+            "exitCode": {
+              "type": "integer",
+              "enum": [1, 2, 3, 4, 5]
+            },
             "receipt": {
               "$ref": "#/definitions/receipt"
             }
@@ -54,6 +58,25 @@
                 },
                 "cursor": {
                   "$ref": "#/definitions/cursor"
+                },
+                "signal": {
+                  "type": "object",
+                  "required": ["kind", "options"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "enum": ["blocked", "question"]
+                    },
+                    "options": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    }
+                  }
                 },
                 "run": {
                   "type": "object",

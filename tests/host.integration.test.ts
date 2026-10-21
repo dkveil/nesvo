@@ -409,9 +409,10 @@ process.stdin.on('data',text=>{
         ],
         { windowsHide: true, timeout: 5000, encoding: 'utf8' },
       );
-      assert.equal(cliWait.status, 7, cliWait.stdout + cliWait.stderr);
+      assert.equal(cliWait.status, 2, cliWait.stdout + cliWait.stderr);
       const notComplete = JSON.parse(cliWait.stdout);
       assert.equal(notComplete.error.code, 'timeout');
+      assert.equal(notComplete.error.exitCode, 2);
       assert.equal(notComplete.error.receipt.id, held.id);
       await delay(450);
       assert.notEqual(

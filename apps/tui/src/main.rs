@@ -102,6 +102,10 @@ async fn main() -> Result<()> {
                 "Invalid CLI arguments; use --help",
             ));
         }
+        if error.use_stderr() {
+            let _ = error.print();
+            std::process::exit(cli::EXIT_BAD_REQUEST);
+        }
         error.exit()
     });
     let headless = arguments.command.is_some() || arguments.list || arguments.check_host;
