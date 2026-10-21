@@ -440,6 +440,7 @@ pub struct App {
     pub overview: crate::overview::Overview,
     pub schedules: Vec<Value>,
     pub jobs: Option<crate::jobs::Jobs>,
+    pub git: Option<crate::git_pane::GitPane>,
     pub host_features: Value,
     pub review: crate::review::ReviewState,
     pub reviews: crate::review_session::ReviewSessions,
@@ -506,6 +507,7 @@ impl App {
             overview: Default::default(),
             schedules: Vec::new(),
             jobs: None,
+            git: None,
             host_features: Value::Null,
             client_id,
             sessions: vec![],
@@ -1176,7 +1178,10 @@ impl App {
 
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
-        let kind = if crate::review_session::host_event(self, &event).is_some() {
+        let kind = if let Some(next) = crate::git_pane::host_event(self, &event) {
+            commands.extend(next);
+            ""
+        } else if crate::review_session::host_event(self, &event).is_some() {
             ""
         } else {
             event["type"].as_str().unwrap_or_default()
@@ -1517,7 +1522,10 @@ impl App {
         {
             self.request_diff()
         } else {
-            crate::review_session::tick(self).into_iter().next()
+            crate::review_session::tick(self)
+                .into_iter()
+                .next()
+                .or_else(|| crate::git_pane::tick(self))
         }
     }
 

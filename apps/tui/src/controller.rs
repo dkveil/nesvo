@@ -55,6 +55,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     if app.jobs.is_some() && app.dialog.is_none() {
         return crate::jobs_controller::event(app, event);
     }
+    if crate::git_pane::captures(app) {
+        return crate::git_pane::event(app, event);
+    }
     if crate::overview::engaged(app) && app.dialog.is_none() {
         return crate::overview::event(app, event);
     }
@@ -1286,6 +1289,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         }
         KeyCode::Char('J') => crate::jobs_controller::open(app, outcome),
         KeyCode::Char('O') => crate::overview::open(app),
+        KeyCode::Char('Y') => outcome.commands.extend(crate::git_pane::open(app, true)),
         KeyCode::Tab if app.reviews.shown.is_some() => app.reviews.focused = true,
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,

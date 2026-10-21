@@ -24,6 +24,7 @@ pub enum Role {
     Files,
     Jobs,
     Overview,
+    Git,
     Empty,
 }
 
@@ -40,6 +41,7 @@ impl Role {
             Self::Files => "Files",
             Self::Jobs => "Jobs",
             Self::Overview => "Overview",
+            Self::Git => "Git",
             Self::Empty => "Empty",
         }
     }
@@ -50,6 +52,7 @@ impl Role {
             Self::Files => "Press 2 to browse files".into(),
             Self::Jobs => "Press J to open Jobs".into(),
             Self::Overview => "Press O to focus the session overview".into(),
+            Self::Git => "Press Y to open Git".into(),
             Self::Agent | Self::Terminal | Self::Empty => "Press n to start a session".into(),
         }
     }
@@ -302,6 +305,7 @@ pub fn shipped() -> Vec<NamedLayout> {
         NamedLayout::new("Agent + Terminal", pair(Role::Terminal)),
         NamedLayout::new("Agent + Review", pair(Role::Review)),
         NamedLayout::new("Agent + Files", pair(Role::Files)),
+        NamedLayout::new("Agent + Git", pair(Role::Git)),
         quad,
     ]
 }
@@ -646,6 +650,12 @@ pub fn apply(app: &mut App, layout: &NamedLayout, width: u16) -> Result<Vec<Valu
         app.review.return_to_input = false;
         app.review.focused = false;
         commands.extend(app.request_diff());
+    }
+    if layout.tree.position(Role::Git).is_some()
+        && app.active_id().is_some()
+        && crate::git_pane::supported(app)
+    {
+        commands.extend(crate::git_pane::open(app, false));
     }
     app.layouts.mark_active(project.as_deref(), &layout.name);
     Ok(commands)
@@ -1057,7 +1067,7 @@ mod tests {
         let mut app = app(vec![session("claude", "claude", true)]);
         let quad = shipped().pop().unwrap();
         app.layout_picker = Some(Picker {
-            selected: 3,
+            selected: shipped().len() - 1,
             ..Default::default()
         });
         assert!(press(&mut app, KeyCode::Enter, 100).is_empty());
@@ -1115,7 +1125,10 @@ mod tests {
             }
         );
         assert_eq!(saved.tree.slots()[1].role, Role::Terminal);
-        assert_eq!(app.layout_picker.as_ref().unwrap().selected, 4);
+        assert_eq!(
+            app.layout_picker.as_ref().unwrap().selected,
+            shipped().len()
+        );
         press(&mut app, KeyCode::Char('r'), 120);
         type_text(&mut app, " work");
         press(&mut app, KeyCode::Enter, 120);
@@ -1162,9 +1175,9 @@ mod tests {
         assert!(library.save(Some("repo"), named("One more")).is_err());
         assert_eq!(
             library.entries(Some("repo")).len(),
-            4 + MAX_PROJECT_LAYOUTS + 1
+            shipped().len() + MAX_PROJECT_LAYOUTS + 1
         );
-        assert_eq!(library.entries(None).len(), 5);
+        assert_eq!(library.entries(None).len(), shipped().len() + 1);
     }
 
     #[test]

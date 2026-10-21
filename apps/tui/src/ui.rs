@@ -472,6 +472,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
             ui_controls::render(frame, app);
         }
     }
+    crate::ui_git::render(frame, app);
     crate::toolbox::render(frame, app);
     if let Some(picker) = &app.session_kind {
         crate::ui_session_kind::render(frame, app, picker);
@@ -865,6 +866,9 @@ fn render_view(frame: &mut Frame, app: &App, role: Role, area: Rect) {
         return;
     }
     if role == Role::Files && crate::ui_files::render_leaf(frame, app, area) {
+        return;
+    }
+    if role == Role::Git && crate::ui_git::render_leaf(frame, app, area) {
         return;
     }
     let content = pane_content(area, false);
