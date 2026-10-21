@@ -224,6 +224,13 @@ fn main() -> Result<()> {
     {
         std::process::exit(git_repository::helper_stdio());
     }
+    #[cfg(windows)]
+    if std::env::args_os().len() == 2
+        && std::env::args_os().nth(1).as_deref()
+            == Some(std::ffi::OsStr::new(worktrees::STEP_HELPER_FLAG))
+    {
+        std::process::exit(worktrees::step_helper());
+    }
     if std::env::args_os().len() == 2
         && std::env::args_os().nth(1).as_deref()
             == Some(std::ffi::OsStr::new(job_precheck_adapter::FLAG))

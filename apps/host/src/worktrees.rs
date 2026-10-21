@@ -1,6 +1,6 @@
 use crate::{
     caller::Authority, command_scope, event_log, git, jobs::LaunchSpec, process::display_path,
-    protocol::Command, sessions::State,
+    protocol::Command, sessions::State, status::now_millis,
 };
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,10 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::{
@@ -110,7 +113,7 @@ pub(crate) fn error_code(error: &anyhow::Error) -> Option<&'static str> {
     })
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub setup: Vec<String>,
@@ -325,15 +328,18 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn valid_step(step: &str) -> bool {
+    !step.trim().is_empty()
+        && step.len() <= STEP_BYTES
+        && !step.chars().any(|c| c.is_control() && c != '\t')
+}
+
 fn validate_steps(key: &str, steps: Vec<String>) -> Result<Vec<String>> {
     if steps.len() > STEP_LIMIT {
         return Err(anyhow!("{key} declares more than {STEP_LIMIT} steps"));
     }
     for step in &steps {
-        if step.trim().is_empty()
-            || step.len() > STEP_BYTES
-            || step.chars().any(|c| c.is_control() && c != '\t')
-        {
+        if !valid_step(step) {
             return Err(anyhow!(
                 "{key} steps must be nonempty single-line commands of at most {STEP_BYTES} bytes"
             ));
@@ -466,6 +472,8 @@ pub struct Record {
     pub repository: String,
     pub created_at: u64,
     pub digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    config: Option<Config>,
     pub setup: Phase,
     pub run: Option<Phase>,
     env_files: Vec<Copied>,
@@ -484,14 +492,40 @@ struct Document {
 pub struct Store {
     path: PathBuf,
     document: Mutex<Document>,
+    revision: AtomicU64,
+    written: Arc<Mutex<u64>>,
     active: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or_default()
+fn replace_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let temporary = path.with_extension("json.tmp");
+    match std::fs::remove_file(&temporary) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&temporary, path)
+}
+
+fn registry_full(stage: Stage) -> anyhow::Error {
+    Failure::raise(
+        stage,
+        "worktree_registry_full",
+        format!(
+            "The host tracks {RECORD_LIMIT} active worktrees; archive one before creating another"
+        ),
+    )
 }
 
 impl Store {
@@ -526,19 +560,39 @@ impl Store {
         Ok(Self {
             path,
             document: Mutex::new(document),
+            revision: AtomicU64::new(0),
+            written: Arc::new(Mutex::new(0)),
             active: Mutex::new(HashMap::new()),
         })
     }
-    fn update<T>(&self, change: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
-        let mut document = self
-            .document
-            .lock()
-            .map_err(|_| anyhow!("Worktree registry is unavailable"))?;
-        let value = change(&mut document)?;
-        let bytes = serde_json::to_vec_pretty(&*document)?;
-        let temporary = self.path.with_extension("json.tmp");
-        std::fs::write(&temporary, bytes)?;
-        std::fs::rename(&temporary, &self.path)?;
+    async fn update<T>(&self, change: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
+        let (value, bytes, revision) = {
+            let mut document = self
+                .document
+                .lock()
+                .map_err(|_| anyhow!("Worktree registry is unavailable"))?;
+            let value = change(&mut document)?;
+            let bytes = serde_json::to_vec_pretty(&*document)?;
+            (
+                value,
+                bytes,
+                self.revision.fetch_add(1, Ordering::SeqCst) + 1,
+            )
+        };
+        let path = self.path.clone();
+        let written = self.written.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut last = written
+                .lock()
+                .map_err(|_| anyhow!("Worktree registry is unavailable"))?;
+            if *last < revision {
+                replace_private(&path, &bytes)?;
+                *last = revision;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .map_err(|_| anyhow!("Worktree registry write was interrupted"))??;
         Ok(value)
     }
     fn read<T>(&self, view: impl FnOnce(&Document) -> T) -> Result<T> {
@@ -557,7 +611,7 @@ impl Store {
         })
         .unwrap_or(false)
     }
-    fn approve(&self, repository: &str, digest: &str) -> Result<u64> {
+    async fn approve(&self, repository: &str, digest: &str) -> Result<u64> {
         self.update(|document| {
             if let Some(existing) = document
                 .approvals
@@ -566,7 +620,7 @@ impl Store {
             {
                 return Ok(existing.approved_at);
             }
-            let approved_at = now();
+            let approved_at = now_millis();
             document.approvals.push(Approval {
                 repository: repository.into(),
                 digest: digest.into(),
@@ -576,8 +630,9 @@ impl Store {
             document.approvals.drain(..excess);
             Ok(approved_at)
         })
+        .await
     }
-    fn revoke(&self, repository: &str, digest: &str) -> Result<bool> {
+    async fn revoke(&self, repository: &str, digest: &str) -> Result<bool> {
         self.update(|document| {
             let before = document.approvals.len();
             document
@@ -585,22 +640,34 @@ impl Store {
                 .retain(|approval| approval.repository != repository || approval.digest != digest);
             Ok(document.approvals.len() != before)
         })
+        .await
     }
-    fn insert(&self, record: Record) -> Result<()> {
+    fn has_room(&self) -> bool {
+        self.read(|document| {
+            document.worktrees.len() < RECORD_LIMIT
+                || document
+                    .worktrees
+                    .iter()
+                    .any(|record| record.archived_at.is_some())
+        })
+        .unwrap_or(false)
+    }
+    async fn insert(&self, record: Record) -> Result<()> {
         self.update(|document| {
-            document.worktrees.push(record);
-            while document.worktrees.len() > RECORD_LIMIT {
+            if document.worktrees.len() >= RECORD_LIMIT {
                 let index = document
                     .worktrees
                     .iter()
                     .position(|record| record.archived_at.is_some())
-                    .unwrap_or(0);
+                    .ok_or_else(|| registry_full(Stage::Setup))?;
                 document.worktrees.remove(index);
             }
+            document.worktrees.push(record);
             Ok(())
         })
+        .await
     }
-    fn modify(&self, session_id: &str, change: impl FnOnce(&mut Record)) -> Result<()> {
+    async fn modify(&self, session_id: &str, change: impl FnOnce(&mut Record)) -> Result<()> {
         self.update(|document| {
             let record = document
                 .worktrees
@@ -611,6 +678,7 @@ impl Store {
             change(record);
             Ok(())
         })
+        .await
     }
     fn find(&self, session_id: &str) -> Option<Record> {
         self.read(|document| {
@@ -742,6 +810,9 @@ async fn plan_with(store: Option<&Store>, directory: &Path) -> Result<Plan> {
         )
     })?;
     let repository = repository_key(&root);
+    if store.is_some_and(|store| !store.has_room()) {
+        return Err(registry_full(Stage::Plan));
+    }
     let config = head_config(&root).await.map_err(|error| {
         Failure::raise(Stage::Plan, "worktree_config_invalid", error.to_string())
     })?;
@@ -791,7 +862,7 @@ async fn journal(
             log.append(vec![event_log::Observation {
                 session_id: Some(session_id.into()),
                 kind,
-                at: now(),
+                at: now_millis(),
                 payload,
             }]),
         )
@@ -803,39 +874,101 @@ fn sha256(bytes: &[u8]) -> String {
     hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
 }
 
-async fn copy_env_files(
-    root: &Path,
-    worktree: &Path,
-    files: &[String],
-) -> Result<Vec<Copied>, String> {
+fn without_links(options: &mut std::fs::OpenOptions) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x0020_0000);
+    }
+}
+
+fn contained(base: &Path, path: &Path) -> bool {
+    std::fs::canonicalize(path).is_ok_and(|resolved| resolved.starts_with(base))
+}
+
+fn read_env_file(root: &Path, file: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let missing = || format!("environment file {file} is missing in the source checkout");
+    let linked = || format!("environment file {file} must stay inside the source checkout");
+    let mut source = root.to_owned();
+    for part in file.split('/') {
+        source.push(part);
+        let metadata = std::fs::symlink_metadata(&source).map_err(|_| missing())?;
+        if metadata.file_type().is_symlink() || !contained(root, &source) {
+            return Err(linked());
+        }
+    }
+    let oversized = || {
+        format!("environment file {file} must be a regular file of at most {ENV_FILE_BYTES} bytes")
+    };
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    without_links(&mut options);
+    let opened = options.open(&source).map_err(|_| linked())?;
+    let metadata = opened.metadata().map_err(|_| missing())?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > ENV_FILE_BYTES {
+        return Err(oversized());
+    }
+    let mut bytes = Vec::new();
+    opened
+        .take(ENV_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| format!("environment file {file} cannot be read"))?;
+    if bytes.len() as u64 > ENV_FILE_BYTES {
+        return Err(oversized());
+    }
+    Ok(bytes)
+}
+
+fn write_env_file(worktree: &Path, file: &str, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let folder = || format!("environment file {file} has no writable folder inside the worktree");
+    let parts: Vec<&str> = file.split('/').collect();
+    let (name, parents) = parts.split_last().ok_or_else(folder)?;
+    let mut target = worktree.to_owned();
+    for part in parents {
+        target.push(part);
+        match std::fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Err(folder()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&target).map_err(|_| folder())?;
+            }
+            Err(_) => return Err(folder()),
+        }
+        if !contained(worktree, &target) {
+            return Err(folder());
+        }
+    }
+    target.push(name);
+    if std::fs::symlink_metadata(&target).is_ok() {
+        return Err(format!(
+            "environment file {file} would overwrite a checked-out path"
+        ));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    without_links(&mut options);
+    options
+        .open(&target)
+        .and_then(|mut opened| opened.write_all(bytes))
+        .map_err(|_| format!("environment file {file} cannot be written"))
+}
+
+fn copy_env_files(root: &Path, worktree: &Path, files: &[String]) -> Result<Vec<Copied>, String> {
+    let root = std::fs::canonicalize(root)
+        .map_err(|_| "the source checkout cannot be resolved".to_owned())?;
+    let worktree = std::fs::canonicalize(worktree)
+        .map_err(|_| "the worktree cannot be resolved".to_owned())?;
     let mut copied = Vec::new();
     for file in files {
-        let source = root.join(file);
-        let metadata = tokio::fs::symlink_metadata(&source)
-            .await
-            .map_err(|_| format!("environment file {file} is missing in the source checkout"))?;
-        if !metadata.is_file() || metadata.len() > ENV_FILE_BYTES {
-            return Err(format!(
-                "environment file {file} must be a regular file of at most {ENV_FILE_BYTES} bytes"
-            ));
-        }
-        let target = worktree.join(file);
-        if tokio::fs::symlink_metadata(&target).await.is_ok() {
-            return Err(format!(
-                "environment file {file} would overwrite a checked-out path"
-            ));
-        }
-        let bytes = tokio::fs::read(&source)
-            .await
-            .map_err(|_| format!("environment file {file} cannot be read"))?;
-        if let Some(parent) = target.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|_| format!("environment file {file} has no writable folder"))?;
-        }
-        tokio::fs::write(&target, &bytes)
-            .await
-            .map_err(|_| format!("environment file {file} cannot be written"))?;
+        let bytes = read_env_file(&root, file)?;
+        write_env_file(&worktree, file, &bytes)?;
         copied.push(Copied {
             path: file.clone(),
             sha256: sha256(&bytes),
@@ -872,7 +1005,7 @@ async fn prepare_with(
     session_id: &str,
     log: Option<event_log::Service>,
 ) -> Result<Option<SetupFact>> {
-    let started_at = now();
+    let started_at = now_millis();
     let display = display_path(worktree);
     let Some(store) = store else {
         return Ok(None);
@@ -880,29 +1013,32 @@ async fn prepare_with(
     let branch = git::current_branch(worktree).await;
     let digest = plan.prepared.as_ref().map(|(_, digest)| digest.clone());
     let log_path = display_path(&worktree.join(STATE_DIR).join("setup.log"));
-    store.insert(Record {
-        session_id: session_id.into(),
-        worktree: display.clone(),
-        branch,
-        repository: plan.repository.clone(),
-        created_at: started_at,
-        digest: digest.clone(),
-        setup: Phase {
-            state: if plan.prepared.is_some() {
-                "running"
-            } else {
-                "notConfigured"
-            }
-            .into(),
-            log: plan.prepared.as_ref().map(|_| log_path.clone()),
-            started_at,
-            finished_at: plan.prepared.is_none().then_some(started_at),
-        },
-        run: None,
-        env_files: Vec::new(),
-        archived_at: None,
-        discarded: false,
-    })?;
+    store
+        .insert(Record {
+            session_id: session_id.into(),
+            worktree: display.clone(),
+            branch,
+            repository: plan.repository.clone(),
+            created_at: started_at,
+            digest: digest.clone(),
+            config: plan.prepared.as_ref().map(|(config, _)| config.clone()),
+            setup: Phase {
+                state: if plan.prepared.is_some() {
+                    "running"
+                } else {
+                    "notConfigured"
+                }
+                .into(),
+                log: plan.prepared.as_ref().map(|_| log_path.clone()),
+                started_at,
+                finished_at: plan.prepared.is_none().then_some(started_at),
+            },
+            run: None,
+            env_files: Vec::new(),
+            archived_at: None,
+            discarded: false,
+        })
+        .await?;
     let Some((config, digest)) = plan.prepared else {
         return Ok(None);
     };
@@ -914,11 +1050,13 @@ async fn prepare_with(
     let (outcome, copied) = setup(&plan.root, worktree, &config, &digest, cancel).await;
     drop(activity);
     let result = outcome.name();
-    store.modify(session_id, |record| {
-        record.setup.state = result.into();
-        record.setup.finished_at = Some(now());
-        record.env_files = copied;
-    })?;
+    store
+        .modify(session_id, |record| {
+            record.setup.state = result.into();
+            record.setup.finished_at = Some(now_millis());
+            record.env_files = copied;
+        })
+        .await?;
     journal(
         log.as_ref(),
         session_id,
@@ -970,7 +1108,15 @@ async fn setup(
             return (Outcome::Failed, Vec::new());
         }
     }
-    let copied = match copy_env_files(root, worktree, &config.env_files).await {
+    let (source, target, files) = (
+        root.to_owned(),
+        worktree.to_owned(),
+        config.env_files.clone(),
+    );
+    let copied = match tokio::task::spawn_blocking(move || copy_env_files(&source, &target, &files))
+        .await
+        .unwrap_or_else(|_| Err("environment files could not be copied".into()))
+    {
         Ok(copied) => copied,
         Err(message) => {
             log.line(&message).await;
@@ -1073,13 +1219,14 @@ impl Log {
     }
 }
 
-fn shell(step: &str) -> Result<tokio::process::Command> {
+fn shell(step: &str) -> Result<std::process::Command> {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         let executable = PathBuf::from(command_scope::system_root()?)
             .join("System32")
             .join("cmd.exe");
-        let mut command = tokio::process::Command::new(executable);
+        let mut command = std::process::Command::new(executable);
         command
             .args(["/d", "/s", "/c"])
             .raw_arg(format!("\"{step}\""));
@@ -1087,7 +1234,7 @@ fn shell(step: &str) -> Result<tokio::process::Command> {
     }
     #[cfg(not(windows))]
     {
-        let mut command = tokio::process::Command::new("/bin/sh");
+        let mut command = std::process::Command::new("/bin/sh");
         command.arg("-c").arg(step);
         Ok(command)
     }
@@ -1096,6 +1243,150 @@ fn shell(step: &str) -> Result<tokio::process::Command> {
 fn private_variable(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy().to_ascii_uppercase();
     name.starts_with("NESVO_") || name.starts_with("POCKET_")
+}
+
+fn without_private_environment(command: &mut std::process::Command) {
+    for (name, _) in std::env::vars_os() {
+        if private_variable(&name) {
+            command.env_remove(name);
+        }
+    }
+}
+
+#[cfg(windows)]
+pub(crate) const STEP_HELPER_FLAG: &str = "--worktree-step-helper";
+#[cfg(all(windows, test))]
+const STEP_TEST_GATE: &str = "NESVO_WORKTREE_STEP_TEST_HELPER";
+
+#[cfg(windows)]
+fn step_command(_: &str) -> Result<std::process::Command> {
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    without_private_environment(&mut command);
+    #[cfg(not(test))]
+    command.arg(STEP_HELPER_FLAG);
+    #[cfg(test)]
+    command
+        .args([
+            "--ignored",
+            "--exact",
+            "worktrees::tests::step_helper_entry",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(STEP_TEST_GATE, "1");
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    Ok(command)
+}
+
+#[cfg(not(windows))]
+fn step_command(text: &str) -> Result<std::process::Command> {
+    let mut command = shell(text)?;
+    without_private_environment(&mut command);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    Ok(command)
+}
+
+#[cfg(windows)]
+fn step_frame(text: &str) -> Vec<u8> {
+    let mut frame = u32::try_from(text.len())
+        .unwrap_or(u32::MAX)
+        .to_be_bytes()
+        .to_vec();
+    frame.extend_from_slice(text.as_bytes());
+    frame
+}
+
+#[cfg(windows)]
+fn read_step(input: &mut impl std::io::Read) -> Option<String> {
+    let mut length = [0; 4];
+    input.read_exact(&mut length).ok()?;
+    let length = usize::try_from(u32::from_be_bytes(length)).ok()?;
+    if length == 0 || length > STEP_BYTES {
+        return None;
+    }
+    let mut bytes = vec![0; length];
+    input.read_exact(&mut bytes).ok()?;
+    String::from_utf8(bytes)
+        .ok()
+        .filter(|text| valid_step(text))
+}
+
+#[cfg(windows)]
+pub(crate) fn step_helper() -> i32 {
+    use std::os::windows::process::CommandExt;
+    let Some(text) = read_step(&mut std::io::stdin().lock()) else {
+        eprintln!("the step request was refused");
+        return 1;
+    };
+    let Ok(mut command) = shell(&text) else {
+        eprintln!("the platform shell is unavailable");
+        return 1;
+    };
+    without_private_environment(&mut command);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(std::io::stderr()))
+        .stderr(Stdio::inherit())
+        .creation_flags(0x0800_0000);
+    match command.status() {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(_) => {
+            eprintln!("the step could not be started");
+            1
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn release(child: &mut tokio::process::Child, text: &str) -> Result<()> {
+    let mut input = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("The step helper input is unavailable"))?;
+    input.write_all(&step_frame(text)).await?;
+    input.flush().await?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+async fn release(_: &mut tokio::process::Child, _: &str) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn exited(child: &mut tokio::process::Child) -> std::io::Result<bool> {
+    child.try_wait().map(|status| status.is_some())
+}
+
+#[cfg(unix)]
+fn exited(child: &mut tokio::process::Child) -> std::io::Result<bool> {
+    let Some(id) = child.id() else {
+        return Ok(true);
+    };
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            id as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == 0 {
+        return Ok(info.si_signo == libc::SIGCHLD);
+    }
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::Interrupted {
+        Ok(false)
+    } else {
+        Err(error)
+    }
 }
 
 struct Owned {
@@ -1146,7 +1437,7 @@ async fn cancelled(cancel: &mut watch::Receiver<bool>) {
 }
 
 enum Ended {
-    Exited(Option<i32>),
+    Exited,
     TimedOut,
     Cancelled,
     Lost,
@@ -1159,21 +1450,12 @@ async fn step(
     cancel: &mut watch::Receiver<bool>,
     log: &mut Log,
 ) -> Outcome {
-    let Ok(mut command) = shell(text) else {
+    let Ok(command) = step_command(text) else {
         log.line("the platform shell is unavailable").await;
         return Outcome::Failed;
     };
-    command
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    for (name, _) in std::env::vars_os() {
-        if private_variable(&name) {
-            command.env_remove(name);
-        }
-    }
+    let mut command = tokio::process::Command::from(command);
+    command.current_dir(cwd).kill_on_drop(true);
     command_scope::configure(&mut command);
     let Ok(child) = command.spawn() else {
         log.line("the step could not be started").await;
@@ -1190,6 +1472,13 @@ async fn step(
             log.line("the step could not be contained").await;
             return Outcome::Failed;
         }
+    }
+    if !matches!(
+        tokio::time::timeout_at(deadline.into(), release(&mut owned.child, text)).await,
+        Ok(Ok(()))
+    ) {
+        log.line("the step could not be started").await;
+        return Outcome::Failed;
     }
     let (sender, mut output) = mpsc::channel(8);
     let mut readers = Vec::new();
@@ -1211,12 +1500,9 @@ async fn step(
                 Some(bytes) => log.write(&bytes).await,
                 None => open = false,
             },
-            _ = poll.tick() => match owned.child.try_wait() {
-                Ok(Some(status)) => {
-                    owned.may_terminate = cfg!(windows);
-                    break Ended::Exited(status.code());
-                }
-                Ok(None) => {}
+            _ = poll.tick() => match exited(&mut owned.child) {
+                Ok(true) => break Ended::Exited,
+                Ok(false) => {}
                 Err(_) => break Ended::Lost,
             },
         }
@@ -1231,28 +1517,28 @@ async fn step(
     for reader in readers {
         reader.abort();
     }
-    if !matches!(ended, Ended::Exited(_)) {
-        let _ = tokio::time::timeout(DRAIN_DEADLINE, owned.child.wait()).await;
-    }
-    match ended {
-        Ended::Exited(Some(0)) => Outcome::Passed,
-        Ended::Exited(code) => {
+    let status = tokio::time::timeout(DRAIN_DEADLINE, owned.child.wait()).await;
+    match (ended, status) {
+        (Ended::Exited, Ok(Ok(status))) if status.success() => Outcome::Passed,
+        (Ended::Exited, Ok(Ok(status))) => {
             log.line(&format!(
                 "step failed with exit code {}",
-                code.map_or_else(|| "unknown".into(), |code| code.to_string())
+                status
+                    .code()
+                    .map_or_else(|| "unknown".into(), |code| code.to_string())
             ))
             .await;
             Outcome::Failed
         }
-        Ended::Lost => {
+        (Ended::Exited | Ended::Lost, _) => {
             log.line("the step exit could not be observed").await;
             Outcome::Failed
         }
-        Ended::TimedOut => {
+        (Ended::TimedOut, _) => {
             log.line("the step timed out and was terminated").await;
             Outcome::TimedOut
         }
-        Ended::Cancelled => {
+        (Ended::Cancelled, _) => {
             log.line("the step was cancelled and terminated").await;
             Outcome::Cancelled
         }
@@ -1424,12 +1710,12 @@ async fn approve(
             format!("The committed setup changed; inspect it again (current digest {current})"),
         ));
     }
-    let approved_at = store.approve(&repository, &current)?;
+    let approved_at = store.approve(&repository, &current).await?;
     if let Some(log) = log {
         log.observe(event_log::Observation {
             session_id: None,
             kind: "worktreeSetupApproved",
-            at: now(),
+            at: now_millis(),
             payload: json!({"repository":repository,"digest":current}),
         });
     }
@@ -1455,12 +1741,12 @@ async fn revoke(
         })?;
     let repository = repository_key(&root);
     let digest = digest.to_ascii_lowercase();
-    let revoked = store.revoke(&repository, &digest)?;
+    let revoked = store.revoke(&repository, &digest).await?;
     if revoked && let Some(log) = log {
         log.observe(event_log::Observation {
             session_id: None,
             kind: "worktreeSetupRevoked",
-            at: now(),
+            at: now_millis(),
             payload: json!({"repository":repository,"digest":digest}),
         });
     }
@@ -1492,21 +1778,23 @@ async fn run(
         ));
     }
     let worktree = PathBuf::from(&record.worktree);
-    let config = read_worktree_config(&worktree)
-        .await
-        .map_err(|error| command_failure("worktree_config_invalid", error.to_string()))?
+    let config = record
+        .config
+        .clone()
         .filter(|config| !config.run.is_empty())
         .ok_or_else(|| {
             command_failure(
                 "worktree_run_unavailable",
-                "nesvo.toml declares no run steps",
+                "The nesvo.toml approved for this worktree declares no run steps",
             )
         })?;
     let digest = config.digest();
-    if !store.approved(&record.repository, &digest) {
+    if record.digest.as_deref() != Some(digest.as_str())
+        || !store.approved(&record.repository, &digest)
+    {
         return Err(command_failure(
             "worktree_setup_unapproved",
-            format!("This worktree's nesvo.toml digest {digest} is not approved"),
+            format!("The nesvo.toml digest {digest} recorded for this worktree is not approved"),
         ));
     }
     let cancel = store.begin(session_id)?;
@@ -1515,14 +1803,16 @@ async fn run(
         session_id: session_id.into(),
     };
     let log_path = display_path(&worktree.join(STATE_DIR).join("run.log"));
-    store.modify(session_id, |record| {
-        record.run = Some(Phase {
-            state: "running".into(),
-            log: Some(log_path.clone()),
-            started_at: now(),
-            finished_at: None,
-        });
-    })?;
+    store
+        .modify(session_id, |record| {
+            record.run = Some(Phase {
+                state: "running".into(),
+                log: Some(log_path.clone()),
+                started_at: now_millis(),
+                finished_at: None,
+            });
+        })
+        .await?;
     let session = session_id.to_owned();
     let started = log_path.clone();
     tokio::spawn(async move {
@@ -1542,14 +1832,16 @@ async fn run(
         }
         .await
         .unwrap_or(Outcome::Failed);
-        drop(activity);
         let result = outcome.name();
-        let _ = store.modify(&session, |record| {
-            if let Some(run) = &mut record.run {
-                run.state = result.into();
-                run.finished_at = Some(now());
-            }
-        });
+        let _ = store
+            .modify(&session, |record| {
+                if let Some(run) = &mut record.run {
+                    run.state = result.into();
+                    run.finished_at = Some(now_millis());
+                }
+            })
+            .await;
+        drop(activity);
         journal(
             log.as_ref(),
             &session,
@@ -1739,10 +2031,12 @@ async fn archive(
         None => false,
     };
     let discarded = !blockers.is_empty();
-    store.modify(session_id, |record| {
-        record.archived_at = Some(now());
-        record.discarded = discarded;
-    })?;
+    store
+        .modify(session_id, |record| {
+            record.archived_at = Some(now_millis());
+            record.discarded = discarded;
+        })
+        .await?;
     let payload = json!({"sessionId":session_id,"worktree":record.worktree,"branch":record.branch,"discarded":discarded,"blockers":blockers,"branchDeleted":branch_deleted});
     journal(log, session_id, "worktreeArchived", payload.clone()).await;
     let mut event = payload;
@@ -1795,6 +2089,9 @@ async fn registry(store: &Store, live: impl Fn(&str) -> bool) -> Result<Value> {
                 .is_some_and(|paths| paths.contains(&comparable(&record.worktree)))
         };
         let mut value = serde_json::to_value(&record)?;
+        if let Some(fields) = value.as_object_mut() {
+            fields.remove("config");
+        }
         value["present"] = present.into();
         value["sessionLive"] = live(&record.session_id).into();
         value["active"] = store.running(&record.session_id).into();

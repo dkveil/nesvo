@@ -335,15 +335,23 @@ timeout_s = 600
 ```
 
 At most 32 steps per list, 4096 bytes per step and 32 environment files of at most
-1 MiB each (relative `/` paths outside `.git` and `.nesvo`). The digest is the
-SHA-256 of the normalized values with the policy `platform-shell-v1`, so formatting
-and comments do not change it. The host reads the file from `HEAD` of the source
-repository, never from uncommitted edits.
+1 MiB each (relative `/` paths outside `.git` and `.nesvo`). Every component of an
+environment file path must be a real folder or file inside the source checkout, and
+inside the worktree for the copy; links are refused and new files never replace a
+checked-out path. The digest is the SHA-256 of the normalized values with the
+policy `platform-shell-v1`, so formatting and comments do not change it. The host
+reads the file from `HEAD` of the source repository, never from uncommitted edits,
+and records the approved steps with the worktree when it creates it: setup and later
+`run` execute those recorded steps, never a `nesvo.toml` edited inside the
+agent-writable worktree.
 
 Trust follows the job precheck model: approving a digest authorizes arbitrary code
 with the host user's permissions, the host never approves repository files on its
-own, and a changed file needs a new approval. Steps inherit the host environment
-without `NESVO_*` and `POCKET_*` variables.
+own, and a changed file needs a new approval. The digest covers the command strings
+only, not the scripts or programs they invoke: `npm run dev` runs whatever the
+worktree's `package.json` says when the step starts, and an agent can change that
+file. Approve steps whose targets you accept under that rule. Steps inherit the host
+environment without `NESVO_*` and `POCKET_*` variables.
 
 ```powershell
 nesvo worktree describe --directory C:\project --json
@@ -356,7 +364,8 @@ approved, policy }` and runs nothing. `approve-setup` refuses with
 `digest_mismatch` when `HEAD` changed since inspection and returns
 `worktreeSetupApproved { repository, digest, approvedAt }`; `revoke-setup` returns
 `worktreeSetupRevoked { repository, digest, revoked }`. Approvals persist in
-`worktrees.json` next to the host pairing data.
+`worktrees.json` next to the host pairing data; every registry write replaces that
+file atomically (an owner-only temporary file, synced, then renamed).
 
 Approval and revocation exist only in this owner CLI, need owner authority and have no
 MCP tool. The host refuses every worktree command with `forbidden` for a session-scoped
@@ -387,13 +396,22 @@ nesvo worktree archive SESSION_ID [--discard] --json
 nesvo worktree list --json
 ```
 
-`run` starts the approved `run` steps after a passed (or absent) setup and returns
-`worktreeRunStarted { sessionId, worktree, log }` at once; the outcome is the
+`run` starts the `run` steps recorded from the approved digest after a passed
+setup and returns `worktreeRunStarted { sessionId, worktree, log }` at once; it
+refuses `worktree_run_unavailable` when that digest declares no `run` steps and
+`worktree_setup_unapproved` after the digest was revoked. The outcome is the
 journal event `worktreeRan { sessionId, result, log }` and the registry run state,
 with output in `.nesvo/run.log`. `cancel` terminates the active setup or run
 (`worktreeCancelled { sessionId, cancelled }`). At most four setups or runs execute
-at once. On Windows a step's whole process tree is terminated with it; on Unix a
-background process left behind by a finished step is not stopped.
+at once.
+
+Nothing a step starts runs outside its containment. On Windows a waiting helper
+joins a kill-on-close job before the host releases the step to it; on Unix the
+step leads its own process group, which the host keeps unreaped until it has
+signalled the group. When a step exits, times out or is cancelled the host
+terminates the whole job or group, so background processes a step leaves behind
+stop with it. On Unix a process that moves itself to another process group or
+session escapes this.
 
 `archive` refuses while the session runs (`session_running`) and refuses
 `worktree_unsaved` when the worktree has uncommitted or untracked files,
@@ -404,7 +422,10 @@ the journal event `worktreeArchived` carry `sessionId`, `worktree`, `branch`,
 `discarded`, `blockers` and `branchDeleted`. `list` returns `worktreeRegistry
 { worktrees:[{ sessionId, worktree, branch, repository, createdAt, digest, setup,
 run, envFiles, archivedAt, discarded, present, sessionLive, active }] }`, newest
-first (128); `present` compares with `git worktree list`. All worktree commands are
+first (128); `present` compares with `git worktree list`. The registry keeps at most
+512 records: a new worktree evicts the oldest archived record, never an active one,
+and a launch refuses `worktree_registry_full` with no effect while all 512 are
+active. All worktree commands are
 owner-only and need `worktrees:true`: the host refuses every one of them with
 `forbidden` for a session-scoped or wake caller, including a caller targeting its own
 session, and `run`, `cancel` and `archive` refuse `worktree_not_found` unless the host

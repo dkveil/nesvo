@@ -1002,6 +1002,7 @@ async fn dispatch_quota_create(
         }
         spec.cwd = Some(crate::process::display_path(&directory));
         spec.worktree = false;
+        drop(gate);
         if let Some(plan) = worktree_plan {
             spec.worktree_setup = crate::worktrees::prepare(
                 plan,
@@ -1018,7 +1019,6 @@ async fn dispatch_quota_create(
             derived_worktree,
         })
         .await?;
-        drop(gate);
         spec.quota_launch = Some(crate::quota_contexts::LaunchContext {
             permit: permit.clone(),
             derived_worktree,

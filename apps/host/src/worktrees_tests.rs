@@ -278,6 +278,7 @@ async fn setup_passes_copies_environment_files_and_archives_cleanly() {
     let digest = parse(&config).unwrap().digest();
     store
         .approve(&repository_key(&repository), &digest)
+        .await
         .unwrap();
     let (worktree, result) = derived(&store, &repository, "a".repeat(32).as_str()).await;
     let fact = result.unwrap().unwrap();
@@ -337,6 +338,7 @@ async fn failed_setup_refuses_the_spawn_with_a_receipt_and_registry_state() {
             &repository_key(&repository),
             &parse(&config).unwrap().digest(),
         )
+        .await
         .unwrap();
     let session = "b".repeat(32);
     let (worktree, result) = derived(&store, &repository, &session).await;
@@ -372,6 +374,7 @@ async fn failed_setup_refuses_the_spawn_with_a_receipt_and_registry_state() {
             &repository_key(&repository),
             &parse(&missing).unwrap().digest(),
         )
+        .await
         .unwrap();
     let (worktree, result) = derived(&store, &repository, &"c".repeat(32)).await;
     assert_eq!(code(&result.unwrap_err()), "worktree_setup_failed");
@@ -417,6 +420,7 @@ async fn a_pending_setup_holds_the_spawn_until_cancellation_terminates_it() {
             &repository_key(&repository),
             &parse(&config).unwrap().digest(),
         )
+        .await
         .unwrap();
     let session = "d".repeat(32);
     let plan = plan_with(Some(&store), &repository).await.unwrap();
@@ -684,5 +688,319 @@ async fn owner_callers_pass_the_gate_and_reach_only_host_registered_worktrees() 
     assert_eq!(
         code(&cancel(&store, &session).unwrap_err()),
         "worktree_not_found"
+    );
+}
+
+async fn accepted(listener: &tokio::net::TcpListener, role: &[u8]) -> tokio::net::TcpStream {
+    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(30), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut received = vec![0; role.len()];
+    stream.read_exact(&mut received).await.unwrap();
+    assert_eq!(received, role);
+    stream
+}
+
+async fn idle(store: &Store, session: &str) {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while store.running(session) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the worktree activity finishes");
+}
+
+fn record(session_id: &str) -> Record {
+    Record {
+        session_id: session_id.into(),
+        worktree: format!("C:/worktrees/{session_id}"),
+        branch: None,
+        repository: "C:/source".into(),
+        created_at: 1,
+        digest: None,
+        config: None,
+        setup: Phase {
+            state: "notConfigured".into(),
+            log: None,
+            started_at: 1,
+            finished_at: Some(1),
+        },
+        run: None,
+        env_files: Vec::new(),
+        archived_at: None,
+        discarded: false,
+    }
+}
+
+#[tokio::test]
+async fn run_steps_come_from_the_approved_setup_not_the_agent_writable_worktree() {
+    let scratch = scratch();
+    let store: &'static Store = Box::leak(Box::new(store(&scratch)));
+    let config = format!(
+        "[worktree]\nrun = [{}]\n",
+        toml_steps(&[fixture("emit 617070726f7665640a")])
+    );
+    let repository = repository(&scratch, Some(&config)).await;
+    let repository_id = repository_key(&repository);
+    let digest = parse(&config).unwrap().digest();
+    store.approve(&repository_id, &digest).await.unwrap();
+    let session = "2".repeat(32);
+    let (worktree, result) = derived(store, &repository, &session).await;
+    assert_eq!(result.unwrap().unwrap().result, "passed");
+    let tampered = format!(
+        "[worktree]\nrun = [{}]\n",
+        toml_steps(&[fixture("emit 74616d70657265640a")])
+    );
+    std::fs::write(worktree.join(CONFIG_FILE), &tampered).unwrap();
+    store
+        .approve(&repository_id, &parse(&tampered).unwrap().digest())
+        .await
+        .unwrap();
+    let started = run(store, None, &session).await.unwrap();
+    assert_eq!(started["type"], "worktreeRunStarted");
+    idle(store, &session).await;
+    let text = std::fs::read_to_string(worktree.join(".nesvo/run.log")).unwrap();
+    assert!(text.contains("approved\n"), "{text}");
+    assert!(!text.contains("tampered"), "{text}");
+    assert_eq!(store.find(&session).unwrap().run.unwrap().state, "passed");
+    let listing = registry(store, |_| false).await.unwrap();
+    assert!(listing["worktrees"][0].get("config").is_none());
+    store.revoke(&repository_id, &digest).await.unwrap();
+    assert_eq!(
+        code(&run(store, None, &session).await.unwrap_err()),
+        "worktree_setup_unapproved"
+    );
+    store.approve(&repository_id, &digest).await.unwrap();
+    store
+        .modify(&session, |record| record.config = None)
+        .await
+        .unwrap();
+    assert_eq!(
+        code(&run(store, None, &session).await.unwrap_err()),
+        "worktree_run_unavailable"
+    );
+}
+
+#[tokio::test]
+async fn a_background_process_left_by_a_finished_step_is_terminated_with_it() {
+    let scratch = scratch();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut log = Log::create(&scratch.0.join("run.log")).await.unwrap();
+    let (_cancel, receiver) = watch::channel(false);
+    let steps = vec![fixture(&format!("tree {address} root child"))];
+    let running = execute(
+        &steps,
+        &scratch.0,
+        &mut log,
+        Duration::from_secs(60),
+        receiver,
+    );
+    tokio::pin!(running);
+    let (root, child) = tokio::select! {
+        streams = async {
+            let root = accepted(&listener, b"root\n").await;
+            (root, accepted(&listener, b"child\n").await)
+        } => streams,
+        _ = &mut running => panic!("the step finished before its processes started"),
+    };
+    drop(root);
+    assert_eq!(running.await, Outcome::Passed);
+    closed(child).await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_step_helper_runs_nothing_before_its_frame_is_released() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let text = fixture(&format!("tree {address} root"));
+    let mut command = tokio::process::Command::from(step_command(&text).unwrap());
+    command.kill_on_drop(true);
+    command_scope::configure(&mut command);
+    let mut helper = command.spawn().unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), listener.accept())
+            .await
+            .is_err(),
+        "the helper waits for its frame"
+    );
+    drop(helper.stdin.take());
+    let status = tokio::time::timeout(Duration::from_secs(30), helper.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_step_frames_carry_one_valid_step_only() {
+    let frame = step_frame("echo ready");
+    assert_eq!(
+        read_step(&mut std::io::Cursor::new(frame.clone())).as_deref(),
+        Some("echo ready")
+    );
+    let mut oversized = u32::try_from(STEP_BYTES + 1)
+        .unwrap()
+        .to_be_bytes()
+        .to_vec();
+    oversized.extend(vec![b'a'; STEP_BYTES + 1]);
+    for invalid in [
+        vec![0, 0, 0, 0],
+        oversized,
+        step_frame("a\nb"),
+        step_frame("   "),
+        [&3u32.to_be_bytes()[..], &[0xff, 0xfe, 0xfd]].concat(),
+        frame[..frame.len() - 1].to_vec(),
+    ] {
+        assert!(read_step(&mut std::io::Cursor::new(invalid)).is_none());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "internal worktree step helper entry; inert without its test-only environment gate"]
+fn step_helper_entry() {
+    if std::env::var_os(STEP_TEST_GATE).as_deref() == Some(std::ffi::OsStr::new("1")) {
+        std::process::exit(step_helper());
+    }
+}
+
+#[tokio::test]
+async fn registry_eviction_keeps_every_active_record_and_refuses_when_none_is_archived() {
+    let scratch = scratch();
+    let store = store(&scratch);
+    let repository = repository(&scratch, None).await;
+    store.document.lock().unwrap().worktrees = (0..RECORD_LIMIT)
+        .map(|index| record(&format!("{index:032}")))
+        .collect();
+    let refused = store.insert(record("new")).await.unwrap_err();
+    assert_eq!(code(&refused), "worktree_registry_full");
+    assert!(!store.has_room());
+    assert_eq!(
+        code(&plan_with(Some(&store), &repository).await.err().unwrap()),
+        "worktree_registry_full"
+    );
+    let archived = format!("{:032}", 7);
+    store.document.lock().unwrap().worktrees[7].archived_at = Some(1);
+    assert!(store.has_room());
+    store.insert(record("new")).await.unwrap();
+    let document = store.document.lock().unwrap();
+    assert_eq!(document.worktrees.len(), RECORD_LIMIT);
+    assert!(
+        document
+            .worktrees
+            .iter()
+            .all(|record| record.archived_at.is_none() && record.session_id != archived)
+    );
+    assert_eq!(document.worktrees.last().unwrap().session_id, "new");
+}
+
+#[tokio::test]
+async fn registry_writes_replace_the_file_atomically_and_keep_the_newest_state() {
+    let scratch = scratch();
+    let store = store(&scratch);
+    let digests: Vec<String> = (0..16).map(|index| format!("{index:064x}")).collect();
+    futures_util::future::try_join_all(
+        digests
+            .iter()
+            .map(|digest| store.approve("C:/source", digest)),
+    )
+    .await
+    .unwrap();
+    let host = scratch.0.join("host");
+    assert!(!host.join("worktrees.json.tmp").exists());
+    let reopened = Store::open(&host).unwrap();
+    assert!(
+        digests
+            .iter()
+            .all(|digest| reopened.approved("C:/source", digest))
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(host.join("worktrees.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+fn link(target: &Path, path: &Path, directory: bool) -> bool {
+    #[cfg(unix)]
+    {
+        let _ = directory;
+        std::os::unix::fs::symlink(target, path).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        if directory {
+            std::os::windows::fs::symlink_dir(target, path).is_ok()
+        } else {
+            std::os::windows::fs::symlink_file(target, path).is_ok()
+        }
+    }
+}
+
+#[test]
+fn environment_files_stay_inside_both_checkouts_and_within_their_size_bound() {
+    let scratch = scratch();
+    let root = scratch.0.join("root");
+    let worktree = scratch.0.join("worktree");
+    let outside = scratch.0.join("outside");
+    for directory in [&root, &worktree, &outside] {
+        std::fs::create_dir_all(directory).unwrap();
+    }
+    std::fs::write(root.join(".env"), "A=1\n").unwrap();
+    let copied = copy_env_files(&root, &worktree, &[".env".into()]).unwrap();
+    assert_eq!(copied[0].sha256, sha256(b"A=1\n"));
+    assert_eq!(
+        std::fs::read_to_string(worktree.join(".env")).unwrap(),
+        "A=1\n"
+    );
+    let refusal = |file: &str| copy_env_files(&root, &worktree, &[file.into()]).unwrap_err();
+    assert!(refusal(".env").contains("would overwrite"));
+    assert!(refusal("absent.env").contains("is missing"));
+    std::fs::write(
+        root.join("big.env"),
+        vec![b'a'; ENV_FILE_BYTES as usize + 1],
+    )
+    .unwrap();
+    assert!(refusal("big.env").contains("at most"));
+    std::fs::write(outside.join("secret"), "SECRET=1\n").unwrap();
+    if link(&outside.join("secret"), &root.join("link.env"), false) {
+        assert!(refusal("link.env").contains("inside the source checkout"));
+    }
+    if link(&outside, &root.join("linked"), true) {
+        assert!(refusal("linked/secret").contains("inside the source checkout"));
+    }
+    std::fs::create_dir_all(root.join("apps")).unwrap();
+    std::fs::write(root.join("apps/local.env"), "B=2\n").unwrap();
+    if link(&outside, &worktree.join("apps"), true) {
+        assert!(refusal("apps/local.env").contains("inside the worktree"));
+        assert!(!outside.join("local.env").exists());
+    }
+}
+
+#[test]
+fn quota_launches_release_the_native_run_gate_before_worktree_setup() {
+    let source = include_str!("operations.rs");
+    let start = source.find("async fn dispatch_quota_create").unwrap();
+    let body = &source[start..];
+    let body = &body[..body.find("\n}").unwrap()];
+    let released = body.find("drop(gate);").unwrap();
+    let setup = body.find("crate::worktrees::prepare(").unwrap();
+    assert!(
+        released < setup,
+        "the per-run native gate is released before setup runs"
     );
 }
