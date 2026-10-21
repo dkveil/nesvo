@@ -73,6 +73,51 @@ ordinary-use permission. This feature does not enable Claude quota-based job
 admission or automatic wake. The compatible global cache remains a separate
 display source.
 
+## Capture delivery diagnostics
+
+`session explain SESSION_ID` prints allowlisted capture summaries; `--json`
+exposes the same owner-only evidence under `claudeQuotaCapture`. This is separate
+from lifecycle hook delivery and the accepted `nativeQuotaCallback` snapshot.
+No attempt is inferred from a display marker or a configured profile.
+
+The additive `delivery` object retains at most three attempt slots:
+`latestStarted`, `latestCompleted` and `latestRejected`, plus a nullable
+`lastStorageFailure`. Each attempt has an independent `attemptSequence`,
+`entryGeneration`, `boundAtEntry`, `state`, start/finish receipt clocks, nullable
+`outcome` and nullable `parseReason`. Reservation happens before input is read.
+An unfinished newer attempt stays `unconfirmed`; an older completion cannot
+replace it. Diagnostic sequences are distinct from accepted quota sequences.
+
+Completed outcomes are `recorded`, `rootUnbound`, `payloadScopeRejected`,
+`scopeChanged`, `superseded` or `storageUnavailable`. A recorded attempt can
+still report absent or invalid windows through `parseReason`; it is not a
+promise of usable capacity. A rejected callback leaves the previous accepted
+snapshot and its original receipt clocks intact. Accepted quota and successful
+attempt completion commit in the same transaction.
+
+The additive `reader` object reports `outcome`, `checkedAt` and
+`storageFailureOutcome`. Outcomes distinguish `notPolled`, `readable`, `missing`,
+`unreadable`, `invalidStoredData` and `scopeChanged`. Read failure clears the live
+accepted quota instead of presenting cached data as current. A later successful
+read can recover the previous snapshot without renewing its receipt clocks.
+Older hosts omit these objects; the CLI says "reader not reported" rather than
+claiming callback delivery. `observed:null` retains its previous meaning.
+
+A write failure makes a best-effort, failure-only atomic sidecar in the existing
+private launch directory, bounded to 1 KiB and tied to that exact launch. It
+records only fixed stage/outcome labels, an optional attempt sequence and
+receipt clocks. It never recreates a removed launch directory. The reader can
+show that historical failure even when the journal cannot be opened. Recovery
+does not turn the retained failure into a new current failure. If both storage
+paths fail, only a fixed stderr warning can remain; persistence is not guaranteed
+under complete filesystem failure.
+
+The existing asynchronous observer reads these bounded records in its scoped
+transaction. No new timer or diagnostic timestamp broadcast is added. Public
+attempt records contain no conversation/launch IDs, command, profile path,
+payload, prompt, account identity or raw storage error. These diagnostics grant
+no quota admission, automatic wake or backend freshness authority.
+
 ## Bounds and removal
 
 The manifest is at most 16 KiB. It requires an absolute executable and at most

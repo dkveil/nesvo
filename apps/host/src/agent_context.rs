@@ -13,7 +13,12 @@ enum Adapter {
     ClaudeHarness,
     Codex,
 }
-pub struct Tracker(PathBuf, Adapter, Option<Value>);
+pub struct Tracker(
+    PathBuf,
+    Adapter,
+    Option<Value>,
+    Option<crate::claude_quota_diagnostics::Anchor>,
+);
 impl Tracker {
     #[cfg(test)]
     pub fn install(command: &mut CommandBuilder) -> Result<Self> {
@@ -47,6 +52,9 @@ impl Tracker {
     }
     pub fn capture_diagnostic(&self) -> Option<&Value> {
         self.2.as_ref()
+    }
+    pub fn capture_anchor(&self) -> Option<&crate::claude_quota_diagnostics::Anchor> {
+        self.3.as_ref()
     }
     pub fn install_codex(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
         let mut tracker = Self::create(Some(session_id))?;
@@ -96,8 +104,10 @@ impl Tracker {
             }
         }
         if let Some(capture) = capture {
-            settings["statusLine"] = capture.install(&tracker.report())?;
+            let (settings_value, anchor) = capture.install(&tracker.report())?;
+            settings["statusLine"] = settings_value;
             tracker.2 = Some(capture.diagnostic());
+            tracker.3 = Some(anchor);
         }
         let settings = settings.to_string();
         let argv = command.get_argv_mut();
@@ -119,7 +129,7 @@ impl Tracker {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
-        let tracker = Self(directory, Adapter::Claude, None);
+        let tracker = Self(directory, Adapter::Claude, None, None);
         if let Some(session_id) = session_id {
             crate::agent_events::initialize(&tracker.report(), session_id)?;
         }

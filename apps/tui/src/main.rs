@@ -1,5 +1,6 @@
 mod brand;
 mod budgets;
+mod capture_explain;
 mod cli;
 mod controller;
 mod input;

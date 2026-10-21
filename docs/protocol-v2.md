@@ -245,6 +245,15 @@ neither establishes fresh backend permission or an account lease. See the
 [launch-local capture contract](harness-claude-quota-capture.md). There is no new
 MCP tool or global provider configuration mutation.
 
+Owner `claudeQuotaCapture` diagnostics add bounded `delivery` and `reader`
+objects. Delivery retains latest started/completed/rejected attempts with an
+independent sequence, entry generation, fixed outcomes and receipt clocks;
+reader health remains separate from the accepted `nativeQuotaCallback`.
+Older hosts may omit the objects. Failures never refresh an accepted snapshot,
+and a retained historical storage failure is not current permission evidence.
+The [capture contract](harness-claude-quota-capture.md#capture-delivery-diagnostics)
+defines the enums, privacy and best-effort persistence limits.
+
 Additive `durableQuotaWake:true` advertises owner-only `{type:"getQuotaWake",sessionId}`
 and the durable implementation of `{type:"setWake",sessionId,enabled}`. The getter
 returns `{type:"quotaWake",sessionId,quotaWake:null|view}`; the setter retains

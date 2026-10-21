@@ -29,6 +29,130 @@ async fn explain(owner: &Owner, id: &str) -> Result<Value> {
         .context("Captured session diagnostics")?
         .clone())
 }
+
+async fn completed_capture(owner: &Owner, id: &str, outcome: &str) -> Result<Value> {
+    timeout(Duration::from_secs(4), async {
+        loop {
+            let view = explain(owner, id).await?;
+            if view["claudeQuotaCapture"]["delivery"]["latestCompleted"]["outcome"] == outcome
+                && view["claudeQuotaCapture"]["reader"]["outcome"] == "readable"
+            {
+                return Ok::<_, anyhow::Error>(view);
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .context("Typed native capture completion")?
+}
+
+fn private_capture(view: &Value) {
+    let encoded = view["claudeQuotaCapture"].to_string();
+    for sentinel in ["foreign root", "private input", "configured-main-agent"] {
+        assert!(
+            !encoded.contains(sentinel),
+            "Capture diagnostics must not retain input identities or contents"
+        );
+    }
+}
+
+async fn human_capture(fixture: &Fixture, id: &str) -> Result<String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
+    command
+        .arg("--pairing")
+        .arg(fixture.pairing())
+        .args(["session", "explain", id])
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let output = timeout(Duration::from_secs(15), command.output()).await??;
+    ensure!(
+        output.status.success(),
+        "Human capture explain must succeed"
+    );
+    let output = String::from_utf8(output.stdout)?;
+    for sentinel in ["foreign root", "private input", "configured-main-agent"] {
+        assert!(
+            !output.contains(sentinel),
+            "Human diagnostics must not expose callback input"
+        );
+    }
+    Ok(output)
+}
+
+struct MissingJournal {
+    original: PathBuf,
+    saved: PathBuf,
+    restored: bool,
+}
+
+impl MissingJournal {
+    async fn take(settings: &Value) -> Result<Self> {
+        let report = PathBuf::from(
+            settings["hooks"]["SessionStart"][0]["hooks"][0]["args"][1]
+                .as_str()
+                .context("Owned lifecycle report argument")?,
+        );
+        let directory = report
+            .parent()
+            .context("Owned report directory")?
+            .canonicalize()?;
+        ensure!(
+            directory.parent() == Some(std::env::temp_dir().canonicalize()?.as_path())
+                && directory
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.strip_prefix("nesvo-context-").is_some_and(|suffix| {
+                            suffix.len() == 32
+                                && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        })
+                    }),
+            "Only the fixture's randomly owned launch journal can be moved"
+        );
+        let original = directory.join("events.sqlite3");
+        let saved = directory.join("events.capture-sdk-backup");
+        ensure!(!saved.exists(), "Owned journal backup must be new");
+        timeout(Duration::from_secs(2), async {
+            loop {
+                match std::fs::rename(&original, &saved) {
+                    Ok(()) => return Ok::<_, anyhow::Error>(()),
+                    Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+        })
+        .await
+        .context("Temporarily unavailable owned journal")??;
+        Ok(Self {
+            original,
+            saved,
+            restored: false,
+        })
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        ensure!(
+            !self.original.exists(),
+            "A failed reader must not recreate the owned journal"
+        );
+        std::fs::rename(&self.saved, &self.original)?;
+        self.restored = true;
+        Ok(())
+    }
+}
+
+impl Drop for MissingJournal {
+    fn drop(&mut self) {
+        if !self.restored
+            && !self.original.exists()
+            && std::fs::rename(&self.saved, &self.original).is_err()
+        {
+            eprintln!("Owned capture fixture journal restore was not confirmed");
+        }
+    }
+}
+
 async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::process::Output> {
     #[cfg(windows)]
     let (mut shell, release) = {
@@ -356,14 +480,75 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
         }}).await.context("Actual callback projection")??;
+        let recorded = completed_capture(&owner, id, "recorded").await?;
+        let first_attempt = recorded["claudeQuotaCapture"]["delivery"]["latestCompleted"]["attemptSequence"]
+            .as_u64().context("Capture attempt sequence")?;
+        assert!(first_attempt > 0);
+        assert_eq!(recorded["claudeQuotaCapture"]["delivery"]["latestStarted"]["attemptSequence"], first_attempt);
+        assert_eq!(recorded["claudeQuotaCapture"]["delivery"]["latestCompleted"]["state"], "completed");
+        assert_eq!(recorded["claudeQuotaCapture"]["delivery"]["latestCompleted"]["boundAtEntry"], true);
+        assert_eq!(recorded["claudeQuotaCapture"]["delivery"]["latestCompleted"]["entryGeneration"], recorded["conversationIdentity"]["generation"]);
+        assert_eq!(recorded["claudeQuotaCapture"]["delivery"]["latestCompleted"]["parseReason"], "observed");
+        assert!(recorded["claudeQuotaCapture"]["delivery"]["latestRejected"].is_null());
+        let accepted_callback = recorded["nativeQuotaCallback"].clone();
+        assert_eq!(accepted_callback["sequence"], 1);
+        private_capture(&recorded);
         let foreign=b"{\"session_id\":\"foreign root\",\"literal\":\"private input\"}\r\n";
         let rejected=generated(command,foreign,&fixture.directory).await?;
         let mut expected=hex::decode("1b5b33356d5a61c5bcc3b3c582c48720e697a5e69cace8aa9e1b5b306d0d0a")?;expected.extend_from_slice(foreign);
         assert_eq!(rejected.status.code(),Some(7));assert_eq!(rejected.stdout,expected);
+        let rejected_view = completed_capture(&owner, id, "payloadScopeRejected").await?;
+        assert_eq!(rejected_view["nativeQuotaCallback"], accepted_callback,
+            "A diagnostic rejection cannot replace accepted quota or renew its receipt clocks");
+        let rejected_attempt = rejected_view["claudeQuotaCapture"]["delivery"]["latestRejected"]["attemptSequence"]
+            .as_u64().context("Rejected capture attempt")?;
+        assert!(rejected_attempt > first_attempt);
+        assert_eq!(rejected_view["claudeQuotaCapture"]["delivery"]["latestCompleted"]["attemptSequence"], rejected_attempt);
+        private_capture(&rejected_view);
+        let human = human_capture(&fixture, id).await?;
+        assert!(human.contains("Claude capture: reader readable"));
+        assert!(human.contains("payload scope rejected"));
         std::fs::write(&profile,b"changed invalid source manifest")?;
         let replay=data(call(&owner,"nesvo_create_session",json!({"key":"capture-once","spec":spec})).await?)?;
         assert_eq!(replay["data"]["receipt"]["id"],created["data"]["receipt"]["id"]);
         assert_eq!(generated(command,foreign,&fixture.directory).await?.stdout,expected,"Bound private manifest is not reread on replay");
+        let mut missing_journal = MissingJournal::take(&settings).await?;
+        let unavailable_output = generated(command, &input, &fixture.directory).await?;
+        assert_eq!(unavailable_output.status.code(), Some(7));
+        let mut expected_input = hex::decode("1b5b33356d5a61c5bcc3b3c582c48720e697a5e69cace8aa9e1b5b306d0d0a")?;
+        expected_input.extend_from_slice(&input);
+        assert_eq!(unavailable_output.stdout, expected_input, "Unavailable capture storage cannot change display bytes or exit");
+        timeout(Duration::from_secs(4), async {
+            loop {
+                let view = explain(&owner, id).await?;
+                if view["claudeQuotaCapture"]["reader"]["outcome"] == "unreadable"
+                    && view["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["outcome"] == "storageUnavailable"
+                {
+                    assert!(view["nativeQuotaCallback"].is_null(), "Read failure must clear accepted quota visibility");
+                    assert_eq!(view["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["stage"], "begin");
+                    assert_eq!(view["claudeQuotaCapture"]["reader"]["storageFailureOutcome"], "readable");
+                    private_capture(&view);
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+        }).await.context("Anchored storage failure is visible while the journal is unavailable")??;
+        let human = human_capture(&fixture, id).await?;
+        assert!(human.contains("Claude capture: reader unreadable"));
+        assert!(human.contains("historical"));
+        missing_journal.restore()?;
+        let recovered = completed_capture(&owner, id, "payloadScopeRejected").await?;
+        assert_eq!(recovered["nativeQuotaCallback"], accepted_callback,
+            "Storage recovery reads the original receipt, not new backend evidence");
+        assert_eq!(recovered["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["outcome"], "storageUnavailable",
+            "Historical storage failure remains distinct from a healthy current reader");
+        assert_eq!(generated(command, &input, &fixture.directory).await?.stdout, expected_input);
+        let recovered = completed_capture(&owner, id, "recorded").await?;
+        assert!(recovered["claudeQuotaCapture"]["delivery"]["latestCompleted"]["attemptSequence"]
+            .as_u64().context("Recovered capture attempt")? > rejected_attempt);
+        assert_eq!(recovered["nativeQuotaCallback"]["snapshot"]["reason"], "observed");
+        assert!(recovered["nativeQuotaCallback"]["ordinaryUsageAllowed"].is_null());
+        private_capture(&recovered);
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{id}.txt")))?);
         let scoped=scoped_client(&context,id).await?;
         let refused=call(&scoped,"nesvo_create_session",json!({"key":"capture-scoped-refused","spec":{"name":"Refused scoped capture","program":"claude","claudeQuotaCapture":{"displayProfile":profile}}})).await?;

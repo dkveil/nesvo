@@ -6,6 +6,7 @@ mod attention_projection;
 mod budgets;
 mod caller;
 mod claude_quota;
+mod claude_quota_diagnostics;
 mod claude_statusline;
 mod codex_context;
 mod command_scope;

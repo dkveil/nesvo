@@ -1275,6 +1275,9 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
                     "  OSC 7501: {} probes, {} reports",
                     session["terminalProtocol"]["queries"], session["terminalProtocol"]["reports"]
                 );
+                for line in crate::capture_explain::lines(&session["claudeQuotaCapture"]) {
+                    println!("  {line}");
+                }
                 if session["harness"]["recovery"]["configured"] == true {
                     println!(
                         "  Recovery: {} · {}",

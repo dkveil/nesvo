@@ -70,6 +70,7 @@ struct Session {
     quota_binding: Option<session_quota::LaunchBinding>,
     quota_wake: Option<crate::quota_wakes::Arm>,
     claude_quota: Option<crate::claude_quota::Observation>,
+    claude_capture_diagnostic: Option<crate::claude_quota_diagnostics::View>,
     model_selection: crate::launch_profile::Selection,
     harness_enabled: bool,
     policy: crate::caller::Policy,
@@ -109,6 +110,17 @@ struct Session {
 }
 
 impl Session {
+    fn capture_diagnostic(&self) -> Option<Value> {
+        let mut configured = self.agent_context.as_ref()?.capture_diagnostic()?.clone();
+        let view = self
+            .claude_capture_diagnostic
+            .clone()
+            .unwrap_or_else(crate::claude_quota_diagnostics::View::not_polled);
+        configured["delivery"] = json!(view.delivery);
+        configured["reader"] = json!(view.reader);
+        Some(configured)
+    }
+
     fn kill(&mut self) -> Result<()> {
         // Early native stop can precede ConPTY's first query reaching the reader.
         // Confirm its one reply before termination; the decoder consumes it later.
@@ -2644,7 +2656,7 @@ impl State {
                 "delivery":session.integration_delivery, "shadowSequence":session.integration_shadow_sequence, "cursor":session.lifecycle_cursor, "gap":session.lifecycle_gap},
             "conversationIdentity":session.conversation_identity,
             "nativeQuotaCallback":session.claude_quota.as_ref().map(|quota|json!({"source":"claudeStatusLine","sequence":quota.scope.sequence,"generation":quota.scope.generation,"snapshot":quota.snapshot,"backendFreshness":"unknown","ordinaryUsageAllowed":null,"accountFingerprint":null})),
-            "claudeQuotaCapture":session.agent_context.as_ref().and_then(|tracker|tracker.capture_diagnostic()),
+            "claudeQuotaCapture":session.capture_diagnostic(),
             "publicationLatency":session.status_latency.snapshot(),
             "status":session.status.explain(now), "readiness":session.readiness.snapshot(), "turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())), "turnHistory":session.turn.history(), "terminalProtocol":session.terminal_protocol.diagnostics(),
         })).collect();
@@ -3292,6 +3304,7 @@ fn spawn_session(
         quota_binding: None,
         quota_wake: None,
         claude_quota: None,
+        claude_capture_diagnostic: None,
         model_selection: Default::default(),
         harness_enabled: identity.harness,
         policy: crate::caller::Policy::new(identity.role),
@@ -3483,21 +3496,26 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                 session.caller_context.as_ref().and_then(|context| {
                                     session.harness_enabled.then(|| context.recovery_report())
                                 }),
+                                tracker.capture_anchor().cloned(),
                             )
                         })
                     })
                     .collect()
             };
-            for (id, path, after, claude, recovery_path) in reports {
+            for (id, path, after, claude, recovery_path, capture_anchor) in reports {
                 let observation = crate::agent_context::observe(&path).await;
                 let recovery = match recovery_path {
                     Some(path) => Some(crate::caller::observe_recovery(&path).await),
                     None => None,
                 };
+                let capture_configured = capture_anchor.is_some();
                 let mut observer = observers
                     .remove(&id)
                     .filter(|observer| observer.matches(&path, &id))
-                    .unwrap_or_else(|| crate::agent_events::Observer::new(path, id.clone()));
+                    .unwrap_or_else(|| {
+                        crate::agent_events::Observer::new(path, id.clone())
+                            .with_capture(capture_anchor)
+                    });
                 let batch = tokio::task::spawn_blocking(move || {
                     let mut counts = crate::agent_events::ReadCounts::default();
                     let result = observer.poll(after, claude, &mut counts);
@@ -3505,11 +3523,12 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 })
                 .await;
                 let mut state = state.lock().unwrap();
-                let batch = match batch {
+                let (batch, capture_view) = match batch {
                     Ok((observer, result, counts)) => {
+                        let capture_view = observer.capture_diagnostic().cloned();
                         observers.insert(id.clone(), observer);
                         state.lifecycle_observer.accumulate(counts);
-                        result.ok()
+                        (result.ok(), capture_view)
                     }
                     Err(_) => {
                         state
@@ -3519,12 +3538,17 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                 blocking_task_failures: 1,
                                 ..Default::default()
                             });
-                        None
+                        (
+                            None,
+                            capture_configured
+                                .then(crate::claude_quota_diagnostics::View::failed_read),
+                        )
                     }
                 };
                 let event_log = state.event_log.clone();
                 let mut submission_updates = Vec::new();
                 if let Some(session) = state.sessions.get_mut(&id) {
+                    session.claude_capture_diagnostic = capture_view;
                     if let Some(recovery) = recovery
                         && let Some(context) = session.caller_context.as_mut()
                         && context.recovery_status != recovery

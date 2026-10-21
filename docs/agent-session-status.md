@@ -125,6 +125,13 @@ the provider loaded its settings. Sequence ordering still identifies the legacy
 wall-clock implementation until the F05 identity migration. Provider-version
 probes and matched-rule IDs remain separate status-stage gates.
 
+Explicit Claude quota capture has its own bounded attempt receipts and reader
+health, separate from lifecycle delivery. Human `session explain` labels current
+attempts, earlier completions and historical storage failures without printing
+raw provider values. JSON preserves the same distinctions. See the
+[capture delivery contract](harness-claude-quota-capture.md#capture-delivery-diagnostics);
+these receipts do not establish backend freshness or permission to resume.
+
 ## Versioned screen rules (F04)
 
 `apps/host/status-rules/v1.json` is an embedded literal catalog with schema,

@@ -91,13 +91,13 @@ pub(crate) enum ReceiveOutcome {
 }
 
 #[derive(Clone, Copy)]
-struct ReceiptClock {
-    wall_ms: u64,
-    monotonic_ms: u64,
+pub(crate) struct ReceiptClock {
+    pub wall_ms: u64,
+    pub monotonic_ms: u64,
 }
 
 impl ReceiptClock {
-    fn now() -> Result<Self> {
+    pub fn now() -> Result<Self> {
         Ok(Self {
             wall_ms: crate::status::now_millis(),
             monotonic_ms: monotonic_millis()?,
@@ -176,6 +176,123 @@ pub(crate) fn receive(report: &Path, input: impl Read) -> Result<ReceiveOutcome>
             ReceiveOutcome::RejectedScope
         },
     )
+}
+
+pub(crate) fn receive_capture(
+    report: &Path,
+    anchor: &crate::claude_quota_diagnostics::Anchor,
+    input: impl Read,
+) -> crate::claude_quota_diagnostics::Outcome {
+    use crate::claude_quota_diagnostics::{self as diagnostics, Begin, Outcome, Stage};
+    let Ok(started) = ReceiptClock::now() else {
+        eprintln!("nesvo quota capture diagnostics are unavailable");
+        return Outcome::StorageUnavailable;
+    };
+    let reservation = match diagnostics::begin(report, anchor, started) {
+        Ok(Begin::Reserved(reservation)) => reservation,
+        Ok(Begin::ScopeChanged) => return Outcome::ScopeChanged,
+        Err(_) => {
+            return capture_storage_unavailable(report, anchor, Stage::Begin, None, started);
+        }
+    };
+    let (requested, snapshot) = match &reservation.quota {
+        None => (Outcome::RootUnbound, None),
+        Some(ticket) => {
+            let mut bytes = Vec::with_capacity(MAX_INPUT_BYTES as usize + 1);
+            let failure = match input.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes) {
+                Err(_) => Some(Reason::InputReadFailed),
+                Ok(_) if bytes.len() > MAX_INPUT_BYTES as usize => Some(Reason::InputOversized),
+                Ok(_) => None,
+            };
+            let Ok(received) = ReceiptClock::now() else {
+                return capture_storage_unavailable(
+                    report,
+                    anchor,
+                    Stage::Append,
+                    Some(reservation.attempt.attempt_sequence),
+                    started,
+                );
+            };
+            let parsed = if let Some(reason) = failure {
+                Some((None, None, reason))
+            } else {
+                match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(value) if root_matches(&value, ticket) => {
+                        Some(parse_windows(&value, received.wall_ms))
+                    }
+                    Ok(_) => None,
+                    Err(_) => Some((None, None, Reason::InvalidInput)),
+                }
+            };
+            match parsed {
+                Some((five_hour, seven_day, reason)) => (
+                    Outcome::Recorded,
+                    Some(StoredSnapshot {
+                        started_wall_ms: started.wall_ms,
+                        received_wall_ms: received.wall_ms,
+                        started_monotonic_ms: started.monotonic_ms,
+                        received_monotonic_ms: received.monotonic_ms,
+                        five_hour,
+                        seven_day,
+                        reason,
+                    }),
+                ),
+                None => (Outcome::PayloadScopeRejected, None),
+            }
+        }
+    };
+    let Ok(completed) = ReceiptClock::now() else {
+        return capture_storage_unavailable(
+            report,
+            anchor,
+            Stage::Append,
+            Some(reservation.attempt.attempt_sequence),
+            started,
+        );
+    };
+    match diagnostics::finish(
+        report,
+        anchor,
+        &reservation,
+        requested,
+        snapshot.as_ref(),
+        completed,
+    ) {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            diagnostics::storage_failure(
+                report,
+                anchor,
+                Stage::Append,
+                Some(reservation.attempt.attempt_sequence),
+                started,
+                completed,
+            );
+            Outcome::StorageUnavailable
+        }
+    }
+}
+
+fn capture_storage_unavailable(
+    report: &Path,
+    anchor: &crate::claude_quota_diagnostics::Anchor,
+    stage: crate::claude_quota_diagnostics::Stage,
+    attempt_sequence: Option<u64>,
+    started: ReceiptClock,
+) -> crate::claude_quota_diagnostics::Outcome {
+    if let Ok(completed) = ReceiptClock::now() {
+        crate::claude_quota_diagnostics::storage_failure(
+            report,
+            anchor,
+            stage,
+            attempt_sequence,
+            started,
+            completed,
+        );
+    } else {
+        eprintln!("nesvo quota capture diagnostics are unavailable");
+    }
+    crate::claude_quota_diagnostics::Outcome::StorageUnavailable
 }
 
 fn root_matches(value: &Value, ticket: &RootQuotaTicket) -> bool {

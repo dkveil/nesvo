@@ -3304,3 +3304,42 @@ read bound and cleanup remain unchanged. An archive of the exact staged tree,
 excluding concurrent diagnostic implementation, passes workspace formatting,
 warnings-denied all-target Clippy and the exact ignored case in 0.13 seconds on
 Windows. This records a serial conformance result, not saturation robustness.
+
+### F03 capture attempt and storage diagnostics
+
+Explicit Claude capture now reserves an independent diagnostic attempt before
+stdin, anchored to the exact private host/launch identity and entry generation.
+Three bounded slots retain the latest start, completion and rejection; a delayed
+completion cannot replace a newer start. Quota acceptance and diagnostic
+completion share one transaction. A failed completion write rolls back quota,
+leaving the earlier start unconfirmed. Entry-unbound callbacks cannot borrow a
+root binding established while input is being read.
+
+Owner JSON and human `session explain` distinguish fixed completion outcomes,
+parse reasons and reader health. A rejected callback preserves the earlier
+accepted snapshot and its receipt clocks. An unavailable reader clears live
+quota; recovery can expose the same old receipt without refreshing it. Historical
+rejections and storage failures remain explicitly historical. A bounded atomic
+failure sidecar can survive journal-open failure, but cannot promise persistence
+when both storage paths fail. No payload, prompt, profile path or raw storage
+error enters these public records. Default/manual capture, backend freshness,
+account binding and ordinary-use authority remain unchanged. No dependency,
+timer, global configuration or diagnostic-timestamp broadcast was added.
+
+Ten new host tests cover sequence separation, delayed/unbound/rebound input,
+out-of-order completion, retained rejection, rollback, invalid storage, renamed
+journal recovery, exact anchor, opt-out/privacy and removed-directory cleanup.
+Six pure human formatter tests cover legacy hosts, unavailable readers,
+unconfirmed attempts, retained failures and allowlisted text. Windows passes
+713 workspace units (210 TUI, 500 host, 3 wire), warnings-denied all-target
+Clippy, locked build, formatting and all three exact process conformance cases.
+The extended production-wrapper/CLI SDK case passes separately in 10.93 seconds;
+it preserves raw display bytes and exit status through rejection, absent journal
+and recovery, then verifies a fresh accepted receipt. The full 62-case serial
+SDK/native-host cohort also passes in 467.88 seconds. Publication CI remains
+separate evidence; this is not original-provider/model or native-phone acceptance.
+
+The retention fixture separately seeds its valid at-limit prefix in one test
+transaction, then performs two real appends across the production boundary.
+Exact retained count, gap and head assertions remain; production durability and
+pruning are unchanged (`e61b422`).

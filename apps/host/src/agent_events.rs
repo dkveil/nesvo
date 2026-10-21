@@ -98,6 +98,10 @@ fn open(report: &Path, writable: bool) -> Result<Connection> {
     connection.busy_timeout(Duration::from_millis(50))?;
     Ok(connection)
 }
+
+pub(crate) fn capture_connection(report: &Path) -> Result<Connection> {
+    open(report, true)
+}
 #[cfg(test)]
 pub fn append(
     report: &Path,
@@ -287,7 +291,9 @@ pub(crate) struct RootQuotaTicket {
     pub(crate) sequence: u64,
 }
 
-fn quota_scope(connection: &Connection) -> Result<(String, String, Option<String>, u64)> {
+pub(crate) fn quota_scope(
+    connection: &Connection,
+) -> Result<(String, String, Option<String>, u64)> {
     Ok(connection.query_row(
         "SELECT host_session,launch_id,provider_session,generation FROM scope WHERE id=1",
         [],
@@ -300,7 +306,13 @@ fn quota_scope(connection: &Connection) -> Result<(String, String, Option<String
 pub(crate) fn begin_root_quota(report: &Path) -> Result<Option<RootQuotaTicket>> {
     let mut connection = open(report, true)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let (host_session_id, launch_id, provider_session_id, generation) = quota_scope(&transaction)?;
+    let reserved = reserve_root_quota(&transaction)?;
+    transaction.commit()?;
+    Ok(reserved)
+}
+
+pub(crate) fn reserve_root_quota(connection: &Connection) -> Result<Option<RootQuotaTicket>> {
+    let (host_session_id, launch_id, provider_session_id, generation) = quota_scope(connection)?;
     let Some(provider_session_id) = provider_session_id else {
         return Ok(None);
     };
@@ -308,7 +320,7 @@ pub(crate) fn begin_root_quota(report: &Path) -> Result<Option<RootQuotaTicket>>
         !provider_session_id.is_empty() && generation > 0,
         "Invalid bound quota scope"
     );
-    transaction.execute_batch(
+    connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS root_quota (
           id INTEGER PRIMARY KEY CHECK(id=1),
           next_sequence INTEGER NOT NULL CHECK(next_sequence>=0),
@@ -320,7 +332,7 @@ pub(crate) fn begin_root_quota(report: &Path) -> Result<Option<RootQuotaTicket>>
         );
         INSERT OR IGNORE INTO root_quota(id,next_sequence) VALUES(1,0);",
     )?;
-    let previous: u64 = transaction.query_row(
+    let previous: u64 = connection.query_row(
         "SELECT next_sequence FROM root_quota WHERE id=1",
         [],
         |row| unsigned(row, 0),
@@ -329,11 +341,10 @@ pub(crate) fn begin_root_quota(report: &Path) -> Result<Option<RootQuotaTicket>>
         .checked_add(1)
         .filter(|v| *v <= i64::MAX as u64)
         .ok_or_else(|| anyhow::anyhow!("Quota callback counter exhausted"))?;
-    transaction.execute(
+    connection.execute(
         "UPDATE root_quota SET next_sequence=?1 WHERE id=1",
         [sequence as i64],
     )?;
-    transaction.commit()?;
     Ok(Some(RootQuotaTicket {
         host_session_id,
         launch_id,
@@ -357,22 +368,56 @@ pub(crate) fn append_root_quota(
     );
     let mut connection = open(report, true)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let (host_session, launch, provider_session, generation) = quota_scope(&transaction)?;
+    let outcome = append_root_quota_encoded(&transaction, ticket, &encoded)?;
+    transaction.commit()?;
+    Ok(outcome == QuotaAppend::Recorded)
+}
+
+#[derive(PartialEq, Eq)]
+pub(crate) enum QuotaAppend {
+    Recorded,
+    ScopeChanged,
+    Superseded,
+}
+
+pub(crate) fn append_root_quota_in(
+    connection: &Connection,
+    ticket: &RootQuotaTicket,
+    snapshot: &crate::claude_quota::StoredSnapshot,
+) -> Result<QuotaAppend> {
+    snapshot.validate()?;
+    let encoded = serde_json::to_string(snapshot)?;
+    ensure!(
+        encoded.len() <= 2048,
+        "Quota snapshot exceeds private bound"
+    );
+    append_root_quota_encoded(connection, ticket, &encoded)
+}
+
+fn append_root_quota_encoded(
+    connection: &Connection,
+    ticket: &RootQuotaTicket,
+    encoded: &str,
+) -> Result<QuotaAppend> {
+    let (host_session, launch, provider_session, generation) = quota_scope(connection)?;
     if host_session != ticket.host_session_id
         || launch != ticket.launch_id
         || provider_session.as_deref() != Some(ticket.provider_session_id.as_str())
         || generation != ticket.generation
     {
-        return Ok(false);
+        return Ok(QuotaAppend::ScopeChanged);
     }
-    let changed = transaction.execute(
+    let changed = connection.execute(
         "UPDATE root_quota SET sequence=?1,launch_id=?2,provider_session=?3,generation=?4,snapshot=?5
          WHERE id=1 AND next_sequence=?1",
         params![i64::try_from(ticket.sequence)?, ticket.launch_id, ticket.provider_session_id,
             i64::try_from(ticket.generation)?, encoded],
     )?;
-    transaction.commit()?;
-    Ok(changed == 1)
+    Ok(if changed == 1 {
+        QuotaAppend::Recorded
+    } else {
+        QuotaAppend::Superseded
+    })
 }
 
 #[cfg(test)]
@@ -467,9 +512,8 @@ fn saved_root_quota(
             |row| Ok((unsigned(row, 0)?, row.get::<_, String>(1)?)),
         )
         .optional()?;
-    if let Some((_, encoded)) = &saved {
+    if saved.is_some() {
         counts.quota_rows = counts.quota_rows.saturating_add(1);
-        ensure!(encoded.len() <= 2048, "Invalid stored quota snapshot");
     }
     Ok(saved)
 }
@@ -478,6 +522,7 @@ fn decode_root_quota(
     encoded: &str,
     counts: &mut ReadCounts,
 ) -> Result<crate::claude_quota::StoredSnapshot> {
+    ensure!(encoded.len() <= 2048, "Invalid stored quota snapshot");
     counts.quota_decodes = counts.quota_decodes.saturating_add(1);
     crate::claude_quota::decode_snapshot(encoded)
 }
@@ -689,6 +734,8 @@ pub(crate) struct Observer {
     columns: Option<CorrelationColumns>,
     quota_table_present: bool,
     quota: Option<CachedQuota>,
+    capture_anchor: Option<crate::claude_quota_diagnostics::Anchor>,
+    capture_view: Option<crate::claude_quota_diagnostics::View>,
 }
 
 impl Observer {
@@ -700,7 +747,18 @@ impl Observer {
             columns: None,
             quota_table_present: false,
             quota: None,
+            capture_anchor: None,
+            capture_view: None,
         }
+    }
+
+    pub fn with_capture(mut self, anchor: Option<crate::claude_quota_diagnostics::Anchor>) -> Self {
+        self.capture_anchor = anchor;
+        self
+    }
+
+    pub fn capture_diagnostic(&self) -> Option<&crate::claude_quota_diagnostics::View> {
+        self.capture_view.as_ref()
     }
 
     pub fn matches(&self, report: &Path, expected_session: &str) -> bool {
@@ -724,6 +782,13 @@ impl Observer {
         let result = self.poll_inner(after, include_quota, counts);
         if result.is_err() {
             self.invalidate();
+            self.capture_view = self.capture_anchor.as_ref().map(|anchor| {
+                crate::claude_quota_diagnostics::View::unavailable(
+                    &self.report,
+                    anchor,
+                    crate::claude_quota_diagnostics::ReaderOutcome::Unreadable,
+                )
+            });
             counts.lifecycle_read_failures = counts.lifecycle_read_failures.saturating_add(1);
         }
         result
@@ -761,20 +826,34 @@ impl Observer {
         };
         identity.prompt_correlation = columns.prompt;
         let lifecycle = read_lifecycle(&transaction, identity, columns.paste, after, counts)?;
-        let quota = if include_quota {
+        let (quota, quota_failure) = if include_quota {
             match self.read_quota(&transaction, &lifecycle.identity, counts) {
-                Ok(quota) => quota,
-                Err(_) => {
+                Ok(quota) => (quota, None),
+                Err(outcome) => {
                     self.quota = None;
                     self.quota_table_present = false;
                     counts.quota_read_failures = counts.quota_read_failures.saturating_add(1);
-                    None
+                    (None, Some(outcome))
                 }
             }
         } else {
             self.quota = None;
-            None
+            (None, None)
         };
+        self.capture_view = self.capture_anchor.as_ref().map(|anchor| {
+            let mut view = crate::claude_quota_diagnostics::read(
+                &transaction,
+                &self.report,
+                anchor,
+                &lifecycle.identity,
+            );
+            if view.reader.outcome == crate::claude_quota_diagnostics::ReaderOutcome::Readable
+                && let Some(outcome) = quota_failure
+            {
+                view.reader.outcome = outcome;
+            }
+            view
+        });
         transaction.commit()?;
         Ok(Observed { lifecycle, quota })
     }
@@ -784,7 +863,11 @@ impl Observer {
         connection: &Connection,
         identity: &Identity,
         counts: &mut ReadCounts,
-    ) -> Result<Option<crate::claude_quota::Observation>> {
+    ) -> std::result::Result<
+        Option<crate::claude_quota::Observation>,
+        crate::claude_quota_diagnostics::ReaderOutcome,
+    > {
+        use crate::claude_quota_diagnostics::ReaderOutcome;
         if self.quota.as_ref().is_some_and(|cached| {
             let scope = &cached.observation.scope;
             scope.host_session_id != identity.host_session_id
@@ -799,7 +882,8 @@ impl Observer {
             return Ok(None);
         };
         if !self.quota_table_present {
-            self.quota_table_present = root_quota_exists(connection, counts)?;
+            self.quota_table_present =
+                root_quota_exists(connection, counts).map_err(|_| ReaderOutcome::Unreadable)?;
             if !self.quota_table_present {
                 self.quota = None;
                 return Ok(None);
@@ -811,11 +895,15 @@ impl Observer {
             provider,
             identity.generation,
             counts,
-        )?
+        )
+        .map_err(|_| ReaderOutcome::Unreadable)?
         else {
             self.quota = None;
             return Ok(None);
         };
+        if encoded.len() > 2048 {
+            return Err(ReaderOutcome::InvalidStoredData);
+        }
         let ticket = RootQuotaTicket {
             host_session_id: identity.host_session_id.clone(),
             launch_id: identity.launch_id.clone(),
@@ -829,7 +917,8 @@ impl Observer {
         {
             return Ok(Some(cached.observation.clone()));
         }
-        let snapshot = decode_root_quota(&encoded, counts)?;
+        let snapshot =
+            decode_root_quota(&encoded, counts).map_err(|_| ReaderOutcome::InvalidStoredData)?;
         let observation = crate::claude_quota::Observation {
             scope: ticket,
             snapshot,

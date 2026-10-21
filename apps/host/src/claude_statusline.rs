@@ -136,6 +136,12 @@ pub struct Prepared {
 struct Manifest {
     report: PathBuf,
     profile: Profile,
+    #[serde(
+        rename = "captureAnchor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    capture_anchor: Option<crate::claude_quota_diagnostics::Anchor>,
 }
 
 fn file_bytes(path: &Path, limit: usize) -> Result<Vec<u8>> {
@@ -417,13 +423,18 @@ impl Prepared {
     pub fn diagnostic(&self) -> Value {
         json!({"configured":true,"mode":"declaredDisplay","profileFingerprint":self.fingerprint,"observed":null,"globalConfigChanged":false,"inputLimitBytes":INPUT_LIMIT,"outputLimitBytes":OUTPUT_LIMIT,"helperLifetimeMs":if cfg!(unix) {3000} else {4000}})
     }
-    pub fn install(&self, report: &Path) -> Result<Value> {
+    pub fn install(
+        &self,
+        report: &Path,
+    ) -> Result<(Value, crate::claude_quota_diagnostics::Anchor)> {
+        let anchor = crate::claude_quota_diagnostics::install(report)?;
         let manifest = report.with_file_name("claude-statusline.json");
         crate::private_write(
             &manifest,
             &serde_json::to_vec(&Manifest {
                 report: report.to_owned(),
                 profile: self.profile.clone(),
+                capture_anchor: Some(anchor.clone()),
             })?,
         )?;
         let executable = crate::process::display_path(&std::env::current_exe()?);
@@ -446,7 +457,7 @@ impl Prepared {
         if let Some(hide) = self.profile.hide_vim_mode_indicator {
             value["hideVimModeIndicator"] = json!(hide);
         }
-        Ok(value)
+        Ok((value, anchor))
     }
 }
 
@@ -503,17 +514,28 @@ impl<R: Read> Read for Tee<'_, R> {
         Ok(count)
     }
 }
-fn collect(report: &Path, mut input: impl Read) -> Result<Vec<u8>> {
+#[cfg(test)]
+fn collect(report: &Path, input: impl Read) -> Result<Vec<u8>> {
+    collect_capture(report, None, input)
+}
+
+fn collect_capture(
+    report: &Path,
+    anchor: Option<&crate::claude_quota_diagnostics::Anchor>,
+    mut input: impl Read,
+) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     // receive captures its root/generation ticket before Tee's first read.
     // Failure/rejected scope does not prevent the declared display from running.
-    let _ = crate::claude_quota::receive(
-        report,
-        Tee {
-            input: &mut input,
-            copy: &mut bytes,
-        },
-    );
+    let tee = Tee {
+        input: &mut input,
+        copy: &mut bytes,
+    };
+    if let Some(anchor) = anchor {
+        let _ = crate::claude_quota::receive_capture(report, anchor, tee);
+    } else {
+        let _ = crate::claude_quota::receive(report, tee);
+    }
     let remaining = INPUT_LIMIT.saturating_add(1).saturating_sub(bytes.len());
     input.take(remaining as u64).read_to_end(&mut bytes)?;
     ensure!(
@@ -683,7 +705,11 @@ pub fn run(manifest: &Path) -> i32 {
         );
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {
-            let _ = sender.send(collect(&manifest.report, std::io::stdin()));
+            let _ = sender.send(collect_capture(
+                &manifest.report,
+                manifest.capture_anchor.as_ref(),
+                std::io::stdin(),
+            ));
         });
         let input = receiver
             .recv_timeout(Duration::from_secs(2))
@@ -1038,6 +1064,68 @@ mod tests {
         assert_eq!(error.to_string(), "Profile response exceeds its bound");
         assert_eq!(slots.available_permits(), 1);
     }
+    #[test]
+    fn unbound_capture_preserves_display_bytes_when_remaining_input_binds_the_root() {
+        let mut command = portable_pty::CommandBuilder::new("fixture");
+        let tracker =
+            crate::agent_context::Tracker::install_for(&mut command, "capture-fixture").unwrap();
+        let report = tracker.report();
+        let anchor = crate::claude_quota_diagnostics::install(&report).unwrap();
+        struct BindInput {
+            report: Option<PathBuf>,
+            input: std::io::Cursor<Vec<u8>>,
+        }
+        impl Read for BindInput {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                if let Some(report) = self.report.take() {
+                    crate::agent_events::append(
+                        &report,
+                        Some("conversation-a"),
+                        "SessionStart",
+                        crate::status::StatusState::Idle,
+                        false,
+                        None,
+                    )
+                    .unwrap();
+                }
+                std::io::Read::read(&mut self.input, bytes)
+            }
+        }
+        let original = b"{\"session_id\":\"conversation-a\",\"private\":\"literal display bytes\"}";
+        let copied = collect_capture(
+            &report,
+            Some(&anchor),
+            BindInput {
+                report: Some(report.clone()),
+                input: std::io::Cursor::new(original.to_vec()),
+            },
+        )
+        .unwrap();
+        assert_eq!(copied, original);
+        let mut observer = crate::agent_events::Observer::new(report, "capture-fixture".into())
+            .with_capture(Some(anchor));
+        let observed = observer
+            .poll(0, true, &mut crate::agent_events::ReadCounts::default())
+            .unwrap();
+        assert!(observed.quota.is_none());
+        assert_eq!(
+            observed.lifecycle.identity.provider_session_id.as_deref(),
+            Some("conversation-a")
+        );
+        let attempt = observer
+            .capture_diagnostic()
+            .unwrap()
+            .delivery
+            .latest_completed
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            attempt.outcome,
+            Some(crate::claude_quota_diagnostics::Outcome::RootUnbound)
+        );
+        assert!(!attempt.bound_at_entry);
+    }
+
     #[tokio::test]
     #[ignore = "serial native process conformance; explicitly run by CI"]
     async fn capture_failure_does_not_change_input_stdout_or_display_exit() {

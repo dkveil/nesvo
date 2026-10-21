@@ -54,6 +54,20 @@ They verify process and byte behavior, not performance under CPU saturation. The
 serial `mcp_host` capture scenario separately checks the actual production helper,
 root callback correlation and cleanup of a hanging declared display.
 
+The capture case can also be selected directly after the locked native build:
+
+```text
+cargo test --package nesvo --test mcp_host --locked claude_quota_capture:: -- --ignored --test-threads=1
+```
+
+It runs the actual generated wrapper and human CLI against an owned private
+host. Assertions cover unchanged display bytes/exit, rejected-payload attempt
+receipts, missing journal with a readable failure sidecar, cleared live quota,
+restoration of the original receipt clocks, a fresh accepted callback and
+allowlisted human/JSON diagnostics. Only its validated temporary journal is
+renamed; RAII attempts restoration before fixture teardown. These are controlled
+provider/process checks, not an original-Claude lifecycle or model acceptance.
+
 ### Native job execution timeout scenarios
 
 After building the native host/client, the ignored `mcp_host` integration target
