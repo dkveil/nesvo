@@ -208,7 +208,12 @@ impl Store {
         crate::receipts::initialize(&mut connection)?;
         crate::quota_wakes::initialize(&connection)?;
         crate::quota_wakes::recover(&mut connection)?;
-        crate::orchestration::initialize(&connection)?;
+        {
+            let schema =
+                connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            crate::orchestration::initialize(&schema)?;
+            schema.commit()?;
+        }
         crate::workflow_launches::recover(&mut connection)?;
         crate::workflow_delivery::recover(&mut connection)?;
         crate::workflow_executor::recover(&mut connection)?;
@@ -1106,6 +1111,449 @@ impl Service {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    struct StartupDatabase {
+        directory: PathBuf,
+        path: PathBuf,
+    }
+    impl StartupDatabase {
+        fn new() -> Self {
+            let directory = std::env::temp_dir().join(format!(
+                "nesvo-startup-schema-{}",
+                hex::encode(crate::wire::random::<16>())
+            ));
+            std::fs::create_dir(&directory).unwrap();
+            let directory = directory.canonicalize().unwrap();
+            Self {
+                path: directory.join("metadata.sqlite3"),
+                directory,
+            }
+        }
+    }
+    impl Drop for StartupDatabase {
+        fn drop(&mut self) {
+            if std::env::temp_dir().canonicalize().is_ok_and(|temporary| {
+                self.directory.parent() == Some(temporary.as_path())
+                    && self
+                        .directory
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("nesvo-startup-schema-"))
+            }) {
+                let _ = std::fs::remove_dir_all(&self.directory);
+            }
+        }
+    }
+    fn startup_columns(connection: &Connection, table: &str) -> Vec<String> {
+        let mut query = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        query
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    }
+    fn startup_has_table(connection: &Connection, name: &str) -> bool {
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+                [name],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn startup_schema_batch_fresh_and_warm_preserve_metadata_and_recover_receipt_once() {
+        let fixture = StartupDatabase::new();
+        let retained_spec = "{  \"name\": \"retained specification\"  }";
+        let (host_id, group_id, receipt_id, receipt_identity, original_head) = {
+            let mut metadata = crate::storage::MetadataStore::open(&fixture.path).unwrap();
+            let group = metadata.create("Retained group", None, 0, 0).unwrap();
+            let mut store = Store::open(&fixture.path).unwrap();
+            assert_eq!(store.cursors().unwrap(), (0, 0));
+            assert!(startup_has_table(&store.0, "harness_job_quota_sources"));
+            assert!(startup_has_table(
+                &store.0,
+                "harness_job_launch_resolutions"
+            ));
+            assert_eq!(
+                store
+                    .0
+                    .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "wal"
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            metadata
+                .connection
+                .execute(
+                    "INSERT INTO templates VALUES('retained-template','Retained',?1)",
+                    [retained_spec],
+                )
+                .unwrap();
+            metadata
+                .connection
+                .execute(
+                    "INSERT INTO recovery VALUES('legacy-recovery',?1,'starting')",
+                    [retained_spec],
+                )
+                .unwrap();
+            metadata
+                .connection
+                .execute(
+                    "INSERT INTO schedules VALUES('legacy-schedule',1,?1,'starting',NULL)",
+                    [retained_spec],
+                )
+                .unwrap();
+            let accepted = crate::receipts::accept(
+                &mut store.0,
+                "owner",
+                "retained-startup-key",
+                "send",
+                json!({"sessionId":"retained-session","prompt":"controlled fixture"}),
+            )
+            .unwrap();
+            crate::receipts::claim(&mut store.0, &accepted.receipt.id, "owner")
+                .unwrap()
+                .unwrap();
+            let identity: String = store.0.query_row(
+                "SELECT json_array(issuer,key,digest,operation,session_id) FROM operation_receipts WHERE id=?1",
+                [&accepted.receipt.id], |row| row.get(0),
+            ).unwrap();
+            (
+                metadata.host_id.clone(),
+                group,
+                accepted.receipt.id,
+                identity,
+                store.cursors().unwrap().0,
+            )
+        };
+        for _ in 0..2 {
+            let metadata = crate::storage::MetadataStore::open(&fixture.path).unwrap();
+            assert_eq!(metadata.host_id, host_id);
+            assert_eq!(metadata.revision(), 1);
+            assert_eq!(metadata.groups().len(), 1);
+            assert_eq!(metadata.groups()[0].id, group_id);
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row(
+                        "SELECT spec FROM templates WHERE id='retained-template'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                retained_spec
+            );
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row(
+                        "SELECT state FROM recovery WHERE id='legacy-recovery'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                "interrupted"
+            );
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row(
+                        "SELECT state FROM schedules WHERE id='legacy-schedule'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                "interrupted"
+            );
+            let mut store = Store::open(&fixture.path).unwrap();
+            let actual: (String, Option<String>, String, String) = store.0.query_row(
+                "SELECT phase,claim_token,result,json_array(issuer,key,digest,operation,session_id) FROM operation_receipts WHERE id=?1",
+                [&receipt_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+            ).unwrap();
+            assert_eq!(actual.0, "unknown");
+            assert!(actual.1.is_none());
+            assert_eq!(
+                serde_json::from_str::<Value>(&actual.2).unwrap()["code"],
+                "host_restart"
+            );
+            assert_eq!(actual.3, receipt_identity);
+            assert_eq!(store.cursors().unwrap(), (original_head + 1, 0));
+            assert!(
+                crate::receipts::claim(&mut store.0, &receipt_id, "owner")
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(store.0.is_autocommit());
+        }
+    }
+
+    #[test]
+    fn startup_schema_batch_migrates_published_shapes_without_minting_dispatch_authority() {
+        let fixture = StartupDatabase::new();
+        let spec = "{  \"published\": true  }";
+        let accepted = "{  \"accepted\": true  }";
+        let host_id = {
+            let metadata = crate::storage::MetadataStore::open(&fixture.path).unwrap();
+            metadata.connection.execute_batch("CREATE TABLE workflow_runs(id TEXT PRIMARY KEY,title TEXT NOT NULL,goal TEXT NOT NULL,coordinator_id TEXT,revision INTEGER NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL);
+                CREATE TABLE workflow_launches(attempt_id TEXT PRIMARY KEY REFERENCES workflow_attempts(id),operation_id TEXT NOT NULL UNIQUE REFERENCES operation_receipts(id),operation_key TEXT NOT NULL,workspace TEXT NOT NULL,created_at INTEGER NOT NULL);
+                CREATE TABLE workflow_native_context(operation_id TEXT PRIMARY KEY REFERENCES operation_receipts(id),run_id TEXT NOT NULL REFERENCES workflow_runs(id),revision INTEGER NOT NULL,admitted INTEGER NOT NULL);
+                CREATE TABLE harness_jobs(id TEXT PRIMARY KEY,spec TEXT NOT NULL,revision INTEGER NOT NULL,enabled INTEGER NOT NULL,next_due INTEGER,created_at INTEGER NOT NULL);
+                CREATE TABLE harness_job_occurrences(id TEXT PRIMARY KEY,job_id TEXT NOT NULL REFERENCES harness_jobs(id),job_revision INTEGER NOT NULL,spec TEXT NOT NULL,trigger_key TEXT NOT NULL,trigger_kind TEXT NOT NULL,due_at INTEGER NOT NULL,created_at INTEGER NOT NULL,state TEXT NOT NULL,reason TEXT,run_id TEXT REFERENCES workflow_runs(id),started_at INTEGER,finished_at INTEGER,UNIQUE(job_id,trigger_key));
+                CREATE TABLE harness_job_attempts(id TEXT PRIMARY KEY,occurrence_id TEXT NOT NULL REFERENCES harness_job_occurrences(id),ordinal INTEGER NOT NULL,run_id TEXT UNIQUE REFERENCES workflow_runs(id),created_at INTEGER NOT NULL,claimed_at INTEGER,finished_at INTEGER,state TEXT NOT NULL,reason TEXT,UNIQUE(occurrence_id,ordinal));
+                CREATE TABLE harness_job_mutations(issuer TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,view TEXT NOT NULL,PRIMARY KEY(issuer,key));
+                INSERT INTO workflow_runs VALUES('published-run','Retained','Retained',NULL,7,'completed',10);").unwrap();
+            metadata
+                .connection
+                .execute(
+                    "INSERT INTO harness_jobs VALUES('published-job',?1,7,0,NULL,10)",
+                    [spec],
+                )
+                .unwrap();
+            metadata.connection.execute("INSERT INTO harness_job_occurrences VALUES('published-occurrence','published-job',7,?1,'published-trigger','once',10,10,'succeeded','retained occurrence','published-run',11,12)", [spec]).unwrap();
+            metadata.connection.execute("INSERT INTO harness_job_attempts VALUES('published-generation','published-occurrence',1,'published-run',10,11,12,'succeeded','retained generation')", []).unwrap();
+            metadata.connection.execute("INSERT INTO harness_job_mutations VALUES('owner','published-key','published-digest',?1)", [accepted]).unwrap();
+            metadata.host_id
+        };
+        for _ in 0..2 {
+            let store = Store::open(&fixture.path).unwrap();
+            assert_eq!(store.cursors().unwrap(), (0, 0));
+            assert_eq!(
+                store
+                    .0
+                    .query_row(
+                        "SELECT public_id FROM host_identity WHERE id=1",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                host_id
+            );
+            let actual: (String, Option<String>, i64, i64, i64, String, String) = store.0.query_row(
+                "SELECT o.current_job_attempt_id,a.dispatch_token,a.created_at,a.claimed_at,a.finished_at,a.state,a.reason FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id WHERE o.id='published-occurrence'",
+                [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?)),
+            ).unwrap();
+            assert_eq!(
+                actual,
+                (
+                    "published-generation".into(),
+                    None,
+                    10,
+                    11,
+                    12,
+                    "succeeded".into(),
+                    "retained generation".into()
+                )
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row(
+                        "SELECT spec FROM harness_jobs WHERE id='published-job'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                spec
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row(
+                        "SELECT spec FROM harness_job_occurrences WHERE id='published-occurrence'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                spec
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row(
+                        "SELECT view FROM harness_job_mutations WHERE key='published-key'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                accepted
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row("SELECT count(*) FROM harness_job_attempts", [], |row| row
+                        .get::<_, i64>(
+                        0
+                    ))
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row("SELECT count(*) FROM operation_receipts", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                store
+                    .0
+                    .query_row(
+                        "SELECT count(*) FROM harness_job_launch_resolutions",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                0
+            );
+            for (table, column) in [
+                ("workflow_launches", "profile"),
+                ("workflow_launches", "prepared_spec"),
+                ("workflow_launches", "quota_hold_reason"),
+                ("workflow_native_context", "coordinator_generation"),
+                ("harness_jobs", "calendar_error"),
+                ("harness_job_occurrences", "coalesced_from"),
+                ("harness_job_cancellations", "precheck_attempt_id"),
+            ] {
+                assert!(
+                    startup_columns(&store.0, table)
+                        .iter()
+                        .any(|name| name == column)
+                );
+            }
+            assert!(store.0.is_autocommit());
+        }
+    }
+
+    #[test]
+    fn startup_schema_batch_late_failure_rolls_back_schema_but_not_prior_receipt_recovery() {
+        let fixture = StartupDatabase::new();
+        let mut metadata = crate::storage::MetadataStore::open(&fixture.path).unwrap();
+        let group = metadata
+            .create("Retained after failure", None, 0, 0)
+            .unwrap();
+        metadata.connection.execute_batch("CREATE TABLE domain_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,kind TEXT NOT NULL,at INTEGER NOT NULL,payload TEXT NOT NULL);
+            CREATE TABLE domain_event_cursor(id INTEGER PRIMARY KEY CHECK(id=1),head INTEGER NOT NULL,floor INTEGER NOT NULL);
+            INSERT INTO domain_event_cursor VALUES(1,0,0);
+            CREATE TABLE workflow_launches(attempt_id TEXT PRIMARY KEY REFERENCES workflow_attempts(id),operation_id TEXT NOT NULL UNIQUE REFERENCES operation_receipts(id),operation_key TEXT NOT NULL,workspace TEXT NOT NULL,created_at INTEGER NOT NULL);
+            CREATE TABLE harness_job_quota_sources(source_id TEXT PRIMARY KEY);
+            INSERT INTO harness_job_quota_sources VALUES('retained incompatible row');").unwrap();
+        crate::receipts::initialize(&mut metadata.connection).unwrap();
+        let accepted = crate::receipts::accept(
+            &mut metadata.connection,
+            "owner",
+            "pre-schema-recovery",
+            "send",
+            json!({"sessionId":"retained-session","prompt":"controlled fixture"}),
+        )
+        .unwrap();
+        let before: i64 = metadata
+            .connection
+            .query_row(
+                "SELECT head FROM domain_event_cursor WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let original_columns = startup_columns(&metadata.connection, "workflow_launches");
+        for _ in 0..2 {
+            // Missing context/account columns fail a real late schema index;
+            // no test-only SQL hook or altered production sequence is used.
+            assert!(Store::open(&fixture.path).is_err());
+            assert_eq!(
+                startup_columns(&metadata.connection, "workflow_launches"),
+                original_columns
+            );
+            for table in [
+                "workflow_runs",
+                "workflow_tasks",
+                "harness_jobs",
+                "harness_job_attempts",
+                "host_budget",
+            ] {
+                assert!(!startup_has_table(&metadata.connection, table));
+            }
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row(
+                        "SELECT source_id FROM harness_job_quota_sources",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                "retained incompatible row"
+            );
+            let receipt: (String, Option<String>, String) = metadata
+                .connection
+                .query_row(
+                    "SELECT phase,claim_token,result FROM operation_receipts WHERE id=?1",
+                    [&accepted.receipt.id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(receipt.0, "unknown");
+            assert!(receipt.1.is_none());
+            assert_eq!(
+                serde_json::from_str::<Value>(&receipt.2).unwrap()["code"],
+                "host_restart"
+            );
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row(
+                        "SELECT head FROM domain_event_cursor WHERE id=1",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                before + 1
+            );
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row("SELECT revision FROM metadata WHERE id=1", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row("SELECT name FROM groups WHERE id=?1", [&group], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .unwrap(),
+                "Retained after failure"
+            );
+            assert_eq!(
+                metadata
+                    .connection
+                    .query_row("SELECT count(*) FROM quota_wake_arms", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert!(metadata.connection.is_autocommit());
+        }
+    }
 
     #[test]
     fn receipt_and_event_commit_atomically_and_claims_cannot_be_reused() {

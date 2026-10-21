@@ -59,3 +59,18 @@ It uses a private controlled host with no model prompts. It checks the phase
 order, independent restart evidence, unchanged pairing key, normal authenticated
 MCP access and owned cleanup. Pure tests cover disabled tracing, early drop,
 write/flush failure, fixed bounds, strict parsing and private-input rejection.
+
+## Schema initialization boundary
+
+The journal's orchestration schema initializer runs in one immediate SQLite
+transaction. It contains DDL, additive migrations and default budget insertion;
+it does not dispatch work. Receipt and quota recovery remain before this batch,
+and workflow/job recovery remains after it. Those recovery operations keep their
+own existing transactions and ordering. WAL, synchronous FULL, foreign keys and
+the existing busy timeout are unchanged.
+
+A schema error rolls back the batch, including earlier additive columns and
+defaults. It does not roll back previously committed receipt recovery. Fresh,
+warm, published-schema migration and late-failure regressions verify preserved
+host identity, workspace revision, raw specification bytes, generation pointers
+and receipt recovery without duplicate events or new dispatch authority.
