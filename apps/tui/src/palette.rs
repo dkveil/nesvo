@@ -104,17 +104,6 @@ pub fn results(app: &App, query: &str) -> Vec<ResultRow> {
                 }),
         );
     }
-    if query.trim().is_empty() {
-        results.sort_by_key(|row| match row.target.session_id() {
-            Some(id) if Some(id) == app.active_id() => usize::MAX,
-            Some(id) => app
-                .recent_sessions
-                .iter()
-                .position(|recent| recent == id)
-                .unwrap_or(32),
-            None => 33,
-        });
-    }
     let words = words(query);
     if category == 0 || category == 2 {
         for (id, path) in app.group_choices(None) {
@@ -208,6 +197,261 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod ranking_tests {
+    use super::*;
+    use crate::model::Dialog;
+    use serde_json::{Value, json};
+
+    fn session(id: &str, name: &str, state: &str) -> Value {
+        json!({
+            "id":id,"name":name,"cwd":"/work","program":"claude",
+            "cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null,
+            "status":{"state":state,"source":"hook","updatedAt":1},
+            "currentAttention":{"priority":0,"reason":null,"status":null}
+        })
+    }
+
+    fn needs_you(mut session: Value, priority: u8) -> Value {
+        let (state, reason) = match priority {
+            3 => ("question", "question"),
+            2 => ("blocked", "child"),
+            _ => ("failed", "failure"),
+        };
+        if priority == 3 {
+            session["status"] = json!({"state":state,"source":"hook","updatedAt":1});
+        }
+        session["currentAttention"] = json!({"priority":priority,"reason":reason,
+            "status":{"state":state,"source":"program","updatedAt":1}});
+        session
+    }
+
+    fn completion(mut session: Value, response: bool) -> Value {
+        session["attention"] = json!({"sequence":1,"kind":"done","at":1,"unread":true,
+            "source":if response {"hook"} else {"program"},
+            "subject":if response {Some("response")} else {None}});
+        session
+    }
+
+    fn snapshot(sessions: Vec<Value>) -> Value {
+        json!({"type":"sessions","revision":1,"groups":[],"sessions":sessions})
+    }
+
+    fn app(snapshot: Value) -> App {
+        let mut app = App::new(1);
+        app.event(snapshot).unwrap();
+        // Test rank independently of the optional active-session tie breaker.
+        app.panes = [None, None];
+        app
+    }
+
+    fn ranks(app: &mut App, query: &str) -> Vec<String> {
+        let quick: Vec<_> = app
+            .quick_switch_results(query)
+            .into_iter()
+            .map(|session| session.id.clone())
+            .collect();
+        for expanded in [false, true] {
+            app.palette_expanded = expanded;
+            app.palette_category = 0;
+            let palette: Vec<_> = results(app, query)
+                .into_iter()
+                .filter_map(|row| row.target.session_id().map(str::to_owned))
+                .collect();
+            assert_eq!(palette, quick, "expanded={expanded}, query={query}");
+        }
+        quick
+    }
+
+    #[test]
+    fn empty_query_ranks_current_needs_you_then_unread_completion_then_mru() {
+        let mut app = app(snapshot(vec![
+            session("recent", "Needle recent", "idle"),
+            session("idle", "Needle idle", "idle"),
+            completion(session("response", "Needle response", "idle"), true),
+            completion(session("provider", "Needle provider", "done"), false),
+            needs_you(session("failed", "Needle failed", "failed"), 1),
+            needs_you(session("blocked", "Needle blocked", "working"), 2),
+            needs_you(session("question", "Needle question", "working"), 3),
+        ]));
+        app.recent_sessions = vec!["recent".into(), "response".into(), "idle".into()];
+        app.panes[0] = Some("question".into());
+        assert_eq!(
+            ranks(&mut app, ""),
+            [
+                "question", "blocked", "failed", "response", "provider", "recent", "idle"
+            ]
+        );
+        assert_eq!(
+            app.session("blocked")
+                .unwrap()
+                .status
+                .as_ref()
+                .unwrap()
+                .state,
+            crate::status::State::Working,
+            "Aggregate attention must not replace the running agent's state"
+        );
+    }
+
+    #[test]
+    fn nonempty_query_preserves_text_relevance_before_urgency_and_mru_ties() {
+        let mut context = needs_you(session("context", "Other", "working"), 3);
+        context["cwd"] = json!("/work/needle");
+        let mut app = app(snapshot(vec![
+            context,
+            session("exact", "Needle exact", "idle"),
+            session("idle", "Needle idle", "idle"),
+            session("recent", "Needle recent", "idle"),
+            completion(session("complete", "Needle complete", "idle"), true),
+            needs_you(session("needs", "Needle needs", "working"), 2),
+        ]));
+        app.recent_sessions = vec!["recent".into(), "context".into()];
+        assert_eq!(
+            ranks(&mut app, "needle"),
+            ["needs", "complete", "recent", "exact", "idle", "context"]
+        );
+    }
+
+    #[test]
+    fn historical_unread_completion_does_not_boost_working_or_active_turns() {
+        let mut sessions = vec![
+            session("idle", "Zulu idle", "idle"),
+            completion(session("working", "Alpha working", "working"), true),
+        ];
+        for phase in ["accepted", "started", "waiting"] {
+            let mut row = completion(session(phase, phase, "idle"), true);
+            row["lifecycle"] = json!({"turn":{"phase":phase,"elapsedSeconds":1}});
+            sessions.push(row);
+        }
+        let mut app = app(snapshot(sessions));
+        app.recent_sessions = ["idle", "working", "accepted", "started", "waiting"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            ranks(&mut app, ""),
+            ["idle", "working", "accepted", "started", "waiting"]
+        );
+        assert!(
+            app.session("working")
+                .unwrap()
+                .attention
+                .as_ref()
+                .unwrap()
+                .unread
+        );
+    }
+
+    #[test]
+    fn completion_rank_requires_an_unread_host_done_event() {
+        let mut acknowledged = completion(session("read", "Needle read", "idle"), true);
+        acknowledged["attention"]["unread"] = json!(false);
+        let mut historical = completion(session("history", "Needle history", "idle"), false);
+        historical["attention"]["kind"] = json!("question");
+        let mut app = app(snapshot(vec![
+            session("status", "Needle status", "done"),
+            acknowledged,
+            historical,
+            session("idle", "Needle idle", "idle"),
+            completion(session("complete", "Needle complete", "idle"), true),
+        ]));
+        app.recent_sessions = ["status", "read", "history", "idle"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        for query in ["", "needle"] {
+            assert_eq!(
+                ranks(&mut app, query),
+                ["complete", "status", "read", "history", "idle"]
+            );
+        }
+    }
+
+    #[test]
+    fn acknowledgment_removes_completion_boost_but_preview_does_not() {
+        let mut value = snapshot(vec![
+            session("idle", "Needle idle", "idle"),
+            completion(session("complete", "Needle complete", "idle"), true),
+        ]);
+        let mut app = app(value.clone());
+        app.recent_sessions = vec!["idle".into()];
+        assert_eq!(ranks(&mut app, ""), ["complete", "idle"]);
+        let commands = app.preview_session("complete");
+        assert!(
+            commands
+                .iter()
+                .all(|command| command["type"] != "acknowledgeAttention")
+        );
+        assert_eq!(app.recent_sessions, ["idle"]);
+        assert!(
+            app.session("complete")
+                .unwrap()
+                .attention
+                .as_ref()
+                .unwrap()
+                .unread
+        );
+        assert_eq!(ranks(&mut app, "needle"), ["complete", "idle"]);
+
+        value["revision"] = json!(2);
+        value["sessions"][1]["attention"]["unread"] = json!(false);
+        app.event(value).unwrap();
+        app.panes = [None, None];
+        assert_eq!(ranks(&mut app, ""), ["idle", "complete"]);
+        assert_eq!(ranks(&mut app, "needle"), ["idle", "complete"]);
+        assert_eq!(
+            app.session("complete")
+                .unwrap()
+                .status
+                .as_ref()
+                .unwrap()
+                .state,
+            crate::status::State::Idle
+        );
+    }
+
+    #[test]
+    fn ranking_changes_preserve_the_exact_selected_target() {
+        for query in ["", "needle"] {
+            let mut value = snapshot(vec![
+                session("idle", "Needle idle", "idle"),
+                completion(session("complete", "Needle complete", "idle"), true),
+                session("needs", "Needle needs", "idle"),
+            ]);
+            let mut app = app(value.clone());
+            app.palette_expanded = true;
+            let target = Target::Session("complete".into());
+            app.dialog = Some(Dialog::QuickSwitch {
+                query: query.into(),
+                selected: Some(target.clone()),
+            });
+            assert_eq!(app.palette_index(), Some(0));
+            value["revision"] = json!(2);
+            value["sessions"][2] = needs_you(value["sessions"][2].clone(), 3);
+            app.event(value).unwrap();
+            assert_eq!(app.palette_index(), Some(1));
+            assert!(matches!(&app.dialog,
+                Some(Dialog::QuickSwitch { selected: Some(selected), .. }) if selected == &target));
+            assert_eq!(app.active_id(), Some("idle"));
+            assert!(app.recent_sessions.is_empty());
+        }
+    }
+
+    #[test]
+    fn duplicate_unicode_names_use_exact_id_as_deterministic_rank_tie() {
+        let mut app = app(snapshot(vec![
+            session("b", "工程 ÅPI", "idle"),
+            session("a", "工程 åpi", "idle"),
+        ]));
+        for query in ["", "工程", "åpi"] {
+            assert_eq!(ranks(&mut app, query), ["a", "b"]);
+            app.sessions.reverse();
+            assert_eq!(ranks(&mut app, query), ["a", "b"]);
         }
     }
 }

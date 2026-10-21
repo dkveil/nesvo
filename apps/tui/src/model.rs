@@ -7,7 +7,10 @@ use crate::{
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 fn fuzzy_contains(haystack: &str, needle: &str) -> bool {
     let mut chars = haystack.chars();
@@ -27,6 +30,30 @@ impl SessionSearch {
             scope,
             words: query.split_whitespace().map(str::to_lowercase).collect(),
         }
+    }
+}
+
+struct SessionSearchRank<'a> {
+    relevance: u32,
+    needs_you: u8,
+    unread_completion: bool,
+    active: bool,
+    recent: usize,
+    name: String,
+    id: &'a str,
+}
+impl SessionSearchRank<'_> {
+    fn compare(&self, other: &Self) -> Ordering {
+        other
+            .relevance
+            .cmp(&self.relevance)
+            .then_with(|| other.needs_you.cmp(&self.needs_you))
+            .then_with(|| other.unread_completion.cmp(&self.unread_completion))
+            // Keep the current session last only within the same urgency bucket.
+            .then_with(|| self.active.cmp(&other.active))
+            .then_with(|| self.recent.cmp(&other.recent))
+            .then_with(|| self.name.cmp(&other.name))
+            .then_with(|| self.id.cmp(other.id))
     }
 }
 
@@ -75,6 +102,25 @@ impl Session {
             || self.status.as_ref().map_or(0, Status::attention_priority),
             |a| a.priority,
         )
+    }
+    fn unread_completion(&self) -> bool {
+        // Historical notifications survive a new turn. They are not current
+        // completion evidence while the host reports new work in progress.
+        let working = self
+            .status
+            .as_ref()
+            .is_some_and(|status| status.state == crate::status::State::Working);
+        let active_turn = self
+            .lifecycle
+            .as_ref()
+            .and_then(|lifecycle| lifecycle.turn.as_ref())
+            .is_some_and(|turn| turn.phase.active());
+        !working
+            && !active_turn
+            && self
+                .attention
+                .as_ref()
+                .is_some_and(|attention| attention.unread && attention.kind == "done")
     }
     fn refresh_time(&mut self, now: std::time::Instant) -> bool {
         let label = self
@@ -540,20 +586,31 @@ impl App {
 
     pub fn quick_switch_results(&self, query: &str) -> Vec<&Session> {
         let search = SessionSearch::new(query);
-        let mut matches: Vec<(&Session, u32)> = self
+        let mut matches: Vec<_> = self
             .sessions
             .iter()
             .filter_map(|session| {
-                self.session_search_score(session, &search)
-                    .map(|score| (session, score))
+                self.session_search_score(session, &search).map(|score| {
+                    (
+                        session,
+                        SessionSearchRank {
+                            relevance: score,
+                            needs_you: session.attention_priority(),
+                            unread_completion: session.unread_completion(),
+                            active: self.active_id() == Some(session.id.as_str()),
+                            recent: self
+                                .recent_sessions
+                                .iter()
+                                .position(|id| id == &session.id)
+                                .unwrap_or(usize::MAX),
+                            name: session.name.to_lowercase(),
+                            id: &session.id,
+                        },
+                    )
+                })
             })
             .collect();
-        matches.sort_by(|(a, a_score), (b, b_score)| {
-            b_score
-                .cmp(a_score)
-                .then_with(|| b.attention_priority().cmp(&a.attention_priority()))
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        matches.sort_by(|(_, a), (_, b)| a.compare(b));
         matches.into_iter().map(|(session, _)| session).collect()
     }
 
@@ -582,7 +639,7 @@ impl App {
         {
             return None;
         }
-        let mut score = u32::from(session.attention_priority() > 0);
+        let mut score = 0;
         if search.words.is_empty() {
             return Some(score);
         }

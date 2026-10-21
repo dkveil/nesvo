@@ -275,6 +275,13 @@ fn previous_session_toggles_and_previews_do_not_rewrite_history() {
     let history = app.recent_sessions.clone();
     app.preview_session("a");
     assert_eq!(app.recent_sessions, history);
+    assert_eq!(
+        app.palette_results("")[0].target.session_id(),
+        Some("b"),
+        "A current blocker outranks MRU even in the active session"
+    );
+    // With equal urgency, the previous session remains the first MRU result.
+    app.sessions[1].status = app.sessions[0].status.clone();
     assert_eq!(app.palette_results("")[0].target.session_id(), Some("a"));
     app.dialog = Some(Dialog::Help);
     key(&mut app, KeyCode::F(6));

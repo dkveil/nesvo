@@ -55,7 +55,7 @@ not evidence that the expanded acceptance criteria pass.
 | F27 | Authenticated webhook and GitHub triggers       | Missing                                                       | Partial: signed loopback HTTP, durable admission, GitHub adapter and owner CLI/MCP implemented; native Windows fixtures pass; publication/platform and external-account deployment gates separate     |
 | F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: history, no-effect retry, overlap, cancellation, execution timeouts and owner no-effect launch resolution; broader retry, uncertain effects, cleanup and job UI pending                      |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                                                                                      |
-| F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Partial: exact target cursor and Enter validation; full attention/unread/MRU ranking pending                                                                                                          |
+| F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Implemented shared attention/unread/MRU ranking and exact target safety; current native/platform verification pending                                                                                 |
 | F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Pending                                                                                                                                                                                               |
 | F32 | Incremental preview and process/turn times      | Partial: bounded replay and monotonic process age             | Implemented distinct process/turn times and bounded passive read; device matrix pending                                                                                                               |
 | F33 | Revision-bound diff feedback                    | Missing                                                       | Pending                                                                                                                                                                                               |
@@ -3206,3 +3206,21 @@ warnings-denied all-target TUI Clippy and formatting pass. Direct identity
 revalidation and label-free palette controls avoid redundant full-list sorting
 on each host event/redraw. This fixes selection safety without changing the
 approved layout; richer attention/unread/MRU ranking remains a separate F30 gate.
+
+### F30 shared search ranking
+
+Quick and expanded session results now use one comparator with precomputed rank
+keys. Text relevance precedes canonical current attention, unread host completion
+and confirmed-open MRU. The previous palette-only empty-query sort no longer
+overrides urgency. Active-session demotion applies only inside an equal urgency
+bucket, and Unicode name ties resolve by stable ID. No silence/idle inference,
+status rewrite, preview acknowledgment or preview MRU update is introduced.
+
+Seven new ranking tests cover quick/expanded parity, current blockers versus MRU,
+response/provider completion, acknowledged and historical events, new work/active
+turns, textual matches, duplicate names and stable selection across rank changes.
+The existing previous-session regression now checks both a current blocker ahead
+of MRU and its original equal-urgency history behavior. Windows workspace checks
+pass 698 units (204 TUI, 491 host, 3 wire), formatting, warnings-denied all-target
+Clippy and locked build. Serial native conformance checks pass separately. Current
+publication CI and interactive/platform gates remain separate evidence.

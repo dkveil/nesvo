@@ -15,6 +15,15 @@ query and the selected identity; preview alone does not change MRU. Revalidation
 checks the selected identity directly rather than rebuilding and sorting the
 entire result list for every host event.
 
+Quick search and expanded session results share one ranking: text relevance,
+current host attention priority, unread host completion events, then recent
+confirmed opens. The active session is moved down only within the same urgency
+bucket; a current blocker still ranks first. Equal names use the stable ID as a
+deterministic tie-breaker. Idle/silence alone never adds completion priority, and
+a historical unread completion does not boost a working or active-turn session.
+Preview changes neither MRU nor acknowledgment; a host acknowledgment removes the
+unread boost without changing agent status.
+
 Verification: unit/render tests cover adjacent row geometry, full-row highlight, Unicode names, provider fallback and column separation. Windows ConPTY smoke exercises search, sidebar, diff and resizing to 100x32 and 80x24. No macOS or Linux interactive verification is claimed.
 
 In navigation mode, `[` narrows the sidebar and `]` widens it in four-column steps. The width is saved per host and constrained to keep at least 48 terminal columns. When review is visible, both keys resize the review panel instead, even while the sidebar has focus; its existing boundary movement is preserved (`[` grows the right panel leftward). In session input, these keys are passed through unchanged. Dialogs retain their own input handling.
