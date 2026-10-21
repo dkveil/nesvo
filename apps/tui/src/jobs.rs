@@ -197,7 +197,12 @@ impl Definition {
             ),
             (
                 "Quota wait",
-                if quota { "Wait for quota" } else { "Off" }.to_owned(),
+                if quota {
+                    "Configured account"
+                } else {
+                    "Host gate"
+                }
+                .to_owned(),
                 quota,
             ),
         ]
@@ -245,19 +250,38 @@ impl Occurrence {
             .map_or_else(|| "Not allocated".to_owned(), |run| format!("Run · {run}"))
     }
 
-    pub fn quota_label(&self) -> String {
+    fn quota_reset(&self, now_ms: i64, offset: Option<i32>) -> Option<String> {
+        self.quota["resetsAt"]
+            .as_i64()
+            .map(|reset| job_time::moment(reset, now_ms, offset))
+    }
+
+    pub fn quota_label(&self, now_ms: i64, offset: Option<i32>) -> String {
+        let reason = self.quota["reason"].as_str().unwrap_or("unknown");
         match self.quota["state"].as_str() {
             Some("eligible") => "Eligible".into(),
-            Some("waiting") => format!(
-                "Waiting · {}",
-                self.quota["reason"].as_str().unwrap_or("unknown")
-            ),
-            _ => "Not required".into(),
+            Some("waiting") => format!("Waiting · {reason}"),
+            Some("held") => match self.quota_reset(now_ms, offset) {
+                Some(reset) => format!("Held until {reset} · {reason}"),
+                None => format!("Held · {reason} · until a newer read"),
+            },
+            _ => "Not held".into(),
+        }
+    }
+
+    pub fn quota_column(&self, now_ms: i64, offset: Option<i32>) -> String {
+        match self.quota["state"].as_str() {
+            Some("eligible") => "eligible".into(),
+            Some("waiting") => "waiting".into(),
+            Some("held") => self
+                .quota_reset(now_ms, offset)
+                .map_or_else(|| "held".into(), |reset| format!("held → {reset}")),
+            _ => "—".into(),
         }
     }
 
     pub fn waiting(&self) -> bool {
-        self.quota["state"] == "waiting"
+        matches!(self.quota["state"].as_str(), Some("waiting" | "held"))
     }
 }
 

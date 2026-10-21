@@ -941,7 +941,46 @@ fn provider_quota_text(value: &Value) -> String {
             lines.push("No installed provider observations available.".into());
         }
     }
+    if value["gate"].is_object() {
+        lines.extend(quota_gate_lines(&value["gate"]));
+    }
     lines.join("\n")
+}
+
+fn quota_reset_text(value: &Value) -> String {
+    value["resetsAt"]
+        .as_u64()
+        .map_or_else(String::new, |at| format!(" · resets at {at} ms"))
+}
+
+fn quota_gate_lines(gate: &Value) -> Vec<String> {
+    let mut lines = vec!["Launch gate:".to_owned()];
+    for provider in gate["providers"].as_array().into_iter().flatten() {
+        lines.push(format!(
+            "  {}: {} · {} · source {}{}",
+            provider["program"].as_str().unwrap_or("provider"),
+            provider["verdict"].as_str().unwrap_or("unknown"),
+            provider["reason"].as_str().unwrap_or("observed"),
+            provider["source"].as_str().unwrap_or("unsupported"),
+            quota_reset_text(provider)
+        ));
+    }
+    let holds = gate["holds"].as_array().map_or(&[][..], Vec::as_slice);
+    if holds.is_empty() {
+        lines.push("  No held launches.".into());
+    }
+    for hold in holds {
+        lines.push(format!(
+            "  Held {} {} · {} · {}{} · checks {}",
+            hold["kind"].as_str().unwrap_or("launch"),
+            hold["id"].as_str().unwrap_or("?"),
+            hold["program"].as_str().unwrap_or("provider"),
+            hold["reason"].as_str().unwrap_or("unknown"),
+            quota_reset_text(hold),
+            hold["checks"].as_u64().unwrap_or(0)
+        ));
+    }
+    lines
 }
 async fn events(
     after: u64,

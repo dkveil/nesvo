@@ -414,6 +414,7 @@ fn history(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
     let wide = area.width >= 70;
     let started_width = if wide { 23 } else { 15 }.min(area.width);
     let state_width = area.width.saturating_sub(started_width).min(24);
+    let quota_width = if area.width >= 90 { 28 } else { 0 };
     let header = row(area, 3);
     if !header.is_empty() {
         text(
@@ -428,6 +429,19 @@ fn history(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
             "STATE",
             MUTED,
         );
+        if quota_width > 0 {
+            text(
+                frame,
+                Rect::new(
+                    header.x + started_width + state_width,
+                    header.y,
+                    quota_width,
+                    1,
+                ),
+                "QUOTA",
+                MUTED,
+            );
+        }
     }
     if jobs.occurrences.is_empty() {
         let message = if jobs.history_loading {
@@ -461,13 +475,27 @@ fn history(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
             &occurrence.state,
             occurrence_color(&occurrence.state),
         );
-        if wide {
+        if quota_width > 0 {
             text(
                 frame,
                 Rect::new(
                     target.x + started_width + state_width,
                     target.y,
-                    target.width.saturating_sub(started_width + state_width),
+                    quota_width,
+                    1,
+                ),
+                &occurrence.quota_column(jobs.now_ms, offset),
+                if occurrence.waiting() { WARNING } else { MUTED },
+            );
+        }
+        if wide {
+            let used = started_width + state_width + quota_width;
+            text(
+                frame,
+                Rect::new(
+                    target.x + used,
+                    target.y,
+                    target.width.saturating_sub(used),
                     1,
                 ),
                 occurrence.reason_label(),
@@ -491,7 +519,7 @@ fn history(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
         frame,
         row(area, 16),
         "Quota",
-        &selected.quota_label(),
+        &selected.quota_label(jobs.now_ms, offset),
         if selected.waiting() { WARNING } else { MUTED },
     );
     text(
@@ -605,12 +633,16 @@ fn form(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
         "Host must remain running. Provider consent can still be required.",
         MUTED,
     );
-    text(
-        frame,
-        row(area, 25),
-        "Advanced: recurrence, worktree, overlap, budget, precheck and quota.",
-        MUTED,
-    );
+    text(frame, row(area, 25), quota_hint(draft.program), MUTED);
+}
+
+fn quota_hint(program: crate::launch::Program) -> &'static str {
+    match program {
+        crate::launch::Program::Gemini => {
+            "Quota · no admission source: starts proceed and are marked unverified."
+        }
+        _ => "Quota · a known provider limit holds starts until its reset or a newer read.",
+    }
 }
 
 fn hints(jobs: &Jobs) -> Vec<(&'static str, &'static str)> {
@@ -822,7 +854,7 @@ mod tests {
             (27, "Run budget        5 minutes"),
             (28, "Native timeout    Not configured"),
             (29, "Retry             Off"),
-            (30, "Quota wait        Off"),
+            (30, "Quota wait        Host gate"),
             (
                 33,
                 "Definition revision 3 · edits affect future occurrences",
@@ -879,13 +911,54 @@ mod tests {
         assert!(line(&buffer, 19).contains("Reason            quota_wait"));
         assert!(line(&buffer, 20).contains("Run               Not allocated"));
         assert!(line(&buffer, 21).contains("Quota             Waiting · source_unavailable"));
+        assert_eq!(find(&buffer, "QUOTA"), Some((91, 8)));
+        assert!(first.contains("waiting"));
+        assert!(line(&buffer, 11).contains("—"));
         assert!(line(&buffer, 24).contains("Cancellation is a request"));
         let footer = line(&buffer, 43);
         assert!(footer.contains(" c ") && footer.contains(" cancel occurrence"));
     }
 
     #[test]
-    fn form_highlights_the_focused_field_and_keeps_the_advanced_hint() {
+    fn held_occurrence_quota_state_renders_at_every_supported_size() {
+        let mut app = app(fixtures::loaded());
+        let features = fixtures::features();
+        let history = jobs(&mut app).open_history(&features);
+        let reset = fixtures::NOW + 53_100_000;
+        let mut occurrences = fixtures::occurrences();
+        occurrences[0]["quota"] =
+            json!({"state":"held","reason":"quota_exhausted","resetsAt":reset});
+        jobs(&mut app).response(
+            &features,
+            &json!({"type":"workflow","requestId":history.commands[0]["requestId"],"occurrences":occurrences}),
+            fixtures::NOW,
+        );
+        let moment = crate::job_time::moment(reset, fixtures::NOW, Some(120));
+        for (width, height, column) in [(80, 24, false), (100, 32, false), (150, 44, true)] {
+            let buffer = draw(&app, width, height);
+            let screen = screen(&buffer);
+            assert!(
+                screen.contains(&format!("Held until {moment}")),
+                "{width}x{height}"
+            );
+            assert_eq!(
+                screen.contains(&format!("held → {moment}")),
+                column,
+                "{width}x{height}"
+            );
+            let (x, y) = find(&buffer, "Held until").unwrap();
+            assert_eq!(buffer[(x, y)].fg, WARNING, "{width}x{height}");
+            assert!(line(&buffer, height - 1).starts_with(" JOBS "));
+        }
+        let wide = draw(&app, 150, 44);
+        assert!(line(&wide, 21).contains("· quota_exhausted"));
+        let (x, y) = find(&wide, "held →").unwrap();
+        assert_eq!((x, y), (91, 10));
+        assert_eq!(wide[(x, y)].fg, WARNING);
+    }
+
+    #[test]
+    fn form_highlights_the_focused_field_and_shows_the_quota_gate_line() {
         let mut app = app(fixtures::loaded());
         jobs(&mut app).new_form(vec![Program::Claude], "C:/Projects/nesvo".into());
         let form = jobs(&mut app).form.as_mut().unwrap();
@@ -907,7 +980,10 @@ mod tests {
         assert!(line(&buffer, 23).contains("START · one time, explicit offset"));
         assert!(line(&buffer, 24).contains("2026-10-22 16:02 +02:00"));
         assert!(line(&buffer, 27).contains("Host must remain running."));
-        assert!(line(&buffer, 30).contains("Advanced: recurrence, worktree"));
+        assert!(line(&buffer, 30).contains("Quota · a known provider limit holds starts"));
+        jobs(&mut app).form.as_mut().unwrap().program = Program::Gemini;
+        let gemini = draw(&app, 150, 44);
+        assert!(line(&gemini, 30).contains("Quota · no admission source"));
         let footer = line(&buffer, 43);
         for hint in [" Tab ", " field", " Enter ", " save", " Esc ", " discard"] {
             assert!(footer.contains(hint), "{hint}");

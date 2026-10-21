@@ -111,3 +111,23 @@ fn quota_human_output_keeps_refresh_progress_separate_from_observation_evidence(
     assert!(text.contains("fresh, complete"));
     assert!(text.contains("native account binding is unverified"));
 }
+
+#[test]
+fn quota_human_output_lists_gate_verdicts_and_the_hold_queue() {
+    let held = json!({"type":"providerQuota","providers":[],"refresh":null,"gate":{"revision":4,"providers":[
+        {"program":"claude","source":"claudeStatusline","verdict":"hold","reason":"quota_exhausted","resetsAt":1_792_629_000_000_u64,"freshUntil":null},
+        {"program":"gemini","source":"unsupported","verdict":"unknown","reason":"no_admission_source","resetsAt":null,"freshUntil":null}
+    ],"holds":[{"id":"0123456789abcdef0123456789abcdef","kind":"launch","program":"claude","reason":"quota_exhausted","resetsAt":1_792_629_000_000_u64,"since":1_792_613_681_000_u64,"checks":2}]}});
+    let text = provider_quota_text(&held);
+    assert!(text.contains("Launch gate:"));
+    assert!(text.contains(
+        "  claude: hold · quota_exhausted · source claudeStatusline · resets at 1792629000000 ms"
+    ));
+    assert!(text.contains("  gemini: unknown · no_admission_source · source unsupported"));
+    assert!(text.contains(
+        "  Held launch 0123456789abcdef0123456789abcdef · claude · quota_exhausted · resets at 1792629000000 ms · checks 2"
+    ));
+    let mut clear = held;
+    clear["gate"]["holds"] = json!([]);
+    assert!(provider_quota_text(&clear).contains("  No held launches."));
+}
