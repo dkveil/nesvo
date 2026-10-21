@@ -136,11 +136,20 @@ fn config_base() -> Option<PathBuf> {
     }
 }
 
+#[derive(Clone)]
 struct Roots {
-    host: PathBuf,
+    config: PathBuf,
+    host: String,
 }
 
 impl Roots {
+    fn host_directory(&self) -> PathBuf {
+        self.config
+            .join("nesvo")
+            .join(NOTES_DIRECTORY)
+            .join(&self.host)
+    }
+
     fn new(config: &Path, host_id: &str) -> Self {
         let host = if !host_id.is_empty()
             && host_id.len() <= 64
@@ -153,12 +162,13 @@ impl Roots {
             "host"
         };
         Self {
-            host: config.join("nesvo").join(NOTES_DIRECTORY).join(host),
+            config: config.to_path_buf(),
+            host: host.to_owned(),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Location {
     Repository(PathBuf),
     Host,
@@ -233,7 +243,7 @@ async fn same(left: &Path, right: &Path) -> bool {
 }
 
 async fn classify(roots: &Roots, parent: &Path) -> Result<Location> {
-    if same(parent, &roots.host).await {
+    if same(parent, &roots.host_directory()).await {
         return Ok(Location::Host);
     }
     let outside = || {
@@ -259,36 +269,90 @@ async fn classify(roots: &Roots, parent: &Path) -> Result<Location> {
 fn notes_directory(roots: &Roots, location: &Location) -> PathBuf {
     match location {
         Location::Repository(root) => root.join(PROJECT_DIRECTORY).join(NOTES_DIRECTORY),
-        Location::Host => roots.host.clone(),
+        Location::Host => roots.host_directory(),
     }
 }
 
-async fn confined(roots: &Roots, location: &Location, directory: &Path) -> Result<PathBuf> {
-    let actual = canonical(directory)
-        .await
-        .ok_or_else(|| failure("not_found", "This note does not exist"))?;
-    let expected = match location {
-        Location::Repository(root) => canonical(&notes_directory(roots, location))
-            .await
-            .filter(|path| path.starts_with(root)),
-        Location::Host => canonical(&roots.host).await,
-    };
-    if expected.as_ref() != Some(&actual) {
-        return Err(failure(
-            "outside_notes",
-            "The notes folder links outside its root",
-        ));
+fn linked() -> anyhow::Error {
+    failure("outside_notes", "The notes folder links outside its root")
+}
+
+fn missing(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Failure>()
+        .is_some_and(|failure| failure.code == "not_found")
+}
+
+fn descend(path: &Path, create: bool) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(linked()),
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(failure(
+            "not_directory",
+            "A notes folder level is not a folder",
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+            match std::fs::create_dir(path) {
+                Ok(()) => descend(path, false),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    descend(path, false)
+                }
+                Err(_) => Err(failure(
+                    "not_writable",
+                    "The notes folder cannot be created",
+                )),
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(failure("not_found", "This note does not exist"))
+        }
+        Err(_) => Err(failure(
+            "not_readable",
+            "The notes folder cannot be inspected",
+        )),
     }
-    Ok(actual)
+}
+
+fn secure(roots: &Roots, location: &Location, create: bool) -> Result<PathBuf> {
+    let (mut directory, levels) = match location {
+        Location::Repository(root) => (
+            root.clone(),
+            vec![PROJECT_DIRECTORY.to_owned(), NOTES_DIRECTORY.to_owned()],
+        ),
+        Location::Host => (
+            std::fs::canonicalize(&roots.config)
+                .map_err(|_| failure("not_found", "The configuration folder does not exist"))?,
+            vec![
+                "nesvo".to_owned(),
+                NOTES_DIRECTORY.to_owned(),
+                roots.host.clone(),
+            ],
+        ),
+    };
+    for level in levels {
+        directory.push(level);
+        descend(&directory, create)?;
+    }
+    let resolved = std::fs::canonicalize(&directory).map_err(|_| linked())?;
+    if lexical(&resolved) != lexical(&directory) {
+        return Err(linked());
+    }
+    Ok(directory)
 }
 
 struct Target {
-    directory: PathBuf,
+    roots: Roots,
+    location: Location,
     name: String,
-    path: PathBuf,
 }
 
-async fn target(roots: &Roots, value: &str, create: bool) -> Result<Target> {
+impl Target {
+    fn directory(&self, create: bool) -> Result<PathBuf> {
+        secure(&self.roots, &self.location, create)
+    }
+}
+
+async fn target(roots: &Roots, value: &str) -> Result<Target> {
     let path = requested(value)?;
     let (Some(parent), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
     else {
@@ -300,16 +364,9 @@ async fn target(roots: &Roots, value: &str, create: bool) -> Result<Target> {
             "Note names use letters, digits, spaces, '-', '_' or '.' and end in .md",
         ));
     }
-    let location = classify(roots, parent).await?;
-    if create {
-        tokio::fs::create_dir_all(notes_directory(roots, &location))
-            .await
-            .map_err(|_| failure("not_writable", "The notes folder cannot be created"))?;
-    }
-    let directory = confined(roots, &location, parent).await?;
     Ok(Target {
-        path: directory.join(name),
-        directory,
+        location: classify(roots, parent).await?,
+        roots: roots.clone(),
         name: name.to_owned(),
     })
 }
@@ -408,19 +465,21 @@ async fn list_notes(roots: &Roots, root: &str) -> Result<Value> {
         Some(root) => Location::Repository(root),
         None => Location::Host,
     };
-    let lexical = notes_directory(roots, &location);
-    let directory = match canonical(&lexical).await {
-        Some(directory) => {
-            confined(roots, &location, &directory).await?;
-            directory
-        }
-        None => lexical,
-    };
-    let (notes, truncated) = {
-        let directory = directory.clone();
-        tokio::task::spawn_blocking(move || scan(&directory))
-            .await
-            .map_err(|_| failure("notes_failed", "Notes listing stopped"))?
+    let (directory, notes, truncated) = {
+        let roots = roots.clone();
+        let location = location.clone();
+        tokio::task::spawn_blocking(move || match secure(&roots, &location, false) {
+            Ok(directory) => {
+                let (notes, truncated) = scan(&directory);
+                Ok((directory, notes, truncated))
+            }
+            Err(error) if missing(&error) => {
+                Ok((notes_directory(&roots, &location), Vec::new(), false))
+            }
+            Err(error) => Err(error),
+        })
+        .await
+        .map_err(|_| failure("notes_failed", "Notes listing stopped"))??
     };
     let repository = match &location {
         Location::Repository(root) => Some(display_path(root)),
@@ -481,16 +540,20 @@ fn load(path: &Path) -> Result<Option<Contents>> {
 }
 
 async fn read_note(roots: &Roots, path: &str) -> Result<Value> {
-    let target = target(roots, path, false).await?;
-    let file = target.path.clone();
-    let contents = tokio::task::spawn_blocking(move || load(&file))
-        .await
-        .map_err(|_| failure("notes_failed", "Note read stopped"))??
-        .ok_or_else(|| failure("not_found", "This note does not exist"))?;
+    let target = target(roots, path).await?;
+    let name = target.name.clone();
+    let (file, contents) = tokio::task::spawn_blocking(move || -> Result<(PathBuf, Contents)> {
+        let file = target.directory(false)?.join(&target.name);
+        let contents =
+            load(&file)?.ok_or_else(|| failure("not_found", "This note does not exist"))?;
+        Ok((file, contents))
+    })
+    .await
+    .map_err(|_| failure("notes_failed", "Note read stopped"))??;
     Ok(json!({
         "type": "note",
-        "path": display_path(&target.path),
-        "name": target.name,
+        "path": display_path(&file),
+        "name": name,
         "text": contents.text,
         "size": contents.size,
         "modifiedMs": contents.modified_ms,
@@ -498,18 +561,26 @@ async fn read_note(roots: &Roots, path: &str) -> Result<Value> {
     }))
 }
 
-fn store(target: &Target, text: &str, expected: Option<&str>) -> Result<(bool, std::fs::Metadata)> {
+struct Stored {
+    path: PathBuf,
+    created: bool,
+    metadata: std::fs::Metadata,
+}
+
+fn store(target: &Target, text: &str, expected: Option<&str>) -> Result<Stored> {
     let _guard = WRITES
         .lock()
         .map_err(|_| failure("notes_failed", "Note writer stopped"))?;
-    let current = load(&target.path)?;
+    let directory = target.directory(true)?;
+    let path = directory.join(&target.name);
+    let current = load(&path)?;
     let actual = current
         .as_ref()
         .map(|contents| revision(contents.text.as_bytes()));
     if actual.as_deref() != expected {
         return Err(Stale { revision: actual }.into());
     }
-    let temporary = target.directory.join(format!(
+    let temporary = directory.join(format!(
         ".{}.{}.tmp",
         target.name,
         hex::encode(crate::wire::random::<6>())
@@ -522,15 +593,19 @@ fn store(target: &Target, text: &str, expected: Option<&str>) -> Result<(bool, s
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&temporary, &target.path)
+        std::fs::rename(&temporary, &path)
     })();
     if written.is_err() {
         let _ = std::fs::remove_file(&temporary);
         return Err(failure("not_writable", "The note cannot be written"));
     }
-    let metadata = std::fs::metadata(&target.path)
+    let metadata = std::fs::symlink_metadata(&path)
         .map_err(|_| failure("not_readable", "The saved note cannot be inspected"))?;
-    Ok((current.is_none(), metadata))
+    Ok(Stored {
+        path,
+        created: current.is_none(),
+        metadata,
+    })
 }
 
 async fn write_note(
@@ -554,42 +629,42 @@ async fn write_note(
             "expectedRevision must be a note revision",
         ));
     }
-    let target = Arc::new(target(roots, path, true).await?);
+    let target = target(roots, path).await?;
+    let name = target.name.clone();
     let revision = revision(text.as_bytes());
-    let (created, metadata) = {
-        let target = target.clone();
-        tokio::task::spawn_blocking(move || store(&target, &text, expected.as_deref()))
-            .await
-            .map_err(|_| failure("notes_failed", "Note write stopped"))??
-    };
+    let stored = tokio::task::spawn_blocking(move || store(&target, &text, expected.as_deref()))
+        .await
+        .map_err(|_| failure("notes_failed", "Note write stopped"))??;
     Ok(json!({
         "type": "noteSaved",
-        "path": display_path(&target.path),
-        "name": target.name,
+        "path": display_path(&stored.path),
+        "name": name,
         "revision": revision,
-        "size": metadata.len(),
-        "modifiedMs": modified_ms(&metadata),
-        "created": created,
+        "size": stored.metadata.len(),
+        "modifiedMs": modified_ms(&stored.metadata),
+        "created": stored.created,
     }))
 }
 
 async fn delete_note(roots: &Roots, path: &str) -> Result<Value> {
-    let target = target(roots, path, false).await?;
-    let file = target.path.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
+    let target = target(roots, path).await?;
+    let name = target.name.clone();
+    let file = tokio::task::spawn_blocking(move || -> Result<PathBuf> {
         let _guard = WRITES
             .lock()
             .map_err(|_| failure("notes_failed", "Note writer stopped"))?;
+        let file = target.directory(false)?.join(&target.name);
         regular(&file)?.ok_or_else(|| failure("not_found", "This note does not exist"))?;
         std::fs::remove_file(&file)
-            .map_err(|_| failure("not_writable", "The note cannot be deleted"))
+            .map_err(|_| failure("not_writable", "The note cannot be deleted"))?;
+        Ok(file)
     })
     .await
     .map_err(|_| failure("notes_failed", "Note delete stopped"))??;
     Ok(json!({
         "type": "noteDeleted",
-        "path": display_path(&target.path),
-        "name": target.name,
+        "path": display_path(&file),
+        "name": name,
     }))
 }
 
@@ -657,7 +732,7 @@ mod tests {
             display_path(&config.join("nesvo").join("notes").join("abc123"))
         );
         assert_eq!(
-            Roots::new(&config, "../escape").host,
+            Roots::new(&config, "../escape").host_directory(),
             config.join("nesvo").join("notes").join("host")
         );
         assert!(!repository.join(".nesvo").exists());
@@ -853,19 +928,79 @@ mod tests {
         assert_eq!(names, ["Plan 2.md"]);
     }
 
-    #[cfg(unix)]
+    fn link_directory(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link).is_ok()
+                || std::process::Command::new("cmd")
+                    .args(["/C", "mklink", "/J"])
+                    .arg(display_path(link))
+                    .arg(display_path(target))
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|status| status.success())
+        }
+    }
+
     #[tokio::test]
     async fn notes_refuse_a_notes_folder_linked_outside_the_repository() {
         let (_config, roots) = roots();
         let repository = repository_fixture();
         let elsewhere = temporary("elsewhere");
+        std::fs::write(elsewhere.join("seed.md"), "outside").unwrap();
         std::fs::create_dir(repository.join(".nesvo")).unwrap();
-        std::os::unix::fs::symlink(&elsewhere, repository.join(".nesvo").join("notes")).unwrap();
-        let path = display_path(&repository.join(".nesvo").join("notes").join("a.md"));
+        let notes = repository.join(".nesvo").join("notes");
+        assert!(link_directory(&elsewhere, &notes));
+        let path = display_path(&notes.join("a.md"));
         let error = write_note(&roots, &path, "x".into(), None)
             .await
             .unwrap_err();
         assert_eq!(code(&error), "outside_notes");
         assert!(!elsewhere.join("a.md").exists());
+        let seed = display_path(&notes.join("seed.md"));
+        assert_eq!(
+            code(&read_note(&roots, &seed).await.unwrap_err()),
+            "outside_notes"
+        );
+        assert_eq!(
+            code(&delete_note(&roots, &seed).await.unwrap_err()),
+            "outside_notes"
+        );
+        assert!(elsewhere.join("seed.md").exists());
+        let listed = list_notes(&roots, &display_path(&repository))
+            .await
+            .unwrap_err();
+        assert_eq!(code(&listed), "outside_notes");
+    }
+
+    #[tokio::test]
+    async fn notes_refuse_a_project_folder_that_is_a_linked_directory_or_a_regular_file() {
+        let (_config, roots) = roots();
+        let repository = repository_fixture();
+        let elsewhere = temporary("project-link");
+        assert!(link_directory(&elsewhere, &repository.join(".nesvo")));
+        let path = display_path(&repository.join(".nesvo").join("notes").join("a.md"));
+        let error = write_note(&roots, &path, "x".into(), None)
+            .await
+            .unwrap_err();
+        assert_eq!(code(&error), "outside_notes");
+        assert!(!elsewhere.join("notes").exists());
+        let repository = repository_fixture();
+        std::fs::write(repository.join(".nesvo"), "file").unwrap();
+        let path = display_path(&repository.join(".nesvo").join("notes").join("a.md"));
+        let error = write_note(&roots, &path, "x".into(), None)
+            .await
+            .unwrap_err();
+        assert_eq!(code(&error), "not_directory");
+        assert_eq!(std::fs::read(repository.join(".nesvo")).unwrap(), b"file");
+        let listed = list_notes(&roots, &display_path(&repository))
+            .await
+            .unwrap_err();
+        assert_eq!(code(&listed), "not_directory");
     }
 }
