@@ -183,7 +183,6 @@ fn form_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
                     form.cycle_kind(true)
                 }
                 KeyCode::Left if form.field == FormField::Agent => form.cycle_program(false),
-
                 KeyCode::Right | KeyCode::Char(' ') if form.field == FormField::Agent => {
                     form.cycle_program(true)
                 }

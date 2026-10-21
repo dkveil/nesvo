@@ -152,6 +152,19 @@ TUI Runs view (`W`) lists runs with tasks, attempts, inbox and pending decisions
 pauses (run stop), resumes, drains and answers decisions through the existing
 commands, and starts approved templates from its "Start from template" row.
 
+### Coordinator wakes in the Runs view
+
+When the host advertises `runWakes`, the selected run also shows its wake policy
+(off, delivering, held or paused with its reason), the delivery mode, the pending
+notice count and the newest three wake batches with their notice count, phase and
+mode, under the delivery checkpoint (the last notice an earlier batch claimed). `w`
+enables wakes, holds delivering wakes or resumes held ones; `f` switches between
+delta-only and full-context batches. Both are owner-only `wakes` actions that need
+`runWakeDelivery`, carry a fresh key and the run's displayed revision, and refresh
+the run list on success; a lost reply names the key for `nesvo run mutation --key`.
+Holding records nothing new; resuming resynchronises from unacknowledged inbox
+messages and live blockers. See the [wake contract](harness-wakes.md#owner-hold-and-delivery-mode).
+
 ## Attempts and result validation
 
 ```powershell

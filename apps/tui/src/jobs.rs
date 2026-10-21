@@ -903,7 +903,6 @@ impl Jobs {
             local_start: text("start"),
             time_zone: text("timeZone"),
             field: FormField::Title,
-
             return_page: self.page,
         });
         self.page = Page::Form;

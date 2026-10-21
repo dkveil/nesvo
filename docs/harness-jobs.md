@@ -17,10 +17,17 @@ retry with probed [uncertain-effect retry classes](#retry-classes), optional
 [owner reconciliation of no-effect launches](harness-job-launch-reconciliation.md)
 are available.
 Safe reuse, authenticated triggers, cleanup after reported results and quota
-queues remain separate implementation gates. Existing legacy
-once schedules and their storage/API remain unchanged until a tested migration
-can preserve their launch semantics. The new `job` commands and the TUI
-[Jobs view](#jobs-view-in-the-tui) list the new records.
+queues remain separate implementation gates. The `job` commands and the TUI
+[Jobs view](#jobs-view-in-the-tui) list these records.
+
+There is no legacy job record to migrate. Every definition, occurrence and
+mutation shape an earlier host wrote (the original once-only specification and
+the canonical bytes from before `executionTimeoutMs`) is a subset of the current
+model; the host reads it unchanged and never rewrites it, and the schema columns
+added later come from the numbered migrations. Scheduled sessions
+(`scheduleSession`, the `S` toolbox) are a separate session-launch API, not job
+records: they start an interactive session of any program without a result or
+validation gate, so they stay as they are and are not converted.
 
 ## Create a once job
 
@@ -103,12 +110,19 @@ start; the selected profile and instruction appear to the right, or below on nar
 terminals. List: ↑↓ select, Enter details, `n` new, `r` reload, Esc back. Details:
 `e` edit, Space pause/resume future starts, `R` run now, `h` history. History: ↑↓
 select, Enter re-reads the occurrence, `c` requests cancellation. Form: Tab/↑↓ move,
-←→ or Space choose an installed agent, Enter saves, Esc discards.
+←→ or Space choose an installed agent or a schedule kind, Enter saves, Esc discards.
 
-The form creates a once job in a shared workspace with `harness:true` and the defaults
-above; its start needs an explicit offset such as `2026-10-22 16:02 +02:00`. Editing
-keeps every field the form does not show. Recurring and external schedules are edited
-with `nesvo job edit`. Each read and change is a `workflow` request with its own request
+The form creates jobs in a shared workspace with `harness:true` and the defaults
+above. **Schedule** offers once plus the kinds in `jobScheduleKinds`: a once start
+needs an explicit offset such as `2026-10-22 16:02 +02:00`; cron takes the five
+fields and RRULE takes the rule and a local `YYYY-MM-DDTHH:MM:SS` start, both with
+an optional IANA time zone (blank sends the CLI default `Europe/Warsaw`); external
+has no timer and starts only from a trigger created with `nesvo job trigger create`.
+Every save is parsed by the same job model as `nesvo job create --file` and passes
+the same capability checks, so an older host or a missing trigger provider is
+refused before sending; the expression and rule grammar is validated only by the
+host. Editing any kind prefills its schedule and keeps every field the form does not
+show. Each read and change is a `workflow` request with its own request
 ID; a change carries a fresh key and the displayed revision, and only one is in flight.
 A `revision_conflict` re-reads the definition and list instead of retrying. If the
 connection drops first, the footer names the key for `nesvo job mutation --key`. Times

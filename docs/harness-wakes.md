@@ -89,6 +89,53 @@ ACK only its exact inbox ID. A wake, batch claim, terminal response settlement
 or new coordinator process is never ACK. Unread messages stay pending even
 after a settled wake, and claimed notices are never sent again automatically.
 
+## Owner hold and delivery mode
+
+Hosts advertising `runWakeDelivery:true` (alongside `runWakes`) accept three more
+owner-only wake actions with `{key,runId,expectedRevision}`:
+
+```powershell
+nesvo run wake pause RUN_ID --key wake-hold-1 --revision RUN_REV --json
+nesvo run wake resume RUN_ID --key wake-resume-1 --revision RUN_REV --json
+nesvo run wake delivery RUN_ID full --key wake-full-1 --revision RUN_REV --json
+nesvo run wake delivery RUN_ID delta --key wake-delta-1 --revision RUN_REV --json
+```
+
+A coordinator, worker or older client is refused (`forbidden`, or locally before
+sending when the capability is absent). Each change uses the workflow mutation
+journal, bumps the run revision and appends `run.wake_changed`; the original key
+replays the immutable acceptance without another event.
+
+`pause` holds an enabled policy: it keeps `enabled:true`, sets `held:true` and
+phase `held`, and advances the generation so the running pump and any later
+paste/Enter guard stop admitting input. A held run records no new notices, so it
+never consumes the shared 8192-notice retention or blocks other runs' sources;
+messages and canonical attention are still stored in their own tables. `resume`
+clears the hold under a fresh generation, re-checks the bound coordinator, run state
+and elapsed budget, and resynchronises from current state exactly as an enable
+does: unacknowledged coordinator-addressed inbox messages and live blockers are
+seeded (deduplicated by source), while transient changes during the hold are not
+replayed. A hold survives Disable, Enable and host restart: only the owner can
+release it, through `resume` or an owner `enable`; a non-owner enable of a held
+policy is refused with `wake_policy_held`. Disable still stops delivery entirely.
+
+`delivery` selects `delta` (default) or `full`. Both send only notices that no
+earlier batch claimed. Each batch records `afterSequence`, the highest notice
+sequence any earlier batch claimed (its delivery checkpoint), and a `baseline` with
+the run's latest saved checkpoint ID and digest. A `full` batch additionally carries
+the current context digest and part count, the unacknowledged inbox count and up to
+eight task key/state pairs, and its fixed prompt names that digest so the
+coordinator can read `nesvo run checkpoint context` without guessing. It restores no
+native effect and never resends a claimed notice. `run wake get` now also returns
+`deliveredThrough` and the newest eight batch summaries (`id`, `phase`, `reason`,
+`delivery`, `noticeCount`, `native.phase`); `run wake batch` adds `delivery`,
+`afterSequence` and `baseline`. Older batches report `delivery:"delta"` and null
+checkpoint fields.
+
+The TUI Runs view (`W`) shows this policy for the selected run and the newest three
+batches: `w` enables, holds or resumes delivery, and `f` switches between delta-only
+and full-context batches.
+
 ## Native admission and recovery
 
 The existing native input path requires live authority, provider readiness and
@@ -149,5 +196,5 @@ Actual CLI/MCP envelopes are validated with Ajv against the published schema.
 
 These fixtures do not establish a model's handling of a wake or completed
 original-provider orchestration. The existing original Claude native permission
-gate remains open; no permission bypass is installed. UI/mobile policy controls,
+gate remains open; no permission bypass is installed. Mobile policy controls,
 durable checkpoint compaction and complete recovery are separate feature work.

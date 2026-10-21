@@ -33,6 +33,9 @@ never restore effects or adopt a process. See [contract](harness-checkpoints.md)
 workflow requests: `{action:"wakes",request:{action:"enable"|"disable"|"get"|"batch",...}}`.
 See [wake contract](harness-wakes.md) for current-attempt attention sources,
 coalesced native receipt provenance, human/budget fences and restart non-replay.
+`runWakeDelivery` adds owner-only `pause`, `resume` and
+`setDelivery {delivery:"delta"|"full"}` wake actions; see
+[owner hold and delivery mode](harness-wakes.md#owner-hold-and-delivery-mode).
 
 `runExecutor` adds opt-in deterministic scheduling inside authenticated workflow
 requests: `{action:"executor",request:{action:"start"|"get"|"disable"|"enable",...}}`.

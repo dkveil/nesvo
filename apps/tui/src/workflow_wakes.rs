@@ -176,7 +176,6 @@ pub enum Request {
     },
     Get {
         run_id: String,
-
         after: Option<u64>,
     },
     Batch {

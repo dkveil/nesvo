@@ -113,7 +113,6 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         (Page::Runs, KeyCode::Char('a')) => runs.begin_answer(),
         (Page::Runs, KeyCode::Char('w')) => runs.toggle_wakes(features),
         (Page::Runs, KeyCode::Char('f')) => runs.toggle_delivery(features),
-
         (Page::Templates, KeyCode::Up | KeyCode::Char('k')) => {
             runs.move_template(-1);
             Effect::default()
