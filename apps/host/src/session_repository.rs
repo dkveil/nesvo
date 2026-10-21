@@ -544,12 +544,30 @@ mod tests {
     use crate::git_repository::Outcome;
     use serde_json::json;
 
+    const SESSION_EXIT_BOUND: Duration = Duration::from_secs(5);
+
     struct RuntimeFixture {
         state: Arc<Mutex<crate::sessions::State>>,
         root: PathBuf,
         events: tokio::sync::mpsc::Sender<crate::sessions::PtyEvent>,
-        _output: tokio::sync::mpsc::Receiver<crate::sessions::PtyEvent>,
+        exits: std::sync::mpsc::Receiver<String>,
+        running: std::collections::HashSet<String>,
         _owner_events: tokio::sync::mpsc::Receiver<Value>,
+    }
+    fn forward_exits(
+        mut output: tokio::sync::mpsc::Receiver<crate::sessions::PtyEvent>,
+    ) -> std::sync::mpsc::Receiver<String> {
+        let (exited, exits) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            while let Some(event) = output.blocking_recv() {
+                if let crate::sessions::PtyEvent::Exited(id, _) = event
+                    && exited.send(id).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        exits
     }
     impl RuntimeFixture {
         fn new() -> Self {
@@ -567,11 +585,12 @@ mod tests {
             let (events, output) = tokio::sync::mpsc::channel(128);
             let (owner_events, received) = tokio::sync::mpsc::channel(128);
             let (cancelled, _cancel) = watch::channel(false);
-            let fixture = Self {
+            let mut fixture = Self {
                 state: Arc::new(Mutex::new(state)),
                 root,
                 events,
-                _output: output,
+                exits: forward_exits(output),
+                running: std::collections::HashSet::new(),
                 _owner_events: received,
             };
             fixture.state.lock().unwrap().clients.insert(
@@ -585,7 +604,7 @@ mod tests {
             for name in ["a", "b"] {
                 let directory = fixture.root.join(name);
                 std::fs::create_dir(&directory).unwrap();
-                fixture
+                let id = fixture
                     .state
                     .lock()
                     .unwrap()
@@ -600,6 +619,7 @@ mod tests {
                         &fixture.events,
                     )
                     .unwrap();
+                fixture.running.insert(id);
             }
             fixture
         }
@@ -610,16 +630,32 @@ mod tests {
                 .command(client, crate::protocol::Command::List, None, &self.events)
                 .unwrap();
         }
-        fn cleanup(&self) -> bool {
+        fn await_exits(&mut self, deadline: std::time::Instant) -> bool {
+            while !self.running.is_empty() {
+                match self
+                    .exits
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                {
+                    Ok(id) => {
+                        self.running.remove(&id);
+                    }
+                    Err(_) => return false,
+                }
+            }
+            true
+        }
+        fn cleanup(&mut self) -> bool {
             let workers = self
                 .state
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .shutdown();
-            let mut joined = true;
+            let exit_deadline = std::time::Instant::now() + SESSION_EXIT_BOUND;
+            let mut retired = true;
             for worker in workers {
-                joined &= worker.join().is_ok();
+                retired &= worker.join().is_ok();
             }
+            retired &= self.await_exits(exit_deadline);
             let owned = std::env::temp_dir().canonicalize().is_ok_and(|temporary| {
                 self.root.parent() == Some(temporary.as_path())
                     && self
@@ -628,7 +664,7 @@ mod tests {
                         .and_then(|name| name.to_str())
                         .is_some_and(|name| name.starts_with("nesvo-repository-runtime-"))
             });
-            joined && owned && (!self.root.exists() || std::fs::remove_dir_all(&self.root).is_ok())
+            retired && owned && (!self.root.exists() || std::fs::remove_dir_all(&self.root).is_ok())
         }
     }
     impl Drop for RuntimeFixture {
@@ -671,7 +707,7 @@ mod tests {
         use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
         // Real State/client authorization and two owned shell subscriptions;
         // the inspector is the sole substituted adapter. No Git/provider runs.
-        let fixture = RuntimeFixture::new();
+        let mut fixture = RuntimeFixture::new();
         let clock = Arc::new(AtomicU64::new(crate::event_log::monotonic_millis()));
         let calls = Arc::new(AtomicUsize::new(0));
         let active = Arc::new(AtomicUsize::new(0));
