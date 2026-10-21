@@ -289,6 +289,30 @@ retained arm rather than adopting another process. See [one-shot quota wake](har
 
 The directory browser starts at the host workspace if `path` is omitted. Each response has the canonical absolute `path`, its optional `parent`, and up to 512 sorted child directories. The TUI sends a new request when the user opens a child or parent and applies only the matching `requestId`. Older hosts omit `directoryBrowser`; the TUI keeps the launch form open and asks for a host update instead of sending an unsupported command. Newly launched PTYs receive `NESVO_SESSION=1`; interactive TUI startup refuses to run inside one of those sessions, while `--list` remains available for scripts.
 
+## Reviews
+
+Additive `reviews:true` advertises host-side review sessions. Scoped session callers receive `forbidden` for every command below except `getDiff` with only a `sessionId` they may read. Errors are `{type:"error", code, message, requestId?}`.
+
+| Command                                                                   | Reply                                                                  |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `openReview { source, base?, requestId? }`                                | `reviewProgress { stage }` events, then `reviewOpened`                 |
+| `reviewContext { reviewId, requestId? }`                                  | `reviewContext { reviewId, directory, readiness, provenance, checks }` |
+| `deliverReview { reviewId, sessionId, text, key?, leaseId?, requestId? }` | `reviewDelivered { reviewId, sessionId, path, key, bytes, receipt }`   |
+| `watchReviews { requestId? }`                                             | `reviewsWatched`                                                       |
+| `getDiff { sessionId?, reviewId?, scope, directory?, base?, from?, to? }` | `diff { sessionId, reviewId?, review \| error }`                       |
+
+`source` is `{kind:"local", sessionId?, directory?}` (a session's context folder, or an absolute folder) or `{kind:"pull", url}` for `https://github.com/OWNER/REPO/pull/N`. A pull request runs `gh pr view` and fetches the head and base into a partial checkout under `<config>/nesvo/reviews/<owner>-<repo>-<n>`, reused when present, with `reviewProgress.stage` `metadata`, `fetch` and `checkout`. Fetch, checkout and the initial branch diff share one 120 s deadline; when it passes the command fails with `timeout`. One pull request fetch runs per host (`busy` otherwise); review Git work shares the connection's single Git slot with `getDiff`.
+
+`reviewOpened { reviewId, directory, source, base:{ref, oid, mergeBase}|null, head:{ref|null, oid|null}, scope:"branch"|"unstaged", revision, checks:{headOid, total, passed, failed, pending}|null }`. `reviewId` is deterministic: `local-<16 hex>` or `pull-<owner>-<repo>-<n>`. A local `source` echoes `{kind, sessionId, context}`; a pull `source` adds `owner`, `repo`, `number`, `title`, `state`, `headRef`, `baseRef` and `headOid`. The host keeps the last 64 reviews in memory; reopen them after a host restart.
+
+The opener receives `reviewOpened` only as its reply. The same event without `requestId` reaches the other owner clients that opted in: a connection becomes a review watcher after it sends `watchReviews` or any review command (`openReview`, `reviewContext`, `deliverReview`, or `getDiff` with `reviewId`) and stops being one when it disconnects. Clients that never opt in, such as the mobile app, receive no review events. The TUI sends `watchReviews` once when the host advertises `reviews`.
+
+`readiness` reports `worktreeRevision`, `head`, `branch`, `upstream`, `ahead`, `behind`, `staged`, `unstaged`, `untracked`, `conflicted`, `truncated`, `clean`, `base:{ref, oid, ahead, behind, mergeConflicts, conflictPaths}|null`, `pushed`, `blockers` and `ready`. Blockers are `unborn`, `conflicts`, `baseConflicts`, `dirty`, `behindBase`, `behindUpstream` and `unpushed`. `provenance` carries `evidence` (`hooks`, `unavailable` or `notSession`), `sessionId`, `turn`, `complete`, `truncated` and up to 128 `files` with `path`, `changed`, `attribution` (`agent`, `otherAgent`, `uncertain`, `unattributed`), `thisTurn`, `subagent`, `sessions` and `editedAt`. Local checks are not run.
+
+`deliverReview` targets a ready, idle agent session. Without a control lease the text becomes a durable operation (`path:"operation"`, at most 8192 bytes, `too_large` beyond, `key` defaulting to a hash of review, session and text). With the caller's own `leaseId` it is pasted with bracketed paste and not submitted (`path:"paste"`, up to 32 KiB); another client's lease gives `control_busy`.
+
+With `reviewId`, `getDiff` takes its folder and default base from the review. `scope:"branch"` diffs the merge base of `base` (default the repository's default branch) against the working tree including untracked files; `scope:"commits"` diffs `from` to `to` (default `HEAD`). The `review` object adds `revision` (`<tree12>-<hash16>`), `head`, `base:{ref, oid, mergeBase}` for the branch scope and `range:{from, to}` for the commits scope.
+
 ## Files sidebar
 
 Additive `files:true` advertises three owner-only read commands. Scoped session callers receive `forbidden`, the same policy as `listDirectories`. Every path is an absolute host path (at most 4096 bytes, no control characters) and is canonicalized before use. Requests run off the shared state lock, at most two per connection; a third concurrent request receives `busy`. Errors are `{type:"error", code, message, requestId?}` with `invalid_argument`, `not_found`, `not_directory`, `not_readable`, `not_file`, `binary`, `outside_root`, `busy` or `files_failed`.
