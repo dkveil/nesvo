@@ -3,11 +3,12 @@ import type { Session } from '@entities/session';
 import type { SessionGroup, SessionProgram } from '@shared/api/host';
 
 export type WorkspaceMode = 'demo' | 'live';
-export type WorkspaceSection = 'sessions' | 'hosts' | 'settings' | 'groups';
+export type WorkspaceSection = 'sessions' | 'hosts' | 'settings' | 'groups' | 'inbox' | 'decisions';
 
 /** Application navigation is injected; workspace state never depends on a router. */
 export type WorkspaceNavigation = {
   openSession: (id: string) => void;
+  openDecision: (decisionId: string) => void;
   returnToSessions: () => void;
   navigateTo: (section: WorkspaceSection) => void;
 };

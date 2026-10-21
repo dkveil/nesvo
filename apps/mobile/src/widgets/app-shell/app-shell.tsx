@@ -9,6 +9,7 @@ import { NewSessionSheet } from '@features/create-session';
 import { NotificationProvider } from '@features/notifications';
 import { ConnectSheet } from '@features/pair-host';
 
+import { InboxProvider } from '@entities/inbox';
 import { useWorkspace, WorkspaceProvider } from '@entities/workspace';
 
 import { colors } from '@shared/theme';
@@ -33,17 +34,19 @@ function WorkspaceModals() {
 export function AppShell({ children }: PropsWithChildren) {
   return (
     <WorkspaceProvider navigation={workspaceNavigation}>
-      <NotificationProvider>
-        <SafeAreaProvider style={styles.outer}>
-          <View style={styles.frame}>
-            <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
-              <StatusBar style="light" />
-              {children}
-              <WorkspaceModals />
-            </SafeAreaView>
-          </View>
-        </SafeAreaProvider>
-      </NotificationProvider>
+      <InboxProvider>
+        <NotificationProvider>
+          <SafeAreaProvider style={styles.outer}>
+            <View style={styles.frame}>
+              <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
+                <StatusBar style="light" />
+                {children}
+                <WorkspaceModals />
+              </SafeAreaView>
+            </View>
+          </SafeAreaProvider>
+        </NotificationProvider>
+      </InboxProvider>
     </WorkspaceProvider>
   );
 }

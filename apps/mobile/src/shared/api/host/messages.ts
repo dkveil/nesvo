@@ -88,6 +88,7 @@ function capabilities(value: RecordValue): boolean {
       (typeof value.hostId === 'string' && /^[a-f0-9]{32}$/.test(value.hostId))) &&
     (value.pushNotifications === undefined || typeof value.pushNotifications === 'boolean') &&
     (value.attention === undefined || typeof value.attention === 'boolean') &&
+    INBOX_FLAGS.every(flag => value[flag] === undefined || typeof value[flag] === 'boolean') &&
     text(value.workspace, 32768) &&
     Array.isArray(programs) &&
     programs.length === 4 &&
@@ -277,6 +278,101 @@ function snapshot(value: RecordValue): boolean {
   return true;
 }
 
+const INBOX_FLAGS = ['attentionInbox', 'decisions', 'jobPages'] as const;
+const INBOX_KINDS = ['session', 'decision', 'run', 'result'];
+const DECISION_STATES = ['pending', 'answered', 'canceled', 'expired'];
+const MAX_ITEM_ID_LENGTH = 200;
+const MAX_INBOX_TEXT_LENGTH = 4096;
+const MAX_QUESTION_LENGTH = 32768;
+
+const boundedString = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length <= max;
+const nextPage = (value: unknown, max: number) => value === null || integer(value, 1, max);
+const itemId = (value: unknown): value is string =>
+  text(value, MAX_ITEM_ID_LENGTH) && !/[\u0000-\u001f\u007f]/.test(value);
+const optional = (value: unknown, check: (item: unknown) => boolean) =>
+  value === undefined || check(value);
+
+const inboxItem = (value: unknown): value is RecordValue =>
+  record(value) &&
+  itemId(value.id) &&
+  typeof value.kind === 'string' &&
+  INBOX_KINDS.includes(value.kind) &&
+  value.id.startsWith(`${value.kind}:`) &&
+  value.id.length > value.kind.length + 1 &&
+  integer(value.revision) &&
+  integer(value.priority, 1, 3) &&
+  text(value.reason, 128) &&
+  integer(value.at) &&
+  boundedString(value.title, MAX_INBOX_TEXT_LENGTH) &&
+  optional(value.summary, item => boundedString(item, MAX_INBOX_TEXT_LENGTH)) &&
+  optional(value.sessionId, item => text(item)) &&
+  optional(value.decisionId, item => text(item)) &&
+  optional(value.runId, nullableId) &&
+  optional(value.expiresAt, item => integer(item)) &&
+  optional(value.program, item => item === 'claude' || item === 'gemini' || item === 'codex');
+
+const attentionInbox = (value: RecordValue) =>
+  Array.isArray(value.items) &&
+  integer(value.page, 0, 1024) &&
+  integer(value.limit, 1, 32) &&
+  value.items.length <= value.limit &&
+  value.items.every(inboxItem) &&
+  new Set(value.items.map(item => item.id)).size === value.items.length &&
+  nextPage(value.nextPage, 1025) &&
+  integer(value.total);
+
+const inboxReceipt = (value: unknown) =>
+  record(value) && itemId(value.id) && integer(value.revision) && integer(value.acknowledgedAt);
+
+const decisionRun = (value: unknown) =>
+  record(value) &&
+  text(value.id) &&
+  boundedString(value.title, MAX_INBOX_TEXT_LENGTH) &&
+  boundedString(value.state, 64);
+
+const choices = (value: unknown) =>
+  Array.isArray(value) &&
+  value.length <= 8 &&
+  value.every(item => text(item, 200)) &&
+  new Set(value).size === value.length;
+
+const pendingDecision = (value: unknown) =>
+  record(value) &&
+  text(value.id) &&
+  text(value.runId) &&
+  text(value.taskId) &&
+  text(value.attemptId) &&
+  boundedString(value.question, MAX_QUESTION_LENGTH) &&
+  integer(value.revision, 1) &&
+  typeof value.state === 'string' &&
+  DECISION_STATES.includes(value.state) &&
+  (value.audience === 'owner' || value.audience === 'coordinator') &&
+  integer(value.createdAt) &&
+  integer(value.expiresAt) &&
+  (value.answer === null || boundedString(value.answer, MAX_QUESTION_LENGTH)) &&
+  itemId(value.inboxId) &&
+  value.inboxId.startsWith('decision:') &&
+  decisionRun(value.run) &&
+  optional(value.choices, choices);
+
+const decisions = (value: RecordValue) =>
+  Array.isArray(value.decisions) &&
+  value.decisions.length <= 32 &&
+  value.decisions.every(pendingDecision) &&
+  integer(value.page, 0, 512) &&
+  nextPage(value.nextPage, 513) &&
+  integer(value.total);
+
+const decided = (value: RecordValue) =>
+  record(value.decision) &&
+  text(value.decision.id) &&
+  integer(value.decision.revision, 1) &&
+  typeof value.decision.state === 'string' &&
+  DECISION_STATES.includes(value.decision.state) &&
+  itemId(value.inboxId) &&
+  value.inboxId.startsWith('decision:');
+
 /** Authentication proves the peer, not that its payload has a valid shape. */
 export function decodeServerMessage(value: unknown): ServerMessage {
   if (
@@ -289,7 +385,31 @@ export function decodeServerMessage(value: unknown): ServerMessage {
   let valid = false;
   switch (value.type) {
     case 'pushRegistered':
-      valid = typeof value.enabled === 'boolean';
+      valid =
+        typeof value.enabled === 'boolean' &&
+        optional(
+          value.kinds,
+          kinds => Array.isArray(kinds) && kinds.length <= 8 && kinds.every(kind => text(kind, 64)),
+        );
+      break;
+    case 'attentionInbox':
+      valid = attentionInbox(value);
+      break;
+    case 'inboxAcknowledged':
+      valid =
+        Array.isArray(value.acknowledged) &&
+        value.acknowledged.length >= 1 &&
+        value.acknowledged.length <= 32 &&
+        value.acknowledged.every(inboxReceipt);
+      break;
+    case 'decisions':
+      valid = decisions(value);
+      break;
+    case 'decided':
+      valid = decided(value);
+      break;
+    case 'attentionInboxChanged':
+      valid = text(value.reason, 64) && optional(value.itemId, itemId);
       break;
     case 'capabilities':
       valid = capabilities(value);

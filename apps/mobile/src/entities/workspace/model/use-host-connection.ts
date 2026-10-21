@@ -11,6 +11,11 @@ import { type HostCapabilities, HostClient, type Pairing, parsePairing } from '@
 import { EMPTY_SNAPSHOT, type LiveSnapshot, type WorkspaceMode } from './workspace-types';
 
 const SAVED_HOST = 'pocket-sessions.host.v1';
+const SCREEN_HANDLED_ERRORS = new Set([
+  'decision_resolved',
+  'decision_expired',
+  'decision_not_found',
+]);
 
 /** Owns host lifecycle and projections. Session/group mutations live in command modules. */
 export function useHostConnection(mode: WorkspaceMode) {
@@ -41,18 +46,22 @@ export function useHostConnection(mode: WorkspaceMode) {
           hostId: event.hostId,
           pushNotifications: event.pushNotifications,
           attention: event.attention,
+          attentionInbox: event.attentionInbox,
+          decisions: event.decisions,
+          jobPages: event.jobPages,
           workspace: event.workspace,
           programs: event.programs,
           providerLimits: event.providerLimits ?? [],
         });
       } else if (event.type === 'error') {
+        setConnecting(false);
+        if (event.code && SCREEN_HANDLED_ERRORS.has(event.code)) return;
         setNotice(
           event.code === 'revision_conflict'
             ? 'Grupy zmieniły się na innym urządzeniu. Lista została odświeżona; ponów zmianę.'
             : event.message,
         );
         if (event.code === 'revision_conflict') client.listSessions();
-        setConnecting(false);
       } else if (event.type === 'sessions') {
         setSnapshotReady(true);
         const sessions: Session[] = event.sessions.map(session => ({

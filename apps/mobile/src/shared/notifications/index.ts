@@ -3,10 +3,17 @@ import { Platform } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
-import { parseTarget, type PushTarget } from './target';
+import { type NotificationTarget, parseNotificationTarget } from './target';
 
-export { parseTarget, type PushTarget } from './target';
-export type Registration = { hostId: string; token: string };
+export {
+  type InboxPushTarget,
+  type NotificationTarget,
+  parseInboxTarget,
+  parseNotificationTarget,
+  parseTarget,
+  type PushTarget,
+} from './target';
+export type Registration = { hostId: string; token: string; kinds?: string[] };
 const KEY = 'nesvo.push.v1';
 export const pushAvailable =
   Platform.OS !== 'web' && Constants.executionEnvironment !== ExecutionEnvironment.StoreClient;
@@ -21,7 +28,13 @@ export async function readRegistration(): Promise<Registration | null> {
     /^[a-f0-9]{32}$/.test(v.hostId) &&
     typeof v.token === 'string' &&
     /^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]{10,200}\]$/.test(v.token)
-    ? { hostId: v.hostId, token: v.token }
+    ? {
+        hostId: v.hostId,
+        token: v.token,
+        kinds: Array.isArray(v.kinds)
+          ? v.kinds.filter((kind): kind is string => typeof kind === 'string')
+          : undefined,
+      }
     : null;
 }
 export async function saveRegistration(value: Registration | null) {
@@ -44,7 +57,9 @@ export async function requestPushToken(): Promise<string> {
   if (typeof projectId !== 'string') throw new Error('Brak konfiguracji powiadomień tej wersji.');
   return (await notifications.getExpoPushTokenAsync({ projectId })).data;
 }
-export async function observePush(onTarget: (target: PushTarget) => void): Promise<() => void> {
+export async function observePush(
+  onTarget: (target: NotificationTarget) => void,
+): Promise<() => void> {
   if (!pushAvailable) return () => {};
   const notifications = await import('expo-notifications');
   notifications.setNotificationHandler({
@@ -59,7 +74,7 @@ export async function observePush(onTarget: (target: PushTarget) => void): Promi
   const consume = (response: import('expo-notifications').NotificationResponse) => {
     const id = response.notification.request.identifier;
     if (id === last) return;
-    const target = parseTarget(response.notification.request.content.data);
+    const target = parseNotificationTarget(response.notification.request.content.data);
     if (target) {
       last = id;
       onTarget(target);

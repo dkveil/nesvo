@@ -17,6 +17,11 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="hosts" options={{ animation: 'none' }} />
         <Stack.Screen name="settings" options={{ animation: 'none' }} />
+        <Stack.Screen name="inbox" options={{ animation: motionAllowed ? 'default' : 'fade' }} />
+        <Stack.Screen
+          name="decisions"
+          options={{ animation: motionAllowed ? 'default' : 'fade' }}
+        />
         <Stack.Screen
           name="session/[id]"
           options={{ animation: motionAllowed ? 'default' : 'fade' }}

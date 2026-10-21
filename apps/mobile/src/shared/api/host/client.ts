@@ -3,7 +3,10 @@ import { randomBytes } from './random';
 import type {
   ClientCommand,
   HostEvent,
+  InboxFeatures,
+  InboxMark,
   Pairing,
+  PushKind,
   SessionControl,
   SessionGroup,
   SessionLaunchOptions,
@@ -25,6 +28,14 @@ export type {
   SessionStatusState,
 } from './types';
 
+const NO_INBOX_FEATURES: InboxFeatures = {
+  attentionInbox: false,
+  decisions: false,
+  jobPages: false,
+};
+const INBOX_PUSH_KINDS: PushKind[] = ['decisionPending', 'resultReady'];
+const MAX_INBOX_MARKS = 32;
+
 /** Sessions live on the host. Reconnect is explicit: input is never queued or replayed. */
 export class HostClient {
   private socket: WebSocket | null = null;
@@ -38,12 +49,16 @@ export class HostClient {
   private identity: number | null = null;
   private controls = new Map<string, SessionControl>();
   private authTimer: ReturnType<typeof setTimeout> | undefined;
+  private features: InboxFeatures = NO_INBOX_FEATURES;
 
   get clientId(): number | null {
     return this.identity;
   }
   get isConnected(): boolean {
     return this.ready;
+  }
+  get inboxFeatures(): InboxFeatures {
+    return this.features;
   }
   getControl(sessionId: string): SessionControl | undefined {
     return this.controls.get(sessionId);
@@ -73,6 +88,7 @@ export class HostClient {
       ).join('');
       this.incomingSeq = 0;
       this.outgoingSeq = 0;
+      this.features = NO_INBOX_FEATURES;
       const socket = new WebSocket(validated.url);
       this.socket = socket;
       this.authTimer = setTimeout(() => {
@@ -154,6 +170,13 @@ export class HostClient {
               throw new Error('Unexpected control lease.');
             this.controls.set(message.sessionId, message);
           }
+          if (message.type === 'capabilities') {
+            this.features = {
+              attentionInbox: message.attentionInbox === true,
+              decisions: message.decisions === true,
+              jobPages: message.jobPages === true,
+            };
+          }
           if (message.type === 'sessions') {
             const ids = new Set(message.sessions.map(session => session.id));
             for (const id of this.controls.keys()) if (!ids.has(id)) this.controls.delete(id);
@@ -187,6 +210,7 @@ export class HostClient {
         this.ready = false;
         this.identity = null;
         this.controls.clear();
+        this.features = NO_INBOX_FEATURES;
         this.key = null;
         this.clientNonce = '';
         this.emit({
@@ -213,6 +237,7 @@ export class HostClient {
     this.ready = false;
     this.identity = null;
     this.controls.clear();
+    this.features = NO_INBOX_FEATURES;
     this.key = null;
     this.clientNonce = '';
     if (socket) {
@@ -262,7 +287,32 @@ export class HostClient {
   }
 
   registerPush(token: string, enabled: boolean, requestId: string) {
-    this.send({ type: 'registerPush', token, enabled, requestId });
+    this.send(
+      enabled && this.features.decisions
+        ? { type: 'registerPush', token, enabled, requestId, kinds: INBOX_PUSH_KINDS }
+        : { type: 'registerPush', token, enabled, requestId },
+    );
+  }
+  requestAttentionInbox(page: number, limit?: number, requestId = this.requestId()) {
+    if (!this.ready || !this.features.attentionInbox) return null;
+    this.send({ type: 'attentionInbox', page, limit, requestId });
+    return requestId;
+  }
+  acknowledgeInbox(items: InboxMark[], requestId = this.requestId()) {
+    if (!this.ready || !this.features.attentionInbox) return null;
+    if (items.length === 0 || items.length > MAX_INBOX_MARKS) return null;
+    this.send({ type: 'acknowledgeInbox', items, requestId });
+    return requestId;
+  }
+  requestDecisions(page: number, requestId = this.requestId()) {
+    if (!this.ready || !this.features.decisions) return null;
+    this.send({ type: 'decisions', page, requestId });
+    return requestId;
+  }
+  decide(decisionId: string, choice: string, note?: string, requestId = this.requestId()) {
+    if (!this.ready || !this.features.decisions) return null;
+    this.send({ type: 'decide', decisionId, choice, note: note || undefined, requestId });
+    return requestId;
   }
   acknowledgeAttention(sessionId: string, sequence: number) {
     this.send({ type: 'acknowledgeAttention', sessionId, sequence });

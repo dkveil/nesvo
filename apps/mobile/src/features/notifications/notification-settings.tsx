@@ -12,9 +12,9 @@ import { Text, View } from 'react-native';
 import { useWorkspace } from '@entities/workspace';
 
 import {
+  type NotificationTarget,
   observePush,
   pushAvailable,
-  type PushTarget,
   readRegistration,
   type Registration,
   requestPushToken,
@@ -38,13 +38,19 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     connect,
     sessions,
     openSession,
+    navigateTo,
     setNotice,
   } = useWorkspace();
   const [registration, setRegistration] = useState<Registration | null>(null);
-  const [target, setTarget] = useState<PushTarget | null>(null);
+  const [target, setTarget] = useState<NotificationTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
-  const pending = useRef<{ id: string; registration: Registration; enabled: boolean } | null>(null);
+  const pending = useRef<{
+    id: string;
+    registration: Registration;
+    enabled: boolean;
+    silent?: boolean;
+  } | null>(null);
   const hostId = hostCapabilities?.hostId;
   const operation = useRef(0);
   useEffect(() => {
@@ -52,7 +58,8 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   }, [connected, hostId]);
   const enabled = registration !== null && registration.hostId === hostId;
   const reconnectAttempted = useRef(false);
-  const handledTarget = useRef<PushTarget | null>(null);
+  const handledTarget = useRef<NotificationTarget | null>(null);
+  const kindsUpgraded = useRef(false);
   useEffect(() => {
     let active = true;
     let stop = () => {};
@@ -88,10 +95,13 @@ export function NotificationProvider({ children }: PropsWithChildren) {
         if (!request) return;
         if (event.type === 'pushRegistered' && event.requestId === request.id) {
           pending.current = null;
-          const value = request.enabled ? request.registration : null;
+          const value = request.enabled
+            ? { ...request.registration, kinds: event.kinds ?? request.registration.kinds }
+            : null;
           void saveRegistration(value)
             .then(() => {
               setRegistration(value);
+              if (request.silent) return;
               setStatus(
                 request.enabled
                   ? 'Powiadomienia włączone dla tego hosta.'
@@ -108,7 +118,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
         ) {
           pending.current = null;
           setBusy(false);
-          setStatus('Nie potwierdzono zmiany na hoście. Spróbuj ponownie.');
+          if (!request.silent) setStatus('Nie potwierdzono zmiany na hoście. Spróbuj ponownie.');
         }
       }),
     [client],
@@ -123,18 +133,21 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       return;
     }
     if (!hostId || !snapshotReady) return;
-    if (target.hostId !== hostId) {
+    handledTarget.current = target;
+    if (target.target.hostId !== hostId) {
       setNotice('To powiadomienie pochodzi z innego hosta.');
-      handledTarget.current = target;
       return;
     }
-    if (sessions.some(s => s.id === target.sessionId)) {
-      openSession(target.sessionId);
-      client.acknowledgeAttention(target.sessionId, target.sequence);
-      handledTarget.current = target;
+    if (target.type === 'inbox') {
+      navigateTo('inbox');
+      return;
+    }
+    const { sessionId, sequence } = target.target;
+    if (sessions.some(s => s.id === sessionId)) {
+      openSession(sessionId);
+      client.acknowledgeAttention(sessionId, sequence);
     } else {
       setNotice('Sesja z powiadomienia jest już niedostępna.');
-      handledTarget.current = target;
     }
   }, [
     target,
@@ -145,9 +158,31 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     hostId,
     sessions,
     openSession,
+    navigateTo,
     client,
     setNotice,
   ]);
+  const wantsInboxKinds = hostCapabilities?.decisions === true;
+  useEffect(() => {
+    if (!connected) kindsUpgraded.current = false;
+  }, [connected]);
+  useEffect(() => {
+    if (
+      !connected ||
+      !enabled ||
+      !registration ||
+      !wantsInboxKinds ||
+      busy ||
+      kindsUpgraded.current ||
+      (registration.kinds?.length ?? 0) > 0
+    )
+      return;
+    kindsUpgraded.current = true;
+    const id = `push-kinds-${Date.now()}`;
+    pending.current = { id, registration, enabled: true, silent: true };
+    setBusy(true);
+    client.registerPush(registration.token, true, id);
+  }, [connected, enabled, registration, wantsInboxKinds, busy, client]);
   useEffect(() => {
     if (!busy) return;
     const timer = setTimeout(() => {
@@ -195,6 +230,12 @@ export function NotificationSettings() {
         Pytania, zgody, zakończenie pracy i limity. Przez Expo, bez treści terminala. Dotknięcie
         otwiera właściwą sesję.
       </Text>
+      {hostCapabilities?.decisions ? (
+        <Text style={common.body}>
+          This host also notifies you about pending decisions and finished job results. Tapping
+          opens the inbox.
+        </Text>
+      ) : null}
       {!pushAvailable ? (
         <Text style={common.body}>
           Dostępne w natywnej wersji nesvo, poza Expo Go i przeglądarką.

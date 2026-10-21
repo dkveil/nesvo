@@ -19,6 +19,7 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-
 import { NotificationSettings } from '@features/notifications';
 
 import { groupDescendants, groupPath } from '@entities/group';
+import { useInbox } from '@entities/inbox';
 import {
   sessionAgentColor,
   SessionStatusBadge,
@@ -74,6 +75,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
     openSession,
     navigateTo,
   } = useWorkspace();
+  const inbox = useInbox();
   const [menuOpen, setMenuOpen] = useState(false);
   const [logoVisible, setLogoVisible] = useState(true);
   const visibility = useRef({ visible: true, top: 0, height: 0, logoTop: 0, logoBottom: 0 });
@@ -139,6 +141,14 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         <View style={s.headerTitle}>
           <NesvoLogo width={96} />
         </View>
+        {inbox.supported ? (
+          <IconButton
+            name="file-tray-outline"
+            label={`Inbox, ${inbox.total} to review`}
+            badge={inbox.total}
+            onPress={() => navigateTo('inbox')}
+          />
+        ) : null}
         <IconButton
           name="add"
           label={tab === 'hosts' ? 'Dodaj komputer' : 'Nowa sesja'}
@@ -579,6 +589,34 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                   <Icon name="folder-outline" color={c.text} size={21} />
                   <Text style={s.menuLabel}>Grupy i podgrupy</Text>
                 </Pressable>
+                {inbox.supported ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Inbox"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      navigateTo('inbox');
+                    }}
+                    style={({ pressed }) => [s.menuItem, pressed && s.pressed]}
+                  >
+                    <Icon name="file-tray-outline" color={c.text} size={21} />
+                    <Text style={s.menuLabel}>Inbox</Text>
+                  </Pressable>
+                ) : null}
+                {inbox.decisionsSupported ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Decisions"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      navigateTo('decisions');
+                    }}
+                    style={({ pressed }) => [s.menuItem, pressed && s.pressed]}
+                  >
+                    <Icon name="help-circle-outline" color={c.text} size={21} />
+                    <Text style={s.menuLabel}>Decisions</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Ustawienia"

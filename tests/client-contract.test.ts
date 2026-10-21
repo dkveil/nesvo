@@ -11,13 +11,41 @@ import {
   validGroupName,
 } from '../apps/mobile/src/entities/group/model/groups';
 import {
+  canSubmitDecision,
+  decisionRefusal,
+  markSubmissionsUnknown,
+  mergeDecisionPage,
+  normalizeDecisionAnswer,
+  settleUnknownSubmissions,
+  submissionKey,
+} from '../apps/mobile/src/entities/inbox/model/decision-outcome';
+import {
+  groupInboxItems,
+  markKey,
+  mergeInboxPage,
+  refreshLimit,
+  restoreItems,
+  withoutItems,
+} from '../apps/mobile/src/entities/inbox/model/inbox-items';
+import {
   sessionReadinessLabel,
   statusNeedsAttention,
 } from '../apps/mobile/src/entities/session/model/status-presentation';
+import { HostClient } from '../apps/mobile/src/shared/api/host/client';
 import { decodeServerMessage } from '../apps/mobile/src/shared/api/host/messages';
-import type { SessionGroup } from '../apps/mobile/src/shared/api/host/types';
+import type {
+  ClientCommand,
+  HostEvent,
+  InboxItem,
+  PendingDecision,
+  SessionGroup,
+} from '../apps/mobile/src/shared/api/host/types';
 import { decodeFrame, encodeFrame } from '../apps/mobile/src/shared/api/host/wire';
-import { parseTarget } from '../apps/mobile/src/shared/notifications/target';
+import {
+  parseNotificationTarget,
+  parseTarget,
+} from '../apps/mobile/src/shared/notifications/target';
+import { formatAge, formatRemaining } from '../apps/mobile/src/shared/ui/format-age';
 
 const groups: SessionGroup[] = [
   { id: 'child', name: 'Mobile', parentId: 'root', order: 1 },
@@ -682,4 +710,539 @@ test('launch roles are optional validated metadata rather than authority claims'
       /Invalid host message/,
     );
   }
+});
+
+const HOST_ID = 'c'.repeat(32);
+const SESSION_ID = 'd'.repeat(32);
+const programsFixture = [
+  { id: 'shell', label: 'Terminal', available: true },
+  { id: 'claude', label: 'Claude Code', available: true },
+  { id: 'gemini', label: 'Gemini', available: false },
+  { id: 'codex', label: 'Codex', available: true },
+];
+const inboxCapabilities = {
+  type: 'capabilities',
+  hostId: HOST_ID,
+  workspace: 'C:\\projects',
+  programs: programsFixture,
+  pushNotifications: true,
+  attentionInbox: true,
+  decisions: true,
+  jobPages: true,
+};
+const sessionItem = {
+  kind: 'session',
+  reason: 'question',
+  title: 'Review',
+  sessionId: SESSION_ID,
+  program: 'claude',
+  id: `session:${SESSION_ID}`,
+  revision: 3,
+  priority: 3,
+  at: 1_792_783_619_000,
+};
+const decisionItem = {
+  kind: 'decision',
+  reason: 'decision',
+  title: 'Release run',
+  summary: 'Which branch should the worker use?',
+  runId: 'run-1',
+  decisionId: 'question-1',
+  attemptId: 'attempt-1',
+  audience: 'owner',
+  expiresAt: 1_792_783_919_000,
+  id: 'decision:run-1:question-1',
+  revision: 1,
+  priority: 3,
+  at: 1_792_783_600_000,
+};
+const runItem = {
+  kind: 'run',
+  reason: 'validation',
+  title: 'Nightly',
+  runId: 'run-2',
+  taskId: 'task-1',
+  attemptId: 'attempt-2',
+  id: 'run:run-2:attempt-2',
+  revision: 2,
+  priority: 2,
+  at: 1_792_783_000_000,
+};
+const resultItem = {
+  kind: 'result',
+  reason: 'succeeded',
+  title: '',
+  jobId: 'job-1',
+  occurrenceId: 'occurrence-1',
+  runId: null,
+  id: 'result:occurrence-1',
+  revision: 2,
+  priority: 1,
+  at: 1_792_782_000_000,
+};
+const inboxPage = {
+  type: 'attentionInbox',
+  items: [sessionItem, decisionItem, runItem, resultItem],
+  page: 0,
+  limit: 16,
+  nextPage: null,
+  total: 4,
+  requestId: 'inbox-1',
+};
+const pendingDecision = {
+  id: 'question-1',
+  runId: 'run-1',
+  taskId: 'task-1',
+  attemptId: 'attempt-1',
+  question: 'Which branch should the worker use?',
+  revision: 1,
+  state: 'pending',
+  audience: 'owner',
+  askedBy: { kind: 'worker' },
+  createdAt: 1_792_783_600_000,
+  expiresAt: 1_792_783_919_000,
+  answer: null,
+  reason: null,
+  resolvedAt: null,
+  resolvedBy: null,
+  inboxId: 'decision:run-1:question-1',
+  run: { id: 'run-1', title: 'Release run', state: 'running' },
+};
+
+test('inbox, acknowledgement, decision and change events decode from host-shaped fixtures', () => {
+  assert.deepEqual(decodeServerMessage(inboxPage), inboxPage);
+  const receipts = {
+    type: 'inboxAcknowledged',
+    acknowledged: [{ id: decisionItem.id, revision: 1, acknowledgedAt: 1_792_783_700_000 }],
+    requestId: 'ack-1',
+  };
+  assert.deepEqual(decodeServerMessage(receipts), receipts);
+  const decisionsPage = {
+    type: 'decisions',
+    decisions: [pendingDecision],
+    page: 0,
+    nextPage: 1,
+    total: 9,
+    requestId: 'decisions-1',
+  };
+  assert.deepEqual(decodeServerMessage(decisionsPage), decisionsPage);
+  const withChoices = {
+    ...decisionsPage,
+    decisions: [{ ...pendingDecision, choices: ['main', 'release/1.0'] }],
+  };
+  assert.deepEqual(decodeServerMessage(withChoices), withChoices);
+  const decided = {
+    type: 'decided',
+    run: { id: 'run-1' },
+    task: { id: 'task-1' },
+    attempt: { id: 'attempt-1' },
+    decision: { ...pendingDecision, state: 'answered', answer: 'main', revision: 2 },
+    cursor: 41,
+    inboxId: 'decision:run-1:question-1',
+    requestId: 'decide-1',
+  };
+  assert.deepEqual(decodeServerMessage(decided), decided);
+  for (const changed of [
+    { type: 'attentionInboxChanged', reason: 'decision', itemId: 'decision:run-1:question-1' },
+    { type: 'attentionInboxChanged', reason: 'acknowledged' },
+  ])
+    assert.deepEqual(decodeServerMessage(changed), changed);
+  const registered = {
+    type: 'pushRegistered',
+    enabled: true,
+    kinds: ['decisionPending', 'resultReady'],
+    requestId: 'push-1',
+  };
+  assert.deepEqual(decodeServerMessage(registered), registered);
+});
+
+test('malformed inbox and decision payloads are refused before reaching state', () => {
+  const invalidItems = [
+    { ...sessionItem, kind: 'banner' },
+    { ...sessionItem, id: `decision:${SESSION_ID}` },
+    { ...sessionItem, id: 'session:' },
+    { ...sessionItem, priority: 0 },
+    { ...sessionItem, priority: 4 },
+    { ...sessionItem, revision: -1 },
+    { ...sessionItem, at: 1.5 },
+    { ...sessionItem, title: 7 },
+    { ...sessionItem, reason: '' },
+    { ...sessionItem, summary: null },
+    { ...sessionItem, id: `session:${SESSION_ID}\n` },
+    { ...sessionItem, id: `session:${'x'.repeat(200)}` },
+  ];
+  for (const item of invalidItems)
+    assert.throws(
+      () => decodeServerMessage({ ...inboxPage, items: [item] }),
+      /Invalid host message/,
+    );
+  for (const page of [
+    { ...inboxPage, items: [sessionItem, sessionItem] },
+    { ...inboxPage, limit: 1 },
+    { ...inboxPage, limit: 33 },
+    { ...inboxPage, nextPage: 0 },
+    { ...inboxPage, total: -1 },
+    { ...inboxPage, items: undefined },
+  ])
+    assert.throws(() => decodeServerMessage(page), /Invalid host message/);
+  for (const acknowledged of [[], [{ id: decisionItem.id, revision: 1 }], 'all'])
+    assert.throws(
+      () => decodeServerMessage({ type: 'inboxAcknowledged', acknowledged }),
+      /Invalid host message/,
+    );
+  for (const decision of [
+    { ...pendingDecision, inboxId: 'run:run-1:question-1' },
+    { ...pendingDecision, revision: 0 },
+    { ...pendingDecision, state: 'approved' },
+    { ...pendingDecision, audience: 'everyone' },
+    { ...pendingDecision, run: null },
+    { ...pendingDecision, choices: ['main', 'main'] },
+    { ...pendingDecision, choices: [''] },
+  ])
+    assert.throws(
+      () =>
+        decodeServerMessage({
+          type: 'decisions',
+          decisions: [decision],
+          page: 0,
+          nextPage: null,
+          total: 1,
+        }),
+      /Invalid host message/,
+    );
+  for (const value of [
+    { type: 'decided', decision: { id: 'question-1', revision: 2, state: 'answered' } },
+    {
+      type: 'decided',
+      decision: { id: 'question-1', revision: 2, state: 'answered' },
+      inboxId: 'session:x',
+    },
+    { type: 'attentionInboxChanged' },
+    { type: 'attentionInboxChanged', reason: 'decision', itemId: 7 },
+    { type: 'pushRegistered', enabled: true, kinds: 'decisionPending' },
+  ])
+    assert.throws(() => decodeServerMessage(value), /Invalid host message/);
+});
+
+test('inbox capability flags are optional booleans and legacy capabilities still decode', () => {
+  assert.deepEqual(decodeServerMessage(inboxCapabilities), inboxCapabilities);
+  const { attentionInbox, decisions, jobPages, ...legacy } = inboxCapabilities;
+  assert.equal(attentionInbox && decisions && jobPages, true);
+  assert.deepEqual(decodeServerMessage(legacy), legacy);
+  for (const flag of ['attentionInbox', 'decisions', 'jobPages'])
+    assert.throws(
+      () => decodeServerMessage({ ...inboxCapabilities, [flag]: 'yes' }),
+      /Invalid host message/,
+    );
+});
+
+class InboxFakeSocket {
+  static latest: InboxFakeSocket;
+  readyState = 1;
+  bufferedAmount = 0;
+  sent: string[] = [];
+  onmessage?: (event: { data: string }) => void;
+  onclose?: (event: { code: number; reason: string }) => void;
+  onerror?: () => void;
+  constructor() {
+    InboxFakeSocket.latest = this;
+  }
+  send(data: string) {
+    this.sent.push(data);
+  }
+  close() {
+    this.readyState = 3;
+    this.onclose?.({ code: 1000, reason: '' });
+  }
+}
+
+const connectInboxPeer = () => {
+  const originalWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = InboxFakeSocket as unknown as typeof WebSocket;
+  const client = new HostClient();
+  const events: HostEvent[] = [];
+  client.subscribe(event => events.push(event));
+  const key = new Uint8Array(32).fill(5);
+  const challenge = 'b'.repeat(64);
+  client.connect({ version: 1, url: 'ws://localhost:9999', key: Buffer.from(key).toString('hex') });
+  const socket = InboxFakeSocket.latest;
+  socket.onmessage?.({ data: JSON.stringify({ type: 'challenge', version: 1, challenge }) });
+  const auth = decodeFrame(socket.sent[0]!, key, challenge, 'client-to-host', 1) as {
+    clientNonce: string;
+  };
+  let hostSeq = 0;
+  const receive = (payload: unknown) =>
+    socket.onmessage?.({
+      data: encodeFrame(payload, key, challenge, 'host-to-client', ++hostSeq, randomBytes),
+    });
+  receive({ type: 'connected', protocolVersion: 2, clientNonce: auth.clientNonce, clientId: 1 });
+  const commands = () =>
+    socket.sent.map(
+      (frame, index) =>
+        decodeFrame(frame, key, challenge, 'client-to-host', index + 1) as ClientCommand,
+    );
+  return {
+    client,
+    events,
+    socket,
+    receive,
+    commands,
+    cleanup: () => {
+      client.disconnect();
+      globalThis.WebSocket = originalWebSocket;
+    },
+  };
+};
+
+test('inbox commands stay unsent until the host advertises their capability flags', () => {
+  const peer = connectInboxPeer();
+  try {
+    const { attentionInbox, decisions, jobPages, ...legacy } = inboxCapabilities;
+    assert.equal(attentionInbox && decisions && jobPages, true);
+    peer.receive(legacy);
+    const before = peer.commands().length;
+    assert.equal(peer.client.requestAttentionInbox(0), null);
+    assert.equal(peer.client.acknowledgeInbox([{ id: decisionItem.id, revision: 1 }]), null);
+    assert.equal(peer.client.requestDecisions(0), null);
+    assert.equal(peer.client.decide('question-1', 'main'), null);
+    peer.client.registerPush('ExponentPushToken[abcdefghijkl]', true, 'push-legacy');
+    assert.equal(peer.commands().length, before + 1);
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'registerPush',
+      token: 'ExponentPushToken[abcdefghijkl]',
+      enabled: true,
+      requestId: 'push-legacy',
+    });
+    assert.equal(
+      peer.events.some(event => event.type === 'error'),
+      false,
+    );
+
+    peer.receive({ ...legacy, attentionInbox: true });
+    assert.equal(peer.client.requestAttentionInbox(0, 24, 'inbox-a'), 'inbox-a');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'attentionInbox',
+      page: 0,
+      limit: 24,
+      requestId: 'inbox-a',
+    });
+    assert.equal(peer.client.requestDecisions(0), null);
+    assert.equal(peer.client.acknowledgeInbox([]), null);
+    assert.equal(
+      peer.client.acknowledgeInbox(
+        Array.from({ length: 33 }, (_, index) => ({ id: `session:${index}`, revision: 1 })),
+      ),
+      null,
+    );
+    assert.equal(
+      peer.client.acknowledgeInbox([{ id: decisionItem.id, revision: 1 }], 'ack-a'),
+      'ack-a',
+    );
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'acknowledgeInbox',
+      items: [{ id: decisionItem.id, revision: 1 }],
+      requestId: 'ack-a',
+    });
+
+    peer.receive(inboxCapabilities);
+    assert.equal(peer.client.requestDecisions(2, 'decisions-a'), 'decisions-a');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'decisions',
+      page: 2,
+      requestId: 'decisions-a',
+    });
+    assert.equal(peer.client.decide('question-1', 'main', '', 'decide-a'), 'decide-a');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'decide',
+      decisionId: 'question-1',
+      choice: 'main',
+      requestId: 'decide-a',
+    });
+    peer.client.decide('question-1', 'main', 'Use the release notes', 'decide-b');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'decide',
+      decisionId: 'question-1',
+      choice: 'main',
+      note: 'Use the release notes',
+      requestId: 'decide-b',
+    });
+    peer.client.registerPush('ExponentPushToken[abcdefghijkl]', true, 'push-kinds');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'registerPush',
+      token: 'ExponentPushToken[abcdefghijkl]',
+      enabled: true,
+      requestId: 'push-kinds',
+      kinds: ['decisionPending', 'resultReady'],
+    });
+    peer.client.registerPush('ExponentPushToken[abcdefghijkl]', false, 'push-off');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'registerPush',
+      token: 'ExponentPushToken[abcdefghijkl]',
+      enabled: false,
+      requestId: 'push-off',
+    });
+
+    peer.receive(inboxPage);
+    assert.deepEqual(peer.events.at(-1), inboxPage);
+    assert.equal(peer.client.isConnected, true);
+  } finally {
+    peer.cleanup();
+  }
+});
+
+test('a reconnect forgets advertised inbox flags until the new host repeats them', () => {
+  const peer = connectInboxPeer();
+  try {
+    peer.receive(inboxCapabilities);
+    assert.equal(peer.client.inboxFeatures.decisions, true);
+    peer.socket.close();
+    assert.deepEqual(peer.client.inboxFeatures, {
+      attentionInbox: false,
+      decisions: false,
+      jobPages: false,
+    });
+    assert.equal(peer.client.decide('question-1', 'main'), null);
+    assert.equal(peer.client.requestAttentionInbox(0), null);
+  } finally {
+    peer.cleanup();
+  }
+});
+
+test('unknown inbox event types still disconnect a legacy-shaped session', () => {
+  const peer = connectInboxPeer();
+  try {
+    peer.receive({ type: 'inboxSummary', items: [] });
+    assert.equal(peer.client.isConnected, false);
+    assert.ok(peer.events.some(event => event.type === 'disconnected'));
+  } finally {
+    peer.cleanup();
+  }
+});
+
+test('inbox lists group by priority, hide acknowledged revisions and roll back refusals', () => {
+  const items = inboxPage.items as InboxItem[];
+  const sections = groupInboxItems(items);
+  assert.deepEqual(
+    sections.map(section => [section.priority, section.items.map(item => item.kind)]),
+    [
+      [3, ['session', 'decision']],
+      [2, ['run']],
+      [1, ['result']],
+    ],
+  );
+  const decision = items[1]!;
+  const optimistic = withoutItems(items, [decision]);
+  assert.equal(
+    optimistic.some(item => item.id === decision.id),
+    false,
+  );
+  const hidden = new Set([markKey(decision)]);
+  assert.equal(
+    mergeInboxPage(optimistic, items, true, hidden).some(item => item.id === decision.id),
+    false,
+  );
+  const newer = { ...decision, revision: 2 };
+  assert.ok(mergeInboxPage(optimistic, [newer], true, hidden).includes(newer));
+  assert.deepEqual(
+    restoreItems(optimistic, [decision]).map(item => item.id),
+    items.map(item => item.id),
+  );
+  assert.deepEqual(restoreItems([newer], [decision]), [newer]);
+  const appended = mergeInboxPage(items.slice(0, 2), items.slice(1), false, new Set());
+  assert.deepEqual(
+    appended.map(item => item.id),
+    items.map(item => item.id),
+  );
+  assert.equal(refreshLimit(0), 16);
+  assert.equal(refreshLimit(20), 20);
+  assert.equal(refreshLimit(90), 32);
+});
+
+test('stale decision answers are explained and never resubmitted before a fresh list', () => {
+  const decision = pendingDecision as PendingDecision;
+  assert.match(decisionRefusal('decision_resolved') ?? '', /already answered or canceled/);
+  assert.match(decisionRefusal('decision_expired') ?? '', /expired before/);
+  assert.equal(decisionRefusal('busy'), null);
+  assert.equal(decisionRefusal(undefined), null);
+  const key = submissionKey(decision);
+  const sending = new Map([[key, 'sending' as const]]);
+  assert.equal(canSubmitDecision(new Map(), decision), true);
+  assert.equal(canSubmitDecision(sending, decision), false);
+  assert.equal(canSubmitDecision(new Map(), { ...decision, state: 'expired' }), false);
+  const unknown = markSubmissionsUnknown(sending, [key]);
+  assert.equal(unknown.get(key), 'unknown');
+  assert.equal(canSubmitDecision(unknown, decision), false);
+  assert.equal(canSubmitDecision(unknown, { ...decision, revision: 2 }), true);
+  assert.equal(settleUnknownSubmissions(unknown).size, 0);
+  assert.equal(settleUnknownSubmissions(sending).get(key), 'sending');
+  assert.deepEqual(normalizeDecisionAnswer('  main ', '  '), { choice: 'main', note: undefined });
+  assert.deepEqual(normalizeDecisionAnswer('main', ' ship it '), {
+    choice: 'main',
+    note: 'ship it',
+  });
+  assert.equal(normalizeDecisionAnswer('   ', 'note'), null);
+  assert.equal(normalizeDecisionAnswer('x'.repeat(2001), ''), null);
+  assert.deepEqual(mergeDecisionPage([decision], [{ ...decision, state: 'answered' }], true), []);
+});
+
+test('metadata-only inbox pushes open the inbox and session pushes keep their target', () => {
+  const inbox = { hostId: HOST_ID, kind: 'decisionPending', itemId: 'decision:run-1:question-1' };
+  assert.deepEqual(parseNotificationTarget(inbox), { type: 'inbox', target: inbox });
+  assert.deepEqual(
+    parseNotificationTarget({ hostId: HOST_ID, kind: 'resultReady', itemId: 'result:occ-1' }),
+    { type: 'inbox', target: { hostId: HOST_ID, kind: 'resultReady', itemId: 'result:occ-1' } },
+  );
+  const session = { hostId: HOST_ID, sessionId: SESSION_ID, sequence: 4 };
+  assert.deepEqual(parseNotificationTarget(session), { type: 'session', target: session });
+  for (const value of [
+    { ...inbox, kind: 'sessionAttention' },
+    { ...inbox, itemId: '../../settings' },
+    { ...inbox, itemId: 'decision:' },
+    { ...inbox, itemId: 'decision:run 1' },
+    { ...inbox, hostId: 'https://malicious.example' },
+    null,
+    'decision:run-1:question-1',
+  ])
+    assert.equal(parseNotificationTarget(value), null);
+});
+
+test('list ages and decision deadlines accept millisecond and second host timestamps', () => {
+  const now = 1_792_783_619_000;
+  assert.equal(formatAge(now - 10_000, now), 'just now');
+  assert.equal(formatAge(now - 5 * 60_000, now), '5 min ago');
+  assert.equal(formatAge(Math.floor((now - 3 * 3_600_000) / 1000), now), '3 h ago');
+  assert.equal(formatAge(now - 2 * 86_400_000, now), '2 d ago');
+  assert.equal(formatRemaining(now + 10 * 60_000, now), 'in 10 min');
+  assert.equal(formatRemaining(now + 5_000, now), 'in under a minute');
+  assert.equal(formatRemaining(now - 1, now), 'now');
+});
+
+test('inbox fixtures used by the client match the published host schema', () => {
+  const validate = new Ajv().compile(
+    JSON.parse(readFileSync(new URL('../docs/harness-cli.schema.json', import.meta.url), 'utf8')),
+  );
+  const envelope = (data: Record<string, unknown>) => ({ schemaVersion: 1, ok: true, data });
+  const { requestId: _inboxRequest, ...page } = inboxPage;
+  assert.equal(validate(envelope(page)), true, JSON.stringify(validate.errors));
+  const decisionsPage = {
+    type: 'decisions',
+    decisions: [pendingDecision],
+    page: 0,
+    nextPage: null,
+    total: 1,
+  };
+  assert.equal(validate(envelope(decisionsPage)), true, JSON.stringify(validate.errors));
+  const receipts = {
+    type: 'inboxAcknowledged',
+    acknowledged: [{ id: decisionItem.id, revision: 1, acknowledgedAt: 1_792_783_700_000 }],
+  };
+  assert.equal(validate(envelope(receipts)), true, JSON.stringify(validate.errors));
+  const decided = {
+    type: 'decided',
+    run: { id: 'run-1' },
+    decision: { ...pendingDecision, state: 'answered', answer: 'main', revision: 2 },
+    cursor: 41,
+    inboxId: 'decision:run-1:question-1',
+  };
+  assert.equal(validate(envelope(decided)), true, JSON.stringify(validate.errors));
 });

@@ -67,6 +67,9 @@ export type HostCapabilities = {
   hostId?: string;
   pushNotifications?: boolean;
   attention?: boolean;
+  attentionInbox?: boolean;
+  decisions?: boolean;
+  jobPages?: boolean;
   workspace: string;
   programs: { id: SessionProgram; label: string; available: boolean }[];
   providerLimits?: ProviderLimit[];
@@ -77,6 +80,44 @@ export type ProviderLimit = {
   windows: { usedPercent: number; durationMins: number; resetsAt: number | null }[];
 };
 export type SessionLaunchOptions = { cwd?: string; program?: SessionProgram };
+
+export type InboxFeatures = { attentionInbox: boolean; decisions: boolean; jobPages: boolean };
+export type InboxItemKind = 'session' | 'decision' | 'run' | 'result';
+export type InboxItem = {
+  id: string;
+  kind: InboxItemKind;
+  revision: number;
+  priority: 1 | 2 | 3;
+  reason: string;
+  at: number;
+  title: string;
+  summary?: string;
+  sessionId?: string;
+  decisionId?: string;
+  runId?: string | null;
+  expiresAt?: number;
+  program?: Exclude<SessionProgram, 'shell'>;
+};
+export type InboxMark = { id: string; revision: number };
+export type InboxReceipt = InboxMark & { acknowledgedAt: number };
+export type DecisionState = 'pending' | 'answered' | 'canceled' | 'expired';
+export type PendingDecision = {
+  id: string;
+  runId: string;
+  taskId: string;
+  attemptId: string;
+  question: string;
+  revision: number;
+  state: DecisionState;
+  audience: 'owner' | 'coordinator';
+  createdAt: number;
+  expiresAt: number;
+  answer: string | null;
+  inboxId: string;
+  run: { id: string; title: string; state: string };
+  choices?: string[];
+};
+export type PushKind = 'decisionPending' | 'resultReady';
 
 export type SessionGroup = {
   id: string;
@@ -126,7 +167,32 @@ export type TerminalSession = {
 };
 
 export type HostEvent =
-  | { type: 'pushRegistered'; enabled: boolean; requestId?: string }
+  | { type: 'pushRegistered'; enabled: boolean; kinds?: string[]; requestId?: string }
+  | {
+      type: 'attentionInbox';
+      items: InboxItem[];
+      page: number;
+      limit: number;
+      nextPage: number | null;
+      total: number;
+      requestId?: string;
+    }
+  | { type: 'inboxAcknowledged'; acknowledged: InboxReceipt[]; requestId?: string }
+  | {
+      type: 'decisions';
+      decisions: PendingDecision[];
+      page: number;
+      nextPage: number | null;
+      total: number;
+      requestId?: string;
+    }
+  | {
+      type: 'decided';
+      decision: { id: string; revision: number; state: DecisionState };
+      inboxId: string;
+      requestId?: string;
+    }
+  | { type: 'attentionInboxChanged'; reason: string; itemId?: string }
   | { type: 'connected'; clientId: number; protocolVersion: 2 }
   | { type: 'disconnected'; reason: string }
   | ({ type: 'capabilities'; requestId?: string } & HostCapabilities)
@@ -142,7 +208,17 @@ export type HostEvent =
   | { type: 'error'; message: string; requestId?: string; code?: string; revision?: number };
 
 export type ClientCommand =
-  | { type: 'registerPush'; token: string; enabled: boolean; requestId: string }
+  | {
+      type: 'registerPush';
+      token: string;
+      enabled: boolean;
+      requestId: string;
+      kinds?: PushKind[];
+    }
+  | { type: 'attentionInbox'; page: number; limit?: number; requestId: string }
+  | { type: 'acknowledgeInbox'; items: InboxMark[]; requestId: string }
+  | { type: 'decisions'; page: number; requestId: string }
+  | { type: 'decide'; decisionId: string; choice: string; note?: string; requestId: string }
   | { type: 'acknowledgeAttention'; sessionId: string; sequence: number }
   | { type: 'muteSession'; sessionId: string; muted: boolean }
   | { type: 'auth'; clientNonce: string }
