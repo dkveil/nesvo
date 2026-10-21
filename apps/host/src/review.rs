@@ -1,5 +1,5 @@
 use crate::{
-    agent_context::{EDIT_HASH_LIMIT, Ledger, content_hash},
+    agent_context::{EDIT_HASH_LIMIT, Ledger, canonical_path, content_hash},
     git,
     launchers::Program,
     protocol::Command,
@@ -952,6 +952,7 @@ async fn opened_event(entry: &Entry) -> Result<Value> {
     }))
 }
 
+#[derive(Clone)]
 pub struct SessionLedger {
     pub session_id: String,
     pub hooks: bool,
@@ -1006,6 +1007,26 @@ fn relative(root: &str, path: &str) -> Option<String> {
         .get(normalized.len().checked_sub(rest.len())?..)
         .filter(|tail| !tail.is_empty())
         .map(str::to_owned)
+}
+
+async fn canonical(root: &Path, ledgers: &[SessionLedger]) -> Result<(String, Vec<SessionLedger>)> {
+    let root = root.to_owned();
+    let mut ledgers = ledgers.to_vec();
+    Ok(tokio::task::spawn_blocking(move || {
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        for edit in ledgers
+            .iter_mut()
+            .filter_map(|session| session.ledger.as_mut())
+            .flat_map(|ledger| &mut ledger.edits)
+        {
+            edit.path = resolved
+                .entry(edit.path.clone())
+                .or_insert_with_key(|path| canonical_path(Path::new(path)))
+                .clone();
+        }
+        (canonical_path(&root), ledgers)
+    })
+    .await?)
 }
 
 fn candidates(
@@ -1162,8 +1183,10 @@ pub async fn inspect(entry: &Entry, ledgers: &[SessionLedger]) -> Result<Value> 
     .await
     .map_err(git_failure)?;
     let root = display(&entry.directory);
+    let (key, ledgers) = canonical(&entry.directory, ledgers).await?;
+    let ledgers = ledgers.as_slice();
     let subject = entry.session_id.as_deref();
-    let (paths, mut truncated) = candidates(&root, &readiness.status, ledgers, subject);
+    let (paths, mut truncated) = candidates(&key, &readiness.status, ledgers, subject);
     let observed = observe(&entry.directory, paths).await;
     readiness.worktree_revision = worktree_revision(&readiness.status, &observed);
     let subject_ledger = ledgers
@@ -1175,7 +1198,7 @@ pub async fn inspect(entry: &Entry, ledgers: &[SessionLedger]) -> Result<Value> 
         _ => "unavailable",
     };
     let mut files = match subject {
-        Some(subject) => attribute(&root, &observed, ledgers, subject),
+        Some(subject) => attribute(&key, &observed, ledgers, subject),
         None => Vec::new(),
     };
     let ledger = subject_ledger.and_then(|session| session.ledger.as_ref());
@@ -1410,6 +1433,21 @@ mod tests {
             changed,
         }
     }
+    fn alias(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "mklink /J");
+        }
+    }
     async fn git(path: &Path, args: &[&str]) {
         let status = tokio::process::Command::new("git")
             .args(args)
@@ -1524,6 +1562,53 @@ mod tests {
         assert_eq!(relative("/work/repo", "/work/repo"), None);
         assert_eq!(relative("/work/repo", "/elsewhere/file"), None);
         assert_eq!(comparable(r"\\?\C:\x\"), comparable("C:/x"));
+    }
+
+    #[tokio::test]
+    async fn provenance_matches_paths_spelled_through_an_aliased_directory() {
+        let base = std::env::temp_dir().join(format!(
+            "nesvo-review-alias-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(&real).unwrap();
+        alias(&real, &link);
+        std::fs::write(
+            real.join("a.rs"),
+            "agent
+",
+        )
+        .unwrap();
+        let hash = content_hash(&real.join("a.rs"), EDIT_HASH_LIMIT);
+        let files = [observed("a.rs", hash.as_deref(), true)];
+        for (root, spelled) in [(&real, &link), (&link, &real)] {
+            let ledgers = [SessionLedger {
+                session_id: "mine".into(),
+                hooks: true,
+                ledger: Some(Ledger {
+                    edits: vec![
+                        edit(
+                            &spelled.join("a.rs").display().to_string(),
+                            hash.as_deref(),
+                            1,
+                            0,
+                        ),
+                        edit(&spelled.join("gone.rs").display().to_string(), None, 2, 0),
+                    ],
+                    turns: 0,
+                    complete: true,
+                }),
+            }];
+            let (key, ledgers) = canonical(root, &ledgers).await.unwrap();
+            let (paths, _) = candidates(&key, &git::Status::default(), &ledgers, Some("mine"));
+            assert_eq!(paths.keys().collect::<Vec<_>>(), ["a.rs", "gone.rs"]);
+            assert_eq!(
+                attribute(&key, &files, &ledgers, "mine")[0]["attribution"],
+                "agent"
+            );
+        }
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

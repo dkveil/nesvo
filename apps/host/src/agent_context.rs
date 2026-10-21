@@ -251,6 +251,14 @@ pub(crate) fn content_hash(path: &Path, limit: u64) -> Option<String> {
         .then(|| hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()))
 }
 
+pub(crate) fn canonical_path(path: &Path) -> String {
+    let resolved = path.canonicalize().ok().or_else(|| {
+        let parent = path.parent()?.canonicalize().ok()?;
+        Some(parent.join(path.file_name()?))
+    });
+    crate::process::display_path(resolved.as_deref().unwrap_or(path))
+}
+
 fn edited_path(value: &Value) -> Option<&str> {
     if value["hook_event_name"] != "PostToolUse" {
         return None;
@@ -273,7 +281,7 @@ fn provenance_record(value: &Value) -> Option<Value> {
         .map(Path::new)
         .filter(|path| path.is_absolute())?;
     Some(
-        json!({"k":"edit","p":path,"h":content_hash(path, EDIT_HASH_LIMIT),"at":at,"sub":is_child(value)}),
+        json!({"k":"edit","p":canonical_path(path),"h":content_hash(path, EDIT_HASH_LIMIT),"at":at,"sub":is_child(value)}),
     )
 }
 
@@ -1565,7 +1573,7 @@ mod tests {
         assert!(ledger.complete);
         assert_eq!(ledger.turns, 1);
         assert_eq!(ledger.edits.len(), 2);
-        assert_eq!(ledger.edits[0].path, first.display().to_string());
+        assert_eq!(ledger.edits[0].path, canonical_path(&first));
         assert_eq!(ledger.edits[0].turn, 0);
         assert_eq!(ledger.edits[0].hash, content_hash(&first, EDIT_HASH_LIMIT));
         assert!(!ledger.edits[0].subagent);
