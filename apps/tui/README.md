@@ -54,6 +54,7 @@ The start menu initially observes the first session without taking control. Ente
 | t                     | Take control after confirmation                         |
 | x                     | Release control                                         |
 | n                     | Create a session: name, folder, and available program   |
+| N                     | Session kind menu: agent, clean terminal or review      |
 | p                     | Show private phone pairing instructions and file paths  |
 | J                     | Open durable host jobs: list, details, history and form |
 | g                     | Create a group; choose root or a parent group           |

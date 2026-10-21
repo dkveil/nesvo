@@ -22,8 +22,9 @@ pub struct ResultRow {
     pub context: String,
 }
 pub const CATEGORIES: [&str; 4] = ["All", "Sessions", "Groups", "Commands"];
-pub const COMMANDS: [(char, &str); 10] = [
+pub const COMMANDS: [(char, &str); 11] = [
     ('n', "New session"),
+    ('N', "New session kind"),
     ('g', "New group"),
     ('D', "Review Git changes"),
     ('f', "Filter session statuses"),

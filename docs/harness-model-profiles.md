@@ -14,7 +14,9 @@ nesvo run launch RUN_ID --task TASK_ID --key worker-model-1 --revision RUN_REVIS
 
 The model examples are explicit user choices, not a promise of account access.
 CLI/MCP check the capability before sending model fields to an older host. MCP
-`nesvo_create_session` accepts `spec.model` and `spec.effort`. Task launch and
+`nesvo_create_session` accepts `spec.model` and `spec.effort`. The TUI `N` Agent session
+form exposes the same fields as MODEL and EFFORT when the host reports support for the
+selected provider and sends them in `launch{spec}`. Task launch and
 executor task profiles accept the same optional fields:
 
 ```json

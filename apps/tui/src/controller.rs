@@ -3,6 +3,7 @@ use crate::{
     input,
     launch::{Field, SessionForm},
     model::{App, Dialog, Mode, MoveTarget, RowKind, TextAction, folder_choices},
+    session_kind::{Choice, Picker, SessionKind, SessionKindAction},
     theme::Theme,
     ui,
     ui_controls::{self, Action},
@@ -41,6 +42,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         || matches!(&event, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
     {
         app.pending_input = None;
+    }
+    if app.session_kind.is_some() {
+        return session_kind_event(app, event, area);
     }
     if app.overlay.is_some() {
         return crate::toolbox::event(app, event, area);
@@ -454,7 +458,12 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             }
         }
         Action::Program(program) => {
-            if let Some(Dialog::NewSession(form)) = &mut app.dialog {
+            if let Some(Dialog::NewSession(form)) = &mut app.dialog
+                && form.programs().contains(&program)
+            {
+                if form.program != program {
+                    form.effort.clear();
+                }
                 form.program = program;
                 form.field = Field::Program;
             }
@@ -670,11 +679,8 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             KeyCode::Up | KeyCode::BackTab if button == 0 => {
                 app.dialog_button = None;
                 if let Some(Dialog::NewSession(form)) = &mut app.dialog {
-                    form.field = if form.advanced {
-                        Field::When
-                    } else {
-                        Field::Program
-                    };
+                    let profiles = form.profile_efforts(app.capabilities.as_ref()).is_some();
+                    form.field = form.last_field(profiles);
                 }
                 if let Some(Dialog::NewGroup { editing_parent, .. }) = &mut app.dialog {
                     *editing_parent = true;
@@ -723,6 +729,9 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
                 }}));
                 app.notice = "Saving launch template…".into();
             }
+            return;
+        }
+        if key.code == KeyCode::F(2) && form.kind == Some(SessionKind::Terminal) {
             return;
         }
         if key.code == KeyCode::F(2) {
@@ -778,53 +787,84 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     let mut directory_path = None;
     let mut selected_folder = None;
     let mut close = false;
+    let efforts = match &app.dialog {
+        Some(Dialog::NewSession(form)) => form.profile_efforts(app.capabilities.as_ref()),
+        _ => None,
+    };
+    let profiles = efforts.is_some();
     match &mut app.dialog {
-        Some(Dialog::NewSession(form)) => match key.code {
-            KeyCode::Tab | KeyCode::Down if form.field == Field::Name => {
-                form.field = Field::Directory
+        Some(Dialog::NewSession(form)) => {
+            if !profiles && matches!(form.field, Field::Model | Field::Effort) {
+                form.field = Field::Program;
             }
-            KeyCode::Tab | KeyCode::Down if form.field == Field::Directory => {
-                form.field = Field::Program
-            }
-            KeyCode::Tab if form.field == Field::Program => app.dialog_button = Some(0),
-            KeyCode::BackTab | KeyCode::Up if form.field == Field::Directory => {
-                form.field = Field::Name
-            }
-            KeyCode::BackTab if form.field == Field::Program => form.field = Field::Directory,
-            KeyCode::Down
-                if form.field == Field::Program
-                    && form.program == crate::launch::Program::Codex =>
-            {
-                app.dialog_button = Some(0)
-            }
-            KeyCode::Up
-                if form.field == Field::Program
-                    && form.program == crate::launch::Program::Shell =>
-            {
-                form.field = Field::Directory
-            }
-            KeyCode::Up if form.field == Field::Program => form.cycle_program(true),
-            KeyCode::Down if form.field == Field::Program => form.cycle_program(false),
-            KeyCode::Left if form.field == Field::Program => form.cycle_program(true),
-            KeyCode::Right if form.field == Field::Program => form.cycle_program(false),
-            KeyCode::Enter if form.field == Field::Name => form.field = Field::Directory,
-            KeyCode::Enter if form.field == Field::Directory => browse = true,
-            KeyCode::Enter => submit = true,
-            KeyCode::Backspace => form.backspace(),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if form.field == Field::Name {
-                    form.name.clear();
+            let programs = form.programs();
+            match key.code {
+                KeyCode::Tab | KeyCode::Down
+                    if matches!(form.field, Field::Name | Field::Directory | Field::Model) =>
+                {
+                    match form.next_field(profiles) {
+                        Some(field) => form.field = field,
+                        None => app.dialog_button = Some(0),
+                    }
                 }
+                KeyCode::Tab | KeyCode::Down if form.field == Field::Effort => {
+                    app.dialog_button = Some(0)
+                }
+                KeyCode::Tab if form.field == Field::Program => match form.next_field(profiles) {
+                    Some(field) => form.field = field,
+                    None => app.dialog_button = Some(0),
+                },
+                KeyCode::BackTab | KeyCode::Up
+                    if matches!(form.field, Field::Directory | Field::Model | Field::Effort) =>
+                {
+                    form.field = form.previous_field()
+                }
+                KeyCode::BackTab if form.field == Field::Program => form.field = Field::Directory,
+                KeyCode::Down
+                    if form.field == Field::Program && programs.last() == Some(&form.program) =>
+                {
+                    match form.next_field(profiles) {
+                        Some(field) => form.field = field,
+                        None => app.dialog_button = Some(0),
+                    }
+                }
+                KeyCode::Up
+                    if form.field == Field::Program && programs.first() == Some(&form.program) =>
+                {
+                    form.field = Field::Directory
+                }
+                KeyCode::Up | KeyCode::Left if form.field == Field::Program => {
+                    form.cycle_program(true)
+                }
+                KeyCode::Down | KeyCode::Right if form.field == Field::Program => {
+                    form.cycle_program(false)
+                }
+                KeyCode::Left | KeyCode::Right if form.field == Field::Effort => form.cycle_effort(
+                    efforts.as_deref().unwrap_or_default(),
+                    key.code == KeyCode::Left,
+                ),
+                KeyCode::Enter if form.field == Field::Name => form.field = Field::Directory,
+                KeyCode::Enter if form.field == Field::Model => form.field = Field::Effort,
+                KeyCode::Enter if form.field == Field::Directory => browse = true,
+                KeyCode::Enter => submit = true,
+                KeyCode::Backspace => form.backspace(),
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    match form.field {
+                        Field::Name => form.name.clear(),
+                        Field::Model => form.model.clear(),
+                        _ => {}
+                    }
+                }
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    form.append(&c.to_string())
+                }
+                _ => {}
             }
-            KeyCode::Char(c)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                form.append(&c.to_string())
-            }
-            _ => {}
-        },
+        }
         Some(Dialog::NewGroup {
             name,
             parent_index,
@@ -1276,6 +1316,11 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
                 ..Default::default()
             }))
         }
+        KeyCode::Char('N') => {
+            app.dialog = None;
+            app.dialog_button = None;
+            app.session_kind = Some(Picker::default());
+        }
         KeyCode::Char('g') | KeyCode::Char('G') => {
             let parent = app.selected_group();
             let parent_index = app
@@ -1426,6 +1471,89 @@ fn close_selected(app: &mut App) {
         detail,
         command,
     });
+}
+
+fn session_kind_event(app: &mut App, event: Event, area: Rect) -> Outcome {
+    let mut outcome = Outcome::default();
+    let Some(picker) = app.session_kind.as_mut() else {
+        return outcome;
+    };
+    let action = match event {
+        Event::Key(key) if key.kind != KeyEventKind::Release => picker.action(key),
+        Event::Paste(text) => {
+            picker.paste(&text);
+            None
+        }
+        Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+            crate::ui_session_kind::row_at(area, picker, mouse.column, mouse.row)
+                .map(SessionKindAction::Pick)
+        }
+        Event::Resize(..) | Event::Key(_) => None,
+        _ => {
+            outcome.redraw = false;
+            None
+        }
+    };
+    if let Some(action) = action {
+        let choice = picker.apply(action);
+        apply_session_kind(app, choice, &mut outcome);
+    }
+    outcome
+}
+
+fn apply_session_kind(app: &mut App, choice: Choice, outcome: &mut Outcome) {
+    if choice == Choice::Pending {
+        return;
+    }
+    app.session_kind = None;
+    match choice {
+        Choice::Pending | Choice::Closed => {}
+        Choice::Kind(kind) => open_session_form(app, kind),
+        Choice::LocalChanges => open_local_review(app, outcome),
+        Choice::PullRequest(url) => {
+            app.review.show_pull_request(url);
+            app.mode = Mode::Navigate;
+            app.notice = crate::review::PULL_REQUEST_PENDING.into();
+        }
+    }
+}
+
+fn open_session_form(app: &mut App, kind: SessionKind) {
+    let hint = app
+        .active_session()
+        .map(|session| app.effective_program(session));
+    let agent = crate::session_kind::agent_program(hint, |program| {
+        app.capabilities
+            .as_ref()
+            .is_some_and(|caps| caps.available(program))
+    });
+    let group_id = app.selected_group();
+    let form = kind.preset(
+        group_id,
+        agent,
+        app.sessions.iter().map(|session| session.name.as_str()),
+    );
+    if let Some(form) = form {
+        app.dialog = Some(Dialog::NewSession(form));
+        app.dialog_button = None;
+        app.notice.clear();
+    }
+}
+
+fn open_local_review(app: &mut App, outcome: &mut Outcome) {
+    let Some(id) = app.review_candidate().map(|session| session.id.clone()) else {
+        app.notice = "Select a session to review its local changes.".into();
+        return;
+    };
+    if app.active_id() != Some(id.as_str()) {
+        outcome.commands.extend(app.open_session(&id));
+    }
+    app.review.return_to_input = false;
+    app.review.focused = true;
+    if let Some(command) = app.request_diff() {
+        outcome.commands.push(command);
+    }
+    app.mode = Mode::Navigate;
 }
 
 fn toggle_review(app: &mut App, outcome: &mut Outcome) {
@@ -3199,5 +3327,166 @@ mod tests {
             assert!(app.pending_input.is_none());
             assert!(app.owns("s"));
         }
+    }
+
+    fn session_kind_app() -> App {
+        let mut app = App::new(4);
+        app.event(json!({"type":"capabilities","workspace":"/work","advancedLaunch":true,"gitDiff":true,
+            "programs":[{"id":"shell","available":true},{"id":"claude","available":true},
+                {"id":"codex","available":true},{"id":"gemini","available":false}],
+            "sessionModelProfiles":true,"launchProfileSupport":[
+                {"program":"claude","supported":true,"effortValues":["low","medium","high"],"effortSource":"cli"}
+            ]}))
+        .unwrap();
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"s1","name":"Terminal 1","cwd":"/work","program":"shell","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]}))
+        .unwrap();
+        app.dialog = None;
+        app.onboarded = true;
+        app
+    }
+
+    fn press(app: &mut App, code: KeyCode) -> Outcome {
+        event(
+            app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            Rect::new(0, 0, 100, 32),
+        )
+    }
+
+    #[test]
+    fn session_kind_menu_opens_from_key_and_palette_and_routes_each_row() {
+        let mut app = session_kind_app();
+        press(&mut app, KeyCode::Char('N'));
+        assert_eq!(app.session_kind, Some(Picker::Kind { selected: 0 }));
+        press(&mut app, KeyCode::Esc);
+        assert!(app.session_kind.is_none() && app.dialog.is_none());
+        press(&mut app, KeyCode::Char('N'));
+        press(&mut app, KeyCode::Char('2'));
+        assert!(app.session_kind.is_none());
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
+            if form.kind == Some(SessionKind::Terminal) && form.name == "Terminal 2"
+                && form.program == crate::launch::Program::Shell));
+        press(&mut app, KeyCode::F(2));
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form)) if !form.advanced));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.dialog_button, Some(0));
+        press(&mut app, KeyCode::Up);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.field == Field::Directory)
+        );
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('N'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('k'));
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
+            if form.kind == Some(SessionKind::Agent) && form.program == crate::launch::Program::Claude));
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('n'));
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
+            if form.kind.is_none() && form.program == crate::launch::Program::Shell));
+        press(&mut app, KeyCode::Esc);
+        app.palette_expanded = true;
+        app.begin_palette("session kind".into());
+        app.select_palette(
+            app.palette_results("session kind")
+                .iter()
+                .position(|row| row.target == crate::palette::Target::Command('N'))
+                .unwrap(),
+        );
+        press(&mut app, KeyCode::Enter);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.session_kind, Some(Picker::Kind { selected: 0 }));
+        press(&mut app, KeyCode::Char('3'));
+        let review = press(&mut app, KeyCode::Char('1'));
+        assert!(app.session_kind.is_none());
+        assert_eq!(app.active_id(), Some("s1"));
+        assert!(
+            review
+                .commands
+                .iter()
+                .any(|command| command["type"] == "getDiff" && command["sessionId"] == "s1")
+        );
+        assert!(app.review.visible && app.review.focused);
+        press(&mut app, KeyCode::Esc);
+        app.review.visible = false;
+        app.review.focused = false;
+        press(&mut app, KeyCode::Char('N'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Down);
+        event(
+            &mut app,
+            Event::Paste("https://github.com/dkveil/nesvo/pull/12/files".into()),
+            Rect::new(0, 0, 100, 32),
+        );
+        press(&mut app, KeyCode::Enter);
+        assert!(app.session_kind.is_none());
+        assert_eq!(
+            app.review.pull_request.as_deref(),
+            Some("https://github.com/dkveil/nesvo/pull/12")
+        );
+        assert!(app.review.visible && app.review.focused);
+    }
+
+    #[test]
+    fn session_kind_agent_form_keys_reach_profile_fields_and_submit_launch() {
+        let mut app = session_kind_app();
+        press(&mut app, KeyCode::Char('N'));
+        press(&mut app, KeyCode::Char('1'));
+        for _ in 0..2 {
+            press(&mut app, KeyCode::Tab);
+        }
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.field == Field::Program)
+        );
+        press(&mut app, KeyCode::Tab);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.field == Field::Model)
+        );
+        for c in "sonnet".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Right);
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
+            if form.field == Field::Effort && form.model == "sonnet" && form.effort == "medium"));
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.dialog_button, Some(0));
+        press(&mut app, KeyCode::Up);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.field == Field::Effort)
+        );
+        let created = press(&mut app, KeyCode::Enter);
+        assert_eq!(created.commands[0]["type"], "launch");
+        assert_eq!(created.commands[0]["spec"]["model"], "sonnet");
+        assert_eq!(created.commands[0]["spec"]["effort"], "medium");
+        press(&mut app, KeyCode::Char('N'));
+        press(&mut app, KeyCode::Char('1'));
+        if let Some(Dialog::NewSession(form)) = &mut app.dialog {
+            form.field = Field::Program;
+        }
+        press(&mut app, KeyCode::Up);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::NewSession(form)) if form.field == Field::Directory)
+        );
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
+            if form.program == crate::launch::Program::Codex && form.field == Field::Program));
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.dialog_button, Some(0));
+        let area = Rect::new(0, 0, 100, 32);
+        click(
+            &mut app,
+            area,
+            Action::Program(crate::launch::Program::Shell),
+        );
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
+            if form.program == crate::launch::Program::Codex));
     }
 }

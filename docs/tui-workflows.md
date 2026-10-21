@@ -25,6 +25,7 @@ F4 opens Git review directly from terminal input as well as navigation; F4 or Es
 | `u`                       | Mute/unmute alerts for the current session             |
 | `f`                       | Select status filters; empty selection means all       |
 | `n`, then `F2`            | New session and advanced launch options                |
+| `N`                       | Session kind: agent with profile, terminal or review   |
 | `S`                       | Scheduled sessions; refresh or cancel a pending launch |
 | `J`                       | Jobs: list, details, history, form                     |
 | `H`                       | Replay onboarding                                      |

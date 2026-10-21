@@ -2,6 +2,7 @@
 use crate::{
     launch::{Field, Program, SessionForm},
     model::{App, folder_choices},
+    session_kind::SessionKind,
     theme::{BORDER, MUTED, TEXT},
     ui_controls,
 };
@@ -182,11 +183,31 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         Paragraph::new("Enter to browse folders on the host").style(Style::default().fg(MUTED)),
         row(area, 7),
     );
-    frame.render_widget(
-        Paragraph::new("PROGRAM").style(Style::default().fg(MUTED)),
-        row(area, 9),
-    );
-    for (index, program) in Program::ALL.into_iter().enumerate() {
+    let programs = form.programs();
+    if programs.len() > 1 {
+        frame.render_widget(
+            Paragraph::new("PROGRAM").style(Style::default().fg(MUTED)),
+            row(area, 9),
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new("PROGRAM  Terminal · a plain shell in this folder")
+                .style(Style::default().fg(MUTED)),
+            row(area, 9),
+        );
+    }
+    if form.kind == Some(SessionKind::Agent) {
+        frame.render_widget(
+            Paragraph::new("   Coding agents · Clean terminal opens a shell")
+                .style(Style::default().fg(MUTED)),
+            row(area, 10),
+        );
+    }
+    for (index, program) in Program::ALL
+        .into_iter()
+        .enumerate()
+        .filter(|(_, program)| programs.len() > 1 && programs.contains(program))
+    {
         let availability = match &app.capabilities {
             None => "checking…",
             Some(caps) if caps.available(program) => "available",
@@ -218,14 +239,74 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
             row(area, 10 + index as u16),
         );
     }
+    if form.kind == Some(SessionKind::Agent) {
+        render_profile(frame, app, form, row(area, 14));
+    }
     frame.render_widget(
-        Paragraph::new("Tab fields · Shift+Tab back · F2 worktree / prompt / schedule")
-            .style(Style::default().fg(MUTED)),
+        Paragraph::new(match form.kind {
+            Some(SessionKind::Terminal) => "Tab fields · Shift+Tab back · Enter create",
+            Some(_) => "Tab fields · ←→ effort · F2 worktree / prompt / schedule",
+            None => "Tab fields · Shift+Tab back · F2 worktree / prompt / schedule",
+        })
+        .style(Style::default().fg(MUTED)),
         row(area, 15),
     );
     frame.render_widget(
         Paragraph::new(app.notice.as_str()).style(Style::default().fg(MUTED)),
         row(area, 16),
+    );
+}
+
+fn render_profile(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect) {
+    if area.is_empty() {
+        return;
+    }
+    if form.profile_efforts(app.capabilities.as_ref()).is_none() {
+        let reason = match &app.capabilities {
+            None => "checking the host…",
+            Some(caps) if !caps.session_model_profiles => "update the host for model profiles",
+            Some(_) => "this provider version has no profile support",
+        };
+        frame.render_widget(
+            Paragraph::new(format!("PROFILE  default · {reason}"))
+                .style(Style::default().fg(MUTED)),
+            area,
+        );
+        return;
+    }
+    let label = 7.min(area.width);
+    let effort = format!(
+        "  EFFORT ‹ {} ›",
+        if form.effort.is_empty() {
+            "default"
+        } else {
+            form.effort.as_str()
+        }
+    );
+    let effort_width = (Line::from(effort.as_str()).width() as u16).min(area.width - label);
+    let input_width = area.width - label - effort_width;
+    frame.render_widget(
+        Paragraph::new("MODEL").style(Style::default().fg(MUTED)),
+        Rect::new(area.x, area.y, label, 1),
+    );
+    input_row(
+        frame,
+        Rect::new(area.x + label, area.y, input_width, 1),
+        &form.model,
+        form.field == Field::Model && app.dialog_button.is_none(),
+        app,
+        "default",
+    );
+    let focused = form.field == Field::Effort && app.dialog_button.is_none();
+    frame.render_widget(
+        Paragraph::new(effort).style(Style::default().fg(if focused { TEXT } else { MUTED }).bg(
+            if focused {
+                app.theme.selection()
+            } else {
+                ratatui::style::Color::Reset
+            },
+        )),
+        Rect::new(area.x + label + input_width, area.y, effort_width, 1),
     );
 }
 
@@ -331,4 +412,106 @@ pub fn render_pairing(frame: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        launch::{Field, Program},
+        model::{App, Dialog},
+        session_kind::SessionKind,
+    };
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+    use serde_json::json;
+
+    fn app(profiles: bool) -> App {
+        let mut app = App::new(9);
+        app.event(json!({"type":"capabilities","workspace":"C:/work","programs":[
+            {"id":"shell","available":true},{"id":"claude","available":true},
+            {"id":"codex","available":true},{"id":"gemini","available":false}
+        ],"sessionModelProfiles":profiles,"launchProfileSupport":[
+            {"program":"claude","supported":true,"effortValues":["low","medium","high","xhigh","max"],"effortSource":"cli"},
+            {"program":"gemini","supported":false}
+        ]}))
+        .unwrap();
+        app.dialog = None;
+        app.onboarded = true;
+        app
+    }
+
+    fn text(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, app, 0))
+            .unwrap();
+        let buffer: &Buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn open(app: &mut App, kind: SessionKind, program: Program) {
+        let mut form = kind.preset(None, program, ["Terminal 1"]).unwrap();
+        form.field = Field::Model;
+        form.model = "opus".into();
+        form.effort = "high".into();
+        app.dialog = Some(Dialog::NewSession(form));
+    }
+
+    #[test]
+    fn launch_agent_form_shows_profile_only_when_supported() {
+        for (width, height) in [(80, 24), (100, 32), (150, 44)] {
+            let mut supported = app(true);
+            open(&mut supported, SessionKind::Agent, Program::Claude);
+            let screen = text(&supported, width, height);
+            assert!(
+                screen.contains("New agent session"),
+                "{width}x{height}\n{screen}"
+            );
+            assert!(screen.contains("MODEL"), "{width}x{height}\n{screen}");
+            assert!(screen.contains("opus"));
+            assert!(screen.contains("EFFORT ‹ high ›"));
+            assert!(screen.contains("Claude"));
+            assert!(screen.contains("Codex"));
+            assert!(!screen.contains("Terminal   "), "{screen}");
+            let mut gemini = app(true);
+            open(&mut gemini, SessionKind::Agent, Program::Gemini);
+            let screen = text(&gemini, width, height);
+            assert!(!screen.contains("MODEL"), "{screen}");
+            assert!(screen.contains("PROFILE  default"), "{screen}");
+            let mut legacy = app(false);
+            open(&mut legacy, SessionKind::Agent, Program::Claude);
+            let screen = text(&legacy, width, height);
+            assert!(!screen.contains("MODEL"));
+            assert!(screen.contains("update the host for model profiles"));
+        }
+    }
+
+    #[test]
+    fn launch_terminal_form_hides_programs_and_prefills_name() {
+        for (width, height) in [(80, 24), (100, 32), (150, 44)] {
+            let mut app = app(true);
+            open(&mut app, SessionKind::Terminal, Program::Claude);
+            let screen = text(&app, width, height);
+            assert!(screen.contains("New terminal"), "{screen}");
+            assert!(screen.contains("Terminal 2"), "{screen}");
+            assert!(screen.contains("a plain shell in this folder"));
+            assert!(!screen.contains("Claude"), "{screen}");
+            assert!(!screen.contains("MODEL"));
+            assert!(!screen.contains("F2 worktree"));
+            app.dialog = Some(Dialog::NewSession(crate::launch::SessionForm {
+                field: Field::Program,
+                ..Default::default()
+            }));
+            let screen = text(&app, width, height);
+            assert!(screen.contains("New session"));
+            assert!(screen.contains("Terminal   "), "{screen}");
+            assert!(!screen.contains("MODEL"));
+        }
+    }
 }

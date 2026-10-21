@@ -246,7 +246,7 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
         Mode::Input => (" SESSION INPUT ", " Ctrl+Q menu · F4 diff"),
         Mode::Navigate => (
             " NESVO MENU ",
-            " Enter resume · n new · / search · F4 diff · ? help",
+            " Enter resume · n new · N kind · / search · F4 diff · ? help",
         ),
     }
 }
@@ -272,6 +272,7 @@ pub(crate) fn shortcut_spans(hint: &str) -> Vec<Span<'static>> {
                 | "→"
                 | "[]"
                 | "n"
+                | "N"
                 | "z"
                 | "w"
                 | "r"
@@ -371,6 +372,9 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         crate::ui_jobs::render(frame, app, jobs);
     }
     crate::toolbox::render(frame, app);
+    if let Some(picker) = &app.session_kind {
+        crate::ui_session_kind::render(frame, app, picker);
+    }
     if let Some(selection) = &app.selection {
         selection.render(frame.buffer_mut(), app.theme.selection());
     }
@@ -1066,7 +1070,11 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         Dialog::Text { title, .. } | Dialog::Confirm { title, .. } => title.as_str(),
         Dialog::Move { .. } => "Move to group",
         Dialog::Help => "Keyboard",
-        Dialog::NewSession(_) => "New session",
+        Dialog::NewSession(form) => match form.kind {
+            Some(crate::session_kind::SessionKind::Agent) => "New agent session",
+            Some(crate::session_kind::SessionKind::Terminal) => "New terminal",
+            _ => "New session",
+        },
         Dialog::FolderPicker { .. } => "Choose folder",
         Dialog::PairPhone => "Pair your phone",
     };
@@ -1337,7 +1345,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("F1  ?", "Main menu / keyboard help"),
         ],
         &[
-            ("n  g", "New session / group"),
+            ("n  N  g", "New session / kind / group"),
             ("r  m  d", "Rename / move / delete"),
             ("f  u", "Filter status / mute attention"),
             ("F8  F9", "Templates / restore sessions"),

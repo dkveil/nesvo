@@ -445,6 +445,7 @@ pub struct App {
     pub focused: usize,
     pub mode: Mode,
     pub dialog: Option<Dialog>,
+    pub session_kind: Option<crate::session_kind::Picker>,
     pub dialog_button: Option<usize>,
     pub menu_selected: usize,
     pub help_page: usize,
@@ -501,6 +502,7 @@ impl App {
             focused: 0,
             mode: Mode::Navigate,
             dialog: None,
+            session_kind: None,
             dialog_button: None,
             menu_selected: 0,
             help_page: 0,
@@ -595,6 +597,13 @@ impl App {
     }
     pub fn selected_row(&self) -> Option<TreeRow> {
         self.tree().get(self.selected).cloned()
+    }
+    pub fn review_candidate(&self) -> Option<&Session> {
+        match self.selected_row().map(|row| row.kind) {
+            Some(RowKind::Session(id)) => self.session(&id),
+            _ => None,
+        }
+        .or_else(|| self.active_session())
     }
     pub fn selected_group(&self) -> Option<String> {
         match self.selected_row()?.kind {
@@ -1187,6 +1196,7 @@ impl App {
                                 && self.active_id() == Some(id)
                                 && self.dialog.is_none()
                                 && self.overlay.is_none()
+                                && self.session_kind.is_none()
                                 && !self.review.focused
                             {
                                 self.mode = Mode::Input;
@@ -1257,6 +1267,7 @@ impl App {
         self.pending_input = None;
         self.mode = Mode::Navigate;
         self.dialog = None;
+        self.session_kind = None;
         self.dialog_button = None;
         self.pending_directory = None;
         self.notice = if self.capabilities.is_none() {
@@ -1304,6 +1315,7 @@ impl App {
             && self.dialog.is_none()
             && self.overlay.is_none()
             && self.review.request_id.is_none()
+            && self.review.pull_request.is_none()
             && self.capabilities.as_ref().is_some_and(|caps| caps.git_diff)
             && self
                 .review
@@ -1318,6 +1330,7 @@ impl App {
 
     pub fn request_diff(&mut self) -> Option<Value> {
         let id = self.active_id()?.to_owned();
+        self.review.pull_request = None;
         self.review.last_requested = Some(std::time::Instant::now());
         self.review.visible = true;
         self.review.error = None;
@@ -1399,8 +1412,20 @@ impl App {
                     self.dialog = Some(Dialog::NewSession(form));
                     return None;
                 }
-                let advanced =
-                    auto_title || form.worktree || !form.prompt.is_empty() || !form.when.is_empty();
+                let efforts = form.profile_efforts(self.capabilities.as_ref());
+                let profile = match form.profile(efforts.as_deref()) {
+                    Ok(profile) => profile,
+                    Err(message) => {
+                        self.notice = message.into();
+                        self.dialog = Some(Dialog::NewSession(form));
+                        return None;
+                    }
+                };
+                let advanced = auto_title
+                    || form.worktree
+                    || !form.prompt.is_empty()
+                    || !form.when.is_empty()
+                    || profile.is_some();
                 if advanced
                     && !self
                         .capabilities
@@ -1411,7 +1436,13 @@ impl App {
                     self.dialog = Some(Dialog::NewSession(form));
                     return None;
                 }
-                let spec = json!({"name":name,"cwd":form.cwd.trim(), "program":form.program,"groupId":form.group_id,"prompt":form.prompt,"worktree":form.worktree,"autoTitle":auto_title});
+                let mut spec = json!({"name":name,"cwd":form.cwd.trim(), "program":form.program,"groupId":form.group_id,"prompt":form.prompt,"worktree":form.worktree,"autoTitle":auto_title});
+                if let Some((model, effort)) = profile {
+                    spec["model"] = model.into();
+                    if let Some(effort) = effort {
+                        spec["effort"] = effort.into();
+                    }
+                }
                 let command = if !form.when.is_empty() {
                     json!({"type":"scheduleSession","spec":spec,"at":form.when.trim()})
                 } else if advanced {
@@ -2181,5 +2212,111 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    fn profile_app() -> App {
+        let mut app = App::new(5);
+        app.event(json!({"type":"capabilities","workspace":"/work","advancedLaunch":true,
+            "programs":[{"id":"shell","available":true},{"id":"claude","available":true},
+                {"id":"codex","available":true},{"id":"gemini","available":true}],
+            "sessionModelProfiles":true,"launchProfileSupport":[
+                {"program":"claude","supported":true,"effortValues":["low","medium","high","xhigh","max"],"effortSource":"cli"},
+                {"program":"codex","supported":true,"effortValues":null,"effortSource":"modelAdvertised"},
+                {"program":"gemini","supported":false}
+            ]}))
+        .unwrap();
+        app
+    }
+
+    #[test]
+    fn session_kind_agent_submit_sends_launch_with_model_and_effort() {
+        let mut app = profile_app();
+        let mut form = crate::session_kind::SessionKind::Agent
+            .preset(Some("g".into()), Program::Claude, [])
+            .unwrap();
+        form.cwd = "/work/api".into();
+        form.model = " opus ".into();
+        form.effort = "high".into();
+        app.dialog = Some(Dialog::NewSession(form));
+        let command = app.submit_dialog().unwrap();
+        assert_eq!(command["type"], "launch");
+        assert_eq!(command["spec"]["program"], "claude");
+        assert_eq!(command["spec"]["model"], "opus");
+        assert_eq!(command["spec"]["effort"], "high");
+        assert_eq!(command["spec"]["autoTitle"], true);
+        assert_eq!(command["spec"]["groupId"], "g");
+        assert_eq!(app.pending_create.as_deref(), command["requestId"].as_str());
+        app.event(
+            json!({"type":"error","requestId":command["requestId"],"message":"Unsupported effort"}),
+        )
+        .unwrap();
+        assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
+            if form.kind == Some(crate::session_kind::SessionKind::Agent) && form.model == " opus "));
+        let mut plain = crate::session_kind::SessionKind::Agent
+            .preset(None, Program::Codex, [])
+            .unwrap();
+        plain.name = "Worker".into();
+        app.dialog = Some(Dialog::NewSession(plain));
+        let command = app.submit_dialog().unwrap();
+        assert_eq!(command["type"], "create");
+        assert!(command.get("model").is_none());
+        let mut gemini = crate::session_kind::SessionKind::Agent
+            .preset(None, Program::Gemini, [])
+            .unwrap();
+        gemini.model = "stale".into();
+        app.dialog = Some(Dialog::NewSession(gemini));
+        let command = app.submit_dialog().unwrap();
+        assert_eq!(command["type"], "launch");
+        assert!(command["spec"].get("model").is_none());
+    }
+
+    #[test]
+    fn session_kind_terminal_submit_sends_create_and_effort_needs_a_model() {
+        let mut app = profile_app();
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"t","name":"Terminal 1","cwd":"/work","program":"shell","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]}))
+        .unwrap();
+        let form = crate::session_kind::SessionKind::Terminal
+            .preset(
+                None,
+                Program::Claude,
+                app.sessions.iter().map(|s| s.name.as_str()),
+            )
+            .unwrap();
+        app.dialog = Some(Dialog::NewSession(form));
+        let command = app.submit_dialog().unwrap();
+        assert_eq!(command["type"], "create");
+        assert_eq!(command["name"], "Terminal 2");
+        assert_eq!(command["program"], "shell");
+        let mut form = crate::session_kind::SessionKind::Agent
+            .preset(None, Program::Claude, [])
+            .unwrap();
+        form.effort = "max".into();
+        app.dialog = Some(Dialog::NewSession(form));
+        assert!(app.submit_dialog().is_none());
+        assert!(app.notice.contains("explicit model"));
+        assert!(matches!(app.dialog, Some(Dialog::NewSession(_))));
+    }
+
+    #[test]
+    fn session_kind_pull_request_stub_blocks_auto_refresh_until_local_review() {
+        let mut app = profile_app();
+        app.event(json!({"type":"capabilities","workspace":".","programs":[],"gitDiff":true}))
+            .unwrap();
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"s","name":"Agent","cwd":"/work","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]}))
+        .unwrap();
+        app.open_session("s");
+        app.review
+            .show_pull_request("https://github.com/o/r/pull/5".into());
+        app.review.last_requested =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(5));
+        assert!(app.review.visible && app.review.focused);
+        assert!(app.auto_refresh_diff().is_none());
+        let command = app.request_diff().unwrap();
+        assert_eq!(command["type"], "getDiff");
+        assert!(app.review.pull_request.is_none());
     }
 }
