@@ -43,6 +43,15 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     {
         app.pending_input = None;
     }
+    if app.notes.capture.is_some() {
+        return crate::notes_controller::capture_event(app, event);
+    }
+    if let Event::Key(key) = &event
+        && crate::notes_controller::capture_key(app, key)
+    {
+        crate::notes_controller::begin_capture(app);
+        return Outcome::default();
+    }
     if app.session_kind.is_some() {
         return session_kind_event(app, event, area);
     }
@@ -57,6 +66,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     }
     if crate::git_pane::captures(app) {
         return crate::git_pane::event(app, event);
+    }
+    if crate::notes_controller::captures(app) {
+        return crate::notes_controller::event(app, event, area);
     }
     if crate::overview::engaged(app) && app.dialog.is_none() {
         return crate::overview::event(app, event, area);
@@ -424,6 +436,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         app.notice.clear();
     }
     outcome.commands.extend(crate::files_controller::sync(app));
+    outcome.commands.extend(crate::notes_controller::sync(app));
     for command in &outcome.commands {
         if command["type"] == "acquireControl" {
             app.pending_input = command["sessionId"].as_str().map(str::to_owned);
@@ -1290,6 +1303,9 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Char('J') => crate::jobs_controller::open(app, outcome),
         KeyCode::Char('O') => crate::overview::open(app, area.width),
         KeyCode::Char('Y') => outcome.commands.extend(crate::git_pane::open(app, true)),
+        KeyCode::Char('T') => outcome
+            .commands
+            .extend(crate::notes_controller::open(app, true)),
         KeyCode::Tab if app.reviews.shown.is_some() => app.reviews.focused = true,
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,

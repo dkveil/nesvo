@@ -473,6 +473,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
         }
     }
     crate::ui_git::render(frame, app);
+    crate::ui_notes::render(frame, app);
     crate::toolbox::render(frame, app);
     if let Some(picker) = &app.session_kind {
         crate::ui_session_kind::render(frame, app, picker);
@@ -480,6 +481,7 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     if let Some(picker) = &app.layout_picker {
         crate::ui_layouts::render(frame, app, picker);
     }
+    crate::ui_notes::render_capture(frame, app);
     if let Some(selection) = &app.selection {
         selection.render(frame.buffer_mut(), app.theme.selection());
     }
@@ -869,6 +871,9 @@ fn render_view(frame: &mut Frame, app: &App, role: Role, area: Rect) {
         return;
     }
     if role == Role::Git && crate::ui_git::render_leaf(frame, app, area) {
+        return;
+    }
+    if role == Role::Notes && crate::ui_notes::render_leaf(frame, app, area) {
         return;
     }
     let content = pane_content(area, false);
@@ -1549,6 +1554,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("PgUp PgDn", "Scroll review or terminal history"),
             ("Esc", "Close diff / cancel dialog"),
             ("Ctrl+Q → z", "Toggle full screen from terminal input"),
+            ("T  Ctrl+T", "Notes / quick note to today's note"),
             ("Settings → k", "Customize global function keys"),
         ],
     ];

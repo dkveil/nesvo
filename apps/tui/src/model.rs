@@ -445,6 +445,7 @@ pub struct App {
     pub review: crate::review::ReviewState,
     pub reviews: crate::review_session::ReviewSessions,
     pub files: crate::files_controller::FilesState,
+    pub notes: crate::notes_controller::NotesState,
     pub client_id: u64,
     pub sessions: Vec<Session>,
     pub groups: Vec<Group>,
@@ -500,6 +501,7 @@ impl App {
             review: Default::default(),
             reviews: Default::default(),
             files: Default::default(),
+            notes: Default::default(),
             overlay: None,
             palette_expanded: false,
             palette_category: 0,
@@ -1451,12 +1453,17 @@ impl App {
                 }
                 commands.extend(crate::jobs_controller::host_event(self, &event));
                 crate::files_controller::host_error(self, &event);
+                crate::notes_controller::host_error(self, &event);
             }
             "entries" | "file" | "files" => crate::files_controller::host_event(self, &event),
+            "notes" | "note" | "noteSaved" | "noteDeleted" => {
+                crate::notes_controller::host_event(self, &event);
+            }
             _ => {}
         }
         commands.extend(crate::review_session::pump(self));
         commands.extend(crate::files_controller::sync(self));
+        commands.extend(crate::notes_controller::sync(self));
         self.reconcile_palette();
         Ok(commands)
     }
@@ -1473,6 +1480,7 @@ impl App {
         self.pending_directory = None;
         self.reviews.picking = None;
         self.reviews.focused = false;
+        self.notes.disconnected();
         self.notice = if self.capabilities.is_none() {
             "Host disconnected during setup; update nesvo-host and reconnect.".into()
         } else {

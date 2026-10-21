@@ -64,6 +64,7 @@ F4 opens Git review directly from terminal input as well as navigation: with the
 | `r`, `Esc`, `q` in Git    | Refresh / close diff, then view / close view           |
 | Review tab keys           | Listed under Git review below                          |
 | Diff dock keys            | Listed under Git review below                          |
+| `T`, `Ctrl+T`             | Notes: list, edit, search; quick note to today's file  |
 | `H`                       | Replay onboarding                                      |
 | `w` when offered          | Confirm arming or disabling quota wake                 |
 

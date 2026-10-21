@@ -362,6 +362,21 @@ Additive `git:true` advertises one owner-only read command for the TUI Git view;
 
 `directory` is an absolute host folder inside a Git work tree and is echoed as sent. The command runs one `git log HEAD` without signatures, decorations or colour (10 s, 1 KiB of output per commit), newest first. `limit` defaults to 50 and is clamped to 1..200; `truncated` is true when more commits exist or the output was cut. `summary` is the subject line (200 characters), `author` the author name (80 characters), `committedMs` the committer time in Unix milliseconds and `parents` the parent ids (empty for a root commit, at most 8). An unborn branch returns an empty list. Errors are `{type:"error", code, message, requestId?}` with `invalid_argument`, `not_found`, `not_directory`, `not_repository`, `timeout`, `git_failed` or `busy`. A commit's diff is `getDiff { reviewId, scope:"commits", from: parent, to: oid }`.
 
+## Notes
+
+Additive `notes:true` advertises four owner-only commands over plain markdown files; scoped session callers receive `forbidden`. Requests run off the shared state lock, at most two per connection (a third concurrent request receives `busy`).
+
+| Command                                                   | Result                                                                                                                      |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `listNotes { root, requestId? }`                          | `notes { root, directory, location, repository, notes:[{name, path, size, modifiedMs, firstLine}], truncated, requestId? }` |
+| `readNote { path, requestId? }`                           | `note { path, name, text, size, modifiedMs, revision, requestId? }`                                                         |
+| `writeNote { path, text, expectedRevision?, requestId? }` | `noteSaved { path, name, revision, size, modifiedMs, created, requestId? }`                                                 |
+| `deleteNote { path, requestId? }`                         | `noteDeleted { path, name, requestId? }`                                                                                    |
+
+`root` is an absolute host folder. Inside a Git work tree the notes folder is `<toplevel>/.nesvo/notes` (`location:"repository"`); the host never adds ignore rules, so committing it is the owner's choice. Otherwise it is `<config>/nesvo/notes/<hostId>` (`location:"host"`, `repository:null`). A missing folder lists as empty and is created by the first write. Notes are flat files whose names use letters, digits, spaces, `-`, `_` or `.`, end in `.md` and do not start with a dot; at most 500 are returned, newest first, and `firstLine` is the first non-empty line (120 characters).
+
+A note `path` must be absolute, without `.` or `..` segments, and name a file directly inside one of those folders. Each request walks the folder levels without following links: a linked level is refused with `outside_notes`, a level that is not a folder with `not_directory`, and only a write creates missing levels. Notes are UTF-8 text without NUL, at most 64 KiB. `revision` is the SHA-256 of the content in lowercase hex. A write replaces the file atomically (temporary file, sync, rename); with `expectedRevision` it succeeds only while the note still has that revision, and without it only while the note does not exist. Otherwise it is refused with `stale_revision` and the current `revision` (`null` when the note is gone). Errors are `{type:"error", code, message, revision?, requestId?}` with `invalid_argument`, `not_found`, `not_directory`, `not_file`, `not_readable`, `not_writable`, `not_text`, `binary`, `too_large`, `outside_notes`, `stale_revision`, `unsupported`, `busy` or `notes_failed`.
+
 ## Worktrees
 
 Additive `worktrees:true` advertises owner-only worktree commands; scoped session callers receive `forbidden`. Requests share the four-per-connection event request limit (`busy` beyond it). Errors are `{type:"error", code, message, requestId?}`.

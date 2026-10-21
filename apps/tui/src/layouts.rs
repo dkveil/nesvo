@@ -25,6 +25,7 @@ pub enum Role {
     Jobs,
     Overview,
     Git,
+    Notes,
     Empty,
 }
 
@@ -42,6 +43,7 @@ impl Role {
             Self::Jobs => "Jobs",
             Self::Overview => "Overview",
             Self::Git => "Git",
+            Self::Notes => "Notes",
             Self::Empty => "Empty",
         }
     }
@@ -53,6 +55,7 @@ impl Role {
             Self::Jobs => "Press J to open Jobs".into(),
             Self::Overview => "Press O to focus the session overview".into(),
             Self::Git => "Press Y to open Git".into(),
+            Self::Notes => "Press T to open Notes".into(),
             Self::Agent | Self::Terminal | Self::Empty => "Press n to start a session".into(),
         }
     }
@@ -306,6 +309,7 @@ pub fn shipped() -> Vec<NamedLayout> {
         NamedLayout::new("Agent + Review", pair(Role::Review)),
         NamedLayout::new("Agent + Files", pair(Role::Files)),
         NamedLayout::new("Agent + Git", pair(Role::Git)),
+        NamedLayout::new("Agent + Notes", pair(Role::Notes)),
         quad,
     ]
 }
@@ -657,6 +661,7 @@ pub fn apply(app: &mut App, layout: &NamedLayout, width: u16) -> Result<Vec<Valu
     {
         commands.extend(crate::git_pane::open(app, false));
     }
+    commands.extend(crate::notes_controller::apply_layout(app));
     app.layouts.mark_active(project.as_deref(), &layout.name);
     Ok(commands)
 }

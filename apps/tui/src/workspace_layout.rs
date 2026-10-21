@@ -37,6 +37,8 @@ pub struct WorkspaceLayout {
     library: Library,
     #[serde(deserialize_with = "lenient")]
     files: crate::files_controller::Saved,
+    #[serde(deserialize_with = "lenient")]
+    notes: crate::notes::Saved,
 }
 impl WorkspaceLayout {
     pub fn capture(app: &App) -> Self {
@@ -52,6 +54,7 @@ impl WorkspaceLayout {
             tree: app.pane_layout.clone(),
             library: app.layouts.clone(),
             files: app.files.capture(),
+            notes: app.notes.saved(),
         }
     }
     pub fn library(&self) -> Library {
@@ -82,6 +85,7 @@ impl WorkspaceLayout {
         app.fullscreen = self.fullscreen;
         app.sidebar_width = self.sidebar_width;
         app.files.restore(&self.files);
+        app.notes.restore(&self.notes);
         let count = app.leaf_count();
         let slots = app.pane_tree().slots();
         for (index, slot) in slots.iter().enumerate().take(count.min(MAX_LEAVES)) {
