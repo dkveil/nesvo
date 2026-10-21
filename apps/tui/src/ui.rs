@@ -453,6 +453,25 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     {
         crate::ui_jobs::render(frame, app, jobs);
     }
+    if app.connected
+        && (app.overview.open || crate::overview::engaged(app))
+        && !matches!(
+            app.dialog,
+            Some(
+                Dialog::Menu
+                    | Dialog::ExitConfirm {
+                        from_menu: true,
+                        ..
+                    }
+            )
+        )
+    {
+        crate::ui_overview::render(frame, app);
+        if let Some(dialog) = app.dialog.as_ref().filter(|_| app.overview.open) {
+            render_dialog(frame, app, dialog);
+            ui_controls::render(frame, app);
+        }
+    }
     crate::toolbox::render(frame, app);
     if let Some(picker) = &app.session_kind {
         crate::ui_session_kind::render(frame, app, picker);
@@ -864,6 +883,10 @@ fn render_view(frame: &mut Frame, app: &App, role: Role, area: Rect) {
             area.height.min(1),
         ),
     );
+    if role == Role::Overview {
+        crate::ui_overview::render_leaf(frame, app, content);
+        return;
+    }
     let lines = vec![
         Line::from(Span::styled(
             role.label(),
@@ -1508,7 +1531,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("r  m  d", "Rename / move / delete"),
             ("f  u", "Filter status / mute attention"),
             ("F8  F9", "Templates / restore sessions"),
-            ("S  J", "Scheduled sessions / jobs"),
+            ("S  J  O", "Scheduled sessions / jobs / overview"),
             ("F2 / F3", "New session: options / save template"),
             ("v  Tab  L", "Split / change pane / layouts"),
             ("1  2  F", "Sessions / files sidebar"),

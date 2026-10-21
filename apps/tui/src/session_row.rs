@@ -92,6 +92,22 @@ pub fn status_label(session: &Session, program: Program) -> StatusLabel {
     }
 }
 
+pub fn status_source(session: &Session) -> &'static str {
+    let status = session
+        .current_attention
+        .as_ref()
+        .filter(|attention| attention.priority > 0)
+        .and_then(|attention| attention.status.as_ref())
+        .or(session.status.as_ref());
+    match status.map(|status| status.source) {
+        Some(Source::Program) => "program",
+        Some(Source::Hook) => "hook",
+        Some(Source::Screen) => "screen",
+        Some(Source::Process) => "process",
+        Some(Source::Activity) | None => "unknown",
+    }
+}
+
 pub struct SessionRow<'a> {
     pub name: &'a str,
     pub icon: &'a str,

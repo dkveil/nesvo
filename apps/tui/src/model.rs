@@ -129,6 +129,12 @@ impl RepositoryContext {
         .flatten()
     }
 
+    pub(crate) fn branch_name(&self) -> Option<&str> {
+        matches!(self.state, RepositoryState::Ready)
+            .then_some(self.branch.as_deref())
+            .flatten()
+    }
+
     fn append_search_terms(&self, terms: &mut String) {
         if matches!(
             self.state,
@@ -203,7 +209,7 @@ impl Session {
             |a| a.priority,
         )
     }
-    fn unread_completion(&self) -> bool {
+    pub(crate) fn unread_completion(&self) -> bool {
         // Historical notifications survive a new turn. They are not current
         // completion evidence while the host reports new work in progress.
         let working = self
@@ -431,6 +437,7 @@ pub struct App {
     pub palette_category: usize,
     pub overlay: Option<crate::toolbox::Overlay>,
     pub status_filters: HashSet<usize>,
+    pub overview: crate::overview::Overview,
     pub schedules: Vec<Value>,
     pub jobs: Option<crate::jobs::Jobs>,
     pub host_features: Value,
@@ -496,6 +503,7 @@ impl App {
             palette_expanded: false,
             palette_category: 0,
             status_filters: HashSet::new(),
+            overview: Default::default(),
             schedules: Vec::new(),
             jobs: None,
             host_features: Value::Null,
@@ -549,7 +557,7 @@ impl App {
         for session in &mut self.sessions {
             changed |= session.refresh_time(now);
         }
-        changed | crate::jobs_controller::tick(self)
+        changed | crate::jobs_controller::tick(self) | crate::overview::tick(self, now)
     }
 
     pub fn session(&self, id: &str) -> Option<&Session> {
@@ -560,7 +568,11 @@ impl App {
     }
     pub fn wake_available(&self) -> bool {
         self.active_session()
-            .is_some_and(|s| s.program == Program::Codex && s.running)
+            .is_some_and(|session| self.wake_offered(session))
+    }
+    pub fn wake_offered(&self, session: &Session) -> bool {
+        session.program == Program::Codex
+            && session.running
             && self.capabilities.as_ref().is_some_and(|caps| {
                 caps.quota_wake
                     && caps.provider_limits.iter().any(|p| {
@@ -1089,6 +1101,29 @@ impl App {
     }
 
     pub fn activate_session(&mut self, id: &str) -> Vec<Value> {
+        let mut commands = self.show_session(id);
+        let Some(session) = self.session(id) else {
+            return commands;
+        };
+        if !self.connected || !session.running {
+            return commands;
+        }
+        if self.owns(id) {
+            self.mode = Mode::Input;
+            self.notice.clear();
+        } else if session.controller_id.is_none() {
+            let (cols, rows) = (session.cols, session.rows);
+            self.pending_input = Some(id.into());
+            commands.push(json!({"type":"acquireControl","sessionId":id,
+                "takeOver":false,"cols":cols,"rows":rows}));
+            self.notice = "Starting terminal…".into();
+        } else {
+            self.notice = "Read-only view · another device has control · t takes over".into();
+        }
+        commands
+    }
+
+    pub fn show_session(&mut self, id: &str) -> Vec<Value> {
         if self.reviews.shown.is_some()
             && self
                 .pane_tree()
@@ -1135,24 +1170,6 @@ impl App {
             .position(|row| row.kind == RowKind::Session(id.into()))
         {
             self.selected = index;
-        }
-        let Some(session) = self.session(id) else {
-            return commands;
-        };
-        if !self.connected || !session.running {
-            return commands;
-        }
-        if self.owns(id) {
-            self.mode = Mode::Input;
-            self.notice.clear();
-        } else if session.controller_id.is_none() {
-            let (cols, rows) = (session.cols, session.rows);
-            self.pending_input = Some(id.into());
-            commands.push(json!({"type":"acquireControl","sessionId":id,
-                "takeOver":false,"cols":cols,"rows":rows}));
-            self.notice = "Starting terminal…".into();
-        } else {
-            self.notice = "Read-only view · another device has control · t takes over".into();
         }
         commands
     }
@@ -1387,6 +1404,9 @@ impl App {
                 if let (Some(id), Some(data)) =
                     (event["sessionId"].as_str(), event["data"].as_str())
                 {
+                    if event["replay"] != true && !data.is_empty() {
+                        self.overview.observe_output(id, std::time::Instant::now());
+                    }
                     let may_reply = self.owns(id)
                         && (event["replay"] != true || event["allowResponses"] == true);
                     if let Some(terminal) = self.terminals.get_mut(id) {

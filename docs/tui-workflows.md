@@ -30,6 +30,7 @@ F4 opens Git review directly from terminal input as well as navigation; F4 or Es
 | `1` / `2`, `F`            | Files sidebar: preview, paste path, pin `o`, find `#`  |
 | `S`                       | Scheduled sessions; refresh or cancel a pending launch |
 | `J`                       | Jobs: list, details, history, form                     |
+| `O`                       | Overview table; `w` wake, `f` filters, `/` text filter |
 | `H`                       | Replay onboarding                                      |
 | `w` when offered          | Confirm arming or disabling quota wake                 |
 

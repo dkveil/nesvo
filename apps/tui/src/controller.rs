@@ -55,6 +55,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     if app.jobs.is_some() && app.dialog.is_none() {
         return crate::jobs_controller::event(app, event);
     }
+    if crate::overview::engaged(app) && app.dialog.is_none() {
+        return crate::overview::event(app, event);
+    }
     let mut outcome = Outcome::default();
     match &event {
         Event::Key(_) | Event::Resize(..) => app.selection = None,
@@ -1268,12 +1271,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             if let Some(session) = app.active_session()
                 && (app.wake_available() || session.wake_at.is_some())
             {
-                let enabled = session.wake_at.is_none();
-                app.dialog = Some(Dialog::Confirm {
-                    title: if enabled { "Wake after quota reset?" } else { "Disable automatic wake?" }.into(),
-                    detail: "Send one Continue prompt only after a verified quota reset while this Codex session still shows a usage-limit message. Any manual input cancels the plan.".into(),
-                    command: json!({"type":"setWake", "sessionId":session.id, "enabled":enabled}),
-                });
+                app.dialog = Some(crate::overview::wake_confirm(session));
             }
         }
         KeyCode::Char('H') => app.overlay = Some(crate::toolbox::Overlay::Onboarding(0)),
@@ -1287,6 +1285,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             outcome.commands.push(json!({"type":"listSchedules"}));
         }
         KeyCode::Char('J') => crate::jobs_controller::open(app, outcome),
+        KeyCode::Char('O') => crate::overview::open(app),
         KeyCode::Tab if app.reviews.shown.is_some() => app.reviews.focused = true,
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,

@@ -49,7 +49,7 @@ impl Role {
             Self::Review => format!("Press F{review_key} to review the active session's changes"),
             Self::Files => "Press 2 to browse files".into(),
             Self::Jobs => "Press J to open Jobs".into(),
-            Self::Overview => "Overview arrives with a later slice".into(),
+            Self::Overview => "Press O to focus the session overview".into(),
             Self::Agent | Self::Terminal | Self::Empty => "Press n to start a session".into(),
         }
     }

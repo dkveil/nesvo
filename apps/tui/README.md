@@ -59,6 +59,7 @@ The start menu initially observes the first session without taking control. Ente
 | N                     | Session kind menu: agent, clean terminal or review      |
 | p                     | Show private phone pairing instructions and file paths  |
 | J                     | Open durable host jobs: list, details, history and form |
+| O                     | Overview of all sessions; Enter jumps without control   |
 | g                     | Create a group; choose root or a parent group           |
 | r / m                 | Rename / move the selected item                         |
 | d                     | Confirm deleting a session / deleting an empty group    |
