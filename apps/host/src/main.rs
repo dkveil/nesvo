@@ -36,6 +36,7 @@ mod job_webhook_http;
 mod jobs;
 mod launch_profile;
 mod launchers;
+mod migrations;
 mod notifications;
 mod operations;
 mod orchestration;
@@ -606,5 +607,205 @@ mod tests {
         fs::write(fixture.join("apps/host/Cargo.toml"), "").unwrap();
         assert_eq!(repository_pairing_directory(&fixture), expected);
         fs::remove_dir_all(fixture).unwrap();
+    }
+
+    mod boundary {
+        use std::{
+            fs,
+            path::{Path, PathBuf},
+            process::Command,
+        };
+
+        const JOURNAL_CLIENTS: &[&str] =
+            &["apps/host/src/transport.rs", "apps/host/src/sessions.rs"];
+        const JOURNAL_SERVICE_API: &[&str] = &[
+            "Service",
+            "Observation",
+            "Event",
+            "Page",
+            "monotonic_millis",
+        ];
+        const JOURNAL_INTERNAL_PATHS: &[&str] =
+            &["migrations::", "schema_migrations", "event_log as "];
+        const TUI_HOST_MODULES: &[&str] = &["protocol"];
+
+        fn repository_root() -> PathBuf {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .canonicalize()
+                .unwrap()
+        }
+
+        fn committed_sources(root: &Path) -> Vec<String> {
+            let listed = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(["ls-files", "--", "apps/host/src/*.rs", "apps/tui/src/*.rs"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| {
+                    String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|sources| !sources.is_empty());
+            listed.unwrap_or_else(|| {
+                let mut sources = Vec::new();
+                for directory in ["apps/host/src", "apps/tui/src"] {
+                    walk(root, &root.join(directory), &mut sources);
+                }
+                sources
+            })
+        }
+
+        fn walk(root: &Path, directory: &Path, sources: &mut Vec<String>) {
+            for entry in fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(root, &path, sources);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    let relative = path.strip_prefix(root).unwrap();
+                    sources.push(relative.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+
+        fn is_identifier(character: char) -> bool {
+            character.is_ascii_alphanumeric() || character == '_'
+        }
+
+        fn referenced_items(source: &str, module: &str) -> Vec<String> {
+            let prefix = format!("{module}::");
+            let mut items = Vec::new();
+            for (index, _) in source.match_indices(&prefix) {
+                if source[..index].ends_with(is_identifier) {
+                    continue;
+                }
+                let rest = &source[index + prefix.len()..];
+                if let Some(group) = rest.strip_prefix('{') {
+                    let group = &group[..group.find('}').unwrap_or(group.len())];
+                    items.extend(group.split(',').filter_map(|item| {
+                        let segment = item.trim().split("::").next()?.split(' ').next()?;
+                        (!segment.is_empty()).then(|| segment.to_owned())
+                    }));
+                } else {
+                    let end = rest.find(|c: char| !is_identifier(c)).unwrap_or(rest.len());
+                    items.push(rest[..end].to_owned());
+                }
+            }
+            items
+        }
+
+        fn journal_violations(source: &str) -> Vec<String> {
+            let mut violations: Vec<String> = referenced_items(source, "event_log")
+                .into_iter()
+                .filter(|item| !JOURNAL_SERVICE_API.contains(&item.as_str()))
+                .map(|item| format!("event_log::{item}"))
+                .collect();
+            violations.extend(
+                JOURNAL_INTERNAL_PATHS
+                    .iter()
+                    .filter(|path| source.contains(**path))
+                    .map(|path| (*path).to_owned()),
+            );
+            violations
+        }
+
+        fn host_import_violations(source: &str) -> Vec<String> {
+            let mut violations: Vec<String> = source
+                .match_indices("nesvo_host")
+                .filter(|(index, _)| !source[..*index].ends_with(is_identifier))
+                .filter(|(index, name)| !source[index + name.len()..].starts_with("::"))
+                .map(|_| "nesvo_host without a module path".to_owned())
+                .collect();
+            violations.extend(
+                referenced_items(source, "nesvo_host")
+                    .into_iter()
+                    .filter(|item| !TUI_HOST_MODULES.contains(&item.as_str()))
+                    .map(|item| format!("nesvo_host::{item}")),
+            );
+            violations.extend(
+                source
+                    .match_indices("host/src/")
+                    .map(|(index, prefix)| &source[index + prefix.len()..])
+                    .filter(|rest| {
+                        !TUI_HOST_MODULES
+                            .iter()
+                            .any(|module| rest.starts_with(&format!("{module}.rs")))
+                    })
+                    .map(|rest| {
+                        let end = rest.find(['"', ')']).unwrap_or(rest.len());
+                        format!("host/src/{}", &rest[..end])
+                    }),
+            );
+            violations
+        }
+
+        #[test]
+        fn boundary_scanner_flags_journal_internals_and_host_imports() {
+            assert_eq!(
+                journal_violations(
+                    "use crate::event_log::{Service, Store};\nlet head = crate::event_log::append_transaction(&tx, events);\ncrate::migrations::apply_pending(&tx);\nlet code = \"event_log_unavailable\";\ncrate::event_log::monotonic_millis();"
+                ),
+                [
+                    "event_log::Store",
+                    "event_log::append_transaction",
+                    "migrations::"
+                ]
+            );
+            assert_eq!(
+                host_import_violations(
+                    "use nesvo_host::protocol::Command;\nuse nesvo_host::{protocol, sessions::State};\nuse nesvo_host as host;\n#[path = \"../../host/src/event_log.rs\"]\nmod journal;\n#[path = \"../../host/src/protocol.rs\"]\nmod protocol;"
+                ),
+                [
+                    "nesvo_host without a module path",
+                    "nesvo_host::sessions",
+                    "host/src/event_log.rs"
+                ]
+            );
+        }
+
+        #[test]
+        fn boundary_transport_and_sessions_reach_the_journal_only_through_its_service_api() {
+            let root = repository_root();
+            let sources = committed_sources(&root);
+            for client in JOURNAL_CLIENTS {
+                assert!(
+                    sources.iter().any(|source| source == client),
+                    "{client} is part of the scanned source list"
+                );
+                let violations =
+                    journal_violations(&fs::read_to_string(root.join(client)).unwrap());
+                assert!(
+                    violations.is_empty(),
+                    "{client} must reach the event journal only through event_log::{JOURNAL_SERVICE_API:?}, never its store, schema or migrations; found {violations:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn boundary_tui_sources_import_no_host_module_except_protocol() {
+            let root = repository_root();
+            let tui_sources: Vec<String> = committed_sources(&root)
+                .into_iter()
+                .filter(|source| source.starts_with("apps/tui/src/"))
+                .collect();
+            assert!(
+                tui_sources
+                    .iter()
+                    .any(|source| source == "apps/tui/src/main.rs"),
+                "the TUI sources are part of the scanned source list"
+            );
+            for source in tui_sources {
+                let violations =
+                    host_import_violations(&fs::read_to_string(root.join(&source)).unwrap());
+                assert!(
+                    violations.is_empty(),
+                    "{source} may use host modules {TUI_HOST_MODULES:?} only and otherwise depends on nesvo-wire; found {violations:?}"
+                );
+            }
+        }
     }
 }

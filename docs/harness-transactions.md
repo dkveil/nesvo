@@ -24,3 +24,9 @@ The former deferred implementation fails with `database is locked`; immediate
 admission passes and preserves same-key receipt replay. Native integration's
 earlier transient unconfirmed operation was not instrumented with an SQL code,
 so its exact cause remains unproven even though this conflict is reproduced.
+
+Schema setup follows the same admission rule. The journal applies pending
+numbered migrations and records them in `schema_migrations` inside its one
+immediate schema transaction, so a failed file rolls back with the rest of the
+batch. The metadata store runs its table creation and interrupted-launch
+updates in one immediate transaction instead of separate autocommit writes.

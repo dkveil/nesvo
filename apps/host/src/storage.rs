@@ -111,10 +111,12 @@ impl MetadataStore {
     }
 
     pub fn open(path: &Path) -> Result<Self> {
-        let connection = Connection::open(path).context("Could not open metadata database")?;
+        let mut connection = Connection::open(path).context("Could not open metadata database")?;
         connection.busy_timeout(Duration::from_secs(2))?;
-        connection.execute_batch("PRAGMA foreign_keys=ON;
-            CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT NOT NULL);
+        connection.execute_batch("PRAGMA foreign_keys=ON;")?;
+        let schema =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        schema.execute_batch("CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS recovery (id TEXT PRIMARY KEY, spec TEXT NOT NULL, state TEXT NOT NULL);
             UPDATE recovery SET state='interrupted' WHERE state='starting';
             CREATE TABLE IF NOT EXISTS push_devices (token TEXT PRIMARY KEY);
@@ -126,6 +128,7 @@ impl MetadataStore {
             CREATE TABLE IF NOT EXISTS metadata (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
             INSERT OR IGNORE INTO metadata(id,revision) VALUES(1,0);
             CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES groups(id), name TEXT NOT NULL, sort_order INTEGER NOT NULL);")?;
+        schema.commit()?;
         let revision: i64 =
             connection.query_row("SELECT revision FROM metadata WHERE id=1", [], |row| {
                 row.get(0)

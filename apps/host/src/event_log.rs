@@ -198,6 +198,18 @@ mod workflow_recovery_tests;
 mod workflow_wakes_tests;
 impl Store {
     fn open(path: &std::path::Path) -> Result<Self> {
+        Self::open_with_schema(path, |schema| {
+            crate::migrations::apply_pending(schema).map(drop)
+        })
+    }
+    #[cfg(test)]
+    fn legacy_initialize(path: &std::path::Path) -> Result<Self> {
+        Self::open_with_schema(path, crate::orchestration::initialize)
+    }
+    fn open_with_schema(
+        path: &std::path::Path,
+        initialize_schema: impl FnOnce(&Connection) -> Result<()>,
+    ) -> Result<Self> {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_millis(50))?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -211,7 +223,7 @@ impl Store {
         {
             let schema =
                 connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            crate::orchestration::initialize(&schema)?;
+            initialize_schema(&schema)?;
             schema.commit()?;
         }
         crate::workflow_launches::recover(&mut connection)?;
@@ -1453,6 +1465,48 @@ mod tests {
                 );
             }
             assert!(store.0.is_autocommit());
+        }
+    }
+
+    #[test]
+    fn startup_schema_migrations_upgrade_a_legacy_database_to_the_fresh_schema() {
+        let legacy = StartupDatabase::new();
+        crate::storage::MetadataStore::open(&legacy.path).unwrap();
+        let legacy_store = Store::legacy_initialize(&legacy.path).unwrap();
+        assert!(
+            !crate::migrations::schema_snapshot(&legacy_store.0)
+                .iter()
+                .any(|(_, name, _)| name == "schema_migrations")
+        );
+        drop(legacy_store);
+        let fresh = StartupDatabase::new();
+        crate::storage::MetadataStore::open(&fresh.path).unwrap();
+        let fresh_schema = crate::migrations::schema_snapshot(&Store::open(&fresh.path).unwrap().0);
+        for _ in 0..2 {
+            let upgraded = Store::open(&legacy.path).unwrap();
+            assert_eq!(
+                crate::migrations::schema_snapshot(&upgraded.0),
+                fresh_schema,
+                "a database created by the pre-migration initializer reaches the fresh schema"
+            );
+            let mut query = upgraded
+                .0
+                .prepare("SELECT version FROM schema_migrations ORDER BY version")
+                .unwrap();
+            let versions = query
+                .query_map([], |row| row.get::<_, u32>(0))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(
+                versions,
+                crate::migrations::MIGRATIONS
+                    .iter()
+                    .map(|migration| migration.version)
+                    .collect::<Vec<_>>()
+            );
+            drop(query);
+            assert!(upgraded.0.is_autocommit());
         }
     }
 

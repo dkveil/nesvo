@@ -62,8 +62,8 @@ write/flush failure, fixed bounds, strict parsing and private-input rejection.
 
 ## Schema initialization boundary
 
-The journal's orchestration schema initializer runs in one immediate SQLite
-transaction. It contains DDL, additive migrations and default budget insertion;
+The journal applies its pending numbered migrations in one immediate SQLite
+transaction. They hold DDL, additive columns and default budget insertion;
 it does not dispatch work. Receipt and quota recovery remain before this batch,
 and workflow/job recovery remains after it. Those recovery operations keep their
 own existing transactions and ordering. WAL, synchronous FULL, foreign keys and

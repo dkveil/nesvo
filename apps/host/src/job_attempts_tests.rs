@@ -460,7 +460,7 @@ fn legacy_disk_reopen_backfills_once_and_preserves_original_evidence_and_keys() 
         store.0.query_row("SELECT digest,view FROM harness_job_mutations WHERE issuer='owner' AND key='old-accepted-key'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap()
     };
     {
-        let legacy = Store::open(&path).unwrap();
+        let legacy = Store::legacy_initialize(&path).unwrap();
         run(&legacy, "legacy-run");
         for (id, state, claimed, finished, run) in [
             (
