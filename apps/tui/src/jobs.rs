@@ -291,29 +291,92 @@ pub enum FormField {
     Agent,
     Folder,
     Instruction,
+    Schedule,
     Start,
+    Expression,
+    Rule,
+    LocalStart,
+    TimeZone,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScheduleKind {
+    Once,
+    Cron,
+    Rrule,
+    External,
+}
+
+impl ScheduleKind {
+    const ALL: [Self; 4] = [Self::Once, Self::Cron, Self::Rrule, Self::External];
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::Cron => "cron",
+            Self::Rrule => "rrule",
+            Self::External => "external",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Once => "One time",
+            Self::Cron => "Cron (recurring)",
+            Self::Rrule => "Calendar RRULE (recurring)",
+            Self::External => "External trigger only",
+        }
+    }
+
+    fn parse(kind: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.wire() == kind)
+    }
+
+    pub fn advertised(features: &Value) -> Vec<Self> {
+        let listed = features["jobScheduleKinds"].as_array();
+        Self::ALL
+            .into_iter()
+            .filter(|kind| {
+                *kind == Self::Once
+                    || listed.is_some_and(|kinds| kinds.iter().any(|item| item == kind.wire()))
+            })
+            .collect()
+    }
+
+    fn fields(self) -> &'static [FormField] {
+        match self {
+            Self::Once => &[FormField::Start],
+            Self::Cron => &[FormField::Expression, FormField::TimeZone],
+            Self::Rrule => &[FormField::Rule, FormField::LocalStart, FormField::TimeZone],
+            Self::External => &[],
+        }
+    }
 }
 
 impl FormField {
-    const ORDER: [Self; 5] = [
+    const BASE: [Self; 5] = [
         Self::Title,
         Self::Agent,
         Self::Folder,
         Self::Instruction,
-        Self::Start,
+        Self::Schedule,
     ];
 
-    fn step(self, forward: bool) -> Self {
-        let index = Self::ORDER
-            .iter()
-            .position(|field| *field == self)
-            .unwrap_or(0);
+    pub fn order(kind: ScheduleKind) -> Vec<Self> {
+        Self::BASE.iter().chain(kind.fields()).copied().collect()
+    }
+
+    fn step(self, kind: ScheduleKind, forward: bool) -> Self {
+        let order = Self::order(kind);
+        let index = order.iter().position(|field| *field == self).unwrap_or(0);
         let next = if forward {
-            (index + 1) % Self::ORDER.len()
+            (index + 1) % order.len()
         } else {
-            (index + Self::ORDER.len() - 1) % Self::ORDER.len()
+            (index + order.len() - 1) % order.len()
         };
-        Self::ORDER[next]
+        order[next]
     }
 }
 
@@ -332,14 +395,35 @@ pub struct Form {
     pub programs: Vec<Program>,
     pub folder: String,
     pub instruction: String,
+    pub kind: ScheduleKind,
+    pub kinds: Vec<ScheduleKind>,
     pub start: String,
+    pub expression: String,
+    pub rule: String,
+    pub local_start: String,
+    pub time_zone: String,
     pub field: FormField,
     pub return_page: Page,
 }
 
 impl Form {
     pub fn step(&mut self, forward: bool) {
-        self.field = self.field.step(forward);
+        self.field = self.field.step(self.kind, forward);
+    }
+
+    pub fn cycle_kind(&mut self, forward: bool) {
+        let count = self.kinds.len();
+        let Some(index) = self.kinds.iter().position(|kind| *kind == self.kind) else {
+            if let Some(first) = self.kinds.first() {
+                self.kind = *first;
+            }
+            return;
+        };
+        self.kind = self.kinds[if forward {
+            (index + 1) % count
+        } else {
+            (index + count - 1) % count
+        }];
     }
 
     pub fn cycle_program(&mut self, forward: bool) {
@@ -363,8 +447,42 @@ impl Form {
             FormField::Folder => Some(&mut self.folder),
             FormField::Instruction => Some(&mut self.instruction),
             FormField::Start => Some(&mut self.start),
-            FormField::Agent => None,
+            FormField::Expression => Some(&mut self.expression),
+            FormField::Rule => Some(&mut self.rule),
+            FormField::LocalStart => Some(&mut self.local_start),
+            FormField::TimeZone => Some(&mut self.time_zone),
+            FormField::Agent | FormField::Schedule => None,
         }
+    }
+
+    fn schedule(&self) -> std::result::Result<Value, &'static str> {
+        let mut schedule = match self.kind {
+            ScheduleKind::Once => {
+                if let Some(schedule) = self.unchanged_schedule() {
+                    return Ok(schedule);
+                }
+                let at = job_time::rfc3339(&self.start)
+                    .ok_or("Start needs a date, time and offset: 2026-10-22 16:02 +02:00.")?;
+                return Ok(json!({"kind": "once", "at": at}));
+            }
+            ScheduleKind::External => return Ok(json!({"kind": "external"})),
+            ScheduleKind::Cron => {
+                if self.expression.trim().is_empty() {
+                    return Err("Give the five cron fields: minute hour day month weekday.");
+                }
+                json!({"kind": "cron", "expression": self.expression.trim()})
+            }
+            ScheduleKind::Rrule => {
+                if self.rule.trim().is_empty() || self.local_start.trim().is_empty() {
+                    return Err("Give the RRULE and its local start: 2026-11-02T09:00:00.");
+                }
+                json!({"kind": "rrule", "rule": self.rule.trim(), "start": self.local_start.trim()})
+            }
+        };
+        if !self.time_zone.trim().is_empty() {
+            schedule["timeZone"] = self.time_zone.trim().into();
+        }
+        Ok(schedule)
     }
 
     fn spec(&self) -> std::result::Result<Value, &'static str> {
@@ -377,14 +495,7 @@ impl Form {
         if self.program == Program::Shell {
             return Err("Jobs need an installed agent.");
         }
-        let schedule = match self.unchanged_schedule() {
-            Some(schedule) => schedule,
-            None => {
-                let at = job_time::rfc3339(&self.start)
-                    .ok_or("Start needs a date, time and offset: 2026-10-22 16:02 +02:00.")?;
-                json!({"kind": "once", "at": at})
-            }
-        };
+        let schedule = self.schedule()?;
         let folder = self.folder.trim();
         let mut spec = self.target.as_ref().map_or_else(
             || {
@@ -412,6 +523,9 @@ impl Form {
 
     fn unchanged_schedule(&self) -> Option<Value> {
         let schedule = &self.target.as_ref()?.spec["schedule"];
+        if schedule["kind"] != "once" {
+            return None;
+        }
         let at = schedule["at"].as_str()?;
         (job_time::form_start(at) == self.start.trim()).then(|| schedule.clone())
     }
@@ -479,6 +593,7 @@ pub struct Jobs {
     pub occurrence: Option<String>,
     pub form: Option<Form>,
     pub now_ms: i64,
+    pub schedule_kinds: Vec<ScheduleKind>,
     prefix: String,
     counter: u64,
     reads: HashMap<String, Read>,
@@ -502,6 +617,7 @@ impl Jobs {
             occurrence: None,
             form: None,
             now_ms,
+            schedule_kinds: ScheduleKind::advertised(features),
             prefix: format!("tui-{client_id}-jobs"),
             counter: 0,
             reads: HashMap::new(),
@@ -734,7 +850,13 @@ impl Jobs {
             programs,
             folder,
             instruction: String::new(),
+            kind: ScheduleKind::Once,
+            kinds: self.schedule_kinds.clone(),
             start: String::new(),
+            expression: String::new(),
+            rule: String::new(),
+            local_start: String::new(),
+            time_zone: String::new(),
             field: FormField::Title,
             return_page: self.page,
         });
@@ -748,11 +870,15 @@ impl Jobs {
         let Some(spec) = job.spec.clone() else {
             return Effect::notice("Job details are still loading.");
         };
-        if job.kind() != "once" {
-            return Effect::notice(
-                "Recurring and external schedules are edited with nesvo job edit.",
-            );
+        let Some(kind) = ScheduleKind::parse(job.kind()) else {
+            return Effect::notice("This schedule kind is edited with nesvo job edit.");
+        };
+        let mut kinds = self.schedule_kinds.clone();
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
         }
+        let schedule = &spec["schedule"];
+        let text = |name: &str| schedule[name].as_str().unwrap_or_default().to_owned();
         let program =
             serde_json::from_value(spec["profile"]["program"].clone()).unwrap_or(Program::Claude);
         self.form = Some(Form {
@@ -769,8 +895,15 @@ impl Jobs {
                 .unwrap_or_default()
                 .to_owned(),
             instruction: spec["instruction"].as_str().unwrap_or_default().to_owned(),
+            kind,
+            kinds,
             start: job_time::form_start(spec["schedule"]["at"].as_str().unwrap_or_default()),
+            expression: text("expression"),
+            rule: text("rule"),
+            local_start: text("start"),
+            time_zone: text("timeZone"),
             field: FormField::Title,
+
             return_page: self.page,
         });
         self.page = Page::Form;
@@ -1368,11 +1501,173 @@ pub(crate) mod tests {
                 ..jobs.definitions[1].clone()
             },
         );
+        assert!(jobs.edit_form(vec![Program::Claude]).notice.is_none());
+        assert_eq!(jobs.form.as_ref().unwrap().kind, ScheduleKind::Cron);
+    }
+
+    fn draft(jobs: &mut Jobs, kind: ScheduleKind) -> &mut Form {
+        jobs.mutation = None;
+        jobs.new_form(vec![Program::Claude], "C:/Projects/nesvo".into());
+        let form = jobs.form.as_mut().unwrap();
+        form.title = "Recurring".into();
+        form.instruction = "Report".into();
+        form.kind = kind;
+        form
+    }
+
+    fn sent_schedule(effect: &Effect) -> Value {
+        effect.commands[0]["request"]["request"]["spec"]["schedule"].clone()
+    }
+
+    #[test]
+    fn form_offers_advertised_kinds_and_orders_their_fields() {
+        let mut jobs = loaded();
+        jobs.new_form(vec![Program::Claude], "C:/Projects/nesvo".into());
+        let form = jobs.form.as_mut().unwrap();
+        assert_eq!(
+            form.kinds,
+            [
+                ScheduleKind::Once,
+                ScheduleKind::Cron,
+                ScheduleKind::Rrule,
+                ScheduleKind::External
+            ]
+        );
+        form.field = FormField::Instruction;
+        form.step(true);
+        assert_eq!(form.field, FormField::Schedule);
+        assert!(form.text_mut().is_none());
+        form.cycle_kind(true);
+        form.cycle_kind(true);
+        assert_eq!(form.kind, ScheduleKind::Rrule);
+        assert_eq!(
+            FormField::order(form.kind)[5..],
+            [FormField::Rule, FormField::LocalStart, FormField::TimeZone]
+        );
+        form.cycle_kind(false);
+        form.cycle_kind(false);
+        form.cycle_kind(false);
+        assert_eq!(form.kind, ScheduleKind::External);
+        form.step(true);
+        assert_eq!(form.field, FormField::Title);
+        assert_eq!(
+            ScheduleKind::advertised(&json!({"jobScheduleKinds":["once"]})),
+            [ScheduleKind::Once]
+        );
+        assert_eq!(ScheduleKind::advertised(&json!({})), [ScheduleKind::Once]);
+    }
+
+    #[test]
+    fn form_sends_recurring_and_external_schedules_through_the_cli_job_model() {
+        let features = features();
+        let mut jobs = loaded();
         assert!(
-            jobs.edit_form(vec![Program::Claude])
+            jobs.save_form(&features).commands.is_empty(),
+            "no form, no command"
+        );
+        draft(&mut jobs, ScheduleKind::Cron);
+        assert!(
+            jobs.save_form(&features)
                 .notice
                 .unwrap()
-                .contains("nesvo job edit")
+                .contains("five cron fields")
+        );
+        jobs.form.as_mut().unwrap().expression = "0 9 * * MON-FRI".into();
+        let cron = jobs.save_form(&features);
+        assert_eq!(
+            sent_schedule(&cron),
+            json!({"kind":"cron","expression":"0 9 * * MON-FRI","timeZone":"Europe/Warsaw"})
+        );
+        let request = &cron.commands[0]["request"]["request"];
+        assert_eq!(request["action"], "create");
+        assert!(request["key"].as_str().unwrap().starts_with("tui-job-"));
+
+        let form = draft(&mut jobs, ScheduleKind::Cron);
+        form.expression = "every weekday".into();
+        let unparsed = jobs.save_form(&features);
+        assert_eq!(sent_schedule(&unparsed)["expression"], "every weekday");
+
+        let form = draft(&mut jobs, ScheduleKind::Rrule);
+        form.rule = "FREQ=WEEKLY;BYDAY=MO".into();
+        assert!(
+            jobs.save_form(&features)
+                .notice
+                .unwrap()
+                .contains("local start")
+        );
+        let form = jobs.form.as_mut().unwrap();
+        form.local_start = "2026-11-02T09:00:00".into();
+        form.time_zone = " America/New_York ".into();
+        assert_eq!(
+            sent_schedule(&jobs.save_form(&features)),
+            json!({"kind":"rrule","rule":"FREQ=WEEKLY;BYDAY=MO","start":"2026-11-02T09:00:00","timeZone":"America/New_York"})
+        );
+
+        draft(&mut jobs, ScheduleKind::External);
+        assert!(
+            jobs.save_form(&features)
+                .notice
+                .unwrap()
+                .contains("external job or trigger provider")
+        );
+        let mut triggers = features.clone();
+        triggers["jobExternalTriggers"] = true.into();
+        triggers["jobTriggerProviders"] = json!(["webhook", "github"]);
+        assert_eq!(
+            sent_schedule(&jobs.save_form(&triggers)),
+            json!({"kind":"external"})
+        );
+        let once_only = json!({"workflowPlans":true,"workflowAttempts":true,"durableJobs":true,"jobScheduleKinds":["once"]});
+        let form = draft(&mut jobs, ScheduleKind::Cron);
+        form.expression = "0 2 * * *".into();
+        assert!(
+            jobs.save_form(&once_only)
+                .notice
+                .unwrap()
+                .contains("job calendar")
+        );
+    }
+
+    #[test]
+    fn editing_a_recurring_job_prefills_its_schedule_and_keeps_unshown_fields() {
+        let features = features();
+        let mut jobs = loaded();
+        let mut nightly = definitions()[1].clone();
+        nightly["spec"] = json!({
+            "title":"Nightly checks","instruction":"Run the checks",
+            "profile":{"name":null,"cwd":null,"program":"codex","workspace":"worktree","harness":true},
+            "schedule":{"kind":"cron","expression":"0 2 * * *","timeZone":"Europe/Warsaw"},
+            "misfire":"skip","graceMs":60000,"overlap":"queue","maxElapsedMs":300000
+        });
+        jobs.details
+            .insert("nightly".into(), serde_json::from_value(nightly).unwrap());
+        jobs.selected = Some("nightly".into());
+        jobs.page = Page::Detail;
+        assert!(jobs.edit_form(vec![Program::Codex]).notice.is_none());
+        let form = jobs.form.as_mut().unwrap();
+        assert_eq!(form.kind, ScheduleKind::Cron);
+        assert_eq!(form.expression, "0 2 * * *");
+        assert_eq!(form.time_zone, "Europe/Warsaw");
+        form.title = "Nightly checks v2".into();
+        let update = jobs.save_form(&features);
+        let request = &update.commands[0]["request"]["request"];
+        assert_eq!(request["action"], "update");
+        assert_eq!(request["expectedRevision"], 1);
+        assert_eq!(request["spec"]["profile"]["workspace"], "worktree");
+        assert_eq!(request["spec"]["misfire"], "skip");
+        assert_eq!(
+            request["spec"]["schedule"],
+            json!({"kind":"cron","expression":"0 2 * * *","timeZone":"Europe/Warsaw"})
+        );
+        jobs.mutation = None;
+        let form = jobs.form.as_mut().unwrap();
+        form.kind = ScheduleKind::Rrule;
+        form.rule = "FREQ=DAILY".into();
+        form.local_start = "2026-11-02T02:00:00".into();
+        let moved = jobs.save_form(&features);
+        assert_eq!(
+            sent_schedule(&moved),
+            json!({"kind":"rrule","rule":"FREQ=DAILY","start":"2026-11-02T02:00:00","timeZone":"Europe/Warsaw"})
         );
     }
 

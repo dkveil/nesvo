@@ -536,7 +536,7 @@ fn history(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
     );
 }
 
-fn field(
+fn field_input(
     frame: &mut Frame,
     app: &App,
     area: Rect,
@@ -560,6 +560,81 @@ fn field(
     );
 }
 
+fn form_label(field: FormField) -> &'static str {
+    match field {
+        FormField::Title => "TITLE",
+        FormField::Agent => "AGENT",
+        FormField::Folder => "FOLDER · shared workspace",
+        FormField::Instruction => "INSTRUCTION",
+        FormField::Schedule => "SCHEDULE · ←→ choose",
+        FormField::Start => "START · one time, explicit offset",
+        FormField::Expression => "CRON · minute hour day month weekday",
+        FormField::Rule => "RRULE · e.g. FREQ=WEEKLY;BYDAY=MO",
+        FormField::LocalStart => "LOCAL START · YYYY-MM-DDTHH:MM:SS",
+        FormField::TimeZone => "TIME ZONE · IANA, blank uses Europe/Warsaw",
+    }
+}
+
+fn form_value(draft: &crate::jobs::Form, field: FormField) -> &str {
+    match field {
+        FormField::Title => &draft.title,
+        FormField::Agent => draft.program.label(),
+        FormField::Folder => &draft.folder,
+        FormField::Instruction => &draft.instruction,
+        FormField::Schedule => draft.kind.label(),
+        FormField::Start => &draft.start,
+        FormField::Expression => &draft.expression,
+        FormField::Rule => &draft.rule,
+        FormField::LocalStart => &draft.local_start,
+        FormField::TimeZone => &draft.time_zone,
+    }
+}
+
+fn form_rows(field: FormField, compact: bool) -> u16 {
+    match (field, compact) {
+        (FormField::Instruction, true) => 2,
+        (FormField::Instruction, false) => 6,
+        (_, true) => 1,
+        (_, false) => 3,
+    }
+}
+
+fn compact_field(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    field: FormField,
+    value: &str,
+    focused: bool,
+) {
+    if area.is_empty() {
+        return;
+    }
+    let label = form_label(field).split(" · ").next().unwrap_or_default();
+    let label_width = 14.min(area.width);
+    text(
+        frame,
+        Rect::new(area.x, area.y, label_width, 1),
+        label,
+        MUTED,
+    );
+    frame.render_widget(
+        Paragraph::new(format!(" {value}"))
+            .style(Style::default().fg(TEXT).bg(if focused {
+                app.theme.selection()
+            } else {
+                SURFACE
+            }))
+            .wrap(Wrap { trim: false }),
+        Rect::new(
+            area.x + label_width,
+            area.y,
+            area.width - label_width,
+            area.height,
+        ),
+    );
+}
+
 fn form(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
     let Some(draft) = &jobs.form else {
         return;
@@ -572,68 +647,64 @@ fn form(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
         row(area, 0),
     );
     let area = Rect::new(area.x, area.y, area.width.min(76), area.height);
-    let focused = |field: FormField| draft.field == field;
-    field(
-        frame,
-        app,
-        area,
-        3,
-        "TITLE",
-        &draft.title,
-        focused(FormField::Title),
-    );
-    field(
-        frame,
-        app,
-        area,
-        6,
-        "AGENT",
-        draft.program.label(),
-        focused(FormField::Agent),
-    );
-    field(
-        frame,
-        app,
-        area,
-        9,
-        "FOLDER · shared workspace",
-        &draft.folder,
-        focused(FormField::Folder),
-    );
-    section(frame, row(area, 12), "INSTRUCTION");
-    let prompt = below(area, 13, 3);
-    if !prompt.is_empty() {
-        frame.render_widget(
-            Paragraph::new(format!(" {}", draft.instruction))
-                .style(
-                    Style::default()
-                        .fg(TEXT)
-                        .bg(if focused(FormField::Instruction) {
+    let fields = FormField::order(draft.kind);
+    let tall: u16 = 3 + fields.iter().map(|f| form_rows(*f, false)).sum::<u16>() + 5;
+    let compact = area.height < tall;
+    let mut y = if compact { 2 } else { 3 };
+    for field in fields {
+        let focused = draft.field == field;
+        let value = form_value(draft, field);
+        if compact {
+            compact_field(
+                frame,
+                app,
+                below(area, y, form_rows(field, true)),
+                field,
+                value,
+                focused,
+            );
+        } else if field == FormField::Instruction {
+            section(frame, row(area, y), form_label(field));
+            let prompt = below(area, y + 1, 3);
+            if !prompt.is_empty() {
+                frame.render_widget(
+                    Paragraph::new(format!(" {value}"))
+                        .style(Style::default().fg(TEXT).bg(if focused {
                             app.theme.selection()
                         } else {
                             SURFACE
-                        }),
-                )
-                .wrap(Wrap { trim: false }),
-            prompt,
-        );
+                        }))
+                        .wrap(Wrap { trim: false }),
+                    prompt,
+                );
+            }
+        } else {
+            field_input(frame, app, area, y, form_label(field), value, focused);
+        }
+        y += form_rows(field, compact);
     }
-    field(
-        frame,
-        app,
-        area,
-        18,
-        "START · one time, explicit offset",
-        &draft.start,
-        focused(FormField::Start),
-    );
+    if draft.kind == crate::jobs::ScheduleKind::External {
+        text(
+            frame,
+            row(area, y),
+            "Trigger only · nesvo job trigger create",
+            MUTED,
+        );
+        y += if compact { 1 } else { 2 };
+    }
+    let gap = if compact { 0 } else { 1 };
     text(
         frame,
-        row(area, 22),
+        row(area, y + gap),
         "Host must remain running. Provider consent can still be required.",
         MUTED,
     );
-    text(frame, row(area, 25), quota_hint(draft.program), MUTED);
+    text(
+        frame,
+        row(area, y + gap + if compact { 1 } else { 3 }),
+        quota_hint(draft.program),
+        MUTED,
+    );
 }
 
 fn quota_hint(program: crate::launch::Program) -> &'static str {
@@ -977,16 +1048,68 @@ mod tests {
         assert_eq!(buffer[(44, 12)].bg, SURFACE);
         assert!(line(&buffer, 14).contains("FOLDER · shared workspace"));
         assert!(line(&buffer, 18).contains("Review changes and report findings."));
-        assert!(line(&buffer, 23).contains("START · one time, explicit offset"));
-        assert!(line(&buffer, 24).contains("2026-10-22 16:02 +02:00"));
-        assert!(line(&buffer, 27).contains("Host must remain running."));
-        assert!(line(&buffer, 30).contains("Quota · a known provider limit holds starts"));
+        assert!(line(&buffer, 23).contains("SCHEDULE · ←→ choose"));
+        assert!(line(&buffer, 24).contains(" One time"));
+        assert!(line(&buffer, 26).contains("START · one time, explicit offset"));
+        assert!(line(&buffer, 27).contains("2026-10-22 16:02 +02:00"));
+        assert!(line(&buffer, 30).contains("Host must remain running."));
+        assert!(line(&buffer, 33).contains("Quota · a known provider limit holds starts"));
         jobs(&mut app).form.as_mut().unwrap().program = Program::Gemini;
         let gemini = draw(&app, 150, 44);
-        assert!(line(&gemini, 30).contains("Quota · no admission source"));
+        assert!(line(&gemini, 33).contains("Quota · no admission source"));
         let footer = line(&buffer, 43);
         for hint in [" Tab ", " field", " Enter ", " save", " Esc ", " discard"] {
             assert!(footer.contains(hint), "{hint}");
+        }
+    }
+
+    #[test]
+    fn recurring_and_external_forms_fit_every_supported_size() {
+        let mut app = app(fixtures::loaded());
+        jobs(&mut app).new_form(vec![Program::Claude], "C:/Projects/nesvo".into());
+        let form = jobs(&mut app).form.as_mut().unwrap();
+        form.title = "Weekly notes".into();
+        form.instruction = "Draft release notes".into();
+        form.kind = crate::jobs::ScheduleKind::Rrule;
+        form.rule = "FREQ=WEEKLY;BYDAY=MO".into();
+        form.local_start = "2026-11-02T09:00:00".into();
+        form.field = FormField::TimeZone;
+        for (width, height) in [(150, 44), (100, 32), (80, 24)] {
+            let buffer = draw(&app, width, height);
+            let all = screen(&buffer);
+            for needle in [
+                "Calendar RRULE (recurring)",
+                "FREQ=WEEKLY;BYDAY=MO",
+                "2026-11-02T09:00:00",
+                "TIME ZONE",
+                "Quota · a known provider limit",
+            ] {
+                assert!(all.contains(needle), "{width}x{height} {needle}\n{all}");
+            }
+            let (_, zone) = find(&buffer, "TIME ZONE").unwrap();
+            let input = if height == 44 { zone + 1 } else { zone };
+            assert_eq!(
+                buffer[(60, input)].bg,
+                app.theme.selection(),
+                "{width}x{height}"
+            );
+            assert!(line(&buffer, height - 1).contains(" Esc "));
+        }
+        let form = jobs(&mut app).form.as_mut().unwrap();
+        form.kind = crate::jobs::ScheduleKind::Cron;
+        form.expression = "0 9 * * MON-FRI".into();
+        form.field = FormField::Expression;
+        let buffer = draw(&app, 80, 24);
+        assert!(screen(&buffer).contains("CRON"));
+        assert!(screen(&buffer).contains("0 9 * * MON-FRI"));
+        jobs(&mut app).form.as_mut().unwrap().kind = crate::jobs::ScheduleKind::External;
+        for (width, height) in [(150, 44), (80, 24)] {
+            let all = screen(&draw(&app, width, height));
+            assert!(all.contains("External trigger only"));
+            assert!(
+                all.contains("nesvo job trigger create"),
+                "{width}x{height}\n{all}"
+            );
         }
     }
 

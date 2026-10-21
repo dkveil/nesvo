@@ -178,7 +178,12 @@ fn form_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
             match code {
                 KeyCode::Tab | KeyCode::Down => form.step(true),
                 KeyCode::BackTab | KeyCode::Up => form.step(false),
+                KeyCode::Left if form.field == FormField::Schedule => form.cycle_kind(false),
+                KeyCode::Right | KeyCode::Char(' ') if form.field == FormField::Schedule => {
+                    form.cycle_kind(true)
+                }
                 KeyCode::Left if form.field == FormField::Agent => form.cycle_program(false),
+
                 KeyCode::Right | KeyCode::Char(' ') if form.field == FormField::Agent => {
                     form.cycle_program(true)
                 }
@@ -332,6 +337,11 @@ mod tests {
             Rect::new(0, 0, 150, 44),
         );
         press(&mut app, KeyCode::Tab);
+        assert_eq!(
+            app.jobs.as_ref().unwrap().form.as_ref().unwrap().field,
+            FormField::Schedule
+        );
+        press(&mut app, KeyCode::Tab);
         for character in "2026-10-22 16:02 +02:00".chars() {
             press(&mut app, KeyCode::Char(character));
         }
@@ -350,6 +360,42 @@ mod tests {
         assert!(jobs.form.is_none());
         assert!(app.notice.contains("saved"));
         assert_eq!(follow_up[0]["request"]["request"]["action"], "list");
+    }
+
+    #[test]
+    fn schedule_field_cycles_kinds_and_saves_a_cron_job() {
+        let mut app = opened();
+        press(&mut app, KeyCode::Char('n'));
+        for character in "Weekdays".chars() {
+            press(&mut app, KeyCode::Char(character));
+        }
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Tab);
+        }
+        for character in "Review".chars() {
+            press(&mut app, KeyCode::Char(character));
+        }
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Right);
+        let form = app.jobs.as_ref().unwrap().form.as_ref().unwrap();
+        assert_eq!(form.kind, crate::jobs::ScheduleKind::Cron);
+        assert_eq!(form.title, "Weekdays");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(
+            app.jobs.as_ref().unwrap().form.as_ref().unwrap().field,
+            FormField::Expression
+        );
+        for character in "0 9 * * 1-5".chars() {
+            press(&mut app, KeyCode::Char(character));
+        }
+        let save = press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            save.commands[0]["request"]["request"]["spec"]["schedule"],
+            json!({"kind":"cron","expression":"0 9 * * 1-5","timeZone":"Europe/Warsaw"})
+        );
     }
 
     #[test]
