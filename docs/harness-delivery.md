@@ -3557,3 +3557,23 @@ The failures concern cancellation readiness, a reserved-versus-created session
 test race, a completed-but-unavailable provider probe and a worker result after
 prompt dispatch. They are not one established startup cause. This tracing slice
 improves future evidence without claiming those publication failures are fixed.
+
+### F03 retained retry boundary evidence
+
+The retry wait now preserves its last exact scoped occurrence pointers and
+completed/in-flight poll evidence across read failure or timeout cancellation.
+Its bounded failure collector reuses the authenticated MCP adapter, with three
+parallel fixed reads and at most one correlated attempt read. Fixed projections
+retain actual native submission fences, integration delivery, input/readiness
+and `launchId:sequence` turn identity, without prompts, paths, conversations or
+raw errors. Fixture stage files are presence evidence only. No production retry,
+effect, admission policy or acceptance deadline changes.
+
+Windows warnings-denied all-target Clippy and eight pure evidence tests pass.
+Five other native retry/precheck-generation scenarios passed in the initial
+six-case cohort; the positive collector assertion found an omitted `sent` label
+after the worker's explicit report. After correcting that allowlist and the
+turn-ID projection, the exact successful retry case passes in 8.92 seconds.
+The tests use controlled Node PTYs, no model. Read caller timeouts do not promise
+immediate server-handler or blocking-filesystem cancellation. This is improved
+failure evidence, not proof that the older CI retry delay has been fixed.

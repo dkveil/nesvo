@@ -123,6 +123,33 @@ or native-phone acceptance. See the [timeout contract](harness-job-timeouts.md).
 
 ### Native no-effect launch reconciliation
 
+Retry scenarios retain their primary wait's exact occurrence/run/attempt/session
+and original create-receipt pointers, successful-poll counters and pending-query
+age even if a later read times out. Failure-only diagnostics use the already
+authenticated MCP adapter, rather than starting additional diagnostic CLI
+processes. Three reads run concurrently, followed by at most one correlated
+attempt read; each has a 600 ms caller deadline within the existing 3.8-second
+collection bound. Only fixed state/identity fields and fixture-file presence
+booleans are emitted. File presence is not completion proof. No prompt, path,
+provider conversation, raw stderr or arbitrary nested adapter error is copied.
+Caller timeout does not protocol-cancel an already dispatched read-only handler;
+the adapter's existing bounds/shutdown still own that work. A local metadata read
+already running on the blocking pool likewise cannot be force-canceled.
+
+```text
+cargo test --package nesvo --test mcp_host --locked job_diagnostics::retry_evidence_tests -- --test-threads=1
+cargo test --package nesvo --test mcp_host --locked job_retries:: -- --ignored --test-threads=1
+```
+
+Eight ordinary evidence tests cover retained pointers, pending-versus-completed
+polls, scope mismatch, source-shaped turn IDs, delivery states, typed submission
+fences and private-data exclusion. The successful native retry scenario also
+checks the collector against its actual run, create receipt, session and task
+delivery, without introducing an artificial acceptance timeout or another job.
+Primary 14-second waits, polling and outer scenario limits are unchanged. These
+observations distinguish boundaries; they do not by themselves identify the
+cause of a historical retry delay.
+
 The serial `mcp_host` target also includes `job_launch_reconciliation::`.
 
 ```powershell

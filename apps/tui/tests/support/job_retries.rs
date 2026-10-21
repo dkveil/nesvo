@@ -89,23 +89,32 @@ async fn state(
     id: &str,
     wanted: &str,
     ordinal: u64,
+    observation: &mut job_diagnostics::RetryWaitObservation,
+    started: tokio::time::Instant,
 ) -> Result<Value> {
-    let mut last = Value::Null;
     timeout(Duration::from_secs(14), async {
         loop {
-            let view = occurrence(owner, job, id).await?;
+            observation.started(started.elapsed());
+            let response = occurrence(owner, job, id).await;
+            match &response {
+                Ok(view) => observation.completed(view, started.elapsed()),
+                Err(_) => observation.failed(),
+            }
+            let view = response?;
             if view["data"]["occurrence"]["state"] == wanted
                 && view["data"]["occurrence"]["jobAttemptOrdinal"] == ordinal
             {
                 return Ok::<_, anyhow::Error>(view);
             }
-            last = view;
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
     })
     .await
     .with_context(|| {
-        format!("Native retry occurrence did not reach {wanted}/{ordinal}; last: {last}")
+        format!(
+            "Native retry occurrence did not reach {wanted}/{ordinal}; progress: {}",
+            observation.summary(started.elapsed())
+        )
     })?
 }
 
@@ -128,10 +137,18 @@ async fn state_with_diagnostics(
     wanted: &str,
     ordinal: u64,
 ) -> Result<Value> {
-    match state(owner, job, id, wanted, ordinal).await {
+    let mut observation = job_diagnostics::RetryWaitObservation::new(job, id);
+    let started = tokio::time::Instant::now();
+    match state(owner, job, id, wanted, ordinal, &mut observation, started).await {
         Ok(view) => Ok(view),
         Err(error) => {
-            let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
+            let diagnostics = job_diagnostics::retry_timeout_diagnostics(
+                fixture,
+                owner,
+                &observation,
+                started.elapsed(),
+            )
+            .await;
             Err(error.context(format!(
                 "Bounded actual retry diagnostics: {}",
                 diagnostics
@@ -506,6 +523,40 @@ async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_ge
                 .join(format!("{worker}.result.json")),
         )?)?;
         assert_eq!(report["data"]["attempt"]["id"], second["attemptId"]);
+        // Exercise failure-evidence collection against an already successful
+        // controlled native generation without an artificial acceptance timeout.
+        // This uses the same MCP adapter; no diagnostic CLI children are started.
+        let mut progress = job_diagnostics::RetryWaitObservation::new(job, id);
+        progress.started(Duration::ZERO);
+        progress.completed(&reported, Duration::ZERO);
+        let evidence = job_diagnostics::retry_timeout_diagnostics(
+            &mut fixture,
+            &owner,
+            &progress,
+            Duration::ZERO,
+        )
+        .await;
+        assert_eq!(evidence["queries"]["run"], "observed");
+        assert_eq!(evidence["queries"]["launchOperation"], "observed");
+        assert_eq!(evidence["queries"]["explain"], "observed");
+        assert_eq!(evidence["queries"]["nativeAttempt"], "observed");
+        assert_eq!(
+            evidence["wait"]["occurrence"]["sessionId"],
+            second["sessionId"]
+        );
+        assert_eq!(evidence["launchOperation"]["id"], second["launchReceiptId"]);
+        assert_eq!(evidence["launchOperation"]["phase"], "created");
+        assert_eq!(evidence["session"]["sessionId"], second["sessionId"]);
+        assert_eq!(evidence["attempt"]["id"], second["attemptId"]);
+        assert_eq!(
+            evidence["attempt"]["delivery"]["attemptId"],
+            second["attemptId"]
+        );
+        assert!(evidence["attempt"]["delivery"]["receiptId"].is_string());
+        assert!(evidence["attempt"]["delivery"]["phase"].is_string());
+        assert_ne!(evidence["attempt"]["delivery"]["phase"], "other");
+        assert_eq!(evidence["fixtureStages"]["reportInputPresent"], true);
+        assert_eq!(evidence["stageFilesAreCompletionProof"], false);
         let sessions = data(call(&owner, "nesvo_list_sessions", json!({})).await?)?;
         assert_eq!(
             sessions["data"]["sessions"]
