@@ -95,6 +95,11 @@ the native scenario does not invent an observable pre-stdin helper barrier.
 
 ### Native job execution timeout scenarios
 
+For opt-in phase evidence before listener readiness and the controlled
+fresh/restart scenario, see [host startup diagnostics](host-startup-diagnostics.md).
+This evidence preserves the existing readiness deadline; an unmatched phase
+does not identify the scheduling or I/O cause of a startup delay.
+
 After building the native host/client, the ignored `mcp_host` integration target
 uses the official MCP SDK, actual private hosts and controlled Node PTY workers.
 It does not call a model or change user provider configuration. Run scenarios

@@ -52,6 +52,7 @@ mod recipes;
 mod replay;
 mod scoped_context;
 mod sessions;
+mod startup_trace;
 mod status;
 mod status_latency;
 mod status_rules;
@@ -258,22 +259,30 @@ fn main() -> Result<()> {
     }
     // High-frequency hook invocations do only synchronous bounded file work.
     // Construct the multi-thread runtime exclusively for the actual host.
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("Cannot start host runtime")?
-        .block_on(run(args))
+    let trace = startup_trace::Trace::from_env();
+    let span = trace.begin(startup_trace::Phase::RuntimeCreate);
+    let runtime = span.result(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("Cannot start host runtime"),
+    )?;
+    runtime.block_on(run(args, trace))
 }
 
-async fn run(args: Args) -> Result<()> {
+async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
+    use startup_trace::Phase;
+    let span = trace.begin(Phase::WorkspaceResolve);
     let workspace = fs::canonicalize(&args.workspace).context("Workspace does not exist")?;
     ensure!(workspace.is_dir(), "Workspace must be a directory");
+    span.end(true);
     let bind = args.bind.unwrap_or(IpAddr::V4(if args.lan {
         Ipv4Addr::UNSPECIFIED
     } else {
         Ipv4Addr::LOCALHOST
     }));
     let listen_address = SocketAddr::new(bind, args.port);
+    let span = trace.begin(Phase::ListenerBind);
     let listener = TcpListener::bind(listen_address).await.map_err(|error| {
         let message = if error.kind() == ErrorKind::AddrInUse {
             format!(
@@ -285,6 +294,8 @@ async fn run(args: Args) -> Result<()> {
         anyhow::Error::new(error).context(message)
     })?;
     let actual_port = listener.local_addr()?.port();
+    span.end(true);
+    let span = trace.begin(Phase::AdvertiseResolve);
     let advertised = args.advertise.unwrap_or_else(|| {
         if bind.is_unspecified() {
             local_ip()
@@ -309,6 +320,8 @@ async fn run(args: Args) -> Result<()> {
             && parsed_url.fragment().is_none(),
         "Advertise must contain only an IP address or hostname"
     );
+    span.end(true);
+    let span = trace.begin(Phase::PairingDirectory);
     let pairing_dir = args.pairing_dir.unwrap_or_else(|| {
         if let Some(directory) = repository_pairing_directory(Path::new(".")) {
             directory
@@ -331,12 +344,18 @@ async fn run(args: Args) -> Result<()> {
         }
     });
     fs::create_dir_all(&pairing_dir)?;
+    span.end(true);
+    let span = trace.begin(Phase::HostLock);
     let host_lock = Arc::new(host_lock::HostLock::acquire(&pairing_dir)?);
+    span.end(true);
     #[cfg(unix)]
     {
+        let span = trace.begin(Phase::PairingPermissions);
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&pairing_dir, fs::Permissions::from_mode(0o700))?;
+        span.end(true);
     }
+    let span = trace.begin(Phase::PairingPrepare);
     let pairing_path = pairing_dir.join("pairing.json");
     let existing = if args.rotate_key {
         None
@@ -363,23 +382,36 @@ async fn run(args: Args) -> Result<()> {
         .build();
     let qr_path = pairing_dir.join("pairing.svg");
     private_write(&qr_path, svg.as_bytes())?;
+    span.end(true);
 
-    let metadata = storage::MetadataStore::open(&pairing_dir.join("metadata.sqlite3"))?;
-    let event_log = event_log::Service::open_with_owner(
-        pairing_dir.join("metadata.sqlite3"),
-        host_lock.clone(),
-    )
-    .await?;
-    event_log
-        .append(vec![event_log::Observation {
-            session_id: None,
-            kind: "host.started",
-            at: status::now_millis(),
-            payload: serde_json::json!({"buildId":env!("NESVO_BUILD_ID")}),
-        }])
-        .await?;
+    let span = trace.begin(Phase::MetadataOpen);
+    let metadata = span.result(storage::MetadataStore::open(
+        &pairing_dir.join("metadata.sqlite3"),
+    ))?;
+    let span = trace.begin(Phase::JournalOpen);
+    let event_log = span.result(
+        event_log::Service::open_with_owner(
+            pairing_dir.join("metadata.sqlite3"),
+            host_lock.clone(),
+        )
+        .await,
+    )?;
+    let span = trace.begin(Phase::StartupEventAppend);
+    span.result(
+        event_log
+            .append(vec![event_log::Observation {
+                session_id: None,
+                kind: "host.started",
+                at: status::now_millis(),
+                payload: serde_json::json!({"buildId":env!("NESVO_BUILD_ID")}),
+            }])
+            .await,
+    )?;
+    let span = trace.begin(Phase::LauncherDiscover);
     let launchers = launchers::Launchers::discover();
     let version_probes = launchers.version_probes();
+    span.end(true);
+    let span = trace.begin(Phase::StateInitialize);
     let state = Arc::new(Mutex::new(sessions::State::new(
         workspace.clone(),
         metadata,
@@ -388,8 +420,10 @@ async fn run(args: Args) -> Result<()> {
     let (event_tx, event_rx) = mpsc::channel(128);
     state.lock().unwrap().set_caller_url(pairing.url.clone());
     state.lock().unwrap().set_event_log(event_log.clone());
+    span.end(true);
     let webhooks = match args.webhook_port {
         Some(port) => {
+            let span = trace.begin(Phase::WebhookBind);
             let listener = job_webhook_http::Listener::bind(port, event_log.clone()).await?;
             state
                 .lock()
@@ -407,10 +441,12 @@ async fn run(args: Args) -> Result<()> {
                     eprintln!("Job webhook listener stopped: webhook_listener_unavailable");
                 }
             });
+            span.end(true);
             Some(listener)
         }
         None => None,
     };
+    let span = trace.begin(Phase::RuntimesInstall);
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -429,7 +465,10 @@ async fn run(args: Args) -> Result<()> {
     let quota_runtime = provider_quota_runtime::Runtime::start(state.clone());
     let quota_wake_runtime = quota_wake_runtime::Runtime::start(state.clone(), event_log.clone());
     let permits = Arc::new(Semaphore::new(16));
+    span.end(true);
+    let span = trace.begin(Phase::ReadinessAnnounce);
     println!("nesvo Rust host listening on {bind}:{actual_port}");
+    span.end(true);
     println!("Workspace: {}", workspace.display());
     println!("Private pairing file: {}", pairing_path.display());
     println!("Private pairing QR: {}", qr_path.display());

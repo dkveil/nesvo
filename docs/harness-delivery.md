@@ -3530,3 +3530,30 @@ byte bound. Windows checks pass all 26 client contracts, TypeScript, warnings-fr
 ESLint and all four architecture tests. No host policy, layout, Expo API or SDK
 changed. These are transport/parser checks, not a sixteen-session native-phone
 smoke test or completed F43 fleet/job/decision UI acceptance.
+
+### F03 opt-in startup boundary evidence
+
+`NESVO_STARTUP_DIAGNOSTICS=1` adds bounded fixed phase/elapsed records for the
+actual host, after helper/build-ID early returns. Ordinary startup is unchanged.
+The owned SDK collector consumes strict prefixed records before its existing
+listening-line check, retains independent evidence for each restart and rejects
+raw/unknown data without echoing it. Store, journal, provider, readiness and
+cleanup policies are unchanged; the first slice identifies outer phases rather
+than individual journal initialization/recovery statements. An unmatched begin
+is observed progress, not proof of the delay's cause. See the
+[startup contract](host-startup-diagnostics.md) for bounds and activation.
+
+Six host and six parser tests cover disabled mode, early drop, write/flush errors,
+sequence/duration/bounds, incomplete phases and privacy. A controlled native
+fresh/restart case passes in 1.20 seconds, preserving the pairing key and normal
+MCP access with separate collectors. Windows formatting, warnings-denied all-target
+Clippy, 757 workspace units, locked build and the three exact process checks
+pass. The full 64-case serial SDK/native-host cohort passes in 471.13 seconds.
+No model or physical-device test is claimed by these controlled checks.
+
+Publication `ff67de3` passed the full app/browser/native CI matrix; the following
+`0ba3460` passed app/browser/Linux/macOS but Windows passed 59 of 63 SDK cases.
+The failures concern cancellation readiness, a reserved-versus-created session
+test race, a completed-but-unavailable provider probe and a worker result after
+prompt dispatch. They are not one established startup cause. This tracing slice
+improves future evidence without claiming those publication failures are fixed.

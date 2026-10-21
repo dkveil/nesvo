@@ -26,6 +26,7 @@ struct Fixture {
     directory: PathBuf,
     host: Child,
     webhook_port: Option<u16>,
+    startup_trace: startup_trace::Shared,
 }
 fn published_tool_count() -> usize {
     serde_json::from_str::<Vec<String>>(include_str!("../../../docs/harness-mcp-tools.json"))
@@ -96,6 +97,8 @@ mod run_launches;
 mod run_wakes;
 #[path = "support/scoped_review_context.rs"]
 mod scoped_review_context;
+#[path = "support/startup_trace.rs"]
+mod startup_trace;
 #[path = "support/task_tool_profiles.rs"]
 mod task_tool_profiles;
 impl Fixture {
@@ -135,15 +138,21 @@ impl Fixture {
             std::fs::copy(env!("CARGO_BIN_EXE_nesvo"), &client)?;
             command.env("NESVO_CLIENT_BINARY", client);
         }
-        let host = Self::spawn_host(&directory, command).await?;
+        let (host, startup_trace) = Self::spawn_host(&directory, command).await?;
         Ok(Self {
             directory,
             host,
             webhook_port,
+            startup_trace,
         })
     }
-    async fn spawn_host(directory: &Path, mut command: Command) -> Result<Child> {
+    async fn spawn_host(
+        directory: &Path,
+        mut command: Command,
+    ) -> Result<(Child, startup_trace::Shared)> {
         command
+            // Explicit owned-fixture opt-in; ordinary host startup stays quiet.
+            .env("NESVO_STARTUP_DIAGNOSTICS", "1")
             .env("CODEX_HOME", directory.join("codex-home"))
             .env_remove("OPENAI_BASE_URL")
             .env_remove("OPENAI_API_KEY")
@@ -162,6 +171,7 @@ impl Fixture {
         let mut host = command
             .spawn()
             .context("Build nesvo-host before running this ignored native integration test")?;
+        let startup_trace = startup_trace::shared();
         let started = tokio::time::Instant::now();
         let mut stdout_lines = 0u64;
         let mut stdout_bytes = 0u64;
@@ -169,6 +179,9 @@ impl Fixture {
         let mut output = BufReader::new(host.stdout.take().context("fixture stdout")?).lines();
         let ready = timeout(Duration::from_secs(15), async {
             while let Some(line) = output.next_line().await? {
+                if startup_trace::consume(&startup_trace, &line) {
+                    continue;
+                }
                 stdout_lines = stdout_lines.saturating_add(1);
                 stdout_bytes = stdout_bytes.saturating_add(line.len() as u64);
                 if line.contains("Rust host listening") {
@@ -235,6 +248,7 @@ impl Fixture {
                     "phase":"await_listening_line","deadlineMs":15000,"elapsedMs":observed_at_ms,
                     "pid":pid,"process":status,"stdoutLines":stdout_lines,"stdoutBytes":stdout_bytes,
                     "stdoutClosed":stdout_closed,"bufferedBytes":buffered_bytes,"files":files,
+                    "startupTrace":startup_trace::view(&startup_trace),
                     "ownedKillRequested":kill_requested,"cleanup":cleanup
                 })
             );
@@ -246,8 +260,13 @@ impl Fixture {
         }
         // Keep draining after readiness; closing the pipe here could race the
         // host's remaining startup lines and cause a platform-specific BrokenPipe.
-        tokio::spawn(async move { while matches!(output.next_line().await, Ok(Some(_))) {} });
-        Ok(host)
+        let remaining_trace = startup_trace.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = output.next_line().await {
+                startup_trace::consume(&remaining_trace, &line);
+            }
+        });
+        Ok((host, startup_trace))
     }
     fn pairing(&self) -> PathBuf {
         self.directory.join("pairing.json")
@@ -281,7 +300,9 @@ impl Fixture {
         if self.directory.join("bin").is_dir() {
             agent_fixture_environment(&self.directory, &mut command)?;
         }
-        self.host = Self::spawn_host(&self.directory, command).await?;
+        let (host, startup_trace) = Self::spawn_host(&self.directory, command).await?;
+        self.host = host;
+        self.startup_trace = startup_trace;
         Ok(())
     }
     async fn close(&mut self) -> Result<()> {
