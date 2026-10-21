@@ -231,3 +231,11 @@ one-use cleanup claims, human takeover and release, restart uncertainty, overlap
 retention and native exit evidence. Controlled native fixtures must exercise
 client disconnection and both timeout cleanup and a report awaiting validation.
 Verification results are recorded separately from this contract.
+
+Arming records a reserved native session identity before the process is physically
+created. A read of that exact ID can therefore return typed `session_not_found`
+while launch is still pending. Neither the ID nor an armed timer is process or
+readiness proof. The controlled readiness poll tolerates only that exact
+structured absence within its original deadline; it still rejects foreign IDs,
+other tool refusals and malformed responses immediately. Transport failure is not
+converted into readiness or permission to retry a native effect.

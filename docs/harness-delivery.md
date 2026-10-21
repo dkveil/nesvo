@@ -3577,3 +3577,19 @@ turn-ID projection, the exact successful retry case passes in 8.92 seconds.
 The tests use controlled Node PTYs, no model. Read caller timeouts do not promise
 immediate server-handler or blocking-filesystem cancellation. This is improved
 failure evidence, not proof that the older CI retry delay has been fixed.
+
+### F03 timeout fixture reserved-session race
+
+One Windows CI failure occurred before human control was acquired: the timeout
+was armed with a reserved session ID, but a read of that ID preceded physical
+creation. The existing seven-second readiness poll now tolerates only the exact
+structured `session_not_found` response. Other refusals, transport/malformed
+replies and a different returned session still fail immediately. No production
+timing, native effect retry or scenario deadline changes.
+
+Windows warnings-denied all-target Clippy, the ordinary strict-boundary regression
+and all three controlled native timeout scenarios pass; the latter take 51.08
+seconds serially. They preserve immutable timer identity, actual exit/report
+proof, independent-session safety and active/quick human takeover protection.
+The other three observed CI boundaries remain unproven causes; this test-race
+fix does not claim to resolve them.

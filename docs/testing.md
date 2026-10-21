@@ -121,6 +121,12 @@ Failures retain bounded phase/host/job diagnostics before cleanup. They compleme
 the injected-clock and restart storage regressions; they are not original-provider
 or native-phone acceptance. See the [timeout contract](harness-job-timeouts.md).
 
+The readiness helper polls the exact reserved ID within its original seven-second
+bound. Before physical creation, only the current structured MCP
+`session_not_found` refusal is pending; other refusals, malformed messages,
+foreign identities and transport errors remain failures. An ordinary regression
+covers that boundary separately from the three native timeout scenarios.
+
 ### Native no-effect launch reconciliation
 
 Retry scenarios retain their primary wait's exact occurrence/run/attempt/session

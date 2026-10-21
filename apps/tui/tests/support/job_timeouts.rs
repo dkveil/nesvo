@@ -128,6 +128,32 @@ async fn discovery_ready(fixture: &Fixture, evidence: &mut DiscoveryEvidence) ->
     result.context("Controlled provider discovery before execution timeout admission")?
 }
 
+fn working_session(result: CallToolResult, worker: &str) -> Result<Option<Value>> {
+    // Storage reserves this exact session ID and arms its deadline before the
+    // native process is created. Only this typed absence is a pending read;
+    // authority, malformed replies and transport failures are not readiness.
+    if result.is_error == Some(true)
+        && result.structured_content.as_ref().is_some_and(|reply| {
+            reply["schemaVersion"] == 1
+                && reply["ok"] == false
+                && reply["error"]["code"] == "session_not_found"
+                && reply["error"]["retryable"] == false
+                && reply["error"]["message"].is_string()
+                && reply.get("data").is_none()
+        })
+    {
+        return Ok(None);
+    }
+    let session = data(result)?;
+    ensure!(
+        session["schemaVersion"] == 1
+            && session["ok"] == true
+            && session["data"]["session"]["id"] == worker,
+        "Timed worker session reply must match its exact reserved identity"
+    );
+    Ok(Some(session))
+}
+
 async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
     let mut last = Value::Null;
     timeout(Duration::from_secs(7), async {
@@ -137,9 +163,11 @@ async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
             if row["executionTimeout"]["state"] == "armed"
                 && let Some(worker) = row["sessionId"].as_str()
             {
-                let session =
-                    reply(owner, "nesvo_get_session", json!({"sessionId":worker})).await?;
-                if session["data"]["session"]["status"]["state"] == "working" {
+                let observed =
+                    call(owner, "nesvo_get_session", json!({"sessionId":worker})).await?;
+                if let Some(session) = working_session(observed, worker)?
+                    && session["data"]["session"]["status"]["state"] == "working"
+                {
                     return Ok::<_, anyhow::Error>((current, session));
                 }
             }
@@ -149,6 +177,51 @@ async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
     })
     .await
     .with_context(|| format!("Timed worker never reached controlled hold; last: {last}"))?
+}
+
+#[test]
+fn timed_worker_waits_for_reserved_id_but_rejects_foreign_or_untyped_missing_session() {
+    let worker = "1".repeat(32);
+    let missing = json!({"schemaVersion":1,"ok":false,"error":{
+        "code":"session_not_found","message":"Session no longer exists","retryable":false}});
+    assert!(
+        working_session(CallToolResult::structured_error(missing.clone()), &worker)
+            .unwrap()
+            .is_none()
+    );
+    let created = json!({"schemaVersion":1,"ok":true,"data":{"type":"session",
+        "session":{"id":worker,"status":{"state":"working"}}}});
+    assert_eq!(
+        working_session(CallToolResult::structured(created.clone()), &worker).unwrap(),
+        Some(created.clone())
+    );
+    let mut foreign = created;
+    foreign["data"]["session"]["id"] = json!("2".repeat(32));
+    assert!(working_session(CallToolResult::structured(foreign), &worker).is_err());
+
+    for (field, value) in [
+        ("code", json!("forbidden")),
+        ("code", json!("scope_revoked")),
+        ("retryable", json!(true)),
+        ("retryable", json!("false")),
+        ("message", Value::Null),
+    ] {
+        let mut refused = missing.clone();
+        refused["error"][field] = value;
+        assert!(working_session(CallToolResult::structured_error(refused), &worker).is_err());
+    }
+    for malformed in [
+        json!({"error":{"code":"session_not_found"}}),
+        json!({"schemaVersion":1,"ok":true,"error":missing["error"]}),
+        json!({"schemaVersion":2,"ok":false,"error":missing["error"]}),
+        json!({"schemaVersion":1,"ok":false,"error":missing["error"],"data":{}}),
+    ] {
+        assert!(working_session(CallToolResult::structured_error(malformed), &worker).is_err());
+    }
+    // The MCP error flag is part of the typed refusal. A body merely containing
+    // the same code cannot turn an otherwise malformed success into a wait.
+    assert!(working_session(CallToolResult::structured(missing), &worker).is_err());
+    assert!(working_session(CallToolResult::structured(json!({})), &worker).is_err());
 }
 
 async fn timeout_state(owner: &Owner, job: &str, id: &str, wanted: &str) -> Result<Value> {
