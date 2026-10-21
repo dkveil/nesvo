@@ -1,9 +1,41 @@
 # Configured-account quota admission
 
-Quota waiting is explicit owner intent. It currently supports installed Codex
-launchers; Claude cache observations remain display-only and Gemini reports its
-unsupported source honestly. Omitting `quotaPolicy` preserves existing job behavior.
-This feature neither buys credits nor bypasses a provider refusal.
+Every native spawn passes one host quota gate. Configured-account waiting is
+additional explicit owner intent for installed Codex launchers; a job without
+`quotaPolicy` is admitted by the host gate alone. Neither buys credits nor
+bypasses a provider refusal.
+
+## Host-wide gate
+
+The gate is consulted by job occurrences, run launches, the executor,
+`createOperation`, interactive `launch`, plain `create` and restores. It returns
+one verdict per provider:
+
+- **allow**: a fresh admission source shows no known limit.
+- **hold**: a fresh read showed an exhausted window, a backend denial or a
+  spend/rate stop. Work stays queued with a reason code and the reset time and is
+  re-evaluated only when a newer read arrives or the reset passes. Staleness alone
+  never releases a known limit; after the reset the verdict is unknown until a
+  newer read.
+- **unknown**: no admission-grade evidence (read or network failure, stale or
+  partial source, no account identity, no source). Work starts and the session
+  list marks it `quotaUnverified:{reason}`.
+
+Jobs without `quotaPolicy` stay `queued` while held, with occurrence
+`quota:{state:"held",reason,resetsAt}`; no precheck, attempt or Run is allocated.
+Run launches and the executor get `quota_wait` before an attempt or receipt exists;
+the executor waits on the journal. `createOperation` keeps its claimed receipt in
+the host hold queue. An interactive launch receives `{"type":"quotaHold"}` with the
+reason and reset time; disconnecting abandons it before any effect. A host stop
+finishes held operations as failed with no effect. Plain `create`, restores and
+legacy one-shot schedules refuse with `quota_hold`.
+
+`nesvo quota` and `nesvo_get_provider_quota` add `gate.providers` (verdict, reason,
+source, `resetsAt`, `freshUntil`) and `gate.holds` (kind, ID, program, reason,
+`resetsAt`, `checks`). `checks` counts re-evaluations and grows only when the gate
+changes. The Jobs history shows a quota column; `quotaGate:true` advertises the
+gate. Holds are process-local: after a restart each source starts with an
+`awaiting_observation` hold of at most 30 seconds until its first read.
 
 ## Inspect, then opt in
 

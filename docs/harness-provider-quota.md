@@ -36,7 +36,18 @@ omit it.
   accept regular files only, validate the opened handle and have a two-second
   deadline; special files cannot hold the observer in a blocking pipe read.
 - Gemini: no implemented structured source; its installed entry explicitly
-  reports `unsupported`. It is not displayed as zero usage.
+  reports `unsupported`. It is not displayed as zero usage. The launch gate
+  reports it unknown with `no_admission_source`.
+
+For the [host launch gate](harness-quota-jobs.md#host-wide-gate), the same Claude
+cache is admission-grade only when its `at` is under 15 seconds old and an account
+fingerprint is present. The fingerprint hashes `oauthAccount.accountUuid` and
+`organizationUuid` from `.claude.json` (in `CLAUDE_CONFIG_DIR`, else
+`~/.claude/.claude.json`, then `~/.claude.json`) with the host-epoch salt; nothing
+else from that file is kept and `.credentials.json` is never read. Otherwise the
+gate reports unknown. The status-line cache carries no account identity of its
+own, so the fingerprint is the configured login, not proof of which account wrote
+the cache. Codex admission uses the ambient app-server view above.
 
 Codex reads have an eight-second deadline, a 256 KiB line bound, 1 MiB aggregate
 bound and 64-frame bound. Cleanup has a two-second observation bound. Unconfirmed
