@@ -179,6 +179,15 @@ callback-start ordering within one generation, or status-file completion orderin
 after an already accepted commit. Same-generation late Stop requires its own
 provider correlation; this guard does not manufacture one.
 
+Reverse completion of compatibility JSON writes cannot reorder the current
+host's canonical lifecycle. Its shadow reader updates delivery diagnostics and
+`shadowSequence` only; lifecycle, turn and input correlation consume the ordered
+journal batch. A journal read failure does not fall back to JSON status. This
+does not protect an old JSON-only host or identify a source-old callback whose
+helper first enters after rebinding: a permitted clear/resume/compact event can
+then acquire the current ticket. Those are separate compatibility/provider
+identity limits rather than a current shadow-file status regression.
+
 The journal retains 1024 records, reads at most 256 per batch and reports cursor
 gaps explicitly. Fast synchronous turns cannot overwrite each other between
 polls. UI coalescing need not draw every short intermediate state; run/turn event
