@@ -34,7 +34,7 @@ stdio can; this is not a startup performance guarantee.
 ## Controlled native test evidence
 
 The SDK fixture explicitly opts in for each owned child and restart. It keeps
-the same 15-second readiness deadline and owned kill/reap behavior. Its existing
+the same 60-second readiness deadline and owned kill/reap behavior. Its existing
 stdout reader consumes prefixed records before matching the listening line and
 continues draining after readiness. A bounded strict parser retains only known
 fields, labels, sequence and duration evidence. Invalid/oversized/out-of-order

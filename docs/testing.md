@@ -201,7 +201,7 @@ manufactured exit proof. They use controlled PTYs, not original model calls.
 See the
 [launch reconciliation contract](harness-job-launch-reconciliation.md).
 
-Initial native fixture startup retains a 15-second readiness deadline. On failure
+Initial native fixture startup retains a 60-second readiness deadline. On failure
 only, `NATIVE_HOST_STARTUP_DIAGNOSTIC` records child status, stdout counters,
 buffer occupancy and the presence/size of five fixed startup files. A dedicated
 metadata thread has a one-second observation wait and cannot hold Tokio runtime
