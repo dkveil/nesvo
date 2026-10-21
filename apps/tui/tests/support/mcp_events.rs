@@ -1,0 +1,260 @@
+use super::*;
+use rmcp::{
+    ClientHandler,
+    model::{
+        ClientRequest, ErrorCode, NotificationMetaObject, ReadResourceRequestParams, Request,
+        ResourceContents, ResourceUpdatedNotificationParam, ServerNotification,
+        SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
+    },
+    service::{ClientLifecycleMode, ClientServiceExt, NotificationContext, Subscription},
+};
+use tokio::sync::mpsc;
+
+const OPERATIONS: &str = "nesvo://events/operations";
+const META_KEY: &str = "nesvo/events";
+const NOTIFICATION_DEADLINE: Duration = Duration::from_secs(10);
+
+async fn modern(pairing: &Path) -> Result<RunningService<RoleClient, ()>> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
+    command.arg("--pairing").arg(pairing).arg("mcp");
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    Ok(()
+        .serve_with_lifecycle(
+            TokioChildProcess::new(command)?,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await?)
+}
+
+fn cursor_meta(meta: Option<&NotificationMetaObject>) -> Option<Value> {
+    meta.and_then(|meta| meta.get(META_KEY)).cloned()
+}
+
+struct LegacyUpdates {
+    config: ClientConfig,
+    updates: mpsc::Sender<(String, Value)>,
+}
+
+impl ClientHandler for LegacyUpdates {
+    fn get_info(&self) -> ClientConfig {
+        self.config.clone()
+    }
+    async fn on_resource_updated(
+        &self,
+        params: ResourceUpdatedNotificationParam,
+        context: NotificationContext<RoleClient>,
+    ) {
+        let meta = cursor_meta(Some(&context.meta))
+            .or_else(|| cursor_meta(context.extensions.get::<NotificationMetaObject>()))
+            .or_else(|| cursor_meta(params.meta.as_ref()))
+            .unwrap_or(Value::Null);
+        let _ = self.updates.try_send((params.uri, meta));
+    }
+}
+
+async fn modern_update(subscription: &mut Subscription) -> Result<Value> {
+    let notification = timeout(NOTIFICATION_DEADLINE, subscription.next())
+        .await
+        .context("Resource update notification deadline")??
+        .context("Subscription ended before an update")?;
+    let ServerNotification::ResourceUpdatedNotification(update) = notification else {
+        anyhow::bail!("Unexpected subscription notification: {notification:?}");
+    };
+    ensure!(
+        update.params.uri == OPERATIONS,
+        "Notification names the subscribed URI"
+    );
+    cursor_meta(update.extensions.get::<NotificationMetaObject>())
+        .or_else(|| cursor_meta(update.params.meta.as_ref()))
+        .context("Notification cursor metadata")
+}
+
+async fn legacy_update(updates: &mut mpsc::Receiver<(String, Value)>) -> Result<Value> {
+    let (uri, meta) = timeout(NOTIFICATION_DEADLINE, updates.recv())
+        .await
+        .context("Legacy resource update deadline")?
+        .context("Legacy client closed")?;
+    ensure!(
+        uri == OPERATIONS,
+        "Legacy notification names the subscribed URI"
+    );
+    Ok(meta)
+}
+
+async fn read_page<S: rmcp::Service<RoleClient>>(
+    client: &RunningService<RoleClient, S>,
+    uri: &str,
+) -> Result<Value> {
+    let result = client
+        .read_resource(ReadResourceRequestParams::new(uri))
+        .await?;
+    let Some(ResourceContents::TextResourceContents {
+        text, mime_type, ..
+    }) = result.contents.first()
+    else {
+        anyhow::bail!("Event resource returns one JSON text content");
+    };
+    ensure!(mime_type.as_deref() == Some("application/json"));
+    let value: Value = serde_json::from_str(text)?;
+    ensure!(value["schemaVersion"] == 1 && value["ok"] == true);
+    Ok(value["data"].clone())
+}
+
+async fn delta_for(
+    client: &RunningService<RoleClient, ()>,
+    mut next: impl AsyncFnMut() -> Result<Value>,
+    operation: &str,
+) -> Result<(Value, Value)> {
+    loop {
+        let meta = next().await?;
+        ensure!(meta["ready"] == false && meta["gap"] == false && meta.get("closed").is_none());
+        let sequences = meta["sequences"].as_array().context("sequences")?;
+        ensure!(!sequences.is_empty(), "Only matching deltas notify");
+        let after = meta["after"].as_u64().context("after")?;
+        ensure!(sequences.iter().all(|s| s.as_u64() > Some(after)));
+        ensure!(meta["nextCursor"].as_u64() >= sequences.last().and_then(Value::as_u64));
+        let page = read_page(client, meta["readUri"].as_str().context("readUri")?).await?;
+        let events = page["events"].as_array().context("delta events")?;
+        ensure!(
+            events
+                .iter()
+                .all(|e| e["kind"] == "operation.changed" && e["sequence"].as_u64() > Some(after))
+        );
+        if events
+            .iter()
+            .any(|e| e["payload"]["operationId"] == operation && e["payload"]["phase"] == "created")
+        {
+            return Ok((meta, page));
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires native CLI/host; MCP resource subscriptions over a controlled shell, no models"]
+async fn sdk_clients_receive_event_resource_updates_with_cursors() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let outcome = std::panic::AssertUnwindSafe(async {
+        let owner = client(&fixture.pairing()).await?;
+        let listed = owner.list_all_resources().await?;
+        ensure!(listed.iter().any(|r| r.uri == OPERATIONS));
+        let templates = owner.list_all_resource_templates().await?;
+        ensure!(templates.iter().any(|t| t.uri_template.starts_with("nesvo://events/session/")));
+        let unknown = owner
+            .read_resource(ReadResourceRequestParams::new("nesvo://events/unknown"))
+            .await
+            .expect_err("Unknown event resource");
+        ensure!(
+            matches!(&unknown, rmcp::ServiceError::McpError(error) if error.code == ErrorCode::RESOURCE_NOT_FOUND),
+            "Unknown resources are not found: {unknown:?}"
+        );
+        let initial = read_page(&owner, OPERATIONS).await?;
+        ensure!(initial["resource"] == OPERATIONS && initial["more"] == false);
+
+        let modern_client = modern(&fixture.pairing()).await?;
+        let modern_page = read_page(&modern_client, OPERATIONS).await?;
+        ensure!(modern_page["resource"] == OPERATIONS);
+        let mut subscription = modern_client
+            .peer()
+            .listen(
+                SubscriptionFilter::builder()
+                    .resource_subscription(OPERATIONS)
+                    .resource_subscription("nesvo://events/bogus")
+                    .build(),
+            )
+            .await?;
+        ensure!(
+            subscription.acknowledged().resource_subscriptions.as_deref()
+                == Some(&[OPERATIONS.to_owned()][..]),
+            "Only valid event URIs are acknowledged"
+        );
+        let ready = modern_update(&mut subscription).await?;
+        ensure!(ready["ready"] == true && ready["sequences"] == json!([]), "{ready}");
+        let start = ready["after"].as_u64().context("start cursor")?;
+        ensure!(ready["readUri"] == format!("{OPERATIONS}?after={start}"));
+
+        let (legacy_tx, mut legacy_rx) = mpsc::channel(8);
+        let mut legacy_command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
+        legacy_command.arg("--pairing").arg(fixture.pairing()).arg("mcp");
+        #[cfg(windows)]
+        legacy_command.creation_flags(0x08000000);
+        let legacy = LegacyUpdates {
+            config: ClientConfig::new(
+                ClientCapabilities::default(),
+                Implementation::new("nesvo-legacy-events", "1"),
+            )
+            .with_protocol_version(ProtocolVersion::V_2025_11_25),
+            updates: legacy_tx,
+        }
+        .serve(TokioChildProcess::new(legacy_command)?)
+        .await?;
+        let subscribe = || {
+            ClientRequest::SubscribeRequest(Request::new(SubscribeRequestParams::new(
+                OPERATIONS,
+            )))
+        };
+        legacy.peer().send_request(subscribe()).await?;
+        ensure!(legacy_update(&mut legacy_rx).await?["ready"] == true);
+
+        let created = data(
+            call(
+                &owner,
+                "nesvo_create_session",
+                json!({"key":"events-bridge","spec":{"name":"Events bridge","program":"shell","cwd":fixture.directory}}),
+            )
+            .await?,
+        )?;
+        let receipt = &created["data"]["receipt"];
+        let operation = receipt["id"].as_str().context("operation")?;
+        let (modern, page) = delta_for(&modern_client, async || modern_update(&mut subscription).await, operation).await?;
+        ensure!(modern["after"].as_u64() >= Some(start));
+        let (legacy_meta, _) = delta_for(&owner, async || legacy_update(&mut legacy_rx).await, operation).await?;
+        ensure!(legacy_meta["after"].as_u64() >= Some(start));
+        let resumed = read_page(
+            &owner,
+            &format!("{OPERATIONS}?after={}", page["nextCursor"].as_u64().context("next")?),
+        )
+        .await?;
+        ensure!(
+            resumed["events"].as_array().context("resumed")?.iter().all(|e| e["sequence"].as_u64() > page["nextCursor"].as_u64()),
+            "Reading from nextCursor returns only the remaining delta"
+        );
+
+        legacy
+            .peer()
+            .send_request(ClientRequest::UnsubscribeRequest(Request::new(
+                UnsubscribeRequestParams::new(OPERATIONS),
+            )))
+            .await?;
+        legacy.peer().send_request(subscribe()).await?;
+        let mut buffered = 0;
+        while legacy_update(&mut legacy_rx).await?["ready"] != true {
+            buffered += 1;
+            ensure!(buffered < 8, "Unsubscribe releases its stream for a new subscription");
+        }
+
+        let id = receipt["sessionId"].as_str().context("session")?;
+        data(call(&owner, "nesvo_stop_session", json!({"key":"events-bridge-stop","sessionId":id})).await?)?;
+        drop(subscription);
+        modern_client.cancel().await?;
+        legacy.cancel().await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .catch_unwind()
+    .await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            cleanup?;
+        }
+        Err(panic) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic);
+        }
+    }
+    Ok(())
+}

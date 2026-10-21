@@ -65,6 +65,8 @@ mod job_triggers;
 mod jobs;
 #[path = "support/mcp_cancellation.rs"]
 mod mcp_cancellation;
+#[path = "support/mcp_events.rs"]
+mod mcp_events;
 #[path = "support/model_profiles.rs"]
 mod model_profiles;
 #[path = "support/native_tool_permissions.rs"]

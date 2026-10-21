@@ -17,6 +17,7 @@ mod jobs_controller;
 mod launch;
 mod layouts;
 mod mcp;
+mod mcp_events;
 mod model;
 mod network;
 mod notes;

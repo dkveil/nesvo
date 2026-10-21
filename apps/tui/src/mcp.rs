@@ -1,6 +1,6 @@
 //! MCP is a transport adapter to the authenticated host, never a session engine.
 use crate::{
-    cli,
+    cli, mcp_events,
     network::{Connection, Pairing, open_failure_message},
 };
 use anyhow::Result;
@@ -8,10 +8,13 @@ use futures_util::{StreamExt, future};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, Implementation, ListToolsResult,
-        PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
+        CallToolRequestParams, CallToolResponse, CallToolResult, Implementation,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+        ReadResourceRequestParams, ReadResourceResponse, ServerCapabilities, ServerConfig,
+        SubscribeRequestParams, SubscriptionFilter, Tool, ToolAnnotations,
+        UnsubscribeRequestParams,
     },
-    service::{RequestContext, RxJsonRpcMessage, TxJsonRpcMessage},
+    service::{RequestContext, RxJsonRpcMessage, SubscriptionContext, TxJsonRpcMessage},
     transport::async_rw::JsonRpcMessageCodec,
 };
 use serde::Deserialize;
@@ -2021,6 +2024,7 @@ struct HostTools {
     pairing: PathBuf,
     url: Option<String>,
     slots: Semaphore,
+    events: mcp_events::EventBridge,
 }
 impl HostTools {
     async fn invoke_until_cancelled(
@@ -2190,7 +2194,13 @@ impl HostTools {
 }
 impl ServerHandler for HostTools {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_resources_subscribe()
+                .build(),
+        )
             .with_server_info(Implementation::new("nesvo",env!("CARGO_PKG_VERSION")))
             .with_instructions("Host session IDs are stable process identities, not UI focus. Capabilities come from the private launch context. Never request owner credentials to bypass a refusal. After a timeout inspect the original idempotency key; unknown, idle and response settlement never mean task success.")
     }
@@ -2228,6 +2238,69 @@ impl ServerHandler for HostTools {
         };
         Ok(result.into())
     }
+    async fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> std::result::Result<ListResourcesResult, ErrorData> {
+        mcp_events::single_page(request.as_ref())?;
+        Ok(mcp_events::resources())
+    }
+    async fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> std::result::Result<ListResourceTemplatesResult, ErrorData> {
+        mcp_events::single_page(request.as_ref())?;
+        Ok(mcp_events::templates())
+    }
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> std::result::Result<ReadResourceResponse, ErrorData> {
+        mcp_events::read(
+            &self.pairing,
+            self.url.as_deref(),
+            &self.slots,
+            &request.uri,
+            &context.ct,
+        )
+        .await
+        .map(Into::into)
+    }
+    fn accepted_subscription_filter(
+        &self,
+        requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        Some(mcp_events::EventBridge::accepted(requested))
+    }
+    async fn listen(&self, context: SubscriptionContext) -> std::result::Result<(), ErrorData> {
+        self.events
+            .listen(&self.pairing, self.url.as_deref(), context)
+            .await
+    }
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), ErrorData> {
+        self.events
+            .subscribe(
+                &self.pairing,
+                self.url.as_deref(),
+                request.uri,
+                context.peer,
+            )
+            .await
+    }
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParams,
+        _: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), ErrorData> {
+        self.events.unsubscribe(&request.uri).await
+    }
 }
 
 pub async fn serve(pairing: PathBuf, url: Option<String>) -> Result<()> {
@@ -2243,15 +2316,23 @@ pub async fn serve(pairing: PathBuf, url: Option<String>) -> Result<()> {
         tokio::io::stdout(),
         JsonRpcMessageCodec::<TxJsonRpcMessage<RoleServer>>::default(),
     );
-    HostTools {
+    let tools = HostTools {
         pairing,
         url,
         slots: Semaphore::new(4),
-    }
-    .serve((output, input))
-    .await?
-    .waiting()
-    .await?;
+        events: mcp_events::EventBridge::default(),
+    };
+    let closed = tools.events.closed();
+    let input = Box::pin(
+        input.chain(
+            futures_util::stream::once(async move {
+                closed.cancel();
+                None
+            })
+            .filter_map(future::ready),
+        ),
+    );
+    tools.serve((output, input)).await?.waiting().await?;
     Ok(())
 }
 
@@ -2265,6 +2346,7 @@ mod tests {
             pairing: PathBuf::new(),
             url: None,
             slots: Semaphore::new(0),
+            events: mcp_events::EventBridge::default(),
         };
         let cancellation = CancellationToken::new();
         cancellation.cancel();
