@@ -591,6 +591,10 @@ fn paste(app: &mut App, absolute: bool, outcome: &mut crate::controller::Outcome
     } else {
         relative
     };
+    if !pasteable(&text) {
+        app.notice = "This path contains control characters; nothing was pasted.".into();
+        return;
+    }
     let Some(terminal) = app.active_terminal() else {
         app.notice = "Open a session to paste the path into.".into();
         return;
@@ -600,6 +604,10 @@ fn paste(app: &mut App, absolute: bool, outcome: &mut crate::controller::Outcome
         outcome.commands.push(command);
         app.notice = format!("Pasted {text}");
     }
+}
+
+fn pasteable(text: &str) -> bool {
+    !text.is_empty() && !text.chars().any(char::is_control)
 }
 
 fn pin(app: &mut App) {
@@ -992,6 +1000,33 @@ mod tests {
                 .unwrap()
                 .contains("/work/a.txt")
         );
+    }
+
+    #[test]
+    fn files_paste_refuses_paths_with_newlines_or_control_characters() {
+        assert!(pasteable("src/main.rs"));
+        assert!(pasteable(r"C:\work\a b.txt"));
+        assert!(!pasteable("src/a\nrm -rf ~"));
+        assert!(!pasteable("src/\u{1b}[2J"));
+        assert!(!pasteable(""));
+        let mut app = app();
+        listed(&mut app);
+        let expand = press(&mut app, KeyCode::Char('l'));
+        reply(
+            &mut app,
+            &expand[0],
+            json!({"type":"entries","entries":entries(&[("evil\nrm -rf ~","file"),("ok.rs","file")]),"truncated":false}),
+        );
+        let rows: Vec<String> = app
+            .files
+            .tree
+            .as_ref()
+            .unwrap()
+            .rows()
+            .into_iter()
+            .map(|row| row.path)
+            .collect();
+        assert_eq!(rows, ["src", "src/ok.rs", "a.txt"]);
     }
 
     #[test]

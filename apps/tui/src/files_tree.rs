@@ -103,6 +103,14 @@ pub fn valid_relative(path: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
+pub fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\'])
+        && !name.chars().any(char::is_control)
+}
+
 pub fn separator(root: &str) -> char {
     if root.contains('\\') { '\\' } else { '/' }
 }
@@ -401,10 +409,11 @@ impl Tree {
             .any(|slot| slot.pending.as_deref() == Some(request_id))
     }
 
-    pub fn accept(&mut self, request_id: &str, listing: Listing) -> bool {
+    pub fn accept(&mut self, request_id: &str, mut listing: Listing) -> bool {
         let Some((directory, slot)) = self.pending_slot(request_id) else {
             return false;
         };
+        listing.entries.retain(|entry| valid_name(&entry.name));
         slot.pending = None;
         slot.error = None;
         slot.stale = false;
@@ -650,6 +659,34 @@ mod tests {
         assert!(tree.is_expanded("src"));
         assert!(tree.is_expanded("src/deep"));
         assert_eq!(tree.expanded().len(), MAX_EXPANDED);
+    }
+
+    #[test]
+    fn files_tree_skips_entry_names_that_could_inject_input_or_escape_the_root() {
+        let mut tree = Tree::new("/work".into(), Vec::new(), false);
+        tree.mark_pending("", "r1".into());
+        tree.accept(
+            "r1",
+            listing(
+                [
+                    "ok.rs",
+                    "red\u{1b}[31m",
+                    "line\nbreak",
+                    "",
+                    ".",
+                    "..",
+                    "a/b",
+                    r"a\b",
+                    ".env",
+                ]
+                .into_iter()
+                .map(|name| entry(name, Kind::File, None, false))
+                .collect(),
+            ),
+        );
+        assert_eq!(paths(&tree), ["ok.rs", ".env"]);
+        assert!(valid_name("..."));
+        assert!(!valid_name("tab\there"));
     }
 
     #[test]
