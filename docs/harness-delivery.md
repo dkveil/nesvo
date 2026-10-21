@@ -3343,3 +3343,25 @@ The retention fixture separately seeds its valid at-limit prefix in one test
 transaction, then performs two real appends across the production boundary.
 Exact retained count, gap and head assertions remain; production durability and
 pruning are unchanged (`e61b422`).
+
+### Native startup failure evidence and canceled CLI ownership
+
+Publication `1f29115` passed app/browser/Linux/macOS CI. Windows passed 61 of 62
+SDK scenarios; the human-priority timeout scenario failed its five-second
+provider-discovery precondition before creating any job. Its previous
+`jobNotCreated:true` diagnostic cannot establish whether the single-shot version
+probe failed or an awaited doctor query stalled. The same full cohort passed
+locally; this does not explain the CI failure.
+
+The test now retains attempted/completed doctor counts, in-flight stage, monotonic
+elapsed time, fixed query/precondition outcomes and the last allowlisted Claude
+probe status. Before fixture cleanup, failure evidence also records whether its
+owned host is running or exited. It adds no diagnostic subprocess, raw output,
+paths, pairing data or provider payload. Readiness and scenario bounds,
+assertions and the host's single-shot probe remain unchanged.
+
+The shared controlled-fixture CLI command now enables Tokio kill-on-drop so outer
+readiness/scenario cancellation requests termination of that owned CLI rather
+than leaving it running. Drop handling is not an awaited confirmation of reaping.
+This is a concrete cancellation-safety improvement and an evidence repair, not
+a claimed fix for the unproven CI startup cause.

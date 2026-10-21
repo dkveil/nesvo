@@ -30,21 +30,102 @@ async fn read_occurrence(owner: &Owner, job: &str, id: &str) -> Result<Value> {
     .await
 }
 
-async fn discovery_ready(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
+struct DiscoveryEvidence {
+    started: tokio::time::Instant,
+    elapsed_ms: Option<u64>,
+    attempted: u64,
+    completed: u64,
+    stage: &'static str,
+    query_outcome: &'static str,
+    precondition_outcome: &'static str,
+    last_claude_status: &'static str,
+}
+
+impl DiscoveryEvidence {
+    fn new() -> Self {
+        Self {
+            started: tokio::time::Instant::now(),
+            elapsed_ms: None,
+            attempted: 0,
+            completed: 0,
+            stage: "notStarted",
+            query_outcome: "notAttempted",
+            precondition_outcome: "notCompleted",
+            last_claude_status: "notReported",
+        }
+    }
+
+    fn summary(&self) -> Value {
+        json!({
+            "deadlineMs":5000,
+            "elapsedMs":self.elapsed_ms.unwrap_or_else(|| {
+                u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+            }),
+            "attemptedDoctorQueries":self.attempted,
+            "completedDoctorQueries":self.completed,
+            "doctorQueryInFlight":self.stage == "doctorQuery",
+            "stage":self.stage,
+            "queryOutcome":self.query_outcome,
+            "preconditionOutcome":self.precondition_outcome,
+            "lastClaudeProbeStatus":self.last_claude_status,
+        })
+    }
+}
+
+async fn discovery_ready(fixture: &Fixture, evidence: &mut DiscoveryEvidence) -> Result<()> {
+    evidence.started = tokio::time::Instant::now();
+    let result = timeout(Duration::from_secs(5), async {
         loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
+            evidence.attempted = evidence.attempted.saturating_add(1);
+            evidence.stage = "doctorQuery";
+            evidence.query_outcome = "pending";
+            let query = budgets::owner_cli(fixture, &["doctor", "--json"]).await;
+            evidence.completed = evidence.completed.saturating_add(1);
+            evidence.stage = "doctorCompleted";
+            let doctor = match query {
+                Ok(doctor) => {
+                    evidence.query_outcome = "completed";
+                    doctor
+                }
+                Err(_) => {
+                    evidence.query_outcome = "failed";
+                    anyhow::bail!("Controlled provider doctor query failed");
+                }
+            };
+            evidence.last_claude_status = match doctor["providerVersions"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["program"] == "claude"))
+                .and_then(|row| row["status"].as_str())
+            {
+                Some("checking") => "checking",
+                Some("ready") => "ready",
+                Some("unavailable") => "unavailable",
+                Some(_) => "invalidStatus",
+                None => "notReported",
+            };
             if doctor["providerVersions"].as_array().is_some_and(|rows| {
                 rows.iter()
                     .any(|row| row["program"] == "claude" && row["status"] == "ready")
             }) {
+                evidence.stage = "ready";
                 return Ok::<_, anyhow::Error>(());
             }
+            evidence.stage = "betweenDoctorQueries";
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
     })
-    .await
-    .context("Controlled provider discovery before execution timeout admission")?
+    .await;
+    evidence.elapsed_ms =
+        Some(u64::try_from(evidence.started.elapsed().as_millis()).unwrap_or(u64::MAX));
+    evidence.precondition_outcome = match &result {
+        Ok(Ok(())) => "ready",
+        Ok(Err(_)) => "queryFailed",
+        Err(_) => "deadlineElapsed",
+    };
+    if result.is_err() && evidence.stage == "doctorQuery" {
+        evidence.query_outcome = "pendingAtDeadline";
+    }
+    result.context("Controlled provider discovery before execution timeout admission")?
 }
 
 async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
@@ -221,12 +302,20 @@ async fn finish(
     scenario: &str,
     phase: &str,
     job: Option<&str>,
+    discovery: &DiscoveryEvidence,
     outcome: ScenarioOutcome,
 ) -> Result<()> {
     if !matches!(&outcome, Ok(Ok(Ok(())))) {
         let diagnostics = match job {
             Some(job) => job_diagnostics::report_timeout_diagnostics(fixture, job).await,
-            None => json!({"jobNotCreated":true}),
+            None => {
+                let host = match fixture.host.try_wait() {
+                    Ok(Some(status)) => json!({"state":"exited","exitCode":status.code()}),
+                    Ok(None) => json!({"state":"running"}),
+                    Err(_) => json!({"state":"unavailable"}),
+                };
+                json!({"jobNotCreated":true,"discovery":discovery.summary(),"hostAfterFailure":host})
+            }
         };
         eprintln!(
             "JOB_EXECUTION_TIMEOUT_DIAGNOSTIC {}",
@@ -285,8 +374,9 @@ async fn timeout_without_clients_stops_only_its_worker_and_never_retries_executi
     let mut fixture = Fixture::start_variant(true).await?;
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
+    let mut discovery = DiscoveryEvidence::new();
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40),async {
-        discovery_ready(&fixture).await?;
+        discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let independent = reply(&owner,"nesvo_create_session",json!({"key":"timeout-independent","spec":{"name":"Untimed independent shell","program":"shell"}})).await?;
         let independent_id = independent["data"]["receipt"]["sessionId"].as_str().context("Independent session")?;
@@ -377,6 +467,7 @@ async fn timeout_without_clients_stops_only_its_worker_and_never_retries_executi
         "Disconnected native execution timeout",
         phase,
         diagnostic_job.as_deref(),
+        &discovery,
         outcome,
     )
     .await
@@ -389,8 +480,9 @@ async fn accepted_report_disarms_execution_timeout_while_explicit_validation_sta
     let mut fixture = Fixture::start_variant(true).await?;
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
+    let mut discovery = DiscoveryEvidence::new();
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30),async {
-        discovery_ready(&fixture).await?;
+        discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let created = reply(&owner,"nesvo_create_job",json!({"key":"report-disarms-definition","spec":spec("report-task")})).await?;
         let job = created["data"]["job"]["id"].as_str().context("Reported job")?;
@@ -435,6 +527,7 @@ async fn accepted_report_disarms_execution_timeout_while_explicit_validation_sta
         "Report disarms native execution timeout",
         phase,
         diagnostic_job.as_deref(),
+        &discovery,
         outcome,
     )
     .await
@@ -447,8 +540,9 @@ async fn human_lease_and_quick_takeover_release_permanently_block_automatic_time
     let mut fixture = Fixture::start_variant(true).await?;
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
+    let mut discovery = DiscoveryEvidence::new();
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40),async {
-        discovery_ready(&fixture).await?;
+        discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let mut envelopes = Vec::new();
         for quick_release in [false,true] {
@@ -532,6 +626,7 @@ async fn human_lease_and_quick_takeover_release_permanently_block_automatic_time
         "Human priority over automatic job timeout",
         phase,
         diagnostic_job.as_deref(),
+        &discovery,
         outcome,
     )
     .await
