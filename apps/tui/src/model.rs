@@ -440,6 +440,7 @@ pub struct App {
     pub overview: crate::overview::Overview,
     pub schedules: Vec<Value>,
     pub jobs: Option<crate::jobs::Jobs>,
+    pub runs: Option<crate::runs::Runs>,
     pub git: Option<crate::git_pane::GitPane>,
     pub host_features: Value,
     pub review: crate::review::ReviewState,
@@ -509,6 +510,7 @@ impl App {
             overview: Default::default(),
             schedules: Vec::new(),
             jobs: None,
+            runs: None,
             git: None,
             host_features: Value::Null,
             client_id,
@@ -1210,7 +1212,13 @@ impl App {
                 self.host_features = event.clone();
                 self.capabilities = Some(serde_json::from_value(event)?);
             }
-            "workflow" => commands.extend(crate::jobs_controller::host_event(self, &event)),
+            "workflow" => {
+                commands.extend(crate::jobs_controller::host_event(self, &event));
+                commands.extend(crate::runs_controller::host_event(self, &event));
+            }
+            "workflowTemplates" | "workflowTemplateStarted" => {
+                commands.extend(crate::runs_controller::host_event(self, &event));
+            }
             "directories" => {
                 if event["requestId"].as_str() == self.pending_directory.as_deref() {
                     self.pending_directory = None;
@@ -1452,6 +1460,7 @@ impl App {
                     }
                 }
                 commands.extend(crate::jobs_controller::host_event(self, &event));
+                commands.extend(crate::runs_controller::host_event(self, &event));
                 crate::files_controller::host_error(self, &event);
                 crate::notes_controller::host_error(self, &event);
             }
@@ -1492,6 +1501,11 @@ impl App {
             .and_then(|jobs| jobs.unconfirmed_key().map(str::to_owned))
         {
             self.notice = crate::jobs::unconfirmed_notice(&self.notice, &key);
+        }
+        if let Some(runs) = self.runs.take()
+            && let Some((key, change)) = runs.unconfirmed_key()
+        {
+            self.notice = crate::runs::unconfirmed_notice(&self.notice, change, key);
         }
     }
 

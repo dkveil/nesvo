@@ -26,6 +26,7 @@ pub enum Role {
     Overview,
     Git,
     Notes,
+    Runs,
     Empty,
 }
 
@@ -44,6 +45,7 @@ impl Role {
             Self::Overview => "Overview",
             Self::Git => "Git",
             Self::Notes => "Notes",
+            Self::Runs => "Runs",
             Self::Empty => "Empty",
         }
     }
@@ -56,6 +58,7 @@ impl Role {
             Self::Overview => "Press O to focus the session overview".into(),
             Self::Git => "Press Y to open Git".into(),
             Self::Notes => "Press T to open Notes".into(),
+            Self::Runs => "Press W to open Runs".into(),
             Self::Agent | Self::Terminal | Self::Empty => "Press n to start a session".into(),
         }
     }

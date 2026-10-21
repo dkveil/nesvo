@@ -96,6 +96,65 @@ pub enum Command {
         #[command(subcommand)]
         command: attention::DecisionCommand,
     },
+    #[command(
+        about = "Owner-only nesvo.toml workflow templates: inspect, approve, revoke and start as runs"
+    )]
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
+}
+#[derive(Subcommand)]
+pub enum WorkflowCommand {
+    #[command(
+        about = "Show the committed [[workflow]] templates of a repository with their digest and approval; starts nothing"
+    )]
+    Templates {
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Approve one inspected template digest; its templates can then be started")]
+    ApproveTemplates {
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Revoke an approved template digest; later starts using it are refused")]
+    RevokeTemplates {
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(
+        about = "Create a run and its tasks from an approved template; repeat the same key after uncertainty"
+    )]
+    Start {
+        name: String,
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+impl WorkflowCommand {
+    fn machine(&self) -> bool {
+        match self {
+            Self::Templates { json, .. }
+            | Self::ApproveTemplates { json, .. }
+            | Self::RevokeTemplates { json, .. }
+            | Self::Start { json, .. } => *json,
+        }
+    }
 }
 #[derive(Subcommand)]
 pub enum WorktreeCommand {
@@ -525,6 +584,7 @@ impl Command {
             Self::Worktree { command } => command.machine(),
             Self::Inbox { command } => command.machine(),
             Self::Decision { command } => command.machine(),
+            Self::Workflow { command } => command.machine(),
             Self::Review { command } => match command {
                 ReviewCommand::Open { json, .. } | ReviewCommand::Deliver { json, .. } => *json,
             },
@@ -621,7 +681,11 @@ pub(crate) async fn request(
             "listWorktrees"
             | "describeWorktreeSetup"
             | "approveWorktreeSetup"
-            | "revokeWorktreeSetup",
+            | "revokeWorktreeSetup"
+            | "listWorkflowTemplates"
+            | "approveWorkflowTemplates"
+            | "revokeWorkflowTemplates"
+            | "startWorkflowTemplate",
         ) => Duration::from_secs(30),
         _ => Duration::from_secs(10),
     };
@@ -1160,6 +1224,45 @@ async fn worktree(command: WorktreeCommand, connection: &mut Connection) -> Resu
     print_data(machine, request(connection, query, kind).await?)
 }
 
+pub(crate) async fn workflow_templates_capability(connection: &mut Connection) -> Result<()> {
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["workflowTemplates"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not support nesvo.toml workflow templates; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+
+async fn workflow_templates(command: WorkflowCommand, connection: &mut Connection) -> Result<()> {
+    let machine = command.machine();
+    let (query, kind) = match &command {
+        WorkflowCommand::Templates { directory, .. } => {
+            crate::runs::template_command("list", directory, None, None)?
+        }
+        WorkflowCommand::ApproveTemplates {
+            directory, digest, ..
+        } => crate::runs::template_command("approve", directory, Some(digest), None)?,
+        WorkflowCommand::RevokeTemplates {
+            directory, digest, ..
+        } => crate::runs::template_command("revoke", directory, Some(digest), None)?,
+        WorkflowCommand::Start {
+            name,
+            directory,
+            key,
+            ..
+        } => crate::runs::template_command("start", directory, None, Some((name, key)))?,
+    };
+    workflow_templates_capability(connection).await?;
+    print_data(machine, request(connection, query, kind).await?)
+}
+
 fn bounded(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
 }
@@ -1600,6 +1703,7 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         Command::Decision { command } => {
             return attention::run_decision(command, connection).await;
         }
+        Command::Workflow { command } => return workflow_templates(command, connection).await,
         Command::Operation {
             id,
             receipt_id,

@@ -776,6 +776,21 @@ fn catalog() -> Vec<Tool> {
             true,
         ),
         (
+            "nesvo_list_workflow_templates",
+            "Owner-only: read the committed nesvo.toml [[workflow]] templates of a repository (HEAD) with tasks, tool profiles, workspace modes, budgets, digest and approval state. Starts nothing; requires host workflowTemplates:true. Approving or revoking a digest is a human act through the owner CLI (nesvo workflow approve-templates/revoke-templates) and has no agent tool.",
+            object(json!({"directory":worktree_directory}), &["directory"]),
+            true,
+        ),
+        (
+            "nesvo_start_workflow_template",
+            "Owner-only: create a run and its tasks from an approved template through the existing run create/plan/budget/activate/executor commands. Unapproved or changed digests are refused. Reuse the same key after uncertainty; a different template under that key is an idempotency conflict. A started run is not task success.",
+            object(
+                json!({"directory":worktree_directory,"name":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"key":{"type":"string","minLength":1,"maxLength":96}}),
+                &["directory", "name", "key"],
+            ),
+            false,
+        ),
+        (
             "nesvo_read_events",
             "Read durable metadata events after a domain cursor. Preserve nextCursor; gap is incomplete history, never success. No terminal transcript.",
             object(
@@ -956,6 +971,81 @@ fn catalog() -> Vec<Tool> {
 #[cfg(test)]
 #[path = "quota_mcp_tests.rs"]
 mod quota_tests;
+
+#[cfg(test)]
+mod workflow_template_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_template_mcp_matches_cli_wire_and_has_no_approval_tool() {
+        assert_eq!(
+            command(
+                "nesvo_list_workflow_templates",
+                json!({"directory":"/repo"})
+            )
+            .unwrap(),
+            crate::runs::template_command("list", "/repo", None, None).unwrap()
+        );
+        assert_eq!(
+            command(
+                "nesvo_start_workflow_template",
+                json!({"directory":"/repo","name":"review","key":"k1"})
+            )
+            .unwrap(),
+            (
+                json!({"type":"startWorkflowTemplate","directory":"/repo","name":"review","key":"k1"}),
+                "workflowTemplateStarted"
+            )
+        );
+        for (name, value) in [
+            ("nesvo_list_workflow_templates", json!({})),
+            (
+                "nesvo_list_workflow_templates",
+                json!({"directory":"/repo","digest":"a".repeat(64)}),
+            ),
+            (
+                "nesvo_start_workflow_template",
+                json!({"directory":"/repo","name":"bad name","key":"k"}),
+            ),
+            (
+                "nesvo_start_workflow_template",
+                json!({"directory":"/repo","name":"review","key":""}),
+            ),
+            (
+                "nesvo_start_workflow_template",
+                json!({"directory":"/repo","name":"review"}),
+            ),
+        ] {
+            assert!(command(name, value.clone()).is_err(), "{name} {value}");
+        }
+        for name in [
+            "nesvo_approve_workflow_templates",
+            "nesvo_revoke_workflow_templates",
+        ] {
+            assert!(catalog().iter().all(|tool| tool.name != name), "{name}");
+        }
+        for (name, read_only) in [
+            ("nesvo_list_workflow_templates", true),
+            ("nesvo_start_workflow_template", false),
+        ] {
+            let tool = serde_json::to_value(
+                catalog()
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(tool["annotations"]["readOnlyHint"], read_only);
+            assert_eq!(tool["annotations"]["destructiveHint"], false);
+            assert!(
+                tool["description"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Owner-only")
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod worktree_tests {
@@ -1155,8 +1245,8 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 109);
-        assert_eq!(published_tools().len(), 109);
+        assert_eq!(catalog().len(), 111);
+        assert_eq!(published_tools().len(), 111);
     }
 }
 
@@ -1218,6 +1308,13 @@ struct WorktreeSetup {
 struct WorktreeSession {
     session_id: String,
     discard: Option<bool>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkflowTemplateStart {
+    directory: String,
+    name: String,
+    key: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1788,6 +1885,14 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
             let _: Empty = parse(arguments)?;
             (json!({"type":"listWorktrees"}), "worktreeRegistry")
         }
+        "nesvo_list_workflow_templates" => {
+            let a: WorktreeSetup = parse(arguments)?;
+            crate::runs::template_command("list", &a.directory, None, None)?
+        }
+        "nesvo_start_workflow_template" => {
+            let a: WorkflowTemplateStart = parse(arguments)?;
+            crate::runs::template_command("start", &a.directory, None, Some((&a.name, &a.key)))?
+        }
         "nesvo_read_events" => {
             let a: Events = parse(arguments)?;
             if let Some(id) = &a.session_id {
@@ -1989,6 +2094,8 @@ impl HostTools {
             cli::review_capability(&mut connection).await?;
         } else if kind.starts_with("worktree") {
             cli::worktree_capability(&mut connection).await?;
+        } else if kind.starts_with("workflowTemplate") {
+            cli::workflow_templates_capability(&mut connection).await?;
         } else if kind == "operation" {
             let caps = cli::operation_capability(&mut connection).await?;
             if name == "nesvo_create_session"
@@ -2645,7 +2752,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 109);
+        assert_eq!(catalog().len(), 111);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

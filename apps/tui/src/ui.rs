@@ -453,6 +453,13 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     {
         crate::ui_jobs::render(frame, app, jobs);
     }
+    if let Some(runs) = app.runs.as_ref().filter(|runs| runs.open)
+        && app.jobs.is_none()
+        && app.connected
+        && app.dialog.is_none()
+    {
+        crate::ui_runs::render(frame, app, runs);
+    }
     if app.connected
         && (app.overview.open || crate::overview::engaged(app))
         && !matches!(
@@ -843,6 +850,7 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
             && app.dialog.is_none()
             && app.overlay.is_none()
             && app.jobs.is_none()
+            && !crate::runs_controller::engaged(app)
         {
             // Highlight the entire selectable row, including provider and status.
             let highlight_start = entry.x;
@@ -894,6 +902,9 @@ fn render_view(frame: &mut Frame, app: &App, role: Role, area: Rect) {
     );
     if role == Role::Overview {
         crate::ui_overview::render_leaf(frame, app, content);
+        return;
+    }
+    if role == Role::Runs && crate::ui_runs::render_leaf(frame, app, content) {
         return;
     }
     let lines = vec![
@@ -1540,7 +1551,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("r  m  d", "Rename / move / delete"),
             ("f  u", "Filter status / mute attention"),
             ("F8  F9", "Templates / restore sessions"),
-            ("S  J  O", "Scheduled sessions / jobs / overview"),
+            ("S  J  W  O", "Schedules / jobs / runs / overview"),
             ("F2 / F3", "New session: options / save template"),
             ("v  Tab  L", "Split / change pane / layouts"),
             ("1  2  F", "Sessions / files sidebar"),

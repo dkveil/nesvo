@@ -1,0 +1,749 @@
+use crate::{
+    model::App,
+    runs::{Detail, Load, Page, Runs, Summary, Templates},
+    theme::{BACKGROUND, BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, WARNING},
+    ui::truncate_cells,
+};
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+};
+
+const SUBTITLE: &str = "Host runs · tasks, attempts, inbox and decisions";
+const TEMPLATE_ROW: &str = "+ Start from template";
+const STATE_WIDTH: u16 = 10;
+
+fn row(area: Rect, offset: u16) -> Rect {
+    if offset >= area.height {
+        return Rect::default();
+    }
+    Rect::new(area.x, area.y + offset, area.width, 1)
+}
+
+fn text(frame: &mut Frame, area: Rect, value: &str, color: Color) {
+    if !area.is_empty() {
+        frame.render_widget(
+            Paragraph::new(truncate_cells(value, usize::from(area.width)))
+                .style(Style::default().fg(color)),
+            area,
+        );
+    }
+}
+
+fn wrapped(frame: &mut Frame, area: Rect, value: &str, color: Color) {
+    if !area.is_empty() {
+        frame.render_widget(
+            Paragraph::new(value.to_owned())
+                .style(Style::default().fg(color))
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+    }
+}
+
+fn below(area: Rect, offset: u16, limit: u16) -> Rect {
+    Rect::new(
+        area.x,
+        area.y + offset.min(area.height),
+        area.width,
+        area.height.saturating_sub(offset).min(limit),
+    )
+}
+
+pub fn state_mark(state: &str) -> &'static str {
+    match state {
+        "active" => "●",
+        "draining" | "drained" => "◐",
+        "stopping" | "stopped" => "■",
+        "succeeded" => "✓",
+        "failed" | "canceling" | "canceled" => "×",
+        _ => "○",
+    }
+}
+
+pub fn state_color(state: &str) -> Color {
+    match state {
+        "active" | "succeeded" | "accepted" => SUCCESS,
+        "failed" | "canceling" | "canceled" | "stopped" | "stopping" => DANGER,
+        "draft" | "planned" => MUTED,
+        _ => WARNING,
+    }
+}
+
+pub fn render(frame: &mut Frame, app: &App, runs: &Runs) {
+    let (area, footer_area) = crate::ui_jobs::surface(frame, app);
+    if area.is_empty() {
+        return;
+    }
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::default().style(Style::default().bg(BACKGROUND).fg(TEXT)),
+        area,
+    );
+    let inset = 2.min(area.width / 2);
+    let content = Rect::new(area.x + inset, area.y, area.width - 2 * inset, area.height);
+    let title = match runs.page {
+        Page::Runs => "Runs",
+        Page::Templates => "Runs / Start from template",
+        Page::Answer => "Runs / Answer decision",
+    };
+    frame.render_widget(
+        Paragraph::new(title).style(Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+        row(content, 1),
+    );
+    text(frame, row(content, 2), SUBTITLE, app.theme.accent());
+    let rule = row(content, 3);
+    if !rule.is_empty() {
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(BORDER)),
+            rule,
+        );
+    }
+    let body = Rect::new(
+        content.x,
+        content.y + content.height.min(5),
+        content.width,
+        content.height.saturating_sub(6),
+    );
+    match (&runs.load, runs.page) {
+        (_, Page::Answer) => answer(frame, app, body, runs),
+        (_, Page::Templates) => templates(frame, app, body, runs.templates.as_ref()),
+        (Load::Loading, Page::Runs) if runs.runs.is_empty() => {
+            text(frame, row(body, 2), "Loading runs from your host…", TEXT);
+        }
+        (Load::Failed(message), Page::Runs) => {
+            text(frame, row(body, 2), "Could not load runs", DANGER);
+            wrapped(frame, below(body, 4, 3), message, TEXT);
+        }
+        (_, Page::Runs) => overview(frame, app, body, runs),
+    }
+    footer(frame, app, footer_area, runs);
+}
+
+fn run_row(frame: &mut Frame, area: Rect, run: &Summary, selected: bool, app: &App) {
+    if area.is_empty() {
+        return;
+    }
+    if selected {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(app.theme.selection())),
+            area,
+        );
+    }
+    let state_width = STATE_WIDTH.min(area.width / 2);
+    let name_width = area.width.saturating_sub(state_width + 1);
+    text(
+        frame,
+        Rect::new(area.x, area.y, name_width, 1),
+        &format!(" {} {}", state_mark(&run.state), run.title),
+        TEXT,
+    );
+    frame.render_widget(
+        Paragraph::new(truncate_cells(&run.state, usize::from(state_width)))
+            .right_aligned()
+            .style(Style::default().fg(state_color(&run.state))),
+        Rect::new(
+            area.right().saturating_sub(state_width + 1),
+            area.y,
+            state_width,
+            1,
+        ),
+    );
+}
+
+fn overview(frame: &mut Frame, app: &App, area: Rect, runs: &Runs) {
+    let wide = area.width >= 96;
+    let list_width = if wide { area.width * 2 / 5 } else { area.width };
+    let list = Rect::new(area.x, area.y, list_width, area.height);
+    let more = if runs.more { "  · newest 16" } else { "" };
+    text(
+        frame,
+        row(list, 0),
+        &format!("RUNS  {}{more}", runs.runs.len()),
+        MUTED,
+    );
+    let capacity = if wide {
+        list.height.saturating_sub(3)
+    } else {
+        list.height.saturating_sub(3).min(6)
+    };
+    let visible = usize::from(capacity.max(1));
+    let first = runs
+        .selected_row()
+        .saturating_sub(visible.saturating_sub(1));
+    let rows = std::iter::once(None).chain(runs.runs.iter().map(Some));
+    let mut shown = 0;
+    for (offset, run) in rows.skip(first).take(visible).enumerate() {
+        let target = row(list, offset as u16 + 2);
+        if target.is_empty() {
+            break;
+        }
+        shown = offset + 1;
+        match run {
+            None => {
+                if runs.selected.is_none() {
+                    frame.render_widget(
+                        Block::default().style(Style::default().bg(app.theme.selection())),
+                        target,
+                    );
+                }
+                text(
+                    frame,
+                    target,
+                    &format!(" {TEMPLATE_ROW}"),
+                    app.theme.accent(),
+                );
+            }
+            Some(run) => run_row(
+                frame,
+                target,
+                run,
+                runs.selected.as_deref() == Some(run.id.as_str()),
+                app,
+            ),
+        }
+    }
+    let detail_area = if wide {
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_style(Style::default().fg(BORDER)),
+            Rect::new(list.right() + 1, area.y, 1, area.height),
+        );
+        Rect::new(
+            list.right() + 3,
+            area.y,
+            area.width.saturating_sub(list.width + 3),
+            area.height,
+        )
+    } else {
+        let offset = (shown as u16 + 3).min(area.height);
+        Rect::new(area.x, area.y + offset, area.width, area.height - offset)
+    };
+    match (runs.selected_run(), runs.selected_detail()) {
+        (Some(run), detail) => run_detail(frame, detail_area, run, detail),
+        (None, _) => template_hint(frame, detail_area),
+    }
+}
+
+fn template_hint(frame: &mut Frame, area: Rect) {
+    text(frame, row(area, 0), "START FROM TEMPLATE", MUTED);
+    wrapped(
+        frame,
+        below(area, 2, 3),
+        "Enter lists the approved [[workflow]] templates committed in HEAD:nesvo.toml and starts one as a new run.",
+        TEXT,
+    );
+    wrapped(
+        frame,
+        below(area, 5, 3),
+        "Approval is an owner CLI step: nesvo workflow approve-templates.",
+        MUTED,
+    );
+}
+
+fn task_line(task: &crate::runs::Task) -> String {
+    let attempt = match &task.current_attempt {
+        Some(attempt) => format!(
+            "attempt {}/{} {} · {}",
+            attempt.ordinal, task.attempts, attempt.state, attempt.session_id
+        ),
+        None if task.dependency_state == "waiting" => "waiting on dependencies".into(),
+        None => "ready, no attempt".into(),
+    };
+    format!(" {} {}  {}", state_mark(&task.state), task.key, attempt)
+}
+
+fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Detail>) {
+    text(frame, row(area, 0), "SELECTED RUN", MUTED);
+    text(frame, row(area, 1), &run.title, TEXT);
+    text(
+        frame,
+        row(area, 2),
+        &format!("{} · revision {}", run.state, run.revision),
+        state_color(&run.state),
+    );
+    let Some(detail) = detail else {
+        text(frame, row(area, 4), "Loading tasks…", MUTED);
+        return;
+    };
+    let mut y = 4;
+    text(
+        frame,
+        row(area, y),
+        &format!("TASKS  {}", detail.tasks.len()),
+        MUTED,
+    );
+    y += 1;
+    let task_rows = area.height.saturating_sub(12).clamp(1, 8);
+    for task in detail.tasks.iter().take(usize::from(task_rows)) {
+        text(
+            frame,
+            row(area, y),
+            &task_line(task),
+            state_color(&task.state),
+        );
+        y += 1;
+    }
+    if detail.tasks.len() > usize::from(task_rows) {
+        text(
+            frame,
+            row(area, y),
+            &format!(" +{} more", detail.tasks.len() - usize::from(task_rows)),
+            MUTED,
+        );
+        y += 1;
+    }
+    y += 1;
+    let inbox = if detail.inbox_loaded {
+        format!("INBOX  {} pending", detail.pending_messages)
+    } else {
+        "INBOX  loading".into()
+    };
+    text(frame, row(area, y), &inbox, MUTED);
+    y += 1;
+    for message in detail.messages.iter().take(2) {
+        text(
+            frame,
+            row(area, y),
+            &format!(
+                " {}: {}",
+                message.kind,
+                message.body.replace(['\r', '\n'], " ")
+            ),
+            TEXT,
+        );
+        y += 1;
+    }
+    y += 1;
+    let decisions = if detail.decisions_loaded {
+        format!("DECISIONS  {} pending", detail.decisions.len())
+    } else {
+        "DECISIONS  loading".into()
+    };
+    text(frame, row(area, y), &decisions, MUTED);
+    y += 1;
+    for decision in detail.decisions.iter().take(2) {
+        let task = detail
+            .tasks
+            .iter()
+            .find(|task| task.id == decision.task_id)
+            .map_or("task", |task| task.key.as_str());
+        text(
+            frame,
+            row(area, y),
+            &format!(
+                " ? {} ({} · {task})",
+                decision.question.replace(['\r', '\n'], " "),
+                decision.audience
+            ),
+            WARNING,
+        );
+        y += 1;
+    }
+    if !detail.decisions.is_empty() {
+        text(frame, row(area, y), " a answers the first one", MUTED);
+    }
+}
+
+fn templates(frame: &mut Frame, app: &App, area: Rect, templates: Option<&Templates>) {
+    let Some(templates) = templates else {
+        text(
+            frame,
+            row(area, 2),
+            "This host cannot start workflow templates.",
+            MUTED,
+        );
+        return;
+    };
+    match &templates.load {
+        Load::Loading => {
+            text(
+                frame,
+                row(area, 2),
+                "Reading HEAD:nesvo.toml from your host…",
+                TEXT,
+            );
+            return;
+        }
+        Load::Failed(message) => {
+            text(
+                frame,
+                row(area, 2),
+                "Could not read workflow templates",
+                DANGER,
+            );
+            wrapped(frame, below(area, 4, 4), message, TEXT);
+            return;
+        }
+        Load::Ready => {}
+    }
+    text(
+        frame,
+        row(area, 0),
+        &format!(
+            "TEMPLATES  {}  · {}",
+            templates.items.len(),
+            templates.repository
+        ),
+        MUTED,
+    );
+    if templates.items.is_empty() {
+        wrapped(
+            frame,
+            below(area, 2, 3),
+            "No [[workflow]] entries are committed in HEAD:nesvo.toml of this repository.",
+            TEXT,
+        );
+        return;
+    }
+    let mut y = 2;
+    if !templates.approved {
+        let digest = templates.digest.as_deref().unwrap_or_default();
+        wrapped(
+            frame,
+            below(area, y, 2),
+            "These templates are not approved. Inspect them, then approve the digest from the owner CLI:",
+            WARNING,
+        );
+        wrapped(
+            frame,
+            below(area, y + 2, 3),
+            &format!(
+                "nesvo workflow approve-templates --directory {} --digest {digest}",
+                templates.directory
+            ),
+            TEXT,
+        );
+        y += 6;
+    }
+    for (index, template) in templates.items.iter().enumerate() {
+        let target = row(area, y + index as u16);
+        if target.is_empty() {
+            break;
+        }
+        if templates.approved && index == templates.selected {
+            frame.render_widget(
+                Block::default().style(Style::default().bg(app.theme.selection())),
+                target,
+            );
+        }
+        text(
+            frame,
+            target,
+            &format!(
+                " {}  {}  · {} · {} tasks",
+                template.name,
+                template.title,
+                template.start,
+                template.tasks.len()
+            ),
+            if templates.approved { TEXT } else { MUTED },
+        );
+    }
+}
+
+fn answer(frame: &mut Frame, app: &App, area: Rect, runs: &Runs) {
+    let Some(form) = &runs.answer else {
+        return;
+    };
+    text(frame, row(area, 0), "DECISION", MUTED);
+    wrapped(frame, below(area, 1, 4), &form.question, TEXT);
+    text(frame, row(area, 6), "ANSWER", MUTED);
+    let input = row(area, 7);
+    if !input.is_empty() {
+        frame.render_widget(Block::default().style(Style::default().bg(SURFACE)), input);
+        let shown = format!("{}▏", form.text);
+        let width = usize::from(input.width.saturating_sub(1));
+        let tail: String = shown
+            .chars()
+            .rev()
+            .take(width)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        text(
+            frame,
+            Rect::new(input.x + 1, input.y, input.width.saturating_sub(1), 1),
+            &tail,
+            app.theme.accent(),
+        );
+    }
+    wrapped(
+        frame,
+        below(area, 9, 3),
+        &format!(
+            "Enter records the answer at decision revision {}; it never validates the task or approves provider permissions.",
+            form.revision
+        ),
+        MUTED,
+    );
+}
+
+fn hints(runs: &Runs) -> Vec<(&'static str, &'static str)> {
+    match runs.page {
+        Page::Answer => vec![("Enter", "answer"), ("Esc", "cancel")],
+        Page::Templates => vec![
+            ("↑↓", "select"),
+            ("Enter", "start"),
+            ("F5", "reload"),
+            ("Esc", "back"),
+        ],
+        Page::Runs if runs.selected.is_none() => vec![
+            ("↑↓", "select"),
+            ("Enter", "templates"),
+            ("F5", "refresh"),
+            ("Esc", "back"),
+        ],
+        Page::Runs => vec![
+            ("↑↓", "select"),
+            ("p", "pause"),
+            ("r", "resume"),
+            ("d", "drain"),
+            ("a", "answer"),
+            ("n", "template"),
+            ("Esc", "back"),
+        ],
+    }
+}
+
+fn footer(frame: &mut Frame, app: &App, area: Rect, runs: &Runs) {
+    if area.is_empty() {
+        return;
+    }
+    let mut spans = vec![
+        Span::styled(
+            " RUNS ",
+            Style::default()
+                .fg(BACKGROUND)
+                .bg(app.theme.accent())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+    ];
+    for (key, label) in hints(runs) {
+        spans.push(Span::styled(
+            format!(" {key} "),
+            Style::default()
+                .fg(TEXT)
+                .bg(BORDER)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {label}  "),
+            Style::default().fg(MUTED),
+        ));
+    }
+    let used = Line::from(spans.clone()).width();
+    let available = usize::from(area.width);
+    if !app.notice.is_empty() && available > used + 4 {
+        spans.push(Span::styled(
+            truncate_cells(&format!("· {}", app.notice), available - used),
+            Style::default().fg(WARNING),
+        ));
+    }
+    frame.render_widget(Clear, area);
+    frame.render_widget(Block::default().style(Style::default().bg(SURFACE)), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+pub fn render_leaf(frame: &mut Frame, app: &App, area: Rect) -> bool {
+    let Some(runs) = &app.runs else {
+        return false;
+    };
+    if area.is_empty() {
+        return true;
+    }
+    text(
+        frame,
+        row(area, 0),
+        &format!("RUNS  {}", runs.runs.len()),
+        MUTED,
+    );
+    for (offset, run) in runs.runs.iter().enumerate() {
+        let target = row(area, offset as u16 + 2);
+        if target.is_empty() {
+            break;
+        }
+        let pending = runs
+            .details
+            .get(&run.id)
+            .map_or(0, |detail| detail.decisions.len());
+        let mut summary = run.clone();
+        if pending > 0 {
+            summary.title = format!("{} · {pending}?", run.title);
+        }
+        run_row(frame, target, &summary, false, app);
+    }
+    if runs.runs.is_empty() {
+        text(
+            frame,
+            row(area, 2),
+            "No runs yet. Press W to start one.",
+            MUTED,
+        );
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runs::tests as fixtures;
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+    use serde_json::json;
+
+    fn app(runs: Runs) -> App {
+        let mut app = App::new(71);
+        app.event(json!({
+            "type":"capabilities", "workspace":"C:/Projects/nesvo", "programs":[
+                {"id":"claude","available":true}
+            ]
+        }))
+        .unwrap();
+        app.event(json!({"type":"sessions", "revision":1, "groups":[
+            {"id":"g","name":"nesvo","parentId":null,"order":0}
+        ], "sessions":[
+            {"id":"s1","name":"Review navigation","cwd":"C:/Projects/nesvo","program":"claude","cols":100,"rows":40,"running":true,"groupId":"g","controllerId":null,"uptimeSeconds":720,"status":{"state":"idle","source":"hook","updatedAt":1}}
+        ]}))
+        .unwrap();
+        app.dialog = None;
+        app.overlay = None;
+        app.onboarded = true;
+        app.notice.clear();
+        app.runs = Some(runs);
+        app
+    }
+
+    fn draw(app: &App, width: u16, height: u16) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, app, 0))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn line(buffer: &Buffer, y: u16) -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    fn screen(buffer: &Buffer) -> String {
+        (0..buffer.area.height)
+            .map(|y| line(buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn find(buffer: &Buffer, needle: &str) -> Option<(u16, u16)> {
+        (0..buffer.area.height).find_map(|y| {
+            let text = line(buffer, y);
+            text.find(needle)
+                .map(|byte| (text[..byte].chars().count() as u16, y))
+        })
+    }
+
+    #[test]
+    fn runs_render_wide_list_with_tasks_attempts_inbox_and_decisions_at_150x44() {
+        let app = app(fixtures::loaded());
+        let buffer = draw(&app, 150, 44);
+        let all = screen(&buffer);
+        assert!(all.contains("Review navigation"), "sidebar stays visible");
+        let (x, y) = find(&buffer, "Runs").unwrap();
+        assert_eq!((x, y), (44, 1));
+        assert!(line(&buffer, 2).contains(SUBTITLE));
+        assert!(line(&buffer, 5).contains("RUNS  2"));
+        assert!(line(&buffer, 7).contains(TEMPLATE_ROW));
+        let (_, selected) = find(&buffer, "● Branch review").unwrap();
+        assert_eq!(selected, 8);
+        assert_eq!(buffer[(45, selected)].bg, app.theme.selection());
+        assert!(line(&buffer, selected).contains("active"));
+        assert!(line(&buffer, 9).contains("◐ Release notes"));
+        assert!(all.contains("SELECTED RUN"));
+        assert!(all.contains("active · revision 4"));
+        assert!(all.contains("TASKS  2"));
+        assert!(all.contains("implement  attempt 2/2 reported · s-worker"));
+        assert!(all.contains("review  waiting on dependencies"));
+        assert!(all.contains("INBOX  3 pending"));
+        assert!(all.contains("result: Implementation reported"));
+        assert!(all.contains("DECISIONS  1 pending"));
+        assert!(all.contains("? Ship the migration now? (owner · implement)"));
+        assert!(line(&buffer, 43).starts_with(" RUNS "));
+        assert!(line(&buffer, 43).contains(" p  pause"));
+    }
+
+    #[test]
+    fn runs_render_compact_detail_below_the_list_at_80x24() {
+        let app = app(fixtures::loaded());
+        let buffer = draw(&app, 80, 24);
+        let all = screen(&buffer);
+        assert!(all.contains("RUNS  2"));
+        assert!(all.contains(TEMPLATE_ROW));
+        assert!(all.contains("● Branch review"));
+        let (_, list) = find(&buffer, "◐ Release notes").unwrap();
+        let (_, detail) = find(&buffer, "SELECTED RUN").unwrap();
+        assert!(detail > list);
+        assert!(all.contains("active · revision 4"));
+        assert!(line(&buffer, 23).starts_with(" RUNS "));
+    }
+
+    #[test]
+    fn runs_render_templates_and_the_answer_form_at_100x32() {
+        let mut runs = fixtures::loaded();
+        let features = fixtures::features();
+        let open = runs
+            .open_templates(&features, "C:/Projects/nesvo".into())
+            .commands
+            .remove(0);
+        fixtures::reply(&mut runs, &open, fixtures::templates());
+        let mut app = app(runs);
+        let buffer = draw(&app, 100, 32);
+        let all = screen(&buffer);
+        assert!(all.contains("Runs / Start from template"));
+        assert!(all.contains("TEMPLATES  2"));
+        let (x, review) = find(&buffer, "review  Branch review  · active · 2 tasks").unwrap();
+        assert_eq!(buffer[(x, review)].bg, app.theme.selection());
+        assert!(all.contains("triage  Triage  · draft · 1 tasks"));
+        let runs = app.runs.as_mut().unwrap();
+        runs.templates.as_mut().unwrap().approved = false;
+        let buffer = draw(&app, 100, 32);
+        assert!(screen(&buffer).contains("not approved"));
+        assert!(screen(&buffer).contains("nesvo workflow approve-templates --directory"));
+        let runs = app.runs.as_mut().unwrap();
+        runs.back();
+        runs.begin_answer();
+        runs.answer.as_mut().unwrap().text = "Yes".into();
+        let buffer = draw(&app, 100, 32);
+        let all = screen(&buffer);
+        assert!(all.contains("Runs / Answer decision"));
+        assert!(all.contains("Ship the migration now?"));
+        assert!(all.contains("Yes▏"));
+        assert!(all.contains("decision revision 1"));
+    }
+
+    #[test]
+    fn runs_leaf_lists_the_last_snapshot_with_pending_decisions() {
+        let mut runs = fixtures::loaded();
+        runs.open = false;
+        let mut app = app(runs);
+        app.set_pane_layout(crate::layouts::PaneTree::split(
+            crate::layouts::Direction::Horizontal,
+            crate::layouts::PaneTree::leaf(crate::layouts::Role::Agent),
+            crate::layouts::PaneTree::leaf(crate::layouts::Role::Runs),
+        ));
+        let buffer = draw(&app, 150, 44);
+        let all = screen(&buffer);
+        assert!(all.contains("Branch review · 1?"), "{all}");
+        assert!(all.contains("Release notes"));
+        app.runs = None;
+        let buffer = draw(&app, 150, 44);
+        assert!(screen(&buffer).contains("Press W to open Runs"));
+    }
+}
