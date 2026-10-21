@@ -148,7 +148,6 @@ fn catalog() -> Vec<Tool> {
     let key = json!({"type":"string","minLength":1,"maxLength":128});
     let revision = json!({"type":"integer","minimum":1});
     let worktree_directory = json!({"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host folder inside the Git repository"});
-    let worktree_digest = json!({"type":"string","pattern":"^[0-9a-fA-F]{64}$","description":"Digest returned by nesvo_describe_worktree_setup"});
     let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
     let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
     let definitions = [
@@ -745,30 +744,9 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_describe_worktree_setup",
-            "Owner-only: read the committed nesvo.toml [worktree] table of a repository (HEAD), its normalized setup/run/env_files/timeout_s, digest and approval state. Runs nothing; requires host worktrees:true.",
-            object(
-                json!({"directory":worktree_directory.clone()}),
-                &["directory"],
-            ),
+            "Owner-only: read the committed nesvo.toml [worktree] table of a repository (HEAD), its normalized setup/run/env_files/timeout_s, digest and approval state. Runs nothing; requires host worktrees:true. Approving or revoking a digest is a human act through the owner CLI (nesvo worktree approve-setup/revoke-setup) and has no agent tool.",
+            object(json!({"directory":worktree_directory}), &["directory"]),
             true,
-        ),
-        (
-            "nesvo_approve_worktree_setup",
-            "Owner-only: approve exactly one inspected setup digest for a repository. Approval authorizes the declared commands to run with the host user's permissions in each new worktree before its agent starts; a changed nesvo.toml needs a new approval. Never auto-approves repository files.",
-            object(
-                json!({"directory":worktree_directory.clone(),"digest":worktree_digest.clone()}),
-                &["directory", "digest"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_revoke_worktree_setup",
-            "Owner-only: revoke an approved setup digest. Later worktree launches with that setup are refused before any worktree is created; running steps are not stopped.",
-            object(
-                json!({"directory":worktree_directory,"digest":worktree_digest}),
-                &["directory", "digest"],
-            ),
-            false,
         ),
         (
             "nesvo_run_worktree",
@@ -986,14 +964,17 @@ mod worktree_tests {
     #[test]
     fn worktree_mcp_matches_cli_wire_and_refuses_extra_arguments() {
         let digest = "b".repeat(64);
-        assert_eq!(
-            command(
-                "nesvo_approve_worktree_setup",
-                json!({"directory":"/repo","digest":digest})
-            )
-            .unwrap(),
-            cli::worktree_setup_query("approve", "/repo", Some(&digest)).unwrap()
-        );
+        for name in [
+            "nesvo_approve_worktree_setup",
+            "nesvo_revoke_worktree_setup",
+        ] {
+            assert!(
+                command(name, json!({"directory":"/repo","digest":digest})).is_err(),
+                "{name}"
+            );
+            assert!(catalog().iter().all(|tool| tool.name != name), "{name}");
+            assert!(!published_tools().iter().any(|tool| tool == name), "{name}");
+        }
         assert_eq!(
             command(
                 "nesvo_describe_worktree_setup",
@@ -1028,15 +1009,6 @@ mod worktree_tests {
                 "nesvo_describe_worktree_setup",
                 json!({"directory":"/repo","digest":digest}),
             ),
-            ("nesvo_approve_worktree_setup", json!({"directory":"/repo"})),
-            (
-                "nesvo_approve_worktree_setup",
-                json!({"directory":"/repo","digest":"x"}),
-            ),
-            (
-                "nesvo_revoke_worktree_setup",
-                json!({"directory":"/repo","digest":digest,"all":true}),
-            ),
             (
                 "nesvo_run_worktree",
                 json!({"sessionId":"s","discard":false}),
@@ -1060,8 +1032,6 @@ mod worktree_tests {
     fn worktree_catalog_marks_reads_and_the_destructive_archive() {
         for (name, read_only, destructive) in [
             ("nesvo_describe_worktree_setup", true, false),
-            ("nesvo_approve_worktree_setup", false, false),
-            ("nesvo_revoke_worktree_setup", false, false),
             ("nesvo_run_worktree", false, false),
             ("nesvo_cancel_worktree", false, false),
             ("nesvo_archive_worktree", false, true),
@@ -1185,8 +1155,8 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 107);
-        assert_eq!(published_tools().len(), 107);
+        assert_eq!(catalog().len(), 105);
+        assert_eq!(published_tools().len(), 105);
     }
 }
 
@@ -1242,7 +1212,6 @@ struct DeliverReview {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WorktreeSetup {
     directory: String,
-    digest: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1793,16 +1762,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "reviewDelivered",
             )
         }
-        "nesvo_describe_worktree_setup"
-        | "nesvo_approve_worktree_setup"
-        | "nesvo_revoke_worktree_setup" => {
+        "nesvo_describe_worktree_setup" => {
             let a: WorktreeSetup = parse(arguments)?;
-            let action = match name {
-                "nesvo_describe_worktree_setup" => "describe",
-                "nesvo_approve_worktree_setup" => "approve",
-                _ => "revoke",
-            };
-            cli::worktree_setup_query(action, &a.directory, a.digest.as_deref())?
+            cli::worktree_setup_query("describe", &a.directory, None)?
         }
         "nesvo_run_worktree" | "nesvo_cancel_worktree" | "nesvo_archive_worktree" => {
             let a: WorktreeSession = parse(arguments)?;
@@ -2678,7 +2640,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 107);
+        assert_eq!(catalog().len(), 105);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

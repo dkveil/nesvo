@@ -191,8 +191,6 @@ These native flags are documented in the official
 | nesvo_open_review             | owner-only local or GitHub pull request review           |
 | nesvo_deliver_review          | owner-only review feedback with one receipt              |
 | nesvo_describe_worktree_setup | owner-only committed nesvo.toml, digest and approval     |
-| nesvo_approve_worktree_setup  | owner-only approval of one inspected setup digest        |
-| nesvo_revoke_worktree_setup   | owner-only revocation of a setup digest                  |
 | nesvo_run_worktree            | owner-only start of approved run steps                   |
 | nesvo_cancel_worktree         | owner-only cancellation of active setup or run           |
 | nesvo_archive_worktree        | owner-only archive; refuses unsaved work without discard |
@@ -207,6 +205,12 @@ These native flags are documented in the official
 | nesvo_list_recovery           | owner-only page of saved session descriptions            |
 | nesvo_restore_session         | owner-only new process, optional exact resume            |
 | nesvo_forget_recovery         | owner-only removal of one saved description              |
+
+Worktree setup approval and revocation have no MCP tool: approving a digest is a
+human act through the owner CLI (`nesvo worktree approve-setup` and `revoke-setup`),
+so an agent can describe a setup but never approve its own repository-declared steps.
+The host also refuses every worktree command with `forbidden` for session-scoped and
+wake callers.
 
 `conversationResume` adds `resume:true` to `nesvo_restore_session`. The session
 accepts no automated input until the provider confirms the exact conversation;

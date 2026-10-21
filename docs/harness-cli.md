@@ -316,6 +316,10 @@ approved, policy }` and runs nothing. `approve-setup` refuses with
 `worktreeSetupRevoked { repository, digest, revoked }`. Approvals persist in
 `worktrees.json` next to the host pairing data.
 
+Approval and revocation exist only in this owner CLI. The MCP catalog has no
+approve or revoke tool, so an agent cannot approve repository-declared steps for
+itself; it can only describe the setup and ask the owner to approve the digest.
+
 Every worktree launch (TUI, `session create --worktree`, MCP, workflow tasks and
 scheduled launches) checks the approval before creating anything: an unapproved
 declared setup fails with `worktree_setup_unapproved` and no effect. After the
@@ -355,7 +359,10 @@ the journal event `worktreeArchived` carry `sessionId`, `worktree`, `branch`,
 { worktrees:[{ sessionId, worktree, branch, repository, createdAt, digest, setup,
 run, envFiles, archivedAt, discarded, present, sessionLive, active }] }`, newest
 first (128); `present` compares with `git worktree list`. All worktree commands are
-owner-only and need `worktrees:true`.
+owner-only and need `worktrees:true`: the host refuses every one of them with
+`forbidden` for a session-scoped or wake caller, including a caller targeting its own
+session, and `run`, `cancel` and `archive` refuse `worktree_not_found` unless the host
+registered a worktree for that session.
 
 ## Remaining delivery gates
 

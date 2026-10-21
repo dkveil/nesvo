@@ -252,7 +252,7 @@ pub async fn handle(
             Client {
                 events: event_tx,
                 cancelled: cancel_tx,
-                authority,
+                authority: authority.clone(),
             },
         );
         state.send(
@@ -526,7 +526,7 @@ pub async fn handle(
                         }
                         if crate::worktrees::handles(&command) {
                             let permit = event_gate.clone().try_acquire_owned().ok();
-                            tokio::spawn(crate::worktrees::serve(state.clone(), id, command, request_id, permit));
+                            tokio::spawn(crate::worktrees::serve(state.clone(), id, authority.clone(), command, request_id, permit));
                             continue;
                         }
                         if matches!(command, Command::ListCommits { .. }) {

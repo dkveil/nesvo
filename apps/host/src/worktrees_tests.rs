@@ -594,3 +594,95 @@ fn the_repository_worktree_config_parses_within_bounds() {
     assert!(config.env_files.is_empty());
     assert_eq!(config.timeout_s, 900);
 }
+
+fn worktree_commands(directory: &str, digest: &str, session: &str) -> Vec<Command> {
+    vec![
+        Command::DescribeWorktreeSetup {
+            directory: directory.into(),
+        },
+        Command::ApproveWorktreeSetup {
+            directory: directory.into(),
+            digest: digest.into(),
+        },
+        Command::RevokeWorktreeSetup {
+            directory: directory.into(),
+            digest: digest.into(),
+        },
+        Command::RunWorktree {
+            session_id: session.into(),
+        },
+        Command::CancelWorktree {
+            session_id: session.into(),
+        },
+        Command::ArchiveWorktree {
+            session_id: session.into(),
+            discard: true,
+        },
+        Command::ListWorktrees,
+    ]
+}
+
+#[test]
+fn scoped_callers_are_forbidden_every_worktree_command_even_inside_their_scope() {
+    let own = "a".repeat(32);
+    let digest = "b".repeat(64);
+    for authority in [
+        Authority::Session {
+            id: own.clone(),
+            scope_id: "c".repeat(32),
+        },
+        Authority::RunWake {
+            id: own.clone(),
+            scope_id: "c".repeat(32),
+        },
+    ] {
+        for target in [own.as_str(), "foreign"] {
+            for command in worktree_commands("C:/repo", &digest, target) {
+                let error = admit(&authority, &command).unwrap_err();
+                assert_eq!(code(&error), "forbidden", "{error}");
+                let outside = target_session(&command).is_some() && target != own;
+                assert_eq!(error.to_string().contains("outside"), outside, "{error}");
+                assert_eq!(
+                    error.to_string().contains("requires owner authority"),
+                    !outside,
+                    "{error}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn owner_callers_pass_the_gate_and_reach_only_host_registered_worktrees() {
+    let scratch = scratch();
+    let store = store(&scratch);
+    let config = format!(
+        "[worktree]\nsetup = [{}]\n",
+        toml_steps(&[fixture("echo 0")])
+    );
+    let repository = repository(&scratch, Some(&config)).await;
+    let directory = display_path(&repository);
+    let session = "e".repeat(32);
+    let digest = parse(&config).unwrap().digest();
+    for command in worktree_commands(&directory, &digest, &session) {
+        assert!(admit(&Authority::Owner, &command).is_ok());
+    }
+    let approved = approve(&store, None, &directory, &digest).await.unwrap();
+    assert_eq!(approved["type"], "worktreeSetupApproved");
+    let (_worktree, result) = derived(&store, &repository, &session).await;
+    assert_eq!(result.unwrap().unwrap().result, "passed");
+    let cancelled = cancel(&store, &session).unwrap();
+    assert_eq!(
+        (cancelled["type"].as_str(), cancelled["cancelled"].as_bool()),
+        (Some("worktreeCancelled"), Some(false))
+    );
+    assert_eq!(
+        code(&cancel(&store, &"f".repeat(32)).unwrap_err()),
+        "worktree_not_found"
+    );
+    assert!(archive(&store, None, &session, false, false).await.is_ok());
+    assert_eq!(
+        code(&cancel(&store, &session).unwrap_err()),
+        "worktree_not_found"
+    );
+}

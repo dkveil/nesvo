@@ -1,6 +1,6 @@
 use crate::{
-    command_scope, event_log, git, jobs::LaunchSpec, process::display_path, protocol::Command,
-    sessions::State,
+    caller::Authority, command_scope, event_log, git, jobs::LaunchSpec, process::display_path,
+    protocol::Command, sessions::State,
 };
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -1305,6 +1305,46 @@ pub(crate) fn handles(command: &Command) -> bool {
     )
 }
 
+fn target_session(command: &Command) -> Option<&str> {
+    match command {
+        Command::RunWorktree { session_id }
+        | Command::CancelWorktree { session_id }
+        | Command::ArchiveWorktree { session_id, .. } => Some(session_id),
+        _ => None,
+    }
+}
+
+fn owner_action(command: &Command) -> &'static str {
+    match command {
+        Command::ApproveWorktreeSetup { .. } => "Approving a worktree setup digest",
+        Command::RevokeWorktreeSetup { .. } => "Revoking a worktree setup digest",
+        Command::RunWorktree { .. } => "Running worktree steps",
+        Command::CancelWorktree { .. } => "Cancelling worktree steps",
+        Command::ArchiveWorktree { .. } => "Archiving a worktree",
+        _ => "Inspecting worktree setup and the worktree registry",
+    }
+}
+
+pub(crate) fn admit(authority: &Authority, command: &Command) -> Result<()> {
+    let scope = match authority {
+        Authority::Owner => return Ok(()),
+        Authority::Session { id, .. } | Authority::RunWake { id, .. } => id,
+    };
+    if target_session(command).is_some_and(|target| target != scope) {
+        return Err(command_failure(
+            "forbidden",
+            "The target worktree session is outside the caller's session scope",
+        ));
+    }
+    Err(command_failure(
+        "forbidden",
+        format!(
+            "{} requires owner authority; setup approval is a human act through the owner CLI",
+            owner_action(command)
+        ),
+    ))
+}
+
 fn host_directory(value: &str) -> Result<PathBuf> {
     let path = PathBuf::from(value);
     if value.is_empty()
@@ -1524,7 +1564,7 @@ async fn run(
 }
 
 fn cancel(store: &Store, session_id: &str) -> Result<Value> {
-    valid_session(session_id)?;
+    active_record(store, session_id)?;
     Ok(
         json!({"type":"worktreeCancelled","sessionId":session_id,"cancelled":store.cancel(session_id)}),
     )
@@ -1773,18 +1813,20 @@ fn error_event(error: &anyhow::Error) -> Value {
 pub async fn serve(
     state: Arc<Mutex<State>>,
     client: u64,
+    authority: Authority,
     command: Command,
     request_id: Option<String>,
     permit: Option<OwnedSemaphorePermit>,
 ) {
     let log = state.lock().ok().and_then(|state| state.event_log().ok());
-    let result = match (STORE.get(), permit) {
-        (_, None) => Err(command_failure("busy", "Worktree service is busy")),
-        (None, _) => Err(command_failure(
+    let result = match (admit(&authority, &command), STORE.get(), permit) {
+        (Err(error), _, _) => Err(error),
+        (Ok(()), _, None) => Err(command_failure("busy", "Worktree service is busy")),
+        (Ok(()), None, _) => Err(command_failure(
             "unsupported",
             "The host worktree registry is unavailable",
         )),
-        (Some(store), Some(_permit)) => match command {
+        (Ok(()), Some(store), Some(_permit)) => match command {
             Command::DescribeWorktreeSetup { directory } => describe(store, &directory).await,
             Command::ApproveWorktreeSetup { directory, digest } => {
                 approve(store, log.as_ref(), &directory, &digest).await
