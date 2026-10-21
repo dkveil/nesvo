@@ -12,6 +12,49 @@ fn node(fixture: &Fixture) -> PathBuf {
 }
 
 const COMMAND_TIMEOUT_MS: u64 = 10_000;
+const PRECHECK_BOUND_MS: u64 = COMMAND_TIMEOUT_MS + 3_000;
+const HOST_READINESS_MS: u64 = 60_000;
+const MARGIN_MS: u64 = 10_000;
+const FIRST_GENERATION_BOUND: Duration = Duration::from_millis(PRECHECK_BOUND_MS + MARGIN_MS);
+const CANCEL_CLEANUP_BOUND: Duration = Duration::from_millis(2_000 + MARGIN_MS);
+const RESTART_RECONCILE_BOUND: Duration = Duration::from_millis(MARGIN_MS);
+const SCENARIO_BOUND: Duration = Duration::from_secs(240);
+const SETTLED_STATES: [&str; 6] = [
+    "canceled",
+    "failed",
+    "needsValidation",
+    "reconcile",
+    "skipped",
+    "succeeded",
+];
+const BLOCKED_REASONS: [&str; 2] = ["input_unknown", "instruction_not_sent"];
+
+fn next_generation_bound(delay_ms: u64) -> Duration {
+    Duration::from_millis(delay_ms + MARGIN_MS)
+}
+
+fn next_precheck_bound(delay_ms: u64) -> Duration {
+    Duration::from_millis(delay_ms + PRECHECK_BOUND_MS + MARGIN_MS)
+}
+
+fn reported_bound(delay_ms: u64) -> Duration {
+    Duration::from_millis(delay_ms + PRECHECK_BOUND_MS + 2 * HOST_READINESS_MS + MARGIN_MS)
+}
+
+fn diverged(occurrence: &Value, wanted: &str, ordinal: u64) -> Option<String> {
+    let state = occurrence["state"].as_str().unwrap_or_default();
+    let current = occurrence["jobAttemptOrdinal"].as_u64().unwrap_or_default();
+    let reason = occurrence["reason"].as_str().unwrap_or_default();
+    if state == wanted && current == ordinal {
+        return None;
+    }
+    (current > ordinal || SETTLED_STATES.contains(&state) || BLOCKED_REASONS.contains(&reason))
+        .then(|| {
+            format!(
+                "Occurrence settled at {state}/{current} ({reason}) instead of {wanted}/{ordinal}"
+            )
+        })
+}
 
 async fn approve(
     fixture: &Fixture,
@@ -123,15 +166,16 @@ async fn wait_for(
     id: &str,
     wanted: &str,
     ordinal: u64,
-    seconds: u64,
+    bound: Duration,
 ) -> Result<Value> {
     let mut last = Value::Null;
     let mut report_file_cause = String::new();
-    // This new budget includes command containment, native launch, hooks,
-    // context delivery and the controlled worker's report on supported hosts.
-    let observed = timeout(Duration::from_secs(seconds), async {
+    let observed = timeout(bound, async {
         loop {
             last = occurrence(owner, job, id).await?;
+            if let Some(divergence) = diverged(&last["data"]["occurrence"], wanted, ordinal) {
+                anyhow::bail!(divergence);
+            }
             let phase_matches = last["data"]["occurrence"]["state"] == wanted
                 && last["data"]["occurrence"]["jobAttemptOrdinal"] == ordinal;
             let report_ready = if wanted != "needsValidation" {
@@ -186,7 +230,8 @@ async fn wait_for(
         result => {
             let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
             anyhow::bail!(
-                "Fresh precheck did not reach {wanted}/{ordinal} in {seconds}s; result: {result:?}; last: {last}; report file cause: {report_file_cause}; actual diagnostics: {}",
+                "Fresh precheck did not reach {wanted}/{ordinal} in {}s; result: {result:?}; last: {last}; report file cause: {report_file_cause}; actual diagnostics: {}",
+                bound.as_secs(),
                 diagnostics
                     .to_string()
                     .chars()
@@ -307,7 +352,7 @@ async fn replay_admission(
 async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_worker() -> Result<()>
 {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(60), async {
+    let outcome = std::panic::AssertUnwindSafe(timeout(SCENARIO_BOUND, async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (approval, directory, mut envelopes) =
@@ -323,7 +368,16 @@ async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_wo
         let id = admitted["data"]["occurrence"]["id"]
             .as_str()
             .context("Checked retry occurrence")?;
-        let waiting = wait_for(&mut fixture, &owner, job, id, "retryWaiting", 1, 18).await?;
+        let waiting = wait_for(
+            &mut fixture,
+            &owner,
+            job,
+            id,
+            "retryWaiting",
+            1,
+            FIRST_GENERATION_BOUND,
+        )
+        .await?;
         let first = &waiting["data"]["occurrence"];
         let due = deadline(first, 4000)?;
         checked_record(&first["precheck"], &approval, 1, "passed")?;
@@ -341,7 +395,16 @@ async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_wo
             "Repair owned worker cwd before its original retry deadline"
         );
         std::fs::create_dir(&cwd)?;
-        let reported = wait_for(&mut fixture, &owner, job, id, "needsValidation", 2, 25).await?;
+        let reported = wait_for(
+            &mut fixture,
+            &owner,
+            job,
+            id,
+            "needsValidation",
+            2,
+            reported_bound(4000),
+        )
+        .await?;
         let second = &reported["data"]["occurrence"];
         checked_record(&second["precheck"], &approval, 2, "passed")?;
         assert_eq!(count(&directory)?, 2);
@@ -444,7 +507,7 @@ async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_wo
 #[ignore = "native SDK/CLI/host and owned Node prechecks; second-command skip and revoked waiting retry never start a worker"]
 async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(65), async {
+    let outcome = std::panic::AssertUnwindSafe(timeout(SCENARIO_BOUND, async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (approval, directory, mut envelopes) =
@@ -459,7 +522,16 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
         let id = admitted["data"]["occurrence"]["id"]
             .as_str()
             .context("Second skip occurrence")?;
-        let waiting = wait_for(&mut fixture, &owner, job, id, "retryWaiting", 1, 18).await?;
+        let waiting = wait_for(
+            &mut fixture,
+            &owner,
+            job,
+            id,
+            "retryWaiting",
+            1,
+            FIRST_GENERATION_BOUND,
+        )
+        .await?;
         let first = &waiting["data"]["occurrence"];
         let due = deadline(first, 3000)?;
         checked_record(&first["precheck"], &approval, 1, "passed")?;
@@ -470,7 +542,16 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
             "Repair skipped worker cwd before the fixed retry deadline"
         );
         std::fs::create_dir(&cwd)?;
-        let skipped = wait_for(&mut fixture, &owner, job, id, "skipped", 2, 18).await?;
+        let skipped = wait_for(
+            &mut fixture,
+            &owner,
+            job,
+            id,
+            "skipped",
+            2,
+            next_precheck_bound(3000),
+        )
+        .await?;
         let second = &skipped["data"]["occurrence"];
         checked_record(&second["precheck"], &approval, 2, "skipped")?;
         assert_eq!(second["reason"], "precheck_skip");
@@ -521,7 +602,7 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
             revoked_id,
             "retryWaiting",
             1,
-            18,
+            FIRST_GENERATION_BOUND,
         )
         .await?;
         let source = &before["data"]["occurrence"];
@@ -566,7 +647,7 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
             revoked_id,
             "reconcile",
             1,
-            18,
+            next_generation_bound(4000),
         )
         .await?;
         assert_eq!(
@@ -671,7 +752,7 @@ async fn tree_gone(fixture: &mut Fixture, job: &str, tree: &mut OwnedTree) -> Re
 #[ignore = "native SDK/CLI/host and owned second-generation command descendants; cancellation, restart and exact unknown abandon, no models"]
 async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(90), async {
+    let outcome = std::panic::AssertUnwindSafe(timeout(SCENARIO_BOUND, async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let mut tree = OwnedTree::bind().await?;
@@ -681,14 +762,14 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         let (created, admitted) = admit(&fixture, &owner, key, checked_spec(&cwd, &approval, 3000)).await?;
         let job = created["data"]["job"]["id"].as_str().context("Canceled second-command job")?;
         let id = admitted["data"]["occurrence"]["id"].as_str().context("Canceled second-command occurrence")?;
-        let waiting = wait_for(&mut fixture, &owner, job, id, "retryWaiting", 1, 18).await?;
+        let waiting = wait_for(&mut fixture, &owner, job, id, "retryWaiting", 1, FIRST_GENERATION_BOUND).await?;
         let first = &waiting["data"]["occurrence"];
         let due = deadline(first, 3000)?;
         let old = detail(&owner, job, id, &first["jobAttemptId"]).await?;
         checked_record(&first["precheck"], &approval, 1, "passed")?;
         ensure!(now_ms() < due, "Repair cancel worker cwd before its fixed deadline");
         std::fs::create_dir(&cwd)?;
-        let active = wait_for(&mut fixture, &owner, job, id, "prechecking", 2, 18).await?;
+        let active = wait_for(&mut fixture, &owner, job, id, "prechecking", 2, next_generation_bound(3000)).await?;
         let second = &active["data"]["occurrence"];
         checked_record(&second["precheck"], &approval, 2, "running")?;
         assert_ne!(second["jobAttemptId"], first["jobAttemptId"]);
@@ -701,7 +782,7 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         assert_eq!(canceling["data"]["occurrence"]["state"], "canceling");
         assert_eq!(canceling["data"]["occurrence"]["cancellation"]["state"], "awaitingPrecheck");
         assert_eq!(canceling["data"]["occurrence"]["jobAttemptId"], second["jobAttemptId"]);
-        let canceled = wait_for(&mut fixture, &owner, job, id, "canceled", 2, 12).await?;
+        let canceled = wait_for(&mut fixture, &owner, job, id, "canceled", 2, CANCEL_CLEANUP_BOUND).await?;
         assert_eq!(canceled["data"]["occurrence"]["cancellation"]["state"], "completed");
         assert_eq!(canceled["data"]["occurrence"]["precheck"]["result"]["cleanupConfirmed"], true);
         assert!(canceled["data"]["occurrence"]["precheck"]["result"]["commandStarted"].is_null());
@@ -721,20 +802,20 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         let (crash_job, crash_admission) = admit(&fixture, &owner, crash_key, checked_spec(&crash_cwd, &crash_approval, 3000)).await?;
         let crash_job_id = crash_job["data"]["job"]["id"].as_str().context("Crashed second-command job")?;
         let crash_id = crash_admission["data"]["occurrence"]["id"].as_str().context("Crashed second-command occurrence")?;
-        let before = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "retryWaiting", 1, 18).await?;
+        let before = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "retryWaiting", 1, FIRST_GENERATION_BOUND).await?;
         let source = &before["data"]["occurrence"];
         let crash_due = deadline(source, 3000)?;
         let source_detail = detail(&owner, crash_job_id, crash_id, &source["jobAttemptId"]).await?;
         ensure!(now_ms() < crash_due, "Repair crash worker cwd before its fixed deadline");
         std::fs::create_dir(&crash_cwd)?;
-        let running = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "prechecking", 2, 18).await?;
+        let running = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "prechecking", 2, next_generation_bound(3000)).await?;
         let target = running["data"]["occurrence"]["jobAttemptId"].as_str().context("Exact unknown second generation")?;
         tree_ready(&mut fixture, crash_job_id, &mut crash_tree).await?;
         assert_eq!(count(&crash_directory)?, 2);
         owner.cancel().await?;
         fixture.restart(true).await?;
         let owner = client(&fixture.pairing()).await?;
-        let unknown = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "reconcile", 2, 8).await?;
+        let unknown = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "reconcile", 2, RESTART_RECONCILE_BOUND).await?;
         assert_eq!(unknown["data"]["occurrence"]["jobAttemptId"], target);
         checked_record(&unknown["data"]["occurrence"]["precheck"], &crash_approval, 2, "unknown")?;
         assert!(unknown["data"]["occurrence"]["precheck"]["finishedAt"].is_null());
