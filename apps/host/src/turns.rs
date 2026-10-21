@@ -331,4 +331,303 @@ mod tests {
                 .contains("not established")
         );
     }
+    fn synthesized_codex_hook(event: &str, tool_name: Option<&str>) -> serde_json::Value {
+        let mut payload = serde_json::json!({
+            "hook_event_name": event,
+            "session_id": "synthesized-codex-session",
+            "turn_id": "synthesized-codex-turn",
+        });
+        if let Some(tool_name) = tool_name {
+            payload["tool_name"] = tool_name.into();
+        }
+        payload
+    }
+    fn synthesized_gemini_hook(event: &str, notification_type: Option<&str>) -> serde_json::Value {
+        let mut payload = serde_json::json!({
+            "hook_event_name": event,
+            "session_id": "synthesized-gemini-session",
+        });
+        if let Some(notification_type) = notification_type {
+            payload["notification_type"] = notification_type.into();
+        }
+        payload
+    }
+    fn codex_state(payload: &serde_json::Value) -> StatusState {
+        crate::codex_context::state(payload).unwrap().unwrap()
+    }
+    fn deliver_through_settled_gate(
+        tracker: &mut Tracker,
+        attention: &mut crate::attention::Attention,
+        launch: &str,
+        sequence: u64,
+        event: &str,
+        state: StatusState,
+    ) -> bool {
+        let elapsed = Duration::from_secs(sequence);
+        tracker.event(
+            Signal {
+                launch,
+                generation: 1,
+                sequence,
+                event,
+                state,
+            },
+            elapsed,
+            sequence * 100,
+        );
+        event == "Stop"
+            && tracker.snapshot(elapsed).is_some_and(|turn| {
+                turn.phase == Phase::Settled
+                    && attention.response_settled(sequence, turn.id, turn.observed_at)
+            })
+    }
+    #[test]
+    fn codex_hook_payloads_drive_the_same_turn_outcomes_as_claude() {
+        let mut tracker = Tracker::default();
+        let mut outcome = |sequence: u64, payload: serde_json::Value| {
+            let elapsed = Duration::from_secs(sequence);
+            tracker.event(
+                Signal {
+                    launch: "codex",
+                    generation: 1,
+                    sequence,
+                    event: payload["hook_event_name"].as_str().unwrap(),
+                    state: codex_state(&payload),
+                },
+                elapsed,
+                sequence * 100,
+            );
+            let turn = tracker.snapshot(elapsed).unwrap();
+            (turn.phase, turn.outcome)
+        };
+        assert_eq!(
+            outcome(1, synthesized_codex_hook("UserPromptSubmit", None)),
+            (Phase::Accepted, None)
+        );
+        assert_eq!(
+            outcome(
+                2,
+                synthesized_codex_hook("PreToolUse", Some("request_user_input"))
+            ),
+            (Phase::Waiting, Some("question"))
+        );
+        assert_eq!(
+            outcome(3, synthesized_codex_hook("PermissionRequest", None)),
+            (Phase::Waiting, Some("permission"))
+        );
+        assert_eq!(
+            outcome(4, synthesized_codex_hook("PostToolUse", None)),
+            (Phase::Started, None)
+        );
+        assert_eq!(
+            outcome(5, synthesized_codex_hook("Stop", None)),
+            (
+                Phase::Settled,
+                Some("response ended; task result not established")
+            )
+        );
+        assert_eq!(
+            outcome(6, synthesized_codex_hook("UserPromptSubmit", None)),
+            (Phase::Accepted, None)
+        );
+        assert_eq!(
+            outcome(7, synthesized_codex_hook("Interrupt", None)),
+            (Phase::Interrupted, Some("provider confirmed interruption"))
+        );
+        let history = tracker.history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].id, "codex:1");
+        assert_eq!(history[0].phase, Phase::Settled);
+    }
+    #[test]
+    fn gemini_hook_events_never_open_a_turn_or_an_unread_response() {
+        let mut tracker = Tracker::default();
+        let mut attention = crate::attention::Attention::default();
+        let events = [
+            (
+                synthesized_gemini_hook("BeforeAgent", None),
+                StatusState::Working,
+            ),
+            (
+                synthesized_gemini_hook("BeforeTool", None),
+                StatusState::Working,
+            ),
+            (
+                synthesized_gemini_hook("AfterTool", None),
+                StatusState::Working,
+            ),
+            (
+                synthesized_gemini_hook("Notification", Some("ToolPermission")),
+                StatusState::Blocked,
+            ),
+            (
+                synthesized_gemini_hook("AfterAgent", None),
+                StatusState::Idle,
+            ),
+        ];
+        for (sequence, (payload, expected)) in (1..).zip(events) {
+            let state = crate::gemini_adapter::state(&payload).unwrap().unwrap();
+            assert_eq!(state, expected);
+            assert!(!deliver_through_settled_gate(
+                &mut tracker,
+                &mut attention,
+                "gemini",
+                sequence,
+                payload["hook_event_name"].as_str().unwrap(),
+                state,
+            ));
+            assert!(tracker.snapshot(Duration::from_secs(sequence)).is_none());
+        }
+        assert!(tracker.history().is_empty());
+        assert!(attention.event.is_none());
+    }
+    #[test]
+    fn only_a_settled_stop_creates_one_unread_response_for_every_provider() {
+        let codex =
+            |event: &'static str| (event, codex_state(&synthesized_codex_hook(event, None)));
+        let providers = [
+            (
+                "claude",
+                [
+                    ("UserPromptSubmit", StatusState::Working),
+                    ("PostToolUse", StatusState::Working),
+                    ("Stop", StatusState::Idle),
+                    ("Stop", StatusState::Idle),
+                ],
+            ),
+            (
+                "codex",
+                [
+                    codex("UserPromptSubmit"),
+                    codex("PostToolUse"),
+                    codex("Stop"),
+                    codex("Stop"),
+                ],
+            ),
+        ];
+        for (launch, events) in providers {
+            let mut tracker = Tracker::default();
+            let mut attention = crate::attention::Attention::default();
+            let responses = (1..)
+                .zip(events)
+                .filter(|(sequence, (event, state))| {
+                    deliver_through_settled_gate(
+                        &mut tracker,
+                        &mut attention,
+                        launch,
+                        *sequence,
+                        event,
+                        *state,
+                    )
+                })
+                .count();
+            assert_eq!(responses, 1, "{launch}");
+            let response = attention.event.as_ref().unwrap();
+            assert!(response.unread);
+            assert_eq!(response.subject, Some("response"));
+            assert_eq!(
+                response.turn_id.as_deref(),
+                Some(format!("{launch}:1").as_str())
+            );
+        }
+        for ending in [
+            ("Interrupt", StatusState::Idle),
+            ("StopFailure", StatusState::Failed),
+        ] {
+            let mut tracker = Tracker::default();
+            let mut attention = crate::attention::Attention::default();
+            for (sequence, (event, state)) in (1..).zip([
+                ("UserPromptSubmit", StatusState::Working),
+                ending,
+                ("Stop", StatusState::Idle),
+            ]) {
+                assert!(!deliver_through_settled_gate(
+                    &mut tracker,
+                    &mut attention,
+                    "claude",
+                    sequence,
+                    event,
+                    state,
+                ));
+            }
+            assert!(attention.event.is_none(), "{ending:?}");
+        }
+        let mut tracker = Tracker::default();
+        let mut attention = crate::attention::Attention::default();
+        for (sequence, (event, state)) in (1..).zip([
+            ("UserPromptSubmit", StatusState::Working),
+            ("StopFailure", StatusState::Blocked),
+        ]) {
+            assert!(!deliver_through_settled_gate(
+                &mut tracker,
+                &mut attention,
+                "claude",
+                sequence,
+                event,
+                state,
+            ));
+        }
+        let waiting = tracker.snapshot(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            (waiting.phase, waiting.outcome),
+            (Phase::Waiting, Some("quota"))
+        );
+        assert!(attention.event.is_none());
+        assert!(deliver_through_settled_gate(
+            &mut tracker,
+            &mut attention,
+            "claude",
+            3,
+            "Stop",
+            StatusState::Idle,
+        ));
+        let mut tracker = Tracker::default();
+        let mut attention = crate::attention::Attention::default();
+        deliver_through_settled_gate(
+            &mut tracker,
+            &mut attention,
+            "claude",
+            1,
+            "UserPromptSubmit",
+            StatusState::Working,
+        );
+        tracker.gap(Duration::from_secs(2));
+        assert!(!deliver_through_settled_gate(
+            &mut tracker,
+            &mut attention,
+            "claude",
+            3,
+            "Stop",
+            StatusState::Idle,
+        ));
+        assert!(attention.event.is_none());
+        let mut tracker = Tracker::default();
+        let mut attention = crate::attention::Attention::default();
+        deliver_through_settled_gate(
+            &mut tracker,
+            &mut attention,
+            "claude",
+            1,
+            "UserPromptSubmit",
+            StatusState::Working,
+        );
+        tracker.process_exit(Duration::from_secs(2));
+        assert_eq!(
+            tracker.snapshot(Duration::from_secs(2)).unwrap().phase,
+            Phase::Interrupted
+        );
+        assert!(attention.event.is_none());
+        assert!(deliver_through_settled_gate(
+            &mut tracker,
+            &mut attention,
+            "claude",
+            3,
+            "Stop",
+            StatusState::Idle,
+        ));
+        assert_eq!(
+            attention.event.as_ref().unwrap().turn_id.as_deref(),
+            Some("claude:1")
+        );
+    }
 }
