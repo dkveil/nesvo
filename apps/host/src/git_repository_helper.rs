@@ -298,6 +298,8 @@ mod tests {
     use futures_util::FutureExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 
+    const CANCELLATION_BOUND: Duration = Duration::from_secs(3);
+
     fn enabled() -> bool {
         std::env::var_os(TEST_GATE).as_deref() == Some(std::ffi::OsStr::new("1"))
     }
@@ -415,6 +417,17 @@ mod tests {
         // SAFETY: the owned live handle pins the exact observed process.
         unsafe { WaitForSingleObject(process.as_raw_handle(), 0) == WAIT_OBJECT_0 }
     }
+    fn signals_after_job_drains_by(process: &OwnedHandle, deadline: Instant) -> bool {
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        let remaining = u32::try_from(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .as_millis(),
+        )
+        .unwrap_or(u32::MAX - 1);
+        unsafe { WaitForSingleObject(process.as_raw_handle(), remaining) == WAIT_OBJECT_0 }
+    }
 
     #[tokio::test]
     #[ignore = "Windows process conformance; real contained test wrapper plus long child, no providers/models"]
@@ -464,13 +477,15 @@ mod tests {
                 "Capacity remains pinned while descendants run"
             );
             stop.send_replace(true);
-            let outcome = timeout(Duration::from_secs(3), &mut task)
+            let cancellation = Instant::now() + CANCELLATION_BOUND;
+            let outcome = timeout_at(cancellation, &mut task)
                 .await
                 .expect("Bounded canceled helper cleanup")
                 .expect("Owned helper task");
             assert!(outcome.is_err());
             assert!(
-                exited(&wrapper) && exited(&child),
+                signals_after_job_drains_by(&wrapper, cancellation)
+                    && signals_after_job_drains_by(&child, cancellation),
                 "Both exact process handles must signal termination"
             );
             assert!(

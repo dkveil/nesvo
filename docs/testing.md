@@ -90,8 +90,9 @@ cargo test --package nesvo-host --bin nesvo-host --locked git_repository::helper
 ```
 
 The case enrolls a waiting helper before its first request byte, starts a real
-owned wrapper and long-lived child, then cancels. Both exact process handles must
-signal termination before the global inspector slot is released. Production
+owned wrapper and long-lived child, then cancels. The helper job must report no
+active processes before the global inspector slot is released, and both exact
+process handles must signal termination within the cancellation bound. Production
 frames admit only two fixed metadata builtins; arbitrary fixture arguments and
 helper entries exist only in the test binary. The native SDK case separately
 exercises production helper stdout/early-main dispatch and the actual Git reads:
