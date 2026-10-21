@@ -55,6 +55,7 @@ F4 opens Git review directly from terminal input as well as navigation: with the
 | `n` / `r` in Jobs list    | New once-job form / reload; Enter opens details        |
 | `e R h` in Jobs detail    | Edit / run now / history; Space pauses or resumes      |
 | `c` in Jobs history       | Cancel the selected occurrence; Enter inspects it      |
+| `W`                       | Runs: pause, resume, drain, answer, start templates    |
 | `O`                       | Overview table; `w` wake, `f` filters, `/` text filter |
 | `Enter` in Overview       | Jump to the session without control; Esc or `O` closes |
 | `u` in Overview           | Usage panel: provider quota windows, freshness, wake   |

@@ -318,9 +318,11 @@ agent that is not ready and idle are refused with `control_busy`, `unsupported`,
 ## Worktree setup, run and archive
 
 A repository declares worktree preparation in a committed `nesvo.toml` at its
-root. Only the `[worktree]` table is defined; the parser accepts a strict TOML
-subset (comments, basic and literal single-line strings, string arrays that may
-span lines, decimal integers) and refuses unknown keys or tables:
+root. Only the `[worktree]` table and the `[[workflow]]` run templates described in
+[workflow templates](harness-workflows.md#templates-from-nesvotoml) are defined; the
+parser accepts a strict TOML subset (comments, basic and literal single-line strings,
+string arrays that may span lines, decimal integers, booleans) and refuses unknown
+keys or tables:
 
 ```toml
 [worktree]
@@ -430,6 +432,23 @@ owner-only and need `worktrees:true`: the host refuses every one of them with
 `forbidden` for a session-scoped or wake caller, including a caller targeting its own
 session, and `run`, `cancel` and `archive` refuse `worktree_not_found` unless the host
 registered a worktree for that session.
+
+## Workflow templates
+
+```powershell
+nesvo workflow templates --directory C:\project --json
+nesvo workflow approve-templates --directory C:\project --digest INSPECTED_DIGEST --json
+nesvo workflow revoke-templates --directory C:\project --digest INSPECTED_DIGEST --json
+nesvo workflow start NAME --directory C:\project --key KEY --json
+```
+
+`templates` reads the committed `[[workflow]]` entries with their digest and approval
+and starts nothing. Approval and revocation exist only in this owner CLI, like the
+worktree setup digest. `start` creates a run and its tasks from an approved template
+through the existing run commands; repeat the same key after uncertainty. Unapproved
+or changed digests fail with `workflow_templates_unapproved`, an unknown name with
+`workflow_template_not_found`. All commands need
+`workflowTemplates:true`. See [workflow templates](harness-workflows.md#templates-from-nesvotoml).
 
 ## Remaining delivery gates
 

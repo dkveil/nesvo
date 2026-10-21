@@ -195,6 +195,8 @@ These native flags are documented in the official
 | nesvo_cancel_worktree         | owner-only cancellation of active setup or run           |
 | nesvo_archive_worktree        | owner-only archive; refuses unsaved work without discard |
 | nesvo_list_worktrees          | owner-only registry of host-created worktrees            |
+| nesvo_list_workflow_templates | owner-only committed workflow templates and approval     |
+| nesvo_start_workflow_template | owner-only run and tasks from an approved template       |
 | nesvo_read_events             | bounded durable metadata page with domain cursors        |
 | nesvo_create_session          | durable idempotent background create                     |
 | nesvo_send_prompt             | durable literal prompt submission without control        |
@@ -217,7 +219,9 @@ callers, so an agent running with its scoped capability cannot approve its own
 repository-declared steps. Owner authority is not a human check: an agent that holds
 the owner pairing file has it and can run
 `nesvo --pairing C:\private\pairing.json worktree approve-setup`. A one-time
-confirmation code or interactive confirmation is the planned human gate.
+confirmation code or interactive confirmation is the planned human gate. Workflow
+template approval follows the same rule (`nesvo workflow approve-templates` and
+`revoke-templates`); the two template tools are owner-only too.
 
 `attentionInbox` and `decisions` gate the four owner inbox tools. Acknowledging
 hides one item revision durably and never answers a decision; `nesvo_decide`

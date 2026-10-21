@@ -65,6 +65,87 @@ Run/attempt mailboxes and result notices use the [durable inbox](harness-inbox.m
 Workers access their own mailbox and can message their coordinator, without
 reading other tasks or changing the plan.
 
+## Templates from nesvo.toml
+
+`workflowTemplates:true` advertises run templates committed in a repository's
+`nesvo.toml`, next to the [worktree setup](harness-cli.md) table. A template adds
+no run semantics: starting it only calls the existing create, plan, budget,
+activate and executor commands with derived keys.
+
+```toml
+[[workflow]]
+name = "review"                # 1-64 letters, digits, '_' or '-'; unique
+title = "Branch review"        # optional, defaults to name; 80 bytes
+goal = "Review the branch and report blocking issues"
+start = "active"               # draft (default) | active | executor
+max_parallel = 2               # optional run budget, 1-16 (default 8)
+max_attempts_per_task = 3      # optional, 1-16 (default 16)
+max_elapsed_ms = 1_800_000     # optional, 1000-604800000 (default unlimited)
+
+[[workflow.task]]
+key = "implement"
+title = "Implement"            # optional, defaults to key
+instruction = "Implement the change and report evidence"
+program = "claude"             # claude | codex | gemini
+workspace = "worktree"         # shared | worktree
+harness = true                 # optional
+allowed_nesvo_tools = ["nesvo_get_current_task", "nesvo_report_task_result"]
+
+[[workflow.task]]
+key = "review"
+instruction = "Validate the implementation"
+depends_on = ["implement"]
+program = "codex"
+workspace = "shared"
+```
+
+The same strict subset parser as the worktree table reads `HEAD:nesvo.toml`
+(never uncommitted edits); booleans are accepted for `harness`. At most 32
+templates and 64 tasks each; instructions and goals are 8192 bytes. Unknown keys
+or tables, duplicate names or keys, missing, self or duplicate dependencies and
+cycles are refused with `workflow_templates_invalid` and a line number. The worktree
+setup ignores `[[workflow]]` entries and keeps its own digest.
+
+The template digest is the SHA-256 of the normalized templates, so formatting and
+comments do not change it. Approval follows the worktree setup flow: it is an owner
+CLI act stored in `workflow-templates.json` next to the host pairing data, and a
+changed template needs a new approval.
+
+```powershell
+nesvo workflow templates --directory C:\project --json
+nesvo workflow approve-templates --directory C:\project --digest INSPECTED_DIGEST --json
+nesvo workflow revoke-templates --directory C:\project --digest INSPECTED_DIGEST --json
+nesvo workflow start review --directory C:\project --key review-1 --json
+```
+
+Wire commands are `listWorkflowTemplates {directory}` →
+`workflowTemplates {repository, source, configured, digest, approved, templates}`,
+`approveWorkflowTemplates {directory, digest}` →
+`workflowTemplatesApproved {repository, digest, approvedAt}` (`digest_mismatch`
+when HEAD changed), `revokeWorkflowTemplates {directory, digest}` →
+`workflowTemplatesRevoked {repository, digest, revoked}` and
+`startWorkflowTemplate {directory, name, key}` →
+`workflowTemplateStarted {template, digest, key, start, run, tasks, profiles, executor}`.
+All four are owner-only; session-scoped and wake callers receive `forbidden`.
+
+Start re-reads HEAD and refuses `workflow_templates_unapproved` when the current
+digest is not approved, or `workflow_template_not_found`. It then creates a
+coordinatorless draft run (`KEY/create`), sets the plan (`KEY/plan`), replaces the
+run budget when the template declares one (`KEY/budget`), activates for
+`active|executor` (`KEY/activate`) and, for `executor`, starts the
+[host executor](harness-executor.md) with each task's profile (`KEY/executor`), with
+the repository root as `cwd`. `profiles` maps every host task ID to that profile,
+ready for `run launch` or `run executor start` on a draft or active run. Repeating
+the same key replays each step; a changed template under an old key fails with
+`idempotency_conflict` at the first changed step, and each step can be recovered with
+`run mutation --key KEY/STEP`. The start key is 1-96 bytes.
+
+MCP exposes `nesvo_list_workflow_templates` and `nesvo_start_workflow_template`
+with the same owner-only semantics; there is no approval or revocation tool. The
+TUI Runs view (`W`) lists runs with tasks, attempts, inbox and pending decisions,
+pauses (run stop), resumes, drains and answers decisions through the existing
+commands, and starts approved templates from its "Start from template" row.
+
 ## Attempts and result validation
 
 ```powershell
