@@ -562,7 +562,7 @@ mod tests {
             let state = crate::sessions::State::new(
                 root.clone(),
                 crate::storage::MetadataStore::open(std::path::Path::new(":memory:")).unwrap(),
-                crate::launchers::Launchers::discover(),
+                crate::launchers::Launchers::discover_with_fixture_shell(),
             );
             let (events, output) = tokio::sync::mpsc::channel(128);
             let (owner_events, received) = tokio::sync::mpsc::channel(128);
