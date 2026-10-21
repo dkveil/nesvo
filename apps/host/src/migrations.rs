@@ -53,6 +53,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "projects",
         sql: include_str!("../migrations/0009_projects.sql"),
     },
+    Migration {
+        version: 10,
+        name: "workflow_session_reuse",
+        sql: include_str!("../migrations/0010_workflow_session_reuse.sql"),
+    },
 ];
 
 const LEGACY_SCHEMA_VERSION: u32 = 7;

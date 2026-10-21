@@ -2455,6 +2455,14 @@ impl State {
     pub fn human_control_epoch(&self) -> u64 {
         self.human_control_epoch
     }
+    pub fn conversation_id(&self, id: &str) -> Option<String> {
+        self.sessions
+            .get(id)?
+            .conversation_identity
+            .as_ref()?
+            .provider_session_id
+            .clone()
+    }
     pub fn human_controlled_sessions(&self) -> HashSet<String> {
         self.sessions
             .iter()

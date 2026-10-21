@@ -197,6 +197,9 @@ mod workflow_launches_tests;
 #[path = "workflow_recovery_tests.rs"]
 mod workflow_recovery_tests;
 #[cfg(test)]
+#[path = "workflow_session_reuse_tests.rs"]
+mod workflow_session_reuse_tests;
+#[cfg(test)]
 #[path = "workflow_wakes_tests.rs"]
 mod workflow_wakes_tests;
 impl Store {

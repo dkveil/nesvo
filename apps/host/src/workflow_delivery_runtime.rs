@@ -27,24 +27,32 @@ pub async fn execute_guarded(
     request: Request,
     executor: Option<(crate::workflow_executor::Guard, u64)>,
 ) -> Result<Value> {
-    let (before, controlled) = {
+    let reuse = match (&request, &executor) {
+        (Request::Queue { session_id, .. }, None) => session_id.clone(),
+        _ => None,
+    };
+    let (before, controlled, live) = {
         let state = state.lock().unwrap();
-        (
-            state.human_control_epoch(),
-            state.human_controlled_sessions(),
-        )
+        let epoch = state.human_control_epoch();
+        let live = reuse.map(|session| live_session(&state, &session, &authority, epoch));
+        (epoch, state.human_controlled_sessions(), live)
     };
     let before = executor
         .as_ref()
         .map_or(before, |(_, epoch)| before.min(*epoch));
     let Reply::Prepared { view, pending } = log
-        .delivery(match executor {
-            Some((guard, _)) => Work::PrepareForExecutor {
+        .delivery(match (executor, live) {
+            (Some((guard, _)), _) => Work::PrepareForExecutor {
                 actor: actor.clone(),
                 request,
                 guard,
             },
-            None => Work::Prepare {
+            (None, Some(live)) => Work::Reuse {
+                actor: actor.clone(),
+                request,
+                live,
+            },
+            (None, None) => Work::Prepare {
                 actor: actor.clone(),
                 request,
             },
@@ -127,12 +135,17 @@ async fn deliver(
                 state.workflow_launch_authority(&source, pending.coordinator.as_deref())?;
             state.check_task_delivery(&pending.session_id, &authority, before)?;
             let permit = state.native_run_permit(&pending.run_id)?;
-            Ok((authority, permit))
+            Ok((
+                authority,
+                permit,
+                state.conversation_id(&pending.session_id),
+            ))
         })();
         let result: Result<()> = match prepared {
-            Ok((authority, _permit)) => match log
+            Ok((authority, _permit, conversation)) => match log
                 .delivery(Work::Claim {
                     id: pending.id.clone(),
+                    conversation,
                 })
                 .await
             {
@@ -203,5 +216,23 @@ async fn deliver(
             _=tokio::time::sleep(std::time::Duration::from_millis(remaining))=>{},
             result=changed.changed()=>{if result.is_err(){return Ok(());}},
         }
+    }
+}
+fn live_session(
+    state: &State,
+    session: &str,
+    authority: &Authority,
+    epoch: u64,
+) -> crate::workflow_session_reuse::Live {
+    crate::workflow_session_reuse::Live {
+        blocker: state
+            .check_task_delivery(session, authority, epoch)
+            .err()
+            .map(|error| {
+                error
+                    .downcast_ref::<crate::api_error::Error>()
+                    .map_or("session_busy", |error| error.code)
+            }),
+        conversation: state.conversation_id(session),
     }
 }

@@ -24,6 +24,8 @@ pub enum Request {
         task_id: String,
         expected_revision: u64,
         timeout_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     Cancel {
         key: String,
@@ -53,11 +55,17 @@ pub enum Work {
         actor: Actor,
         request: Request,
     },
+    Reuse {
+        actor: Actor,
+        request: Request,
+        live: crate::workflow_session_reuse::Live,
+    },
     Inspect {
         id: String,
     },
     Claim {
         id: String,
+        conversation: Option<String>,
     },
     Note {
         id: String,
@@ -110,7 +118,7 @@ pub fn summary(connection: &Connection, attempt: &str) -> Result<Value> {
         })
         .transpose()?;
     Ok(
-        json!({"id":id,"attemptId":attempt,"phase":phase,"blocker":blocker,"receiptId":receipt,"operationKey":receipt.as_ref().map(|_|format!("run-delivery:{id}")),"createdAt":created,"deadlineAt":deadline,"native":native}),
+        json!({"id":id,"attemptId":attempt,"phase":phase,"blocker":blocker,"receiptId":receipt,"operationKey":receipt.as_ref().map(|_|format!("run-delivery:{id}")),"createdAt":created,"deadlineAt":deadline,"native":native,"reuse":crate::workflow_session_reuse::summary(connection,attempt)?}),
     )
 }
 fn changed(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<u64> {
@@ -180,6 +188,7 @@ fn prepare(
     request: Request,
     now: u64,
     executor: Option<crate::workflow_executor::Guard>,
+    live: Option<crate::workflow_session_reuse::Live>,
 ) -> Result<Reply> {
     let (key, run, revision) = match &request {
         Request::Queue {
@@ -229,6 +238,7 @@ fn prepare(
         Request::Queue {
             task_id,
             timeout_ms,
+            session_id,
             ..
         } => {
             if current["state"] != "active" {
@@ -254,13 +264,35 @@ fn prepare(
                 )
                 .into());
             }
-            let attempt:Option<(String,String)>=transaction.query_row("SELECT id,session_id FROM workflow_attempts WHERE task_id=?1 AND state='assigned' AND ordinal=(SELECT MAX(ordinal) FROM workflow_attempts WHERE task_id=?1)",[task_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-            let (attempt, session) = attempt.ok_or_else(|| {
-                Error::new(
-                    "attempt_state_conflict",
-                    "Task needs its current assigned worker before queuing an instruction",
-                )
-            })?;
+            let (attempt, session) = match (session_id, &live) {
+                (Some(session), Some(live)) => (
+                    crate::workflow_session_reuse::admit(
+                        &transaction,
+                        run,
+                        task_id,
+                        session,
+                        live,
+                        now,
+                    )?,
+                    session.clone(),
+                ),
+                (Some(_), None) => {
+                    return Err(Error::new(
+                        "invalid_argument",
+                        "Session reuse needs host-observed live session evidence",
+                    )
+                    .into());
+                }
+                (None, _) => {
+                    let attempt:Option<(String,String)>=transaction.query_row("SELECT id,session_id FROM workflow_attempts WHERE task_id=?1 AND state='assigned' AND ordinal=(SELECT MAX(ordinal) FROM workflow_attempts WHERE task_id=?1)",[task_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+                    attempt.ok_or_else(|| {
+                        Error::new(
+                            "attempt_state_conflict",
+                            "Task needs its current assigned worker before queuing an instruction",
+                        )
+                    })?
+                }
+            };
             crate::workflow_budget::guard_dispatch_transaction(&transaction, &session, now)?;
             let exists: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM workflow_deliveries WHERE attempt_id=?1)",
@@ -317,12 +349,17 @@ fn prepare(
 }
 pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Reply> {
     match work {
-        Work::Prepare { actor, request } => prepare(connection, actor, request, now, None),
+        Work::Prepare { actor, request } => prepare(connection, actor, request, now, None, None),
+        Work::Reuse {
+            actor,
+            request,
+            live,
+        } => prepare(connection, actor, request, now, None, Some(live)),
         Work::PrepareForExecutor {
             actor,
             request,
             guard,
-        } => prepare(connection, actor, request, now, Some(guard)),
+        } => prepare(connection, actor, request, now, Some(guard), None),
         Work::Inspect { id } => Ok(Reply::Current {
             queued: connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM workflow_deliveries WHERE id=?1 AND phase='queued')",
@@ -341,7 +378,7 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             update(connection, &id, Some(phase), Some(&code), now)?;
             Ok(Reply::Done)
         }
-        Work::Claim { id } => {
+        Work::Claim { id, conversation } => {
             let row:Option<(String,String,String,i64)>=connection.query_row("SELECT d.attempt_id,a.session_id,d.issuer,d.deadline_at FROM workflow_deliveries d JOIN workflow_attempts a ON a.id=d.attempt_id WHERE d.id=?1 AND d.phase='queued'",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
             let Some((attempt, session, issuer, deadline)) = row else {
                 return Ok(Reply::Claimed(None));
@@ -369,6 +406,11 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
                 return Ok(Reply::Claimed(None));
             }
             crate::workflow_budget::guard_dispatch_transaction(&transaction, &session, now)?;
+            crate::workflow_session_reuse::guard_claim(
+                &transaction,
+                &attempt,
+                conversation.as_deref(),
+            )?;
             let (run,task):(String,String)=transaction.query_row("SELECT t.run_id,t.id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.id=?1",[&attempt],|r|Ok((r.get(0)?,r.get(1)?)))?;
             let prompt = crate::workflow_context::task_prompt(
                 &transaction,
@@ -387,6 +429,7 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             }
             crate::workflow_context::freeze(&transaction, &run, &accepted.receipt.id)?;
             transaction.execute("UPDATE workflow_deliveries SET phase='dispatching',blocker=NULL,operation_id=?2 WHERE id=?1",params![id,accepted.receipt.id])?;
+            crate::workflow_session_reuse::record(&transaction, &id, conversation.as_deref())?;
             changed(&transaction, &id, now)?;
             transaction.commit()?;
             Ok(Reply::Claimed(Some(Dispatch {

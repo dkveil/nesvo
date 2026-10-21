@@ -83,7 +83,7 @@ pub fn build(connection: &Connection, actor: &Actor, run: &str) -> Result<Vec<Va
     sql_parts(
         connection,
         run,
-        "SELECT json_object('receiptId',o.id,'sessionId',o.session_id,'operation',o.operation,'phase',o.phase) FROM operation_receipts o JOIN workflow_attempts a ON a.session_id=o.session_id JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=?1 AND o.phase IN ('accepted','dispatching','delivered','received','started','waiting','unknown') ORDER BY o.id",
+        "SELECT json_object('receiptId',o.id,'sessionId',o.session_id,'operation',o.operation,'phase',o.phase) FROM operation_receipts o WHERE EXISTS(SELECT 1 FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.session_id=o.session_id AND t.run_id=?1) AND o.phase IN ('accepted','dispatching','delivered','received','started','waiting','unknown') ORDER BY o.id",
         "nativeOperation",
         &mut parts,
     )?;

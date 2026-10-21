@@ -96,6 +96,7 @@ mod workflow_inbox;
 mod workflow_launch_runtime;
 mod workflow_launches;
 mod workflow_recovery;
+mod workflow_session_reuse;
 mod workflow_templates;
 mod workflow_wake_batches;
 mod workflow_wake_events;

@@ -254,6 +254,7 @@ impl Runner {
                             .as_u64()
                             .ok_or_else(|| anyhow!("Missing current revision"))?,
                         timeout_ms: Some(engine.spec.readiness_timeout_ms),
+                        session_id: None,
                     };
                     crate::workflow_delivery_runtime::execute_guarded(
                         self.state.clone(),

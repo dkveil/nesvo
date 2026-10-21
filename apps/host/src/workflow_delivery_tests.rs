@@ -41,7 +41,16 @@ fn summary(store: &Store, view: &Value) -> Value {
     .unwrap()
 }
 fn claim(store: &mut Store, id: &str) -> Option<crate::workflow_delivery::Dispatch> {
-    match workflow_delivery::execute(&mut store.0, Work::Claim { id: id.into() }, 10_010).unwrap() {
+    match workflow_delivery::execute(
+        &mut store.0,
+        Work::Claim {
+            id: id.into(),
+            conversation: None,
+        },
+        10_010,
+    )
+    .unwrap()
+    {
         Reply::Claimed(dispatch) => dispatch,
         _ => panic!("unexpected"),
     }
@@ -135,6 +144,7 @@ fn cancellation_timeout_and_repeated_blockers_never_send_or_spam_events() {
         &mut store.0,
         Work::Claim {
             id: accepted["delivery"]["id"].as_str().unwrap().into(),
+            conversation: None,
         },
         11_000,
     )
@@ -201,7 +211,15 @@ fn claim_rechecks_run_attempt_and_decision_fences_before_a_native_receipt() {
         .execute("UPDATE workflow_runs SET state='canceling'", [])
         .unwrap();
     error(
-        workflow_delivery::execute(&mut store.0, Work::Claim { id: id.into() }, 10_010).map(|_| ()),
+        workflow_delivery::execute(
+            &mut store.0,
+            Work::Claim {
+                id: id.into(),
+                conversation: None,
+            },
+            10_010,
+        )
+        .map(|_| ()),
         "attempt_state_conflict",
     );
     assert_eq!(
@@ -218,7 +236,15 @@ fn claim_rechecks_run_attempt_and_decision_fences_before_a_native_receipt() {
         .unwrap();
     super::orchestration_tests::worker(&mut store,"worker",json!({"action":"decision","request":{"action":"ask","key":"ask","attemptId":run["tasks"][0]["currentAttempt"]["id"],"question":"Need human decision","audience":"owner","timeoutMs":60000}})).unwrap();
     error(
-        workflow_delivery::execute(&mut store.0, Work::Claim { id: id.into() }, 10_010).map(|_| ()),
+        workflow_delivery::execute(
+            &mut store.0,
+            Work::Claim {
+                id: id.into(),
+                conversation: None,
+            },
+            10_010,
+        )
+        .map(|_| ()),
         "decision_pending",
     );
     assert_eq!(
@@ -268,7 +294,15 @@ fn native_reservation_and_delivery_claim_rollback_together() {
     let id = accepted["delivery"]["id"].as_str().unwrap();
     store.0.execute_batch("CREATE TRIGGER inject_delivery_failure BEFORE UPDATE OF phase ON workflow_deliveries WHEN NEW.phase='dispatching' BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
     assert!(
-        workflow_delivery::execute(&mut store.0, Work::Claim { id: id.into() }, 10_010).is_err()
+        workflow_delivery::execute(
+            &mut store.0,
+            Work::Claim {
+                id: id.into(),
+                conversation: None
+            },
+            10_010
+        )
+        .is_err()
     );
     assert_eq!(summary(&store, &run)["phase"], "queued");
     assert!(summary(&store, &run)["receiptId"].is_null());

@@ -122,7 +122,7 @@ pub fn context(
     let session = actor.worker()?;
     let id: Option<String> = connection
         .query_row(
-            "SELECT id FROM workflow_attempts WHERE session_id=?1",
+            "SELECT id FROM workflow_attempts WHERE session_id=?1 ORDER BY ordinal DESC LIMIT 1",
             [session],
             |r| r.get(0),
         )

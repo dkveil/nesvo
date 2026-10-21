@@ -492,7 +492,7 @@ pub(crate) fn guard_dispatch_transaction(
     session: &str,
     now: u64,
 ) -> Result<()> {
-    let binding:Option<(String,String,String,bool)>=connection.query_row("SELECT t.run_id,a.id,a.state,a.ordinal=(SELECT MAX(b.ordinal) FROM workflow_attempts b WHERE b.task_id=t.id) FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.session_id=?1",[session],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
+    let binding:Option<(String,String,String,bool)>=connection.query_row("SELECT t.run_id,a.id,a.state,a.ordinal=(SELECT MAX(b.ordinal) FROM workflow_attempts b WHERE b.task_id=t.id) FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.session_id=?1 ORDER BY a.ordinal DESC LIMIT 1",[session],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
     let Some((run_id, attempt, state, current)) = binding else {
         return Ok(());
     };
