@@ -1,0 +1,164 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build as a dry run without publishing, for example 0.2.0
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+      - name: Resolve and validate the version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v${INPUT_VERSION#v}"
+          fi
+          version="${tag#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Version $version is not semantic (MAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+          workspace=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "nesvo-host") | .version')
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$workspace" != "$version" ]; then
+            echo "::error::Tag $tag does not match workspace version $workspace in Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            archive: zip
+            exe: .exe
+          - os: ubuntu-latest
+            archive: tar.gz
+            exe: ''
+          - os: macos-latest
+            archive: tar.gz
+            exe: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+      - name: Build release binaries
+        run: cargo build --release --locked -p nesvo-host -p nesvo
+      - name: Package binaries and notices
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCHIVE: ${{ matrix.archive }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          target=$(rustc -vV | sed -n 's/^host: //p')
+          name="nesvo-$VERSION-$target"
+          mkdir -p "target/package/$name"
+          cp "target/release/nesvo-host$EXE" "target/release/nesvo$EXE" README.md LICENSE THIRD_PARTY_NOTICES.md "target/package/$name/"
+          cd target/package
+          if [ "$ARCHIVE" = zip ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.os }}
+          path: target/package/nesvo-*.${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: packages
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: packages
+        run: sha256sum nesvo-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Write the changelog from commit subjects
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then head="$TAG"; else head=HEAD; fi
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "$head^" 2>/dev/null || true)
+          if [ -n "$previous" ]; then range="$previous..$head"; else range="$head"; fi
+          git log --no-merges --format=%s "$range" > "$RUNNER_TEMP/subjects.txt"
+          section() {
+            lines=$(grep -E ${3:-} "$2" "$RUNNER_TEMP/subjects.txt" || true)
+            if [ -n "$lines" ]; then
+              printf '\n### %s\n\n' "$1"
+              printf '%s\n' "$lines" | sed 's/^/- /'
+            fi
+          }
+          scope='(\([^)]*\))?'
+          {
+            printf '## nesvo %s\n' "$VERSION"
+            if [ -n "$previous" ]; then printf '\nChanges since %s.\n' "$previous"; fi
+            section 'Breaking changes' "^[a-z]+$scope!: "
+            section 'Features' "^feat$scope: "
+            section 'Fixes' "^fix$scope: "
+            section 'Performance' "^perf$scope: "
+            section 'Refactoring' "^refactor$scope: "
+            section 'Documentation' "^docs$scope: "
+            section 'Tests' "^test$scope: "
+            section 'Build and CI' "^(build|ci)$scope: "
+            section 'Maintenance' "^(chore|style|revert)$scope: "
+            section 'Other' "^((feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)$scope|[a-z]+$scope!): " -v
+          } > CHANGELOG.md
+          cat CHANGELOG.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: |
+            CHANGELOG.md
+            packages/SHA256SUMS.txt
+          retention-days: 7
+      - name: Publish the GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$TAG" --verify-tag --title "nesvo $VERSION" --notes-file CHANGELOG.md "${prerelease[@]}" packages/*

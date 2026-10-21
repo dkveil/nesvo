@@ -23,7 +23,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
       - name: Build native host and client
         id: native-build
         run: cargo build --workspace --locked

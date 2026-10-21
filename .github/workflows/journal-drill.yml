@@ -1,0 +1,28 @@
+name: Journal drill
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  drill:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+      - name: Build the host
+        run: cargo build --package nesvo-host --locked
+      - name: Back up and restore a journal
+        timeout-minutes: 10
+        run: cargo test --package nesvo-host --test journal_drill --locked -- --ignored --exact journal_backup_restores_receipts_jobs_and_schema
