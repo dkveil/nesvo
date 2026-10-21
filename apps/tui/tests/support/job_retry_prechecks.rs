@@ -1,6 +1,6 @@
 //! Fresh command authorization for every opted-in native job generation.
+use super::prechecks::{OwnedTree, TREE_EXIT_DEADLINE, TREE_READY_DEADLINE};
 use super::*;
-use tokio::io::AsyncReadExt;
 
 const LITERAL: &str = "literal $(x); & łódź \"quoted\"";
 
@@ -12,59 +12,6 @@ fn node(fixture: &Fixture) -> PathBuf {
 }
 
 const COMMAND_TIMEOUT_MS: u64 = 10_000;
-const TREE_READY_DEADLINE: Duration = Duration::from_millis(COMMAND_TIMEOUT_MS + 5_000);
-const TREE_EXIT_DEADLINE: Duration = Duration::from_secs(5);
-const TREE_ROLES: [&str; 3] = ["child", "grandchild", "root"];
-
-struct OwnedTree {
-    listener: tokio::net::TcpListener,
-    members: Vec<BufReader<tokio::net::TcpStream>>,
-}
-
-impl OwnedTree {
-    async fn bind() -> Result<Self> {
-        Ok(Self {
-            listener: tokio::net::TcpListener::bind("127.0.0.1:0").await?,
-            members: Vec::new(),
-        })
-    }
-
-    fn environment(&self) -> Result<Value> {
-        Ok(json!({
-            "CHECK_LITERAL":LITERAL,
-            "TREE_PORT":self.listener.local_addr()?.port().to_string(),
-            "TREE_PROGRAM":process_fixture::executable(),
-        }))
-    }
-
-    async fn announced(&mut self) -> Result<()> {
-        let mut roles = Vec::new();
-        while roles.len() < TREE_ROLES.len() {
-            let (stream, _) = self.listener.accept().await?;
-            let mut member = BufReader::new(stream);
-            let mut role = String::new();
-            member.read_line(&mut role).await?;
-            roles.push(role.trim_end().to_owned());
-            self.members.push(member);
-        }
-        roles.sort();
-        ensure!(
-            roles == TREE_ROLES,
-            "Unexpected owned tree members: {roles:?}"
-        );
-        Ok(())
-    }
-
-    async fn exited(&mut self) -> Result<()> {
-        for member in &mut self.members {
-            let mut rest = Vec::new();
-            if member.read_to_end(&mut rest).await.is_ok() {
-                ensure!(rest.is_empty(), "Owned tree member wrote after announcing");
-            }
-        }
-        Ok(())
-    }
-}
 
 async fn approve(
     fixture: &Fixture,

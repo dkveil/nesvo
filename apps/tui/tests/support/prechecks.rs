@@ -1,18 +1,95 @@
 //! Real owner CLI/MCP, native timer, bounded command scopes and fake provider.
 use super::*;
+use tokio::io::AsyncReadExt;
 const LITERAL: &str = "literal $(x); & łódź \"quoted\"";
 fn node(f: &Fixture) -> PathBuf {
     f.directory
         .join("bin")
         .join(if cfg!(windows) { "node.exe" } else { "node" })
 }
+pub(crate) const TREE_READY_DEADLINE: Duration = Duration::from_secs(15);
+pub(crate) const TREE_EXIT_DEADLINE: Duration = Duration::from_secs(5);
+const TREE_ROLES: [&str; 3] = ["child", "grandchild", "root"];
+
+pub(crate) struct OwnedTree {
+    listener: tokio::net::TcpListener,
+    members: Vec<(String, BufReader<tokio::net::TcpStream>)>,
+}
+
+impl OwnedTree {
+    pub(crate) async fn bind() -> Result<Self> {
+        Ok(Self {
+            listener: tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+            members: Vec::new(),
+        })
+    }
+
+    pub(crate) fn environment(&self) -> Result<Value> {
+        Ok(json!({
+            "CHECK_LITERAL":LITERAL,
+            "TREE_PORT":self.listener.local_addr()?.port().to_string(),
+            "TREE_PROGRAM":process_fixture::executable(),
+        }))
+    }
+
+    pub(crate) async fn announced(&mut self) -> Result<()> {
+        while self.members.len() < TREE_ROLES.len() {
+            let (stream, _) = self.listener.accept().await?;
+            let mut member = BufReader::new(stream);
+            let mut role = String::new();
+            member.read_line(&mut role).await?;
+            self.members.push((role.trim_end().to_owned(), member));
+        }
+        let mut roles: Vec<&str> = self.members.iter().map(|(role, _)| role.as_str()).collect();
+        roles.sort();
+        ensure!(
+            roles == TREE_ROLES,
+            "Unexpected owned tree members: {roles:?}"
+        );
+        Ok(())
+    }
+
+    pub(crate) async fn release_root(&mut self) -> Result<()> {
+        let (_, root) = self
+            .members
+            .iter_mut()
+            .find(|(role, _)| role == "root")
+            .context("Announced owned tree root")?;
+        root.get_mut().write_all(b"\n").await?;
+        Ok(())
+    }
+
+    pub(crate) async fn exited(&mut self) -> Result<()> {
+        for (role, member) in &mut self.members {
+            let mut rest = Vec::new();
+            if member.read_to_end(&mut rest).await.is_ok() {
+                ensure!(rest.is_empty(), "Owned tree {role} wrote after announcing");
+            }
+        }
+        Ok(())
+    }
+}
+
+fn literal_environment() -> Value {
+    json!({"CHECK_LITERAL":LITERAL})
+}
+
 async fn approve(
     f: &Fixture,
     owner: &RunningService<RoleClient, ()>,
     mode: &str,
     timeout_ms: u64,
 ) -> Result<(Value, PathBuf)> {
-    approve_executable(f, owner, mode, timeout_ms, node(f)).await
+    approve_executable(f, owner, mode, timeout_ms, node(f), literal_environment()).await
+}
+async fn approve_tree(
+    f: &Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    mode: &str,
+    timeout_ms: u64,
+    tree: &OwnedTree,
+) -> Result<(Value, PathBuf)> {
+    approve_executable(f, owner, mode, timeout_ms, node(f), tree.environment()?).await
 }
 async fn approve_executable(
     f: &Fixture,
@@ -20,6 +97,7 @@ async fn approve_executable(
     mode: &str,
     timeout_ms: u64,
     executable: PathBuf,
+    environment: Value,
 ) -> Result<(Value, PathBuf)> {
     let script = f.directory.join("precheck łódź.cjs");
     std::fs::write(
@@ -34,7 +112,7 @@ async fn approve_executable(
             directory.display()
         )
     })?;
-    let spec = json!({"title":format!("Check {mode}"),"executable":executable,"cwd":f.directory,"arguments":[script,mode,directory,"root",LITERAL],"timeoutMs":timeout_ms,"environment":{"CHECK_LITERAL":LITERAL}});
+    let spec = json!({"title":format!("Check {mode}"),"executable":executable,"cwd":f.directory,"arguments":[script,mode,directory,"root",LITERAL],"timeoutMs":timeout_ms,"environment":environment});
     let file = f.directory.join(format!("approve-{mode}.json"));
     std::fs::write(&file, serde_json::to_vec(&spec)?)
         .with_context(|| format!("Write owned precheck approval input: {}", file.display()))?;
@@ -167,49 +245,15 @@ async fn no_model(owner: &RunningService<RoleClient, ()>) -> Result<()> {
     );
     Ok(())
 }
-async fn tree_ready(directory: &Path) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if ["root", "child", "grandchild"]
-                .iter()
-                .all(|name| directory.join(format!("{name}.json")).exists())
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .context("Owned three-level command tree readiness")?
+async fn tree_ready(tree: &mut OwnedTree) -> Result<()> {
+    timeout(TREE_READY_DEADLINE, tree.announced())
+        .await
+        .context("Owned three-level command tree readiness")?
 }
-async fn tree_gone(f: &Fixture, directory: &Path) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let mut command = Command::new(node(f));
-            command
-                .arg(f.directory.join("precheck łódź.cjs"))
-                .arg("probe")
-                .arg(directory);
-            #[cfg(windows)]
-            command.creation_flags(0x08000000);
-            let output = command.output().await?;
-            ensure!(
-                output.status.success(),
-                "Process observation failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let view: Value = serde_json::from_slice(&output.stdout)?;
-            if view["running"]
-                .as_array()
-                .is_some_and(|states| states.len() == 3 && states.iter().all(|v| v == false))
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("All ordinary owned command descendants exited")?
+async fn tree_gone(tree: &mut OwnedTree) -> Result<()> {
+    timeout(TREE_EXIT_DEADLINE, tree.exited())
+        .await
+        .context("All ordinary owned command descendants exited")?
 }
 
 #[tokio::test]
@@ -422,7 +466,8 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
     let mut f = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&f.pairing()).await?;
-        let (approval, directory) = approve(&f, &owner, "tree-timeout", 5000).await?;
+        let mut tree = OwnedTree::bind().await?;
+        let (approval, directory) = approve_tree(&f, &owner, "tree-timeout", 5000, &tree).await?;
         let job = create(
             &owner,
             "tree-timeout",
@@ -431,10 +476,10 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
         )
         .await?;
         let admitted = now(&owner, &job, "tree-timeout").await?;
-        tree_ready(&directory).await?;
+        tree_ready(&mut tree).await?;
         let failed = state(&owner, &job, "failed").await?;
         assert_eq!(failed["data"]["occurrence"]["reason"], "precheck_timeout");
-        tree_gone(&f, &directory).await?;
+        tree_gone(&mut tree).await?;
         no_model(&owner).await?;
         assert_eq!(
             now(&owner, &job, "tree-timeout").await?["data"],
@@ -446,7 +491,8 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
                 .count(),
             1
         );
-        let (approval, directory) = approve(&f, &owner, "tree-crash", 10000).await?;
+        let mut crash_tree = OwnedTree::bind().await?;
+        let (approval, directory) = approve_tree(&f, &owner, "tree-crash", 10000, &crash_tree).await?;
         let job = create(
             &owner,
             "tree-crash",
@@ -455,10 +501,10 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
         )
         .await?;
         let admitted = now(&owner, &job, "tree-crash").await?;
-        tree_ready(&directory).await?;
+        tree_ready(&mut crash_tree).await?;
         owner.cancel().await?;
         f.restart(true).await?;
-        tree_gone(&f, &directory).await?;
+        tree_gone(&mut crash_tree).await?;
         let owner = client(&f.pairing()).await?;
         let unknown = state(&owner, &job, "reconcile").await?;
         assert_eq!(
@@ -505,7 +551,8 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
             .await?,
         )?;
         assert_eq!(abandoned_mcp["data"], abandoned["data"]);
-        let (approval, directory) = approve(&f, &owner, "tree-pass", 5000).await?;
+        let mut pass_tree = OwnedTree::bind().await?;
+        let (approval, _) = approve_tree(&f, &owner, "tree-pass", 5000, &pass_tree).await?;
         let job = create(
             &owner,
             "tree-pass",
@@ -514,8 +561,10 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
         )
         .await?;
         now(&owner, &job, "tree-pass").await?;
+        tree_ready(&mut pass_tree).await?;
+        pass_tree.release_root().await?;
         let passed = state(&owner, &job, "needsValidation").await?;
-        tree_gone(&f, &directory).await?;
+        tree_gone(&mut pass_tree).await?;
         assert_eq!(
             passed["data"]["occurrence"]["precheck"]["result"]["cleanupConfirmed"],
             true
@@ -650,7 +699,8 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
     let mut f = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&f.pairing()).await?;
-        let (approval, directory) = approve(&f, &owner, "tree-cancel", 10000).await?;
+        let mut tree = OwnedTree::bind().await?;
+        let (approval, directory) = approve_tree(&f, &owner, "tree-cancel", 10000, &tree).await?;
         let spec = json!({
             "title":"Cancelable command tree",
             "instruction":"report-task",
@@ -673,7 +723,7 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
         let active_id = active["data"]["occurrence"]["id"]
             .as_str()
             .context("active occurrence ID")?;
-        tree_ready(&directory).await?;
+        tree_ready(&mut tree).await?;
 
         // The live first occurrence holds the overlap gate, so the second one
         // is durably queued without racing a claim from an otherwise idle host.
@@ -738,7 +788,7 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
         assert!(current["precheck"]["finishedAt"].is_number());
         assert!(current["finishedAt"].is_number());
         assert!(current["runId"].is_null());
-        tree_gone(&f, &directory).await?;
+        tree_gone(&mut tree).await?;
         no_model(&owner).await?;
 
         let queued_replay = data(
@@ -802,7 +852,7 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
             call(&owner, "nesvo_cancel_job_occurrence", active_arguments).await?,
         )?;
         assert_eq!(after_restart["data"], active_cancel["data"]);
-        tree_gone(&f, &directory).await?;
+        tree_gone(&mut tree).await?;
         no_model(&owner).await?;
         assert_eq!(
             std::fs::read_to_string(directory.join("effects.log"))?
@@ -850,21 +900,27 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
     let mut f = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40), async {
         let owner = client(&f.pairing()).await?;
-        // A distinct executable makes Windows image-handle release observable
-        // without removing the Node used for process probes or the restarted host.
-        let executable = f.directory.join(if cfg!(windows) {
+        let image_released_by_cleanup = f.directory.join(if cfg!(windows) {
             "shutdown-command.exe"
         } else {
             "shutdown-command"
         });
-        std::fs::copy(node(&f), &executable).with_context(|| {
+        std::fs::copy(node(&f), &image_released_by_cleanup).with_context(|| {
             format!(
                 "Copy owned shutdown command executable: {}",
-                executable.display()
+                image_released_by_cleanup.display()
             )
         })?;
-        let (approval, directory) =
-            approve_executable(&f, &owner, "tree-shutdown", 10000, executable.clone()).await?;
+        let mut tree = OwnedTree::bind().await?;
+        let (approval, directory) = approve_executable(
+            &f,
+            &owner,
+            "tree-shutdown",
+            10000,
+            image_released_by_cleanup.clone(),
+            tree.environment()?,
+        )
+        .await?;
         let job = create(
             &owner,
             "graceful-shutdown-tree",
@@ -876,7 +932,7 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
         let occurrence = admitted["data"]["occurrence"]["id"]
             .as_str()
             .context("Shutdown occurrence identity")?;
-        tree_ready(&directory).await?;
+        tree_ready(&mut tree).await?;
         let running = data(
             call(
                 &owner,
@@ -903,11 +959,11 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
             status.success(),
             "Native host did not confirm its runtime shutdown: {status}"
         );
-        tree_gone(&f, &directory).await?;
-        std::fs::remove_file(&executable).with_context(|| {
+        tree_gone(&mut tree).await?;
+        std::fs::remove_file(&image_released_by_cleanup).with_context(|| {
             format!(
                 "Remove owned command image after graceful host cleanup: {}",
-                executable.display()
+                image_released_by_cleanup.display()
             )
         })?;
 
@@ -937,7 +993,7 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
         let replay = now(&owner, &job, "graceful-shutdown-tree").await?;
         assert_eq!(replay["data"], admitted["data"]);
         no_model(&owner).await?;
-        tree_gone(&f, &directory).await?;
+        tree_gone(&mut tree).await?;
         let effects = directory.join("effects.log");
         assert_eq!(
             std::fs::read_to_string(&effects)
