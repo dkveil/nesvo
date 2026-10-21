@@ -3447,3 +3447,16 @@ observed owned descendant identities were gone. This is bounded F12/F15/F18/F19/
 F26/F40/F41 regression evidence, not a completed source-work or provider matrix
 gate. The [probe profile](harness-native-recovery-probe.md) records its scope and
 limits; earlier failed results remain preserved.
+
+### F44 settled quota-wake test snapshots
+
+Windows publication CI on `d3990e2` exposed a test observation race: the wake
+query retained `operationPhase:received`, while the following receipt query
+already returned `settled`. Repeated full-snapshot comparisons then differed
+only in that projected phase. The test now waits for both independent views of
+the same operation to be settled before retaining its baseline. It preserves
+the full equality, original-key replay, exact single input, same-process and
+single-session assertions, with no production or timeout change. The exact
+controlled native SDK case passes on Windows in 14.41 seconds. This repairs the
+test race; it does not explain the separate CI capture, submission or startup
+failures, or close original-provider quota acceptance.

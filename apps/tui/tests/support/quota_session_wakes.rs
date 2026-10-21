@@ -276,7 +276,13 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
                 let wake = quota_wake(&owner, &session).await?;
                 if let Some(operation_id) = wake["operationId"].as_str() {
                     let receipt = operation(&owner, operation_id).await?;
-                    if receipt["phase"] == "settled" && wake["phase"] == "paused" {
+                    // These are independent snapshots. A receipt may settle
+                    // after the wake query; retain only a settled projection.
+                    if receipt["phase"] == "settled"
+                        && wake["phase"] == "paused"
+                        && wake["operationPhase"] == "settled"
+                    {
+                        assert_eq!(wake["operationId"], receipt["id"]);
                         return Ok::<_, anyhow::Error>((wake, receipt));
                     }
                 }
