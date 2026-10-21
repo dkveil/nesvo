@@ -682,6 +682,9 @@ pub(crate) async fn request(
         Some("createOperation") if command["spec"]["worktree"] == true => {
             Duration::from_secs(WORKTREE_LAUNCH_WAIT_S)
         }
+        Some("workflow") if command["request"]["hostChecks"] == true => {
+            Duration::from_secs(WORKTREE_LAUNCH_WAIT_S)
+        }
         Some("archiveWorktree") => Duration::from_secs(90),
         Some(
             "listWorktrees"

@@ -900,9 +900,9 @@ fn catalog() -> Vec<Tool> {
         ),
         (
             "nesvo_validate_task_result",
-            "Record owner/coordinator attestation of the current reported result. Success needs a succeeded report and passed validation checks. The host records evidence, without executing checks. Accepted results release dependencies; idle never does. Validation bound 2 KiB UTF-8.",
+            "Record owner/coordinator attestation of the current reported result. Success needs a succeeded report and passed validation checks. Without hostChecks the host records evidence without executing checks; hostChecks:true first runs the task's approved nesvo.toml checks in its worktree, records a hostChecks attestation and refuses success when one fails. Accepted results release dependencies; idle never does. Validation bound 2 KiB UTF-8.",
             object(
-                json!({"key":key,"runId":id,"attemptId":id,"expectedRevision":revision,"validation":{"type":"object","additionalProperties":false,"required":["passed","summary","checks"],"properties":{"passed":{"type":"boolean"},"summary":{"type":"string","minLength":1,"maxLength":1024},"checks":checks}}}),
+                json!({"key":key,"runId":id,"attemptId":id,"expectedRevision":revision,"validation":{"type":"object","additionalProperties":false,"required":["passed","summary","checks"],"properties":{"passed":{"type":"boolean"},"summary":{"type":"string","minLength":1,"maxLength":1024},"checks":checks}},"hostChecks":{"type":"boolean"}}),
                 &[
                     "key",
                     "runId",

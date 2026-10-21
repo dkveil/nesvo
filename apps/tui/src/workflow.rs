@@ -229,6 +229,8 @@ pub enum Command {
         #[arg(long)]
         file: PathBuf,
         #[arg(long)]
+        host_checks: bool,
+        #[arg(long)]
         json: bool,
     },
 }
@@ -459,6 +461,7 @@ impl Command {
                 key,
                 revision,
                 file,
+                host_checks,
                 ..
             } => Request::Validate {
                 key,
@@ -466,6 +469,7 @@ impl Command {
                 attempt_id: attempt,
                 expected_revision: revision,
                 validation: read_json(&file, 2048)?,
+                host_checks,
             },
         })
     }
@@ -843,6 +847,8 @@ enum Request {
         attempt_id: String,
         expected_revision: u64,
         validation: ValidationSpec,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        host_checks: bool,
     },
 }
 fn wire(request: Request) -> Result<Value> {
@@ -1057,6 +1063,12 @@ pub(crate) fn supported(caps: &Value, request: &Value) -> Result<()> {
         return Err(cli::failure(
             "unsupported",
             "Host does not support durable inbox/ACK; update nesvo-host",
+        ));
+    }
+    if request["request"]["hostChecks"] == true && caps["workflowHostChecks"] != true {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot run attempt-bound host checks; update nesvo-host",
         ));
     }
     if request["request"]["action"] == "decision" && caps["workflowDecisions"] != true {
@@ -1834,6 +1846,55 @@ mod tests {
         assert_eq!(
             code_of(&ask(&near, &["yes", "no"]).signal().err().unwrap()),
             "input_too_large"
+        );
+    }
+
+    #[test]
+    fn workflow_validate_host_checks_cross_cli_and_mcp_and_require_their_capability() {
+        let path = std::env::temp_dir().join(format!(
+            "nesvo-validation-{}.json",
+            hex::encode(nesvo_wire::random::<8>())
+        ));
+        std::fs::write(
+            &path,
+            r#"{"passed":true,"summary":"Host evidence","checks":[]}"#,
+        )
+        .unwrap();
+        let command = |host_checks| Command::Validate {
+            id: "r".into(),
+            attempt: "a".into(),
+            key: "k".into(),
+            revision: 4,
+            file: path.clone(),
+            host_checks,
+            json: true,
+        };
+        let checked = wire(command(true).request().unwrap()).unwrap();
+        let plain = wire(command(false).request().unwrap()).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(checked["request"]["hostChecks"], true);
+        assert!(plain["request"].get("hostChecks").is_none());
+        let mcp = tool(
+            "validate",
+            json!({"key":"k","runId":"r","attemptId":"a","expectedRevision":4,"hostChecks":true,"validation":{"passed":true,"summary":"Host evidence","checks":[]}}),
+        )
+        .unwrap();
+        assert_eq!(mcp, checked);
+        let caps = json!({"workflowPlans":true,"workflowAttempts":true});
+        assert_eq!(
+            code_of(&supported(&caps, &checked).unwrap_err()),
+            "unsupported"
+        );
+        assert!(supported(&caps, &plain).is_ok());
+        let mut current = caps;
+        current["workflowHostChecks"] = json!(true);
+        assert!(supported(&current, &checked).is_ok());
+        assert!(
+            tool(
+                "validate",
+                json!({"key":"k","runId":"r","attemptId":"a","expectedRevision":4,"hostAttestation":{},"validation":{"passed":true,"summary":"x","checks":[]}}),
+            )
+            .is_err()
         );
     }
 
