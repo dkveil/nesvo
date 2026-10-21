@@ -179,6 +179,7 @@ pub struct State {
     quota_refresh: Vec<crate::provider_quota_runtime::RefreshControl>,
     limits_read_at: i64,
     schedule_watchers: HashSet<u64>,
+    review_watchers: HashSet<u64>,
     native_run_gates: HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
 }
 
@@ -302,6 +303,7 @@ impl State {
             quota_refresh: Vec::new(),
             limits_read_at: 0,
             schedule_watchers: HashSet::new(),
+            review_watchers: HashSet::new(),
             native_run_gates: HashMap::new(),
         }
     }
@@ -1982,6 +1984,7 @@ impl State {
         self.repository.disconnect(client_id);
         self.repository_notify();
         self.schedule_watchers.remove(&client_id);
+        self.review_watchers.remove(&client_id);
         for session in self.sessions.values_mut() {
             session.subscribers.remove(&client_id);
         }
@@ -2837,6 +2840,16 @@ impl State {
         }
     }
 
+    pub fn watch_reviews(&mut self, client_id: u64) {
+        if self.clients.contains_key(&client_id) {
+            self.review_watchers.insert(client_id);
+        }
+    }
+
+    pub fn review_watchers(&self) -> impl Iterator<Item = u64> + '_ {
+        self.review_watchers.iter().copied()
+    }
+
     pub fn context_report(&self, id: &str) -> Option<PathBuf> {
         self.sessions
             .get(id)?
@@ -3049,6 +3062,10 @@ impl State {
             Command::CancelSchedule { id } => {
                 self.metadata.cancel_schedule(&id)?;
                 self.broadcast_schedules();
+            }
+            Command::WatchReviews => {
+                self.watch_reviews(client_id);
+                self.respond(client_id, json!({"type":"reviewsWatched"}), request_id);
             }
             Command::GetDiff { .. } => return Err(anyhow!("Diff requires asynchronous dispatch.")),
             Command::OpenReview { .. }
@@ -4458,6 +4475,213 @@ mod tests {
         assert_eq!(receiver.try_recv().unwrap()["type"], "schedules");
         state.disconnect(1);
         assert!(!state.schedule_watchers.contains(&1));
+    }
+
+    fn review_client(state: &mut State, id: u64) -> mpsc::Receiver<Value> {
+        let (events, inbox) = mpsc::channel(64);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(
+            id,
+            Client {
+                events,
+                cancelled,
+                authority: Default::default(),
+            },
+        );
+        inbox
+    }
+
+    #[test]
+    fn review_notifications_are_opt_in_and_scoped_callers_are_refused_review_and_files_commands() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            metadata,
+            Launchers::discover_with_fixture_shell(),
+        );
+        state.set_caller_url("ws://127.0.0.1:1".into());
+        let (events, _output) = mpsc::channel(128);
+        let id = state
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Owned scoped review fixture".into(),
+                    role: crate::caller::Role::Coordinator,
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        let scope_id = state.sessions[&id]
+            .caller_context
+            .as_ref()
+            .unwrap()
+            .scope_id
+            .clone();
+        let mut owner = review_client(&mut state, 1);
+        let (scoped_events, _scoped) = mpsc::channel(8);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(
+            2,
+            Client {
+                events: scoped_events,
+                cancelled,
+                authority: crate::caller::Authority::Session {
+                    id: id.clone(),
+                    scope_id,
+                },
+            },
+        );
+        let directory = crate::process::display_path(&std::env::temp_dir());
+        let commands = [
+            Command::OpenReview {
+                source: crate::review::SourceRequest::Local {
+                    session_id: Some(id.clone()),
+                    directory: None,
+                },
+                base: None,
+            },
+            Command::ReviewContext {
+                review_id: "local-0000000000000000".into(),
+            },
+            Command::DeliverReview {
+                review_id: "local-0000000000000000".into(),
+                session_id: id.clone(),
+                text: "Fix the guard".into(),
+                key: None,
+                lease_id: None,
+            },
+            Command::WatchReviews,
+            Command::ListEntries {
+                directory: directory.clone(),
+                show_hidden: false,
+            },
+            Command::ReadFile {
+                path: directory.clone(),
+                offset: None,
+                limit: None,
+            },
+            Command::FindFiles {
+                root: directory,
+                query: "a".into(),
+                limit: None,
+            },
+        ];
+        for command in &commands {
+            assert!(state.authorize(1, command).is_ok());
+            let refused = state.authorize(2, command).unwrap_err();
+            assert_eq!(
+                refused
+                    .downcast_ref::<crate::api_error::Error>()
+                    .unwrap()
+                    .code,
+                "forbidden"
+            );
+        }
+        assert_eq!(state.review_watchers().count(), 0);
+        state
+            .command(1, Command::WatchReviews, None, &events)
+            .unwrap();
+        assert_eq!(owner.try_recv().unwrap()["type"], "reviewsWatched");
+        assert_eq!(state.review_watchers().collect::<Vec<_>>(), [1]);
+        state.watch_reviews(9);
+        state.disconnect(1);
+        assert_eq!(state.review_watchers().count(), 0);
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn review_delivery_routes_by_control_lease_and_caps_the_operation_path() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            metadata,
+            Launchers::discover_with_fixture_shell(),
+        );
+        let (events, _output) = mpsc::channel(128);
+        let spec = crate::jobs::LaunchSpec {
+            name: "Owned review delivery fixture".into(),
+            ..Default::default()
+        };
+        let id = state.launch(&spec, &events).unwrap();
+        let now = now_millis();
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.info.program = Program::Claude;
+        session.status = StatusTracker::new(Program::Claude, 24, 80, now);
+        session.status.lifecycle(
+            crate::agent_context::LifecycleReport {
+                state: crate::status::StatusState::Idle,
+                sequence: 1,
+            },
+            now,
+        );
+        session.status.refresh(now);
+        session.readiness = crate::readiness::Tracker::new(Program::Claude);
+        session
+            .readiness
+            .observe(session.status.status(), None, Duration::ZERO);
+        let _first = review_client(&mut state, 1);
+        let _second = review_client(&mut state, 2);
+        state.reviews.insert(crate::review::Entry {
+            id: "local-delivery".into(),
+            directory: std::env::temp_dir(),
+            source: json!({"kind":"local"}),
+            session_id: None,
+            base: None,
+            base_label: None,
+            head_ref: None,
+            remote_head: None,
+            checks: None,
+        });
+        let state = Arc::new(Mutex::new(state));
+        let request = |text: &str, lease_id: Option<String>| crate::review::Delivery {
+            review_id: "local-delivery".into(),
+            session_id: id.clone(),
+            text: text.into(),
+            key: None,
+            lease_id,
+        };
+        let review_code = |error: anyhow::Error| {
+            error
+                .downcast_ref::<crate::review::Failure>()
+                .map(|failure| failure.code)
+                .or_else(|| {
+                    error
+                        .downcast_ref::<crate::api_error::Error>()
+                        .map(|error| error.code)
+                })
+                .unwrap_or("other")
+        };
+        let large = "x".repeat(8193);
+        let refused = crate::review::deliver(&state, &events, 1, request(&large, None)).await;
+        assert_eq!(review_code(refused.unwrap_err()), "too_large");
+        let journal = crate::review::deliver(&state, &events, 1, request("Fix it", None)).await;
+        assert_eq!(review_code(journal.unwrap_err()), "unsupported");
+
+        state
+            .lock()
+            .unwrap()
+            .acquire(1, &id, 80, 24, false, false)
+            .unwrap();
+        let lease = state.lock().unwrap().sessions[&id]
+            .controller
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+        let busy = crate::review::deliver(&state, &events, 2, request("Fix it", None)).await;
+        assert_eq!(review_code(busy.unwrap_err()), "control_busy");
+        let pasted = crate::review::deliver(&state, &events, 1, request(&large, Some(lease)))
+            .await
+            .unwrap();
+        assert_eq!(pasted["path"], "paste");
+        assert_eq!(pasted["bytes"], 8193);
+        assert_eq!(pasted["receipt"]["result"]["submitted"], false);
+        let workers = state.lock().unwrap().shutdown();
+        for worker in workers {
+            worker.join().unwrap();
+        }
     }
 
     #[test]

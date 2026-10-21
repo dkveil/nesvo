@@ -282,6 +282,16 @@ pub async fn serve(
     request_id: Option<String>,
     permit: Option<OwnedSemaphorePermit>,
 ) {
+    if !matches!(
+        command,
+        Command::GetDiff {
+            review_id: None,
+            ..
+        }
+    ) && let Ok(mut host) = state.lock()
+    {
+        host.watch_reviews(client);
+    }
     let mut event = match command {
         Command::GetDiff {
             session_id,
@@ -454,14 +464,17 @@ async fn open(
     if let Some(base) = &base {
         git::validate_ref(base).map_err(|_| failure("invalid_argument", "Invalid base ref"))?;
     }
+    let deadline = Instant::now() + FETCH_DEADLINE;
     let entry = match source {
         SourceRequest::Local {
             session_id,
             directory,
         } => open_local(state, session_id, directory, base).await?,
-        SourceRequest::Pull { url } => open_pull(state, client, request_id, &url, base).await?,
+        SourceRequest::Pull { url } => {
+            open_pull(state, client, request_id, &url, base, deadline).await?
+        }
     };
-    let event = opened_event(&entry).await?;
+    let event = opened_within(&entry, deadline).await?;
     let mut host = lock(state)?;
     host.reviews.insert(entry);
     broadcast(&host, client, &event);
@@ -469,9 +482,13 @@ async fn open(
 }
 
 fn broadcast(host: &State, origin: u64, event: &Value) {
-    for (id, client) in &host.clients {
-        if *id != origin && matches!(client.authority, crate::caller::Authority::Owner) {
-            host.send(*id, event.clone());
+    for id in host.review_watchers() {
+        let owner = host
+            .clients
+            .get(&id)
+            .is_some_and(|client| matches!(client.authority, crate::caller::Authority::Owner));
+        if id != origin && owner {
+            host.send(id, event.clone());
         }
     }
 }
@@ -699,19 +716,19 @@ async fn tool(
         .stderr
         .take()
         .ok_or_else(|| anyhow!("{program} errors are unavailable"))?;
+    let errors = tokio::spawn(drain_errors(stderr));
     let remaining = deadline.saturating_duration_since(Instant::now());
     let (output, errors, status) = timeout(remaining, async {
         let mut output = Vec::new();
-        let mut errors = Vec::new();
-        let mut stdout = stdout.take(TOOL_OUTPUT_LIMIT as u64 + 1);
-        let mut stderr = stderr.take(TOOL_OUTPUT_LIMIT as u64);
-        let (read, failed) = tokio::join!(
-            stdout.read_to_end(&mut output),
-            stderr.read_to_end(&mut errors)
-        );
-        read?;
-        failed?;
+        stdout
+            .take(TOOL_OUTPUT_LIMIT as u64 + 1)
+            .read_to_end(&mut output)
+            .await?;
+        if output.len() > TOOL_OUTPUT_LIMIT {
+            child.kill().await?;
+        }
         let status = child.wait().await?;
+        let errors = errors.await??;
         Ok::<_, anyhow::Error>((output, errors, status))
     })
     .await
@@ -734,6 +751,16 @@ async fn tool(
         ));
     }
     Ok(output)
+}
+
+async fn drain_errors(mut stderr: tokio::process::ChildStderr) -> std::io::Result<Vec<u8>> {
+    let mut errors = Vec::new();
+    (&mut stderr)
+        .take(TOOL_OUTPUT_LIMIT as u64)
+        .read_to_end(&mut errors)
+        .await?;
+    tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await?;
+    Ok(errors)
 }
 
 async fn git_step(directory: &Path, args: &[&str], deadline: Instant) -> Result<Vec<u8>> {
@@ -884,6 +911,7 @@ async fn open_pull(
     request_id: Option<&str>,
     url: &str,
     base: Option<String>,
+    deadline: Instant,
 ) -> Result<Entry> {
     let pull = Pull::parse(url)?;
     let gate = lock(state)?.reviews.fetch_gate();
@@ -893,7 +921,6 @@ async fn open_pull(
             "Another pull request fetch is running; retry when it finishes",
         )
     })?;
-    let deadline = Instant::now() + FETCH_DEADLINE;
     progress(state, client, request_id, "metadata");
     let metadata = pull_metadata(&pull, deadline).await?;
     let directory = reviews_root()?.join(pull.slug());
@@ -915,6 +942,16 @@ async fn open_pull(
         head_ref: Some(metadata.head_ref_name),
         remote_head: Some(metadata.head_ref_oid),
     })
+}
+
+async fn opened_within(entry: &Entry, deadline: Instant) -> Result<Value> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    timeout(remaining, opened_event(entry)).await.map_err(|_| {
+        failure(
+            "timeout",
+            "The review diff did not finish within the 120 s review deadline",
+        )
+    })?
 }
 
 async fn opened_event(entry: &Entry) -> Result<Value> {
@@ -1291,7 +1328,7 @@ pub fn paste_chunks(text: &str, bracketed: bool) -> Vec<String> {
         .collect()
 }
 
-async fn deliver(
+pub(crate) async fn deliver(
     state: &Arc<Mutex<State>>,
     events: &mpsc::Sender<PtyEvent>,
     client: u64,
@@ -1458,6 +1495,142 @@ mod tests {
             .await
             .unwrap();
         assert!(status.success(), "git {args:?}");
+    }
+
+    async fn repository(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "nesvo-review-{label}-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        std::fs::create_dir(&path).unwrap();
+        git(&path, &["init", "-q", "-b", "main"]).await;
+        git(&path, &["config", "user.name", "Nesvo Test"]).await;
+        git(&path, &["config", "user.email", "test@example.invalid"]).await;
+        git(&path, &["config", "commit.gpgsign", "false"]).await;
+        std::fs::write(path.join("a.txt"), "a\n").unwrap();
+        git(&path, &["add", "."]).await;
+        git(
+            &path,
+            &["-c", "core.hooksPath=", "commit", "-q", "-m", "base"],
+        )
+        .await;
+        path
+    }
+
+    fn open_command(path: &Path) -> Command {
+        Command::OpenReview {
+            source: SourceRequest::Local {
+                session_id: None,
+                directory: Some(display(path)),
+            },
+            base: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn review_opened_broadcast_reaches_only_opted_in_owner_clients() {
+        let path = repository("broadcast").await;
+        let metadata = crate::storage::MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut host = State::new(
+            PathBuf::new(),
+            metadata,
+            crate::launchers::Launchers::discover(),
+        );
+        let mut inboxes = Vec::new();
+        for id in 1..=3 {
+            let (events, inbox) = mpsc::channel(16);
+            let (cancelled, _) = tokio::sync::watch::channel(false);
+            host.clients.insert(
+                id,
+                crate::sessions::Client {
+                    events,
+                    cancelled,
+                    authority: Default::default(),
+                },
+            );
+            inboxes.push(inbox);
+        }
+        let (pty_events, _) = mpsc::channel(1);
+        host.command(3, Command::WatchReviews, None, &pty_events)
+            .unwrap();
+        assert_eq!(inboxes[2].try_recv().unwrap()["type"], "reviewsWatched");
+        let state = Arc::new(Mutex::new(host));
+        let gate = Arc::new(Semaphore::new(1));
+
+        let permit = gate.clone().try_acquire_owned().ok();
+        let request = Some("open-1".to_owned());
+        serve(
+            state.clone(),
+            pty_events.clone(),
+            1,
+            open_command(&path),
+            request,
+            permit,
+        )
+        .await;
+        let reply = inboxes[0].try_recv().unwrap();
+        assert_eq!(reply["type"], "reviewOpened");
+        assert_eq!(reply["requestId"], "open-1");
+        assert!(inboxes[0].try_recv().is_err());
+        assert!(inboxes[1].try_recv().is_err());
+        let broadcast = inboxes[2].try_recv().unwrap();
+        assert_eq!(broadcast["type"], "reviewOpened");
+        assert_eq!(broadcast["reviewId"], reply["reviewId"]);
+        assert!(broadcast.get("requestId").is_none());
+
+        let permit = gate.clone().try_acquire_owned().ok();
+        let request = Some("open-2".to_owned());
+        serve(
+            state.clone(),
+            pty_events.clone(),
+            3,
+            open_command(&path),
+            request,
+            permit,
+        )
+        .await;
+        assert_eq!(inboxes[2].try_recv().unwrap()["requestId"], "open-2");
+        assert!(inboxes[2].try_recv().is_err());
+        assert!(inboxes[0].try_recv().unwrap().get("requestId").is_none());
+        assert!(inboxes[1].try_recv().is_err());
+
+        state.lock().unwrap().disconnect(3);
+        assert!(state.lock().unwrap().review_watchers().all(|id| id == 1));
+        std::fs::remove_dir_all(&path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn review_open_deadline_bounds_the_opened_diff() {
+        let path = repository("deadline").await;
+        let root = git::toplevel(&path).await.unwrap();
+        let entry = local_entry(root, None, "Pinned".into(), None)
+            .await
+            .unwrap();
+        let late = opened_within(&entry, Instant::now()).await.unwrap_err();
+        assert_eq!(code(late), "timeout");
+        let opened = opened_within(&entry, Instant::now() + FETCH_DEADLINE)
+            .await
+            .unwrap();
+        assert_eq!(opened["type"], "reviewOpened");
+        std::fs::remove_dir_all(&path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn review_tool_stops_a_child_whose_output_exceeds_the_limit() {
+        let path = repository("flood").await;
+        std::fs::write(path.join("big.txt"), "x".repeat(4 * 1024 * 1024)).unwrap();
+        git(&path, &["add", "big.txt"]).await;
+        git(
+            &path,
+            &["-c", "core.hooksPath=", "commit", "-q", "-m", "big"],
+        )
+        .await;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let error = git_step(&path, &["cat-file", "blob", "HEAD:big.txt"], deadline)
+            .await
+            .unwrap_err();
+        assert_eq!(code(error), "pull_unavailable");
+        std::fs::remove_dir_all(&path).unwrap();
     }
 
     #[test]

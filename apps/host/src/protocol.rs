@@ -99,6 +99,7 @@ pub enum Command {
     ReviewContext {
         review_id: String,
     },
+    WatchReviews,
     DeliverReview {
         review_id: String,
         session_id: String,
