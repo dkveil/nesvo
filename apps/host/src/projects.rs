@@ -382,7 +382,7 @@ pub(crate) fn derive(
             root: root.clone(),
             name: base_name(root),
             branch: None,
-            folder: Some(session.directory.clone()),
+            folder: Some(display_path(Path::new(&session.directory))),
             session_id: Some(session.id.clone()),
             at: if session.running { now } else { 0 },
         })
