@@ -1,7 +1,7 @@
 //! Read-only review state and rendering. All repository I/O belongs to the host.
 use crate::{
     model::App,
-    theme::{BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, WARNING},
+    theme::{BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT},
 };
 use ratatui::{
     Frame,
@@ -19,6 +19,8 @@ pub struct ReviewData {
     pub directory: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub revision: Option<String>,
     pub files: Vec<FileDiff>,
     pub truncated: bool,
 }
@@ -50,16 +52,8 @@ pub struct ReviewState {
     pub hunk: usize,
     pub scroll: u16,
     pub folded: HashSet<(String, usize)>,
-    pub pull_request: Option<String>,
 }
 pub const SCOPES: [&str; 3] = ["unstaged", "staged", "untracked"];
-pub const PULL_REQUEST_PENDING: &str = "PR review arrives with the next slice";
-
-fn pull_request_label(url: &str) -> String {
-    url.strip_prefix("https://github.com/")
-        .unwrap_or(url)
-        .replacen("/pull/", "#", 1)
-}
 
 impl ReviewState {
     pub fn accept(&mut self, data: ReviewData) {
@@ -77,19 +71,6 @@ impl ReviewState {
             .unwrap_or(0);
         self.data = data;
         self.request_id = None;
-    }
-    pub fn show_pull_request(&mut self, url: String) {
-        self.pull_request = Some(url);
-        self.request_id = None;
-        self.error = None;
-        self.data = ReviewData::default();
-        self.file = 0;
-        self.hunk = 0;
-        self.scroll = 0;
-        self.folded.clear();
-        self.visible = true;
-        self.focused = true;
-        self.return_to_input = false;
     }
     pub fn toggle_hunk(&mut self) {
         if let Some(file) = self.data.files.get(self.file) {
@@ -176,18 +157,15 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
     let state = &app.review;
     frame.render_widget(Clear, area);
-    let title = match &state.pull_request {
-        Some(url) => format!(" Pull request · {} ", pull_request_label(url)),
-        None => format!(
-            " Changes · {}{} ",
-            SCOPES[state.scope],
-            if state.data.truncated {
-                " · partial"
-            } else {
-                ""
-            }
-        ),
-    };
+    let title = format!(
+        " Changes · {}{} ",
+        SCOPES[state.scope],
+        if state.data.truncated {
+            " · partial"
+        } else {
+            ""
+        }
+    );
     let block = Block::bordered()
         .title(title)
         .style(Style::default().bg(SURFACE).fg(TEXT))
@@ -237,23 +215,6 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .or(state.directory.as_deref())
         .or_else(|| app.active_session().map(|s| s.cwd.as_str()))
         .unwrap_or("No session");
-    if let Some(url) = &state.pull_request {
-        frame.render_widget(
-            Paragraph::new(PULL_REQUEST_PENDING).style(Style::default().fg(WARNING)),
-            Rect::new(heading.x, heading.y, heading.width, heading.height.min(1)),
-        );
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(url.as_str()),
-                Line::from(""),
-                Line::from("r loads local changes · F4 / Esc close"),
-            ])
-            .style(Style::default().fg(MUTED))
-            .wrap(ratatui::widgets::Wrap { trim: false }),
-            content,
-        );
-        return;
-    }
     frame.render_widget(
         Paragraph::new(Line::from({
             let mut spans = crate::ui::shortcut_spans("o folder");
@@ -546,33 +507,5 @@ mod tests {
         let rows = aligned(&[" context", "-a", "-b", "+c", " tail"]);
         assert_eq!(rows[2], ("-b".into(), "".into()));
         assert_eq!(rows[3], (" tail".into(), " tail".into()));
-    }
-
-    #[test]
-    fn session_kind_pull_request_stub_shows_pending_header_at_three_sizes() {
-        use ratatui::{Terminal, backend::TestBackend};
-        for (width, height) in [(80, 24), (100, 32), (150, 44)] {
-            let mut app = App::new(2);
-            app.onboarded = true;
-            app.dialog = None;
-            app.review
-                .show_pull_request("https://github.com/dkveil/nesvo/pull/12".into());
-            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            terminal
-                .draw(|frame| crate::ui::render(frame, &app, 0))
-                .unwrap();
-            let buffer = terminal.backend().buffer();
-            let text: String = (0..height)
-                .map(|y| {
-                    (0..width)
-                        .map(|x| buffer[(x, y)].symbol())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert!(text.contains("Pull request · dkveil/nesvo#12"), "{text}");
-            assert!(text.contains(PULL_REQUEST_PENDING), "{text}");
-            assert!(!text.contains("Changes ·"), "{text}");
-        }
     }
 }

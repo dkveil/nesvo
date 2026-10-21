@@ -40,6 +40,8 @@ The executable is `target/release/nesvo.exe` on Windows or `target/release/nesvo
 
 See [review, scheduling, worktree and palette workflows](../../docs/tui-workflows.md) for the new shortcuts, host requirements, limits and verified previews.
 
+Review sessions open as non-terminal tabs from `F4`, `N` → Review, or `nesvo review open`. They keep line comments per host review in `<config>/nesvo/review-<reviewId>.json` and send them to an agent with `s`.
+
 ## Keyboard
 
 The start menu initially observes the first session without taking control. Entering the workspace, explicitly opening an available session, or creating one acquires its free control lease automatically and makes it ready for typing. This also completes Windows terminal startup negotiation. If another client controls the session, the view remains read-only; `t` opens a takeover confirmation. No navigation action silently takes control from another device.

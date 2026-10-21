@@ -102,6 +102,8 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 app.mode = Mode::Navigate;
                 app.review.focused = false;
                 app.review.return_to_input = false;
+                app.reviews.focused = false;
+                app.reviews.return_to_input = false;
                 app.notice.clear();
             } else if key.code == KeyCode::F(1) {
                 app.dialog = Some(Dialog::Menu);
@@ -115,9 +117,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 app.palette_expanded = true;
                 app.begin_palette(String::new());
             } else if app.dialog.is_some() {
-                dialog_key(app, key, &mut outcome);
+                dialog_key(app, key, area, &mut outcome);
             } else if key.code == KeyCode::F(app.shortcuts.keys[0]) && key.modifiers.is_empty() {
-                toggle_review(app, &mut outcome);
+                toggle_review(app, area, &mut outcome);
             } else if key.code == KeyCode::F(app.shortcuts.keys[1]) && key.modifiers.is_empty() {
                 if let Some(id) = app
                     .recent_sessions
@@ -179,6 +181,8 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     // console write for a key that has not changed the local view.
                     outcome.redraw = was_scrolled;
                 }
+            } else if app.reviews.has_focus() {
+                review_tab_key(app, key, area, &mut outcome);
             } else if key.modifiers.is_empty() && matches!(key.code, KeyCode::Char('[' | ']')) {
                 if app.review.visible {
                     review_key(app, key, area, &mut outcome);
@@ -207,7 +211,11 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
             }
         }
         Event::Paste(text) => {
-            if let Some(Dialog::QuickSwitch { query, selected }) = &mut app.dialog {
+            if app.dialog.is_none()
+                && app.reviews.has_focus()
+                && crate::review_session::paste(app, &text)
+            {
+            } else if let Some(Dialog::QuickSwitch { query, selected }) = &mut app.dialog {
                 let previous = query.clone();
                 query.extend(
                     text.chars()
@@ -258,6 +266,13 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         Event::Mouse(mouse) => {
             let geometry = ui::geometry(area, app);
             let immersive = ui::immersive(app);
+            if app.dialog.is_none()
+                && app.reviews.shown.is_some()
+                && geometry.review.contains((mouse.column, mouse.row).into())
+            {
+                review_tab_mouse(app, mouse, geometry.review);
+                return outcome;
+            }
             if app.dialog.is_none() && geometry.review.contains((mouse.column, mouse.row).into()) {
                 if !matches!(
                     mouse.kind,
@@ -299,6 +314,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                 if let Some(action) = ui_controls::hit_test(app, area, mouse.column, mouse.row) {
                     if app.dialog.is_none() {
                         app.review.focused = false;
+                        crate::review_session::unfocus(app);
                     }
                     mouse_action(app, action, area, &mut outcome);
                 }
@@ -387,6 +403,11 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         && let Some(command) = app.request_diff()
     {
         outcome.commands.push(command);
+    }
+    if !matches!(app.dialog, Some(Dialog::QuickSwitch { .. }))
+        && app.reviews.picking.take().is_some()
+    {
+        app.notice.clear();
     }
     for command in &outcome.commands {
         if command["type"] == "acquireControl" {
@@ -521,13 +542,16 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
         Action::FocusTab(index) => {
             if let Some(id) = app.tabs.get(index).cloned() {
                 outcome.commands.extend(app.activate_session(&id));
+            } else if let Some(review) = index.checked_sub(app.tabs.len()) {
+                crate::review_session::show(app, review, true);
+                outcome.commands.extend(crate::review_session::pump(app));
             }
         }
         Action::MenuChoice(index) => menu_choice(app, index, outcome),
     }
 }
 
-fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
+fn dialog_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
     if matches!(app.dialog, Some(Dialog::Help))
         && matches!(key.code, KeyCode::Left | KeyCode::Right)
     {
@@ -599,7 +623,7 @@ fn dialog_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         let mut reset_selection = false;
         match key.code {
             KeyCode::Enter => {
-                open_quick_choice(app, outcome);
+                open_quick_choice(app, area, outcome);
                 return;
             }
             KeyCode::Up | KeyCode::Char('p')
@@ -1134,7 +1158,7 @@ fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
     }
 }
 
-fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
+fn open_quick_choice(app: &mut App, area: Rect, outcome: &mut Outcome) {
     app.reconcile_palette();
     let Some(Dialog::QuickSwitch { selected, .. }) = &app.dialog else {
         return;
@@ -1145,6 +1169,18 @@ fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
         return;
     };
     app.dialog = None;
+    if let (Some(review_id), crate::palette::Target::Session(id)) =
+        (app.reviews.picking.take(), &target)
+    {
+        app.notice.clear();
+        outcome
+            .commands
+            .extend(crate::review_session::deliver(app, &review_id, id));
+        if let Some(index) = app.reviews.by_id(&review_id) {
+            crate::review_session::show(app, index, true);
+        }
+        return;
+    }
     match target {
         crate::palette::Target::Session(id) => outcome.commands.extend(app.activate_session(&id)),
         crate::palette::Target::Group(id) => {
@@ -1167,7 +1203,7 @@ fn open_quick_choice(app: &mut App, outcome: &mut Outcome) {
                 .position(|row| row.kind == RowKind::Group(id.clone()))
                 .unwrap_or(0);
         }
-        crate::palette::Target::Command('D') => toggle_review(app, outcome),
+        crate::palette::Target::Command('D') => toggle_review(app, area, outcome),
         crate::palette::Target::Command(key) => navigation_key(
             app,
             KeyEvent::new(
@@ -1240,6 +1276,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             outcome.commands.push(json!({"type":"listSchedules"}));
         }
         KeyCode::Char('J') => crate::jobs_controller::open(app, outcome),
+        KeyCode::Tab if app.reviews.shown.is_some() => app.reviews.focused = true,
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,
         KeyCode::Char('z') => app.fullscreen = !app.fullscreen,
@@ -1528,11 +1565,10 @@ fn apply_session_kind(app: &mut App, choice: Choice, outcome: &mut Outcome) {
         Choice::Pending | Choice::Closed => {}
         Choice::Kind(kind) => open_session_form(app, kind),
         Choice::LocalChanges => open_local_review(app, outcome),
-        Choice::PullRequest(url) => {
-            app.review.show_pull_request(url);
-            app.mode = Mode::Navigate;
-            app.notice = crate::review::PULL_REQUEST_PENDING.into();
-        }
+        Choice::PullRequest(url) => outcome.commands.extend(crate::review_session::open(
+            app,
+            crate::review_session::Source::Pull(url),
+        )),
     }
 }
 
@@ -1563,6 +1599,13 @@ fn open_local_review(app: &mut App, outcome: &mut Outcome) {
         app.notice = "Select a session to review its local changes.".into();
         return;
     };
+    if crate::review_session::supported(app) {
+        outcome.commands.extend(crate::review_session::open(
+            app,
+            crate::review_session::Source::Local(id),
+        ));
+        return;
+    }
     if app.active_id() != Some(id.as_str()) {
         outcome.commands.extend(app.open_session(&id));
     }
@@ -1574,7 +1617,60 @@ fn open_local_review(app: &mut App, outcome: &mut Outcome) {
     app.mode = Mode::Navigate;
 }
 
-fn toggle_review(app: &mut App, outcome: &mut Outcome) {
+fn review_tab_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
+    let rect = ui::geometry(area, app).review;
+    app.reviews.area = rect;
+    let page = app
+        .reviews
+        .active()
+        .map_or(1, |tab| crate::ui_review::page(rect, tab));
+    let result = crate::review_session::key(app, key, page);
+    outcome.commands.extend(result.commands);
+    if result.clipboard.is_some() {
+        outcome.clipboard = result.clipboard;
+    }
+}
+
+fn review_tab_mouse(app: &mut App, mouse: crossterm::event::MouseEvent, rect: Rect) {
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            app.review.focused = false;
+            app.reviews.focused = true;
+            app.reviews.return_to_input = false;
+            app.mode = Mode::Navigate;
+            let hit = app
+                .reviews
+                .active()
+                .and_then(|tab| crate::ui_review::hit(tab, rect, mouse.column, mouse.row));
+            if let Some(hit) = hit {
+                crate::review_session::click(app, hit);
+            }
+        }
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            crate::review_session::scroll(app, mouse.kind == MouseEventKind::ScrollUp)
+        }
+        _ => {}
+    }
+}
+
+fn toggle_review(app: &mut App, area: Rect, outcome: &mut Outcome) {
+    if app.reviews.shown.is_some() {
+        crate::review_session::hide(app);
+        return;
+    }
+    if !app.review.visible
+        && crate::review_session::supported(app)
+        && ui::content_width(area, app) >= crate::review_session::DOCK_COLUMNS
+    {
+        match app.active_id().map(str::to_owned) {
+            Some(id) => outcome.commands.extend(crate::review_session::open(
+                app,
+                crate::review_session::Source::Local(id),
+            )),
+            None => app.notice = "Open a session to review its changes.".into(),
+        }
+        return;
+    }
     if app.review.visible {
         app.review.visible = false;
         app.review.focused = false;
@@ -3443,13 +3539,11 @@ mod tests {
             Event::Paste("https://github.com/dkveil/nesvo/pull/12/files".into()),
             Rect::new(0, 0, 100, 32),
         );
-        press(&mut app, KeyCode::Enter);
+        let pull = press(&mut app, KeyCode::Enter);
         assert!(app.session_kind.is_none());
-        assert_eq!(
-            app.review.pull_request.as_deref(),
-            Some("https://github.com/dkveil/nesvo/pull/12")
-        );
-        assert!(app.review.visible && app.review.focused);
+        assert!(pull.commands.is_empty());
+        assert!(app.reviews.tabs.is_empty());
+        assert!(app.notice.contains("Update nesvo-host"), "{}", app.notice);
     }
 
     #[test]
@@ -3559,5 +3653,345 @@ mod tests {
         assert_eq!(app.active_id(), Some("a1"));
         press(&mut app, KeyCode::Char('v'));
         assert_eq!(app.pane_tree(), crate::layouts::PaneTree::classic());
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    const WIDE: Rect = Rect::new(0, 0, 150, 44);
+    const PATCH: &str = "diff --git a/src/a.rs b/src/a.rs\n@@ -1,4 +1,4 @@\n fn main() {\n-    old();\n+    new();\n     keep();\n }";
+
+    fn review_app() -> App {
+        let mut app = App::new(7);
+        app.event(
+            json!({"type":"capabilities","workspace":"/work","gitDiff":true,"reviews":true,
+            "programs":[{"id":"shell","available":true},{"id":"claude","available":true}]}),
+        )
+        .unwrap();
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"s1","name":"Agent","cwd":"/work","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"s2","name":"Shell","cwd":"/work","program":"shell","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]}))
+        .unwrap();
+        app.dialog = None;
+        app.onboarded = true;
+        app
+    }
+
+    fn key(app: &mut App, code: KeyCode, area: Rect) -> Outcome {
+        event(
+            app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            area,
+        )
+    }
+
+    fn typed(app: &mut App, text: &str) {
+        for c in text.chars() {
+            key(app, KeyCode::Char(c), WIDE);
+        }
+    }
+
+    fn command<'a>(outcome: &'a Outcome, kind: &str) -> &'a Value {
+        outcome
+            .commands
+            .iter()
+            .find(|command| command["type"] == kind)
+            .unwrap_or_else(|| panic!("no {kind} in {:?}", outcome.commands))
+    }
+
+    fn bind(app: &mut App, request: &Value, id: &str) -> Vec<Value> {
+        app.event(json!({"type":"reviewOpened","requestId":request["requestId"],"reviewId":id,
+            "directory":"/work","source":{"kind":"local","sessionId":"s1","context":"Automatic"},
+            "base":{"ref":"main","oid":"1111111111111111","mergeBase":"2222222"},
+            "head":{"ref":"feature","oid":"3333333333333333"},"scope":"branch","revision":"r1","checks":null}))
+        .unwrap()
+    }
+
+    fn diff(app: &mut App, request: &Value, revision: &str, patch: &str) -> Vec<Value> {
+        app.event(json!({"type":"diff","sessionId":null,"reviewId":request["reviewId"],"requestId":request["requestId"],
+            "review":{"directory":"/work","scope":"branch","revision":revision,"head":"3333333","files":[
+                {"path":"src/a.rs","status":"M","patch":patch,"additions":1,"deletions":1,"truncated":false}
+            ],"truncated":false}}))
+        .unwrap()
+    }
+
+    fn opened_review(app: &mut App) {
+        let open = key(app, KeyCode::F(4), WIDE);
+        let request = command(&open, "openReview").clone();
+        let commands = bind(app, &request, "local-abc");
+        let get = commands[0].clone();
+        let context = diff(app, &get, "r1", PATCH);
+        app.event(json!({"type":"reviewContext","requestId":context[0]["requestId"],"reviewId":"local-abc",
+            "directory":"/work","readiness":{"blockers":["dirty"],"ready":false,"branch":"feature"},
+            "provenance":{"evidence":"hooks","files":[{"path":"src/a.rs","attribution":"agent","thisTurn":true}],"truncated":false},
+            "checks":null}))
+        .unwrap();
+    }
+
+    #[test]
+    fn review_tab_opens_from_f4_menu_and_broadcast_while_narrow_f4_keeps_the_dock() {
+        let mut app = review_app();
+        app.activate_session("s1");
+        app.mode = Mode::Navigate;
+        let narrow = key(&mut app, KeyCode::F(4), Rect::new(0, 0, 100, 32));
+        let dock = command(&narrow, "getDiff").clone();
+        assert_eq!(dock["sessionId"], "s1");
+        assert!(app.review.visible && app.reviews.tabs.is_empty());
+        key(&mut app, KeyCode::F(4), Rect::new(0, 0, 100, 32));
+        assert!(!app.review.visible);
+
+        let open = key(&mut app, KeyCode::F(4), WIDE);
+        assert!(
+            open.commands.is_empty(),
+            "queued behind the dock's Git request"
+        );
+        let sent = app
+            .event(
+                json!({"type":"diff","sessionId":"s1","requestId":dock["requestId"],
+                "review":{"directory":"/work","files":[],"truncated":false}}),
+            )
+            .unwrap();
+        let request = sent[0].clone();
+        assert_eq!(request["type"], "openReview");
+        assert_eq!(request["source"], json!({"kind":"local","sessionId":"s1"}));
+        assert_eq!(app.reviews.shown, Some(0));
+        assert!(app.reviews.has_focus() && app.reviews.tabs[0].is_opening());
+        app.event(
+            json!({"type":"reviewProgress","requestId":request["requestId"],"stage":"metadata"}),
+        )
+        .unwrap();
+        assert_eq!(app.reviews.tabs[0].stage.as_deref(), Some("metadata"));
+        let commands = bind(&mut app, &request, "local-abc");
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0]["type"], "getDiff");
+        assert_eq!(commands[0]["reviewId"], "local-abc");
+        assert_eq!(commands[0]["scope"], "branch");
+        assert!(commands[0].get("sessionId").is_none() && commands[0].get("base").is_none());
+        let context = diff(&mut app, &commands[0], "r1", PATCH);
+        assert_eq!(context[0]["type"], "reviewContext");
+
+        key(&mut app, KeyCode::F(4), WIDE);
+        assert!(app.reviews.shown.is_none() && app.reviews.tabs.len() == 1);
+        key(&mut app, KeyCode::F(4), WIDE);
+        assert_eq!(app.reviews.shown, Some(0));
+        assert_eq!(app.reviews.tabs.len(), 1);
+
+        let refreshed = app
+            .event(json!({"type":"reviewContext","requestId":context[0]["requestId"],"reviewId":"local-abc",
+                "directory":"/work","readiness":{"blockers":[],"ready":true},"provenance":null,"checks":null}))
+            .unwrap();
+        assert_eq!(refreshed[0]["type"], "getDiff");
+        assert!(diff(&mut app, &refreshed[0], "r1", PATCH).is_empty());
+        key(&mut app, KeyCode::Esc, WIDE);
+        assert!(!app.reviews.focused && app.reviews.shown == Some(0));
+        key(&mut app, KeyCode::Char('N'), WIDE);
+        key(&mut app, KeyCode::Char('3'), WIDE);
+        key(&mut app, KeyCode::Down, WIDE);
+        event(
+            &mut app,
+            Event::Paste("https://github.com/dkveil/nesvo/pull/12".into()),
+            WIDE,
+        );
+        let pull = key(&mut app, KeyCode::Enter, WIDE);
+        assert_eq!(
+            command(&pull, "openReview")["source"],
+            json!({"kind":"pull","url":"https://github.com/dkveil/nesvo/pull/12"})
+        );
+        assert_eq!(app.reviews.tabs[1].label, "dkveil/nesvo#12");
+        assert_eq!(app.reviews.shown, Some(1));
+
+        app.event(json!({"type":"reviewOpened","reviewId":"pull-o-r-5","directory":"/cfg/o-r-5",
+            "source":{"kind":"pull","url":"https://github.com/o/r/pull/5","owner":"o","repo":"r","number":5,
+                "title":"Fix","state":"OPEN","headRef":"f","baseRef":"main","headOid":"abc"},
+            "base":null,"head":{"ref":"f","oid":"abc"},"scope":"unstaged","revision":"x",
+            "checks":{"headOid":"abc","total":2,"passed":1,"failed":1,"pending":0}}))
+            .unwrap();
+        assert_eq!(app.reviews.tabs.len(), 3);
+        assert_eq!(app.reviews.shown, Some(1));
+        assert!(app.notice.contains("o/r#5"), "{}", app.notice);
+        assert!(ui::tab_title(&app, app.tabs.len() + 2).starts_with("◆ o/r#5"));
+    }
+
+    #[test]
+    fn review_tab_keys_comment_edit_delete_send_and_close() {
+        let mut app = review_app();
+        app.activate_session("s1");
+        app.mode = Mode::Navigate;
+        opened_review(&mut app);
+        let tab = &app.reviews.tabs[0];
+        assert_eq!(tab.view.cursor, 2);
+        key(&mut app, KeyCode::Tab, WIDE);
+        key(&mut app, KeyCode::Char('v'), WIDE);
+        key(&mut app, KeyCode::Char('j'), WIDE);
+        key(&mut app, KeyCode::Char('c'), WIDE);
+        typed(&mut app, "Rename");
+        event(&mut app, Event::Paste(" this\r\npair".into()), WIDE);
+        key(&mut app, KeyCode::Enter, WIDE);
+        let tab = &app.reviews.tabs[0];
+        assert_eq!(tab.comments.comments.len(), 1);
+        let comment = &tab.comments.comments[0];
+        assert_eq!(
+            (
+                comment.anchor.start,
+                comment.anchor.end,
+                comment.anchor.side
+            ),
+            (2, 2, crate::review_comments::Side::New)
+        );
+        assert_eq!(comment.anchor.snippet, "    new();");
+        assert_eq!(comment.text, "Rename this\npair");
+        assert!(tab.view.anchor.is_none());
+
+        key(&mut app, KeyCode::Char('k'), WIDE);
+        key(&mut app, KeyCode::Char('k'), WIDE);
+        key(&mut app, KeyCode::Char('n'), WIDE);
+        assert_eq!(app.reviews.tabs[0].view.cursor, 3);
+        key(&mut app, KeyCode::Char('e'), WIDE);
+        for _ in 0..4 {
+            key(&mut app, KeyCode::Backspace, WIDE);
+        }
+        typed(&mut app, "lines");
+        key(&mut app, KeyCode::Enter, WIDE);
+        assert_eq!(
+            app.reviews.tabs[0].comments.comments[0].text,
+            "Rename this\nlines"
+        );
+        key(&mut app, KeyCode::Char('C'), WIDE);
+        typed(&mut app, "Nearly done");
+        key(&mut app, KeyCode::Enter, WIDE);
+        assert_eq!(app.reviews.tabs[0].comments.summary, "Nearly done");
+
+        let copy = key(&mut app, KeyCode::Char('y'), WIDE);
+        assert!(copy.clipboard.unwrap().starts_with("Nearly done\n"));
+
+        key(&mut app, KeyCode::Char('s'), WIDE);
+        assert!(matches!(&app.dialog, Some(Dialog::QuickSwitch { query, .. }) if query == "@ "));
+        assert_eq!(app.reviews.picking.as_deref(), Some("local-abc"));
+        let rows = app.palette_results("@ ");
+        assert!(
+            rows.iter()
+                .all(|row| row.target != crate::palette::Target::Session("s2".into()))
+        );
+        let index = rows
+            .iter()
+            .position(|row| row.target == crate::palette::Target::Session("s1".into()))
+            .unwrap();
+        app.select_palette(index);
+        let send = key(&mut app, KeyCode::Enter, WIDE);
+        let deliver = command(&send, "deliverReview");
+        assert_eq!(deliver["reviewId"], "local-abc");
+        assert_eq!(deliver["sessionId"], "s1");
+        assert!(deliver.get("leaseId").is_none());
+        let text = deliver["text"].as_str().unwrap();
+        assert!(text.starts_with("Nearly done\n"), "{text}");
+        assert!(
+            text.contains("1. src/a.rs:2\n>     new();\nRename this\nlines"),
+            "{text}"
+        );
+        assert!(app.dialog.is_none() && app.reviews.picking.is_none());
+        assert!(app.reviews.has_focus());
+        app.event(
+            json!({"type":"reviewDelivered","requestId":deliver["requestId"],"reviewId":"local-abc",
+            "sessionId":"s1","path":"operation","key":"review-1","bytes":text.len(),
+            "receipt":{"id":"0123456789abcdef","phase":"accepted"}}),
+        )
+        .unwrap();
+        let status = app.reviews.tabs[0].status.clone().unwrap();
+        assert!(status.text.starts_with("Sent to Agent"), "{}", status.text);
+        assert!(status.text.contains("receipt 01234567"));
+
+        key(&mut app, KeyCode::Char('d'), WIDE);
+        assert!(app.reviews.tabs[0].comments.comments.is_empty());
+        key(&mut app, KeyCode::Char('q'), WIDE);
+        assert!(app.reviews.tabs.is_empty() && app.reviews.shown.is_none());
+        assert!(!app.reviews.focused);
+    }
+
+    #[test]
+    fn review_send_with_lease_pastes_and_shows_refusals() {
+        let mut app = review_app();
+        app.activate_session("s1");
+        app.mode = Mode::Navigate;
+        opened_review(&mut app);
+        app.event(json!({"type":"control","sessionId":"s1","controllerId":7,"cols":80,"rows":24,"leaseId":"lease-1"}))
+            .unwrap();
+        key(&mut app, KeyCode::Char('s'), WIDE);
+        assert!(app.dialog.is_none());
+        assert!(
+            app.reviews.tabs[0]
+                .status
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("Nothing to send")
+        );
+        key(&mut app, KeyCode::Tab, WIDE);
+        key(&mut app, KeyCode::Char('c'), WIDE);
+        typed(&mut app, "x");
+        key(&mut app, KeyCode::Enter, WIDE);
+        key(&mut app, KeyCode::Char('s'), WIDE);
+        let index = app
+            .palette_results("@ ")
+            .iter()
+            .position(|row| row.target == crate::palette::Target::Session("s1".into()))
+            .unwrap();
+        app.select_palette(index);
+        let send = key(&mut app, KeyCode::Enter, WIDE);
+        let deliver = command(&send, "deliverReview").clone();
+        assert_eq!(deliver["leaseId"], "lease-1");
+        app.event(json!({"type":"error","requestId":deliver["requestId"],"code":"control_busy","message":"busy"}))
+            .unwrap();
+        let status = app.reviews.tabs[0].status.clone().unwrap();
+        assert!(status.text.contains("control_busy"), "{}", status.text);
+        key(&mut app, KeyCode::Char('s'), WIDE);
+        key(&mut app, KeyCode::Esc, WIDE);
+        assert!(app.dialog.is_none() && app.reviews.picking.is_none());
+    }
+
+    #[test]
+    fn review_tab_scope_base_and_mouse_route_to_the_review() {
+        let mut app = review_app();
+        app.activate_session("s1");
+        app.mode = Mode::Navigate;
+        opened_review(&mut app);
+        let uncommitted = key(&mut app, KeyCode::Char('u'), WIDE);
+        let get = command(&uncommitted, "getDiff").clone();
+        assert_eq!(
+            (get["scope"].as_str(), get["base"].as_str()),
+            (Some("branch"), Some("HEAD"))
+        );
+        let context = diff(&mut app, &get, "r2", PATCH);
+        assert_eq!(context[0]["type"], "reviewContext");
+        key(&mut app, KeyCode::Char('B'), WIDE);
+        typed(&mut app, "release");
+        let base = key(&mut app, KeyCode::Enter, WIDE);
+        assert!(base.commands.is_empty(), "{:?}", base.commands);
+        let ready = app
+            .event(json!({"type":"reviewContext","requestId":context[0]["requestId"],"reviewId":"local-abc",
+                "directory":"/work","readiness":{"blockers":[],"ready":true},"provenance":null,"checks":null}))
+            .unwrap();
+        assert_eq!(ready[0]["type"], "getDiff");
+        assert_eq!(ready[0]["base"], "release");
+        diff(&mut app, &ready[0], "r3", PATCH);
+        let rect = ui::geometry(WIDE, &app).review;
+        let tab = app.reviews.active().unwrap();
+        let areas = crate::ui_review::areas(rect, tab);
+        event(
+            &mut app,
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: areas.diff.x + 3,
+                row: areas.diff.y + 1,
+                modifiers: KeyModifiers::NONE,
+            }),
+            WIDE,
+        );
+        let tab = app.reviews.active().unwrap();
+        assert_eq!(tab.view.pane, crate::review_session::Pane::Diff);
+        assert_eq!(tab.view.cursor, 1);
+        assert!(app.reviews.has_focus());
     }
 }

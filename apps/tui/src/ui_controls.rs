@@ -399,8 +399,8 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
             enabled: app.connected,
         });
     }
-    for index in 0..if app.split { 2 } else { 1 } {
-        if app.panes[index].is_some() {
+    for index in 0..app.leaf_count() {
+        if app.panes[index].is_some() || geometry.panes[index].is_empty() {
             continue;
         }
         let content = ui::pane_content(geometry.panes[index], ui::immersive(app));
@@ -459,7 +459,7 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
             .iter()
             .find_map(|(index, tab)| tab.contains(point).then_some(Action::FocusTab(*index)));
     }
-    (0..if app.split { 2 } else { 1 })
+    (0..app.leaf_count())
         .find(|index| geometry.panes[*index].contains(point))
         .map(Action::FocusPane)
 }

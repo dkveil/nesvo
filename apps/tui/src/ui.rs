@@ -34,22 +34,46 @@ pub fn immersive(app: &App) -> bool {
         && app.dialog.is_none()
 }
 
+pub fn tab_title(app: &App, index: usize) -> String {
+    match app.tabs.get(index) {
+        Some(id) => app
+            .session(id)
+            .map_or_else(|| "session".to_owned(), |session| tab_label(app, session)),
+        None => app
+            .reviews
+            .tabs
+            .get(index - app.tabs.len())
+            .map_or_else(String::new, |tab| crate::ui_review::tab_label(app, tab)),
+    }
+}
+
+pub fn active_tab(app: &App) -> Option<usize> {
+    match app.reviews.shown {
+        Some(shown) => Some(app.tabs.len() + shown),
+        None => app
+            .active_id()
+            .and_then(|id| app.tabs.iter().position(|tab| tab == id)),
+    }
+}
+
 pub fn tab_areas(app: &App, layout: &Geometry) -> (Vec<(usize, Rect)>, Rect) {
     let mut tabs = Vec::new();
     let mut x = layout.tree.right();
     let available = layout.header.right().saturating_sub(x).saturating_sub(3);
-    let widths: Vec<u16> = app
-        .tabs
-        .iter()
-        .map(|id| {
-            app.session(id).map_or(3, |session| {
-                (Line::from(tab_label(app, session).as_str()).width() as u16 + 2).min(20)
-            })
+    let widths: Vec<u16> = (0..app.tabs.len() + app.reviews.tabs.len())
+        .map(|index| {
+            if app
+                .tabs
+                .get(index)
+                .is_some_and(|id| app.session(id).is_none())
+            {
+                3
+            } else {
+                (Line::from(tab_title(app, index).as_str()).width() as u16 + 2).min(20)
+            }
         })
         .collect();
-    let active = app
-        .active_id()
-        .and_then(|id| app.tabs.iter().position(|tab| tab == id));
+    let active = active_tab(app);
     let mut start = 0;
     let mut used = 0u16;
     if let Some(active) = active {
@@ -114,12 +138,16 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         .min(tree.height);
     let tree = Rect::new(tree.x, tree.y + inset, tree.width, tree.height - inset);
     let pane_tree = app.pane_tree();
-    let review_leaf =
-        (!immersive && app.review.visible && !app.review.expanded && content.width >= 88)
-            .then(|| pane_tree.position(Role::Review))
-            .flatten();
+    let reviewing = !immersive && app.reviews.shown.is_some();
+    let review_leaf = (!immersive
+        && (reviewing || (app.review.visible && !app.review.expanded))
+        && content.width >= crate::review_session::DOCK_COLUMNS)
+        .then(|| pane_tree.position(Role::Review))
+        .flatten();
     let (content, review) = if review_leaf.is_some() {
         (content, Rect::default())
+    } else if reviewing {
+        (Rect::default(), content)
     } else if app.review.visible {
         if app.review.expanded || content.width < 88 {
             (Rect::default(), content)
@@ -163,6 +191,19 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         views,
         footer,
         review,
+    }
+}
+
+pub fn content_width(area: Rect, app: &App) -> u16 {
+    let layout = geometry(area, app);
+    area.width.saturating_sub(layout.tree.width)
+}
+
+pub fn render_review(frame: &mut Frame, app: &App, area: Rect) {
+    if app.reviews.shown.is_some() {
+        crate::ui_review::render(frame, app, area);
+    } else {
+        crate::review::render(frame, app, area);
     }
 }
 
@@ -250,6 +291,9 @@ pub fn sidebar_hit(app: &App, area: Rect, column: u16, row: u16) -> Option<usize
 }
 
 fn footer_copy(app: &App) -> (&'static str, &'static str) {
+    if app.reviews.has_focus() && app.mode == Mode::Navigate {
+        return (" REVIEW ", " Esc navigate · q close · F4 hide");
+    }
     if app.review.visible && app.review.focused && app.mode == Mode::Navigate {
         return (" DIFF REVIEW ", " F4 / Esc close · r refresh");
     }
@@ -302,6 +346,16 @@ pub(crate) fn shortcut_spans(hint: &str) -> Vec<Span<'static>> {
                 | "x"
                 | "/"
                 | "?"
+                | "j/k"
+                | "]/["
+                | "f/F"
+                | "v"
+                | "l"
+                | "d"
+                | "q"
+                | "|"
+                | "u/b/t"
+                | "Ctrl+J"
         ) || key
             .strip_prefix('F')
             .is_some_and(|n| n.parse::<u8>().is_ok());
@@ -456,7 +510,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
         })
     ) {
         render_menu(frame, app, logo_frame);
-        crate::review::render(frame, app, geometry(area, app).review);
+        render_review(frame, app, geometry(area, app).review);
         if let Some(dialog) = &app.dialog {
             render_dialog(frame, app, dialog);
         }
@@ -489,16 +543,15 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
             if tab.width == 0 {
                 continue;
             }
-            let name = app
-                .session(&app.tabs[index])
-                .map_or_else(|| "session".to_owned(), |session| tab_label(app, session));
+            let name = tab_title(app, index);
             let label = format!(
                 " {} ",
                 truncate_cells(&name, usize::from(tab.width.saturating_sub(2)))
             );
-            let active = app.active_id() == Some(app.tabs[index].as_str());
+            let active = active_tab(app) == Some(index);
+            let input = app.mode == Mode::Input && index < app.tabs.len();
             frame.render_widget(
-                Paragraph::new(label).style(if active && app.mode == Mode::Input {
+                Paragraph::new(label).style(if active && input {
                     Style::default()
                         .fg(BACKGROUND)
                         .bg(app.theme.accent())
@@ -630,7 +683,7 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
             handle,
         );
     }
-    crate::review::render(frame, app, geometry(area, app).review);
+    render_review(frame, app, geometry(area, app).review);
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, app, dialog);
     }
@@ -1441,7 +1494,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("i  t  x", "Type / take control / release"),
         ],
         &[
-            ("F4", "Toggle diff (preserves sidebar)"),
+            ("F4", "Review tab; diff dock under 88 columns"),
             ("↑ ↓ / ← →", "Diff: select file / hunk"),
             ("Space", "Diff: fold selected hunk"),
             ("e  s", "Diff: expand / side-by-side"),

@@ -432,6 +432,7 @@ pub struct App {
     pub jobs: Option<crate::jobs::Jobs>,
     pub host_features: Value,
     pub review: crate::review::ReviewState,
+    pub reviews: crate::review_session::ReviewSessions,
     pub client_id: u64,
     pub sessions: Vec<Session>,
     pub groups: Vec<Group>,
@@ -485,6 +486,7 @@ impl App {
             menu_phase: 0,
             toast: None,
             review: Default::default(),
+            reviews: Default::default(),
             overlay: None,
             palette_expanded: false,
             palette_category: 0,
@@ -1081,6 +1083,16 @@ impl App {
     }
 
     pub fn activate_session(&mut self, id: &str) -> Vec<Value> {
+        if self.reviews.shown.is_some()
+            && self
+                .pane_tree()
+                .position(crate::layouts::Role::Review)
+                .is_none()
+        {
+            self.reviews.shown = None;
+            self.reviews.focused = false;
+            self.reviews.return_to_input = false;
+        }
         if self.session(id).is_some() {
             self.recent_sessions.retain(|recent| recent != id);
             self.recent_sessions.insert(0, id.to_owned());
@@ -1141,7 +1153,12 @@ impl App {
 
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
-        match event["type"].as_str().unwrap_or_default() {
+        let kind = if crate::review_session::host_event(self, &event).is_some() {
+            ""
+        } else {
+            event["type"].as_str().unwrap_or_default()
+        };
+        match kind {
             "diff" => {
                 if event["requestId"].as_str() == self.review.request_id.as_deref()
                     && event["sessionId"].as_str() == Some(self.review.session_id.as_str())
@@ -1340,6 +1357,7 @@ impl App {
                                 && self.session_kind.is_none()
                                 && self.layout_picker.is_none()
                                 && !self.review.focused
+                                && !self.reviews.focused
                             {
                                 self.mode = Mode::Input;
                                 self.notice.clear();
@@ -1399,6 +1417,7 @@ impl App {
             }
             _ => {}
         }
+        commands.extend(crate::review_session::pump(self));
         self.reconcile_palette();
         Ok(commands)
     }
@@ -1413,6 +1432,8 @@ impl App {
         self.layout_picker = None;
         self.dialog_button = None;
         self.pending_directory = None;
+        self.reviews.picking = None;
+        self.reviews.focused = false;
         self.notice = if self.capabilities.is_none() {
             "Host disconnected during setup; update nesvo-host and reconnect.".into()
         } else {
@@ -1458,7 +1479,7 @@ impl App {
             && self.dialog.is_none()
             && self.overlay.is_none()
             && self.review.request_id.is_none()
-            && self.review.pull_request.is_none()
+            && !self.reviews.git_busy()
             && self.capabilities.as_ref().is_some_and(|caps| caps.git_diff)
             && self
                 .review
@@ -1467,13 +1488,12 @@ impl App {
         {
             self.request_diff()
         } else {
-            None
+            crate::review_session::tick(self).into_iter().next()
         }
     }
 
     pub fn request_diff(&mut self) -> Option<Value> {
         let id = self.active_id()?.to_owned();
-        self.review.pull_request = None;
         self.review.last_requested = Some(std::time::Instant::now());
         self.review.visible = true;
         self.review.error = None;
@@ -2441,25 +2461,280 @@ mod tests {
         assert!(app.notice.contains("explicit model"));
         assert!(matches!(app.dialog, Some(Dialog::NewSession(_))));
     }
+}
 
-    #[test]
-    fn session_kind_pull_request_stub_blocks_auto_refresh_until_local_review() {
-        let mut app = profile_app();
-        app.event(json!({"type":"capabilities","workspace":".","programs":[],"gitDiff":true}))
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use crate::review_session::{self, Scope, Source};
+
+    const PATCH: &str = "@@ -1,3 +1,3 @@\n a\n-b\n+c\n d";
+
+    fn app(reviews: bool) -> App {
+        let mut app = App::new(3);
+        app.event(json!({"type":"capabilities","workspace":"/w","gitDiff":true,"reviews":reviews,"programs":[]}))
             .unwrap();
         app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
-            {"id":"s","name":"Agent","cwd":"/work","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+            {"id":"s","name":"Agent","cwd":"/w","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
         ]}))
         .unwrap();
-        app.open_session("s");
-        app.review
-            .show_pull_request("https://github.com/o/r/pull/5".into());
-        app.review.last_requested =
-            Some(std::time::Instant::now() - std::time::Duration::from_secs(5));
-        assert!(app.review.visible && app.review.focused);
-        assert!(app.auto_refresh_diff().is_none());
-        let command = app.request_diff().unwrap();
-        assert_eq!(command["type"], "getDiff");
-        assert!(app.review.pull_request.is_none());
+        app.dialog = None;
+        app.mode = Mode::Navigate;
+        app
+    }
+
+    fn opened(request: Option<&Value>, id: &str, scope: &str) -> Value {
+        let mut event = json!({"type":"reviewOpened","reviewId":id,"directory":"/w",
+            "source":{"kind":"local","sessionId":"s","context":"Automatic"},
+            "base":{"ref":"main","oid":"aaaaaaaaaaaa","mergeBase":"bbbbbbb"},
+            "head":{"ref":"topic","oid":"cccccccccccc"},"scope":scope,"revision":"r0","checks":null});
+        if let Some(request) = request {
+            event["requestId"] = request["requestId"].clone();
+        }
+        event
+    }
+
+    fn diff(request: &Value, revision: &str, patch: &str) -> Value {
+        json!({"type":"diff","sessionId":null,"reviewId":request["reviewId"],"requestId":request["requestId"],
+            "review":{"directory":"/w","scope":"branch","revision":revision,"head":null,"files":[
+                {"path":"a.rs","status":"M","patch":patch,"additions":1,"deletions":1,"truncated":false}
+            ],"truncated":false}})
+    }
+
+    fn context(request: &Value) -> Value {
+        json!({"type":"reviewContext","requestId":request["requestId"],"reviewId":request["reviewId"],
+            "directory":"/w","readiness":{"blockers":["unpushed"],"ready":false},"provenance":null,"checks":null})
+    }
+
+    fn bound(app: &mut App, scope: &str) -> Value {
+        let open = review_session::open(app, Source::Local("s".into()));
+        let commands = app.event(opened(Some(&open[0]), "local-1", scope)).unwrap();
+        commands[0].clone()
+    }
+
+    #[test]
+    fn review_model_open_review_commands_follow_the_source_and_capability() {
+        let mut legacy = app(false);
+        assert!(review_session::open(&mut legacy, Source::Local("s".into())).is_empty());
+        assert!(legacy.notice.contains("Update nesvo-host"));
+        let mut app = app(true);
+        let local = review_session::open(&mut app, Source::Local("s".into()));
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0]["type"], "openReview");
+        assert_eq!(local[0]["source"], json!({"kind":"local","sessionId":"s"}));
+        assert!(local[0]["requestId"].is_string());
+        assert_eq!(app.reviews.tabs[0].label, "Agent");
+        let url = "https://github.com/a/b/pull/9";
+        assert!(review_session::open(&mut app, Source::Pull(url.into())).is_empty());
+        assert_eq!(app.reviews.tabs.len(), 2);
+        let pull = app
+            .event(json!({"type":"error","requestId":local[0]["requestId"],"code":"git_unavailable","message":"not a repository"}))
+            .unwrap();
+        assert_eq!(
+            app.reviews.tabs[0].error.as_deref(),
+            Some("not a repository")
+        );
+        assert_eq!(pull[0]["type"], "openReview");
+        assert_eq!(pull[0]["source"], json!({"kind":"pull","url":url}));
+        app.event(
+            json!({"type":"reviewProgress","requestId":pull[0]["requestId"],"stage":"fetch"}),
+        )
+        .unwrap();
+        assert_eq!(app.reviews.tabs[1].stage.as_deref(), Some("fetch"));
+    }
+
+    #[test]
+    fn review_model_get_diff_uses_review_id_scope_and_base() {
+        let mut app = app(true);
+        let first = bound(&mut app, "unstaged");
+        assert_eq!(app.reviews.tabs[0].scope, Scope::Uncommitted);
+        assert_eq!(first["type"], "getDiff");
+        assert_eq!(first["reviewId"], "local-1");
+        assert_eq!(first["scope"], "branch");
+        assert_eq!(first["base"], "HEAD");
+        assert!(first.get("sessionId").is_none());
+        let next = app.event(diff(&first, "r1", PATCH)).unwrap();
+        assert_eq!(next[0]["type"], "reviewContext");
+        assert_eq!(next[0]["reviewId"], "local-1");
+        assert!(app.event(context(&next[0])).unwrap().is_empty());
+        let tab = &mut app.reviews.tabs[0];
+        tab.scope = Scope::Branch;
+        tab.base = Some("release".into());
+        let key = review_session::key(
+            &mut app,
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('r'),
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            10,
+        );
+        assert_eq!(key.commands[0]["type"], "getDiff");
+        assert_eq!(key.commands[0]["base"], "release");
+    }
+
+    #[test]
+    fn review_model_requests_context_once_per_revision_and_marks_drift() {
+        let mut app = app(true);
+        let first = bound(&mut app, "branch");
+        let next = app.event(diff(&first, "r1", PATCH)).unwrap();
+        assert_eq!(next.len(), 1);
+        assert!(app.event(context(&next[0])).unwrap().is_empty());
+        let tab = &mut app.reviews.tabs[0];
+        tab.comments
+            .add(
+                crate::review_comments::Anchor {
+                    path: "a.rs".into(),
+                    side: crate::review_comments::Side::New,
+                    start: 2,
+                    end: 2,
+                    snippet: "c".into(),
+                    revision: "r1".into(),
+                },
+                "Why c?",
+            )
+            .unwrap();
+        tab.comments
+            .add(
+                crate::review_comments::Anchor {
+                    path: "a.rs".into(),
+                    side: crate::review_comments::Side::New,
+                    start: 3,
+                    end: 3,
+                    snippet: "d".into(),
+                    revision: "r1".into(),
+                },
+                "Keep d",
+            )
+            .unwrap();
+        let refresh = |app: &mut App| {
+            app.reviews.tabs[0].refresh();
+            review_session::pump(app)
+        };
+        let again = refresh(&mut app);
+        assert!(app.event(diff(&again[0], "r1", PATCH)).unwrap().is_empty());
+        let moved = refresh(&mut app);
+        let follow = app
+            .event(diff(&moved[0], "r2", "@@ -1,4 +1,4 @@\n a\n x\n-b\n+e\n d"))
+            .unwrap();
+        assert_eq!(follow[0]["type"], "reviewContext");
+        let comments = &app.reviews.tabs[0].comments;
+        let why = comments
+            .comments
+            .iter()
+            .find(|c| c.text == "Why c?")
+            .unwrap();
+        let keep = comments
+            .comments
+            .iter()
+            .find(|c| c.text == "Keep d")
+            .unwrap();
+        assert!(why.drifted && why.anchor.revision == "r1");
+        assert!(!keep.drifted && keep.anchor.start == 4 && keep.anchor.revision == "r2");
+        assert_eq!(app.reviews.tabs[0].revision.as_deref(), Some("r2"));
+    }
+
+    #[test]
+    fn review_model_deliver_review_caps_text_without_lease_and_uses_own_lease() {
+        let mut app = app(true);
+        let first = bound(&mut app, "branch");
+        let next = app.event(diff(&first, "r1", PATCH)).unwrap();
+        app.event(context(&next[0])).unwrap();
+        let tab = &mut app.reviews.tabs[0];
+        for line in 0..20 {
+            tab.comments
+                .add(
+                    crate::review_comments::Anchor {
+                        path: "a.rs".into(),
+                        side: crate::review_comments::Side::New,
+                        start: line,
+                        end: line,
+                        snippet: "c".into(),
+                        revision: "r1".into(),
+                    },
+                    &"n".repeat(900),
+                )
+                .unwrap();
+        }
+        let command = review_session::deliver(&mut app, "local-1", "s").unwrap();
+        assert_eq!(command["type"], "deliverReview");
+        assert_eq!(command["reviewId"], "local-1");
+        assert_eq!(command["sessionId"], "s");
+        assert!(command.get("leaseId").is_none());
+        let text = command["text"].as_str().unwrap();
+        assert!(text.len() <= crate::review_comments::OPERATION_BYTES);
+        assert!(text.contains("comments omitted"));
+        let status = app.reviews.tabs[0].status.clone().unwrap();
+        assert!(
+            status.text.contains("Truncated to 8192 bytes"),
+            "{}",
+            status.text
+        );
+        app.event(json!({"type":"error","requestId":command["requestId"],"code":"too_large","message":"x"}))
+            .unwrap();
+        assert!(
+            app.reviews.tabs[0]
+                .status
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("too_large")
+        );
+        app.event(json!({"type":"control","sessionId":"s","controllerId":3,"cols":80,"rows":24,"leaseId":"own"}))
+            .unwrap();
+        let pasted = review_session::deliver(&mut app, "local-1", "s").unwrap();
+        assert_eq!(pasted["leaseId"], "own");
+        let text = pasted["text"].as_str().unwrap();
+        assert!(text.len() > crate::review_comments::OPERATION_BYTES);
+        assert!(text.len() <= crate::review_comments::PASTE_BYTES);
+        app.event(json!({"type":"reviewDelivered","requestId":pasted["requestId"],"reviewId":"local-1","sessionId":"s",
+            "path":"paste","key":null,"bytes":text.len(),"receipt":{"id":"feedfacecafe","operation":"paste","phase":"pasted"}}))
+            .unwrap();
+        let status = app.reviews.tabs[0].status.clone().unwrap();
+        assert!(
+            status.text.starts_with("Pasted into Agent"),
+            "{}",
+            status.text
+        );
+        assert!(review_session::deliver(&mut app, "missing", "s").is_none());
+    }
+
+    #[test]
+    fn review_model_broadcast_review_opened_opens_one_tab_and_loads_saved_notes() {
+        let directory = std::env::temp_dir().join(format!(
+            "nesvo-review-broadcast-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        let mut saved = crate::review_comments::Comments::default();
+        saved.set_summary("Saved summary").unwrap();
+        saved
+            .save(&crate::review_comments::store_path(&directory, "local-9").unwrap())
+            .unwrap();
+        let mut app = app(true);
+        app.reviews.store = Some(directory.clone());
+        let commands = app.event(opened(None, "local-9", "branch")).unwrap();
+        assert_eq!(commands[0]["type"], "getDiff");
+        assert_eq!(app.reviews.tabs.len(), 1);
+        assert_eq!(app.reviews.shown, Some(0));
+        assert!(app.reviews.has_focus());
+        assert_eq!(app.reviews.tabs[0].comments.summary, "Saved summary");
+        assert_eq!(app.reviews.tabs[0].label, "Agent");
+        app.event(opened(None, "local-9", "branch")).unwrap();
+        assert_eq!(app.reviews.tabs.len(), 1);
+        app.mode = Mode::Input;
+        app.reviews.shown = None;
+        app.event(opened(None, "local-10", "branch")).unwrap();
+        assert_eq!(app.reviews.tabs.len(), 2);
+        assert!(app.reviews.shown.is_none());
+        assert!(app.notice.contains("new tab"));
+        app.event(opened(None, "../bad", "branch")).unwrap();
+        assert_eq!(app.reviews.tabs.len(), 2);
+        app.mode = Mode::Navigate;
+        review_session::show(&mut app, 0, true);
+        app.activate_session("s");
+        assert!(app.reviews.shown.is_none() && !app.reviews.focused);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

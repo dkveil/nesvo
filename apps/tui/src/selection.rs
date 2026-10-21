@@ -69,13 +69,15 @@ pub fn press(app: &App, mouse: MouseEvent, screen: Rect) -> Option<Selection> {
     }
     let geometry = ui::geometry(screen, app);
     let point = (mouse.column, mouse.row).into();
-    let area = (0..if app.split { 2 } else { 1 })
-        .filter(|index| app.panes[*index].is_some())
+    let review = if app.reviews.shown.is_some() {
+        crate::ui_review::content_area(app, geometry.review)
+    } else {
+        crate::review::content_area(app, geometry.review)
+    };
+    let area = (0..app.leaf_count())
+        .filter(|index| app.panes[*index].is_some() && !geometry.panes[*index].is_empty())
         .map(|index| ui::pane_content(geometry.panes[index], ui::immersive(app)))
-        .chain(std::iter::once(crate::review::content_area(
-            app,
-            geometry.review,
-        )))
+        .chain(std::iter::once(review))
         .find(|area| area.contains(point))?;
     let mut terminal = Terminal::new(TestBackend::new(screen.width, screen.height)).ok()?;
     terminal.draw(|frame| ui::render(frame, app, 0)).ok()?;
