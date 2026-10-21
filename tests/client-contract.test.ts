@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import test from 'node:test';
 
 import {
@@ -13,6 +14,7 @@ import {
 } from '../apps/mobile/src/entities/session/model/status-presentation';
 import { decodeServerMessage } from '../apps/mobile/src/shared/api/host/messages';
 import type { SessionGroup } from '../apps/mobile/src/shared/api/host/types';
+import { decodeFrame, encodeFrame } from '../apps/mobile/src/shared/api/host/wire';
 import { parseTarget } from '../apps/mobile/src/shared/notifications/target';
 
 const groups: SessionGroup[] = [
@@ -32,6 +34,75 @@ const session = {
   groupId: 'child',
   controllerId: null,
 };
+
+function retainedSnapshot(count: number) {
+  return {
+    type: 'sessions',
+    revision: 4,
+    groups,
+    sessions: Array.from({ length: count }, (_, index) => ({
+      ...session,
+      id: `session-${index}`,
+      running: index % 2 === 0,
+    })),
+  };
+}
+
+test('session snapshots accept the host retained-record ceiling without dropping exited records', () => {
+  for (const count of [0, 8, 9, 16]) {
+    const snapshot = retainedSnapshot(count);
+    const before = structuredClone(snapshot);
+    assert.equal(decodeServerMessage(snapshot), snapshot);
+    assert.deepEqual(snapshot, before, 'Validation cannot truncate or rewrite host records');
+  }
+});
+
+test('sixteen-session snapshots still reject overflow, late malformed records and duplicates privately', () => {
+  const snapshot = retainedSnapshot(16);
+  const lastRecord = (changes: Record<string, unknown>) => ({
+    ...snapshot,
+    sessions: snapshot.sessions.map((item, index) =>
+      index === 15 ? { ...item, ...changes } : item,
+    ),
+  });
+  for (const invalid of [
+    retainedSnapshot(17),
+    lastRecord({ id: 'session-0' }),
+    lastRecord({ groupId: 'missing' }),
+    lastRecord({ running: 'yes' }),
+    lastRecord({ name: 'PRIVATE_SESSION_NAME', cwd: '/PRIVATE_SESSION_PATH', cols: 0 }),
+    { ...snapshot, sessions: [...snapshot.sessions.slice(0, 15), null] },
+  ]) {
+    assert.throws(() => decodeServerMessage(invalid), {
+      name: 'Error',
+      message: 'Invalid host message.',
+    });
+  }
+});
+
+test('sixteen-session shape support preserves the authenticated plaintext byte bound', () => {
+  const snapshot = retainedSnapshot(16);
+  const key = new Uint8Array(32).fill(7);
+  const challenge = 'a'.repeat(64);
+  const frame = encodeFrame(snapshot, key, challenge, 'host-to-client', 1, randomBytes);
+  assert.deepEqual(
+    decodeServerMessage(decodeFrame(frame, key, challenge, 'host-to-client', 1)),
+    snapshot,
+  );
+  const oversized = {
+    ...snapshot,
+    sessions: snapshot.sessions.map(item => ({ ...item, cwd: `/${'x'.repeat(8192)}` })),
+  };
+  assert.equal(
+    decodeServerMessage(oversized),
+    oversized,
+    'Record shape is independent of frame size',
+  );
+  assert.throws(() => encodeFrame(oversized, key, challenge, 'host-to-client', 1, randomBytes), {
+    name: 'Error',
+    message: 'Message is too large.',
+  });
+});
 
 test('canonical current attention drives filtering and validates group rollups separately from history', () => {
   const status = { state: 'working', source: 'hook', updatedAt: 1 } as const;

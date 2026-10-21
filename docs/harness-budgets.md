@@ -9,6 +9,13 @@ The separate [run policy](harness-run-budgets.md) adds parallel/retry/time
 budgets and drain/resume. [Native run controls](harness-run-controls.md) add
 explicit stop/cancel without treating acceptance as process exit.
 
+The mobile snapshot validator accepts up to 16 retained records, including exited
+processes, matching the host ceiling rather than the default admission policy.
+It does not truncate larger valid lists. Record validation, duplicate-ID checks
+and the authenticated 64 KiB plaintext bound still apply. Older mobile builds
+with the previous eight-record decoder need an update before using a policy
+above eight; this change does not raise the host's configured budget.
+
 ```powershell
 nesvo budget get --json
 nesvo budget set --key host-budget-1 --revision BUDGET_REV --file budget.json --json

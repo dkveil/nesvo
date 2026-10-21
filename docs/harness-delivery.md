@@ -68,7 +68,7 @@ not evidence that the expanded acceptance criteria pass.
 | F40 | Durable goal/progress checkpoint                | Missing                                                       | Partial: native Claude compaction/recovery, saved owner constraints and coordinator replacement verified; native resume/adoption/UI pending                                                           |
 | F41 | Layout, conversation and workflow recovery      | Partial: saved launch recovery records                        | Partial: native metadata recovery and Windows process ownership verified; conversation/layout/mobile recovery pending                                                                                 |
 | F42 | Safe resumable hibernation                      | Missing                                                       | Pending: process ownership/cleanup prerequisite verified; resume eligibility and hibernation not implemented                                                                                          |
-| F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Pending                                                                                                                                                                                               |
+| F43 | Mobile fleet, decisions and jobs                | Partial: existing mobile sessions/control                     | Partial: retained-session snapshot validation matches host ceiling; fleet, decisions, jobs and native-device acceptance pending                                                                       |
 | F44 | Trustworthy quota-aware dispatch                | Partial: usage cache and quota wake                           | Partial: typed observations, configured-account job admission, retained native launch and durable one-shot session continuation; Claude/Gemini admission and original-provider acceptance remain open |
 
 ## Verification log
@@ -3516,3 +3516,17 @@ Its retained last occurrence was running, while all three additional one-second
 diagnostic CLI queries timed out. That evidence does not identify a submission,
 lifecycle, provider or host failure; it is distinct from the earlier captured
 untyped submission result. No CI rerun or timeout inflation resolved it.
+
+### F43 retained-session snapshot parity
+
+The host's unpaged safety ceiling is 16 retained records with an eight-record
+default policy, while the mobile decoder still rejected every list above eight.
+The decoder now accepts the existing host ceiling without truncating or rewriting
+records. Three boundary tests cover empty/eight/nine/sixteen records with live and
+exited processes, seventeenth-record rejection, a malformed or duplicate final
+record, fixed private validation errors and authenticated frame roundtrip. A
+valid-shaped oversized sixteen-record object still fails the unchanged plaintext
+byte bound. Windows checks pass all 26 client contracts, TypeScript, warnings-free
+ESLint and all four architecture tests. No host policy, layout, Expo API or SDK
+changed. These are transport/parser checks, not a sixteen-session native-phone
+smoke test or completed F43 fleet/job/decision UI acceptance.

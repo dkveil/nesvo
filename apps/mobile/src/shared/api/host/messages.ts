@@ -217,7 +217,7 @@ function snapshot(value: RecordValue): boolean {
     value.groups.length > 64 ||
     !value.groups.every(group) ||
     !Array.isArray(value.sessions) ||
-    value.sessions.length > 8 ||
+    value.sessions.length > 16 ||
     !value.sessions.every(session)
   )
     return false;
