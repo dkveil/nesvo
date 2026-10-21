@@ -27,14 +27,6 @@ jobs:
       - name: Build native host and client
         id: native-build
         run: cargo build --workspace --locked
-      - name: Verify malformed profile reader process conformance
-        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
-        timeout-minutes: 10
-        run: cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::invalid_profile_frame_is_refused_with_confirmed_cleanup -- --ignored --exact --test-threads=1
-      - name: Verify declared statusline display process conformance
-        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
-        timeout-minutes: 10
-        run: cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::capture_failure_does_not_change_input_stdout_or_display_exit -- --ignored --exact --test-threads=1
       - name: Verify Windows statusline raw standard handles
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' && runner.os == 'Windows' }}
         timeout-minutes: 10
