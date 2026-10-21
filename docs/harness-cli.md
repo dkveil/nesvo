@@ -316,9 +316,13 @@ approved, policy }` and runs nothing. `approve-setup` refuses with
 `worktreeSetupRevoked { repository, digest, revoked }`. Approvals persist in
 `worktrees.json` next to the host pairing data.
 
-Approval and revocation exist only in this owner CLI. The MCP catalog has no
-approve or revoke tool, so an agent cannot approve repository-declared steps for
-itself; it can only describe the setup and ask the owner to approve the digest.
+Approval and revocation exist only in this owner CLI, need owner authority and have no
+MCP tool. The host refuses every worktree command with `forbidden` for a session-scoped
+or wake caller, so an agent running with its scoped capability cannot approve the setup
+of its own worktree and can only ask the owner to approve the digest. Owner authority is
+not a human check: an agent that holds the owner pairing file has it and can run
+`nesvo --pairing C:\private\pairing.json worktree approve-setup` with the same options.
+A one-time confirmation code or interactive confirmation is the planned human gate.
 
 Every worktree launch (TUI, `session create --worktree`, MCP, workflow tasks and
 scheduled launches) checks the approval before creating anything: an unapproved

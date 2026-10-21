@@ -181,6 +181,7 @@ credentials never appear in snapshots. This is API authorization, not an OS sand
 - Group: `{ id, parentId: string|null, name, order: number }`. Root is `null`, not a synthetic group.
 - Additive `parentSessionId:string|null` describes immutable process lineage, independent of groups. Missing/null means no parent. A child is a normal visible process with its own ID, output and control lease; opening it never starts another process. This metadata confers no authority. `sessionLineage:true` advertises advanced launch support; a requested parent must be a live process when launching. Historical recovery metadata retains lineage, without claiming processes survived host restart.
 - Additive `role:"worker"|"coordinator"` is host-owned launch metadata. Absence on an older host means no advertised coordinator support. Editing a context file's role does not change it. Recovery retains the requested role but does not resurrect private grants or an old process identity.
+- Additive `resume:{state:"pending"|"verified"|"resumeFailed",conversationId,reason?}` marks a session launched with an exact `spec.resume`, which `restoreSession` with `exact:true` sets, and the `created` reply to that command carries the same object; other sessions omit it. `reason` accompanies only `resumeFailed`. Automated input is refused with `resume_pending` or `resume_failed` until the first root session-start hook reports source `resume` and the same `conversationId`. See [exact conversation resume](harness-recovery-context.md#exact-conversation-resume).
 - `sessionHarness:true` supports optional `spec.harness:boolean` on advanced launches. Absence inherits a scoped coordinator's setting, otherwise defaults off; explicit false opts out. The present adapter accepts probed Claude Code 2.1.303+ in the 2.1 series and requires a native client executable. Other versions/providers fail before effects. Additive session/explain `harness` metadata describes enabled/CLI availability/instruction version/declared MCP names/launch scope without paths or keys; `loaded:null` avoids claiming provider consumption. Configuration is immutable for the process lifetime; default omitted launch fields preserve historical receipt hashes.
 - Additive `currentAttention` on each session is the host's current actionable projection: `priority:0..3`, `reason:null|permission|question|auth|quota|setup|unknown|startup|failure|child`, `status:SessionStatus|null`, and `blockedChildren:0..256`. Priority zero has no reason/indicator. This is separate from historical unread `attention` and never changes the root agent state. For example, a working parent with blocked protocol children has a blocked aggregate indicator and reason `child`.
 - Each group and the snapshot root carry `attentionSummary:{sessions,needsYou,highest}`. Counts include descendant sessions once, independently of client collapse/filter state. `highest` is the highest-priority current projection or null. These derived values do not increment metadata revision. New clients consume them; legacy hosts retain client-side fallback behavior. Startup failure and process failure need attention; successful process exit or a settled response do not imply task success.
@@ -254,6 +255,9 @@ Typed application errors include `session_not_found`, `invalid_cursor` and
 | `create { name, program?, cwd?, groupId?, requestId? }`                        | Targeted `created { sessionId, requestId? }`, then broadcast snapshot. No automatic subscription/control.                   |
 | `renameSession { sessionId, name, requestId? }`                                | Targeted `updated { revision, requestId? }`, then snapshot; runtime name does not increment metadata revision.              |
 | `close { sessionId, requestId? }`                                              | Terminates the session and broadcasts a snapshot.                                                                           |
+| `listRecovery { offset?, requestId? }`                                         | Targeted `recovery { records:[{id,spec,state}], nextOffset, requestId? }` for sessions that are not running.                |
+| `restoreSession { id, exact?, requestId? }`                                    | Targeted `created { sessionId, resume?, requestId? }`, `recovery`, then a snapshot; `exact:true` resumes the conversation.  |
+| `forgetRecovery { id, requestId? }`                                            | Targeted `recovery` page without that record; only the saved description is removed.                                        |
 | `createGroup { name, parentId, order?, expectedRevision, requestId? }`         | Targeted `groupCreated { groupId, revision, requestId? }`, then snapshot.                                                   |
 | `updateGroup { groupId, name, parentId, order, expectedRevision, requestId? }` | Targeted `updated { revision, requestId? }`, then snapshot. Full replacement of editable fields.                            |
 | `deleteGroup { groupId, expectedRevision, requestId? }`                        | Targeted `updated`, then snapshot. Only an empty group with no child groups can be deleted.                                 |
@@ -407,6 +411,12 @@ Screen rules are deliberately narrow and version-sensitive. Codex's [question ov
 
 Capabilities are sent in response to `getCapabilities` and, on hosts supporting `providerLimits`, after a change in the cached Codex limits. Existing `create` requests without `program` continue to create a shell. These are additive commands within application protocol v2: an older v2 host can still reject `getCapabilities` and close the connection. Upgrade host and clients together for the launcher picker; `protocolVersion:2` alone does not establish support for this extension.
 
+Feature flags in `capabilities` such as `files`, `git`, `reviews`, `worktrees`, `recovery` and
+`conversationResume` are strict booleans: a client sends the matching commands only when the flag
+is `true` and treats absence as unsupported. `git` gates `listCommits`, `recovery` gates
+`listRecovery`, `restoreSession` and `forgetRecovery`, and `conversationResume` gates
+`exact:true`, a field older hosts do not know.
+
 `attach {sessionId,cols,rows}` remains supported for the original client: it releases that connection's other control leases/subscriptions, acquires the requested session if free, and emits `attached`, `control`, then replay. Its lease accepts legacy input/resize without `leaseId`; supplying an incorrect lease is always rejected. A lease obtained through v2 `acquireControl` never accepts missing `leaseId`.
 
 Output remains bounded transcript replay, not a full VT screen snapshot. Historical terminal queries are filtered after the first controller attachment. Multi-device observers share canonical dimensions but a late attachment to a full-screen program may need redraw. A canonical screen engine is a subsequent compatibility-tested change. Transport backpressure limits and slow-client disconnection remain in force.
@@ -453,6 +463,15 @@ never revives the agent or supplies a task result. Cursor gaps interrupt pending
 turn correlation until a new submitted prompt. Diagnostic turn history is bounded
 to 16 entries and retained only while the host session exists; it is not durable
 workflow history.
+
+The `diagnostics {report}` reply to `getDiagnostics` adds `geminiIntegration` with `ready`,
+`verifiedVersion`, `version`, `extension`, `extensionSource`, `turnIdentity` and `reason`. `ready`
+is true only when the installed Gemini CLI is the verified version and the `nesvo-lifecycle`
+extension is linked to this host's unmodified source. Otherwise `extension` is `notLinked`,
+`linkedElsewhere`, `stale`, `sourceChanged`, `unreadable`, `homeUnavailable` or
+`sourceUnavailable`, and `reason` states the cause. `turnIdentity` is always `unsupported`: Gemini
+hooks carry no turn ID, so no host turn or settled response is derived. See
+[agent session status](agent-session-status.md).
 
 ### Durable operation receipts
 

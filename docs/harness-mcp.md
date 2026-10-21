@@ -102,7 +102,7 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The current [catalog](harness-mcp-tools.json) contains 109 tools. Task instruction intents use
+The tool count is the length of the [catalog](harness-mcp-tools.json). Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 
@@ -210,11 +210,14 @@ These native flags are documented in the official
 | nesvo_list_pending_decisions  | owner-only pending decisions across runs                 |
 | nesvo_decide                  | owner-only answer by decision ID without a run ID        |
 
-Worktree setup approval and revocation have no MCP tool: approving a digest is a
-human act through the owner CLI (`nesvo worktree approve-setup` and `revoke-setup`),
-so an agent can describe a setup but never approve its own repository-declared steps.
-The host also refuses every worktree command with `forbidden` for session-scoped and
-wake callers.
+Worktree setup approval and revocation have no MCP tool; they exist only in the owner
+CLI (`nesvo worktree approve-setup` and `revoke-setup`) and need owner authority. The
+host refuses every worktree command with `forbidden` for session-scoped and wake
+callers, so an agent running with its scoped capability cannot approve its own
+repository-declared steps. Owner authority is not a human check: an agent that holds
+the owner pairing file has it and can run
+`nesvo --pairing C:\private\pairing.json worktree approve-setup`. A one-time
+confirmation code or interactive confirmation is the planned human gate.
 
 `attentionInbox` and `decisions` gate the four owner inbox tools. Acknowledging
 hides one item revision durably and never answers a decision; `nesvo_decide`
