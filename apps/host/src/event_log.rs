@@ -1488,8 +1488,6 @@ mod tests {
             .unwrap();
         let original_columns = startup_columns(&metadata.connection, "workflow_launches");
         for _ in 0..2 {
-            // Missing context/account columns fail a real late schema index;
-            // no test-only SQL hook or altered production sequence is used.
             assert!(Store::open(&fixture.path).is_err());
             assert_eq!(
                 startup_columns(&metadata.connection, "workflow_launches"),
