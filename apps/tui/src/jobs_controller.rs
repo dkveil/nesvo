@@ -23,6 +23,10 @@ fn agents(app: &App) -> Vec<Program> {
     })
 }
 
+pub fn tick(app: &mut App) -> bool {
+    app.jobs.as_mut().is_some_and(|jobs| jobs.tick(now_ms()))
+}
+
 pub fn open(app: &mut App, outcome: &mut Outcome) {
     match Jobs::open(app.client_id, &app.host_features, now_ms()) {
         Ok((jobs, command)) => {
@@ -375,6 +379,15 @@ mod tests {
         app.disconnect("Host connection lost".into());
         assert!(app.jobs.is_none());
         assert!(app.notice.contains(&run_key));
+    }
+
+    #[test]
+    fn redraw_tick_refreshes_the_jobs_clock() {
+        let mut app = opened();
+        app.jobs.as_mut().unwrap().now_ms = 0;
+        assert!(app.refresh_session_times(std::time::Instant::now()));
+        assert!(app.jobs.as_ref().unwrap().now_ms > 0);
+        assert!(!tick(&mut App::new(9)));
     }
 
     #[test]

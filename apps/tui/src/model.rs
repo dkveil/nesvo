@@ -525,7 +525,7 @@ impl App {
         for session in &mut self.sessions {
             changed |= session.refresh_time(now);
         }
-        changed
+        changed | crate::jobs_controller::tick(self)
     }
 
     pub fn session(&self, id: &str) -> Option<&Session> {
@@ -1269,10 +1269,7 @@ impl App {
             .take()
             .and_then(|jobs| jobs.unconfirmed_key().map(str::to_owned))
         {
-            self.notice = format!(
-                "{} · Job change unconfirmed; inspect it with nesvo job mutation --key {key}",
-                self.notice
-            );
+            self.notice = crate::jobs::unconfirmed_notice(&self.notice, &key);
         }
     }
 

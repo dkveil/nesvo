@@ -353,8 +353,14 @@ impl Form {
         if self.program == Program::Shell {
             return Err("Jobs need an installed agent.");
         }
-        let at = job_time::rfc3339(&self.start)
-            .ok_or("Start needs a date, time and offset: 2026-10-22 16:02 +02:00.")?;
+        let schedule = match self.unchanged_schedule() {
+            Some(schedule) => schedule,
+            None => {
+                let at = job_time::rfc3339(&self.start)
+                    .ok_or("Start needs a date, time and offset: 2026-10-22 16:02 +02:00.")?;
+                json!({"kind": "once", "at": at})
+            }
+        };
         let folder = self.folder.trim();
         let mut spec = self.target.as_ref().map_or_else(
             || {
@@ -376,8 +382,14 @@ impl Form {
         } else {
             folder.into()
         };
-        spec["schedule"] = json!({"kind": "once", "at": at});
+        spec["schedule"] = schedule;
         Ok(spec)
+    }
+
+    fn unchanged_schedule(&self) -> Option<Value> {
+        let schedule = &self.target.as_ref()?.spec["schedule"];
+        let at = schedule["at"].as_str()?;
+        (job_time::form_start(at) == self.start.trim()).then(|| schedule.clone())
     }
 }
 
@@ -403,6 +415,18 @@ struct Mutation {
     request_id: String,
     key: String,
     change: Change,
+    request: Value,
+}
+
+#[derive(Clone, Debug)]
+struct Unconfirmed {
+    key: String,
+    change: Change,
+    request: Value,
+}
+
+pub fn unconfirmed_notice(context: &str, key: &str) -> String {
+    format!("{context} · Job change unconfirmed; inspect it with nesvo job mutation --key {key}")
 }
 
 #[derive(Default, Debug)]
@@ -435,6 +459,7 @@ pub struct Jobs {
     counter: u64,
     reads: HashMap<String, Read>,
     mutation: Option<Mutation>,
+    unconfirmed: Option<Unconfirmed>,
     staged: Vec<Definition>,
 }
 
@@ -457,6 +482,7 @@ impl Jobs {
             counter: 0,
             reads: HashMap::new(),
             mutation: None,
+            unconfirmed: None,
             staged: Vec::new(),
         };
         let command = jobs.list(features, 0)?;
@@ -481,7 +507,23 @@ impl Jobs {
     }
 
     pub fn unconfirmed_key(&self) -> Option<&str> {
-        self.mutation.as_ref().map(|mutation| mutation.key.as_str())
+        self.mutation.as_ref().map_or_else(
+            || self.unconfirmed.as_ref().map(|item| item.key.as_str()),
+            |mutation| Some(mutation.key.as_str()),
+        )
+    }
+
+    pub fn tick(&mut self, now_ms: i64) -> bool {
+        let minute_changed = self.now_ms.div_euclid(60_000) != now_ms.div_euclid(60_000);
+        self.now_ms = now_ms;
+        minute_changed
+    }
+
+    fn key_for(&self, change: &Change, request: &Value) -> String {
+        match &self.unconfirmed {
+            Some(item) if item.change == *change && item.request == *request => item.key.clone(),
+            _ => format!("tui-job-{}", hex::encode(nesvo_wire::random::<8>())),
+        }
     }
 
     fn command(&mut self, features: &Value, request: Value) -> Result<(String, Value)> {
@@ -528,18 +570,21 @@ impl Jobs {
         }
     }
 
-    fn change(&mut self, features: &Value, change: Change, mut request: Value) -> Effect {
+    fn change(&mut self, features: &Value, change: Change, request: Value) -> Effect {
         if self.mutation.is_some() {
             return Effect::notice(BUSY);
         }
-        let key = format!("tui-job-{}", hex::encode(nesvo_wire::random::<8>()));
-        request["key"] = key.clone().into();
-        match self.command(features, request) {
+        let key = self.key_for(&change, &request);
+        let mut keyed = request.clone();
+        keyed["key"] = key.clone().into();
+        match self.command(features, keyed) {
             Ok((request_id, command)) => {
+                self.unconfirmed = None;
                 self.mutation = Some(Mutation {
                     request_id,
                     key,
                     change,
+                    request,
                 });
                 Effect {
                     commands: vec![command],
@@ -889,7 +934,13 @@ impl Jobs {
         }
         let mutation = self.mutation.take()?;
         if event["code"] != "revision_conflict" {
-            return Some(Effect::default());
+            let notice = unconfirmed_notice(&message, &mutation.key);
+            self.unconfirmed = Some(Unconfirmed {
+                key: mutation.key,
+                change: mutation.change,
+                request: mutation.request,
+            });
+            return Some(Effect::notice(notice));
         }
         let mut effect =
             Effect::notice("This job changed on the host; review the current revision and retry.");
@@ -1090,6 +1141,115 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(actions, [json!("get"), json!("list")]);
         assert_eq!(jobs.unconfirmed_key(), None);
+    }
+
+    const UNCONFIRMED: &str = "Job outcome is unconfirmed; inspect the original occurrence";
+
+    fn key_of(effect: &Effect) -> String {
+        effect.commands[0]["request"]["request"]["key"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn fail_unconfirmed(jobs: &mut Jobs, effect: &Effect) -> Effect {
+        jobs.failure(
+            &features(),
+            &json!({"type":"error","requestId":effect.commands[0]["requestId"],"code":"internal","message":UNCONFIRMED}),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unconfirmed_failure_keeps_the_key_and_shows_the_mutation_hint() {
+        let features = features();
+        let mut jobs = loaded();
+        let run = jobs.run_now(&features);
+        let key = key_of(&run);
+        let effect = fail_unconfirmed(&mut jobs, &run);
+        let notice = effect.notice.unwrap();
+        assert!(notice.starts_with(UNCONFIRMED));
+        assert!(notice.contains(&format!("nesvo job mutation --key {key}")));
+        assert!(effect.commands.is_empty());
+        assert_eq!(jobs.unconfirmed_key(), Some(key.as_str()));
+    }
+
+    #[test]
+    fn retrying_the_same_change_reuses_the_unconfirmed_key() {
+        let features = features();
+        let mut jobs = loaded();
+        let run = jobs.run_now(&features);
+        let key = key_of(&run);
+        fail_unconfirmed(&mut jobs, &run);
+        let retry = jobs.run_now(&features);
+        assert_eq!(key_of(&retry), key);
+        assert_ne!(retry.commands[0]["requestId"], run.commands[0]["requestId"]);
+
+        jobs.mutation = None;
+        jobs.new_form(vec![Program::Claude], "C:/Projects/nesvo".into());
+        let form = jobs.form.as_mut().unwrap();
+        form.title = "Nightly".into();
+        form.instruction = "Report".into();
+        form.start = "2026-10-22 16:02 +02:00".into();
+        let create = jobs.save_form(&features);
+        let create_key = key_of(&create);
+        assert_ne!(create_key, key);
+        fail_unconfirmed(&mut jobs, &create);
+        assert_eq!(jobs.page, Page::Form);
+        assert_eq!(key_of(&jobs.save_form(&features)), create_key);
+    }
+
+    #[test]
+    fn a_different_change_after_an_unconfirmed_failure_gets_a_new_key() {
+        let features = features();
+        let mut jobs = loaded();
+        let run = jobs.run_now(&features);
+        let key = key_of(&run);
+        fail_unconfirmed(&mut jobs, &run);
+        let pause = jobs.toggle_enabled(&features);
+        assert_ne!(key_of(&pause), key);
+        assert_eq!(jobs.unconfirmed_key(), Some(key_of(&pause).as_str()));
+        jobs.mutation = None;
+        assert_ne!(key_of(&jobs.run_now(&features)), key);
+    }
+
+    #[test]
+    fn tick_refreshes_the_clock_and_reports_only_minute_changes() {
+        let mut jobs = loaded();
+        assert!(!jobs.tick(NOW + 30_000));
+        assert_eq!(jobs.now_ms, NOW + 30_000);
+        assert!(jobs.tick(NOW + 60_000));
+        assert_eq!(jobs.now_ms, NOW + 60_000);
+    }
+
+    #[test]
+    fn editing_without_touching_start_keeps_the_original_instant() {
+        let features = features();
+        let mut jobs = loaded();
+        let precise = json!({"kind":"once","at":"2026-10-21T16:02:45.250+02:00"});
+        jobs.details
+            .get_mut("daily")
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()["schedule"] = precise.clone();
+        jobs.page = Page::Detail;
+        jobs.edit_form(vec![Program::Claude]);
+        assert_eq!(jobs.form.as_ref().unwrap().start, "2026-10-21 16:02 +02:00");
+        jobs.form.as_mut().unwrap().title = "Daily review v2".into();
+        let update = jobs.save_form(&features);
+        assert_eq!(
+            update.commands[0]["request"]["request"]["spec"]["schedule"],
+            precise
+        );
+
+        jobs.mutation = None;
+        jobs.form.as_mut().unwrap().start = "2026-10-21 16:05 +02:00".into();
+        let moved = jobs.save_form(&features);
+        assert_eq!(
+            moved.commands[0]["request"]["request"]["spec"]["schedule"]["at"],
+            "2026-10-21T16:05:00+02:00"
+        );
     }
 
     #[test]
