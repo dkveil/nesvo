@@ -40,6 +40,7 @@ mod jobs;
 mod launch_profile;
 mod launchers;
 mod migrations;
+mod notes;
 mod notifications;
 mod operations;
 mod orchestration;

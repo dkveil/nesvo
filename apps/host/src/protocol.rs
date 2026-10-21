@@ -182,6 +182,21 @@ pub enum Command {
         #[serde(default)]
         limit: Option<usize>,
     },
+    ListNotes {
+        root: String,
+    },
+    ReadNote {
+        path: String,
+    },
+    WriteNote {
+        path: String,
+        text: String,
+        #[serde(default)]
+        expected_revision: Option<String>,
+    },
+    DeleteNote {
+        path: String,
+    },
     DescribeWorktreeSetup {
         directory: String,
     },

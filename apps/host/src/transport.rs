@@ -274,6 +274,7 @@ pub async fn handle(
     let mut rate_count = 0u32;
     let event_gate = Arc::new(tokio::sync::Semaphore::new(4));
     let files_gate = Arc::new(tokio::sync::Semaphore::new(2));
+    let notes_gate = Arc::new(tokio::sync::Semaphore::new(2));
     let mut domain_subscription = EventSubscription(None);
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     heartbeat.tick().await;
@@ -527,6 +528,11 @@ pub async fn handle(
                         if crate::attention_inbox::handles(&command) {
                             let permit = event_gate.clone().try_acquire_owned().ok();
                             tokio::spawn(crate::attention_inbox::serve(state.clone(), id, command, request_id, permit));
+                            continue;
+                        }
+                        if crate::notes::handles(&command) {
+                            let permit = notes_gate.clone().try_acquire_owned().ok();
+                            tokio::spawn(crate::notes::serve(state.clone(), id, command, request_id, permit));
                             continue;
                         }
                         if crate::worktrees::handles(&command) {

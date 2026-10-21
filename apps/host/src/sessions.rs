@@ -1496,6 +1496,7 @@ impl State {
         event["workflowPlans"] = true.into();
         event["reviews"] = true.into();
         event["files"] = true.into();
+        event["notes"] = true.into();
         event["worktrees"] = crate::worktrees::available().into();
         event["git"] = true.into();
         event
@@ -3184,6 +3185,12 @@ impl State {
             }
             Command::ListCommits { .. } => {
                 return Err(anyhow!("Commit history requires asynchronous dispatch."));
+            }
+            Command::ListNotes { .. }
+            | Command::ReadNote { .. }
+            | Command::WriteNote { .. }
+            | Command::DeleteNote { .. } => {
+                return Err(anyhow!("Notes require asynchronous dispatch."));
             }
             Command::DescribeWorktreeSetup { .. }
             | Command::ApproveWorktreeSetup { .. }
@@ -5625,6 +5632,74 @@ mod tests {
         let record = saved.iter().find(|r| r["id"] == id.as_str()).unwrap();
         assert_eq!(record["spec"]["resume"], json!(target));
         assert!(record["spec"]["prompt"].as_str().unwrap().is_empty());
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn notes_capability_is_advertised_and_scoped_callers_are_refused_notes_commands() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            metadata,
+            Launchers::discover_with_fixture_shell(),
+        );
+        assert_eq!(state.capabilities_event()["notes"], true);
+        state.set_caller_url("ws://127.0.0.1:1".into());
+        let (events, _output) = mpsc::channel(128);
+        let id = state
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Scoped notes fixture".into(),
+                    role: crate::caller::Role::Coordinator,
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        let scope_id = state.sessions[&id]
+            .caller_context
+            .as_ref()
+            .unwrap()
+            .scope_id
+            .clone();
+        let _owner = review_client(&mut state, 1);
+        let (scoped_events, _scoped) = mpsc::channel(8);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(
+            2,
+            Client {
+                events: scoped_events,
+                cancelled,
+                authority: crate::caller::Authority::Session { id, scope_id },
+            },
+        );
+        let path = crate::process::display_path(&std::env::temp_dir().join("a.md"));
+        for command in [
+            Command::ListNotes {
+                root: crate::process::display_path(&std::env::temp_dir()),
+            },
+            Command::ReadNote { path: path.clone() },
+            Command::WriteNote {
+                path: path.clone(),
+                text: "x".into(),
+                expected_revision: None,
+            },
+            Command::DeleteNote { path },
+        ] {
+            assert!(crate::notes::handles(&command));
+            assert!(state.authorize(1, &command).is_ok());
+            let refused = state.authorize(2, &command).unwrap_err();
+            assert_eq!(
+                refused
+                    .downcast_ref::<crate::api_error::Error>()
+                    .unwrap()
+                    .code,
+                "forbidden"
+            );
+            assert!(state.command(1, command, None, &events).is_err());
+        }
         for worker in state.shutdown() {
             worker.join().unwrap();
         }
