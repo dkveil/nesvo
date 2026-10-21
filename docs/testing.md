@@ -54,6 +54,13 @@ They verify process and byte behavior, not performance under CPU saturation. The
 serial `mcp_host` capture scenario separately checks the actual production helper,
 root callback correlation and cleanup of a hanging declared display.
 
+The malformed-profile fixture has a separate five-second readiness bound. Its
+same still-owned child signals readiness only after flushing the invalid header;
+the unchanged two-second production exchange then checks framing and confirmed
+cleanup. Readiness failure also requires cleanup and exact permit release. This
+test separates interpreter startup from malformed-frame handling; it does not
+certify cold startup within the production deadline.
+
 The capture case can also be selected directly after the locked native build:
 
 ```text

@@ -283,10 +283,17 @@ impl Drop for ProfileReader {
     }
 }
 async fn read_profile(
-    mut command: tokio::process::Command,
+    command: tokio::process::Command,
     path: &Path,
     slot: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<Prepared> {
+    // Production starts the exchange immediately after enrolling the child.
+    read_started_profile(start_profile_reader(command, slot)?, path).await
+}
+fn start_profile_reader(
+    mut command: tokio::process::Command,
+    slot: tokio::sync::OwnedSemaphorePermit,
+) -> Result<ProfileReader> {
     command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -307,6 +314,9 @@ async fn read_profile(
             .ok_or_else(|| anyhow::anyhow!("Missing profile reader"))?,
     )?;
     owned.scope = Some(scope);
+    Ok(owned)
+}
+async fn read_started_profile(mut owned: ProfileReader, path: &Path) -> Result<Prepared> {
     let result = tokio::time::timeout(Duration::from_secs(2), async {
         let child = owned
             .child
@@ -1032,20 +1042,93 @@ mod tests {
         .unwrap();
         assert_eq!(slots.available_permits(), 1);
     }
+    // Native fixture startup is a separate bounded phase. The production
+    // exchange still has its original two-second deadline, and this helper
+    // retains the same child, containment scope and permit throughout the wait.
+    async fn await_profile_fixture_ready_before_framing(
+        mut owned: ProfileReader,
+        ready: &Path,
+        slots: &tokio::sync::Semaphore,
+        deadline: Duration,
+    ) -> Result<ProfileReader> {
+        let observed = tokio::time::timeout(deadline, async {
+            loop {
+                match tokio::fs::read(ready).await {
+                    Ok(bytes) if bytes.as_slice() == b"1" => return Ok::<_, anyhow::Error>(()),
+                    Ok(bytes) if bytes.len() > 1 => {
+                        anyhow::bail!("Profile fixture readiness marker was invalid");
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => anyhow::bail!("Profile fixture readiness marker was unreadable"),
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await;
+        if matches!(observed, Ok(Ok(()))) {
+            return Ok(owned);
+        }
+        ensure!(
+            owned.cleanup().await,
+            "Profile fixture readiness cleanup unconfirmed"
+        );
+        ensure!(
+            slots.available_permits() == 1,
+            "Profile fixture readiness cleanup did not release its exact permit"
+        );
+        Err(anyhow::anyhow!(
+            "Profile fixture did not become ready before framing"
+        ))
+    }
+    #[tokio::test]
+    async fn profile_fixture_readiness_timeout_confirms_cleanup_before_releasing_capacity() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slot = slots.clone().acquire_owned().await.unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "nesvo-profile-readiness-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let owned = start_profile_reader(blocked_reader_command(), slot).unwrap();
+        assert_eq!(slots.available_permits(), 0);
+        let result = await_profile_fixture_ready_before_framing(
+            owned,
+            &root.join("never-ready"),
+            &slots,
+            Duration::from_millis(100),
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("Blocked native fixture unexpectedly became ready"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Profile fixture did not become ready before framing"
+        );
+        assert_eq!(slots.available_permits(), 1);
+        std::fs::remove_dir(root).unwrap();
+    }
     #[tokio::test]
     #[ignore = "serial native process conformance; explicitly run by CI"]
     async fn invalid_profile_frame_is_refused_with_confirmed_cleanup() {
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let slot = slots.clone().acquire_owned().await.unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "nesvo-profile-malformed-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let ready = root.join("ready");
         #[cfg(windows)]
         let command = {
             let mut command = tokio::process::Command::new(executable());
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "[Console]::Out.Write('bad!'); [Console]::Out.Flush(); Start-Sleep -Seconds 30",
-            ]);
+            let script = format!(
+                "[Console]::Out.Write('bad!'); [Console]::Out.Flush(); [System.IO.File]::WriteAllBytes('{}', [byte[]](49)); Start-Sleep -Seconds 30",
+                ready.to_str().unwrap().replace('\'', "''")
+            );
+            command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
             command
         };
         #[cfg(not(windows))]
@@ -1054,15 +1137,39 @@ mod tests {
             // Match the real profile reader's single-process scope. Replacing
             // the shell avoids a descendant: this test requires malformed-frame
             // refusal after confirmed cleanup of the exact reader.
-            command.args(["-c", "printf 'bad!'; exec /bin/sleep 30"]);
+            command
+                .args([
+                    "-c",
+                    "printf 'bad!'; printf '1' > \"$1\"; exec /bin/sleep 30",
+                    "nesvo-profile-fixture",
+                ])
+                .arg(&ready);
             command
         };
-        let error = match read_profile(command, &executable(), slot).await {
+        // Publish READY only after the malformed header has been flushed. A
+        // cold interpreter cannot masquerade as a framing refusal or consume
+        // the exchange deadline. No fixture executable is added to the host.
+        let owned = start_profile_reader(command, slot).unwrap();
+        let mut owned = await_profile_fixture_ready_before_framing(
+            owned,
+            &ready,
+            &slots,
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("Native fixture readiness must precede malformed-frame measurement");
+        assert_eq!(slots.available_permits(), 0);
+        assert!(
+            owned.child.as_mut().unwrap().try_wait().unwrap().is_none(),
+            "Malformed response is supplied by the same still-owned live child"
+        );
+        let error = match read_started_profile(owned, &executable()).await {
             Ok(_) => panic!("Malformed profile frame was accepted"),
             Err(error) => error,
         };
         assert_eq!(error.to_string(), "Profile response exceeds its bound");
         assert_eq!(slots.available_permits(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn unbound_capture_preserves_display_bytes_when_remaining_input_binds_the_root() {

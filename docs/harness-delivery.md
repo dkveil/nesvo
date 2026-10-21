@@ -3493,3 +3493,26 @@ warnings-denied all-target Clippy, 745 workspace units (210 TUI, 532 host, 3 wir
 locked build and all three exact process checks. The complete 63-case serial
 SDK/native-host cohort passes in 469.30 seconds. This improves failure evidence;
 it does not establish the cause of CI's earlier untyped submission failure.
+
+### F03 malformed-profile fixture readiness
+
+Windows CI on `0734a0b` stopped before SDK scenarios: the malformed-response
+fixture reached the two-second profile read deadline rather than its expected
+invalid-header refusal. The log proves no header was read in time, not the cause
+of the delay. The fixture now waits separately for its same owned process to
+flush the invalid header, then exercises the unchanged production exchange and
+confirmed cleanup. Its readiness timeout also confirms cleanup before releasing
+the reader permit. Production immediately composes the extracted private spawn
+and exchange functions; its two-second exchange/cleanup bounds are unchanged.
+No fixture mode is added to the shipped binary. The exact Windows conformance
+case passes in 0.15 seconds; its new readiness-cleanup unit and the combined
+workspace/63-case SDK gate above pass. This verifies malformed-frame handling
+after readiness, not production cold-start performance under saturation.
+
+The subsequent `073c895` publication passed app/browser/Linux/macOS CI. Windows
+passed all three process checks and 62 of 63 SDK scenarios; the retry/restart case
+failed its existing 14-second observation of ordinal two reaching validation.
+Its retained last occurrence was running, while all three additional one-second
+diagnostic CLI queries timed out. That evidence does not identify a submission,
+lifecycle, provider or host failure; it is distinct from the earlier captured
+untyped submission result. No CI rerun or timeout inflation resolved it.
