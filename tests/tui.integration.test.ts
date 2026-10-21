@@ -105,13 +105,20 @@ function assertNoSecret(result: CommandResult, secrets: string[]): void {
 }
 
 function stableSnapshot(snapshot: Snapshot) {
-  // Reads happen at different instants. Validate observed status, but compare
-  // process identity, ownership, dimensions and all other metadata unchanged.
+  // Reads happen at different instants. Validate status and optional advisory
+  // evidence, but compare process identity, ownership, dimensions and durable
+  // metadata unchanged. Repository evidence has its own revision/cooldown;
+  // settled native parity is checked separately below.
   assert.equal(decodeServerMessage(snapshot)?.type, 'sessions');
   return {
     ...snapshot,
     sessions: snapshot.sessions.map(
-      ({ status: _status, uptimeSeconds: _uptime, ...session }) => session,
+      ({
+        status: _status,
+        uptimeSeconds: _uptime,
+        repositoryContext: _repositoryContext,
+        ...session
+      }) => session,
     ),
   };
 }
@@ -245,6 +252,38 @@ test(
           const decoded = decodeServerMessage(JSON.parse(result.stdout) as unknown);
           assert.ok(decoded?.type === 'sessions', 'TUI output must be a valid protocol snapshot');
           assert.deepEqual(stableSnapshot(decoded), stableSnapshot(expected));
+        },
+      );
+
+      await suite.test(
+        'headless TUI and mobile agree on settled independent repository evidence',
+        async () => {
+          const settled = await until(async () => {
+            const current = await snapshot();
+            const context = current.sessions.find(
+              session => session.id === created.sessionId,
+            )?.repositoryContext;
+            if (!context || context.state === 'checking') return undefined;
+            // This test owns a fresh temporary directory with no repository.
+            assert.equal(context.state, 'notRepository');
+            assert.equal(context.source, 'launchDirectory');
+            assert.equal(context.name, null);
+            assert.equal(context.branch, null);
+            assert.ok(Number.isSafeInteger(context.observedAt));
+            assert.ok(context.revision >= 2);
+            return current;
+          }, 'native repository observation settles');
+          const result = await runTui(tuiBinary, pairingPath, runningTuis);
+          assertNoSecret(result, [pairing.key]);
+          assert.equal(result.code, 0, result.stderr);
+          const decoded = decodeServerMessage(JSON.parse(result.stdout) as unknown);
+          assert.ok(decoded?.type === 'sessions');
+          assert.deepEqual(stableSnapshot(decoded), stableSnapshot(expected));
+          assert.equal(decoded.revision, settled.revision);
+          assert.deepEqual(
+            decoded.sessions.find(session => session.id === created.sessionId)?.repositoryContext,
+            settled.sessions.find(session => session.id === created.sessionId)?.repositoryContext,
+          );
         },
       );
 

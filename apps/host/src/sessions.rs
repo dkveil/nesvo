@@ -67,6 +67,7 @@ impl ControlLease {
 }
 
 struct Session {
+    repository_binding: crate::session_repository::Binding,
     quota_binding: Option<session_quota::LaunchBinding>,
     quota_wake: Option<crate::quota_wakes::Arm>,
     claude_quota: Option<crate::claude_quota::Observation>,
@@ -159,6 +160,8 @@ pub struct State {
     job_trigger_address: Option<String>,
     workspace: PathBuf,
     sessions: HashMap<String, Session>,
+    repository: crate::session_repository::Registry,
+    repository_wakeup: Option<mpsc::Sender<()>>,
     cleanup_workers: Vec<thread::JoinHandle<()>>,
     shutting_down: bool,
     pub clients: HashMap<u64, Client>,
@@ -180,6 +183,69 @@ pub struct State {
 #[cfg(test)]
 #[path = "provider_quota_host_tests.rs"]
 mod provider_quota_host_tests;
+
+#[cfg(test)]
+mod repository_tests {
+    use super::*;
+
+    #[test]
+    fn unauthenticated_and_revoked_list_never_fall_back_to_owner_repository_demand() {
+        let mut state = State::new(
+            PathBuf::from("captured-launch-directory"),
+            MetadataStore::open(Path::new(":memory:")).unwrap(),
+            Launchers::discover(),
+        );
+        state
+            .repository
+            .register(crate::session_repository::Binding {
+                id: "target".into(),
+                incarnation: [1; 16],
+                directory: PathBuf::from("captured-launch-directory"),
+            });
+        assert!(state.repository_view_requested(99).is_err());
+        let (events, _received) = mpsc::channel(8);
+        let (cancelled, _cancel) = watch::channel(false);
+        state.clients.insert(
+            1,
+            Client {
+                events,
+                cancelled,
+                authority: crate::caller::Authority::Session {
+                    id: "expired-provider".into(),
+                    scope_id: "expired-scope".into(),
+                },
+            },
+        );
+        assert!(state.repository_view_requested(1).is_err());
+        let (output, _received) = mpsc::channel(8);
+        assert!(state.command(1, Command::List, None, &output).is_err());
+        assert!(state.repository_next(0).0.is_none());
+        let (events, mut owner_events) = mpsc::channel(8);
+        let (cancelled, _owner_cancel) = watch::channel(false);
+        state.clients.insert(
+            2,
+            Client {
+                events,
+                cancelled,
+                authority: crate::caller::Authority::Owner,
+            },
+        );
+        let mut wake = state.repository_runtime();
+        let cached = state.list();
+        state.begin_shutdown();
+        let _ = wake.try_recv();
+        assert!(state.repository_view_requested(1).is_err());
+        assert!(state.repository_view_requested(2).is_ok());
+        assert_eq!(state.list(), cached);
+        assert!(state.command(2, Command::List, None, &output).is_err());
+        assert!(owner_events.try_recv().is_err());
+        assert!(
+            wake.try_recv().is_err(),
+            "A sealed advisory read creates no new demand wake"
+        );
+        assert!(state.repository_next(0).0.is_none());
+    }
+}
 
 fn terminal_size(cols: u16, rows: u16) -> Result<PtySize> {
     ensure!(
@@ -216,6 +282,8 @@ impl State {
             job_trigger_address: None,
             workspace,
             sessions: HashMap::new(),
+            repository: Default::default(),
+            repository_wakeup: None,
             cleanup_workers: Vec::new(),
             shutting_down: false,
             clients: HashMap::new(),
@@ -1438,13 +1506,104 @@ impl State {
         )
     }
 
+    fn repository_visible(&self) -> HashMap<u64, HashSet<String>> {
+        self.clients
+            .iter()
+            .filter_map(|(id, client)| {
+                if client.events.is_closed() || *client.cancelled.borrow() {
+                    return None;
+                }
+                let caller = self.caller_session(*id).ok()?;
+                Some((
+                    *id,
+                    self.sessions
+                        .keys()
+                        .filter(|target| caller.is_none_or(|caller| self.can_read(caller, target)))
+                        .cloned()
+                        .collect(),
+                ))
+            })
+            .collect()
+    }
+
+    pub(crate) fn repository_runtime(&mut self) -> mpsc::Receiver<()> {
+        let (sender, receiver) = mpsc::channel(1);
+        self.repository_wakeup = Some(sender);
+        receiver
+    }
+
+    fn repository_notify(&self) {
+        if let Some(wakeup) = &self.repository_wakeup {
+            let _ = wakeup.try_send(());
+        }
+    }
+
+    pub(crate) fn repository_view_requested(&mut self, client_id: u64) -> Result<()> {
+        // An expired/unknown scoped client never falls back to owner demand.
+        self.caller_session(client_id)?;
+        // This advisory hook cannot revive work during drain. State::command
+        // retains its existing independent shutdown refusal for all commands.
+        if self.shutting_down {
+            return Ok(());
+        }
+        if let Some(visible) = self.repository_visible().remove(&client_id) {
+            self.repository.demand(
+                client_id,
+                &visible.into_iter().collect::<Vec<_>>(),
+                crate::event_log::monotonic_millis(),
+            );
+            self.repository_notify();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn repository_next(
+        &mut self,
+        now: u64,
+    ) -> (Option<crate::session_repository::Work>, Option<u64>) {
+        let visible = self.repository_visible();
+        self.repository.retain_authorized(&visible);
+        if self.repository.expire(now) {
+            self.broadcast_list();
+        }
+        (self.repository.claim(), self.repository.next_expiry())
+    }
+
+    pub(crate) fn repository_finished(
+        &mut self,
+        work: &crate::session_repository::Work,
+        outcome: crate::git_repository::Outcome,
+        wall: u64,
+        now: u64,
+    ) {
+        if self.shutting_down {
+            return;
+        }
+        let visible = self.repository_visible();
+        self.repository.retain_authorized(&visible);
+        if self.repository.finish(work, outcome, wall, now) {
+            self.broadcast_list();
+        }
+    }
+
     pub fn list(&self) -> Value {
         self.list_scoped(None)
     }
     fn list_scoped(&self, caller: Option<&str>) -> Value {
-        self.list_with_candidate(caller, None)
+        let mut snapshot = self.baseline_with_candidate(caller, None);
+        let incarnations = self
+            .sessions
+            .iter()
+            .map(|(id, session)| (id.clone(), session.repository_binding.incarnation))
+            .collect();
+        self.repository.enrich(
+            &mut snapshot,
+            &incarnations,
+            crate::event_log::monotonic_millis(),
+        );
+        snapshot
     }
-    fn list_with_candidate(&self, caller: Option<&str>, candidate: Option<&Session>) -> Value {
+    fn baseline_with_candidate(&self, caller: Option<&str>, candidate: Option<&Session>) -> Value {
         let mut sessions: Vec<&Session> = self.sessions.values().chain(candidate).collect();
         sessions.retain(|s| caller.is_none_or(|id| self.can_read(id, &s.info.id)));
         sessions.sort_by(|left, right| left.info.created_at.cmp(&right.info.created_at));
@@ -1789,6 +1948,8 @@ impl State {
 
     pub fn disconnect(&mut self, client_id: u64) {
         self.clients.remove(&client_id);
+        self.repository.disconnect(client_id);
+        self.repository_notify();
         self.schedule_watchers.remove(&client_id);
         for session in self.sessions.values_mut() {
             session.subscribers.remove(&client_id);
@@ -1993,7 +2154,7 @@ impl State {
 
     fn admit_metadata(&self, name: &str, directory: &Path) -> Result<()> {
         crate::budgets::admit_snapshot_bytes(
-            serde_json::to_vec(&self.list())?.len(),
+            serde_json::to_vec(&self.baseline_with_candidate(None, None))?.len(),
             serde_json::to_vec(&json!([name, crate::process::display_path(directory)]))?.len(),
         )
     }
@@ -2001,7 +2162,8 @@ impl State {
     fn admit_snapshot(&self, session: &Session) -> Result<()> {
         // Keep headroom for status updates/request IDs within the legacy 64 KiB
         // plaintext frame. A rejected candidate is never persisted or announced.
-        if serde_json::to_vec(&self.list_with_candidate(None, Some(session)))?.len() > 48 * 1024 {
+        if serde_json::to_vec(&self.baseline_with_candidate(None, Some(session)))?.len() > 48 * 1024
+        {
             return Err(crate::api_error::Error::new(
                 "budget_snapshot_capacity",
                 "Session metadata capacity reached; close retained sessions before creating more",
@@ -2567,6 +2729,7 @@ impl State {
                 .push(thread::spawn(move || drop(session)));
             return Err(error);
         }
+        self.repository.register(session.repository_binding.clone());
         self.sessions.insert(id.clone(), session);
         self.emit(
             Some(&id),
@@ -2879,7 +3042,10 @@ impl State {
                 self.respond(client_id, self.recovery_event(0)?, request_id);
                 self.broadcast_list();
             }
-            Command::List => self.respond(client_id, self.list(), request_id),
+            Command::List => {
+                self.repository_view_requested(client_id)?;
+                self.respond(client_id, self.list(), request_id);
+            }
             Command::GetCapabilities => {
                 self.respond(client_id, self.capabilities_event(), request_id)
             }
@@ -2986,6 +3152,7 @@ impl State {
                         .push(thread::spawn(move || drop(session)));
                     return Err(error);
                 }
+                self.repository.register(session.repository_binding.clone());
                 self.sessions.insert(session_id.clone(), session);
                 self.emit(
                     Some(&session_id),
@@ -3126,6 +3293,8 @@ impl State {
                 }
                 self.metadata.finish_recovery(&session_id, true)?;
                 let mut removed = self.sessions.remove(&session_id);
+                self.repository.remove(&session_id);
+                self.repository_notify();
                 if let Some(pending) = removed
                     .as_mut()
                     .and_then(|session| session.pending_input.take())
@@ -3220,6 +3389,8 @@ impl State {
     /// Existing PTYs stay available until the final resource shutdown below.
     pub fn begin_shutdown(&mut self) {
         self.shutting_down = true;
+        self.repository.seal();
+        self.repository_notify();
         for session in self.sessions.values_mut() {
             session.wake_at = None;
         }
@@ -3301,6 +3472,11 @@ fn spawn_session(
     };
     let pty = Pty::spawn(&id, command, terminal_size(80, 24)?, events)?;
     Ok(Session {
+        repository_binding: crate::session_repository::Binding {
+            id: id.clone(),
+            incarnation: crate::wire::random::<16>(),
+            directory: cwd.to_path_buf(),
+        },
         quota_binding: None,
         quota_wake: None,
         claude_quota: None,

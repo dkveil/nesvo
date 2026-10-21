@@ -50,6 +50,9 @@ jobs:
       - name: Verify Windows statusline raw standard handles
         if: runner.os == 'Windows'
         run: cargo test --package nesvo-host --bin nesvo-host --locked claude_statusline::tests::generated_windows_command_inherits_raw_standard_handles -- --ignored --exact --test-threads=1
+      - name: Verify Windows Git metadata descendant containment
+        if: runner.os == 'Windows'
+        run: cargo test --package nesvo-host --bin nesvo-host --locked git_repository::helper::tests::windows_waiting_helper_cancellation_contains_wrapper_descendants_before_releasing_capacity -- --ignored --exact --test-threads=1
       - run: cargo build --workspace --locked
       - name: Verify Windows development host probes and immutable runtime
         if: runner.os == 'Windows'

@@ -79,6 +79,8 @@ mod quota_session_wakes;
 mod recovery_hooks;
 #[path = "support/recovery_profile.rs"]
 mod recovery_profile;
+#[path = "support/repository_context.rs"]
+mod repository_context;
 #[path = "support/run_budgets.rs"]
 mod run_budgets;
 #[path = "support/run_checkpoints.rs"]
@@ -305,7 +307,7 @@ impl Fixture {
         self.startup_trace = startup_trace;
         Ok(())
     }
-    async fn close(&mut self) -> Result<()> {
+    async fn stop(&mut self) -> Result<()> {
         let host_pid = self.host.id();
         drop(self.host.stdin.take());
         let status = timeout(Duration::from_secs(10), self.host.wait())
@@ -326,6 +328,10 @@ impl Fixture {
             status.success(),
             "Isolated host did not finish clean PTY shutdown"
         );
+        Ok(())
+    }
+    async fn close(&mut self) -> Result<()> {
+        self.stop().await?;
         let canonical = self.directory.canonicalize().with_context(|| {
             format!(
                 "Resolve owned native fixture directory before cleanup: {}",

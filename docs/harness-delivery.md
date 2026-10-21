@@ -56,7 +56,7 @@ not evidence that the expanded acceptance criteria pass.
 | F28 | Durable job attempts, retry and overlap         | Partial: schedule result field                                | Partial: history, no-effect retry, overlap, cancellation, execution timeouts and owner no-effect launch resolution; broader retry, uncertain effects, cleanup and job UI pending                      |
 | F29 | Shared needs-you and group rollups              | Partial: attention and shared snapshot                        | Implemented canonical projections/rollups; device matrix pending                                                                                                                                      |
 | F30 | Stable attention/unread/MRU ranking             | Partial: palette and attention navigation                     | Implemented shared attention/unread/MRU ranking and exact target safety; current native/platform verification pending                                                                                 |
-| F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Partial: validated repository/branch client search and schema; bounded host source and native acceptance pending                                                                                      |
+| F31 | Contextual fuzzy search                         | Partial: session/group/command search                         | Partial: client/schema and bounded launch-repository source; native Windows Git/CLI/MCP cooldown acceptance verified; current-cwd and interactive/device matrix pending                               |
 | F32 | Incremental preview and process/turn times      | Partial: bounded replay and monotonic process age             | Implemented distinct process/turn times and bounded passive read; device matrix pending                                                                                                               |
 | F33 | Revision-bound diff feedback                    | Missing                                                       | Pending                                                                                                                                                                                               |
 | F34 | Verified session/turn edit provenance           | Partial: agent edit folder context only                       | Pending                                                                                                                                                                                               |
@@ -3622,3 +3622,54 @@ legacy/valid-state/contradictory-state boundaries. No dependency, Expo API or SD
 changes. Host inspection/runtime and real Git/SDK acceptance remain a separate
 F31 slice; client fixtures are not evidence of available host metadata or a
 physical-phone test. See [contract](harness-contextual-search.md).
+
+### F31 bounded native repository source
+
+Every actual session captures its canonical launch directory and private process
+incarnation. Authenticated connect/List demand coalesces by directory, with at
+most sixteen subscriptions/queued keys and one retained inspector. Current
+visibility and incarnation are checked before admission and result acceptance.
+All outcomes have a thirty-second monotonic cooldown. Expiry only stales cached
+labels; output/render/publication do not request Git. Disconnect drops queued
+interest while admitted work drains. Optional whole-object projection is applied
+after recipient filtering and unchanged baseline admission, with an eight-KiB
+budget under a sixty-KiB snapshot target. No model, authority, launch policy,
+readiness or durable workspace revision is changed.
+
+Git uses two fixed metadata builtins, sanitized routing/config injection, bounded
+output and a combined three-second deadline. Windows enrolls a waiting native
+helper into its job before releasing Git, including the Git for Windows wrapper's
+descendants. Cleanup has a further two-second bound; unconfirmed cleanup retains
+global capacity. The helper's arbitrary fixture variants do not exist in shipped
+code. No dependency or global Git/provider configuration is added. Metadata
+describes the launch repository, not current provider cwd or edit attribution.
+
+Native Windows formatting, warnings-denied all-target Clippy, the full workspace
+unit suite and locked build pass. Registry/auth/projection tests cover expiry,
+overflow, revocation, reconnect and process replacement; serial actual-Git cases
+cover nested Unicode paths, unborn/detached branches and linked worktrees. The
+Windows wrapper/descendant cancellation case confirms both exact process handles
+exit before the inspector permit is released. The full official-SDK/native-host
+cohort passes all 65 cases in 502.29 seconds, followed by all three exact
+statusline process-conformance checks. Its new repository case verifies actual
+production helper dispatch, CLI/MCP cache parity and changed branch/revision
+after one real cooldown with the owner disconnected. It preserves native
+process/cwd/receipt identity and validates published response schemas.
+
+The actual-host suite passes all ten checks and multi-client synchronization all
+six. Headless TUI/mobile parity passes all fifteen after distinguishing transient
+repository evidence from durable workspace metadata: both snapshots remain
+strictly decoded, and a separate case requires the settled non-repository object
+to agree exactly. An intermediate checking-to-result transition cannot invalidate
+process/ownership assertions or be silently treated as a durable revision change.
+
+An immutable baseline/candidate pair measured eight controlled Node provider
+substitutes with clients closed for 62.04/62.08 seconds. Average host CPU was
+1.89/1.51 percent of one core; sampled peak RSS was 23,773,184/24,637,440 bytes.
+Both retained eight live roots and seventeen direct children, with 1,048 observer
+poll/open/transaction deltas and no schema-probe, quota-decode or read-failure
+deltas. Cleanup succeeded. One pair is not a repeatable speedup or explanation
+of an earlier CPU incident. The fixture PATH has no Git, so CPU evidence alone
+does not prove zero closed-client inspection attempts. The source manifests and
+reports remain outside the repository. Physical-phone, interactive other-platform
+and current-provider-cwd acceptance remain open; this is not the whole F31 gate.

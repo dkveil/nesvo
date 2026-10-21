@@ -93,12 +93,43 @@ or global Git/provider configuration is involved. Deterministic host storage and
 Read-barrier tests separately cover callbacks delayed across generation changes;
 the native scenario does not invent an observable pre-stdin helper barrier.
 
-### Native job execution timeout scenarios
+### Native repository search metadata
+
+F31 repository metadata uses a separate Windows process-conformance gate. Run
+only its exact case; the same host test target also contains inert, opt-in helper
+entries intended solely for its contained child processes.
+
+```text
+cargo test --package nesvo-host --bin nesvo-host --locked git_repository::helper::tests::windows_waiting_helper_cancellation_contains_wrapper_descendants_before_releasing_capacity -- --ignored --exact --test-threads=1
+```
+
+The case enrolls a waiting helper before its first request byte, starts a real
+owned wrapper and long-lived child, then cancels. Both exact process handles must
+signal termination before the global inspector slot is released. Production
+frames admit only two fixed metadata builtins; arbitrary fixture arguments and
+helper entries exist only in the test binary. The native SDK case separately
+exercises production helper stdout/early-main dispatch and the actual Git reads:
+
+```text
+cargo test --package nesvo --test mcp_host --locked repository_context::launch_repository_context_is_native_shared_and_refreshes_after_its_cooldown -- --ignored --exact --test-threads=1
+```
+
+Its private minimal unborn Git tree is constructed using fixed filesystem
+fixtures, not `git init`, a model or injected host metadata. The actual host's Git
+reads discover a nested Unicode launch directory and symbolic branch. CLI/MCP
+agree before cooldown; a closed owner and reconnect cross one actual thirty-second
+TTL, preserve the original process/cwd/receipt, then reveal the changed branch.
+Revision and changed content prove refresh; wall-clock timestamp order is not a
+monotonic guarantee. Uncertain SDK/helper cleanup stops the host while preserving
+its private tree. These checks do not instrument every closed-client Git attempt
+or establish physical-phone behavior. See [contract](harness-contextual-search.md).
 
 For opt-in phase evidence before listener readiness and the controlled
 fresh/restart scenario, see [host startup diagnostics](host-startup-diagnostics.md).
 This evidence preserves the existing readiness deadline; an unmatched phase
 does not identify the scheduling or I/O cause of a startup delay.
+
+### Native job execution timeout scenarios
 
 After building the native host/client, the ignored `mcp_host` integration target
 uses the official MCP SDK, actual private hosts and controlled Node PTY workers.

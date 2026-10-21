@@ -1,0 +1,911 @@
+//! Advisory launch-directory metadata. Demand is explicit and never native input.
+use serde::Serialize;
+use serde_json::Value;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::sync::watch;
+
+const LIMIT: usize = 16;
+const TTL_MS: u64 = 30_000;
+const MAX_REVISION: u64 = 9_007_199_254_740_991;
+const OPTIONAL_BYTES: usize = 8 * 1024;
+const PROJECTED_BYTES: usize = 60 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum Status {
+    Checking,
+    Ready,
+    Detached,
+    NotRepository,
+    Unavailable,
+    Stale,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Context {
+    source: &'static str,
+    state: Status,
+    name: Option<String>,
+    branch: Option<String>,
+    observed_at: Option<u64>,
+    revision: u64,
+}
+
+impl Context {
+    fn empty(state: Status, revision: u64) -> Self {
+        Self {
+            source: "launchDirectory",
+            state,
+            name: None,
+            branch: None,
+            observed_at: None,
+            revision,
+        }
+    }
+    fn stale(&self) -> Self {
+        let mut stale = self.clone();
+        stale.state = Status::Stale;
+        stale.name = None;
+        stale.branch = None;
+        stale.revision = stale.revision.saturating_add(1).min(MAX_REVISION);
+        stale
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Binding {
+    pub id: String,
+    pub incarnation: [u8; 16],
+    pub directory: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Work {
+    pub directory: PathBuf,
+    attempt: u64,
+    bindings: Vec<Binding>,
+}
+
+#[derive(Default)]
+struct Entry {
+    context: Option<Context>,
+    revision: u64,
+    attempt: u64,
+    cooldown_until: Option<u64>,
+    expires: Option<u64>,
+    interested: HashSet<u64>,
+    queued: bool,
+}
+
+impl Entry {
+    fn advance(&mut self) -> Option<u64> {
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .filter(|value| *value <= MAX_REVISION)?;
+        Some(self.revision)
+    }
+    fn expire(&mut self, now: u64) -> bool {
+        if self.expires.is_some_and(|deadline| now >= deadline)
+            && let Some(context) = &self.context
+            && matches!(
+                context.state,
+                Status::Ready | Status::Detached | Status::NotRepository
+            )
+        {
+            let stale = context.stale();
+            self.revision = stale.revision;
+            self.context = Some(stale);
+            self.expires = None;
+            return true;
+        }
+        false
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Registry {
+    subscriptions: HashMap<String, Binding>,
+    entries: HashMap<PathBuf, Entry>,
+    queue: VecDeque<PathBuf>,
+    active: Option<Work>,
+    sealed: bool,
+}
+
+impl Registry {
+    pub(crate) fn register(&mut self, binding: Binding) {
+        if self.sealed
+            || self.subscriptions.len() >= LIMIT && !self.subscriptions.contains_key(&binding.id)
+        {
+            return;
+        }
+        self.remove(&binding.id);
+        if self.entries.len() >= LIMIT && !self.entries.contains_key(&binding.directory) {
+            return;
+        }
+        self.entries.entry(binding.directory.clone()).or_default();
+        self.subscriptions.insert(binding.id.clone(), binding);
+    }
+
+    pub(crate) fn remove(&mut self, id: &str) {
+        self.subscriptions.remove(id);
+        self.entries.retain(|directory, _| {
+            self.subscriptions
+                .values()
+                .any(|binding| &binding.directory == directory)
+        });
+        self.queue
+            .retain(|directory| self.entries.contains_key(directory));
+    }
+
+    pub(crate) fn disconnect(&mut self, client: u64) {
+        for entry in self.entries.values_mut() {
+            entry.interested.remove(&client);
+        }
+        self.drop_uninterested_queue();
+    }
+
+    fn drop_uninterested_queue(&mut self) {
+        for entry in self.entries.values_mut() {
+            if entry.interested.is_empty() && entry.queued {
+                entry.queued = false;
+                entry.context = None;
+            }
+        }
+        self.queue.retain(|directory| {
+            self.entries
+                .get(directory)
+                .is_some_and(|entry| entry.queued)
+        });
+    }
+
+    pub(crate) fn retain_authorized(&mut self, visible: &HashMap<u64, HashSet<String>>) {
+        for (directory, entry) in &mut self.entries {
+            entry.interested.retain(|client| {
+                visible.get(client).is_some_and(|ids| {
+                    self.subscriptions
+                        .values()
+                        .any(|binding| &binding.directory == directory && ids.contains(&binding.id))
+                })
+            });
+        }
+        self.drop_uninterested_queue();
+    }
+
+    pub(crate) fn demand(&mut self, client: u64, visible: &[String], now: u64) {
+        if self.sealed {
+            return;
+        }
+        let mut directories = visible
+            .iter()
+            .filter_map(|id| self.subscriptions.get(id))
+            .map(|binding| binding.directory.clone())
+            .collect::<Vec<_>>();
+        directories.sort();
+        directories.dedup();
+        for directory in directories {
+            let active_current = self.active.as_ref().is_some_and(|work| {
+                work.directory == directory
+                    && work
+                        .bindings
+                        .iter()
+                        .any(|binding| self.subscriptions.get(&binding.id) == Some(binding))
+            });
+            let Some(entry) = self.entries.get_mut(&directory) else {
+                continue;
+            };
+            if entry.interested.len() >= LIMIT && !entry.interested.contains(&client) {
+                continue;
+            }
+            entry.interested.insert(client);
+            entry.expire(now);
+            if entry.queued
+                || active_current
+                || entry.cooldown_until.is_some_and(|deadline| now < deadline)
+            {
+                continue;
+            }
+            let Some(attempt) = entry.attempt.checked_add(1) else {
+                continue;
+            };
+            // Reserve result and expiry revisions before publishing checking.
+            if entry
+                .revision
+                .checked_add(3)
+                .is_none_or(|revision| revision > MAX_REVISION)
+            {
+                entry.revision = MAX_REVISION;
+                entry.context = Some(Context::empty(Status::Unavailable, MAX_REVISION));
+                entry.expires = None;
+                entry.cooldown_until = Some(u64::MAX);
+                continue;
+            }
+            let Some(revision) = entry.advance() else {
+                continue;
+            };
+            entry.attempt = attempt;
+            entry.context = Some(Context::empty(Status::Checking, revision));
+            entry.expires = None;
+            entry.queued = true;
+            self.queue.push_back(directory);
+        }
+    }
+
+    pub(crate) fn expire(&mut self, now: u64) -> bool {
+        let mut changed = false;
+        for entry in self
+            .entries
+            .values_mut()
+            .filter(|entry| !entry.interested.is_empty())
+        {
+            changed |= entry.expire(now);
+        }
+        changed
+    }
+
+    pub(crate) fn next_expiry(&self) -> Option<u64> {
+        if self.sealed {
+            return None;
+        }
+        self.entries
+            .values()
+            .filter(|entry| !entry.interested.is_empty())
+            .filter_map(|entry| entry.expires)
+            .min()
+    }
+
+    pub(crate) fn claim(&mut self) -> Option<Work> {
+        if self.sealed || self.active.is_some() {
+            return None;
+        }
+        while let Some(directory) = self.queue.pop_front() {
+            let Some(entry) = self.entries.get_mut(&directory) else {
+                continue;
+            };
+            if !entry.queued || entry.interested.is_empty() {
+                continue;
+            }
+            entry.queued = false;
+            let bindings = self
+                .subscriptions
+                .values()
+                .filter(|binding| binding.directory == directory)
+                .cloned()
+                .collect::<Vec<_>>();
+            if bindings.is_empty() {
+                continue;
+            }
+            let work = Work {
+                directory,
+                attempt: entry.attempt,
+                bindings,
+            };
+            self.active = Some(work.clone());
+            return Some(work);
+        }
+        None
+    }
+
+    pub(crate) fn finish(
+        &mut self,
+        work: &Work,
+        outcome: crate::git_repository::Outcome,
+        wall: u64,
+        now: u64,
+    ) -> bool {
+        if self.active.as_ref() != Some(work) {
+            return false;
+        }
+        self.active = None;
+        if self.sealed
+            || !work
+                .bindings
+                .iter()
+                .any(|binding| self.subscriptions.get(&binding.id) == Some(binding))
+        {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(&work.directory) else {
+            return false;
+        };
+        if entry.attempt != work.attempt {
+            return false;
+        }
+        let Some(revision) = entry.advance() else {
+            return false;
+        };
+        let mut context = Context::empty(Status::Unavailable, revision);
+        if wall <= MAX_REVISION && now.checked_add(TTL_MS).is_some() {
+            match outcome.validated() {
+                crate::git_repository::Outcome::Ready { name, branch } => {
+                    context.state = Status::Ready;
+                    context.name = Some(name);
+                    context.branch = Some(branch);
+                }
+                crate::git_repository::Outcome::Detached { name } => {
+                    context.state = Status::Detached;
+                    context.name = Some(name);
+                }
+                crate::git_repository::Outcome::NotRepository => {
+                    context.state = Status::NotRepository
+                }
+                crate::git_repository::Outcome::Unavailable => {}
+            }
+        }
+        if context.state != Status::Unavailable {
+            context.observed_at = Some(wall);
+            entry.expires = now.checked_add(TTL_MS);
+        } else {
+            entry.expires = None;
+        }
+        entry.cooldown_until = now.checked_add(TTL_MS).or(Some(u64::MAX));
+        entry.context = Some(context);
+        true
+    }
+
+    pub(crate) fn seal(&mut self) {
+        self.sealed = true;
+        self.active = None;
+        self.queue.clear();
+        for entry in self.entries.values_mut() {
+            entry.queued = false;
+            entry.interested.clear();
+        }
+    }
+
+    fn context(&self, id: &str, incarnation: &[u8; 16], now: u64) -> Option<Context> {
+        let binding = self
+            .subscriptions
+            .get(id)
+            .filter(|binding| &binding.incarnation == incarnation)?;
+        let entry = self.entries.get(&binding.directory)?;
+        let context = entry.context.as_ref()?;
+        Some(if entry.expires.is_some_and(|deadline| now >= deadline) {
+            context.stale()
+        } else {
+            context.clone()
+        })
+    }
+
+    pub(crate) fn enrich(
+        &self,
+        snapshot: &mut Value,
+        incarnations: &HashMap<String, [u8; 16]>,
+        now: u64,
+    ) {
+        if let Some(sessions) = snapshot["sessions"].as_array_mut() {
+            for session in sessions {
+                if let Some(session) = session.as_object_mut() {
+                    session.remove("repositoryContext");
+                }
+            }
+        }
+        let Ok(baseline) = serde_json::to_vec(snapshot).map(|bytes| bytes.len()) else {
+            return;
+        };
+        let available = OPTIONAL_BYTES.min(PROJECTED_BYTES.saturating_sub(baseline));
+        if available == 0 {
+            return;
+        }
+        let mut indices = snapshot["sessions"]
+            .as_array()
+            .map(|sessions| {
+                sessions
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, session)| {
+                        session["id"].as_str().map(|id| (id.to_owned(), index))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        indices.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut used = 0usize;
+        let mut added = Vec::new();
+        for (id, index) in indices {
+            let Some(incarnation) = incarnations.get(&id) else {
+                continue;
+            };
+            let Some(context) = self.context(&id, incarnation, now) else {
+                continue;
+            };
+            let Ok(value) = serde_json::to_value(context) else {
+                continue;
+            };
+            let Ok(field) = serde_json::to_vec(&serde_json::json!({"repositoryContext":&value}))
+            else {
+                continue;
+            };
+            let Some(session) = snapshot["sessions"][index].as_object() else {
+                continue;
+            };
+            let delta = field.len().saturating_sub(2) + usize::from(!session.is_empty());
+            if delta > available.saturating_sub(used) {
+                continue;
+            }
+            snapshot["sessions"][index]["repositoryContext"] = value;
+            used += delta;
+            added.push(index);
+        }
+        // Recheck the whole payload once; capacity never changes admission.
+        if serde_json::to_vec(snapshot).map_or(true, |bytes| bytes.len() > baseline + available) {
+            for index in added {
+                if let Some(session) = snapshot["sessions"][index].as_object_mut() {
+                    session.remove("repositoryContext");
+                }
+            }
+        }
+    }
+}
+
+pub(crate) struct Runtime {
+    stop: watch::Sender<bool>,
+    task: Option<tokio::task::JoinHandle<bool>>,
+}
+impl Runtime {
+    pub(crate) fn start(state: Arc<Mutex<crate::sessions::State>>) -> Self {
+        let (stop, mut stopped) = watch::channel(false);
+        let mut demand = state.lock().unwrap().repository_runtime();
+        let task = tokio::spawn(async move {
+            loop {
+                if *stopped.borrow() {
+                    return true;
+                }
+                let (work, expires) = match state.lock() {
+                    Ok(mut state) => state.repository_next(crate::event_log::monotonic_millis()),
+                    Err(_) => return false,
+                };
+                if let Some(work) = work {
+                    let outcome =
+                        crate::git_repository::inspect(&work.directory, &mut stopped).await;
+                    if let Ok(mut state) = state.lock() {
+                        state.repository_finished(
+                            &work,
+                            outcome,
+                            crate::status::now_millis(),
+                            crate::event_log::monotonic_millis(),
+                        );
+                    }
+                    continue;
+                }
+                tokio::select! {
+                    biased;
+                    _ = stopped.changed() => return true,
+                    requested = demand.recv() => if requested.is_none() { return true; },
+                    _ = async {
+                        if let Some(deadline) = expires {
+                            tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(crate::event_log::monotonic_millis()))).await;
+                        } else { std::future::pending::<()>().await; }
+                    } => {},
+                }
+            }
+        });
+        Self {
+            stop,
+            task: Some(task),
+        }
+    }
+    pub(crate) fn request_shutdown(&self) {
+        self.stop.send_replace(true);
+    }
+    pub(crate) async fn shutdown(mut self) -> bool {
+        self.request_shutdown();
+        let Some(mut task) = self.task.take() else {
+            return true;
+        };
+        matches!(
+            tokio::time::timeout(Duration::from_secs(5), &mut task).await,
+            Ok(Ok(true))
+        ) && crate::git_repository::cleanup_confirmed()
+    }
+}
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        self.request_shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git_repository::Outcome;
+    use serde_json::json;
+
+    fn binding(id: &str, directory: &str, incarnation: u8) -> Binding {
+        Binding {
+            id: id.into(),
+            directory: PathBuf::from(directory),
+            incarnation: [incarnation; 16],
+        }
+    }
+    fn ready() -> Outcome {
+        Outcome::Ready {
+            name: "repo łódź".into(),
+            branch: "feature/żółw".into(),
+        }
+    }
+    fn observed(outcome: Outcome) -> (Registry, Binding) {
+        let mut registry = Registry::default();
+        let binding = binding("a", "captured-directory", 1);
+        registry.register(binding.clone());
+        registry.demand(1, std::slice::from_ref(&binding.id), 100);
+        let work = registry.claim().unwrap();
+        assert!(registry.finish(&work, outcome, 500, 120));
+        (registry, binding)
+    }
+
+    #[test]
+    fn registration_never_creates_demand_and_shared_directories_coalesce() {
+        let mut registry = Registry::default();
+        let a = binding("a", "same-directory", 1);
+        let b = binding("b", "same-directory", 2);
+        registry.register(a.clone());
+        registry.register(b.clone());
+        assert!(registry.claim().is_none());
+        assert!(registry.context(&a.id, &a.incarnation, 0).is_none());
+        registry.demand(1, std::slice::from_ref(&a.id), 0);
+        registry.demand(2, std::slice::from_ref(&b.id), 0);
+        let checking = registry.context(&a.id, &a.incarnation, 0).unwrap();
+        assert_eq!(checking.state, Status::Checking);
+        assert_eq!(checking.revision, 1);
+        assert!(checking.observed_at.is_none());
+        assert_eq!(registry.queue.len(), 1);
+        let work = registry.claim().unwrap();
+        assert_eq!(work.bindings.len(), 2);
+        assert!(registry.claim().is_none());
+        assert!(registry.finish(&work, ready(), 9, 10));
+        assert_eq!(
+            registry.context(&a.id, &a.incarnation, 10),
+            registry.context(&b.id, &b.incarnation, 10)
+        );
+    }
+
+    #[test]
+    fn every_success_negative_and_error_has_exact_thirty_second_cooldown() {
+        for outcome in [
+            ready(),
+            Outcome::Detached {
+                name: "repo".into(),
+            },
+            Outcome::NotRepository,
+            Outcome::Unavailable,
+        ] {
+            let (mut registry, binding) = observed(outcome.clone());
+            let context = registry
+                .context(&binding.id, &binding.incarnation, 120)
+                .unwrap();
+            assert_eq!(
+                context.observed_at,
+                if outcome == Outcome::Unavailable {
+                    None
+                } else {
+                    Some(500)
+                }
+            );
+            registry.demand(1, std::slice::from_ref(&binding.id), 30_119);
+            assert!(registry.claim().is_none());
+            registry.demand(1, std::slice::from_ref(&binding.id), 30_120);
+            assert!(
+                registry.claim().is_some(),
+                "Only an explicit due request creates a new inspection"
+            );
+            let pending = registry
+                .context(&binding.id, &binding.incarnation, 30_120)
+                .unwrap();
+            assert_eq!(pending.state, Status::Checking);
+            assert!(
+                pending.name.is_none() && pending.branch.is_none() && pending.observed_at.is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn expiry_is_memory_only_clears_labels_and_never_renews_observation_time() {
+        let (mut registry, binding) = observed(ready());
+        let fresh = registry
+            .context(&binding.id, &binding.incarnation, 30_119)
+            .unwrap();
+        let stale = registry
+            .context(&binding.id, &binding.incarnation, 30_120)
+            .unwrap();
+        assert_eq!(stale.state, Status::Stale);
+        assert_eq!(stale.observed_at, fresh.observed_at);
+        assert_eq!(stale.revision, fresh.revision + 1);
+        assert!(stale.name.is_none() && stale.branch.is_none());
+        assert!(registry.expire(30_120));
+        assert!(!registry.expire(30_121));
+        assert_eq!(
+            registry.context(&binding.id, &binding.incarnation, 30_121),
+            Some(stale)
+        );
+        assert!(registry.claim().is_none());
+        assert!(registry.next_expiry().is_none());
+        // Wall time is not an input to expiry/cooldown: changing or moving it
+        // backwards cannot refresh an observation or extend these deadlines.
+        registry.demand(1, std::slice::from_ref(&binding.id), 30_120);
+        let work = registry.claim().unwrap();
+        assert!(registry.finish(&work, Outcome::NotRepository, 1, 30_125));
+        assert_eq!(
+            registry
+                .context(&binding.id, &binding.incarnation, 30_125)
+                .unwrap()
+                .observed_at,
+            Some(1)
+        );
+        assert_eq!(registry.next_expiry(), Some(60_125));
+    }
+
+    #[test]
+    fn removed_or_recreated_incarnation_cannot_borrow_late_result_even_with_same_id_path() {
+        for replacement_directory in ["same", "different"] {
+            let mut registry = Registry::default();
+            let old = binding("same-id", "same", 1);
+            registry.register(old.clone());
+            registry.demand(1, std::slice::from_ref(&old.id), 0);
+            let work = registry.claim().unwrap();
+            registry.remove(&old.id);
+            let new = binding("same-id", replacement_directory, 2);
+            registry.register(new.clone());
+            assert!(!registry.finish(&work, ready(), 10, 10));
+            assert!(registry.context(&new.id, &new.incarnation, 10).is_none());
+            registry.demand(1, std::slice::from_ref(&new.id), 10);
+            let current = registry.claim().unwrap();
+            assert!(registry.finish(&current, ready(), 11, 11));
+            assert!(!registry.finish(&work, Outcome::Unavailable, 12, 12));
+            assert_eq!(
+                registry
+                    .context(&new.id, &new.incarnation, 12)
+                    .unwrap()
+                    .state,
+                Status::Ready
+            );
+        }
+    }
+
+    #[test]
+    fn replacement_demand_before_orphan_finishes_keeps_its_own_fresh_ticket() {
+        let mut registry = Registry::default();
+        let old = binding("same-id", "same-directory", 1);
+        registry.register(old.clone());
+        registry.demand(1, std::slice::from_ref(&old.id), 0);
+        let orphan = registry.claim().unwrap();
+        registry.remove(&old.id);
+        let replacement = binding("same-id", "same-directory", 2);
+        registry.register(replacement.clone());
+        registry.demand(2, std::slice::from_ref(&replacement.id), 1);
+        registry.demand(2, std::slice::from_ref(&replacement.id), 2);
+        assert_eq!(
+            registry.queue.len(),
+            1,
+            "One replacement demand despite repeated Lists"
+        );
+        assert!(
+            registry.claim().is_none(),
+            "The old inspection still owns the one active slot"
+        );
+        assert_eq!(
+            registry
+                .context(&replacement.id, &replacement.incarnation, 2)
+                .unwrap()
+                .state,
+            Status::Checking
+        );
+        assert!(
+            !registry.finish(&orphan, ready(), 10, 10),
+            "Never borrow the removed incarnation's result"
+        );
+        assert_eq!(
+            registry
+                .context(&replacement.id, &replacement.incarnation, 10)
+                .unwrap()
+                .state,
+            Status::Checking
+        );
+        let fresh = registry.claim().unwrap();
+        assert_ne!(fresh.bindings, orphan.bindings);
+        assert_eq!(fresh.bindings, vec![replacement.clone()]);
+        assert!(registry.claim().is_none());
+        assert!(registry.finish(
+            &fresh,
+            Outcome::Detached {
+                name: "new observation".into()
+            },
+            11,
+            11
+        ));
+        assert_eq!(
+            registry
+                .context(&replacement.id, &replacement.incarnation, 11)
+                .unwrap()
+                .state,
+            Status::Detached
+        );
+        assert!(!registry.finish(&orphan, Outcome::Unavailable, 12, 12));
+
+        // Revocation/disconnect still removes that new queued demand while the
+        // old inspection drains; it cannot become an automatic replacement.
+        for revoked in [false, true] {
+            let mut registry = Registry::default();
+            registry.register(old.clone());
+            registry.demand(1, std::slice::from_ref(&old.id), 0);
+            let orphan = registry.claim().unwrap();
+            registry.remove(&old.id);
+            registry.register(replacement.clone());
+            registry.demand(2, std::slice::from_ref(&replacement.id), 1);
+            if revoked {
+                registry.retain_authorized(&HashMap::new());
+            } else {
+                registry.disconnect(2);
+            }
+            assert!(!registry.finish(&orphan, ready(), 10, 10));
+            assert!(registry.claim().is_none());
+        }
+    }
+
+    #[test]
+    fn revoked_or_disconnected_interests_cannot_keep_unrelated_queue_alive() {
+        let mut registry = Registry::default();
+        let a = binding("a", "a-dir", 1);
+        let b = binding("b", "b-dir", 2);
+        registry.register(a.clone());
+        registry.register(b.clone());
+        registry.demand(1, std::slice::from_ref(&a.id), 0);
+        registry.demand(2, std::slice::from_ref(&b.id), 0);
+        registry.retain_authorized(&HashMap::from([
+            (1, HashSet::new()),
+            (2, HashSet::from([b.id.clone()])),
+        ]));
+        let work = registry.claim().unwrap();
+        assert_eq!(work.directory, b.directory);
+        assert!(registry.context(&a.id, &a.incarnation, 0).is_none());
+        registry.finish(&work, ready(), 1, 1);
+        registry.disconnect(2);
+        assert!(registry.next_expiry().is_none());
+        assert!(
+            !registry.expire(60_000),
+            "No closed-client background expiry publication"
+        );
+        registry.demand(2, std::slice::from_ref(&b.id), 60_000);
+        registry.disconnect(2);
+        assert!(
+            registry.claim().is_none(),
+            "Queued demand disappears with its final client"
+        );
+    }
+
+    #[test]
+    fn sixteen_subscriptions_directories_fifo_and_one_active_are_hard_bounds() {
+        let mut registry = Registry::default();
+        let ids = (0..17)
+            .map(|index| format!("session-{index:02}"))
+            .collect::<Vec<_>>();
+        for (index, id) in ids.iter().enumerate() {
+            registry.register(binding(id, &format!("directory-{index:02}"), index as u8));
+        }
+        registry.demand(1, &ids, 0);
+        assert_eq!(registry.subscriptions.len(), LIMIT);
+        assert_eq!(registry.entries.len(), LIMIT);
+        assert_eq!(registry.queue.len(), LIMIT);
+        for index in 0..LIMIT {
+            let work = registry.claim().unwrap();
+            assert_eq!(
+                work.directory,
+                PathBuf::from(format!("directory-{index:02}"))
+            );
+            assert!(registry.claim().is_none());
+            assert!(registry.finish(&work, Outcome::NotRepository, 1, 1));
+        }
+        assert!(registry.claim().is_none());
+    }
+
+    #[test]
+    fn shutdown_retires_claim_and_counter_or_clock_overflow_never_publishes_labels() {
+        let mut registry = Registry::default();
+        let a = binding("a", "dir", 1);
+        registry.register(a.clone());
+        registry.demand(1, std::slice::from_ref(&a.id), 0);
+        let work = registry.claim().unwrap();
+        registry.seal();
+        assert!(!registry.finish(&work, ready(), 1, 1));
+        registry.demand(1, std::slice::from_ref(&a.id), 50_000);
+        assert!(registry.claim().is_none());
+        let (mut registry, a) = observed(ready());
+        let entry = registry.entries.get_mut(&a.directory).unwrap();
+        entry.revision = MAX_REVISION - 1;
+        entry.context.as_mut().unwrap().revision = entry.revision;
+        registry.demand(1, std::slice::from_ref(&a.id), 60_000);
+        assert!(registry.claim().is_none());
+        assert_eq!(
+            registry
+                .context(&a.id, &a.incarnation, 60_000)
+                .unwrap()
+                .state,
+            Status::Unavailable
+        );
+        let (mut registry, a) = observed(ready());
+        registry.demand(1, std::slice::from_ref(&a.id), 60_000);
+        let work = registry.claim().unwrap();
+        registry.finish(&work, ready(), MAX_REVISION + 1, u64::MAX);
+        let unavailable = registry.context(&a.id, &a.incarnation, u64::MAX).unwrap();
+        assert_eq!(unavailable.state, Status::Unavailable);
+        assert!(unavailable.observed_at.is_none());
+    }
+
+    #[test]
+    fn optional_projection_clips_whole_objects_in_id_order_without_spending_admission() {
+        let mut registry = Registry::default();
+        let mut incarnations = HashMap::new();
+        let mut sessions = Vec::new();
+        for index in (0..16).rev() {
+            let id = format!("session-{index:02}");
+            let a = binding(&id, &id, index as u8);
+            registry.register(a.clone());
+            incarnations.insert(id.clone(), a.incarnation);
+            registry.demand(1, std::slice::from_ref(&id), 0);
+            let work = registry.claim().unwrap();
+            registry.finish(
+                &work,
+                Outcome::Ready {
+                    name: "\\".repeat(128),
+                    branch: "\"".repeat(256),
+                },
+                10,
+                10,
+            );
+            sessions.push(json!({"id":id}));
+        }
+        let mut snapshot = serde_json::json!({"type":"sessions","sessions":sessions,"groups":[],"padding":"x".repeat(36 * 1024)});
+        let baseline = snapshot.clone();
+        let baseline_bytes = serde_json::to_vec(&baseline).unwrap().len();
+        assert!(crate::budgets::admit_snapshot_bytes(baseline_bytes, 100).is_ok());
+        registry.enrich(&mut snapshot, &incarnations, 11);
+        let projected = serde_json::to_vec(&snapshot).unwrap().len();
+        assert!(projected <= baseline_bytes + OPTIONAL_BYTES && projected <= PROJECTED_BYTES);
+        assert!(
+            crate::budgets::admit_snapshot_bytes(projected, 100).is_err(),
+            "Reusing optional projection for admission would wrongly reject this candidate"
+        );
+        let included = snapshot["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|session| session.get("repositoryContext").is_some())
+            .collect::<Vec<_>>();
+        assert!(!included.is_empty() && included.len() < 16);
+        assert_eq!(included.last().unwrap()["id"], "session-00");
+        assert!(
+            snapshot["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|session| session.get("repositoryContext"))
+                .all(|context| context.as_object().unwrap().len() == 6)
+        );
+        assert_eq!(serde_json::to_vec(&baseline).unwrap().len(), baseline_bytes);
+        assert!(crate::budgets::admit_snapshot_bytes(baseline_bytes, 100).is_ok());
+        snapshot["requestId"] = json!("\\".repeat(128));
+        assert!(
+            crate::wire::encode(snapshot, &[9; 32], &"challenge".repeat(8), MAX_REVISION).is_ok()
+        );
+    }
+
+    #[test]
+    fn scope_filter_and_expired_projection_never_leak_other_subscription_or_old_branch() {
+        let (registry, a) = observed(ready());
+        let bindings = HashMap::from([(a.id.clone(), a.incarnation)]);
+        let mut hidden = serde_json::json!({"sessions":[{"id":"different"}]});
+        registry.enrich(&mut hidden, &bindings, 120);
+        assert!(hidden["sessions"][0].get("repositoryContext").is_none());
+        let mut stale = serde_json::json!({"sessions":[{"id":a.id}]});
+        registry.enrich(&mut stale, &bindings, 30_120);
+        assert_eq!(stale["sessions"][0]["repositoryContext"]["state"], "stale");
+        assert!(stale["sessions"][0]["repositoryContext"]["branch"].is_null());
+        assert_eq!(stale["sessions"][0]["repositoryContext"]["observedAt"], 500);
+    }
+}

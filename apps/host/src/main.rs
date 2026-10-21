@@ -12,6 +12,7 @@ mod codex_context;
 mod command_scope;
 mod event_log;
 mod git;
+mod git_repository;
 mod groups;
 mod host_lock;
 mod job_attempts;
@@ -51,6 +52,7 @@ mod receipts;
 mod recipes;
 mod replay;
 mod scoped_context;
+mod session_repository;
 mod sessions;
 mod startup_trace;
 mod status;
@@ -205,6 +207,13 @@ fn stdin_close_signal() -> oneshot::Receiver<()> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    if std::env::args_os().len() == 2
+        && std::env::args_os().nth(1).as_deref()
+            == Some(std::ffi::OsStr::new(git_repository::HELPER_FLAG))
+    {
+        std::process::exit(git_repository::helper_stdio());
+    }
     if std::env::args_os().len() == 2
         && std::env::args_os().nth(1).as_deref()
             == Some(std::ffi::OsStr::new(job_precheck_adapter::FLAG))
@@ -464,6 +473,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     tokio::spawn(notifications::run(state.clone()));
     let quota_runtime = provider_quota_runtime::Runtime::start(state.clone());
     let quota_wake_runtime = quota_wake_runtime::Runtime::start(state.clone(), event_log.clone());
+    let repository_runtime = session_repository::Runtime::start(state.clone());
     let permits = Arc::new(Semaphore::new(16));
     span.end(true);
     let span = trace.begin(Phase::ReadinessAnnounce);
@@ -501,6 +511,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     quota_runtime.request_shutdown();
     quota_wake_runtime.request_shutdown();
     job_runtime.request_shutdown();
+    repository_runtime.request_shutdown();
     let (job_shutdown, webhook_shutdown) = tokio::join!(job_runtime.shutdown(), async {
         if let Some(listener) = webhooks {
             let result = listener.shutdown().await;
@@ -515,6 +526,9 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     }
     if !quota_wake_runtime.shutdown().await {
         eprintln!("Quota wake dispatch cleanup is unconfirmed");
+    }
+    if !repository_runtime.shutdown().await {
+        eprintln!("Session repository metadata cleanup is unconfirmed");
     }
     // Closed sessions may still be releasing ConPTY resources in background
     // workers. Keep the output dispatcher alive while they finish, without

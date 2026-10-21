@@ -259,6 +259,7 @@ pub async fn handle(
             id,
             json!({"type":"connected", "clientNonce":client_nonce.unwrap(), "clientId":id, "protocolVersion":2}),
         );
+        let _ = state.repository_view_requested(id);
         state.send(id, state.list());
     }
     let _cleanup = Cleanup {
