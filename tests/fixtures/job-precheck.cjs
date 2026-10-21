@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
+const net = require('node:net');
 const [requestedMode, directory, role, literal] = process.argv.slice(2);
 let mode = requestedMode;
 if (mode === 'probe') {
@@ -49,7 +50,7 @@ if (role === 'root' && mode.startsWith('generation-')) {
   fs.writeFileSync(counter, JSON.stringify({ count }));
   // The approved command is immutable; owned state selects only the second outcome.
   mode = count === 1 ? 'pass' : mode.slice('generation-'.length);
-  if (mode.startsWith('tree')) mode = 'tree-cancel';
+  if (mode.startsWith('tree')) mode = 'announced-tree';
 }
 if (mode.startsWith('tree-')) {
   fs.writeFileSync(path.join(directory, `${role}.json`), JSON.stringify({ pid: process.pid }));
@@ -69,6 +70,18 @@ if (mode.startsWith('tree-')) {
       }
     }, 20);
   } else setInterval(() => {}, 1000);
+} else if (mode === 'announced-tree') {
+  const address = `127.0.0.1:${process.env.TREE_PORT}`;
+  const observer = net.connect(Number(process.env.TREE_PORT), '127.0.0.1', () => {
+    observer.write(`${role}\n`);
+    cp.spawn(process.env.TREE_PROGRAM, ['tree', address, 'child', 'grandchild'], {
+      stdio: 'ignore',
+      env: process.env,
+      windowsHide: true,
+    });
+  });
+  observer.on('error', () => process.exit(1));
+  observer.on('close', () => process.exit(0));
 } else if (mode === 'hold') {
   setInterval(() => {
     if (fs.existsSync(path.join(directory, 'release'))) {

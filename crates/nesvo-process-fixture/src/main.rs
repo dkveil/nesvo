@@ -1,7 +1,8 @@
 use std::{
     io::{Read, Write},
+    net::TcpStream,
     path::Path,
-    process::ExitCode,
+    process::{ExitCode, Stdio},
     time::{Duration, Instant},
 };
 
@@ -20,6 +21,7 @@ fn main() -> ExitCode {
         ["echo", code] => echo(code, ""),
         ["echo", code, prefix] => echo(code, prefix),
         ["gate", release, program, rest @ ..] => gate(Path::new(release), program, rest),
+        ["tree", address, role, descendants @ ..] => tree(address, role, descendants),
         _ => Err(format!("unsupported fixture arguments: {args:?}")),
     };
     result.unwrap_or_else(|error| {
@@ -73,6 +75,33 @@ fn gate(release: &Path, program: &str, args: &[&str]) -> Result<ExitCode, String
     let status = command.status().map_err(|e| e.to_string())?;
     let code = status.code().and_then(|code| u8::try_from(code).ok());
     Ok(code.map_or(ExitCode::FAILURE, ExitCode::from))
+}
+
+fn tree(address: &str, role: &str, descendants: &[&str]) -> Result<ExitCode, String> {
+    let mut observer = TcpStream::connect(address).map_err(|e| e.to_string())?;
+    observer
+        .write_all(format!("{role}\n").as_bytes())
+        .map_err(|e| e.to_string())?;
+    if let Some((next, rest)) = descendants.split_first() {
+        let mut command =
+            std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+        command
+            .arg("tree")
+            .arg(address)
+            .arg(next)
+            .args(rest)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        command.spawn().map_err(|e| e.to_string())?;
+    }
+    let _ = observer.read(&mut [0]);
+    Ok(ExitCode::SUCCESS)
 }
 
 fn write_stdout(bytes: &[u8]) -> Result<(), String> {

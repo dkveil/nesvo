@@ -1,5 +1,6 @@
 //! Fresh command authorization for every opted-in native job generation.
 use super::*;
+use tokio::io::AsyncReadExt;
 
 const LITERAL: &str = "literal $(x); & łódź \"quoted\"";
 
@@ -10,10 +11,66 @@ fn node(fixture: &Fixture) -> PathBuf {
         .join(if cfg!(windows) { "node.exe" } else { "node" })
 }
 
+const COMMAND_TIMEOUT_MS: u64 = 10_000;
+const TREE_READY_DEADLINE: Duration = Duration::from_millis(COMMAND_TIMEOUT_MS + 5_000);
+const TREE_EXIT_DEADLINE: Duration = Duration::from_secs(5);
+const TREE_ROLES: [&str; 3] = ["child", "grandchild", "root"];
+
+struct OwnedTree {
+    listener: tokio::net::TcpListener,
+    members: Vec<BufReader<tokio::net::TcpStream>>,
+}
+
+impl OwnedTree {
+    async fn bind() -> Result<Self> {
+        Ok(Self {
+            listener: tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+            members: Vec::new(),
+        })
+    }
+
+    fn environment(&self) -> Result<Value> {
+        Ok(json!({
+            "CHECK_LITERAL":LITERAL,
+            "TREE_PORT":self.listener.local_addr()?.port().to_string(),
+            "TREE_PROGRAM":process_fixture::executable(),
+        }))
+    }
+
+    async fn announced(&mut self) -> Result<()> {
+        let mut roles = Vec::new();
+        while roles.len() < TREE_ROLES.len() {
+            let (stream, _) = self.listener.accept().await?;
+            let mut member = BufReader::new(stream);
+            let mut role = String::new();
+            member.read_line(&mut role).await?;
+            roles.push(role.trim_end().to_owned());
+            self.members.push(member);
+        }
+        roles.sort();
+        ensure!(
+            roles == TREE_ROLES,
+            "Unexpected owned tree members: {roles:?}"
+        );
+        Ok(())
+    }
+
+    async fn exited(&mut self) -> Result<()> {
+        for member in &mut self.members {
+            let mut rest = Vec::new();
+            if member.read_to_end(&mut rest).await.is_ok() {
+                ensure!(rest.is_empty(), "Owned tree member wrote after announcing");
+            }
+        }
+        Ok(())
+    }
+}
+
 async fn approve(
     fixture: &Fixture,
     owner: &RunningService<RoleClient, ()>,
     mode: &str,
+    tree: Option<&OwnedTree>,
 ) -> Result<(Value, PathBuf, Vec<Value>)> {
     let script = fixture.directory.join("generation precheck łódź.cjs");
     std::fs::write(
@@ -24,10 +81,14 @@ async fn approve(
     std::fs::create_dir(&directory)?;
     // This existing command cwd is deliberately independent of the missing
     // worker cwd which produces the genuine native failed/no-effect receipt.
+    let environment = match tree {
+        Some(tree) => tree.environment()?,
+        None => json!({"CHECK_LITERAL":LITERAL}),
+    };
     let command = json!({
         "title":format!("Repeated owned {mode}"),"executable":node(fixture),
         "cwd":directory,"arguments":[script,mode,directory,"root",LITERAL],
-        "timeoutMs":10000,"environment":{"CHECK_LITERAL":LITERAL}
+        "timeoutMs":COMMAND_TIMEOUT_MS,"environment":environment
     });
     let description = data(call(owner, "nesvo_describe_precheck", json!({"spec":command})).await?)?;
     let digest = description["data"]["precheckDescription"]["digest"]
@@ -303,7 +364,7 @@ async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_wo
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (approval, directory, mut envelopes) =
-            approve(&fixture, &owner, "generation-pass").await?;
+            approve(&fixture, &owner, "generation-pass", None).await?;
         let cwd = fixture.directory.join("worker-after-second-check");
         assert!(!cwd.exists());
         let key = "native-command-generations";
@@ -440,7 +501,7 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (approval, directory, mut envelopes) =
-            approve(&fixture, &owner, "generation-skip").await?;
+            approve(&fixture, &owner, "generation-skip", None).await?;
         let cwd = fixture.directory.join("worker-for-skipped-generation");
         let key = "native-second-command-skip";
         let (created, admitted) =
@@ -489,7 +550,7 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
         envelopes.extend(launch_evidence(&owner, first, "failed").await?);
 
         let (revocable, revoked_directory, approvals) =
-            approve(&fixture, &owner, "generation-pass").await?;
+            approve(&fixture, &owner, "generation-pass", None).await?;
         envelopes.extend(approvals);
         let revoked_cwd = fixture.directory.join("worker-for-revoked-generation");
         let revoked_key = "native-revoked-waiting-precheck";
@@ -637,19 +698,8 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
     }
 }
 
-async fn tree_ready(fixture: &mut Fixture, job: &str, directory: &Path) -> Result<()> {
-    let result = timeout(Duration::from_secs(5), async {
-        loop {
-            if ["root", "child", "grandchild"]
-                .iter()
-                .all(|name| directory.join(format!("{name}.json")).exists())
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await;
+async fn tree_ready(fixture: &mut Fixture, job: &str, tree: &mut OwnedTree) -> Result<()> {
+    let result = timeout(TREE_READY_DEADLINE, tree.announced()).await;
     if !matches!(result, Ok(Ok(()))) {
         let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
         anyhow::bail!(
@@ -659,34 +709,8 @@ async fn tree_ready(fixture: &mut Fixture, job: &str, directory: &Path) -> Resul
     Ok(())
 }
 
-async fn tree_gone(fixture: &mut Fixture, job: &str, directory: &Path) -> Result<()> {
-    let result = timeout(Duration::from_secs(5), async {
-        loop {
-            let mut command = Command::new(node(fixture));
-            command
-                .arg(fixture.directory.join("generation precheck łódź.cjs"))
-                .arg("probe")
-                .arg(directory)
-                .kill_on_drop(true);
-            #[cfg(windows)]
-            command.creation_flags(0x08000000);
-            let output = command.output().await?;
-            ensure!(
-                output.status.success(),
-                "Owned process probe failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let view: Value = serde_json::from_slice(&output.stdout)?;
-            if view["running"]
-                .as_array()
-                .is_some_and(|rows| rows.len() == 3 && rows.iter().all(|value| value == false))
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await;
+async fn tree_gone(fixture: &mut Fixture, job: &str, tree: &mut OwnedTree) -> Result<()> {
+    let result = timeout(TREE_EXIT_DEADLINE, tree.exited()).await;
     if !matches!(result, Ok(Ok(()))) {
         let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
         anyhow::bail!(
@@ -703,7 +727,8 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(90), async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
-        let (approval, directory, mut envelopes) = approve(&fixture, &owner, "generation-tree-cancel").await?;
+        let mut tree = OwnedTree::bind().await?;
+        let (approval, directory, mut envelopes) = approve(&fixture, &owner, "generation-tree-cancel", Some(&tree)).await?;
         let cwd = fixture.directory.join("worker-never-starts-after-cancel");
         let key = "native-cancel-second-command";
         let (created, admitted) = admit(&fixture, &owner, key, checked_spec(&cwd, &approval, 3000)).await?;
@@ -721,7 +746,7 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         checked_record(&second["precheck"], &approval, 2, "running")?;
         assert_ne!(second["jobAttemptId"], first["jobAttemptId"]);
         assert!(second["runId"].is_null());
-        tree_ready(&mut fixture, job, &directory).await?;
+        tree_ready(&mut fixture, job, &mut tree).await?;
         assert_eq!(count(&directory)?, 2);
         envelopes.push(no_workers(&fixture, &owner).await?);
         let cancellation_args = json!({"key":"cancel-fresh-command","jobId":job,"occurrenceId":id});
@@ -735,13 +760,14 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         assert!(canceled["data"]["occurrence"]["precheck"]["result"]["commandStarted"].is_null());
         assert_eq!(canceled["data"]["occurrence"]["precheck"]["result"]["reason"], "owner_canceled");
         assert!(canceled["data"]["occurrence"]["runId"].is_null());
-        tree_gone(&mut fixture, job, &directory).await?;
+        tree_gone(&mut fixture, job, &mut tree).await?;
         let cancel_replay = budgets::owner_cli(&fixture, &["job", "cancel", job, id, "--key", "cancel-fresh-command", "--json"]).await?;
         assert_eq!(cancel_replay["data"], canceling["data"]);
         envelopes.extend(parity(&fixture, &owner, job, id, &old, &canceled).await?);
         envelopes.extend(replay_admission(&fixture, &owner, job, key, &admitted).await?);
 
-        let (crash_approval, crash_directory, approvals) = approve(&fixture, &owner, "generation-tree-crash").await?;
+        let mut crash_tree = OwnedTree::bind().await?;
+        let (crash_approval, crash_directory, approvals) = approve(&fixture, &owner, "generation-tree-crash", Some(&crash_tree)).await?;
         envelopes.extend(approvals);
         let crash_cwd = fixture.directory.join("worker-never-starts-after-crash");
         let crash_key = "native-restart-second-command";
@@ -756,7 +782,7 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         std::fs::create_dir(&crash_cwd)?;
         let running = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "prechecking", 2, 18).await?;
         let target = running["data"]["occurrence"]["jobAttemptId"].as_str().context("Exact unknown second generation")?;
-        tree_ready(&mut fixture, crash_job_id, &crash_directory).await?;
+        tree_ready(&mut fixture, crash_job_id, &mut crash_tree).await?;
         assert_eq!(count(&crash_directory)?, 2);
         owner.cancel().await?;
         fixture.restart(true).await?;
@@ -766,7 +792,7 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         checked_record(&unknown["data"]["occurrence"]["precheck"], &crash_approval, 2, "unknown")?;
         assert!(unknown["data"]["occurrence"]["precheck"]["finishedAt"].is_null());
         assert!(unknown["data"]["occurrence"]["runId"].is_null());
-        tree_gone(&mut fixture, crash_job_id, &crash_directory).await?;
+        tree_gone(&mut fixture, crash_job_id, &mut crash_tree).await?;
         let intent = json!({"key":"abandon-exact-second-command","jobId":crash_job_id,"occurrenceId":crash_id,"expectedDigest":crash_approval["digest"],"acknowledgeUnknownEffects":true});
         for job_attempt_id in [None, Some(source["jobAttemptId"].clone())] {
             let mut wrong = intent.clone();
