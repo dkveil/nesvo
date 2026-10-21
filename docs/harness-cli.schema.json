@@ -6086,7 +6086,7 @@
           }
         }
       ],
-      "description": "Additive F31 evidence of the directory contextual search inspects and why. A cwd outside the launch repository toplevel or launch directory is never exposed. Grants no authority."
+      "description": "Additive F31 evidence of the directory that roots contextual search and why; repository labels and root stay bound to the launch repository. A cwd outside the launch repository toplevel or launch directory is never exposed. Grants no authority."
     },
     "repositoryContext": {
       "type": "object",

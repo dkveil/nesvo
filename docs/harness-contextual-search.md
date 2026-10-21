@@ -6,9 +6,10 @@ and ranking. Both quick search and the expanded palette accept current ready
 repository/branch labels; detached repositories contribute only their name.
 Checking, unavailable, stale, malformed or omitted metadata adds no terms.
 
-The source is the provider's current working directory when the host observed
-one that is fresh and inside the allowed root, otherwise the native launch
-directory. It is never inferred: a later Edit/Write review location does not
+Repository evidence always comes from the native launch directory. The search
+root is the provider's current working directory when the host observed one
+that is fresh and inside the allowed root, otherwise the launch directory; the
+current path then adds a search term. Neither is ever inferred: a later Edit/Write review location does not
 become search metadata. See [current provider cwd](#current-provider-cwd). No new
 shortcut, layout, icon, sidebar width or ranking weight is introduced.
 
@@ -70,10 +71,11 @@ launch, without Git), or the launch directory itself when no ancestor has one.
 A cwd outside it is recorded as `outsideRoot`; its path is not projected and the
 launch directory stays the search root.
 
-When the root changes, the session's subscription moves to that directory under
-the same sixteen-directory bound, an admitted read of the old directory becomes
-an orphan, and no Git work starts until the next explicit demand. The snapshot's
-`searchRoot` names the source, reason, current path and observation time (see
+The current cwd influences only `searchRoot` and its path search term. Git
+inspection, the repository/branch labels, `repositoryContext.root` and the
+projects registry stay bound to the launch repository, so a worker that changes
+into another repository never creates a new project entry. A cwd change starts
+no Git work. The snapshot's `searchRoot` names the source, reason, current path and observation time (see
 [protocol v2](protocol-v2.md#sessions-and-groups)). The TUI adds the current
 path as a search term and shows the selected session's root in the expanded
 palette footer, eliding the path from the left; the compact footer keeps only its

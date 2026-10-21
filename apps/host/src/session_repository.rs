@@ -89,7 +89,6 @@ pub(crate) struct SearchRoot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CurrentCwd {
     path: PathBuf,
-    directory: PathBuf,
     observed_at: u64,
     sequence: u64,
     inside: bool,
@@ -97,7 +96,6 @@ struct CurrentCwd {
 
 #[derive(Debug)]
 struct Location {
-    launch: PathBuf,
     allowed: PathBuf,
     current: Option<CurrentCwd>,
 }
@@ -111,7 +109,6 @@ impl Location {
             .unwrap_or(&canonical)
             .to_owned();
         Self {
-            launch: launch.to_owned(),
             allowed,
             current: None,
         }
@@ -132,19 +129,11 @@ impl Location {
             }
             (Some(observed), _) => Some(CurrentCwd {
                 inside: observed.path.starts_with(&self.allowed),
-                directory: PathBuf::from(crate::process::display_path(&observed.path)),
                 path: observed.path,
                 observed_at: observed.observed_at,
                 sequence: observed.sequence,
             }),
         };
-    }
-
-    fn directory(&self) -> &Path {
-        match &self.current {
-            Some(current) if current.inside => &current.directory,
-            _ => &self.launch,
-        }
     }
 
     fn search_root(&self) -> SearchRoot {
@@ -268,28 +257,7 @@ impl Registry {
         };
         let previous = location.search_root();
         location.observe(observed);
-        let changed = location.search_root() != previous;
-        let directory = location.directory().to_owned();
-        self.retarget(id, directory);
-        changed
-    }
-
-    fn retarget(&mut self, id: &str, directory: PathBuf) {
-        let Some(binding) = self.subscriptions.get_mut(id) else {
-            return;
-        };
-        if binding.directory == directory {
-            return;
-        }
-        binding.directory = directory.clone();
-        self.entries.retain(|directory, _| {
-            self.subscriptions
-                .values()
-                .any(|binding| &binding.directory == directory)
-        });
-        self.entries.entry(directory).or_default();
-        self.queue
-            .retain(|directory| self.entries.contains_key(directory));
+        location.search_root() != previous
     }
 
     fn search_root(&self, id: &str, incarnation: &[u8; 16]) -> Option<SearchRoot> {

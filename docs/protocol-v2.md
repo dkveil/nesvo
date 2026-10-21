@@ -195,10 +195,9 @@ credentials never appear in snapshots. This is API authorization, not an OS sand
 Session snapshots and query output may include optional
 `repositoryContext:{source,state,name,branch,observedAt,revision}`. Omission is
 valid for older hosts or optional snapshot-byte clipping. All six inner fields
-are required when present. `source` stays exactly `launchDirectory` for
-compatibility with clients that reject other values; the directory actually
-inspected is named by `searchRoot` below. Review selection never changes it.
-States are `checking|ready|detached|notRepository|unavailable|stale`.
+are required when present. `source` is exactly `launchDirectory`: the canonical
+directory passed to the native launch, independently of later agent cwd or review
+selection. The current cwd never changes this object or its `root`. States are `checking|ready|detached|notRepository|unavailable|stale`.
 Repository/branch labels are nullable, nonempty, control-free UTF-8 strings of
 at most 128/256 bytes. `ready` has both labels; `detached` has only a repository
 name. Other states have null labels. Ready/detached/notRepository have a
@@ -215,7 +214,9 @@ by the repository name otherwise.
 
 An F31-capable host adds optional `searchRoot:{source,reason,path,observedAt}`,
 projected and clipped together with `repositoryContext` from the same optional
-bytes. It states which directory the contextual search inspects and why:
+bytes. It states which directory roots the contextual search and why; a
+`currentCwd` path is a search term, while repository labels, `root` and the
+derived project stay bound to the launch repository:
 
 | `source`          | `reason`       | `path`                 | `observedAt` |
 | ----------------- | -------------- | ---------------------- | ------------ |
@@ -231,8 +232,7 @@ newer cwd, and `observedAt` is the first observation of that path, not renewed
 by repeats. The allowed root is the launch directory's repository toplevel (the
 nearest ancestor holding a `.git` entry, found without running Git) or the
 launch directory itself. A cwd outside it is recorded as `outsideRoot` and not
-used. Moving the root starts no Git work; the next explicit demand inspects it.
-Clients that do not know the field ignore it. See
+used. A cwd change starts no Git work and never moves Git inspection. Clients that do not know the field ignore it. See
 [contextual search](harness-contextual-search.md#current-provider-cwd).
 
 The TUI ignores malformed optional context without rejecting a legacy session;

@@ -86,10 +86,7 @@ fn search_root_follows_current_cwd_only_inside_the_launch_repository_toplevel() 
             observed_at: Some(1_002),
         }
     );
-    assert_eq!(
-        inspected(&registry, &binding),
-        PathBuf::from(workspace.shown("repo/worktree"))
-    );
+    assert_eq!(inspected(&registry, &binding), binding.directory);
     assert!(!registry.observe_cwd(
         &binding.id,
         &binding.incarnation,
@@ -164,7 +161,7 @@ fn search_root_outside_a_repository_is_confined_to_the_launch_directory_itself()
 }
 
 #[test]
-fn search_projection_states_each_root_and_inspects_only_the_root_it_names() {
+fn search_root_follows_another_repository_while_repository_context_and_project_stay_on_launch() {
     let workspace = Workspace::new();
     let mut registry = Registry::default();
     let binding = launched(&mut registry, workspace.path("repo/nested"));
@@ -181,49 +178,77 @@ fn search_projection_states_each_root_and_inspects_only_the_root_it_names() {
     );
     assert!(launch.get("repositoryContext").is_none());
 
-    registry.observe_cwd(
-        &binding.id,
-        &binding.incarnation,
-        observed(&workspace.path("repo/worktree"), 7),
-    );
     registry.demand(1, std::slice::from_ref(&binding.id), 0);
     let work = registry.claim().unwrap();
-    assert_eq!(
-        work.directory,
-        PathBuf::from(workspace.shown("repo/worktree"))
-    );
+    assert_eq!(work.directory, binding.directory);
     assert!(registry.finish(
         &work,
         Outcome::Ready {
             name: "repo".into(),
-            branch: "feature".into(),
+            branch: "main".into(),
             root: workspace.shown("repo"),
         },
         5,
         5,
+    ));
+    let derived = |registry: &Registry| {
+        crate::projects::derive(
+            &[crate::projects::LiveSession {
+                id: binding.id.clone(),
+                directory: workspace.shown("repo/nested"),
+                root: registry.root(&binding.id),
+                running: true,
+            }],
+            &[],
+            10,
+        )
+        .into_iter()
+        .map(|observation| observation.root)
+        .collect::<Vec<_>>()
+    };
+    let launch = project(&registry);
+    let launch_project = derived(&registry);
+    assert_eq!(launch_project, vec![workspace.shown("repo")]);
+
+    assert!(registry.observe_cwd(
+        &binding.id,
+        &binding.incarnation,
+        observed(&workspace.path("repo/worktree"), 7),
     ));
     let current = project(&registry);
     assert_eq!(
         current["searchRoot"],
         json!({"source":"currentCwd","reason":"insideRoot","path":workspace.shown("repo/worktree"),"observedAt":1_007})
     );
-    assert_eq!(current["repositoryContext"]["branch"], "feature");
-    assert_eq!(current["repositoryContext"]["source"], "launchDirectory");
+    assert_eq!(current["repositoryContext"], launch["repositoryContext"]);
+    assert_eq!(
+        current["repositoryContext"]["root"],
+        workspace.shown("repo")
+    );
+    assert_eq!(registry.root(&binding.id), Some(workspace.shown("repo")));
+    assert_eq!(derived(&registry), launch_project);
+    registry.demand(1, std::slice::from_ref(&binding.id), 40_000);
+    let refresh = registry.claim().unwrap();
+    assert_eq!(refresh.directory, binding.directory);
+    assert!(registry.finish(
+        &refresh,
+        Outcome::Ready {
+            name: "repo".into(),
+            branch: "main".into(),
+            root: workspace.shown("repo"),
+        },
+        40_000,
+        40_000,
+    ));
 
     registry.observe_cwd(
         &binding.id,
         &binding.incarnation,
         observed(&workspace.path("plain"), 8),
     );
-    let outside = project(&registry);
     assert_eq!(
-        outside["searchRoot"],
+        project(&registry)["searchRoot"],
         json!({"source":"launchDirectory","reason":"outsideRoot","path":null,"observedAt":1_008})
     );
-    assert!(
-        outside.get("repositoryContext").is_none(),
-        "the current cwd's branch never labels the launch directory"
-    );
-    registry.demand(1, std::slice::from_ref(&binding.id), 40_000);
-    assert_eq!(registry.claim().unwrap().directory, binding.directory);
+    assert_eq!(derived(&registry), launch_project);
 }
