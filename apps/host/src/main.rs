@@ -50,6 +50,7 @@ mod readiness;
 mod receipts;
 mod recipes;
 mod replay;
+mod scoped_context;
 mod sessions;
 mod status;
 mod status_latency;

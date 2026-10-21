@@ -18,6 +18,7 @@ pub struct Tracker(
     Adapter,
     Option<Value>,
     Option<crate::claude_quota_diagnostics::Anchor>,
+    Option<crate::scoped_context::Descriptor>,
 );
 impl Tracker {
     #[cfg(test)]
@@ -59,7 +60,7 @@ impl Tracker {
     pub fn install_codex(command: &mut CommandBuilder, session_id: &str) -> Result<Self> {
         let mut tracker = Self::create(Some(session_id))?;
         tracker.1 = Adapter::Codex;
-        crate::codex_context::configure(command, &tracker.report())?;
+        crate::codex_context::configure(command, &tracker.hook_report()?)?;
         Ok(tracker)
     }
     pub fn adapter(&self) -> &'static str {
@@ -80,7 +81,7 @@ impl Tracker {
             command.env("NESVO_SESSION_ID", id);
         }
         let hook = json!({"type":"command", "command": std::env::current_exe()?,
-            "args":["--agent-context-hook", tracker.report()], "timeout":3});
+            "args":["--agent-context-hook", tracker.hook_report()?], "timeout":3});
         let mut settings = json!({"hooks": {
             "SessionStart":[{"hooks":[hook.clone()]}],
             "UserPromptSubmit":[{"hooks":[hook.clone()]}],
@@ -129,11 +130,19 @@ impl Tracker {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
         }
-        let tracker = Self(directory, Adapter::Claude, None, None);
+        let mut tracker = Self(directory, Adapter::Claude, None, None, None);
         if let Some(session_id) = session_id {
             crate::agent_events::initialize(&tracker.report(), session_id)?;
         }
+        tracker.4 = Some(crate::scoped_context::install(
+            &tracker.report(),
+            session_id,
+        )?);
         Ok(tracker)
+    }
+    fn hook_report(&self) -> Result<PathBuf> {
+        anyhow::ensure!(self.4.is_some(), "Context scope was not installed");
+        Ok(self.report())
     }
     pub fn report(&self) -> PathBuf {
         self.0.join("context.json")
@@ -228,6 +237,13 @@ fn receive_from(report: &Path, input: impl Read) -> Result<()> {
     receive_inner(report, input, false)
 }
 fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
+    // Immutable mode does not depend on whether the current journal exists.
+    let descriptor = crate::scoped_context::load(report).ok();
+    let ticket = if !codex && let Some(descriptor) = &descriptor {
+        crate::scoped_context::begin(report, descriptor)
+    } else {
+        Ok(None)
+    };
     let mut bytes = Vec::new();
     input.take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > 2 * 1024 * 1024 {
@@ -252,7 +268,7 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
                     .and_then(crate::submission::claude_paste_digest)
             })
             .flatten();
-        let sequence = if crate::agent_events::exists(report) {
+        let sequence = if !matches!(descriptor, Some(crate::scoped_context::Descriptor::Legacy)) {
             match crate::agent_events::append_scoped(
                 report,
                 crate::agent_events::SourceEvent {
@@ -276,7 +292,7 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
                 None => return Ok(()),
             }
         } else {
-            // Existing launch scopes created by older hosts retain compatibility.
+            // Only explicitly legacy fixtures use unscoped status/context JSON.
             chrono::Utc::now()
                 .timestamp_nanos_opt()
                 .unwrap_or_default()
@@ -294,9 +310,26 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
         result?;
     }
     if !codex && let Some(context) = extract(&value) {
-        if crate::agent_events::exists(report)
-            && !crate::agent_events::accepts_context(report, value["session_id"].as_str())?
-        {
+        // An upgraded helper can still deliver lifecycle events to an old valid
+        // journal, but an absent/invalid descriptor never grants context authority.
+        let descriptor = descriptor
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Scoped review context is unavailable"))?;
+        if descriptor.journal_backed() {
+            if let Some(ticket) = ticket? {
+                let change = if value["hook_event_name"] == "CwdChanged" {
+                    crate::scoped_context::Change::CwdChanged(context.directory)
+                } else {
+                    crate::scoped_context::Change::EditedFile(context.directory)
+                };
+                crate::scoped_context::append(
+                    report,
+                    descriptor,
+                    &ticket,
+                    value["session_id"].as_str(),
+                    &change,
+                )?;
+            }
             return Ok(());
         }
         let temporary =
@@ -399,8 +432,37 @@ async fn read_lifecycle(report: &Path) -> Option<LifecycleReport> {
     observe(report).await.report
 }
 
-pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
+pub async fn resolve(
+    fallback: PathBuf,
+    report: Option<PathBuf>,
+    expected_session: Option<String>,
+) -> Context {
     if let Some(report) = report {
+        if let Some(expected_session) = expected_session {
+            // SQLite work stays off the async runtime and outside the State lock.
+            if let Ok(Ok(Some(context))) = tokio::task::spawn_blocking(move || {
+                let descriptor = crate::scoped_context::load(&report)?;
+                crate::scoped_context::read(&report, &descriptor, &expected_session)
+            })
+            .await
+            {
+                return context;
+            }
+            return Context {
+                directory: fallback,
+                source: "Auto: launch folder".into(),
+            };
+        }
+        // Compatibility is explicit. An unknown/missing descriptor is not legacy.
+        if !matches!(
+            crate::scoped_context::load(&report),
+            Ok(crate::scoped_context::Descriptor::Legacy)
+        ) {
+            return Context {
+                directory: fallback,
+                source: "Auto: launch folder".into(),
+            };
+        }
         // Reports contain only two bounded strings, never the original hook payload.
         if let Ok(file) = tokio::fs::File::open(report).await {
             use tokio::io::AsyncReadExt;
@@ -422,6 +484,308 @@ pub async fn resolve(fallback: PathBuf, report: Option<PathBuf>) -> Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct BeforeInput<F> {
+        action: Option<F>,
+        input: std::io::Cursor<Vec<u8>>,
+    }
+    impl<F: FnOnce()> Read for BeforeInput<F> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if let Some(action) = self.action.take() {
+                action();
+            }
+            self.input.read(buffer)
+        }
+    }
+    fn rebind(report: &Path, provider: &str) {
+        receive_from(
+            report,
+            json!({"hook_event_name":"SessionStart", "session_id":provider, "source":"clear"})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+    }
+    fn current_context(report: &Path) -> Option<Context> {
+        crate::scoped_context::read(
+            report,
+            &crate::scoped_context::load(report).unwrap(),
+            "owner",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn stdin_delay_cannot_rebind_cwd_context_to_a_new_generation() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        rebind(&report, "a");
+        let current = tracker.0.join("b");
+        let input = json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":tracker.0.join("old-a")});
+        receive_from(&report, BeforeInput {
+            action: Some(|| {
+                rebind(&report, "b");
+                receive_from(&report, json!({"hook_event_name":"CwdChanged", "session_id":"b", "new_cwd":current})
+                    .to_string().as_bytes()).unwrap();
+            }),
+            input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+        }).unwrap();
+        assert_eq!(current_context(&report).unwrap().directory, current);
+        assert_eq!(
+            crate::agent_events::read(&report, "owner", 0)
+                .unwrap()
+                .identity
+                .provider_session_id
+                .as_deref(),
+            Some("b")
+        );
+    }
+
+    #[test]
+    fn stdin_delay_cannot_reattribute_aba_edit_but_keeps_existing_lifecycle_behavior() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        rebind(&report, "a");
+        let current = tracker.0.join("new-a");
+        let input = json!({"hook_event_name":"PostToolUse", "session_id":"a", "tool_name":"Edit",
+            "tool_input":{"file_path":tracker.0.join("old-a/file.rs"), "content":"PRIVATE_PAYLOAD_SENTINEL"}});
+        receive_from(&report, BeforeInput {
+            action: Some(|| {
+                rebind(&report, "b");
+                rebind(&report, "a");
+                receive_from(&report, json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":current})
+                    .to_string().as_bytes()).unwrap();
+            }),
+            input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+        }).unwrap();
+        assert_eq!(current_context(&report).unwrap().directory, current);
+        let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+        assert_eq!(batch.identity.generation, 3);
+        assert_eq!(batch.events.last().unwrap().name, "PostToolUse");
+        for file in std::fs::read_dir(&tracker.0).unwrap() {
+            let path = file.unwrap().path();
+            if path.is_file() {
+                let bytes = std::fs::read(path).unwrap();
+                assert!(
+                    !bytes
+                        .windows(b"PRIVATE_PAYLOAD_SENTINEL".len())
+                        .any(|part| part == b"PRIVATE_PAYLOAD_SENTINEL")
+                );
+            }
+        }
+        assert!(
+            !report.exists(),
+            "production hooks do not create unscoped context JSON"
+        );
+    }
+
+    #[test]
+    fn entry_unbound_context_cannot_borrow_a_binding_created_while_reading_stdin() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        let input = json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":tracker.0});
+        receive_from(
+            &report,
+            BeforeInput {
+                action: Some(|| rebind(&report, "a")),
+                input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+            },
+        )
+        .unwrap();
+        assert!(current_context(&report).is_none());
+        receive_from(&report, input.to_string().as_bytes()).unwrap();
+        assert_eq!(current_context(&report).unwrap().directory, tracker.0);
+    }
+
+    #[test]
+    fn first_edit_may_bind_lifecycle_but_not_invent_entry_context_authority() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        let input = json!({"hook_event_name":"PostToolUse", "session_id":"a", "tool_name":"Write",
+            "tool_input":{"file_path":tracker.0.join("external/file.rs")}});
+        receive_from(&report, input.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            crate::agent_events::read(&report, "owner", 0)
+                .unwrap()
+                .identity
+                .provider_session_id
+                .as_deref(),
+            Some("a")
+        );
+        assert!(current_context(&report).is_none());
+        receive_from(&report, input.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            current_context(&report).unwrap().directory,
+            tracker.0.join("external")
+        );
+    }
+
+    #[test]
+    fn descriptor_absent_old_journal_keeps_lifecycle_without_context_authority() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        std::fs::remove_file(report.with_file_name("context-scope.json")).unwrap();
+        // This is a pre-F05 journal, not an explicitly legacy no-journal handle.
+        crate::agent_events::capture_connection(&report)
+            .unwrap()
+            .execute_batch("DROP TABLE review_context")
+            .unwrap();
+        rebind(&report, "a");
+        receive_from(
+            &report,
+            json!({"hook_event_name":"UserPromptSubmit", "session_id":"a"})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let input = json!({"hook_event_name":"PostToolUse", "session_id":"a", "tool_name":"Edit",
+            "tool_input":{"file_path":tracker.0.join("not-authorized/file.rs")}});
+        assert!(receive_adapter(&report, input.to_string().as_bytes(), false).is_err());
+        let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+        assert_eq!(batch.events.len(), 3);
+        assert_eq!(batch.events.last().unwrap().name, "PostToolUse");
+        assert!(!report.exists());
+        assert_eq!(
+            std::fs::read(report.with_file_name("diagnostic.json")).unwrap(),
+            br#"{"code":"hook_receive_failed"}"#
+        );
+        // A malformed descriptor has the same context refusal and journal-only
+        // lifecycle behavior; it cannot opt into the JSON compatibility branch.
+        std::fs::write(
+            report.with_file_name("context-scope.json"),
+            b"not a descriptor",
+        )
+        .unwrap();
+        receive_from(
+            &report,
+            json!({"hook_event_name":"Stop", "session_id":"a"})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::agent_events::read(&report, "owner", 0)
+                .unwrap()
+                .events
+                .len(),
+            4
+        );
+        let cwd = json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":tracker.0});
+        assert!(receive_from(&report, cwd.to_string().as_bytes()).is_err());
+        assert!(!report.exists());
+    }
+
+    #[test]
+    fn scoped_context_rejects_child_foreign_missing_provider_and_invalid_paths() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        rebind(&report, "a");
+        let current = tracker.0.join("current");
+        receive_from(
+            &report,
+            json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":current})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        for input in [
+            json!({"hook_event_name":"CwdChanged", "session_id":"a", "agent_id":"child", "new_cwd":tracker.0}),
+            json!({"hook_event_name":"CwdChanged", "session_id":"b", "new_cwd":tracker.0}),
+            json!({"hook_event_name":"CwdChanged", "new_cwd":tracker.0}),
+            json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":"relative"}),
+            json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":format!("{}\ninvalid", tracker.0.display())}),
+        ] {
+            receive_from(&report, input.to_string().as_bytes()).unwrap();
+            assert_eq!(current_context(&report).unwrap().directory, current);
+        }
+    }
+
+    #[tokio::test]
+    async fn production_missing_corrupt_or_foreign_journal_never_resurrects_unscoped_json() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        rebind(&report, "a");
+        let current = tracker.0.join("current");
+        receive_from(
+            &report,
+            json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":current})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let fallback = tracker.0.join("launch");
+        let legacy = Context {
+            directory: tracker.0.join("untrusted-json"),
+            source: "Auto: edited file".into(),
+        };
+        std::fs::write(&report, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(
+            resolve(fallback.clone(), Some(report.clone()), Some("owner".into()))
+                .await
+                .directory,
+            current
+        );
+        assert_eq!(
+            resolve(
+                fallback.clone(),
+                Some(report.clone()),
+                Some("wrong-owner".into())
+            )
+            .await
+            .directory,
+            fallback
+        );
+        assert_eq!(
+            resolve(fallback.clone(), Some(report.clone()), None)
+                .await
+                .directory,
+            fallback,
+            "Journal descriptor does not permit legacy JSON even without an expected identity"
+        );
+        let database = report.with_file_name("events.sqlite3");
+        let original = database.with_extension("saved");
+        std::fs::rename(&database, &original).unwrap();
+        assert_eq!(
+            resolve(fallback.clone(), Some(report.clone()), Some("owner".into()))
+                .await
+                .directory,
+            fallback
+        );
+        let input = json!({"hook_event_name":"CwdChanged", "session_id":"a", "new_cwd":tracker.0});
+        assert!(receive_adapter(&report, input.to_string().as_bytes(), false).is_err());
+        assert!(
+            !database.exists(),
+            "failed scoped read must never create a replacement journal"
+        );
+        assert_eq!(
+            std::fs::read(&report).unwrap(),
+            serde_json::to_vec(&legacy).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(report.with_file_name("diagnostic.json")).unwrap(),
+            br#"{"code":"hook_receive_failed"}"#
+        );
+        std::fs::write(&database, b"not a SQLite journal").unwrap();
+        assert_eq!(
+            resolve(fallback.clone(), Some(report.clone()), Some("owner".into()))
+                .await
+                .directory,
+            fallback
+        );
+        assert!(receive_from(&report, input.to_string().as_bytes()).is_err());
+        assert_eq!(std::fs::read(&database).unwrap(), b"not a SQLite journal");
+        std::fs::remove_file(&database).unwrap();
+        std::fs::rename(&original, &database).unwrap();
+        std::fs::remove_file(report.with_file_name("context-scope.json")).unwrap();
+        assert!(receive_from(&report, input.to_string().as_bytes()).is_err());
+        assert_eq!(
+            resolve(fallback.clone(), Some(report), Some("owner".into()))
+                .await
+                .directory,
+            fallback
+        );
+    }
+
     #[test]
     fn harness_recovery_appends_only_a_launch_local_startup_hook_without_replacing_lifecycle() {
         let mut command = CommandBuilder::new("fixture");
@@ -644,7 +1008,7 @@ mod tests {
         std::fs::write(root.join("changed.txt"), "hello").unwrap();
         let fallback = tracker.0.join("launch");
         assert_eq!(
-            resolve(fallback.clone(), Some(tracker.report()))
+            resolve(fallback.clone(), Some(tracker.report()), None)
                 .await
                 .directory,
             fallback
@@ -655,7 +1019,7 @@ mod tests {
         ] {
             receive_from(&tracker.report(), event.to_string().as_bytes()).unwrap();
         }
-        let context = resolve(fallback, Some(tracker.report())).await;
+        let context = resolve(fallback, Some(tracker.report()), None).await;
         assert_eq!(context.directory, root);
         let report = std::fs::read_to_string(tracker.report()).unwrap();
         assert!(!report.contains("SECRET"));

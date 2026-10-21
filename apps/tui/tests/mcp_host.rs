@@ -94,6 +94,8 @@ mod run_executor;
 mod run_launches;
 #[path = "support/run_wakes.rs"]
 mod run_wakes;
+#[path = "support/scoped_review_context.rs"]
+mod scoped_review_context;
 #[path = "support/task_tool_profiles.rs"]
 mod task_tool_profiles;
 impl Fixture {

@@ -519,7 +519,7 @@ pub async fn handle(
                                     (Ok(directory), Ok(_permit)) => {
                                         let context = if pinned {
                                             crate::agent_context::Context { directory, source: "Pinned".into() }
-                                        } else { crate::agent_context::resolve(directory, report).await };
+                                        } else { crate::agent_context::resolve(directory, report, Some(session_id.clone())).await };
                                         crate::git::review(&context.directory, &scope).await.map_err(|error| anyhow!("{} · {}: {error}", context.source, context.directory.display())).map(|mut review| {
                                             review.source = Some(context.source);
                                             review

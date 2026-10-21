@@ -3365,3 +3365,41 @@ readiness/scenario cancellation requests termination of that owned CLI rather
 than leaving it running. Drop handling is not an awaited confirmation of reaping.
 This is a concrete cancellation-safety improvement and an evidence repair, not
 a claimed fix for the unproven CI startup cause.
+
+### F05 scoped automatic review context
+
+Journal-backed launches now install an immutable private mode/launch descriptor
+and keep one bounded typed context row. Before stdin, context captures the full
+host/launch/provider/generation ticket; its transaction compares that identity
+again before writing. Current-scope and expected-session resolution share a read
+transaction outside the State lock. A delayed old writer cannot displace a valid
+new-generation folder, and rebinding without another context event invalidates
+the retained folder, including A → B → A. Accepted transaction order within one
+generation is explicit; callback-start order is not invented.
+
+External Edit/Write still selects the edited file's parent for automatic review.
+Only CwdChanged establishes separate optional actual-cwd evidence. Pins retain
+their existing precedence. Missing/corrupt current storage never resurrects an
+unscoped JSON report. Explicit legacy fixtures retain bounded JSON behavior;
+descriptor-less old valid journals keep lifecycle delivery without context
+authority. Descriptor reads reject nonregular/symlink/reparse inputs and use
+bounded nonblocking/no-follow handling where available. No timer, rendering I/O,
+provider configuration mutation, public protocol field or dependency was added.
+
+Fourteen new Windows host tests cover identity/generation/revision fences,
+unbound/delayed input, root/child/path rejection, missing/corrupt storage, legacy
+compatibility, private bounds and cwd/review separation. One additional Unix-only
+FIFO/symlink test is source coverage until native CI executes it. Windows passes
+727 workspace units (210 TUI, 514 host, 3 wire), warnings-denied all-target Clippy,
+locked build and the three exact process conformance cases. The new SDK scenario
+passes separately in 4.58 seconds: actual configured helper invocations and owner
+diff requests check repository marker patches, Unicode external edits, CwdChanged,
+rebind/ABA invalidation and a pinned folder through the existing shared transport.
+This is controlled-helper evidence, not original-Claude emission certification.
+The complete 63-case serial SDK/native-host cohort also passes in 470.43 seconds,
+including the three timeout scenarios with the new startup failure evidence.
+
+This slice fences review context. The inherited lifecycle in-flight epoch gap is
+a separate follow-up: an older PostToolUse/Stop or SessionStart can still be
+attributed at append time after a conversation rebind. Full F05 acceptance is
+not closed by context correctness alone.

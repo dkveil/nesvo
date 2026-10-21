@@ -68,6 +68,24 @@ allowlisted human/JSON diagnostics. Only its validated temporary journal is
 renamed; RAII attempts restoration before fixture teardown. These are controlled
 provider/process checks, not an original-Claude lifecycle or model acceptance.
 
+### Scoped automatic review context
+
+After building the native host/client, select the actual-helper scenario with:
+
+```text
+cargo test --package nesvo --test mcp_host --locked scoped_review_context:: -- --ignored --test-threads=1
+```
+
+It creates private temporary Git repositories and invokes the production hook
+from the controlled launch's actual settings. Owner diff requests verify both
+the selected repository and its marker patch after external Edit/Write,
+CwdChanged, rejected child/foreign callbacks, rebind and ABA invalidation.
+Existing pinned-directory behavior is checked through the authenticated shared
+wire codec because the current MCP diff tool omits that optional field. No model
+or global Git/provider configuration is involved. Deterministic host storage and
+Read-barrier tests separately cover callbacks delayed across generation changes;
+the native scenario does not invent an observable pre-stdin helper barrier.
+
 ### Native job execution timeout scenarios
 
 After building the native host/client, the ignored `mcp_host` integration target

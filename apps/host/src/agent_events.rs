@@ -69,9 +69,6 @@ impl ReadCounts {
 fn database(report: &Path) -> std::path::PathBuf {
     report.with_file_name("events.sqlite3")
 }
-pub fn exists(report: &Path) -> bool {
-    database(report).is_file()
-}
 pub fn initialize(report: &Path, session_id: &str) -> Result<()> {
     let connection = Connection::open(database(report))?;
     connection.execute_batch("CREATE TABLE scope (id INTEGER PRIMARY KEY CHECK(id=1), host_session TEXT NOT NULL, launch_id TEXT NOT NULL, provider_session TEXT, provider_turn TEXT, generation INTEGER NOT NULL DEFAULT 1, rejected INTEGER NOT NULL DEFAULT 0);
@@ -101,6 +98,9 @@ fn open(report: &Path, writable: bool) -> Result<Connection> {
 
 pub(crate) fn capture_connection(report: &Path) -> Result<Connection> {
     open(report, true)
+}
+pub(crate) fn context_connection(report: &Path) -> Result<Connection> {
+    open(report, false)
 }
 #[cfg(test)]
 pub fn append(
@@ -272,15 +272,6 @@ fn has_column(connection: &Connection, table: &'static str, wanted: &str) -> Res
     }
     Ok(false)
 }
-pub fn accepts_context(report: &Path, provider_session: Option<&str>) -> Result<bool> {
-    let active: Option<String> = open(report, false)?.query_row(
-        "SELECT provider_session FROM scope WHERE id=1",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok(active.is_none() || active.as_deref() == provider_session)
-}
-
 /// A private callback ticket never binds or changes lifecycle identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RootQuotaTicket {
