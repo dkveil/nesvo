@@ -1615,13 +1615,38 @@ mod tests {
     fn retention_is_bounded_and_reports_cursor_gaps() {
         let report = fixture();
         initialize(&report, "session").unwrap();
-        for _ in 0..1026 {
+        // Seed the valid at-limit prefix in one fixture transaction; real appends
+        // still cross the boundary and exercise production pruning/durability.
+        let mut connection = Connection::open(database(&report)).unwrap();
+        let transaction = connection.transaction().unwrap();
+        {
+            let mut statement = transaction
+                .prepare(
+                    "INSERT INTO events(sequence,generation,event,state) VALUES(?1,1,'Stop',?2)",
+                )
+                .unwrap();
+            let idle = serde_json::to_string(&StatusState::Idle).unwrap();
+            for sequence in 1..=RETENTION {
+                statement
+                    .execute(params![i64::try_from(sequence).unwrap(), idle])
+                    .unwrap();
+            }
+        }
+        transaction.commit().unwrap();
+        drop(connection);
+        for _ in 0..2 {
             append(&report, None, "Stop", StatusState::Idle, false, None).unwrap();
         }
         let batch = read(&report, "session", 0).unwrap();
         assert!(batch.gap);
         assert_eq!(batch.events.len(), 256);
         assert_eq!(batch.events[0].sequence, 3);
+        assert_eq!(batch.head_sequence, 1026);
+        let count: i64 = Connection::open(database(&report))
+            .unwrap()
+            .query_row("SELECT count(*) FROM events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, i64::try_from(RETENTION).unwrap());
         assert_eq!(
             read(&report, "session", 1025).unwrap().events[0].sequence,
             1026
