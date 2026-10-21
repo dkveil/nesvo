@@ -22,7 +22,8 @@ use tokio::{
 };
 
 pub const CONFIG_FILE: &str = "nesvo.toml";
-const CONFIG_LIMIT: usize = 64 * 1024;
+pub(crate) const CONFIG_LIMIT: usize = 64 * 1024;
+const FOREIGN_TABLES: [&str; 2] = ["workflow", "workflow.task"];
 const LOG_LIMIT: usize = 64 * 1024;
 const LOG_CONTENT_LIMIT: usize = LOG_LIMIT - 64;
 const STEP_LIMIT: usize = 32;
@@ -101,7 +102,7 @@ impl Failure {
     }
 }
 
-fn command_failure(code: &'static str, message: impl Into<String>) -> anyhow::Error {
+pub(crate) fn command_failure(code: &'static str, message: impl Into<String>) -> anyhow::Error {
     Failure::raise(Stage::Command, code, message)
 }
 
@@ -127,35 +128,83 @@ impl Config {
         self.setup.is_empty() && self.run.is_empty() && self.env_files.is_empty()
     }
     pub fn digest(&self) -> String {
-        let canonical = json!({"version":1,"policy":POLICY,"setup":self.setup,"run":self.run,"envFiles":self.env_files,"timeoutS":self.timeout_s});
-        hex::encode(
-            ring::digest::digest(&ring::digest::SHA256, canonical.to_string().as_bytes()).as_ref(),
+        canonical_digest(
+            &json!({"version":1,"policy":POLICY,"setup":self.setup,"run":self.run,"envFiles":self.env_files,"timeoutS":self.timeout_s}),
         )
     }
 }
 
-enum Item {
-    Integer(u64),
-    List(Vec<String>),
+pub(crate) fn canonical_digest(canonical: &Value) -> String {
+    hex::encode(
+        ring::digest::digest(&ring::digest::SHA256, canonical.to_string().as_bytes()).as_ref(),
+    )
 }
 
-struct Parser<'a> {
+pub(crate) enum Item {
+    Integer(u64),
+    List(Vec<String>),
+    Text(String),
+    Flag(bool),
+}
+
+pub(crate) struct Parser<'a> {
     text: &'a str,
     at: usize,
 }
 
 impl<'a> Parser<'a> {
-    fn peek(&self) -> Option<char> {
+    pub(crate) fn document(text: &'a str) -> Result<Self> {
+        if text.len() > CONFIG_LIMIT {
+            return Err(anyhow!("{CONFIG_FILE} exceeds {CONFIG_LIMIT} bytes"));
+        }
+        Ok(Self {
+            text: text.strip_prefix('\u{feff}').unwrap_or(text),
+            at: 0,
+        })
+    }
+    pub(crate) fn peek(&self) -> Option<char> {
         self.text[self.at..].chars().next()
     }
-    fn bump(&mut self) -> Option<char> {
+    pub(crate) fn bump(&mut self) -> Option<char> {
         let c = self.peek()?;
         self.at += c.len_utf8();
         Some(c)
     }
-    fn error(&self, message: &str) -> anyhow::Error {
-        let line = self.text[..self.at].matches('\n').count() + 1;
-        anyhow!("{CONFIG_FILE} line {line}: {message}")
+    pub(crate) fn line(&self) -> usize {
+        self.text[..self.at].matches('\n').count() + 1
+    }
+    pub(crate) fn error(&self, message: &str) -> anyhow::Error {
+        anyhow!("{CONFIG_FILE} line {}: {message}", self.line())
+    }
+    pub(crate) fn header(&mut self) -> Result<(bool, String)> {
+        self.expect('[')?;
+        let array = self.peek() == Some('[');
+        if array {
+            self.bump();
+        }
+        self.blank();
+        let mut name = self.key()?.to_owned();
+        while self.peek() == Some('.') {
+            self.bump();
+            name.push('.');
+            name.push_str(self.key()?);
+        }
+        self.blank();
+        self.expect(']')?;
+        if array {
+            self.expect(']')?;
+        }
+        self.line_end()?;
+        Ok((array, name))
+    }
+    pub(crate) fn entry(&mut self) -> Result<(&'a str, Item)> {
+        let key = self.key()?;
+        self.blank();
+        self.expect('=')?;
+        self.blank();
+        let value = self.value()?;
+        self.line_end()?;
+        Ok((key, value))
     }
     fn expect(&mut self, wanted: char) -> Result<()> {
         if self.bump() == Some(wanted) {
@@ -198,7 +247,7 @@ impl<'a> Parser<'a> {
             _ => Ok(false),
         }
     }
-    fn trivia(&mut self) -> Result<()> {
+    pub(crate) fn trivia(&mut self) -> Result<()> {
         loop {
             self.blank();
             self.comment()?;
@@ -323,7 +372,20 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some('[') => self.list().map(Item::List),
             Some('0'..='9') => self.integer().map(Item::Integer),
-            _ => Err(self.error("expected an integer or an array of strings")),
+            Some('"' | '\'') => self.string().map(Item::Text),
+            Some('t' | 'f') => {
+                let rest = &self.text[self.at..];
+                let (flag, word) = if rest.starts_with("true") {
+                    (true, "true")
+                } else if rest.starts_with("false") {
+                    (false, "false")
+                } else {
+                    return Err(self.error("expected a value"));
+                };
+                self.at += word.len();
+                Ok(Item::Flag(flag))
+            }
+            _ => Err(self.error("expected a string, a boolean, an integer or an array of strings")),
         }
     }
 }
@@ -362,18 +424,13 @@ fn validate_env_file(path: &str) -> bool {
 }
 
 pub fn parse(text: &str) -> Result<Config> {
-    if text.len() > CONFIG_LIMIT {
-        return Err(anyhow!("{CONFIG_FILE} exceeds {CONFIG_LIMIT} bytes"));
-    }
-    let mut parser = Parser {
-        text: text.strip_prefix('\u{feff}').unwrap_or(text),
-        at: 0,
-    };
+    let mut parser = Parser::document(text)?;
     let mut config = Config {
         timeout_s: DEFAULT_TIMEOUT_S,
         ..Config::default()
     };
     let mut in_table = false;
+    let mut foreign = false;
     let mut seen_table = false;
     let mut keys = HashSet::new();
     loop {
@@ -381,28 +438,27 @@ pub fn parse(text: &str) -> Result<Config> {
         match parser.peek() {
             None => break,
             Some('[') => {
-                parser.bump();
-                parser.blank();
-                let name = parser.key()?;
-                parser.blank();
-                parser.expect(']')?;
-                parser.line_end()?;
-                if name != "worktree" || seen_table {
+                let (array, name) = parser.header()?;
+                if array && FOREIGN_TABLES.contains(&name.as_str()) {
+                    in_table = false;
+                    foreign = true;
+                    continue;
+                }
+                if array || name != "worktree" || seen_table {
                     return Err(parser.error("only one [worktree] table is defined"));
                 }
                 seen_table = true;
                 in_table = true;
+                foreign = false;
+            }
+            Some(_) if foreign => {
+                parser.entry()?;
             }
             Some(_) => {
                 if !in_table {
                     return Err(parser.error("keys must be inside the [worktree] table"));
                 }
-                let key = parser.key()?;
-                parser.blank();
-                parser.expect('=')?;
-                parser.blank();
-                let value = parser.value()?;
-                parser.line_end()?;
+                let (key, value) = parser.entry()?;
                 if !keys.insert(key) {
                     return Err(parser.error(&format!("duplicate key {key}")));
                 }
@@ -778,11 +834,15 @@ pub(crate) struct Plan {
     prepared: Option<(Config, String)>,
 }
 
-fn repository_key(root: &Path) -> String {
+pub(crate) fn repository_key(root: &Path) -> String {
     display_path(&std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned()))
 }
 
 async fn head_config(root: &Path) -> Result<Option<Config>> {
+    head_text(root).await?.as_deref().map(parse).transpose()
+}
+
+pub(crate) async fn head_text(root: &Path) -> Result<Option<String>> {
     let spec = format!("HEAD:{CONFIG_FILE}");
     let output = git::run(
         root,
@@ -797,8 +857,9 @@ async fn head_config(root: &Path) -> Result<Option<Config>> {
     if output.code != Some(0) {
         return Ok(None);
     }
-    parse(&String::from_utf8(output.bytes).map_err(|_| anyhow!("{CONFIG_FILE} must be UTF-8"))?)
+    String::from_utf8(output.bytes)
         .map(Some)
+        .map_err(|_| anyhow!("{CONFIG_FILE} must be UTF-8"))
 }
 
 async fn plan_with(store: Option<&Store>, directory: &Path) -> Result<Plan> {
@@ -1631,7 +1692,7 @@ pub(crate) fn admit(authority: &Authority, command: &Command) -> Result<()> {
     ))
 }
 
-fn host_directory(value: &str) -> Result<PathBuf> {
+pub(crate) fn host_directory(value: &str) -> Result<PathBuf> {
     let path = PathBuf::from(value);
     if value.is_empty()
         || value.len() > 4096
@@ -1656,7 +1717,7 @@ fn valid_session(id: &str) -> Result<()> {
     Ok(())
 }
 
-fn valid_digest(digest: &str) -> Result<()> {
+pub(crate) fn valid_digest(digest: &str) -> Result<()> {
     if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(command_failure(
             "invalid_argument",

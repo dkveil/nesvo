@@ -94,6 +94,7 @@ mod workflow_inbox;
 mod workflow_launch_runtime;
 mod workflow_launches;
 mod workflow_recovery;
+mod workflow_templates;
 mod workflow_wake_batches;
 mod workflow_wake_events;
 mod workflow_wake_runtime;
@@ -418,6 +419,9 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
 
     if let Err(error) = worktrees::configure(&pairing_dir) {
         eprintln!("Worktree registry is unavailable: {error}");
+    }
+    if let Err(error) = workflow_templates::configure(&pairing_dir) {
+        eprintln!("Workflow template approvals are unavailable: {error}");
     }
     if let Err(error) = gemini_adapter::prepare(&pairing_dir) {
         eprintln!("Gemini lifecycle extension source is unavailable: {error}");

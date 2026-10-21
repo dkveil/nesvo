@@ -1498,6 +1498,7 @@ impl State {
         event["files"] = true.into();
         event["notes"] = true.into();
         event["worktrees"] = crate::worktrees::available().into();
+        event["workflowTemplates"] = crate::workflow_templates::available().into();
         event["git"] = true.into();
         event
     }
@@ -3206,6 +3207,12 @@ impl State {
             | Command::Decisions { .. }
             | Command::Decide { .. } => {
                 return Err(anyhow!("Attention inbox requires asynchronous dispatch."));
+            }
+            Command::ListWorkflowTemplates { .. }
+            | Command::ApproveWorkflowTemplates { .. }
+            | Command::RevokeWorkflowTemplates { .. }
+            | Command::StartWorkflowTemplate { .. } => {
+                return Err(anyhow!("Workflow templates require asynchronous dispatch."));
             }
             Command::AcknowledgeAttention {
                 session_id,

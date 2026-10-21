@@ -239,6 +239,22 @@ pub enum Command {
         #[serde(default)]
         note: Option<String>,
     },
+    ListWorkflowTemplates {
+        directory: String,
+    },
+    ApproveWorkflowTemplates {
+        directory: String,
+        digest: String,
+    },
+    RevokeWorkflowTemplates {
+        directory: String,
+        digest: String,
+    },
+    StartWorkflowTemplate {
+        directory: String,
+        name: String,
+        key: String,
+    },
     Create {
         name: String,
         cwd: Option<String>,
