@@ -10,6 +10,7 @@ mod claude_quota_diagnostics;
 mod claude_statusline;
 mod codex_context;
 mod command_scope;
+mod commits;
 mod event_log;
 mod files;
 mod git;

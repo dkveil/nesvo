@@ -512,6 +512,11 @@ pub async fn handle(
                             tokio::spawn(crate::files::serve(state.clone(), id, command, request_id, permit));
                             continue;
                         }
+                        if matches!(command, Command::ListCommits { .. }) {
+                            let permit = files_gate.clone().try_acquire_owned().ok();
+                            tokio::spawn(crate::commits::serve(state.clone(), id, command, request_id, permit));
+                            continue;
+                        }
                         let mut state = state.lock().unwrap();
                         if let Err(error) = state.command(id, command, request_id.as_deref(), &pty_events) {
                             let mut event = json!({"type":"error", "message":error.to_string()});

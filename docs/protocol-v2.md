@@ -307,6 +307,16 @@ Inside a Git work tree `root` is the canonical repository toplevel, otherwise `n
 
 `findFiles` walks `root` once honouring `.ignore`, plus `.gitignore` and Git excludes inside a repository, and skipping hidden entries (maximum depth 32, no link following, sorted by name), stopping after 5,000 entries; the walk is cached for 2 s per root. `matches` contains files and links whose relative `/`-separated path contains the query characters in order, ignoring case and whitespace. Each matched character scores 1, plus 6 at a path-segment start, 3 after `_`, `-`, `.`, a space or a lower-to-upper case change, 6 when consecutive and 2 inside the basename; the best alignment over segment starts wins and long paths lose `length / 8`. Results sort by score, then shorter path; `limit` defaults to 50 and is clamped at 200. `query` is at most 256 bytes; an empty query lists the shortest paths.
 
+## Commit history
+
+Additive `git:true` advertises one owner-only read command for the TUI Git view; scoped session callers receive `forbidden`, as for `listDirectories`. It shares the two-per-connection file request limit (a third concurrent request receives `busy`) and does not take the review Git lock.
+
+| Command                                         | Result                                                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `listCommits { directory, limit?, requestId? }` | `commits { directory, commits:[{oid, shortOid, summary, author, committedMs, parents:[oid]}], truncated, requestId? }` |
+
+`directory` is an absolute host folder inside a Git work tree and is echoed as sent. The command runs one `git log HEAD` without signatures, decorations or colour (10 s, 1 KiB of output per commit), newest first. `limit` defaults to 50 and is clamped to 1..200; `truncated` is true when more commits exist or the output was cut. `summary` is the subject line (200 characters), `author` the author name (80 characters), `committedMs` the committer time in Unix milliseconds and `parents` the parent ids (empty for a root commit, at most 8). An unborn branch returns an empty list. Errors are `{type:"error", code, message, requestId?}` with `invalid_argument`, `not_found`, `not_directory`, `not_repository`, `timeout`, `git_failed` or `busy`. A commit's diff is `getDiff { reviewId, scope:"commits", from: parent, to: oid }`.
+
 ## Observed session status
 
 Session snapshots also include `status: { state, source, updatedAt }`. Older hosts may omit it; a client must not manufacture semantic agent state from `running` alone. `updatedAt` is the host's epoch-millisecond timestamp of the last state/source transition, not the last output byte. Status never increments the durable metadata revision.

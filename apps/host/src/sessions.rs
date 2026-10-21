@@ -1443,6 +1443,7 @@ impl State {
         event["workflowPlans"] = true.into();
         event["reviews"] = true.into();
         event["files"] = true.into();
+        event["git"] = true.into();
         event
     }
 
@@ -2997,6 +2998,9 @@ impl State {
             }
             Command::ListEntries { .. } | Command::ReadFile { .. } | Command::FindFiles { .. } => {
                 return Err(anyhow!("Files require asynchronous dispatch."));
+            }
+            Command::ListCommits { .. } => {
+                return Err(anyhow!("Commit history requires asynchronous dispatch."));
             }
             Command::AcknowledgeAttention {
                 session_id,

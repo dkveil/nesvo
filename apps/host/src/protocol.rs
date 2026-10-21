@@ -172,6 +172,11 @@ pub enum Command {
         #[serde(default)]
         limit: Option<usize>,
     },
+    ListCommits {
+        directory: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
     Create {
         name: String,
         cwd: Option<String>,
