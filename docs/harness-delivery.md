@@ -3241,3 +3241,50 @@ The SDK capture case also passes in the current serial cohort. This does not
 prove runner contention caused the earlier failures or establish behavior under
 CPU saturation. No deadline was relaxed and no platform result is inferred from
 Windows. See [the exact required commands](testing.md#declared-statusline-process-conformance).
+
+### Combined lifecycle and Claude quota observation
+
+Periodic observation now owns one small cache per eligible launch and uses one
+connection/read transaction for current scope, ordered lifecycle events and
+optional quota. Scope is always reread. Lifecycle column discovery is cached for
+the immutable launch; absent lazy quota tables are probed again. A decoded quota
+snapshot is reused only for the same complete committed ticket and identical
+stored bytes. Connections and transactions do not survive a poll, and original
+receipt clocks never advance on cache hits. Missing, rebound, corrupt or failed
+reads clear both cached and visible quota; quota-only failures still deliver
+current lifecycle evidence. No process, permission or status cadence changed.
+
+Seven new combined-reader regressions check committed versus reserved callbacks,
+one-transaction counters, lazy tables, rebind/host/launch isolation, receiver
+refusals, exact-byte corruption, legacy schema recovery, cursor/gap behavior and
+prompt/paste/readiness parity. The existing native authority test now issues
+actual owner and scoped diagnostic commands and checks counter privacy. Windows
+verification passes 698 workspace units, both mandatory process-conformance
+cases, all 62 serial SDK/native-host scenarios (465.49 seconds), warnings-denied
+all-target Clippy, locked build and formatting. The SDK cohort uses controlled
+providers, not original model calls.
+
+The matched eight-root Windows debug-profile benchmark uses identical fixture
+scripts, one actual quota-helper callback per root, no clients and no concurrent
+build/test. Exact source/binary hashes and both reports are retained outside Git.
+
+| Measured work                      | Instrumented baseline | Combined observer |
+| ---------------------------------- | --------------------- | ----------------- |
+| Counter interval                   | 65.532 s              | 65.494 s          |
+| Scope polls                        | 1,048                 | 1,048             |
+| Database opens / read transactions | 2,096 / 2,096         | 1,048 / 1,048     |
+| Lifecycle schema probes            | 2,096                 | 0                 |
+| Quota-table probes                 | 1,048                 | 0                 |
+| Quota rows read                    | 1,048                 | 1,048             |
+| Quota decodes                      | 1,048                 | 0                 |
+| Lifecycle/quota/task read failures | 0 / 0 / 0             | 0 / 0 / 0         |
+| Separate CPU interval              | 62.021 s              | 62.081 s          |
+| Host CPU, one logical core         | 1.940%                | 1.686%            |
+| Working set                        | 22.51–22.68 MiB       | 22.72–22.89 MiB   |
+
+Each run keeps eight exact root birth identities and 17 direct children stable;
+cleanup passes. The optimized sampled working-set maximum is 22.93 MiB. Counter
+intervals include stabilization/reconnection and are separate from CPU sampling.
+The counters substantiate less work; the roughly 13% CPU reduction is one paired
+observation, not a stable performance guarantee, leak verdict or diagnosis of
+historical 100% CPU. MCP pooling and resumable hibernation remain unimplemented.

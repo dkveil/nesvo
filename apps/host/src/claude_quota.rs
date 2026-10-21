@@ -76,6 +76,14 @@ pub(crate) struct Observation {
     pub(crate) snapshot: StoredSnapshot,
 }
 
+pub(crate) fn decode_snapshot(encoded: &str) -> Result<StoredSnapshot> {
+    ensure!(encoded.len() <= 2048, "Invalid stored quota snapshot");
+    let snapshot: StoredSnapshot = serde_json::from_str(encoded)
+        .map_err(|_| anyhow::anyhow!("Invalid stored quota snapshot"))?;
+    snapshot.validate()?;
+    Ok(snapshot)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReceiveOutcome {
     Recorded,
@@ -220,17 +228,6 @@ fn parse_windows(value: &Value, received_wall_ms: u64) -> (Option<Window>, Optio
 pub(crate) fn read(report: &Path, host_session: &str) -> Result<Option<Observation>> {
     Ok(agent_events::read_root_quota(report, host_session)?
         .map(|(scope, snapshot)| Observation { scope, snapshot }))
-}
-
-pub(crate) fn read_counted(
-    report: &Path,
-    host_session: &str,
-    counts: &mut agent_events::ReadCounts,
-) -> Result<Option<Observation>> {
-    Ok(
-        agent_events::read_root_quota_counted(report, host_session, counts)?
-            .map(|(scope, snapshot)| Observation { scope, snapshot }),
-    )
 }
 
 #[cfg(test)]

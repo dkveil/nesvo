@@ -3,7 +3,10 @@ use crate::status::StatusState;
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 const RETENTION: u64 = 1024;
 const BATCH: u64 = 256;
@@ -380,6 +383,7 @@ pub(crate) fn read_root_quota(
     read_root_quota_counted(report, expected_session, &mut ReadCounts::default())
 }
 
+#[cfg(test)]
 pub(crate) fn read_root_quota_counted(
     report: &Path,
     expected_session: &str,
@@ -392,6 +396,7 @@ pub(crate) fn read_root_quota_counted(
     result
 }
 
+#[cfg(test)]
 fn read_root_quota_inner(
     report: &Path,
     expected_session: &str,
@@ -411,32 +416,20 @@ fn read_root_quota_inner(
     let Some(provider_session_id) = provider_session_id else {
         return Ok(None);
     };
-    counts.quota_table_probes = counts.quota_table_probes.saturating_add(1);
-    let table_exists: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='root_quota')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !table_exists {
+    if !root_quota_exists(&transaction, counts)? {
         return Ok(None);
     }
-    let saved = transaction
-        .query_row(
-            "SELECT sequence,snapshot FROM root_quota WHERE id=1 AND launch_id=?1
-         AND provider_session=?2 AND generation=?3 AND snapshot IS NOT NULL",
-            params![launch_id, provider_session_id, i64::try_from(generation)?],
-            |row| Ok((unsigned(row, 0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?;
+    let saved = saved_root_quota(
+        &transaction,
+        &launch_id,
+        &provider_session_id,
+        generation,
+        counts,
+    )?;
     let Some((sequence, encoded)) = saved else {
         return Ok(None);
     };
-    counts.quota_rows = counts.quota_rows.saturating_add(1);
-    ensure!(encoded.len() <= 2048, "Invalid stored quota snapshot");
-    counts.quota_decodes = counts.quota_decodes.saturating_add(1);
-    let snapshot: crate::claude_quota::StoredSnapshot = serde_json::from_str(&encoded)
-        .map_err(|_| anyhow::anyhow!("Invalid stored quota snapshot"))?;
-    snapshot.validate()?;
+    let snapshot = decode_root_quota(&encoded, counts)?;
     transaction.commit()?;
     Ok(Some((
         RootQuotaTicket {
@@ -448,6 +441,45 @@ fn read_root_quota_inner(
         },
         snapshot,
     )))
+}
+
+fn root_quota_exists(connection: &Connection, counts: &mut ReadCounts) -> Result<bool> {
+    counts.quota_table_probes = counts.quota_table_probes.saturating_add(1);
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='root_quota')",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+fn saved_root_quota(
+    connection: &Connection,
+    launch: &str,
+    provider: &str,
+    generation: u64,
+    counts: &mut ReadCounts,
+) -> Result<Option<(u64, String)>> {
+    let saved = connection
+        .query_row(
+            "SELECT sequence,snapshot FROM root_quota WHERE id=1 AND launch_id=?1
+         AND provider_session=?2 AND generation=?3 AND snapshot IS NOT NULL",
+            params![launch, provider, i64::try_from(generation)?],
+            |row| Ok((unsigned(row, 0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((_, encoded)) = &saved {
+        counts.quota_rows = counts.quota_rows.saturating_add(1);
+        ensure!(encoded.len() <= 2048, "Invalid stored quota snapshot");
+    }
+    Ok(saved)
+}
+
+fn decode_root_quota(
+    encoded: &str,
+    counts: &mut ReadCounts,
+) -> Result<crate::claude_quota::StoredSnapshot> {
+    counts.quota_decodes = counts.quota_decodes.saturating_add(1);
+    crate::claude_quota::decode_snapshot(encoded)
 }
 
 #[derive(Serialize)]
@@ -517,7 +549,18 @@ fn read_inner(
     } else {
         false
     };
-    let identity = transaction.query_row(
+    let identity = read_identity(&transaction, prompt_correlation)?;
+    ensure!(
+        identity.host_session_id == expected_session,
+        "Lifecycle launch belongs to another session"
+    );
+    let batch = read_lifecycle(&transaction, identity, paste_correlation, after, counts)?;
+    transaction.commit()?;
+    Ok(batch)
+}
+
+fn read_identity(connection: &Connection, prompt_correlation: bool) -> Result<Identity> {
+    Ok(connection.query_row(
         "SELECT host_session,launch_id,provider_session,generation,rejected FROM scope WHERE id=1",
         [],
         |row| {
@@ -530,15 +573,20 @@ fn read_inner(
                 prompt_correlation,
             })
         },
-    )?;
-    ensure!(
-        identity.host_session_id == expected_session,
-        "Lifecycle launch belongs to another session"
-    );
+    )?)
+}
+
+fn read_lifecycle(
+    connection: &Connection,
+    identity: Identity,
+    paste_correlation: bool,
+    after: u64,
+    counts: &mut ReadCounts,
+) -> Result<Batch> {
     let first: Option<i64> =
-        transaction.query_row("SELECT min(sequence) FROM events", [], |row| row.get(0))?;
+        connection.query_row("SELECT min(sequence) FROM events", [], |row| row.get(0))?;
     let head: Option<i64> =
-        transaction.query_row("SELECT max(sequence) FROM events", [], |row| row.get(0))?;
+        connection.query_row("SELECT max(sequence) FROM events", [], |row| row.get(0))?;
     let head_sequence = head.map(u64::try_from).transpose()?.unwrap_or(0);
     ensure!(
         first.is_none_or(|first| first >= 0),
@@ -547,12 +595,12 @@ fn read_inner(
     let gap = first.is_some_and(|first| first as u64 > after.saturating_add(1));
     let mut events = Vec::new();
     {
-        let columns = match (prompt_correlation, paste_correlation) {
+        let columns = match (identity.prompt_correlation, paste_correlation) {
             (true, true) => "prompt_digest,paste_digest",
             (true, false) => "prompt_digest,NULL",
             _ => "NULL,NULL",
         };
-        let mut statement=transaction.prepare(&format!("SELECT sequence,generation,state,event,{columns} FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2"))?;
+        let mut statement=connection.prepare(&format!("SELECT sequence,generation,state,event,{columns} FROM events WHERE sequence>?1 ORDER BY sequence LIMIT ?2"))?;
         let rows = statement.query_map(params![after as i64, BATCH as i64], |row| {
             Ok((
                 unsigned(row, 0)?,
@@ -584,7 +632,6 @@ fn read_inner(
             });
         }
     }
-    transaction.commit()?;
     Ok(Batch {
         identity,
         events,
@@ -594,9 +641,211 @@ fn read_inner(
     })
 }
 
+#[derive(Clone, Copy)]
+struct CorrelationColumns {
+    prompt: bool,
+    paste: bool,
+}
+
+impl CorrelationColumns {
+    fn read(connection: &Connection, counts: &mut ReadCounts) -> Result<Self> {
+        counts.lifecycle_schema_probes = counts.lifecycle_schema_probes.saturating_add(1);
+        let mut statement = connection.prepare("PRAGMA table_info(events)")?;
+        let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = Self {
+            prompt: false,
+            paste: false,
+        };
+        for name in names {
+            match name?.as_str() {
+                "prompt_digest" => columns.prompt = true,
+                "paste_digest" => columns.paste = true,
+                _ => {}
+            }
+        }
+        columns.paste &= columns.prompt;
+        Ok(columns)
+    }
+}
+
+struct CachedQuota {
+    encoded: String,
+    observation: crate::claude_quota::Observation,
+}
+
+pub(crate) struct Observed {
+    pub lifecycle: Batch,
+    pub quota: Option<crate::claude_quota::Observation>,
+}
+
+/// One launch's observer, moved into a blocking task only for each short read.
+/// Connections and transactions never survive a poll. Lifecycle columns are
+/// fixed per launch; the quota table can appear later on the first callback.
+/// An in-place lifecycle schema migration must invalidate the column cache.
+pub(crate) struct Observer {
+    report: PathBuf,
+    expected_session: String,
+    launch: Option<String>,
+    columns: Option<CorrelationColumns>,
+    quota_table_present: bool,
+    quota: Option<CachedQuota>,
+}
+
+impl Observer {
+    pub fn new(report: PathBuf, expected_session: String) -> Self {
+        Self {
+            report,
+            expected_session,
+            launch: None,
+            columns: None,
+            quota_table_present: false,
+            quota: None,
+        }
+    }
+
+    pub fn matches(&self, report: &Path, expected_session: &str) -> bool {
+        self.report == report && self.expected_session == expected_session
+    }
+
+    fn invalidate(&mut self) {
+        self.launch = None;
+        self.columns = None;
+        self.quota_table_present = false;
+        self.quota = None;
+    }
+
+    pub fn poll(
+        &mut self,
+        after: u64,
+        include_quota: bool,
+        counts: &mut ReadCounts,
+    ) -> Result<Observed> {
+        counts.scope_polls = counts.scope_polls.saturating_add(1);
+        let result = self.poll_inner(after, include_quota, counts);
+        if result.is_err() {
+            self.invalidate();
+            counts.lifecycle_read_failures = counts.lifecycle_read_failures.saturating_add(1);
+        }
+        result
+    }
+
+    fn poll_inner(
+        &mut self,
+        after: u64,
+        include_quota: bool,
+        counts: &mut ReadCounts,
+    ) -> Result<Observed> {
+        ensure!(after <= i64::MAX as u64, "Invalid lifecycle cursor");
+        counts.database_open_attempts = counts.database_open_attempts.saturating_add(1);
+        let mut connection = open(&self.report, false)?;
+        counts.database_opens = counts.database_opens.saturating_add(1);
+        counts.read_transaction_attempts = counts.read_transaction_attempts.saturating_add(1);
+        let transaction = connection.transaction()?;
+        counts.read_transactions = counts.read_transactions.saturating_add(1);
+        let mut identity = read_identity(&transaction, false)?;
+        ensure!(
+            identity.host_session_id == self.expected_session,
+            "Lifecycle launch belongs to another session"
+        );
+        if self.launch.as_deref() != Some(identity.launch_id.as_str()) {
+            self.invalidate();
+            self.launch = Some(identity.launch_id.clone());
+        }
+        let columns = match self.columns {
+            Some(columns) => columns,
+            None => {
+                let columns = CorrelationColumns::read(&transaction, counts)?;
+                self.columns = Some(columns);
+                columns
+            }
+        };
+        identity.prompt_correlation = columns.prompt;
+        let lifecycle = read_lifecycle(&transaction, identity, columns.paste, after, counts)?;
+        let quota = if include_quota {
+            match self.read_quota(&transaction, &lifecycle.identity, counts) {
+                Ok(quota) => quota,
+                Err(_) => {
+                    self.quota = None;
+                    self.quota_table_present = false;
+                    counts.quota_read_failures = counts.quota_read_failures.saturating_add(1);
+                    None
+                }
+            }
+        } else {
+            self.quota = None;
+            None
+        };
+        transaction.commit()?;
+        Ok(Observed { lifecycle, quota })
+    }
+
+    fn read_quota(
+        &mut self,
+        connection: &Connection,
+        identity: &Identity,
+        counts: &mut ReadCounts,
+    ) -> Result<Option<crate::claude_quota::Observation>> {
+        if self.quota.as_ref().is_some_and(|cached| {
+            let scope = &cached.observation.scope;
+            scope.host_session_id != identity.host_session_id
+                || scope.launch_id != identity.launch_id
+                || Some(&scope.provider_session_id) != identity.provider_session_id.as_ref()
+                || scope.generation != identity.generation
+        }) {
+            self.quota = None;
+        }
+        let Some(provider) = identity.provider_session_id.as_deref() else {
+            self.quota = None;
+            return Ok(None);
+        };
+        if !self.quota_table_present {
+            self.quota_table_present = root_quota_exists(connection, counts)?;
+            if !self.quota_table_present {
+                self.quota = None;
+                return Ok(None);
+            }
+        }
+        let Some((sequence, encoded)) = saved_root_quota(
+            connection,
+            &identity.launch_id,
+            provider,
+            identity.generation,
+            counts,
+        )?
+        else {
+            self.quota = None;
+            return Ok(None);
+        };
+        let ticket = RootQuotaTicket {
+            host_session_id: identity.host_session_id.clone(),
+            launch_id: identity.launch_id.clone(),
+            provider_session_id: provider.into(),
+            generation: identity.generation,
+            sequence,
+        };
+        if let Some(cached) = &self.quota
+            && cached.observation.scope == ticket
+            && cached.encoded == encoded
+        {
+            return Ok(Some(cached.observation.clone()));
+        }
+        let snapshot = decode_root_quota(&encoded, counts)?;
+        let observation = crate::claude_quota::Observation {
+            scope: ticket,
+            snapshot,
+        };
+        self.quota = Some(CachedQuota {
+            encoded,
+            observation: observation.clone(),
+        });
+        Ok(Some(observation))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
     fn fixture() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "nesvo-events-{}",
@@ -604,6 +853,501 @@ mod tests {
         ));
         std::fs::create_dir(&dir).unwrap();
         dir.join("context.json")
+    }
+
+    struct ObserverFixture(PathBuf);
+
+    impl ObserverFixture {
+        fn new() -> Self {
+            let fixture = Self(fixture());
+            initialize(&fixture.0, "host-session").unwrap();
+            fixture.bind("conversation-a");
+            fixture
+        }
+
+        fn bind(&self, provider: &str) {
+            append(
+                &self.0,
+                Some(provider),
+                "SessionStart",
+                StatusState::Idle,
+                true,
+                None,
+            )
+            .unwrap();
+        }
+
+        fn observer(&self) -> Observer {
+            Observer::new(self.0.clone(), "host-session".into())
+        }
+
+        fn publish(&self) -> crate::claude_quota::Observation {
+            let scope = begin_root_quota(&self.0).unwrap().unwrap();
+            let snapshot = crate::claude_quota::StoredSnapshot {
+                started_wall_ms: 1000,
+                received_wall_ms: 2000,
+                started_monotonic_ms: 1,
+                received_monotonic_ms: 2,
+                five_hour: Some(crate::claude_quota::Window {
+                    used_percentage: 31.25,
+                    resets_at: 4000,
+                }),
+                seven_day: Some(crate::claude_quota::Window {
+                    used_percentage: 42.5,
+                    resets_at: 9000,
+                }),
+                reason: crate::claude_quota::Reason::Observed,
+            };
+            assert!(append_root_quota(&self.0, &scope, &snapshot).unwrap());
+            crate::claude_quota::Observation { scope, snapshot }
+        }
+    }
+
+    impl Drop for ObserverFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0.parent().unwrap());
+        }
+    }
+
+    fn batch_projection(batch: &Batch) -> Value {
+        json!({
+            "identity": batch.identity,
+            "events": batch.events.iter().map(|event| json!({
+                "name": event.name, "sequence": event.sequence, "generation": event.generation,
+                "state": event.state, "prompt": event.prompt_digest, "paste": event.paste_digest,
+            })).collect::<Vec<_>>(),
+            "gap": batch.gap, "observed": batch.observed, "head": batch.head_sequence,
+        })
+    }
+
+    #[test]
+    fn combined_observer_reuses_committed_snapshot_and_original_receipts_with_one_transaction() {
+        let fixture = ObserverFixture::new();
+        let expected = fixture.publish();
+        let mut observer = fixture.observer();
+        let mut counts = ReadCounts::default();
+        let initial = observer.poll(0, true, &mut counts).unwrap();
+        assert_eq!(initial.quota, Some(expected.clone()));
+        let reserved = begin_root_quota(&fixture.0).unwrap().unwrap();
+        assert!(reserved.sequence > expected.scope.sequence);
+        for _ in 0..3 {
+            let current = observer
+                .poll(initial.lifecycle.head_sequence, true, &mut counts)
+                .unwrap();
+            assert_eq!(
+                current.quota,
+                Some(expected.clone()),
+                "An unfinished callback cannot supersede committed evidence or renew its clocks"
+            );
+            assert!(current.lifecycle.events.is_empty());
+        }
+        assert!(
+            append(
+                &fixture.0,
+                Some("foreign"),
+                "Stop",
+                StatusState::Idle,
+                false,
+                None
+            )
+            .unwrap()
+            .is_none()
+        );
+        let rejected = observer
+            .poll(initial.lifecycle.head_sequence, true, &mut counts)
+            .unwrap();
+        assert_eq!(
+            rejected.lifecycle.identity.rejected, 1,
+            "Current scope must be reread even with an unchanged event head"
+        );
+        assert!(rejected.lifecycle.events.is_empty());
+        assert_eq!(rejected.quota, Some(expected));
+        assert_eq!(counts.scope_polls, 5);
+        assert_eq!(counts.database_open_attempts, 5);
+        assert_eq!(counts.database_opens, 5);
+        assert_eq!(counts.read_transaction_attempts, 5);
+        assert_eq!(counts.read_transactions, 5);
+        assert_eq!(counts.lifecycle_schema_probes, 1);
+        assert_eq!(counts.quota_table_probes, 1);
+        assert_eq!(counts.quota_rows, 5);
+        assert_eq!(counts.quota_decodes, 1);
+        assert_eq!(counts.lifecycle_event_rows, 1);
+    }
+
+    #[test]
+    fn combined_observer_rechecks_absent_quota_table_and_recovers_after_positive_table_failure() {
+        let fixture = ObserverFixture::new();
+        let mut observer = fixture.observer();
+        let mut counts = ReadCounts::default();
+        for _ in 0..3 {
+            assert!(observer.poll(1, true, &mut counts).unwrap().quota.is_none());
+        }
+        assert_eq!(counts.quota_table_probes, 3);
+        assert_eq!(counts.lifecycle_schema_probes, 1);
+        let expected = fixture.publish();
+        for _ in 0..2 {
+            assert_eq!(
+                observer.poll(1, true, &mut counts).unwrap().quota,
+                Some(expected.clone())
+            );
+        }
+        assert_eq!(counts.quota_table_probes, 4);
+        assert_eq!(counts.quota_decodes, 1);
+        Connection::open(database(&fixture.0))
+            .unwrap()
+            .execute_batch("DROP TABLE root_quota")
+            .unwrap();
+        let failed = observer.poll(1, true, &mut counts).unwrap();
+        assert!(failed.quota.is_none());
+        assert_eq!(
+            failed.lifecycle.identity.provider_session_id.as_deref(),
+            Some("conversation-a")
+        );
+        assert_eq!(counts.quota_read_failures, 1);
+        assert!(!observer.quota_table_present && observer.quota.is_none());
+        assert!(observer.poll(1, true, &mut counts).unwrap().quota.is_none());
+        assert_eq!(counts.quota_table_probes, 5);
+        let recreated = fixture.publish();
+        assert_eq!(
+            recreated, expected,
+            "A recreated row can have the same numeric sequence and body"
+        );
+        assert_eq!(
+            observer.poll(1, true, &mut counts).unwrap().quota,
+            Some(recreated)
+        );
+        assert_eq!(
+            counts.quota_decodes, 2,
+            "A read failure invalidates the typed cache"
+        );
+        assert_eq!(counts.quota_table_probes, 6);
+    }
+
+    #[test]
+    fn combined_observer_invalidates_rebound_generation_launch_and_foreign_host() {
+        let fixture = ObserverFixture::new();
+        let original = fixture.publish();
+        let mut observer = fixture.observer();
+        let mut counts = ReadCounts::default();
+        observer.poll(0, true, &mut counts).unwrap();
+        fixture.bind("conversation-b");
+        let rebound = observer.poll(1, true, &mut counts).unwrap();
+        assert_eq!(rebound.lifecycle.identity.generation, 2);
+        assert!(
+            rebound.quota.is_none(),
+            "A retained old-generation row cannot survive a rebind"
+        );
+        assert!(!append_root_quota(&fixture.0, &original.scope, &original.snapshot).unwrap());
+        let mut current = fixture.publish();
+        let connection = Connection::open(database(&fixture.0)).unwrap();
+        connection
+            .execute(
+                "UPDATE root_quota SET sequence=?1 WHERE id=1",
+                [i64::try_from(original.scope.sequence).unwrap()],
+            )
+            .unwrap();
+        current.scope.sequence = original.scope.sequence;
+        assert_eq!(
+            observer.poll(2, true, &mut counts).unwrap().quota,
+            Some(current)
+        );
+        assert_eq!(counts.quota_decodes, 2);
+        assert_eq!(counts.lifecycle_schema_probes, 1);
+        connection
+            .execute(
+                "UPDATE scope SET launch_id='replacement-launch' WHERE id=1",
+                [],
+            )
+            .unwrap();
+        assert!(observer.poll(2, true, &mut counts).unwrap().quota.is_none());
+        let replacement = fixture.publish();
+        assert_eq!(
+            observer.poll(2, true, &mut counts).unwrap().quota,
+            Some(replacement)
+        );
+        assert_eq!(
+            counts.lifecycle_schema_probes, 2,
+            "Column capabilities are scoped to the validated launch"
+        );
+        connection
+            .execute(
+                "UPDATE scope SET host_session='foreign-host' WHERE id=1",
+                [],
+            )
+            .unwrap();
+        assert!(observer.poll(2, true, &mut counts).is_err());
+        assert!(observer.quota.is_none() && observer.columns.is_none());
+        connection
+            .execute(
+                "UPDATE scope SET host_session='host-session' WHERE id=1",
+                [],
+            )
+            .unwrap();
+        assert!(observer.poll(2, true, &mut counts).unwrap().quota.is_some());
+        assert!(!observer.matches(&fixture.0, "foreign-host"));
+        assert!(!observer.matches(&fixture.0.with_file_name("other.json"), "host-session"));
+    }
+
+    #[test]
+    fn combined_observer_replaces_success_with_latest_receiver_refusal_without_stale_windows() {
+        let fixture = ObserverFixture::new();
+        fixture.publish();
+        let mut observer = fixture.observer();
+        let mut counts = ReadCounts::default();
+        assert!(
+            observer
+                .poll(0, true, &mut counts)
+                .unwrap()
+                .quota
+                .unwrap()
+                .snapshot
+                .five_hour
+                .is_some()
+        );
+        for (input, reason) in [
+            (b"PRIVATE-INVALID-JSON".to_vec(), crate::claude_quota::Reason::InvalidInput),
+            (serde_json::to_vec(&json!({"session_id":"conversation-a"})).unwrap(), crate::claude_quota::Reason::WindowsUnavailable),
+            (serde_json::to_vec(&json!({"session_id":"conversation-a","rate_limits":{"five_hour":{"used_percentage":"invalid","resets_at":4000}}})).unwrap(), crate::claude_quota::Reason::InvalidWindow),
+        ] {
+            assert_eq!(crate::claude_quota::receive(&fixture.0, input.as_slice()).unwrap(), crate::claude_quota::ReceiveOutcome::Recorded);
+            let current = observer.poll(1, true, &mut counts).unwrap().quota.unwrap();
+            assert_eq!(current.snapshot.reason, reason);
+            assert!(current.snapshot.five_hour.is_none() && current.snapshot.seven_day.is_none());
+            assert_eq!(observer.poll(1, true, &mut counts).unwrap().quota, Some(current));
+        }
+        assert_eq!(counts.quota_decodes, 4);
+        assert_eq!(
+            counts.quota_read_failures, 0,
+            "Receiver refusal is valid replacement evidence, not a storage read error"
+        );
+    }
+
+    #[test]
+    fn combined_observer_checks_exact_stored_bytes_and_never_falls_back_after_corruption_or_absence()
+     {
+        let fixture = ObserverFixture::new();
+        let original = fixture.publish();
+        let mut observer = fixture.observer();
+        let mut counts = ReadCounts::default();
+        observer.poll(0, true, &mut counts).unwrap();
+        let connection = Connection::open(database(&fixture.0)).unwrap();
+        let mut changed = original.snapshot.clone();
+        changed.five_hour.as_mut().unwrap().used_percentage = 12.5;
+        connection
+            .execute(
+                "UPDATE root_quota SET snapshot=?1 WHERE id=1",
+                [serde_json::to_string(&changed).unwrap()],
+            )
+            .unwrap();
+        let current = observer.poll(1, true, &mut counts).unwrap().quota.unwrap();
+        assert_eq!(current.scope, original.scope);
+        assert_eq!(current.snapshot, changed);
+        assert_eq!(
+            counts.quota_decodes, 2,
+            "Matching sequence cannot excuse changed stored bytes"
+        );
+        let mut bad_clock = changed.clone();
+        bad_clock.received_monotonic_ms = 0;
+        let mut bad_window = changed;
+        bad_window.five_hour.as_mut().unwrap().used_percentage = 101.0;
+        for encoded in [
+            "invalid".into(),
+            serde_json::to_string(&bad_clock).unwrap(),
+            serde_json::to_string(&bad_window).unwrap(),
+            "é".repeat(1025),
+        ] {
+            let good = fixture.publish();
+            assert_eq!(
+                observer.poll(1, true, &mut counts).unwrap().quota,
+                Some(good)
+            );
+            connection
+                .execute("UPDATE root_quota SET snapshot=?1 WHERE id=1", [encoded])
+                .unwrap();
+            let failed = observer.poll(1, true, &mut counts).unwrap();
+            assert!(failed.quota.is_none());
+            assert!(failed.lifecycle.events.is_empty());
+            assert!(observer.quota.is_none());
+        }
+        assert_eq!(counts.quota_read_failures, 4);
+        for statement in [
+            "UPDATE root_quota SET snapshot=NULL WHERE id=1",
+            "DELETE FROM root_quota WHERE id=1",
+        ] {
+            fixture.publish();
+            assert!(observer.poll(1, true, &mut counts).unwrap().quota.is_some());
+            connection.execute_batch(statement).unwrap();
+            assert!(observer.poll(1, true, &mut counts).unwrap().quota.is_none());
+            assert!(observer.quota.is_none());
+        }
+        fixture.publish();
+        assert!(observer.poll(1, true, &mut counts).unwrap().quota.is_some());
+        connection.execute_batch("DROP TABLE events").unwrap();
+        assert!(observer.poll(1, true, &mut counts).is_err());
+        assert!(observer.quota.is_none() && observer.columns.is_none());
+        connection.execute_batch("CREATE TABLE events(sequence INTEGER PRIMARY KEY,generation INTEGER NOT NULL,state TEXT NOT NULL,event TEXT NOT NULL,prompt_digest TEXT,paste_digest TEXT)").unwrap();
+        assert!(observer.poll(1, true, &mut counts).unwrap().quota.is_some());
+        assert_eq!(counts.lifecycle_read_failures, 1);
+    }
+
+    #[test]
+    fn combined_observer_preserves_legacy_columns_and_recovers_without_advancing_on_schema_failure()
+    {
+        for schema in [
+            "",
+            "ALTER TABLE events DROP COLUMN paste_digest",
+            "ALTER TABLE events DROP COLUMN prompt_digest; ALTER TABLE events DROP COLUMN paste_digest",
+        ] {
+            let fixture = ObserverFixture::new();
+            let connection = Connection::open(database(&fixture.0)).unwrap();
+            connection.execute_batch(schema).unwrap();
+            let mut observer = fixture.observer();
+            let mut counts = ReadCounts::default();
+            let observed = observer.poll(0, true, &mut counts).unwrap();
+            assert_eq!(
+                batch_projection(&observed.lifecycle),
+                batch_projection(&read(&fixture.0, "host-session", 0).unwrap())
+            );
+            fixture.publish();
+            assert!(observer.poll(1, true, &mut counts).unwrap().quota.is_some());
+            assert_eq!(counts.lifecycle_schema_probes, 1);
+            if schema.is_empty() {
+                connection
+                    .execute_batch("ALTER TABLE events DROP COLUMN paste_digest")
+                    .unwrap();
+                assert!(observer.poll(0, true, &mut counts).is_err());
+                assert!(observer.columns.is_none() && observer.quota.is_none());
+                let recovered = observer.poll(0, true, &mut counts).unwrap();
+                assert_eq!(
+                    batch_projection(&recovered.lifecycle),
+                    batch_projection(&read(&fixture.0, "host-session", 0).unwrap())
+                );
+                assert_eq!(counts.lifecycle_read_failures, 1);
+            }
+        }
+    }
+
+    #[test]
+    fn combined_observer_preserves_native_correlation_readiness_and_gap_projection() {
+        let fixture = ObserverFixture::new();
+        let exact = "a".repeat(64);
+        let pasted = "b".repeat(64);
+        let emit = |event, state, turn, prompt, paste| {
+            append_scoped(
+                &fixture.0,
+                SourceEvent {
+                    provider_session: Some("conversation-a"),
+                    provider_turn: Some(turn),
+                    event,
+                    state,
+                    allow_rebind: false,
+                    prompt_digest: prompt,
+                    paste_digest: paste,
+                },
+            )
+            .unwrap()
+        };
+        emit(
+            "UserPromptSubmit",
+            StatusState::Working,
+            "turn-1",
+            Some(exact.as_str()),
+            None,
+        )
+        .unwrap();
+        fixture.publish();
+        let mut observer = fixture.observer();
+        let mut counts = ReadCounts::default();
+        let initial = observer.poll(0, true, &mut counts).unwrap();
+        emit(
+            "UserPromptSubmit",
+            StatusState::Working,
+            "turn-2",
+            Some(exact.as_str()),
+            Some(pasted.as_str()),
+        )
+        .unwrap();
+        assert!(
+            emit(
+                "UserPromptSubmit",
+                StatusState::Working,
+                "turn-2",
+                Some(exact.as_str()),
+                None
+            )
+            .is_none()
+        );
+        assert!(emit("Stop", StatusState::Idle, "turn-1", None, None).is_none());
+        emit("PreToolUse", StatusState::Working, "turn-2", None, None).unwrap();
+        emit("Stop", StatusState::Idle, "turn-2", None, None).unwrap();
+        let separate = read(&fixture.0, "host-session", initial.lifecycle.head_sequence).unwrap();
+        Connection::open(database(&fixture.0))
+            .unwrap()
+            .execute("UPDATE root_quota SET snapshot='invalid' WHERE id=1", [])
+            .unwrap();
+        let combined = observer
+            .poll(initial.lifecycle.head_sequence, true, &mut counts)
+            .unwrap();
+        assert!(
+            combined.quota.is_none(),
+            "Quota-only failure cannot delay current lifecycle evidence"
+        );
+        assert_eq!(
+            batch_projection(&combined.lifecycle),
+            batch_projection(&separate)
+        );
+        assert_eq!(
+            combined.lifecycle.identity.rejected, 1,
+            "Duplicate pickup is a no-op; only the late old-turn stop is rejected"
+        );
+        let phases = |batch: &Batch, digest: &str| {
+            let mut correlation = crate::submission::Correlation::new(
+                &initial.lifecycle.identity,
+                initial.lifecycle.head_sequence,
+                digest.into(),
+            );
+            batch
+                .events
+                .iter()
+                .filter_map(|event| correlation.observe(&batch.identity, event))
+                .collect::<Vec<_>>()
+        };
+        for (digest, matched_by) in [(&exact, "exact"), (&pasted, "claudePasteWrapper")] {
+            let expected = phases(&separate, digest);
+            assert_eq!(phases(&combined.lifecycle, digest), expected);
+            assert_eq!(
+                expected.iter().map(|(phase, _)| *phase).collect::<Vec<_>>(),
+                ["received", "started", "settled"]
+            );
+            assert_eq!(expected[0].1["promptMatch"], matched_by);
+        }
+        let readiness = |batch: &Batch| {
+            let mut tracker = crate::readiness::Tracker::new(crate::launchers::Program::Claude);
+            for event in &batch.events {
+                tracker.observe(
+                    crate::status::SessionStatus {
+                        state: event.state,
+                        source: crate::status::StatusSource::Hook,
+                        updated_at: event.sequence,
+                    },
+                    None,
+                    Duration::from_millis(event.sequence),
+                );
+            }
+            serde_json::to_value(tracker.snapshot()).unwrap()
+        };
+        assert_eq!(readiness(&combined.lifecycle), readiness(&separate));
+        assert_eq!(readiness(&combined.lifecycle)["phase"], "ready");
+        Connection::open(database(&fixture.0))
+            .unwrap()
+            .execute("DELETE FROM events WHERE sequence<=2", [])
+            .unwrap();
+        let gap = observer.poll(0, false, &mut counts).unwrap();
+        assert!(gap.quota.is_none() && gap.lifecycle.gap);
+        assert_eq!(
+            batch_projection(&gap.lifecycle),
+            batch_projection(&read(&fixture.0, "host-session", 0).unwrap())
+        );
     }
 
     #[test]

@@ -4,6 +4,16 @@ Claude sessions launched by Nesvo install session-scoped hooks alongside the exi
 
 Only lifecycle metadata and conversation/launch identities are stored in the private session directory. Prompts, responses and tool arguments are not persisted. A bounded launch-scoped SQLite journal is read asynchronously every 500 ms, outside the host mutex and PTY dispatch loop; the compatibility JSON shadow is diagnostic data rather than the new host's event source. Status broadcasts remain coalesced. Process exit has final precedence. Fresh visible UI evidence can supersede a different hook state after a short transition grace period, covering approvals. An idle prompt cannot override confirmed working just because output arrived or time passed: a real Ctrl+C/Esc interrupt followed by a newly rendered prompt is required for that fallback. Identical screen/hook states keep hook provenance. Losing a hook does not manufacture completion.
 
+Periodic lifecycle and optional Claude quota reads share one short read
+transaction per launch. Current launch/conversation scope is checked every time;
+only immutable lifecycle-column capabilities and decoding of an identical quota
+ticket plus stored bytes are cached. A quota table created after startup remains
+discoverable. Rebind, missing/corrupt data and read failures remove cached and
+visible quota instead of retaining an old success. Cache hits preserve original
+receipt clocks and establish no new backend freshness or permission. Aggregate
+numeric read counters are available in owner diagnostics as `lifecycleObserver`;
+session-scoped callers cannot read host-wide counters.
+
 The wire contract remains compatible with older v2 clients: confirmed reports use `source: screen` with additive `evidence: hook`. Older clients show an inferred state; updated clients show confirmed running/idle/blocked/question/failed. Attention events retain a legacy-compatible source. TUI labels prefixed with `~` are screen inferences; open/quiet are terminal I/O observations only.
 
 ## Coverage and limits

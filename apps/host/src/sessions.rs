@@ -3448,68 +3448,70 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
     let weak = Arc::downgrade(&state);
     // File I/O runs independently of PTY dispatch and outside the host mutex.
     let lifecycle_task = tokio::spawn(async move {
+        let mut observers = HashMap::<String, crate::agent_events::Observer>::new();
         let mut tick = tokio::time::interval(Duration::from_millis(500));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
             let Some(state) = weak.upgrade() else { break };
             flush_submission_updates(&state).await;
-            let reports: Vec<_> = state
-                .lock()
-                .unwrap()
-                .sessions
-                .iter()
-                .filter(|(_, session)| {
+            let reports: Vec<_> = {
+                let state = state.lock().unwrap();
+                let eligible = |session: &Session| {
                     session.info.running
                         || session.elapsed_at_exit.is_some_and(|at| {
                             session.started.elapsed().saturating_sub(at) < Duration::from_secs(2)
                         })
-                })
-                .filter_map(|(id, session)| {
-                    session.agent_context.as_ref().map(|tracker| {
-                        (
-                            id.clone(),
-                            tracker.report(),
-                            session.lifecycle_cursor,
-                            session.info.program == Program::Claude,
-                            session.caller_context.as_ref().and_then(|context| {
-                                session.harness_enabled.then(|| context.recovery_report())
-                            }),
-                        )
+                };
+                observers.retain(|id, _| {
+                    state
+                        .sessions
+                        .get(id)
+                        .is_some_and(|session| eligible(session) && session.agent_context.is_some())
+                });
+                state
+                    .sessions
+                    .iter()
+                    .filter(|(_, session)| eligible(session))
+                    .filter_map(|(id, session)| {
+                        session.agent_context.as_ref().map(|tracker| {
+                            (
+                                id.clone(),
+                                tracker.report(),
+                                session.lifecycle_cursor,
+                                session.info.program == Program::Claude,
+                                session.caller_context.as_ref().and_then(|context| {
+                                    session.harness_enabled.then(|| context.recovery_report())
+                                }),
+                            )
+                        })
                     })
-                })
-                .collect();
+                    .collect()
+            };
             for (id, path, after, claude, recovery_path) in reports {
                 let observation = crate::agent_context::observe(&path).await;
                 let recovery = match recovery_path {
                     Some(path) => Some(crate::caller::observe_recovery(&path).await),
                     None => None,
                 };
-                let expected = id.clone();
+                let mut observer = observers
+                    .remove(&id)
+                    .filter(|observer| observer.matches(&path, &id))
+                    .unwrap_or_else(|| crate::agent_events::Observer::new(path, id.clone()));
                 let batch = tokio::task::spawn_blocking(move || {
-                    let mut counts = crate::agent_events::ReadCounts {
-                        scope_polls: 1,
-                        ..Default::default()
-                    };
-                    let quota = if claude {
-                        crate::claude_quota::read_counted(&path, &expected, &mut counts)
-                            .ok()
-                            .flatten()
-                    } else {
-                        None
-                    };
-                    let lifecycle =
-                        crate::agent_events::read_counted(&path, &expected, after, &mut counts);
-                    ((lifecycle, quota), counts)
+                    let mut counts = crate::agent_events::ReadCounts::default();
+                    let result = observer.poll(after, claude, &mut counts);
+                    (observer, result, counts)
                 })
                 .await;
                 let mut state = state.lock().unwrap();
                 let batch = match batch {
-                    Ok((result, counts)) => {
+                    Ok((observer, result, counts)) => {
+                        observers.insert(id.clone(), observer);
                         state.lifecycle_observer.accumulate(counts);
-                        Ok(result)
+                        result.ok()
                     }
-                    Err(error) => {
+                    Err(_) => {
                         state
                             .lifecycle_observer
                             .accumulate(crate::agent_events::ReadCounts {
@@ -3517,7 +3519,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                 blocking_task_failures: 1,
                                 ..Default::default()
                             });
-                        Err(error)
+                        None
                     }
                 };
                 let event_log = state.event_log.clone();
@@ -3536,7 +3538,10 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     session.integration_delivery = observation.delivery;
                     session.integration_shadow_sequence = observation.report.map(|r| r.sequence);
                     match batch {
-                        Ok((Ok(batch), quota)) => {
+                        Some(crate::agent_events::Observed {
+                            lifecycle: batch,
+                            quota,
+                        }) => {
                             session.claude_quota = quota.filter(|quota| {
                                 quota.scope.launch_id == batch.identity.launch_id
                                     && quota.scope.generation == batch.identity.generation
@@ -3636,7 +3641,10 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                 session.turn.process_exit(elapsed);
                             }
                         }
-                        _ => session.integration_delivery.outcome = "queueUnreadable",
+                        None => {
+                            session.claude_quota = None;
+                            session.integration_delivery.outcome = "queueUnreadable";
+                        }
                     }
                 }
                 state.submission_updates.extend(submission_updates);
@@ -3990,6 +3998,48 @@ mod tests {
                 .resolve_launch(&wake, &mut crate::jobs::LaunchSpec::default())
                 .is_err()
         );
+        state.lifecycle_observer.scope_polls = 7;
+        for (client_id, authority, owner) in [
+            (1, crate::caller::Authority::Owner, true),
+            (2, normal.clone(), false),
+        ] {
+            let (client_events, mut replies) = mpsc::channel(8);
+            let (cancelled, _) = watch::channel(false);
+            state.clients.insert(
+                client_id,
+                Client {
+                    events: client_events,
+                    cancelled,
+                    authority,
+                },
+            );
+            state
+                .command(
+                    client_id,
+                    Command::GetDiagnostics {
+                        session_id: Some(id.clone()),
+                    },
+                    None,
+                    &events,
+                )
+                .unwrap();
+            let response = replies.try_recv().unwrap();
+            assert_eq!(response["type"], "diagnostics");
+            let report = &response["report"];
+            assert_eq!(report.get("lifecycleObserver").is_some(), owner);
+            if owner {
+                assert_eq!(report["lifecycleObserver"]["counts"]["scopePolls"], 7);
+                assert!(
+                    report["lifecycleObserver"]["counts"]
+                        .as_object()
+                        .unwrap()
+                        .values()
+                        .all(Value::is_u64)
+                );
+            } else {
+                assert!(report.get("providerQuota").is_none());
+            }
+        }
         state
             .sessions
             .get_mut(&id)
