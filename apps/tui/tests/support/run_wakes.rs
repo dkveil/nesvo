@@ -1,4 +1,3 @@
-//! Official SDK -> stdio MCP -> real host/PTY, with controlled non-model programs.
 use super::*;
 
 async fn view(client: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
@@ -349,7 +348,6 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
         timeout(Duration::from_secs(8),async{loop{if view(&coordinator,run).await?["tasks"][0]["state"]=="reported" {return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
         let pending=wake_view(&coordinator,run).await?;assert_eq!(pending["pendingCount"],3);
         assert!(!fixture.directory.join("callers").join(format!("{root_id}.wake-inputs.jsonl")).exists(),"Working coordinator gets no input");
-        // Recover immutable acceptance by its workflow key, not a guessed revision.
         let recovered=inbox::scoped_cli(&context,&["run","mutation","--key","wake-enable","--json"]).await?;assert_eq!(recovered["data"],enabled);
         let original_revision = (enabled["run"]["revision"].as_u64().context("enable revision")? - 1).to_string();
         let cli_replay = inbox::scoped_cli(&context, &["run","wake","enable",run,"--key","wake-enable","--revision",&original_revision,"--json"]).await?;

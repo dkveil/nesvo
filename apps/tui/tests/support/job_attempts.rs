@@ -1,4 +1,3 @@
-//! Durable job generation history through native CLI/MCP and one controlled worker.
 use super::*;
 
 async fn reported_occurrence(
@@ -58,14 +57,12 @@ fn diagnostic_native(value: &Value) -> Value {
     summary
 }
 
-async fn initial_report_diagnostics(
+async fn failed_initial_report_diagnostics(
     fixture: &mut Fixture,
     owner: &RunningService<RoleClient, ()>,
     job: &str,
     occurrence: &str,
 ) -> Value {
-    // Read only after the existing acceptance wait has failed, before teardown
-    // removes the owned worker and its evidence. Neither test deadline changes.
     let actual = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
     let unavailable = Value::Null;
     let current = actual["history"]["reply"]["data"]["occurrences"]
@@ -105,9 +102,6 @@ async fn initial_report_diagnostics(
         })
         .unwrap_or(Value::Null);
     diagnostics["attempt"]["result"] = diagnostic_fields(&attempt["result"], &["outcome"]);
-    // A report-input marker is written only after the scoped run-context CLI
-    // returned; a result marker is written only after the report CLI returned.
-    // Publish stage booleans and a bounded typed reply code, never raw files.
     if let Some(session) = current["sessionId"].as_str().filter(|id| {
         id.len() == 32
             && id
@@ -201,7 +195,7 @@ async fn first_job_generation_retains_native_pointers_and_restarts_without_creat
         let reported = match reported_occurrence(&owner,job,occurrence).await {
             Ok(reported) => reported,
             Err(error) => {
-                let diagnostics = initial_report_diagnostics(&mut fixture, &owner, job, occurrence).await;
+                let diagnostics = failed_initial_report_diagnostics(&mut fixture, &owner, job, occurrence).await;
                 return Err(error.context(format!("Initial job generation report diagnostics: {diagnostics}")));
             }
         };

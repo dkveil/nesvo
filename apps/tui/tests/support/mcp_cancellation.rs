@@ -1,4 +1,3 @@
-//! Official SDK cancellation releases passive MCP waits without changing host work.
 use super::*;
 use rmcp::{
     model::{ClientRequest, Request, ServerResult},
@@ -36,16 +35,13 @@ async fn passive_wait(
         .await?)
 }
 
-async fn occupied_slots(
+async fn slots_proven_occupied_by_fifth_host_call(
     owner: &RunningService<RoleClient, ()>,
     receipt: &Value,
     envelopes: &mut Vec<Value>,
 ) -> Result<Vec<RequestHandle<RoleClient>>> {
     let mut waits = Vec::new();
     let mut admissions = 0;
-    // A real fifth host call proves all four handlers hold their slots.
-    // Merely spawning futures or dropping call_tool would not prove this,
-    // and would not send the protocol's notifications/cancelled message.
     loop {
         retire_rejected_waits(&mut waits, envelopes)?;
         while waits.len() < PENDING_WAITS {
@@ -89,9 +85,6 @@ async fn occupied_slots(
         } else {
             record_observation(envelopes, data(probe)?);
         }
-        // A read-only capacity probe can itself acquire the final slot before
-        // a queued wait. Refill only waits actually rejected as busy, retaining
-        // at most four pending requests and the same original send receipt.
         tokio::task::yield_now().await;
     }
 }
@@ -345,7 +338,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
 
         let mut envelopes = Vec::new();
         phase.set("owner MCP nesvo_wait_prompt/get_session: four occupied slots");
-        let waits = occupied_slots(owner, receipt, &mut envelopes).await?;
+        let waits = slots_proven_occupied_by_fifth_host_call(owner, receipt, &mut envelopes).await?;
         phase.set("owner MCP notifications/cancelled: all four passive waits");
         cancel_waits(waits).await?;
         phase.set("owner MCP nesvo_get_session: same process reuses canceled slots");
@@ -355,10 +348,8 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
         for field in ["id", "generation", "phase", "observedAt", "outcome"] {
             assert_eq!(recovered_turn[field], turn[field], "Cancellation changed the original turn field {field}");
         }
-        // A second pending cohort proves every permit can be reused by this
-        // process while the original native response is still held.
         phase.set("owner MCP nesvo_wait_prompt/get_session: all four slots reused");
-        let reused_waits = occupied_slots(owner, receipt, &mut envelopes).await?;
+        let reused_waits = slots_proven_occupied_by_fifth_host_call(owner, receipt, &mut envelopes).await?;
         phase.set("owner MCP notifications/cancelled: reused four passive waits");
         cancel_waits(reused_waits).await?;
         phase.set("owner MCP nesvo_get_operation: cancellation retains original receipt");
@@ -400,9 +391,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
         Ok::<_, anyhow::Error>(())
     })).catch_unwind().await;
 
-    // Release only this fixture, even on timeout/panic, before shutting down its
-    // MCP subprocess and host. Never wait for the fixture's 20-second fallback.
-    let release_cleanup = release
+    let release_before_fixture_fallback_wait = release
         .as_ref()
         .map(|path| std::fs::write(path, ""))
         .transpose()
@@ -429,7 +418,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
                         phase.get()
                     )
                 })?;
-            release_cleanup?;
+            release_before_fixture_fallback_wait?;
             client_cleanup.context("Cancellation MCP cleanup deadline")??;
             host_cleanup
         }
@@ -438,7 +427,11 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
                 "MCP cancellation panic phase: {}; owned host stderr is inherited by this test",
                 phase.get()
             );
-            let _ = (release_cleanup, client_cleanup, host_cleanup);
+            let _ = (
+                release_before_fixture_fallback_wait,
+                client_cleanup,
+                host_cleanup,
+            );
             std::panic::resume_unwind(panic)
         }
     }

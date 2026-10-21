@@ -11,8 +11,6 @@ pub(super) async fn owner_cli(fixture: &Fixture, args: &[&str]) -> Result<Value>
         .args(args)
         .stdin(Stdio::null())
         .kill_on_drop(true);
-    // Outer readiness/scenario cancellation requests termination of this owned
-    // CLI through Tokio's drop handling; it does not confirm an awaited reap.
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     let output = timeout(Duration::from_secs(15), command.output()).await??;

@@ -1,6 +1,3 @@
-//! Real Git/SDK/private-host quota continuations with controlled PTYs, never models.
-//! The controlled Codex fixture reports through its session-bound CLI context;
-//! these cases do not prove MCP injection into the original Codex program.
 use super::*;
 use provider_quota::{
     configure_source, context_query, context_refresh, context_revision, row, snapshot,

@@ -1,4 +1,3 @@
-//! Real native processes: conflicting host may not rotate keys or recover live data.
 use super::*;
 
 #[tokio::test]

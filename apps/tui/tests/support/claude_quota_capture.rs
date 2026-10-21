@@ -1,4 +1,3 @@
-//! Actual host helper, declared owned display, real scoped callback; no provider/model.
 use super::*;
 use tokio::io::AsyncReadExt;
 
@@ -217,18 +216,7 @@ async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::proce
     })
     .await;
     #[cfg(windows)]
-    {
-        // Close every owned descendant before canceled Windows blocking pipe
-        // reads can outlive this test's Tokio runtime.
-        let terminated = job.terminate();
-        let reaped = timeout(Duration::from_secs(2), child.wait()).await;
-        let _ = std::fs::remove_file(release);
-        terminated?;
-        ensure!(
-            matches!(reaped, Ok(Ok(_))),
-            "Owned generated-command root cleanup"
-        );
-    }
+    terminate_job_before_canceled_pipe_reads_outlive_runtime(&job, &mut child, &release).await?;
     #[cfg(not(windows))]
     if result.is_err() {
         let _ = child.start_kill();
@@ -249,6 +237,23 @@ async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::proce
         stdout: output,
         stderr: diagnostic,
     })
+}
+
+#[cfg(windows)]
+async fn terminate_job_before_canceled_pipe_reads_outlive_runtime(
+    job: &WindowsJob,
+    child: &mut Child,
+    release: &Path,
+) -> Result<()> {
+    let terminated = job.terminate();
+    let reaped = timeout(Duration::from_secs(2), child.wait()).await;
+    let _ = std::fs::remove_file(release);
+    terminated?;
+    ensure!(
+        matches!(reaped, Ok(Ok(_))),
+        "Owned generated-command root cleanup"
+    );
+    Ok(())
 }
 
 fn stderr_class(bytes: &[u8]) -> &'static str {
@@ -341,7 +346,7 @@ impl WindowsJob {
 }
 #[cfg(windows)]
 #[link(name = "kernel32")]
-#[allow(non_snake_case)] // Exact Win32 exports; this is test-only containment.
+#[allow(non_snake_case)]
 unsafe extern "system" {
     fn CreateJobObjectW(
         attributes: *const std::ffi::c_void,

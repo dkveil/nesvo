@@ -1,4 +1,3 @@
-//! Real bound-worker cancellation through owner CLI/MCP; no model calls.
 use super::*;
 
 pub(super) async fn occurrence(
@@ -59,14 +58,12 @@ fn diagnostic_native(value: &Value) -> Value {
     summary
 }
 
-async fn initial_report_diagnostics(
+async fn failed_initial_report_diagnostics(
     fixture: &mut Fixture,
     owner: &RunningService<RoleClient, ()>,
     job: &str,
     occurrence: &str,
 ) -> Value {
-    // Failure-only existing bounded reads; successful scheduling and both the
-    // seven-second acceptance and twenty-second scenario bounds stay unchanged.
     let actual = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
     let unavailable = Value::Null;
     let current = actual["history"]["reply"]["data"]["occurrences"]
@@ -189,7 +186,7 @@ async fn bound_job_cancel_stops_the_exact_worker_and_retains_original_pending_ac
         let reported = match occurrence(&owner, job, id, "needsValidation").await {
             Ok(reported) => reported,
             Err(error) => {
-                let diagnostics = initial_report_diagnostics(&mut fixture, &owner, job, id).await;
+                let diagnostics = failed_initial_report_diagnostics(&mut fixture, &owner, job, id).await;
                 return Err(error.context(format!("Bound initial report diagnostics: {diagnostics}")));
             }
         };
@@ -256,10 +253,8 @@ async fn bound_job_cancel_stops_the_exact_worker_and_retains_original_pending_ac
             "key":"do-not-rearm-canceled-job","runId":run,
             "expectedRevision":control["data"]["run"]["revision"]
         })).await?.structured_content.context("Canceled job executor refusal")?;
-        // An executor observation can revise the run after the control snapshot.
-        // Both guards refuse admission; retained native identity/counts below
-        // prove that a version conflict did not accidentally re-enable work.
-        assert!(matches!(reenable["error"]["code"].as_str(),Some("job_canceled"|"revision_conflict")),"Unexpected re-enable outcome: {reenable}");
+        let admission_refused_by_either_guard=matches!(reenable["error"]["code"].as_str(),Some("job_canceled"|"revision_conflict"));
+        assert!(admission_refused_by_either_guard,"Unexpected re-enable outcome: {reenable}");
         let original = budgets::owner_cli(&fixture,&[
             "job","mutation","--key","cancel-bound-worker","--json"
         ]).await?;

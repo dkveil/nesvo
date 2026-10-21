@@ -1,4 +1,3 @@
-//! Full profile preflight through official MCP SDK/CLI and real PTYs, no models.
 use super::*;
 use run_checkpoints::{mutate, view};
 
@@ -154,10 +153,9 @@ async fn recovery_profile_retains_questions_and_results_then_launches_one_review
         validate(&new,run,&attempt_a,"IMPLEMENTATION_PROBE_OK").await?;
         stopped(&owner,worker).await?;
 
-        // Regression for the original-model retention refusal: retained root,
-        // worker and replacement occupy three slots even with only one live PID.
         let budget=api(&owner,"nesvo_get_host_budget",json!({})).await?;
-        let mut lower=p["hostLimits"].clone();lower["maxSessions"]=3.into();
+        let retained_root_worker_and_replacement_slots=3;
+        let mut lower=p["hostLimits"].clone();lower["maxSessions"]=retained_root_worker_and_replacement_slots.into();
         api(&owner,"nesvo_set_host_budget",json!({"key":"profile-retention-only","expectedRevision":budget["budget"]["revision"],"limits":lower})).await?;
         let rejected=call(&owner,"nesvo_create_session",json!({"key":"profile-preflight-refusal","spec":{"name":"Must not start","program":"claude"}})).await?;
         let failure=rejected.structured_content.context("retention refusal")?;

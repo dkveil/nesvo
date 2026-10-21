@@ -1,10 +1,9 @@
-//! Refuse unknown late Git effects; reconcile a distinct proven no-effect preflight.
-//! Only owned temporary Git configuration and controlled native PTYs are used.
 use super::*;
 
 type Owner = RunningService<RoleClient, ()>;
 type ScenarioOutcome =
     std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
+const PREPARATION_AND_FILTER_MARKER_DEADLINE: Duration = Duration::from_secs(10);
 
 async fn reply(owner: &Owner, name: &'static str, args: Value) -> Result<Value> {
     data(call(owner, name, args).await?)
@@ -59,10 +58,7 @@ async fn git(repository: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(output.stdout)?)
 }
 
-fn git_shell_argument(path: &Path) -> Result<String> {
-    // Git's smudge command is a shell string on POSIX and Git for Windows.
-    // Forward slashes prevent Windows separators from becoming shell escapes;
-    // single-quote escaping preserves spaces, apostrophes and metacharacters.
+fn single_quoted_forward_slash_shell_word(path: &Path) -> Result<String> {
     let path = path.to_str().context("Owned Git filter path is UTF-8")?;
     Ok(format!(
         "'{}'",
@@ -70,7 +66,9 @@ fn git_shell_argument(path: &Path) -> Result<String> {
     ))
 }
 
-async fn source_repository(fixture: &Fixture) -> Result<PathBuf> {
+async fn source_repository_with_checkout_failure_installed_after_initial_commit(
+    fixture: &Fixture,
+) -> Result<PathBuf> {
     let source = fixture.directory.join("source");
     std::fs::create_dir(&source)?;
     git(&source, &["init", "--quiet"]).await?;
@@ -98,8 +96,6 @@ async fn source_repository(fixture: &Fixture) -> Result<PathBuf> {
         ],
     )
     .await?;
-    // Install the required checkout failure only after the initial commit.
-    // No global/system Git config, source edits or precheck approvals change.
     let script = fixture.directory.join("job-launch-filter.cjs");
     std::fs::write(
         &script,
@@ -111,8 +107,8 @@ async fn source_repository(fixture: &Fixture) -> Result<PathBuf> {
         .join(if cfg!(windows) { "node.exe" } else { "node" });
     let command = format!(
         "{} {}",
-        git_shell_argument(&node)?,
-        git_shell_argument(&script)?
+        single_quoted_forward_slash_shell_word(&node)?,
+        single_quoted_forward_slash_shell_word(&script)?
     );
     git(
         &source,
@@ -186,10 +182,7 @@ async fn claimed_before_filter_release(
     let marker = fixture.directory.join("job-launch-filter-started.json");
     let finished = fixture.directory.join("job-launch-filter-finished.json");
     let mut last = Value::Null;
-    // Initial approved-command and native preparation can precede the marker.
-    // The filter itself retains its independent five-second hard bound; the
-    // live marker/unfinished assertion below proves ordering on every platform.
-    timeout(Duration::from_secs(10), async {
+    timeout(PREPARATION_AND_FILTER_MARKER_DEADLINE, async {
         loop {
             let view = read(owner, job, id).await?;
             if marker.is_file() && view["data"]["occurrence"]["executionTimeout"]["state"] == "dispatching" {
@@ -259,6 +252,18 @@ fn identity(row: &Value, descriptor: &Value) {
     }
 }
 
+fn assert_same_control_and_targets_ignoring_live_run_projection(
+    retained: &Value,
+    original: &Value,
+) {
+    assert_eq!(retained["data"]["control"], original["data"]["control"]);
+    assert_eq!(retained["data"]["targets"], original["data"]["targets"]);
+    assert_eq!(
+        retained["data"]["nextOffset"],
+        original["data"]["nextOffset"]
+    );
+}
+
 fn launched_workers(fixture: &Fixture) -> Result<usize> {
     Ok(std::fs::read_dir(fixture.directory.join("callers"))?
         .collect::<std::io::Result<Vec<_>>>()?
@@ -272,7 +277,7 @@ fn launched_workers(fixture: &Fixture) -> Result<usize> {
         .count())
 }
 
-async fn artifact_inventory(fixture: &Fixture, source: &Path) -> Result<Value> {
+async fn retained_artifact_inventory(fixture: &Fixture, source: &Path) -> Result<Value> {
     let mut entries = std::fs::read_dir(&fixture.directory)?
         .collect::<std::io::Result<Vec<_>>>()?
         .iter()
@@ -280,8 +285,6 @@ async fn artifact_inventory(fixture: &Fixture, source: &Path) -> Result<Value> {
         .filter(|name| name.starts_with("source-nesvo-"))
         .collect::<Vec<_>>();
     entries.sort();
-    // Git may retain a partial worktree and/or its branch after checkout fails.
-    // Merely observe them. Logical abandonment must never remove these facts.
     let branches = git(
         source,
         &[
@@ -359,18 +362,21 @@ async fn retained_generation(owner: &Owner, row: &Value, phase: &str) -> Result<
     Ok(vec![listed, detail, run, native])
 }
 
+fn release_live_filter_for_cleanup_regardless_of_outcome(fixture: &Fixture) -> Result<()> {
+    std::fs::write(
+        fixture.directory.join("job-launch-filter-release"),
+        "cleanup",
+    )?;
+    Ok(())
+}
+
 async fn finish(
     fixture: &mut Fixture,
     phase: &str,
     job: Option<&str>,
     outcome: ScenarioOutcome,
 ) -> Result<()> {
-    // Release any live bounded filter even when an assertion fails. Its own
-    // five-second deadline is a second cleanup bound, not an acceptance oracle.
-    std::fs::write(
-        fixture.directory.join("job-launch-filter-release"),
-        "cleanup",
-    )?;
+    release_live_filter_for_cleanup_regardless_of_outcome(fixture)?;
     if !matches!(&outcome, Ok(Ok(Ok(())))) {
         let diagnostic = match job {
             Some(job) => job_diagnostics::report_timeout_diagnostics(fixture, job).await,
@@ -414,7 +420,7 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
     let mut diagnostic_job = None;
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(50),async {
         ready(&fixture).await?;
-        let source = source_repository(&fixture).await?;
+        let source = source_repository_with_checkout_failure_installed_after_initial_commit(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (precheck,mut envelopes) = approve_precheck(&fixture,&owner).await?;
         let mut selected = spec(&source);
@@ -472,7 +478,7 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
         assert_eq!(targets[0]["sessionId"],row["sessionId"]);
         assert_ne!(targets[0]["phase"],"exited");
         assert_ne!(targets[0]["phase"],"stopRequested");
-        let artifacts = artifact_inventory(&fixture,&source).await?;
+        let artifacts = retained_artifact_inventory(&fixture,&source).await?;
         envelopes.extend(retained_generation(&owner,row,"unknown").await?);
         phase = "unknown-effects acknowledgment refusal via both owner adapters";
         let ack = json!({"key":"refuse-unknown-native-effects","jobId":job,"occurrenceId":id,"jobAttemptId":row["jobAttemptId"],"expectedDigest":"0".repeat(64),"acknowledgeUnknownEffects":true});
@@ -512,13 +518,8 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
         let retained_receipt = reply(&owner,"nesvo_get_operation",json!({"id":row["launchReceiptId"]})).await?;
         let retained_control = reply(&owner,"nesvo_get_run_control",json!({"runId":row["runId"],"controlId":row["executionTimeout"]["controlId"]})).await?;
         assert_eq!(retained_receipt["data"]["receipt"],receipt["data"]["receipt"]);
-        // A control read also includes the current Run projection, whose
-        // revision can advance when the in-flight launch finalizes. Compare
-        // the retained control and target facts, not that live projection.
-        assert_eq!(retained_control["data"]["control"],control["data"]["control"]);
-        assert_eq!(retained_control["data"]["targets"],control["data"]["targets"]);
-        assert_eq!(retained_control["data"]["nextOffset"],control["data"]["nextOffset"]);
-        assert_eq!(artifact_inventory(&fixture,&source).await?,artifacts,"Refused acknowledgment must not erase partial Git artifacts");
+        assert_same_control_and_targets_ignoring_live_run_projection(&retained_control,&control);
+        assert_eq!(retained_artifact_inventory(&fixture,&source).await?,artifacts,"Refused acknowledgment must not erase partial Git artifacts");
         envelopes.extend(retained_generation(&owner,&final_first["data"]["occurrence"],"unknown").await?);
         envelopes.extend([created,admitted,claimed,unresolved.clone(),receipt,control,refused,rejected,edited,queued,pending,sessions,final_first,retained_receipt,retained_control]);
         phase = "published schema validation of actual negative-path envelopes";
@@ -606,9 +607,6 @@ async fn owner_abandons_proven_preflight_failure_and_deliberately_starts_a_new_o
         assert_eq!(std::fs::read_to_string(&precheck_effects)?,"pass\n","Acknowledgment never repeats the approved command");
         assert_eq!(launched_workers(&fixture)?,0,"Acknowledgment alone never launches a worker");
         phase = "explicitly admit a separate occurrence after updating only future intent";
-        // The first occurrence was already terminal failed before acknowledgment.
-        // This positive path proves identity/replay and future admission, not
-        // causal overlap release from an execution-timeout cleanup state.
         let mut future = selected.clone();
         future["profile"]["cwd"] = fixture.directory.to_str().context("Owned existing future cwd")?.into();
         let edited = reply(&owner,"nesvo_update_job",json!({"key":"deliberate-future-profile","jobId":job,"expectedRevision":1,"spec":future})).await?;

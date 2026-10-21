@@ -1,4 +1,3 @@
-//! Real calendar helper, CLI/MCP, disconnected host timer and native worker.
 use super::*;
 
 #[tokio::test]

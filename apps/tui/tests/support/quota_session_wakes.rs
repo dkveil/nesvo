@@ -1,5 +1,3 @@
-//! Official SDK -> native durable quota journal -> one controlled existing PTY.
-//! No original provider, model request, artificial hook or database seeding.
 use super::*;
 use provider_quota::{
     configure_source, context_query, context_refresh, context_revision, row, snapshot,
@@ -18,6 +16,12 @@ async fn operation(owner: &Owner, id: &str) -> Result<Value> {
         data(call(owner, "nesvo_get_operation", json!({"id":id})).await?)?["data"]["receipt"]
             .clone(),
     )
+}
+
+fn settled_in_both_independent_snapshots(wake: &Value, receipt: &Value) -> bool {
+    receipt["phase"] == "settled"
+        && wake["phase"] == "paused"
+        && wake["operationPhase"] == "settled"
 }
 
 async fn create(fixture: &Fixture, owner: &Owner) -> Result<(Value, String)> {
@@ -64,9 +68,10 @@ async fn create(fixture: &Fixture, owner: &Owner) -> Result<(Value, String)> {
     Ok((created, id))
 }
 
-/// Start the short reset only when refresh is admitted. An earlier startup
-/// observation can be cooling down; none of these refreshes invokes a model.
-async fn near_reset(fixture: &Fixture, owner: &Owner) -> Result<Value> {
+async fn near_reset_started_when_refresh_is_admitted(
+    fixture: &Fixture,
+    owner: &Owner,
+) -> Result<Value> {
     timeout(Duration::from_secs(9), async {
         loop {
             let mut limited = snapshot();
@@ -254,7 +259,7 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30), async {
         let owner = client(&fixture.pairing()).await?;
         let (created, session) = create(&fixture, &owner).await?;
-        let source = near_reset(&fixture, &owner).await?;
+        let source = near_reset_started_when_refresh_is_admitted(&fixture, &owner).await?;
         let (_, original) = blocked_prompt(&owner, &session).await?;
         let retained = arm(&owner, &session, &original).await?;
         assert_eq!(retained["source"]["contextId"], source["contextId"]);
@@ -262,7 +267,6 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
         assert!(inputs(&fixture, &session)?.is_empty());
         owner.cancel().await?;
 
-        // No owner transport owns the arm or the native producer's lifetime.
         let reset = retained["source"]["resetAt"].as_i64().context("Reset")?;
         let remaining = (reset * 1000 + 200).saturating_sub(chrono::Utc::now().timestamp_millis());
         if remaining > 0 {
@@ -276,12 +280,7 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
                 let wake = quota_wake(&owner, &session).await?;
                 if let Some(operation_id) = wake["operationId"].as_str() {
                     let receipt = operation(&owner, operation_id).await?;
-                    // These are independent snapshots. A receipt may settle
-                    // after the wake query; retain only a settled projection.
-                    if receipt["phase"] == "settled"
-                        && wake["phase"] == "paused"
-                        && wake["operationPhase"] == "settled"
-                    {
+                    if settled_in_both_independent_snapshots(&wake, &receipt) {
                         assert_eq!(wake["operationId"], receipt["id"]);
                         return Ok::<_, anyhow::Error>((wake, receipt));
                     }
@@ -349,7 +348,7 @@ async fn durable_quota_wake_stays_paused_after_takeover_disable_and_fresh_quota(
     let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30), async {
         let owner = client(&fixture.pairing()).await?;
         let (_, session) = create(&fixture, &owner).await?;
-        near_reset(&fixture, &owner).await?;
+        near_reset_started_when_refresh_is_admitted(&fixture, &owner).await?;
         let (_, original) = blocked_prompt(&owner, &session).await?;
         let retained = arm(&owner, &session, &original).await?;
         let mut human = human_control(&fixture.pairing(), &session).await?;

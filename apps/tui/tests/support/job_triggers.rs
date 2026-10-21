@@ -1,5 +1,3 @@
-//! Actual signed loopback HTTP -> durable jobs -> controlled native CLI workers.
-//! No models, external accounts, global configuration or database seeding.
 use super::*;
 
 type Owner = RunningService<RoleClient, ()>;

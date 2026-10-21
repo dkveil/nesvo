@@ -1,4 +1,3 @@
-//! Original CLI-shaped controlled executables capture actual native literal argv.
 use super::*;
 fn argv(fixture: &Fixture, id: &str) -> Result<Vec<String>> {
     Ok(serde_json::from_slice(&std::fs::read(
@@ -71,7 +70,6 @@ async fn model_profiles_are_literal_versioned_and_never_inherited_or_claimed_as_
         let saved=recoveries(&fixture.pairing()).await?;
         let saved=saved.as_array().context("raw recovery profile records")?.iter().find(|record|record["id"]==saved_id).context("saved model selection")?;
         assert_eq!(saved["spec"]["model"],model);assert_eq!(saved["spec"]["effort"],"low");
-        // Profile persistence never automatically restarts historical processes.
         let owner=client(&fixture.pairing()).await?;
         let listed=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;
         assert!(listed["data"]["sessions"].as_array().context("empty restart sessions")?.is_empty());

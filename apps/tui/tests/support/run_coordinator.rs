@@ -1,14 +1,7 @@
-//! Native metadata recovery with scoped MCP, real PTYs and retained uncertainty.
 use super::*;
 use run_checkpoints::{mutate, schema, setup, view};
 
-async fn replacement(
-    fixture: &Fixture,
-    owner: &RunningService<RoleClient, ()>,
-    directory: Option<&Path>,
-) -> Result<(String, PathBuf, RunningService<RoleClient, ()>)> {
-    // Listener readiness is not provider-probe completion, especially after a
-    // fast Unix restart. Observe readiness before creating an immutable intent.
+async fn provider_probe_completed(fixture: &Fixture) -> Result<()> {
     timeout(Duration::from_secs(5), async {
         loop {
             let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
@@ -26,7 +19,14 @@ async fn replacement(
         }
     })
     .await
-    .context("Replacement provider readiness after host restart")??;
+    .context("Replacement provider readiness after host restart")?
+}
+async fn replacement(
+    fixture: &Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    directory: Option<&Path>,
+) -> Result<(String, PathBuf, RunningService<RoleClient, ()>)> {
+    provider_probe_completed(fixture).await?;
     let mut spec = json!({"name":"Replacement coordinator","program":"claude","role":"coordinator","harness":true});
     if let Some(directory) = directory {
         spec["cwd"] = directory.to_string_lossy().as_ref().into();

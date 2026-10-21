@@ -1,4 +1,3 @@
-//! Actual native settings and host authority, through official SDK and native CLI.
 use super::*;
 
 fn permissions(fixture: &Fixture, id: &str) -> Result<Value> {
@@ -108,15 +107,13 @@ async fn task_tool_selection_is_a_policy_subset_or_explicit_owner_intent_and_sur
         let defaults=run_checkpoints::mutate(&coordinator,&run,"nesvo_launch_task",json!({"key":"default-inheritance","taskId":tasks[2],"profile":{"program":"claude","workspace":"shared"}})).await?;
         let default_id=defaults["launch"]["sessionId"].as_str().context("default worker")?;session_ready(&owner,default_id).await?;
         assert_eq!(permissions(&fixture,default_id)?,json!(["mcp__nesvo__nesvo_get_current_task","mcp__nesvo__nesvo_report_task_result"]));
-        // Even owner access on a bound run uses that coordinator's policy.
-        // Request a worktree outside a Git repository: the policy refusal must
-        // happen before attempting Git and cannot become an unknown effect.
-        for (index,profile,code) in [
+        let owner_launches_refused_by_coordinator_policy_before_any_effect=[
             (3,json!({"program":"claude","workspace":"worktree","allowedNesvoTools":["nesvo_create_session"]}),"forbidden"),
             (4,json!({"program":"claude","workspace":"shared","harness":false,"allowedNesvoTools":[]}),"unsupported"),
             (5,json!({"program":"shell","workspace":"shared","harness":false,"allowedNesvoTools":[]}),"unsupported"),
             (6,json!({"program":"claude","workspace":"shared","allowedNesvoTools":["*"]}),"invalid_argument"),
-        ] {
+        ];
+        for (index,profile,code) in owner_launches_refused_by_coordinator_policy_before_any_effect {
             let rejected=run_checkpoints::mutate(&owner,&run,"nesvo_launch_task",json!({"key":format!("refuse-{index}"),"taskId":tasks[index],"profile":profile})).await?;
             let receipt=data(call(&owner,"nesvo_get_operation",json!({"id":rejected["launch"]["receiptId"]})).await?)?;
             assert_eq!(receipt["data"]["receipt"]["phase"],"failed");

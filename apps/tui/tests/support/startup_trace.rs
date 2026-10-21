@@ -1,4 +1,3 @@
-//! Strict bounded evidence from the exact owned child's startup stdout.
 use super::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::{Arc, Mutex};
@@ -76,8 +75,6 @@ pub(super) struct Collector {
 }
 
 impl Collector {
-    // True means the prefix was consumed, including rejected records. An
-    // untrusted diagnostic must never become the listener-line handshake.
     fn consume(&mut self, line: &str) -> bool {
         let Some(body) = line.strip_prefix(PREFIX) else {
             return false;

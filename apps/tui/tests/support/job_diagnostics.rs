@@ -1,4 +1,3 @@
-//! Bounded read-only failure evidence for controlled native job fixtures.
 use super::*;
 
 async fn diagnostic_cli(fixture: &Fixture, args: &[&str]) -> Value {
@@ -31,8 +30,6 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
         Err(error) => json!({"error":error.to_string()}),
     };
     let mut diagnostics = json!({"host":host});
-    // These reads start only after the acceptance deadline has already failed.
-    // Keep partial observations if any diagnostic query itself gets stuck.
     let observed = timeout(Duration::from_millis(3800), async {
         let history_args = ["job", "history", job, "--json"];
         let definition_args = ["job", "show", job, "--json"];
@@ -91,8 +88,6 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
         );
         diagnostics["run"] = run;
         diagnostics["launchReceipt"] = receipt;
-        // Controlled Node stderr shares its native PTY with stdout. The fixture
-        // host's own stderr is already inherited by the test process.
         diagnostics["controlledWorkerOutput"] = transcript;
         diagnostics["session"] = session_state;
         let task_id = diagnostics["run"]["reply"]["data"]["tasks"][0]["id"]
@@ -134,8 +129,6 @@ pub(super) struct RetryOccurrence {
     view: Value,
 }
 
-/// Test-owned progress survives both an unsuccessful RPC and timeout cancellation.
-/// No request, prompt, path or error Display string is retained here.
 pub(super) struct RetryWaitObservation {
     job: String,
     occurrence: String,
@@ -216,7 +209,6 @@ impl RetryWaitObservation {
     }
 }
 
-// Do not copy arbitrary nested diagnostics or raw error strings into CI output.
 fn retry_fields(value: &Value, fields: &[&str]) -> Value {
     let mut result = serde_json::Map::new();
     for field in fields {
@@ -357,8 +349,6 @@ fn retry_submission_fence(value: &Value) -> Value {
     let Some(value) = value.as_object() else {
         return Value::Null;
     };
-    // Exact operations::submission_failure labels; never copy an arbitrary
-    // adapter error, a new unknown enum value or extra nested payload fields.
     let substage = value
         .get("substage")
         .and_then(Value::as_str)
@@ -404,8 +394,6 @@ fn retry_native(value: &Value) -> Value {
 }
 
 fn retry_integration_delivery(value: &Value) -> Value {
-    // agent_context::Delivery derives camelCase serialization. A string or
-    // snake_case spelling is not evidence of this current typed shape.
     let Some(outcome) = value.get("outcome").and_then(Value::as_str) else {
         return Value::Null;
     };
@@ -532,8 +520,6 @@ fn retry_turn_id(value: &Value) -> Option<&str> {
     .then_some(id)
 }
 
-/// Retry-only evidence: no diagnostic subprocesses, mutations or native retries.
-/// IDs come from the primary wait, never a possibly unavailable history lookup.
 pub(super) async fn retry_timeout_diagnostics(
     fixture: &mut Fixture,
     owner: &RunningService<RoleClient, ()>,
@@ -551,8 +537,6 @@ pub(super) async fn retry_timeout_diagnostics(
         return result;
     };
     let collected = timeout(Duration::from_millis(3800),async {
-        // The sole retained MCP adapter is already running. Each call still
-        // authenticates normally; no owner authority is manufactured here.
         let (run,operation,explain) = tokio::join!(
             async {match &current.run_id {Some(id)=>retry_read(owner,"nesvo_get_run",json!({"runId":id})).await,None=>RetryRead{outcome:"notObserved",value:None}}},
             async {match &current.launch_receipt_id {Some(id)=>retry_read(owner,"nesvo_get_operation",json!({"id":id})).await,None=>RetryRead{outcome:"notObserved",value:None}}},

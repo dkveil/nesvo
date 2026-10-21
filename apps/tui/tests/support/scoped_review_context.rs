@@ -1,4 +1,3 @@
-//! Actual production context helper -> owner SDK diff; controlled payloads, no models.
 use super::*;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{
@@ -105,7 +104,11 @@ async fn hook(settings: &Value, event: &str, payload: Value, cwd: &Path) -> Resu
     Ok(())
 }
 
-async fn repository(fixture: &Fixture, name: &str, marker: &str) -> Result<PathBuf> {
+async fn unborn_repository_with_untracked_marker(
+    fixture: &Fixture,
+    name: &str,
+    marker: &str,
+) -> Result<PathBuf> {
     let directory = fixture.directory.join(name);
     std::fs::create_dir(&directory)?;
     let mut command = Command::new("git");
@@ -140,8 +143,6 @@ async fn repository(fixture: &Fixture, name: &str, marker: &str) -> Result<PathB
         status.success(),
         "Initialize only this owned temporary repository"
     );
-    // An unborn repository suffices for the untracked review scope; no identity,
-    // commit, global config, hook, or provider invocation is needed.
     std::fs::write(
         directory.join("review marker łódź.txt"),
         format!("{marker}\n"),
@@ -211,9 +212,11 @@ async fn identity(owner: &Owner, id: &str, provider: &str, generation: u64) -> R
     .context("Public current generation projection")?
 }
 
-// Directory pin is an existing owner GetDiff field, omitted by the MCP tool.
-// Exercise that real transport field with the shared authenticated frame codec.
-async fn pinned(fixture: &Fixture, id: &str, directory: &Path) -> Result<Value> {
+async fn pinned_over_owner_frames_because_mcp_omits_pin(
+    fixture: &Fixture,
+    id: &str,
+    directory: &Path,
+) -> Result<Value> {
     timeout(Duration::from_secs(12), async {
         let pairing: Value = serde_json::from_slice(&std::fs::read(fixture.pairing())?)?;
         ensure!(
@@ -329,10 +332,10 @@ async fn scoped_context_helpers_follow_current_root_without_losing_external_edit
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
         provider_ready(&fixture).await?;
-        let launch = repository(&fixture, "launch repo łódź", "F05_LAUNCH_MARKER").await?;
-        let external = repository(&fixture, "external edited repo 日本語", "F05_EXTERNAL_MARKER").await?;
-        let cwd = repository(&fixture, "changed cwd repo łódź", "F05_CWD_MARKER").await?;
-        let pin = repository(&fixture, "explicit pin repo", "F05_PIN_MARKER").await?;
+        let launch = unborn_repository_with_untracked_marker(&fixture, "launch repo łódź", "F05_LAUNCH_MARKER").await?;
+        let external = unborn_repository_with_untracked_marker(&fixture, "external edited repo 日本語", "F05_EXTERNAL_MARKER").await?;
+        let cwd = unborn_repository_with_untracked_marker(&fixture, "changed cwd repo łódź", "F05_CWD_MARKER").await?;
+        let pin = unborn_repository_with_untracked_marker(&fixture, "explicit pin repo", "F05_PIN_MARKER").await?;
         let owner = client(&fixture.pairing()).await?;
         let created = data(call(&owner, "nesvo_create_session", json!({
             "key":"f05-scoped-review-once",
@@ -358,7 +361,7 @@ async fn scoped_context_helpers_follow_current_root_without_losing_external_edit
             "hook_event_name":"CwdChanged","session_id":provider_a,"agent_id":"","new_cwd":cwd,
         }), &launch).await?;
         assert_review(&automatic(&owner, id).await?, &cwd, "Auto: agent directory", "F05_CWD_MARKER")?;
-        assert_review(&pinned(&fixture, id, &pin).await?, &pin, "Pinned", "F05_PIN_MARKER")?;
+        assert_review(&pinned_over_owner_frames_because_mcp_omits_pin(&fixture, id, &pin).await?, &pin, "Pinned", "F05_PIN_MARKER")?;
         assert_review(&automatic(&owner, id).await?, &cwd, "Auto: agent directory", "F05_CWD_MARKER")?;
 
         for rejected in [
@@ -376,15 +379,13 @@ async fn scoped_context_helpers_follow_current_root_without_losing_external_edit
             assert_review(&automatic(&owner, id).await?, &cwd, "Auto: agent directory", "F05_CWD_MARKER")?;
         }
 
-        // Real helper, controlled clear/rebind. A fresh generation cannot reuse
-        // the preceding generation's review row even before its next cwd event.
         let provider_b = "replacement-context-root";
         hook(&settings, "SessionStart", json!({
             "hook_event_name":"SessionStart","session_id":provider_b,"agent_id":"","source":"clear",
         }), &launch).await?;
         identity(&owner, id, provider_b, 2).await?;
         assert_review(&automatic(&owner, id).await?, &launch, "Auto: launch folder", "F05_LAUNCH_MARKER")?;
-        assert_review(&pinned(&fixture, id, &pin).await?, &pin, "Pinned", "F05_PIN_MARKER")?;
+        assert_review(&pinned_over_owner_frames_because_mcp_omits_pin(&fixture, id, &pin).await?, &pin, "Pinned", "F05_PIN_MARKER")?;
 
         for stale in [
             json!({"hook_event_name":"CwdChanged","session_id":provider_a,
@@ -407,8 +408,6 @@ async fn scoped_context_helpers_follow_current_root_without_losing_external_edit
         }), &launch).await?;
         assert_review(&automatic(&owner, id).await?, &external, "Auto: edited file", "F05_EXTERNAL_MARKER")?;
 
-        // This checks ABA invalidation of retained context, not a delayed helper:
-        // pre-stdin-ticket concurrency is covered by deterministic core Read tests.
         hook(&settings, "SessionStart", json!({
             "hook_event_name":"SessionStart","session_id":provider_a,"agent_id":"","source":"resume",
         }), &launch).await?;
@@ -423,7 +422,7 @@ async fn scoped_context_helpers_follow_current_root_without_losing_external_edit
             "tool_name":"Write","tool_input":{"file_path":external.join("review marker łódź.txt")},
         }), &launch).await?;
         assert_review(&automatic(&owner, id).await?, &external, "Auto: edited file", "F05_EXTERNAL_MARKER")?;
-        assert_review(&pinned(&fixture, id, &pin).await?, &pin, "Pinned", "F05_PIN_MARKER")?;
+        assert_review(&pinned_over_owner_frames_because_mcp_omits_pin(&fixture, id, &pin).await?, &pin, "Pinned", "F05_PIN_MARKER")?;
 
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())

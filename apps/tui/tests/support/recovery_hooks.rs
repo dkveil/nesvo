@@ -1,4 +1,3 @@
-//! Native launch hook -> scoped CLI -> real host; deterministic provider, no models.
 use super::*;
 
 fn last_recovery(fixture: &Fixture, id: &str) -> Result<Value> {
@@ -39,6 +38,7 @@ async fn invoke(
     input: &[u8],
     hold_eof: bool,
 ) -> Result<std::process::Output> {
+    let provider_changed_temp_root = binary.parent().context("fixture executable folder")?;
     let mut command = Command::new(binary);
     command
         .arg("--pairing")
@@ -46,16 +46,9 @@ async fn invoke(
         .args(["run", "recover-hook"])
         .env_remove("NESVO_AGENT_CONTEXT")
         .env_remove("NESVO_SESSION_ID")
-        // Native providers can change the hook's temp root after host launch.
-        .env("TMP", binary.parent().context("fixture executable folder")?)
-        .env(
-            "TMPDIR",
-            binary.parent().context("fixture executable folder")?,
-        )
-        .env(
-            "TEMP",
-            binary.parent().context("fixture executable folder")?,
-        )
+        .env("TMP", provider_changed_temp_root)
+        .env("TMPDIR", provider_changed_temp_root)
+        .env("TEMP", provider_changed_temp_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -91,6 +84,21 @@ fn unavailable(output: &std::process::Output) -> Result<()> {
     assert!(value.get("decision").is_none());
     assert!(!text.contains("LAST_OWNER_RULE"));
     assert!(!output.stderr.is_empty());
+    Ok(())
+}
+async fn oversize_provider_context_with_run_constraints(
+    owner: &RunningService<RoleClient, ()>,
+    run: &str,
+) -> Result<()> {
+    for index in 10..16 {
+        run_checkpoints::mutate(
+            owner,
+            run,
+            "nesvo_add_run_constraint",
+            json!({"key":format!("hook-rule-{index}"),"text":"\"".repeat(1023)}),
+        )
+        .await?;
+    }
     Ok(())
 }
 async fn report(owner: &RunningService<RoleClient, ()>, id: &str, outcome: &str) -> Result<Value> {
@@ -163,11 +171,7 @@ async fn native_recovery_collects_all_current_context_without_replay_and_fails_o
         assert_eq!(run_checkpoints::view(&coordinator,&run).await?,before,"Recovery reads cannot ACK, enable policies, validate, or change revisions");
         let terminal_after=data(call(&owner,"nesvo_read_session",json!({"sessionId":child,"maxBytes":8192})).await?)?;
         assert_eq!(terminal_after["data"]["page"]["data"],terminal_before["data"]["page"]["data"],"No native input from recovery");
-        // Oversized provider context must return only a fixed warning, never a
-        // seemingly complete partial manifest or Claude's truncated file preview.
-        for index in 10..16 {
-            run_checkpoints::mutate(&owner,&run,"nesvo_add_run_constraint",json!({"key":format!("hook-rule-{index}"),"text":"\"".repeat(1023)})).await?;
-        }
+        oversize_provider_context_with_run_constraints(&owner,&run).await?;
         unavailable(&invoke(&binary,&path,&event,false).await?)?;
         let failed=report(&owner,&id,"unavailable").await?;
         assert!(failed["recovery"]["status"]["runId"].is_null());

@@ -1,4 +1,3 @@
-//! Explicit owner native permission additions, real SDK/CLI/host/PTY; no models.
 use super::*;
 
 fn actual(fixture: &Fixture, id: &str) -> Result<Value> {
@@ -46,10 +45,10 @@ async fn owner_child_tool_policy_is_explicit_process_scoped_and_never_delegates_
         let child_view=data(call(&owner,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
         assert_eq!(child_view["data"]["session"]["harness"]["childToolPolicy"]["allow"],json!([]));
         let worker=scoped_client(&caller(&fixture,child_id)?,child_id).await?;
-        refused(&worker,json!({"key":"child-policy-is-not-a-role","spec":{"name":"Forbidden grandchild","program":"claude"}}),"forbidden").await?;
+        refused_before_or_after_durable_identity(&worker,json!({"key":"child-policy-is-not-a-role","spec":{"name":"Forbidden grandchild","program":"claude"}}),"forbidden").await?;
         for field in ["allowedNesvoTools","childAllowedNesvoTools"] {
             let mut spec=json!({"name":"Cannot replace policy","program":"claude"});spec[field]=json!([]);
-            refused(&coordinator,json!({"key":format!("cannot-replace-{field}"),"spec":spec}),"forbidden").await?;
+            refused_before_or_after_durable_identity(&coordinator,json!({"key":format!("cannot-replace-{field}"),"spec":spec}),"forbidden").await?;
         }
         let metadata=data(call(&owner,"nesvo_create_session",json!({"key":"metadata-is-not-delegation","spec":{"name":"Owner metadata child","program":"claude","harness":true,"parentSessionId":id}})).await?)?;
         let metadata=metadata["data"]["receipt"]["sessionId"].as_str().context("metadata child")?;session_ready(&owner,metadata).await?;
@@ -72,12 +71,12 @@ async fn owner_child_tool_policy_is_explicit_process_scoped_and_never_delegates_
         let other_child=data(call(&other_client,"nesvo_create_session",json!({"key":"other-derived-child","spec":{"name":"Other policy child","program":"claude","harness":true}})).await?)?;
         let other_child=other_child["data"]["receipt"]["sessionId"].as_str().context("other child")?;session_ready(&owner,other_child).await?;
         assert_eq!(actual(&fixture,other_child)?,json!(["mcp__nesvo__nesvo_get_session"]));assert_eq!(effective(&owner,other_child).await?["originSessionId"],other_id);
-        refused(&other_client,json!({"key":"cannot-select-another-parent-policy","spec":{"name":"Forged policy origin","program":"claude","harness":true,"parentSessionId":id}}),"forbidden").await?;
+        refused_before_or_after_durable_identity(&other_client,json!({"key":"cannot-select-another-parent-policy","spec":{"name":"Forged policy origin","program":"claude","harness":true,"parentSessionId":id}}),"forbidden").await?;
         let shell=data(call(&coordinator,"nesvo_create_session",json!({"key":"policy-does-not-affect-shell","spec":{"name":"Passive shell child","program":"shell","harness":false}})).await?)?;
         let shell=shell["data"]["receipt"]["sessionId"].as_str().context("passive policy shell")?;
         assert_eq!(effective(&owner,shell).await?["allow"],json!([]));
-        refused(&owner,json!({"key":"worker-cannot-declare-child-policy","spec":{"name":"Wrong role","program":"claude","harness":true,"childAllowedNesvoTools":[]}}),"invalid_argument").await?;
-        refused(&owner,json!({"key":"no-wildcard-child-policy","spec":{"name":"Wrong policy","program":"claude","role":"coordinator","childAllowedNesvoTools":["*"]}}),"invalid_argument").await?;
+        refused_before_or_after_durable_identity(&owner,json!({"key":"worker-cannot-declare-child-policy","spec":{"name":"Wrong role","program":"claude","harness":true,"childAllowedNesvoTools":[]}}),"invalid_argument").await?;
+        refused_before_or_after_durable_identity(&owner,json!({"key":"no-wildcard-child-policy","spec":{"name":"Wrong policy","program":"claude","role":"coordinator","childAllowedNesvoTools":["*"]}}),"invalid_argument").await?;
         let saved_id=id.to_owned();
         run_checkpoints::schema(vec![created,root,child,child_view]).await?;
         other_client.cancel().await?;worker.cancel().await?;coordinator.cancel().await?;owner.cancel().await?;
@@ -99,13 +98,16 @@ async fn owner_child_tool_policy_is_explicit_process_scoped_and_never_delegates_
         }
     }
 }
-async fn refused(client: &RunningService<RoleClient, ()>, args: Value, code: &str) -> Result<()> {
+async fn refused_before_or_after_durable_identity(
+    client: &RunningService<RoleClient, ()>,
+    args: Value,
+    code: &str,
+) -> Result<()> {
     let result = call(client, "nesvo_create_session", args).await?;
     assert_eq!(result.is_error, Some(true));
     let value = result
         .structured_content
         .context("native permission refusal")?;
-    // Native launch validation happens after the durable operation identity.
     if value["error"]["receipt"].is_object() {
         assert_eq!(value["error"]["receipt"]["phase"], "failed");
         assert_eq!(value["error"]["receipt"]["result"]["code"], code);
@@ -151,19 +153,19 @@ async fn owner_native_permissions_are_literal_process_additions_not_child_or_hos
         assert_eq!(effective(&owner,child_id).await?["source"],"none");
         assert_eq!(actual(&fixture,child_id)?,json!([]));
         for (index,tools) in [json!(["nesvo_get_session"]),json!([])].into_iter().enumerate() {
-            refused(&coordinator,json!({"key":format!("cannot-grant-{index}"),"spec":{"name":"Forbidden permission grant","program":"claude","harness":true,"allowedNesvoTools":tools}}),"forbidden").await?;
+            refused_before_or_after_durable_identity(&coordinator,json!({"key":format!("cannot-grant-{index}"),"spec":{"name":"Forbidden permission grant","program":"claude","harness":true,"allowedNesvoTools":tools}}),"forbidden").await?;
         }
         let cli=budgets::owner_cli(&fixture,&["session","create","Owner approved worker","--key","cli-native-policy","--program","claude","--harness","--allow-nesvo-tool","nesvo_get_session","--allow-nesvo-tool","nesvo_create_session","--json"]).await?;
         let passive=cli["data"]["receipt"]["sessionId"].as_str().context("passive worker")?;
         session_ready(&owner,passive).await?;
         assert_eq!(actual(&fixture,passive)?,json!(["mcp__nesvo__nesvo_get_session","mcp__nesvo__nesvo_create_session"]));
         let worker=scoped_client(&caller(&fixture,passive)?,passive).await?;
-        refused(&worker,json!({"key":"native-allow-is-not-host-authority","spec":{"name":"Not permitted to spawn","program":"claude"}}),"forbidden").await?;
+        refused_before_or_after_durable_identity(&worker,json!({"key":"native-allow-is-not-host-authority","spec":{"name":"Not permitted to spawn","program":"claude"}}),"forbidden").await?;
         for (index,tools) in [json!(["*"]),json!(["mcp__nesvo__*"]),json!(["Bash"]),json!(["nesvo_unknown"]),json!(["nesvo_get_session","nesvo_get_session"])].into_iter().enumerate() {
-            refused(&owner,json!({"key":format!("bad-policy-{index}"),"spec":{"name":"Invalid policy","program":"claude","harness":true,"allowedNesvoTools":tools}}),"invalid_argument").await?;
+            refused_before_or_after_durable_identity(&owner,json!({"key":format!("bad-policy-{index}"),"spec":{"name":"Invalid policy","program":"claude","harness":true,"allowedNesvoTools":tools}}),"invalid_argument").await?;
         }
-        refused(&owner,json!({"key":"must-explicitly-enable-harness","spec":{"name":"No harness","program":"claude","allowedNesvoTools":["nesvo_get_session"]}}),"invalid_argument").await?;
-        refused(&owner,json!({"key":"unsupported-program-policy","spec":{"name":"No shell policy","program":"shell","harness":true,"allowedNesvoTools":["nesvo_get_session"]}}),"unsupported").await?;
+        refused_before_or_after_durable_identity(&owner,json!({"key":"must-explicitly-enable-harness","spec":{"name":"No harness","program":"claude","allowedNesvoTools":["nesvo_get_session"]}}),"invalid_argument").await?;
+        refused_before_or_after_durable_identity(&owner,json!({"key":"unsupported-program-policy","spec":{"name":"No shell policy","program":"shell","harness":true,"allowedNesvoTools":["nesvo_get_session"]}}),"unsupported").await?;
         let mut changed=json!({"key":"explicit-native-policy","spec":{"name":"Owner approved coordinator","program":"claude","harness":true,"role":"coordinator","allowedNesvoTools":["nesvo_get_session"]}});
         let conflict=call(&owner,"nesvo_create_session",changed.take()).await?.structured_content.context("policy key conflict")?;
         assert_eq!(conflict["error"]["code"],"idempotency_conflict");

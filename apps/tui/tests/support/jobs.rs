@@ -1,4 +1,3 @@
-//! Once job through real native CLI/MCP, with all owner clients disconnected at due.
 use super::*;
 
 async fn job_history(owner: &RunningService<RoleClient, ()>, job: &str) -> Result<Value> {
