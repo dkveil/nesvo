@@ -7,6 +7,7 @@ use crate::{
     status::State,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
+use ratatui::layout::Rect;
 use serde_json::json;
 use std::{
     cmp::Reverse,
@@ -25,6 +26,7 @@ pub struct Overview {
     selected: Option<String>,
     output_at: HashMap<String, Instant>,
     quiet: HashMap<String, u64>,
+    pub usage: crate::usage_panel::UsagePanel,
 }
 
 impl Overview {
@@ -255,11 +257,14 @@ pub fn refresh(app: &mut App, now: Instant, now_ms: u64) -> bool {
     };
     let changed = bucket(&quiet) != bucket(&app.overview.quiet);
     app.overview.quiet = quiet;
-    changed && (app.overview.open || leaf_visible(app))
+    app.overview.usage.observe_clock(now, now_ms);
+    let usage = crate::usage_panel::redraw_needed(app);
+    (changed && (app.overview.open || leaf_visible(app))) || usage
 }
 
-pub fn open(app: &mut App) {
+pub fn open(app: &mut App, width: u16) {
     app.overview.editing = false;
+    app.overview.usage.width = width;
     if leaf_visible(app) {
         app.overview.focused = true;
         app.overview.open = false;
@@ -289,8 +294,9 @@ pub fn wake_confirm(session: &Session) -> Dialog {
     }
 }
 
-pub fn event(app: &mut App, event: Event) -> Outcome {
+pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     let mut outcome = Outcome::default();
+    app.overview.usage.width = area.width;
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => key_event(app, key, &mut outcome),
         Event::Paste(text) if app.overview.editing => {
@@ -300,7 +306,7 @@ pub fn event(app: &mut App, event: Event) -> Outcome {
         }
         Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => step(app, -1),
         Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollDown => step(app, 1),
-        Event::Resize(..) => {}
+        Event::Resize(width, _) => app.overview.usage.width = width,
         _ => outcome.redraw = false,
     }
     outcome
@@ -326,6 +332,7 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         KeyCode::Char('w') => offer_wake(app),
         KeyCode::Char('f') => app.overlay = Some(crate::toolbox::Overlay::Filters(0)),
         KeyCode::Char('/') => app.overview.editing = true,
+        KeyCode::Char('u') if app.overview.open => app.overview.usage.toggle(),
         _ => outcome.redraw = false,
     }
 }
@@ -389,7 +396,6 @@ fn offer_wake(app: &mut App) {
 pub(crate) mod tests {
     use super::*;
     use crossterm::event::KeyEvent;
-    use ratatui::layout::Rect;
 
     pub const NOW_MS: u64 = 1_800_000_000_000;
 
@@ -510,6 +516,28 @@ pub(crate) mod tests {
         assert!(!app.overview.editing && app.overview.open);
         press(&mut app, KeyCode::Esc);
         assert!(!app.overview.open && !engaged(&app));
+    }
+
+    #[test]
+    fn overview_u_toggles_the_usage_panel_without_stealing_search_input() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('O'));
+        assert!(crate::usage_panel::visible(&app));
+        let outcome = press(&mut app, KeyCode::Char('u'));
+        assert!(outcome.redraw && !crate::usage_panel::visible(&app));
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Char('u'));
+        assert_eq!(app.overview.query, "u");
+        assert!(!crate::usage_panel::visible(&app));
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('u'));
+        assert!(crate::usage_panel::visible(&app));
+        crate::controller::event(&mut app, Event::Resize(80, 24), Rect::new(0, 0, 120, 40));
+        assert_eq!(app.overview.usage.width, 80);
+        assert!(
+            crate::usage_panel::visible(&app),
+            "an explicit toggle survives a resize"
+        );
     }
 
     #[test]

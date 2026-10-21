@@ -1181,7 +1181,9 @@ impl App {
         let kind = if let Some(next) = crate::git_pane::host_event(self, &event) {
             commands.extend(next);
             ""
-        } else if crate::review_session::host_event(self, &event).is_some() {
+        } else if crate::review_session::host_event(self, &event).is_some()
+            || crate::usage_panel::host_event(self, &event)
+        {
             ""
         } else {
             event["type"].as_str().unwrap_or_default()
@@ -1526,6 +1528,7 @@ impl App {
                 .into_iter()
                 .next()
                 .or_else(|| crate::git_pane::tick(self))
+                .or_else(|| crate::usage_panel::tick(self))
         }
     }
 

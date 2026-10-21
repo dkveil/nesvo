@@ -2,6 +2,7 @@ use crate::{
     model::App,
     overview::{self, Flag, Row, Wake},
     theme::{BACKGROUND, BORDER, DANGER, MUTED, TEXT, WARNING},
+    usage_panel::{self, ProviderLine, Summary, Tone},
 };
 use ratatui::{
     Frame,
@@ -19,6 +20,7 @@ struct Columns {
     age: bool,
     repository: bool,
     wake: bool,
+    usage: bool,
 }
 
 impl Columns {
@@ -30,6 +32,7 @@ impl Columns {
             age: width >= 96,
             repository: width >= 96,
             wake: overview::wake_supported(app) && width >= 56,
+            usage: usage_panel::session_column(app),
         }
     }
 }
@@ -64,12 +67,18 @@ pub fn render(frame: &mut Frame, app: &App) {
             area.height,
         );
         heading(frame, app, content);
-        let body = Rect::new(
+        let below = Rect::new(
             content.x,
             content.y + content.height.min(3),
             content.width,
             content.height.saturating_sub(3),
         );
+        let used = if usage_panel::visible(app) {
+            usage(frame, app, below)
+        } else {
+            0
+        };
+        let body = Rect::new(below.x, below.y + used, below.width, below.height - used);
         table(frame, app, body, true);
     }
     footer(frame, app, layout.footer);
@@ -134,6 +143,83 @@ fn heading(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+fn tone_style(tone: Tone) -> Style {
+    Style::default().fg(match tone {
+        Tone::Normal => TEXT,
+        Tone::Warning => WARNING,
+        Tone::Danger => DANGER,
+        Tone::Muted => MUTED,
+    })
+}
+
+fn provider_spans(line: &ProviderLine) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        format!("{:<8}", line.program.label()),
+        Style::default()
+            .fg(crate::ui::program_color(line.program))
+            .add_modifier(Modifier::BOLD),
+    )];
+    for cell in &line.windows {
+        spans.push(Span::styled(cell.text.clone(), tone_style(cell.tone)));
+        spans.push(Span::raw("   "));
+    }
+    spans.push(Span::styled(line.detail.clone(), tone_style(line.tone)));
+    Line::from(spans)
+}
+
+fn usage_lines(summary: &Summary) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            "Usage",
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "  account quota windows per provider · u hides",
+            Style::default().fg(MUTED),
+        ),
+    ])];
+    if summary.providers.is_empty() {
+        lines.push(Line::styled(
+            "No provider quota reported by this host.",
+            Style::default().fg(MUTED),
+        ));
+    }
+    lines.extend(summary.providers.iter().map(provider_spans));
+    if let Some(wake) = &summary.wake {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:<8}", "Wake"),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(wake.clone(), Style::default().fg(MUTED)),
+        ]));
+    }
+    if let Some(notice) = &summary.notice {
+        lines.push(Line::styled(notice.clone(), Style::default().fg(WARNING)));
+    }
+    lines
+}
+
+fn usage(frame: &mut Frame, app: &App, area: Rect) -> u16 {
+    let lines = usage_lines(&usage_panel::summary(app));
+    let wanted = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(1);
+    let height = wanted.min(area.height / 2);
+    if height < 2 {
+        return 0;
+    }
+    let text = Rect::new(area.x, area.y, area.width, height - 1);
+    frame.render_widget(Paragraph::new(lines), text);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(BORDER)),
+        Rect::new(area.x, area.y + height - 1, area.width, 1),
+    );
+    height
+}
+
 fn flag_cell(app: &App, flag: Flag) -> Cell<'static> {
     match flag {
         Flag::Clear => Cell::from(" "),
@@ -151,7 +237,7 @@ fn wake_color(app: &App, wake: Wake) -> Color {
     }
 }
 
-fn body_row(app: &App, row: &Row<'_>, columns: Columns) -> TableRow<'static> {
+fn body_row(app: &App, row: &Row<'_>, columns: Columns, codex: &str) -> TableRow<'static> {
     let muted = Style::default().fg(MUTED);
     let name = if row.faded() {
         muted
@@ -185,6 +271,9 @@ fn body_row(app: &App, row: &Row<'_>, columns: Columns) -> TableRow<'static> {
             Cell::from(row.wake.label()).style(Style::default().fg(wake_color(app, row.wake))),
         );
     }
+    if columns.usage {
+        cells.push(Cell::from(usage_panel::session_usage(row.program, codex)).style(muted));
+    }
     TableRow::new(cells)
 }
 
@@ -208,6 +297,7 @@ fn layout(columns: Columns) -> (Vec<Constraint>, Vec<&'static str>) {
     add(columns.age, Constraint::Length(6), "Age");
     add(columns.repository, Constraint::Fill(1), "Repository");
     add(columns.wake, Constraint::Length(5), "Wake");
+    add(columns.usage, Constraint::Length(7), "Quota");
     (widths, titles)
 }
 
@@ -234,7 +324,15 @@ fn table(frame: &mut Frame, app: &App, area: Rect, highlight: bool) {
     let (widths, titles) = layout(columns);
     let header =
         TableRow::new(titles).style(Style::default().fg(MUTED).add_modifier(Modifier::BOLD));
-    let body: Vec<_> = rows.iter().map(|row| body_row(app, row, columns)).collect();
+    let codex = if columns.usage {
+        usage_panel::codex_usage(app)
+    } else {
+        String::new()
+    };
+    let body: Vec<_> = rows
+        .iter()
+        .map(|row| body_row(app, row, columns, &codex))
+        .collect();
     let table = Table::new(body, widths)
         .header(header)
         .column_spacing(1)
@@ -255,7 +353,11 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         if overview::wake_supported(app) {
             hints.push(("w", "wake"));
         }
-        hints.extend([("f", "filter"), ("/", "search"), ("Esc", "close")]);
+        hints.extend([("f", "filter"), ("/", "search")]);
+        if app.overview.open {
+            hints.push(("u", "usage"));
+        }
+        hints.push(("Esc", "close"));
         hints
     };
     let width = |hints: &[(&str, &str)]| {
@@ -417,6 +519,76 @@ mod tests {
         let column = text_line(&buffer, ask).find("Needs answer").unwrap();
         let x = text_line(&buffer, ask)[..column].chars().count() as u16;
         assert_eq!(buffer[(x, ask)].bg, app.theme.selection());
+    }
+
+    fn usage_screen(width: u16, height: u16, toggled: bool) -> (Buffer, String) {
+        let mut app = crate::usage_panel::tests::usage_app();
+        crate::usage_panel::tests::answer(&mut app);
+        app.overview.usage.width = width;
+        if toggled {
+            app.overview.usage.toggle();
+        }
+        let buffer = draw(&app, width, height);
+        let text = screen(&buffer);
+        (buffer, text)
+    }
+
+    #[test]
+    fn overview_usage_panel_default_and_toggled_at_three_sizes() {
+        for (width, height) in [(80, 24), (100, 32), (150, 44)] {
+            for toggled in [false, true] {
+                let shown = (width >= 100) != toggled;
+                let (buffer, text) = usage_screen(width, height, toggled);
+                let case = format!(
+                    "{width}x{height} toggled={toggled}
+{text}"
+                );
+                assert_eq!(text.contains("u hides"), shown, "{case}");
+                assert_eq!(text.contains("5h 96% resets in 10m"), shown, "{case}");
+                assert_eq!(text.contains("unsupported"), shown, "{case}");
+                assert_eq!(text.contains("armed: Quota parked"), shown, "{case}");
+                let header = text_line(&buffer, row_of(&buffer, "Session").unwrap());
+                assert_eq!(header.contains("Quota"), width >= 120 && shown, "{case}");
+                assert!(text.contains("Needs answer"), "{case}");
+                assert!(text.contains(" Esc  close"), "{case}");
+                if shown {
+                    let usage = row_of(&buffer, "u hides").unwrap();
+                    let codex = row_of(&buffer, "5h 96%").unwrap();
+                    let table = row_of(&buffer, "Needs answer").unwrap();
+                    assert!(usage < codex && codex < table, "{case}");
+                    let claude = text_line(&buffer, row_of(&buffer, "Claude  ").unwrap());
+                    assert!(claude.contains("5h 78% resets in 1h00m"), "{case}");
+                    if width >= 150 {
+                        assert!(text.contains("Codex app-server · 12s old"), "{case}");
+                        assert!(claude.contains("7d 41% resets in 1d1h"), "{case}");
+                        let busy = text_line(&buffer, row_of(&buffer, "Busy builder").unwrap());
+                        assert!(busy.contains("5h 96%"), "{case}");
+                        let idle = text_line(&buffer, row_of(&buffer, "Idle helper").unwrap());
+                        assert!(!idle.contains('%'), "{case}");
+                    }
+                }
+                for y in 0..height {
+                    assert_eq!(text_line(&buffer, y).chars().count(), usize::from(width));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn overview_usage_panel_renders_refusals_inside_the_panel() {
+        let mut app = crate::usage_panel::tests::usage_app();
+        crate::usage_panel::tests::answer(&mut app);
+        let later = std::time::Instant::now() + crate::usage_panel::POLL;
+        let command = crate::usage_panel::tick_at(&mut app, later).unwrap();
+        app.event(serde_json::json!({"type":"error","code":"forbidden","message":"Owner only","requestId":command["requestId"]}))
+            .unwrap();
+        let buffer = draw(&app, 150, 44);
+        let text = screen(&buffer);
+        let notice = row_of(&buffer, "Quota detail is owner-only").unwrap();
+        assert!(notice < row_of(&buffer, "Needs answer").unwrap(), "{text}");
+        assert!(text.contains("7d 35% resets in 1d1h"), "{text}");
+        assert!(text.contains("Codex app-server · age pending"), "{text}");
+        assert_eq!(buffer[(1, notice)].fg, WARNING);
     }
 
     #[test]

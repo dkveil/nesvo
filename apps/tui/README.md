@@ -60,6 +60,7 @@ The start menu initially observes the first session without taking control. Ente
 | p                     | Show private phone pairing instructions and file paths  |
 | J                     | Open durable host jobs: list, details, history and form |
 | O                     | Overview of all sessions; Enter jumps without control   |
+| u in Overview         | Usage panel: provider quota, freshness, quota wake      |
 | Y                     | Read-only Git view of the session repository (`Git`)    |
 | g                     | Create a group; choose root or a parent group           |
 | r / m                 | Rename / move the selected item                         |

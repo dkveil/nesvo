@@ -48,6 +48,7 @@ mod ui_overview;
 mod ui_palette;
 mod ui_review;
 mod ui_session_kind;
+mod usage_panel;
 mod workflow;
 mod workflow_budget;
 mod workflow_checkpoints;
