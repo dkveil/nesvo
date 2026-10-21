@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -59,6 +59,115 @@ impl Context {
         stale.root = None;
         stale.revision = stale.revision.saturating_add(1).min(MAX_REVISION);
         stale
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RootSource {
+    CurrentCwd,
+    LaunchDirectory,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RootReason {
+    InsideRoot,
+    NoCurrentCwd,
+    OutsideRoot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SearchRoot {
+    source: RootSource,
+    reason: RootReason,
+    path: Option<String>,
+    observed_at: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CurrentCwd {
+    path: PathBuf,
+    directory: PathBuf,
+    observed_at: u64,
+    sequence: u64,
+    inside: bool,
+}
+
+#[derive(Debug)]
+struct Location {
+    launch: PathBuf,
+    allowed: PathBuf,
+    current: Option<CurrentCwd>,
+}
+
+impl Location {
+    fn new(launch: &Path) -> Self {
+        let canonical = launch.canonicalize().unwrap_or_else(|_| launch.to_owned());
+        let allowed = canonical
+            .ancestors()
+            .find(|directory| directory.join(".git").symlink_metadata().is_ok())
+            .unwrap_or(&canonical)
+            .to_owned();
+        Self {
+            launch: launch.to_owned(),
+            allowed,
+            current: None,
+        }
+    }
+
+    fn observe(&mut self, observed: Option<crate::agent_context::WorkingDirectory>) {
+        let observed = observed.filter(|observed| observed.observed_at <= MAX_REVISION);
+        self.current = match (observed, self.current.take()) {
+            (None, _) => None,
+            (Some(observed), Some(previous)) if observed.sequence < previous.sequence => {
+                Some(previous)
+            }
+            (Some(observed), Some(previous)) if observed.path == previous.path => {
+                Some(CurrentCwd {
+                    sequence: observed.sequence,
+                    ..previous
+                })
+            }
+            (Some(observed), _) => Some(CurrentCwd {
+                inside: observed.path.starts_with(&self.allowed),
+                directory: PathBuf::from(crate::process::display_path(&observed.path)),
+                path: observed.path,
+                observed_at: observed.observed_at,
+                sequence: observed.sequence,
+            }),
+        };
+    }
+
+    fn directory(&self) -> &Path {
+        match &self.current {
+            Some(current) if current.inside => &current.directory,
+            _ => &self.launch,
+        }
+    }
+
+    fn search_root(&self) -> SearchRoot {
+        match &self.current {
+            Some(current) if current.inside => SearchRoot {
+                source: RootSource::CurrentCwd,
+                reason: RootReason::InsideRoot,
+                path: Some(crate::process::display_path(&current.path)),
+                observed_at: Some(current.observed_at),
+            },
+            Some(current) => SearchRoot {
+                source: RootSource::LaunchDirectory,
+                reason: RootReason::OutsideRoot,
+                path: None,
+                observed_at: Some(current.observed_at),
+            },
+            None => SearchRoot {
+                source: RootSource::LaunchDirectory,
+                reason: RootReason::NoCurrentCwd,
+                path: None,
+                observed_at: None,
+            },
+        }
     }
 }
 
@@ -120,6 +229,7 @@ pub(crate) struct Registry {
     queue: VecDeque<PathBuf>,
     active: Option<Work>,
     sealed: bool,
+    locations: HashMap<String, Location>,
 }
 
 impl Registry {
@@ -134,10 +244,63 @@ impl Registry {
             return;
         }
         self.entries.entry(binding.directory.clone()).or_default();
+        self.locations
+            .insert(binding.id.clone(), Location::new(&binding.directory));
         self.subscriptions.insert(binding.id.clone(), binding);
     }
 
+    pub(crate) fn observe_cwd(
+        &mut self,
+        id: &str,
+        incarnation: &[u8; 16],
+        observed: Option<crate::agent_context::WorkingDirectory>,
+    ) -> bool {
+        if self.sealed
+            || self
+                .subscriptions
+                .get(id)
+                .is_none_or(|binding| &binding.incarnation != incarnation)
+        {
+            return false;
+        }
+        let Some(location) = self.locations.get_mut(id) else {
+            return false;
+        };
+        let previous = location.search_root();
+        location.observe(observed);
+        let changed = location.search_root() != previous;
+        let directory = location.directory().to_owned();
+        self.retarget(id, directory);
+        changed
+    }
+
+    fn retarget(&mut self, id: &str, directory: PathBuf) {
+        let Some(binding) = self.subscriptions.get_mut(id) else {
+            return;
+        };
+        if binding.directory == directory {
+            return;
+        }
+        binding.directory = directory.clone();
+        self.entries.retain(|directory, _| {
+            self.subscriptions
+                .values()
+                .any(|binding| &binding.directory == directory)
+        });
+        self.entries.entry(directory).or_default();
+        self.queue
+            .retain(|directory| self.entries.contains_key(directory));
+    }
+
+    fn search_root(&self, id: &str, incarnation: &[u8; 16]) -> Option<SearchRoot> {
+        self.subscriptions
+            .get(id)
+            .filter(|binding| &binding.incarnation == incarnation)?;
+        Some(self.locations.get(id)?.search_root())
+    }
+
     pub(crate) fn remove(&mut self, id: &str) {
+        self.locations.remove(id);
         self.subscriptions.remove(id);
         self.entries.retain(|directory, _| {
             self.subscriptions
@@ -412,6 +575,7 @@ impl Registry {
             for session in sessions {
                 if let Some(session) = session.as_object_mut() {
                     session.remove("repositoryContext");
+                    session.remove("searchRoot");
                 }
             }
         }
@@ -441,14 +605,22 @@ impl Registry {
             let Some(incarnation) = incarnations.get(&id) else {
                 continue;
             };
-            let Some(context) = self.context(&id, incarnation, now) else {
+            let mut fields = serde_json::Map::new();
+            if let Some(context) = self.context(&id, incarnation, now)
+                && let Ok(value) = serde_json::to_value(context)
+            {
+                fields.insert("repositoryContext".into(), value);
+            }
+            if let Some(root) = self.search_root(&id, incarnation)
+                && let Ok(value) = serde_json::to_value(root)
+            {
+                fields.insert("searchRoot".into(), value);
+            }
+            if fields.is_empty() {
                 continue;
-            };
-            let Ok(value) = serde_json::to_value(context) else {
-                continue;
-            };
-            let Ok(field) = serde_json::to_vec(&serde_json::json!({"repositoryContext":&value}))
-            else {
+            }
+            let fields = Value::Object(fields);
+            let Ok(field) = serde_json::to_vec(&fields) else {
                 continue;
             };
             let Some(session) = snapshot["sessions"][index].as_object() else {
@@ -458,7 +630,11 @@ impl Registry {
             if delta > available.saturating_sub(used) {
                 continue;
             }
-            snapshot["sessions"][index]["repositoryContext"] = value;
+            if let (Some(session), Value::Object(fields)) =
+                (snapshot["sessions"][index].as_object_mut(), fields)
+            {
+                session.extend(fields);
+            }
             used += delta;
             added.push(index);
         }
@@ -467,6 +643,7 @@ impl Registry {
             for index in added {
                 if let Some(session) = snapshot["sessions"][index].as_object_mut() {
                     session.remove("repositoryContext");
+                    session.remove("searchRoot");
                 }
             }
         }
@@ -566,6 +743,10 @@ impl Drop for Runtime {
         self.request_shutdown();
     }
 }
+
+#[cfg(test)]
+#[path = "search_root_tests.rs"]
+mod search_root_tests;
 
 #[cfg(test)]
 mod tests {
@@ -729,6 +910,33 @@ mod tests {
             }
             ready()
         }
+    }
+
+    #[tokio::test]
+    async fn search_root_ignores_a_cwd_without_a_bound_provider_conversation() {
+        let mut fixture = RuntimeFixture::new();
+        let id = fixture.running.iter().next().unwrap().clone();
+        fixture.state.lock().unwrap().repository_working_directory(
+            &id,
+            Some(crate::agent_context::WorkingDirectory {
+                path: fixture.root.join("a"),
+                sequence: 1,
+                observed_at: 1,
+                provider_session: "conversation".into(),
+            }),
+        );
+        let listed = fixture.state.lock().unwrap().list();
+        let session = listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|session| session["id"] == id.as_str())
+            .unwrap();
+        assert_eq!(
+            session["searchRoot"],
+            json!({"source":"launchDirectory","reason":"noCurrentCwd","path":null,"observedAt":null})
+        );
+        assert!(fixture.cleanup());
     }
 
     #[tokio::test]

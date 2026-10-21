@@ -514,6 +514,7 @@ fn receive_dialect(report: &Path, input: impl Read, dialect: Dialect) -> Result<
             )? {
                 Some(sequence) => {
                     let _ = crate::resume::record_start(report, &value);
+                    let _ = record_working_directory(report, &value, dialect, sequence);
                     sequence
                 }
                 None => return Ok(()),
@@ -569,6 +570,94 @@ fn receive_dialect(report: &Path, input: impl Read, dialect: Dialect) -> Result<
         result?;
     }
     Ok(())
+}
+const WORKING_DIRECTORY_REPORT: &str = "cwd.json";
+const WORKING_DIRECTORY_REPORT_BYTES: u64 = 8 * 1024;
+const WORKING_DIRECTORY_PATH_BYTES: usize = 4096;
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkingDirectoryReport {
+    cwd: String,
+    sequence: u64,
+    observed_at: u64,
+    provider_session: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkingDirectory {
+    pub path: PathBuf,
+    pub sequence: u64,
+    pub observed_at: u64,
+    pub provider_session: String,
+}
+fn valid_working_directory(path: &str) -> bool {
+    path.len() <= WORKING_DIRECTORY_PATH_BYTES
+        && !path.chars().any(char::is_control)
+        && Path::new(path).is_absolute()
+}
+fn reported_working_directory(value: &Value, dialect: Dialect) -> Option<&str> {
+    // Gemini 0.65 reports its fixed startup directory, never a later one.
+    if dialect == Dialect::Gemini {
+        return None;
+    }
+    value["cwd"]
+        .as_str()
+        .filter(|path| valid_working_directory(path))
+}
+fn record_working_directory(
+    report: &Path,
+    value: &Value,
+    dialect: Dialect,
+    sequence: u64,
+) -> Result<()> {
+    let (Some(cwd), Some(provider_session)) = (
+        reported_working_directory(value, dialect),
+        value["session_id"].as_str().filter(|id| !id.is_empty()),
+    ) else {
+        return Ok(());
+    };
+    let record = WorkingDirectoryReport {
+        cwd: cwd.into(),
+        sequence,
+        observed_at: chrono::Utc::now().timestamp_millis().max(0) as u64,
+        provider_session: provider_session.into(),
+    };
+    let destination = report.with_file_name(WORKING_DIRECTORY_REPORT);
+    let temporary =
+        destination.with_extension(format!("{}.tmp", hex::encode(crate::wire::random::<8>())));
+    crate::private_write(&temporary, &serde_json::to_vec(&record)?)?;
+    let result = std::fs::rename(&temporary, &destination);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    Ok(result?)
+}
+pub async fn observe_working_directory(report: &Path) -> Option<WorkingDirectory> {
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(report.with_file_name(WORKING_DIRECTORY_REPORT))
+        .await
+        .ok()?;
+    let mut bytes = Vec::new();
+    file.take(WORKING_DIRECTORY_REPORT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    if bytes.len() as u64 > WORKING_DIRECTORY_REPORT_BYTES {
+        return None;
+    }
+    let record = serde_json::from_slice::<WorkingDirectoryReport>(&bytes).ok()?;
+    if !valid_working_directory(&record.cwd) || record.provider_session.is_empty() {
+        return None;
+    }
+    let path = tokio::fs::canonicalize(&record.cwd).await.ok()?;
+    if !tokio::fs::metadata(&path).await.ok()?.is_dir() {
+        return None;
+    }
+    Some(WorkingDirectory {
+        path,
+        sequence: record.sequence,
+        observed_at: record.observed_at,
+        provider_session: record.provider_session,
+    })
 }
 /// Only lifecycle metadata is persisted; never prompts or tool arguments.
 #[derive(Serialize, Deserialize)]
@@ -759,6 +848,91 @@ mod tests {
             value["turn_id"] = "reused-native-turn".into();
         }
         emit(report, value, codex).unwrap();
+    }
+
+    #[tokio::test]
+    async fn claude_and_codex_hook_cwd_context_records_only_journal_accepted_directories() {
+        let workspace = std::env::temp_dir().join(format!(
+            "nesvo-current-cwd-{}",
+            hex::encode(crate::wire::random::<16>())
+        ));
+        std::fs::create_dir_all(workspace.join("nested")).unwrap();
+        let workspace = workspace.canonicalize().unwrap();
+        let nested = workspace.join("nested");
+        for codex in [false, true] {
+            let mut command = CommandBuilder::new("fixture");
+            let tracker = if codex {
+                Tracker::install_codex(&mut command, "owner")
+            } else {
+                Tracker::install_for(&mut command, "owner")
+            }
+            .unwrap();
+            let report = tracker.report();
+            assert!(observe_working_directory(&report).await.is_none());
+            let payload = |event: &str, session: &str, cwd: Value| {
+                let mut value = json!({"hook_event_name":event, "session_id":session,
+                    "transcript_path":"never-read.jsonl", "cwd":cwd, "permission_mode":"default"});
+                if codex {
+                    value["model"] = "fixture-model".into();
+                    if event != "SessionStart" {
+                        value["turn_id"] = "native-turn".into();
+                    }
+                } else if event == "SessionStart" {
+                    value["source"] = "startup".into();
+                }
+                value
+            };
+            emit(
+                &report,
+                payload("SessionStart", "a", json!(workspace)),
+                codex,
+            )
+            .unwrap();
+            let first = observe_working_directory(&report).await.unwrap();
+            assert_eq!(first.path, workspace, "{codex}");
+            assert_eq!(first.provider_session, "a");
+            emit(
+                &report,
+                payload("UserPromptSubmit", "a", json!(nested)),
+                codex,
+            )
+            .unwrap();
+            let second = observe_working_directory(&report).await.unwrap();
+            assert_eq!(second.path, nested, "{codex}");
+            assert_eq!(
+                second.sequence,
+                crate::agent_events::read(&report, "owner", 0)
+                    .unwrap()
+                    .head_sequence
+            );
+            let mut child = payload("PreToolUse", "a", json!(workspace));
+            child["agent_id"] = "child".into();
+            for rejected in [
+                payload("PreToolUse", "a", json!("relative")),
+                payload(
+                    "PreToolUse",
+                    "a",
+                    json!(format!(
+                        "{}
+invalid",
+                        workspace.display()
+                    )),
+                ),
+                payload("PreToolUse", "a", Value::Null),
+                payload("PreToolUse", "foreign", json!(workspace)),
+                child,
+            ] {
+                let _ = emit(&report, rejected, codex);
+                assert_eq!(
+                    observe_working_directory(&report).await.unwrap().path,
+                    nested,
+                    "{codex}"
+                );
+            }
+            std::fs::write(report.with_file_name(WORKING_DIRECTORY_REPORT), b"{").unwrap();
+            assert!(observe_working_directory(&report).await.is_none());
+        }
+        std::fs::remove_dir_all(workspace).unwrap();
     }
 
     #[tokio::test]

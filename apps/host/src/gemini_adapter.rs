@@ -1284,6 +1284,45 @@ mod tests {
         std::fs::remove_dir_all(base).unwrap();
     }
 
+    #[tokio::test]
+    async fn gemini_hook_cwd_sets_no_current_cwd_context() {
+        let (base, prepared) = pairing("cwd");
+        let mut command = CommandBuilder::new("gemini");
+        let tracker = crate::agent_context::Tracker::install_gemini_in(
+            &mut command,
+            "host-session",
+            &prepared,
+        )
+        .unwrap();
+        let root = command.get_argv()[2].to_string_lossy().into_owned();
+        let report = tracker.report();
+        let directory = base.canonicalize().unwrap();
+        for (event, extra) in [
+            ("SessionStart", json!({"source": "startup"})),
+            ("BeforeAgent", json!({"prompt": "PRIVATE_PROMPT_SENTINEL"})),
+        ] {
+            let mut value = synthesized_from_hook_reference(event, &root, extra);
+            value["cwd"] = json!(directory);
+            crate::agent_context::receive_gemini_from(&report, value.to_string().as_bytes())
+                .unwrap();
+        }
+        assert_eq!(
+            crate::agent_events::read(&report, "host-session", 0)
+                .unwrap()
+                .events
+                .len(),
+            2
+        );
+        assert!(
+            crate::agent_context::observe_working_directory(&report)
+                .await
+                .is_none()
+        );
+        assert!(!report.with_file_name("cwd.json").exists());
+        drop(tracker);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     #[test]
     fn gemini_helper_input_failures_are_bounded_and_record_only_a_constant_marker() {
         let (base, prepared) = pairing("input");

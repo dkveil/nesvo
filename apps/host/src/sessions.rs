@@ -1666,6 +1666,27 @@ impl State {
         (self.repository.claim(), self.repository.next_expiry())
     }
 
+    pub(crate) fn repository_working_directory(
+        &mut self,
+        id: &str,
+        observed: Option<crate::agent_context::WorkingDirectory>,
+    ) {
+        let Some(session) = self.sessions.get(id) else {
+            return;
+        };
+        let bound = session
+            .conversation_identity
+            .as_ref()
+            .and_then(|identity| identity.provider_session_id.as_deref());
+        let fresh = observed.filter(|observed| {
+            session.info.running && bound == Some(observed.provider_session.as_str())
+        });
+        let incarnation = session.repository_binding.incarnation;
+        if self.repository.observe_cwd(id, &incarnation, fresh) {
+            self.broadcast_list();
+        }
+    }
+
     pub(crate) fn repository_finished(
         &mut self,
         work: &crate::session_repository::Work,
@@ -4060,6 +4081,8 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     None
                 };
                 let observation = crate::agent_context::observe(&path).await;
+                let working_directory =
+                    crate::agent_context::observe_working_directory(&path).await;
                 let recovery = match recovery_path {
                     Some(path) => Some(crate::caller::observe_recovery(&path).await),
                     None => None,
@@ -4257,6 +4280,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                 if resume_changed {
                     state.broadcast_list();
                 }
+                state.repository_working_directory(&id, working_directory);
                 state.submission_updates.extend(submission_updates);
             }
             flush_submission_updates(&state).await;
@@ -4363,6 +4387,7 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     }
                     state.broadcast_control(&id);
                     state.emit(Some(&id), "process.exited", json!({"exitCode":code}));
+                    state.repository_working_directory(&id, None);
                     // The timer coalesces final state with other status changes.
                 }
             }
