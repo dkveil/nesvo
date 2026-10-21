@@ -1186,6 +1186,18 @@ pub(crate) fn supported(caps: &Value, request: &Value) -> Result<()> {
             "Host lacks task-local native tool profiles; update nesvo-host",
         ));
     }
+    if request["request"]["action"] == "wakes"
+        && matches!(
+            request["request"]["request"]["action"].as_str(),
+            Some("pause" | "resume" | "setDelivery")
+        )
+        && caps["runWakeDelivery"] != true
+    {
+        return Err(cli::failure(
+            "unsupported",
+            "Host cannot hold wakes or change their delivery; update nesvo-host",
+        ));
+    }
     if capability.is_some_and(|key| caps[key] != true) {
         return Err(cli::failure(
             "unsupported",
@@ -1194,6 +1206,7 @@ pub(crate) fn supported(caps: &Value, request: &Value) -> Result<()> {
     }
     Ok(())
 }
+
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     let machine = command.machine();
     let command = match command {

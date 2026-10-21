@@ -130,6 +130,83 @@ impl Digest {
     }
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakePolicy {
+    pub enabled: bool,
+    #[serde(default)]
+    pub held: bool,
+    pub phase: String,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub delivery: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeBatch {
+    pub id: String,
+    pub phase: String,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub delivery: String,
+    #[serde(default)]
+    pub notice_count: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Wakes {
+    pub loaded: bool,
+    pub policy: Option<WakePolicy>,
+    pub pending: u64,
+    pub delivered_through: u64,
+    pub batches: Vec<WakeBatch>,
+}
+
+impl Wakes {
+    pub fn full(&self) -> bool {
+        self.policy
+            .as_ref()
+            .is_some_and(|policy| policy.delivery == "full")
+    }
+
+    pub fn delivery_label(&self) -> &'static str {
+        if self.full() {
+            "full context"
+        } else {
+            "delta only"
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        if !self.loaded {
+            return "Wakes · loading".into();
+        }
+        match &self.policy {
+            None => "Wakes · off".into(),
+            Some(policy) if policy.held => format!(
+                "Wakes · held · {} · {} waiting",
+                self.delivery_label(),
+                self.pending
+            ),
+            Some(policy) if policy.enabled => format!(
+                "Wakes · delivering · {} · {} pending",
+                self.delivery_label(),
+                self.pending
+            ),
+            Some(policy) => format!(
+                "Wakes · {}{} · {}",
+                policy.phase,
+                policy
+                    .reason
+                    .as_deref()
+                    .map_or_else(String::new, |reason| format!(" ({reason})")),
+                self.delivery_label()
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Detail {
     pub goal: String,
@@ -140,6 +217,7 @@ pub struct Detail {
     pub messages: Vec<Message>,
     pub inbox_loaded: bool,
     pub digest: Option<Digest>,
+    pub wakes: Wakes,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -184,6 +262,7 @@ enum Read {
     Decisions(String, u64),
     Inbox(String),
     Digest(String),
+    Wakes(String),
     Templates,
 }
 
@@ -211,6 +290,43 @@ pub enum Change {
         directory: String,
         name: String,
     },
+    Wake {
+        run: String,
+        revision: u64,
+        action: WakeAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WakeAction {
+    Enable,
+    Hold,
+    Resume,
+    Delta,
+    Full,
+}
+
+impl WakeAction {
+    fn request(self) -> &'static str {
+        match self {
+            Self::Enable => "enable",
+            Self::Hold => "pause",
+            Self::Resume => "resume",
+            Self::Delta | Self::Full => "setDelivery",
+        }
+    }
+
+    fn notice(self) -> &'static str {
+        match self {
+            Self::Enable => "Coordinator wakes enabled; only new notices are delivered.",
+            Self::Hold => "Wake delivery held; resume resynchronises from the inbox and blockers.",
+            Self::Resume => {
+                "Wake delivery resumed from current unacknowledged messages and blockers."
+            }
+            Self::Delta => "Wakes now carry only the new notices.",
+            Self::Full => "Wakes now add the current run context digest to new notices.",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -444,6 +560,15 @@ impl Runs {
         if let Ok(pair) = self.workflow(features, "digest", json!({"runId":id})) {
             commands.push(self.read(Read::Digest(id.to_owned()), pair));
         }
+        if features["runWakes"] == true
+            && let Ok(pair) = self.workflow(
+                features,
+                "wakes",
+                json!({"request":{"action":"get","runId":id,"after":null}}),
+            )
+        {
+            commands.push(self.read(Read::Wakes(id.to_owned()), pair));
+        }
         commands
     }
 
@@ -586,6 +711,19 @@ impl Runs {
                 "decision",
                 json!({"request":{"action":"answer","key":key,"runId":run,"decisionId":decision,"expectedRevision":revision,"answer":answer}}),
             ),
+            Change::Wake {
+                run,
+                revision,
+                action,
+            } => {
+                let mut request = json!({"action":action.request(),"key":key,"runId":run,"expectedRevision":revision});
+                match action {
+                    WakeAction::Delta => request["delivery"] = "delta".into(),
+                    WakeAction::Full => request["delivery"] = "full".into(),
+                    _ => {}
+                }
+                self.workflow(features, "wakes", json!({ "request": request }))
+            }
             Change::Start { directory, name } => {
                 Self::templates_supported(features)?;
                 let (mut command, _) =
@@ -649,6 +787,48 @@ impl Runs {
 
     pub fn drain(&mut self, features: &Value) -> Effect {
         self.run_change(features, |run, revision| Change::Drain { run, revision })
+    }
+
+    pub fn toggle_wakes(&mut self, features: &Value) -> Effect {
+        let Some(wakes) = self.selected_detail().map(|detail| detail.wakes.clone()) else {
+            return Effect::default();
+        };
+        if !wakes.loaded {
+            return Effect::notice("Wake policy is still loading.");
+        }
+        let action = match &wakes.policy {
+            Some(policy) if policy.held => WakeAction::Resume,
+            Some(policy) if policy.enabled => WakeAction::Hold,
+            _ => WakeAction::Enable,
+        };
+        self.wake_change(features, action)
+    }
+
+    pub fn toggle_delivery(&mut self, features: &Value) -> Effect {
+        let Some(wakes) = self.selected_detail().map(|detail| detail.wakes.clone()) else {
+            return Effect::default();
+        };
+        if wakes.policy.is_none() {
+            return Effect::notice("Enable coordinator wakes with w before choosing delivery.");
+        }
+        let action = if wakes.full() {
+            WakeAction::Delta
+        } else {
+            WakeAction::Full
+        };
+        self.wake_change(features, action)
+    }
+
+    fn wake_change(&mut self, features: &Value, action: WakeAction) -> Effect {
+        let Some(run) = self.selected_run() else {
+            return Effect::default();
+        };
+        let change = Change::Wake {
+            run: run.id.clone(),
+            revision: run.revision,
+            action,
+        };
+        self.change(features, change)
     }
 
     pub fn cancel_confirm(&mut self) -> bool {
@@ -796,6 +976,16 @@ impl Runs {
                 self.details.entry(id).or_default().digest = Some(Digest::parse(&event["digest"]));
                 Effect::default()
             }
+            Read::Wakes(id) => {
+                let wakes = &mut self.details.entry(id).or_default().wakes;
+                wakes.loaded = true;
+                wakes.policy = serde_json::from_value(event["wakePolicy"].clone()).ok();
+                wakes.pending = event["pendingCount"].as_u64().unwrap_or_default();
+                wakes.delivered_through = event["deliveredThrough"].as_u64().unwrap_or_default();
+                wakes.batches =
+                    serde_json::from_value(event["batches"].clone()).unwrap_or_default();
+                Effect::default()
+            }
             Read::Templates => {
                 if let Some(templates) = &mut self.templates {
                     templates.load = Load::Ready;
@@ -820,6 +1010,7 @@ impl Runs {
             }
             Change::Resume { .. } => "Run resumed on the host.",
             Change::Drain { .. } => "Drain accepted; current workers may finish and report.",
+            Change::Wake { action, .. } => action.notice(),
             Change::Answer { .. } => {
                 self.answer = None;
                 self.page = Page::Runs;
@@ -867,6 +1058,10 @@ impl Runs {
                     let detail = self.details.entry(id).or_default();
                     detail.decisions_loaded = true;
                     detail.inbox_loaded = true;
+                    Effect::default()
+                }
+                Read::Wakes(id) => {
+                    self.details.entry(id).or_default().wakes.loaded = true;
                     Effect::default()
                 }
             });
@@ -960,12 +1155,147 @@ pub(crate) mod tests {
         ]})
     }
 
-    pub(crate) fn reply(runs: &mut Runs, command: &Value, mut body: Value) -> Effect {
+    pub(crate) fn reply(runs: &mut Runs, command: &Value, body: Value) -> Effect {
+        reply_with(runs, &features(), command, body)
+    }
+
+    fn reply_with(runs: &mut Runs, features: &Value, command: &Value, mut body: Value) -> Effect {
         body["requestId"] = command["requestId"].clone();
         if body.get("type").is_none() {
             body["type"] = "workflow".into();
         }
-        runs.response(&features(), &body).unwrap()
+        runs.response(features, &body).unwrap()
+    }
+
+    pub(crate) fn wake_features() -> Value {
+        let mut features = features();
+        features["runWakes"] = true.into();
+        features["runWakeDelivery"] = true.into();
+        features
+    }
+
+    pub(crate) fn wakes() -> Value {
+        json!({
+            "wakePolicy":{"enabled":true,"held":false,"phase":"waiting","reason":"no_new_notices","delivery":"delta","generation":2},
+            "pendingCount":2,
+            "deliveredThrough":11,
+            "batches":[
+                {"id":"b2aaaaaaaaaaaaaa","phase":"settled","reason":null,"delivery":"delta","noticeCount":8,"native":{"phase":"settled"}},
+                {"id":"b1bbbbbbbbbbbbbb","phase":"unknown","reason":"host_restart","delivery":"full","noticeCount":3,"native":{"phase":"unknown"}}
+            ]
+        })
+    }
+
+    pub(crate) fn loaded_with_wakes() -> Runs {
+        let features = wake_features();
+        let (mut runs, list) = Runs::open(7, &features).unwrap();
+        let effect = reply_with(
+            &mut runs,
+            &features,
+            &list,
+            json!({"runs":listed(),"nextOffset":null}),
+        );
+        for command in effect.commands {
+            let body = match command["request"]["action"].as_str().unwrap() {
+                "get" => view(),
+                "decision" => json!({"decisions":decisions(),"nextOffset":null}),
+                "wakes" => wakes(),
+                "digest" => digest(),
+                _ => inbox(),
+            };
+            reply_with(&mut runs, &features, &command, body);
+        }
+        runs
+    }
+
+    fn set_policy(runs: &mut Runs, policy: Value) {
+        let wakes = &mut runs.details.get_mut("run-a").unwrap().wakes;
+        wakes.policy = serde_json::from_value(policy).ok();
+    }
+
+    #[test]
+    fn runs_wake_controls_hold_resume_enable_and_switch_delivery_at_the_run_revision() {
+        let features = wake_features();
+        let (mut runs, list) = Runs::open(7, &features).unwrap();
+        let reads = reply_with(
+            &mut runs,
+            &features,
+            &list,
+            json!({"runs":listed(),"nextOffset":null}),
+        );
+        assert_eq!(
+            reads.commands[4]["request"],
+            json!({"action":"wakes","request":{"action":"get","runId":"run-a","after":null}})
+        );
+        let mut runs = loaded_with_wakes();
+        let wakes = &runs.selected_detail().unwrap().wakes;
+        assert_eq!(
+            wakes.summary(),
+            "Wakes · delivering · delta only · 2 pending"
+        );
+        assert_eq!(wakes.delivered_through, 11);
+        assert_eq!(wakes.batches.len(), 2);
+        let hold = runs.toggle_wakes(&features).commands.remove(0);
+        let request = &hold["request"]["request"];
+        assert_eq!(hold["request"]["action"], "wakes");
+        assert_eq!(request["action"], "pause");
+        assert_eq!(request["runId"], "run-a");
+        assert_eq!(request["expectedRevision"], 4);
+        assert!(request["key"].as_str().unwrap().starts_with("tui-run-"));
+        assert_eq!(
+            runs.toggle_delivery(&features).notice.as_deref(),
+            Some(BUSY)
+        );
+        let done = reply(&mut runs, &hold, json!({"run":{"id":"run-a"}}));
+        assert!(done.notice.unwrap().contains("held"));
+        assert_eq!(done.commands[0]["request"]["action"], "list");
+        set_policy(
+            &mut runs,
+            json!({"enabled":true,"held":true,"phase":"held","reason":"owner_held","delivery":"delta"}),
+        );
+        assert!(
+            runs.selected_detail()
+                .unwrap()
+                .wakes
+                .summary()
+                .starts_with("Wakes · held · delta only")
+        );
+        let resume = runs.toggle_wakes(&features).commands.remove(0);
+        assert_eq!(resume["request"]["request"]["action"], "resume");
+        reply(&mut runs, &resume, json!({"run":{"id":"run-a"}}));
+        let full = runs.toggle_delivery(&features).commands.remove(0);
+        assert_eq!(full["request"]["request"]["action"], "setDelivery");
+        assert_eq!(full["request"]["request"]["delivery"], "full");
+        reply(&mut runs, &full, json!({"run":{"id":"run-a"}}));
+        set_policy(
+            &mut runs,
+            json!({"enabled":true,"held":false,"phase":"enabled","reason":null,"delivery":"full"}),
+        );
+        let delta = runs.toggle_delivery(&features).commands.remove(0);
+        assert_eq!(delta["request"]["request"]["delivery"], "delta");
+        reply(&mut runs, &delta, json!({"run":{"id":"run-a"}}));
+        set_policy(&mut runs, Value::Null);
+        assert!(
+            runs.toggle_delivery(&features)
+                .notice
+                .unwrap()
+                .contains("Enable coordinator wakes")
+        );
+        let enable = runs.toggle_wakes(&features).commands.remove(0);
+        assert_eq!(enable["request"]["request"]["action"], "enable");
+        reply(&mut runs, &enable, json!({"run":{"id":"run-a"}}));
+        set_policy(
+            &mut runs,
+            json!({"enabled":true,"held":false,"phase":"enabled","reason":null,"delivery":"delta"}),
+        );
+        let mut older = wake_features();
+        older["runWakeDelivery"] = false.into();
+        assert!(
+            runs.toggle_wakes(&older)
+                .notice
+                .unwrap()
+                .contains("update nesvo-host")
+        );
     }
 
     pub(crate) fn loaded() -> Runs {

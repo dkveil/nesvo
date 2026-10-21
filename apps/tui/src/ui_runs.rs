@@ -342,6 +342,16 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
         text(frame, row(area, 3), &digest_headline(digest), MUTED);
     }
     let mut y = 4;
+    if detail.wakes.loaded {
+        let line = if detail.digest.is_some() { 4 } else { 3 };
+        text(
+            frame,
+            row(area, line),
+            &detail.wakes.summary(),
+            wake_color(&detail.wakes),
+        );
+        y = line + 1;
+    }
     text(
         frame,
         row(area, y),
@@ -419,8 +429,60 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
         text(frame, row(area, y), " a answers the first one", MUTED);
         y += 1;
     }
+    if detail.wakes.loaded && !detail.wakes.batches.is_empty() {
+        y += 1;
+        text(
+            frame,
+            row(area, y),
+            &format!(
+                "WAKE BATCHES  delivered through notice {}",
+                detail.wakes.delivered_through
+            ),
+            MUTED,
+        );
+        y += 1;
+        for batch in detail.wakes.batches.iter().take(3) {
+            text(frame, row(area, y), &batch_line(batch), batch_color(batch));
+            y += 1;
+        }
+    }
     if let Some(digest) = &detail.digest {
         digest_section(frame, area, y + 1, digest);
+    }
+}
+
+fn wake_color(wakes: &crate::runs::Wakes) -> Color {
+    match &wakes.policy {
+        None => MUTED,
+        Some(policy) if policy.enabled && !policy.held => SUCCESS,
+        Some(_) => WARNING,
+    }
+}
+
+fn batch_line(batch: &crate::runs::WakeBatch) -> String {
+    let id: String = batch.id.chars().take(8).collect();
+    let delivery = if batch.delivery == "full" {
+        "full"
+    } else {
+        "delta"
+    };
+    let reason = batch
+        .reason
+        .as_deref()
+        .map_or_else(String::new, |reason| format!(" ({reason})"));
+    format!(
+        " {} {id} · {} notices · {}{reason} · {delivery}",
+        if batch.phase == "settled" { "✓" } else { "!" },
+        batch.notice_count,
+        batch.phase
+    )
+}
+
+fn batch_color(batch: &crate::runs::WakeBatch) -> Color {
+    match batch.phase.as_str() {
+        "settled" => TEXT,
+        "dispatching" => WARNING,
+        _ => DANGER,
     }
 }
 
@@ -574,6 +636,23 @@ fn hints(runs: &Runs) -> Vec<(&'static str, &'static str)> {
             ("F5", "refresh"),
             ("Esc", "back"),
         ],
+        Page::Runs
+            if runs
+                .selected_detail()
+                .is_some_and(|detail| detail.wakes.loaded) =>
+        {
+            vec![
+                ("↑↓", "select"),
+                ("p", "pause"),
+                ("r", "resume"),
+                ("d", "drain"),
+                ("a", "answer"),
+                ("w", "wakes"),
+                ("f", "delivery"),
+                ("n", "template"),
+                ("Esc", "back"),
+            ]
+        }
         Page::Runs => vec![
             ("↑↓", "select"),
             ("p", "pause"),
@@ -848,6 +927,43 @@ mod tests {
         assert!(all.contains("Ship the migration now?"));
         assert!(all.contains("Yes▏"));
         assert!(all.contains("decision revision 1"));
+    }
+
+    #[test]
+    fn runs_render_wake_policy_and_batches_at_every_supported_size() {
+        let delivering = app(fixtures::loaded_with_wakes());
+        let summary = "Wakes · delivering · delta only · 2 pending";
+        for (width, height) in [(150, 44), (100, 32), (80, 24)] {
+            let buffer = draw(&delivering, width, height);
+            let all = screen(&buffer);
+            assert!(all.contains(summary), "{width}x{height}\n{all}");
+            let (x, y) = find(&buffer, summary).unwrap();
+            assert_eq!(buffer[(x, y)].fg, SUCCESS);
+            assert!(line(&buffer, height - 1).starts_with(" RUNS "));
+        }
+        let wide = draw(&delivering, 150, 44);
+        let all = screen(&wide);
+        assert!(all.contains("WAKE BATCHES  delivered through notice 11"));
+        assert!(all.contains("✓ b2aaaaaa · 8 notices · settled · delta"));
+        let (x, y) = find(
+            &wide,
+            "! b1bbbbbb · 3 notices · unknown (host_restart) · full",
+        )
+        .unwrap();
+        assert_eq!(wide[(x, y)].fg, DANGER);
+        let footer = line(&wide, 43);
+        assert!(footer.contains(" w  wakes") && footer.contains(" f  delivery"));
+        let mut held = fixtures::loaded_with_wakes();
+        held.details.get_mut("run-a").unwrap().wakes.policy = serde_json::from_value(
+            json!({"enabled":true,"held":true,"phase":"held","reason":"owner_held","delivery":"full"}),
+        )
+        .ok();
+        let buffer = draw(&app(held), 100, 32);
+        let (x, y) = find(&buffer, "Wakes · held · full context · 2 waiting").unwrap();
+        assert_eq!(buffer[(x, y)].fg, WARNING);
+        let plain = draw(&app(fixtures::loaded()), 150, 44);
+        assert!(!screen(&plain).contains("Wakes ·"));
+        assert!(!line(&plain, 43).contains(" w  wakes"));
     }
 
     #[test]

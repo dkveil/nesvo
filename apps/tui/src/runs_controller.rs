@@ -111,6 +111,9 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         (Page::Runs, KeyCode::Char('r')) => runs.resume(features),
         (Page::Runs, KeyCode::Char('d')) => runs.drain(features),
         (Page::Runs, KeyCode::Char('a')) => runs.begin_answer(),
+        (Page::Runs, KeyCode::Char('w')) => runs.toggle_wakes(features),
+        (Page::Runs, KeyCode::Char('f')) => runs.toggle_delivery(features),
+
         (Page::Templates, KeyCode::Up | KeyCode::Char('k')) => {
             runs.move_template(-1);
             Effect::default()
@@ -278,6 +281,44 @@ mod tests {
         let answer = press(&mut app, KeyCode::Enter).commands.remove(0);
         assert_eq!(answer["request"]["request"]["answer"], "Yes g");
         assert_eq!(answer["request"]["request"]["decisionId"], "d2");
+    }
+
+    #[test]
+    fn runs_w_and_f_send_owner_wake_commands_for_the_selected_run() {
+        let mut app = app();
+        let mut capabilities = fixtures::wake_features();
+        capabilities["type"] = "capabilities".into();
+        capabilities["workspace"] = "C:/Projects/nesvo".into();
+        capabilities["programs"] = json!([{"id":"claude","available":true}]);
+        app.event(capabilities).unwrap();
+        app.dialog = None;
+        let list = press(&mut app, KeyCode::Char('W')).commands.remove(0);
+        let reads = reply(
+            &mut app,
+            &list,
+            json!({"runs":fixtures::listed(),"nextOffset":null}),
+        );
+        assert_eq!(reads.len(), 5);
+        for command in reads {
+            let body = match command["request"]["action"].as_str() {
+                Some("get") => fixtures::view(),
+                Some("decision") => json!({"decisions":fixtures::decisions(),"nextOffset":null}),
+                Some("wakes") => fixtures::wakes(),
+                Some("digest") => fixtures::digest(),
+                _ => fixtures::inbox(),
+            };
+            reply(&mut app, &command, body);
+        }
+        let hold = press(&mut app, KeyCode::Char('w')).commands.remove(0);
+        assert_eq!(hold["request"]["action"], "wakes");
+        assert_eq!(hold["request"]["request"]["action"], "pause");
+        assert_eq!(hold["request"]["request"]["expectedRevision"], 4);
+        let after = reply(&mut app, &hold, json!({"run":{"id":"run-a"}}));
+        assert!(app.notice.contains("held"));
+        assert_eq!(after[0]["request"]["action"], "list");
+        let full = press(&mut app, KeyCode::Char('f')).commands.remove(0);
+        assert_eq!(full["request"]["request"]["action"], "setDelivery");
+        assert_eq!(full["request"]["request"]["delivery"], "full");
     }
 
     #[test]
