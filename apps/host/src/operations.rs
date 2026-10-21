@@ -463,6 +463,24 @@ fn submission_failure(
     (if queued { "unknown" } else { "failed" }, result)
 }
 
+const FENCE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn transient_lifecycle_read(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<FenceDiagnostic>()
+        .is_some_and(|diagnostic| {
+            matches!(diagnostic.substage, FenceSubstage::LifecycleRead)
+                && matches!(
+                    diagnostic.reason,
+                    FenceReason::SqlBusy | FenceReason::SqlLocked
+                )
+        })
+}
+
+fn busy_backoff(retries: u32) -> std::time::Duration {
+    (FENCE_DEADLINE / 64).saturating_mul(1 << retries.min(3))
+}
+
 /// Retry only rejected admission checks: this queue write accepted no bytes.
 /// Journal notification is registered before reading to avoid a lost wakeup.
 async fn enqueue_fenced(
@@ -476,7 +494,8 @@ async fn enqueue_fenced(
 ) -> Result<(tokio::sync::oneshot::Receiver<bool>, bool)> {
     use crate::api_error::Error;
     let mut changed = log.subscribe();
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + FENCE_DEADLINE;
+    let mut busy_retries = 0;
     loop {
         if *cancellation.borrow() {
             return Err(Error::new(
@@ -486,7 +505,7 @@ async fn enqueue_fenced(
             .into());
         }
         changed.borrow_and_update();
-        let (result, correlated) = fenced_admission(
+        let admission = fenced_admission(
             log.guard_run_dispatch(session_id, operation),
             fence(path.clone(), session_id),
             |latest| {
@@ -496,27 +515,41 @@ async fn enqueue_fenced(
                     .enqueue_submission(session_id, operation, text, latest)
             },
         )
-        .await?;
-        match result {
-            Ok(answer) => {
-                return Ok((answer, correlated));
-            }
-            Err(error)
-                if error
-                    .downcast_ref::<Error>()
-                    .is_some_and(|e| matches!(e.code, "lifecycle_pending" | "editor_pending")) =>
-            {
+        .await;
+        let (pause, busy_read) = match admission {
+            Err(error) if transient_lifecycle_read(&error) => {
                 if tokio::time::Instant::now() >= deadline {
                     return Err(error);
                 }
+                let pause = busy_backoff(busy_retries);
+                busy_retries += 1;
+                (pause, Some(error))
             }
-            Err(error) => return Err(error),
-        }
+            admission => {
+                let (result, correlated) = admission?;
+                match result {
+                    Ok(answer) => {
+                        return Ok((answer, correlated));
+                    }
+                    Err(error)
+                        if error.downcast_ref::<Error>().is_some_and(|e| {
+                            matches!(e.code, "lifecycle_pending" | "editor_pending")
+                        }) =>
+                    {
+                        if tokio::time::Instant::now() >= deadline {
+                            return Err(error);
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
+                (std::time::Duration::from_millis(50), None)
+            }
+        };
         tokio::select! {
-            _=tokio::time::sleep_until(deadline)=>return Err(Error::new("lifecycle_pending","Lifecycle fence/editor did not settle within two seconds; no further input was queued").into()),
+            _=tokio::time::sleep_until(deadline)=>return Err(busy_read.unwrap_or_else(|| Error::new("lifecycle_pending","Lifecycle fence/editor did not settle within two seconds; no further input was queued").into())),
             // PTY evidence is coalesced by the status timer, and unchanged
             // projections need not emit a journal event. Recheck every guard.
-            _=tokio::time::sleep(std::time::Duration::from_millis(50))=>{},
+            _=tokio::time::sleep(pause)=>{},
             _=cancellation.changed()=>return Err(Error::new("submission_preempted","Submission was preempted while waiting for lifecycle evidence").into()),
             result=changed.changed()=>{if result.is_err(){return Err(fence_error(anyhow!("Host journal closed while waiting for lifecycle evidence"), FenceSubstage::RunGuard));}},
         }
@@ -1242,6 +1275,52 @@ mod tests {
         assert!(native_bytes.is_empty());
         projected_fence(error, false, "lifecycleRead", "sqlBusy");
         blocker.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[tokio::test]
+    async fn fenced_delivery_retries_a_busy_lifecycle_journal_within_the_deadline() {
+        let directory = FenceDirectory::new();
+        let report = directory.0.join("context.json");
+        crate::agent_events::initialize(&report, "host-session").unwrap();
+        let log = Service::open(directory.0.join("metadata.sqlite3"))
+            .await
+            .unwrap();
+        let state = Arc::new(Mutex::new(State::new(
+            directory.0.clone(),
+            crate::storage::MetadataStore::open(std::path::Path::new(":memory:")).unwrap(),
+            crate::launchers::Launchers::discover_with_fixture_shell(),
+        )));
+        let blocker = rusqlite::Connection::open(report.with_file_name("events.sqlite3")).unwrap();
+        blocker.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        let (_cancel, mut cancellation) = tokio::sync::watch::channel(false);
+        let delivery = enqueue_fenced(
+            &state,
+            &log,
+            Some(report),
+            "host-session",
+            "operation",
+            Some("PRIVATE_PROMPT"),
+            &mut cancellation,
+        );
+        tokio::pin!(delivery);
+        if let Ok(outcome) = tokio::time::timeout(FENCE_DEADLINE / 4, &mut delivery).await {
+            let error = outcome.expect_err("A locked lifecycle journal cannot admit input");
+            let (_, result) = submission_failure(error, false, SubmissionStage::PasteFence);
+            panic!("A busy lifecycle read ended delivery before the fence deadline: {result}");
+        }
+        blocker.execute_batch("ROLLBACK").unwrap();
+        let error = delivery
+            .await
+            .expect_err("Queue admission refuses a session that does not exist");
+        assert!(error.downcast_ref::<FenceDiagnostic>().is_none());
+        assert_eq!(
+            error
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "submission_preempted"
+        );
+        log.shutdown().await;
     }
 
     #[tokio::test]

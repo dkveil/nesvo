@@ -141,8 +141,12 @@ Untyped adapter failures at either submission fence may additionally retain
 `joinFailed`, `queueFull`, `queueClosed` or `unknown`. They identify the failing
 adapter boundary without serializing SQL, paths, prompts or raw error strings.
 Domain refusals keep their existing code/message and omit this diagnostic. The
-public `submission_unconfirmed` code, conservative effect/phase classification,
-two-second fence deadline and queue-only refusal retries remain unchanged.
+public `submission_unconfirmed` code, conservative effect/phase classification
+and two-second fence deadline remain unchanged. Within that deadline the fence
+retries queue-domain `lifecycle_pending`/`editor_pending` refusals and a
+`lifecycleRead` that is `sqlBusy` or `sqlLocked` (for example while a hook
+commits); busy retries back off from 1/64 to 1/8 of the deadline. No bytes are
+queued before the fence passes; a read still busy at the deadline keeps its reason.
 Lookup/replay returns the same retained diagnostic and never retries input.
 An absent field on older receipts does not identify which boundary failed;
 event-journal health alone does not cover the separate lifecycle journal read.
