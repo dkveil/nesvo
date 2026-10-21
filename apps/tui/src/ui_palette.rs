@@ -363,15 +363,28 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, target: Option<&crate::
             }
         }
     }
+    let mut footer = crate::ui::shortcut_spans(&if app.palette_expanded {
+        format!("↑↓ move · Enter open · Tab filter · Esc close · {scope_label}")
+    } else {
+        "Enter open · F2 expand".to_owned()
+    });
+    if let Some(session) = selected
+        .and_then(|index| matches.get(index))
+        .and_then(|result| result.target.session_id())
+        .and_then(|id| app.session(id))
+    {
+        let (kind, path) = session.search_root_label();
+        let label = format!(" · root {kind} ");
+        let available = usize::from(layout.footer.width).saturating_sub(
+            Line::from(footer.clone()).width() + Line::from(label.as_str()).width(),
+        );
+        if available >= MIN_ROOT_PATH_CELLS {
+            footer.push(Span::raw(label));
+            footer.push(Span::raw(elide_start(path, available)));
+        }
+    }
     frame.render_widget(
-        Paragraph::new(Line::from(crate::ui::shortcut_spans(
-            &if app.palette_expanded {
-                format!("↑↓ move · Enter open · Tab filter · Esc close · {scope_label}")
-            } else {
-                "Enter open · F2 expand".to_owned()
-            },
-        )))
-        .style(Style::default().fg(MUTED)),
+        Paragraph::new(Line::from(footer)).style(Style::default().fg(MUTED)),
         layout.footer,
     );
     let cursor = Line::from(query)
@@ -407,6 +420,31 @@ fn matched_name(name: &str, query: &str, accent: ratatui::style::Color) -> Vec<S
         .collect()
 }
 
+const MIN_ROOT_PATH_CELLS: usize = 8;
+
+fn elide_start(text: &str, width: usize) -> String {
+    if Line::from(text).width() <= width {
+        return text.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let span = Span::raw(text);
+    let graphemes = span
+        .styled_graphemes(Style::default())
+        .map(|grapheme| grapheme.symbol)
+        .collect::<Vec<_>>();
+    let mut used = 1;
+    let start = graphemes
+        .iter()
+        .rposition(|symbol| {
+            used += Span::raw(*symbol).width();
+            used > width
+        })
+        .map_or(0, |index| index + 1);
+    format!("…{}", graphemes[start..].concat())
+}
+
 fn elide(text: &str, width: usize) -> String {
     if Line::from(text).width() <= width {
         text.to_owned()
@@ -438,6 +476,73 @@ mod tests {
                     terminal.backend().buffer()[(x, y)].bg,
                     app.theme.selection()
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn search_footer_names_the_selected_root_and_keeps_the_path_tail() {
+        let path = "C:/dev/api/.claude/worktrees/a-very-long-worktree-name/agent-tail";
+        for (root, expanded, width, expected) in [
+            (
+                json!({"source":"currentCwd","reason":"insideRoot","path":path,"observedAt":3}),
+                true,
+                160,
+                "root cwd …",
+            ),
+            (
+                json!({"source":"currentCwd","reason":"insideRoot","path":path,"observedAt":3}),
+                true,
+                120,
+                "root cwd …",
+            ),
+            (
+                json!({"source":"launchDirectory","reason":"outsideRoot","path":null,"observedAt":3}),
+                true,
+                200,
+                "root launch, cwd outside C:/dev/api",
+            ),
+            (
+                json!({"source":"launchDirectory","reason":"noCurrentCwd","path":null,"observedAt":null}),
+                true,
+                200,
+                "root launch C:/dev/api",
+            ),
+            (
+                json!({"source":"currentCwd","reason":"insideRoot","path":path,"observedAt":3}),
+                false,
+                80,
+                "Enter open",
+            ),
+        ] {
+            let mut app = App::new(1);
+            app.palette_expanded = expanded;
+            app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+                {"id":"one","name":"Review API","cwd":"C:/dev/api","program":"claude","cols":80,"rows":24,
+                    "running":true,"groupId":null,"controllerId":null,"searchRoot":root}
+            ]})).unwrap();
+            let mut terminal = Terminal::new(TestBackend::new(width, 36)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render(
+                        frame,
+                        &app,
+                        "api",
+                        Some(&crate::palette::Target::Session("one".into())),
+                    )
+                })
+                .unwrap();
+            let footer = for_app(Rect::new(0, 0, width, 36), &app).footer;
+            let buffer = terminal.backend().buffer();
+            let line = (footer.x..footer.right())
+                .map(|x| buffer[(x, footer.y)].symbol())
+                .collect::<String>();
+            let compact = line.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(compact.contains(expected), "{line}");
+            if !expanded {
+                assert!(!line.contains("root"), "{line}");
+            } else if root["source"] == "currentCwd" {
+                assert!(line.trim_end().ends_with("agent-tail"), "{line}");
             }
         }
     }

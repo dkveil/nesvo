@@ -178,12 +178,61 @@ where
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SearchRoot {
+    source: String,
+    reason: String,
+    #[serde(deserialize_with = "required_nullable")]
+    path: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    observed_at: Option<u64>,
+}
+
+impl SearchRoot {
+    fn valid(&self) -> bool {
+        const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+        let path = self.path.as_ref().is_some_and(|path| {
+            !path.is_empty() && path.len() <= 4096 && !path.chars().any(char::is_control)
+        });
+        if self.observed_at.is_some_and(|at| at > MAX_SAFE_INTEGER) {
+            return false;
+        }
+        match (self.source.as_str(), self.reason.as_str()) {
+            ("currentCwd", "insideRoot") => path && self.observed_at.is_some(),
+            ("launchDirectory", "outsideRoot") => self.path.is_none() && self.observed_at.is_some(),
+            ("launchDirectory", "noCurrentCwd") => {
+                self.path.is_none() && self.observed_at.is_none()
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn current_cwd(&self) -> Option<&str> {
+        (self.source == "currentCwd")
+            .then_some(self.path.as_deref())
+            .flatten()
+    }
+}
+
+fn search_root<'de, D>(deserializer: D) -> std::result::Result<Option<SearchRoot>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value::<SearchRoot>(value)
+        .ok()
+        .filter(SearchRoot::valid))
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Session {
     pub id: String,
     pub name: String,
     pub cwd: String,
     #[serde(default, deserialize_with = "repository_context")]
     pub repository_context: Option<RepositoryContext>,
+    #[serde(default, deserialize_with = "search_root")]
+    pub search_root: Option<SearchRoot>,
     #[serde(default)]
     pub program: Program,
     pub cols: u16,
@@ -220,6 +269,18 @@ pub struct Session {
 }
 
 impl Session {
+    pub(crate) fn search_root_label(&self) -> (&'static str, &str) {
+        let Some(root) = &self.search_root else {
+            return ("launch", &self.cwd);
+        };
+        if let Some(cwd) = root.current_cwd() {
+            return ("cwd", cwd);
+        }
+        if root.reason == "outsideRoot" {
+            return ("launch, cwd outside", &self.cwd);
+        }
+        ("launch", &self.cwd)
+    }
     pub fn attention_priority(&self) -> u8 {
         self.current_attention.as_ref().map_or_else(
             || self.status.as_ref().map_or(0, Status::attention_priority),
@@ -950,6 +1011,14 @@ impl App {
             return Some(score);
         }
         let mut terms = format!("{} {} {}", session.name, session.cwd, program?.label());
+        if let Some(cwd) = session
+            .search_root
+            .as_ref()
+            .and_then(SearchRoot::current_cwd)
+        {
+            terms.push(' ');
+            terms.push_str(cwd);
+        }
         if let Some(context) = &session.repository_context {
             context.append_search_terms(&mut terms);
         }
@@ -2003,6 +2072,53 @@ mod tests {
         assert_eq!(app.quick_switch_results("codex")[0].id, "codex");
         assert_eq!(app.quick_switch_results("wrkspace")[0].id, "claude");
         assert!(app.quick_switch_results("missing").is_empty());
+    }
+
+    fn search_root_app(root: Value) -> App {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"s","name":"Repair","cwd":"C:/dev/launch","program":"claude","cols":80,"rows":24,
+                "running":true,"groupId":null,"controllerId":null,"searchRoot":root}
+        ]}))
+        .unwrap();
+        app
+    }
+
+    #[test]
+    fn current_cwd_search_root_is_search_evidence_and_the_named_root() {
+        let current = search_root_app(
+            json!({"source":"currentCwd","reason":"insideRoot","path":"C:/dev/launch/agent-łódź","observedAt":5}),
+        );
+        assert_eq!(current.quick_switch_results("agent-łódź")[0].id, "s");
+        assert_eq!(
+            current.sessions[0].search_root_label(),
+            ("cwd", "C:/dev/launch/agent-łódź")
+        );
+        let outside = search_root_app(
+            json!({"source":"launchDirectory","reason":"outsideRoot","path":null,"observedAt":5}),
+        );
+        assert_eq!(
+            outside.sessions[0].search_root_label(),
+            ("launch, cwd outside", "C:/dev/launch")
+        );
+        assert!(outside.quick_switch_results("agent").is_empty());
+        for malformed in [
+            json!({"source":"currentCwd","reason":"insideRoot","path":null,"observedAt":5}),
+            json!({"source":"currentCwd","reason":"outsideRoot","path":"C:/dev/launch/agent","observedAt":5}),
+            json!({"source":"launchDirectory","reason":"noCurrentCwd","path":"C:/dev/launch/agent","observedAt":null}),
+            json!({"source":"currentCwd","reason":"insideRoot","path":"C:/dev/launch/agent","observedAt":9_007_199_254_740_992_u64}),
+            json!({"source":"currentCwd","reason":"insideRoot","path":"C:/dev/launch/agent\ncontrol","observedAt":5}),
+            json!("currentCwd"),
+        ] {
+            let app = search_root_app(malformed);
+            assert_eq!(app.sessions.len(), 1);
+            assert!(app.sessions[0].search_root.is_none());
+            assert_eq!(
+                app.sessions[0].search_root_label(),
+                ("launch", "C:/dev/launch")
+            );
+            assert!(app.quick_switch_results("agent").is_empty());
+        }
     }
 
     fn repository_projection(state: &str) -> Value {
