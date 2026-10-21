@@ -456,6 +456,7 @@ const MOVED_ON_CODES: &[&str] = &[
     "cursor_expired",
     "digest_mismatch",
     "decision_pending",
+    "decision_resolved",
     "coordinator_alive",
     "run_draining",
     "submission_preempted",
@@ -1832,13 +1833,53 @@ pub(crate) mod attention {
         )]
         Decide {
             id: String,
+            #[arg(
+                long,
+                required_unless_present = "choice_file",
+                conflicts_with = "choice_file"
+            )]
+            choice: Option<String>,
             #[arg(long)]
-            choice: String,
-            #[arg(long)]
+            choice_file: Option<std::path::PathBuf>,
+            #[arg(long, conflicts_with = "note_file")]
             note: Option<String>,
+            #[arg(long)]
+            note_file: Option<std::path::PathBuf>,
             #[arg(long)]
             json: bool,
         },
+    }
+
+    const CHOICE_LIMIT: usize = 2048;
+    const NOTE_LIMIT: usize = 1024;
+
+    impl DecisionCommand {
+        pub fn resolved(self) -> Result<Self> {
+            Ok(match self {
+                Self::Decide {
+                    id,
+                    choice,
+                    choice_file,
+                    note,
+                    note_file,
+                    json,
+                } => Self::Decide {
+                    id,
+                    choice: match choice_file {
+                        Some(path) => Some(super::read_text_input(&path, CHOICE_LIMIT)?),
+                        None => choice,
+                    },
+                    choice_file: None,
+                    note: match note_file {
+                        Some(path) => Some(super::read_text_input(&path, NOTE_LIMIT)?),
+                        None => note,
+                    },
+                    note_file: None,
+                    json,
+                },
+                command => command,
+            })
+        }
     }
 
     impl InboxCommand {
@@ -1907,14 +1948,19 @@ pub(crate) mod attention {
                 (json!({"type":"decisions","page":page}), "decisions")
             }
             DecisionCommand::Decide {
-                id, choice, note, ..
+                id,
+                choice: Some(choice),
+                choice_file: None,
+                note,
+                note_file: None,
+                ..
             } => {
                 super::valid_id(id)
                     .map_err(|_| failure("invalid_argument", "Invalid decision ID"))?;
-                if !bounded_text(choice, 2048)
+                if !bounded_text(choice, CHOICE_LIMIT)
                     || note
                         .as_deref()
-                        .is_some_and(|note| !bounded_text(note, 1024))
+                        .is_some_and(|note| !bounded_text(note, NOTE_LIMIT))
                 {
                     return Err(failure(
                         "invalid_argument",
@@ -1926,6 +1972,12 @@ pub(crate) mod attention {
                     query["note"] = note.clone().into();
                 }
                 (query, "decided")
+            }
+            DecisionCommand::Decide { .. } => {
+                return Err(failure(
+                    "invalid_argument",
+                    "Pass exactly one of --choice or --choice-file",
+                ));
             }
         })
     }
@@ -1968,7 +2020,12 @@ pub(crate) mod attention {
     }
 
     pub async fn run_decision(command: DecisionCommand, connection: &mut Connection) -> Result<()> {
-        send(command.machine(), decision_query(&command)?, connection).await
+        send(
+            command.machine(),
+            decision_query(&command.resolved()?)?,
+            connection,
+        )
+        .await
     }
 
     pub const TOOLS: [&str; 4] = [
@@ -2116,8 +2173,10 @@ pub(crate) mod attention {
                 } = parse(arguments)?;
                 decision_query(&DecisionCommand::Decide {
                     id: decision_id,
-                    choice,
+                    choice: Some(choice),
+                    choice_file: None,
                     note,
+                    note_file: None,
                     json: true,
                 })
             }
@@ -2208,10 +2267,85 @@ pub(crate) mod attention {
             assert!(
                 decision_query(&DecisionCommand::Decide {
                     id: "abc".into(),
-                    choice: " ".into(),
+                    choice: Some(" ".into()),
+                    choice_file: None,
                     note: None,
+                    note_file: None,
                     json: true
                 })
+                .is_err()
+            );
+            let unresolved = DecisionCommand::Decide {
+                id: "abc".into(),
+                choice: None,
+                choice_file: Some("-".into()),
+                note: None,
+                note_file: None,
+                json: true,
+            };
+            assert!(decision_query(&unresolved).is_err());
+            let path = std::env::temp_dir().join(format!(
+                "nesvo-choice-{}.txt",
+                hex::encode(nesvo_wire::random::<8>())
+            ));
+            std::fs::write(&path, "use the main branch").unwrap();
+            let from_file = DecisionCommand::Decide {
+                id: "abc".into(),
+                choice: None,
+                choice_file: Some(path.clone()),
+                note: None,
+                note_file: Some(path.clone()),
+                json: true,
+            }
+            .resolved()
+            .unwrap();
+            assert_eq!(
+                decision_query(&from_file).unwrap().0,
+                json!({"type":"decide","decisionId":"abc","choice":"use the main branch","note":"use the main branch"})
+            );
+            std::fs::write(&path, "x".repeat(1025)).unwrap();
+            let too_long = DecisionCommand::Decide {
+                id: "abc".into(),
+                choice: Some("yes".into()),
+                choice_file: None,
+                note: None,
+                note_file: Some(path.clone()),
+                json: true,
+            }
+            .resolved()
+            .err()
+            .unwrap();
+            assert_eq!(
+                crate::cli::error_value(&too_long)["error"]["code"],
+                "input_too_large"
+            );
+            std::fs::remove_file(&path).unwrap();
+            for argv in [
+                vec!["nesvo", "decision", "decide", "abc", "--choice-file", "-"],
+                vec![
+                    "nesvo",
+                    "decision",
+                    "decide",
+                    "abc",
+                    "--choice",
+                    "y",
+                    "--note-file",
+                    "-",
+                ],
+            ] {
+                assert!(Cli::try_parse_from(argv).is_ok());
+            }
+            assert!(
+                Cli::try_parse_from([
+                    "nesvo",
+                    "decision",
+                    "decide",
+                    "abc",
+                    "--choice",
+                    "y",
+                    "--choice-file",
+                    "-"
+                ])
                 .is_err()
             );
         }
@@ -2565,6 +2699,8 @@ mod agent_convention_tests {
             ("attempt_state_conflict", 5),
             ("run_state_conflict", 5),
             ("decision_pending", 5),
+            ("decision_resolved", 5),
+            ("decision_expired", 5),
             ("cursor_expired", 5),
             ("quota_wake_expired", 5),
             ("context_changed", 5),

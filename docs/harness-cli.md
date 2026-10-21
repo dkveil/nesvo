@@ -19,8 +19,8 @@ Argument errors exit 1 with or without `--json`. A `timeout` envelope from
 `session wait` keeps its receipt; wait on the same receipt again.
 
 Every file argument reads stdin when its path is `-`: `--prompt-file`,
-`--goal-file`, `--question-file`, `--answer-file`, `--summary-file`,
-`--message-file` and each `--file` (review text, constraints, plans, reports,
+`--goal-file`, `--question-file`, `--answer-file`, `--choice-file`, `--note-file`,
+`--summary-file`, `--message-file` and each `--file` (review text, constraints, plans, reports,
 validations, budgets, jobs, `run blocked` and `run ask`). Input above the host cap
 for that field is refused with `input_too_large` and exit 1 before anything is
 sent. Inline forms such as `--prompt TEXT` remain.
@@ -552,7 +552,7 @@ Acknowledging marks a session's attention read; it never answers a decision.
 
 `decision list [--page N]` returns `type:"decisions"` with eight pending decisions
 per page across all runs, each with `inboxId` and its `run`. `decision decide ID
---choice TEXT [--note TEXT]` answers at the current revision without a run ID and
+--choice TEXT|--choice-file PATH [--note TEXT|--note-file PATH]` answers at the current revision without a run ID and
 returns `type:"decided"`; the note follows the choice after a blank line. Answered
 or canceled decisions return `decision_resolved` and expired ones
 `decision_expired`. Hosts without `attentionInbox` or `decisions` return
