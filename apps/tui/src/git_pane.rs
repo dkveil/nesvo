@@ -18,6 +18,7 @@ pub const DIFF_PAGE: usize = 10;
 const GIT_TIMEOUT: Duration = Duration::from_secs(20);
 const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_DELAY: Duration = Duration::from_millis(400);
+const TIMEOUT_MESSAGE: &str = "The host did not answer the Git request; r retries.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -139,8 +140,10 @@ pub struct GitPane {
     pub error: Option<String>,
     queue: VecDeque<Request>,
     in_flight: Option<(String, Request, Instant)>,
-    commits_request: Option<String>,
+    commits_request: Option<(String, Instant)>,
+    commits_retry_at: Option<Instant>,
     retry_at: Option<Instant>,
+    outbox: VecDeque<Value>,
 }
 
 impl GitPane {
@@ -258,6 +261,7 @@ impl GitPane {
         self.error = None;
         self.loaded = [false; 4];
         self.retry_at = None;
+        self.commits_retry_at = None;
         self.queue_refresh();
         if self.review_id.is_none() && !self.queue.contains(&Request::Open) {
             self.queue.push_front(Request::Open);
@@ -367,14 +371,19 @@ pub fn pump(app: &mut App) -> Vec<Value> {
             }
         }
     }
+    let commits_waiting = pane.commits_retry_at.is_some_and(|at| Instant::now() < at);
     if pane.commits_request.is_none()
+        && !commits_waiting
         && !pane.loaded[Section::Commits.index()]
         && pane.error.is_none()
         && let Some(directory) = pane.directory.clone()
     {
+        pane.commits_retry_at = None;
         let command =
             app.request(json!({"type":"listCommits","directory":directory,"limit":COMMIT_LIMIT}));
-        pane.commits_request = command["requestId"].as_str().map(str::to_owned);
+        pane.commits_request = command["requestId"]
+            .as_str()
+            .map(|id| (id.to_owned(), Instant::now()));
         commands.push(command);
     }
     app.git = Some(pane);
@@ -383,6 +392,17 @@ pub fn pump(app: &mut App) -> Vec<Value> {
 
 pub fn tick(app: &mut App) -> Option<Value> {
     let pane = app.git.as_mut()?;
+    if let Some(command) = pane.outbox.pop_front() {
+        return Some(command);
+    }
+    if pane
+        .commits_request
+        .as_ref()
+        .is_some_and(|(_, sent)| sent.elapsed() > GIT_TIMEOUT)
+    {
+        pane.commits_request = None;
+        pane.error = Some(TIMEOUT_MESSAGE.into());
+    }
     if let Some((_, request, sent)) = &pane.in_flight {
         let limit = if *request == Request::Open {
             OPEN_TIMEOUT
@@ -392,13 +412,15 @@ pub fn tick(app: &mut App) -> Option<Value> {
         if sent.elapsed() > limit {
             pane.in_flight = None;
             pane.queue.clear();
-            pane.error = Some("The host did not answer the Git request; r retries.".into());
+            pane.error = Some(TIMEOUT_MESSAGE.into());
         }
     }
-    if pane.in_flight.is_some() || pane.queue.is_empty() {
-        return None;
+    let mut commands = pump(app).into_iter();
+    let first = commands.next();
+    if let Some(pane) = app.git.as_mut() {
+        pane.outbox.extend(commands);
     }
-    pump(app).into_iter().next()
+    first
 }
 
 fn retry(pane: &mut GitPane, request: Request) {
@@ -416,7 +438,11 @@ fn busy(event: &Value) -> bool {
 pub fn host_event(app: &mut App, event: &Value) -> Option<Vec<Value>> {
     let request = event["requestId"].as_str()?;
     let pane = app.git.as_mut()?;
-    if pane.commits_request.as_deref() == Some(request) {
+    if pane
+        .commits_request
+        .as_ref()
+        .is_some_and(|(id, _)| id == request)
+    {
         pane.commits_request = None;
         match event["type"].as_str() {
             Some("commits") => {
@@ -425,7 +451,7 @@ pub fn host_event(app: &mut App, event: &Value) -> Option<Vec<Value>> {
                 pane.received_ms = now_ms();
                 pane.loaded[Section::Commits.index()] = true;
             }
-            _ if event["code"] == "busy" => {}
+            _ if busy(event) => pane.commits_retry_at = Some(Instant::now() + RETRY_DELAY),
             _ => {
                 pane.loaded[Section::Commits.index()] = true;
                 pane.error = Some(format!(
@@ -810,6 +836,77 @@ pub mod tests {
         key(&mut app, KeyCode::Esc);
         assert!(app.git.is_none());
         assert!(!captures(&app));
+    }
+
+    #[test]
+    fn git_pane_busy_commits_wait_for_the_retry_delay() {
+        let mut app = loaded();
+        let refresh = key(&mut app, KeyCode::Char('r')).commands;
+        assert_eq!(refresh[1]["type"], "listCommits");
+        let after = reply(
+            &mut app,
+            &refresh[1],
+            json!({"type":"error","code":"busy","message":"busy"}),
+        );
+        assert!(after.iter().all(|command| command["type"] != "listCommits"));
+        assert!(tick(&mut app).is_none());
+        assert!(app.git.as_ref().unwrap().commits_retry_at.is_some());
+        app.git.as_mut().unwrap().commits_retry_at = Some(Instant::now());
+        let retried = tick(&mut app).unwrap();
+        assert_eq!(retried["type"], "listCommits");
+        assert!(app.git.as_ref().unwrap().commits_retry_at.is_none());
+    }
+
+    #[test]
+    fn git_pane_commits_request_times_out_like_the_in_flight_request() {
+        let mut app = loaded();
+        let refresh = key(&mut app, KeyCode::Char('r')).commands;
+        assert_eq!(refresh[1]["type"], "listCommits");
+        reply(
+            &mut app,
+            &refresh[0],
+            json!({"type":"reviewContext","reviewId":"local-0123456789abcdef","directory":"C:/w","readiness":null}),
+        );
+        let pane = app.git.as_mut().unwrap();
+        pane.queue.clear();
+        pane.in_flight = None;
+        let (id, _) = pane.commits_request.clone().unwrap();
+        let expired = Instant::now()
+            .checked_sub(GIT_TIMEOUT + Duration::from_millis(1))
+            .unwrap();
+        pane.commits_request = Some((id, expired));
+        assert!(tick(&mut app).is_none());
+        let pane = app.git.as_ref().unwrap();
+        assert!(pane.commits_request.is_none());
+        assert!(!pane.is_loading());
+        assert_eq!(pane.error.as_deref(), Some(TIMEOUT_MESSAGE));
+    }
+
+    #[test]
+    fn git_pane_tick_delivers_every_command_from_one_pump() {
+        let mut app = loaded();
+        let refresh = key(&mut app, KeyCode::Char('r')).commands;
+        let busy = json!({"type":"error","code":"busy","message":"busy"});
+        reply(&mut app, &refresh[1], busy.clone());
+        reply(&mut app, &refresh[0], busy);
+        let pane = app.git.as_mut().unwrap();
+        pane.retry_at = Some(Instant::now());
+        pane.commits_retry_at = Some(Instant::now());
+        let first = tick(&mut app).unwrap();
+        assert_eq!(first["type"], "reviewContext");
+        let second = tick(&mut app).unwrap();
+        assert_eq!(second["type"], "listCommits");
+        assert_eq!(
+            app.git
+                .as_ref()
+                .unwrap()
+                .commits_request
+                .as_ref()
+                .unwrap()
+                .0,
+            second["requestId"].as_str().unwrap()
+        );
+        assert!(app.git.as_ref().unwrap().outbox.is_empty());
     }
 
     #[test]
