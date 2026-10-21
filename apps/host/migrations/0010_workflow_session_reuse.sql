@@ -1,18 +1,5 @@
 PRAGMA defer_foreign_keys=ON;
 
-CREATE TABLE IF NOT EXISTS operation_receipts (
-  id TEXT PRIMARY KEY,
-  issuer TEXT NOT NULL,
-  key TEXT NOT NULL,
-  digest TEXT NOT NULL,
-  operation TEXT NOT NULL,
-  phase TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  result TEXT NOT NULL,
-  claim_token TEXT,
-  UNIQUE(issuer,key)
-);
-
 CREATE TEMP TABLE workflow_process_exits_copy AS SELECT session_id,observed_at FROM workflow_process_exits ORDER BY rowid;
 
 DROP TABLE workflow_process_exits;

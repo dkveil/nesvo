@@ -232,6 +232,23 @@ mod tests {
         Ok(applied)
     }
 
+    fn startup_connection() -> Connection {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::receipts::initialize(&mut connection).unwrap();
+        crate::quota_wakes::initialize(&connection).unwrap();
+        connection
+    }
+
+    pub(crate) fn database_at(version: u32) -> Connection {
+        let mut connection = startup_connection();
+        assert_eq!(
+            migrate(&mut connection, version).unwrap(),
+            (1..=version).collect::<Vec<_>>()
+        );
+        connection
+    }
+
     fn ledger(connection: &Connection) -> Vec<(i64, String)> {
         recorded(connection).unwrap()
     }
@@ -246,7 +263,7 @@ mod tests {
     }
 
     fn legacy_schema() -> Connection {
-        let mut connection = Connection::open_in_memory().unwrap();
+        let mut connection = startup_connection();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .unwrap();
@@ -258,7 +275,7 @@ mod tests {
     #[test]
     fn migrations_through_the_legacy_version_reproduce_the_legacy_initializer_schema() {
         let legacy = legacy_schema();
-        let mut migrated = Connection::open_in_memory().unwrap();
+        let mut migrated = startup_connection();
         migrate(&mut migrated, LEGACY_SCHEMA_VERSION).unwrap();
         assert_eq!(
             without_ledger(schema_snapshot(&migrated)),
@@ -297,7 +314,7 @@ mod tests {
 
     #[test]
     fn migrations_apply_in_order_on_a_fresh_database_and_reopen_idempotently() {
-        let mut connection = Connection::open_in_memory().unwrap();
+        let mut connection = startup_connection();
         assert_eq!(
             migrate(&mut connection, latest_version()).unwrap(),
             (1..=latest_version()).collect::<Vec<_>>()
@@ -323,9 +340,9 @@ mod tests {
 
     #[test]
     fn migrations_upgrade_a_version_one_database_through_each_additive_file() {
-        let mut fresh = Connection::open_in_memory().unwrap();
+        let mut fresh = startup_connection();
         migrate(&mut fresh, latest_version()).unwrap();
-        let mut upgraded = Connection::open_in_memory().unwrap();
+        let mut upgraded = startup_connection();
         assert_eq!(migrate(&mut upgraded, 1).unwrap(), vec![1]);
         assert_eq!(
             migrate(&mut upgraded, latest_version()).unwrap(),
@@ -336,7 +353,7 @@ mod tests {
 
     #[test]
     fn migrations_adopt_a_pre_ledger_database_without_replaying_additive_files() {
-        let mut fresh = Connection::open_in_memory().unwrap();
+        let mut fresh = startup_connection();
         migrate(&mut fresh, latest_version()).unwrap();
         let mut legacy = legacy_schema();
         assert!(!has_ledger(&legacy).unwrap());
@@ -354,7 +371,7 @@ mod tests {
 
     #[test]
     fn migrations_refuse_a_database_recorded_by_a_newer_host() {
-        let mut connection = Connection::open_in_memory().unwrap();
+        let mut connection = startup_connection();
         migrate(&mut connection, latest_version()).unwrap();
         let newer = latest_version() + 1;
         connection
@@ -377,7 +394,7 @@ mod tests {
 
     #[test]
     fn migrations_refuse_a_renamed_or_renumbered_record_and_require_a_transaction() {
-        let mut connection = Connection::open_in_memory().unwrap();
+        let mut connection = startup_connection();
         migrate(&mut connection, 1).unwrap();
         connection
             .execute(
@@ -402,7 +419,7 @@ mod tests {
 
     #[test]
     fn migrations_insert_the_default_host_budget_the_budget_model_defines() {
-        let mut connection = Connection::open_in_memory().unwrap();
+        let mut connection = startup_connection();
         migrate(&mut connection, latest_version()).unwrap();
         let (revision, data): (i64, String) = connection
             .query_row(
@@ -427,6 +444,115 @@ mod tests {
         assert_ne!(
             normalize("CREATE TABLE t(a TEXT NOT NULL)"),
             normalize("CREATE TABLE t(a TEXT)")
+        );
+    }
+
+    fn table_sql(connection: &Connection, name: &str) -> String {
+        normalize(
+            &connection
+                .query_row(
+                    "SELECT sql FROM sqlite_schema WHERE name=?1",
+                    [name],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+        )
+    }
+
+    fn count(connection: &Connection, query: &str) -> i64 {
+        connection.query_row(query, [], |row| row.get(0)).unwrap()
+    }
+
+    #[test]
+    fn migrations_session_reuse_rebuilds_attempt_tables_and_keeps_rows_under_foreign_keys() {
+        let mut connection = database_at(9);
+        connection.execute_batch("INSERT INTO workflow_runs VALUES('run','Run','Goal',NULL,1,'active',1);
+            INSERT INTO workflow_tasks VALUES('task','run','task','{}');
+            INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state,result) VALUES('first','task',1,'worker','failed','{\"outcome\":\"failed\"}');
+            INSERT INTO workflow_process_exits VALUES('worker',5);
+            INSERT INTO operation_receipts(id,issuer,key,digest,operation,phase,session_id,result) VALUES('launch','owner','launch','digest','create','created','worker','{}');
+            INSERT INTO workflow_deliveries(id,run_id,attempt_id,issuer,phase,created_at,deadline_at) VALUES('delivery','run','first','owner','sent',1,2);
+            INSERT INTO workflow_controls VALUES('control','run','stop','owner','completed',NULL,1);
+            INSERT INTO harness_jobs(id,spec,revision,enabled,created_at) VALUES('job','{}',1,1,1);
+            INSERT INTO harness_job_occurrences(id,job_id,job_revision,spec,trigger_key,trigger_kind,due_at,created_at,state) VALUES('occurrence','job',1,'{}','trigger','once',1,1,'running');
+            INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,run_id,created_at,state) VALUES('job-attempt','occurrence',1,'run',1,'running');
+            INSERT INTO harness_job_timeouts(job_attempt_id,job_id,occurrence_id,run_id,attempt_id,session_id,launch_receipt_id,issuer,timeout_ms,armed_at,deadline_at,armed_monotonic_ms,deadline_monotonic_ms,state,observed_at,control_key,control_id) VALUES('job-attempt','job','occurrence','run','first','worker','launch','owner',1000,1,2,1,2,'armed',1,'timeout-key','control');").unwrap();
+        assert!(
+            table_sql(&connection, "workflow_attempts").contains("session_id TEXT NOT NULL UNIQUE")
+        );
+        assert_eq!(migrate(&mut connection, 10).unwrap(), vec![10]);
+        assert!(!table_sql(&connection, "workflow_attempts").contains("UNIQUE,"));
+        for table in ["workflow_process_exits", "harness_job_timeouts"] {
+            assert!(!table_sql(&connection, table).contains("workflow_attempts(session_id)"));
+        }
+        assert!(
+            table_sql(&connection, "harness_job_timeouts")
+                .contains("session_id TEXT NOT NULL UNIQUE")
+        );
+        assert!(
+            table_sql(&connection, "workflow_attempts_open_session").contains("WHERE state IN")
+        );
+        for index in [
+            "workflow_attempts_session",
+            "harness_job_timeouts_due",
+            "harness_job_timeouts_control",
+        ] {
+            assert_eq!(
+                count(
+                    &connection,
+                    &format!(
+                        "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='{index}'"
+                    )
+                ),
+                1
+            );
+        }
+        assert_eq!(
+            count(&connection, "SELECT count(*) FROM pragma_foreign_key_check"),
+            0
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT count(*) FROM workflow_attempts WHERE id='first' AND session_id='worker' AND state='failed' AND json_extract(result,'$.outcome')='failed'"
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT count(*) FROM workflow_process_exits WHERE session_id='worker' AND observed_at=5"
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT count(*) FROM workflow_deliveries WHERE attempt_id='first'"
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT count(*) FROM harness_job_timeouts WHERE attempt_id='first' AND session_id='worker' AND control_id='control'"
+            ),
+            1
+        );
+        for table in ["workflow_session_reuses", "workflow_delivery_identities"] {
+            assert_eq!(
+                count(&connection, &format!("SELECT count(*) FROM {table}")),
+                0
+            );
+        }
+        connection.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES('second','task',2,'worker','assigned')", []).unwrap();
+        assert!(
+            connection.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES('third','task',3,'worker','reported')", []).is_err(),
+            "one session owns at most one open attempt"
+        );
+        assert_eq!(
+            count(&connection, "SELECT count(*) FROM pragma_foreign_key_check"),
+            0
         );
     }
 }
