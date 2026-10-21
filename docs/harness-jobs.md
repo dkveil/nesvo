@@ -16,9 +16,10 @@ retry, optional [execution timeouts](harness-job-timeouts.md), and explicit
 [owner reconciliation of no-effect launches](harness-job-launch-reconciliation.md)
 are available.
 Safe reuse, authenticated triggers, broader retry classes, cleanup after reported
-results, quota queues and job UI remain separate implementation gates. Existing legacy
+results and quota queues remain separate implementation gates. Existing legacy
 once schedules and their storage/API remain unchanged until a tested migration
-can preserve their launch semantics. The new `job` commands list the new records.
+can preserve their launch semantics. The new `job` commands and the TUI
+[Jobs view](#jobs-view-in-the-tui) list the new records.
 
 ## Create a once job
 
@@ -91,6 +92,27 @@ session ID alone is not proof that a process started: inspect its launch receipt
 Use the existing owner `nesvo run stop` or `nesvo run cancel` with
 their own exact revision/key to control that run. A definition toggle is not a
 substitute for occurrence cancellation.
+
+## Jobs view in the TUI
+
+In navigation mode, `J` (or the palette command **Jobs**) opens the owner Jobs view
+beside the sidebar when the host advertises `durableJobs`, `workflowPlans` and
+`workflowAttempts`. Rows mark enabled (●) or paused (○) definitions with their next
+start; the selected profile and instruction appear to the right, or below on narrow
+terminals. List: ↑↓ select, Enter details, `n` new, `r` reload, Esc back. Details:
+`e` edit, Space pause/resume future starts, `R` run now, `h` history. History: ↑↓
+select, Enter re-reads the occurrence, `c` requests cancellation. Form: Tab/↑↓ move,
+←→ or Space choose an installed agent, Enter saves, Esc discards.
+
+The form creates a once job in a shared workspace with `harness:true` and the defaults
+above; its start needs an explicit offset such as `2026-10-22 16:02 +02:00`. Editing
+keeps every field the form does not show. Recurring and external schedules are edited
+with `nesvo job edit`. Each read and change is a `workflow` request with its own request
+ID; a change carries a fresh key and the displayed revision, and only one is in flight.
+A `revision_conflict` re-reads the definition and list instead of retrying. If the
+connection drops first, the footer names the key for `nesvo job mutation --key`. Times
+use the once schedule's offset; other instants show UTC because the client has no time
+zone database. Rendering performs no I/O.
 
 ## Inspect retained dispatch generations
 

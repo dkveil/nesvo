@@ -837,6 +837,9 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         "capabilities",
     )
     .await?;
+    supported(&caps, request)
+}
+pub(crate) fn supported(caps: &Value, request: &Value) -> Result<()> {
     if request["request"]["action"] == "hostBudget" {
         return if caps["hostBudgets"] == true {
             Ok(())
@@ -890,7 +893,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
         Some("drain" | "resume") => Some("runDrain"),
         _ => None,
     };
-    if !job_calendar_supported(&caps, request) {
+    if !job_calendar_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host does not support this job calendar; update nesvo-host",
@@ -902,49 +905,49 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host cannot enforce owner-approved bounded prechecks; update nesvo-host",
         ));
     }
-    if !job_precheck_generations_supported(&caps, request) {
+    if !job_precheck_generations_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot enforce fresh prechecks for job generations; update nesvo-host",
         ));
     }
-    if !job_cancellation_supported(&caps, request) {
+    if !job_cancellation_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot enforce occurrence cancellation and cleanup; update nesvo-host",
         ));
     }
-    if !job_launch_reconciliation_supported(&caps, request) {
+    if !job_launch_reconciliation_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot reconcile exact no-effect job launches; update nesvo-host",
         ));
     }
-    if !job_quota_supported(&caps, request) {
+    if !job_quota_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot enforce job quota admission or reauthorization; update nesvo-host",
         ));
     }
-    if !job_attempts_supported(&caps, request) {
+    if !job_attempts_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host does not support retained job attempt history; update nesvo-host",
         ));
     }
-    if !job_retry_supported(&caps, request) {
+    if !job_retry_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot enforce this job retry policy; update nesvo-host",
         ));
     }
-    if !job_external_supported(&caps, request) {
+    if !job_external_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot authorize this external job or trigger provider; update nesvo-host",
         ));
     }
-    if !job_execution_timeout_supported(&caps, request) {
+    if !job_execution_timeout_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot enforce job execution timeouts; update nesvo-host",
@@ -956,7 +959,7 @@ pub async fn capability(connection: &mut Connection, request: &Value) -> Result<
             "Host lacks launch-local model profile support; update nesvo-host",
         ));
     }
-    if !capture_supported(&caps, request) {
+    if !capture_supported(caps, request) {
         return Err(cli::failure(
             "unsupported",
             "Host cannot configure explicit Claude quota capture; update nesvo-host",

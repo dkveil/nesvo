@@ -364,6 +364,12 @@ pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
 
 pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     render_workspace(frame, app, logo_frame);
+    if let Some(jobs) = &app.jobs
+        && app.connected
+        && app.dialog.is_none()
+    {
+        crate::ui_jobs::render(frame, app, jobs);
+    }
     crate::toolbox::render(frame, app);
     if let Some(selection) = &app.selection {
         selection.render(frame.buffer_mut(), app.theme.selection());
@@ -704,7 +710,12 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
                 );
             }
         }
-        if selected && app.mode == Mode::Navigate && app.dialog.is_none() && app.overlay.is_none() {
+        if selected
+            && app.mode == Mode::Navigate
+            && app.dialog.is_none()
+            && app.overlay.is_none()
+            && app.jobs.is_none()
+        {
             // Highlight the entire selectable row, including provider and status.
             let highlight_start = entry.x;
             for y in entry.y..entry.bottom() {
@@ -1330,7 +1341,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("r  m  d", "Rename / move / delete"),
             ("f  u", "Filter status / mute attention"),
             ("F8  F9", "Templates / restore sessions"),
-            ("S", "Scheduled sessions"),
+            ("S  J", "Scheduled sessions / jobs"),
             ("F2 / F3", "New session: options / save template"),
             ("v  Tab", "Split / change pane"),
             ("i  t  x", "Type / take control / release"),
@@ -1999,7 +2010,3 @@ mod tests {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "jobs_preview.rs"]
-mod jobs_preview;

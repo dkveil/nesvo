@@ -55,6 +55,7 @@ The start menu initially observes the first session without taking control. Ente
 | x                     | Release control                                         |
 | n                     | Create a session: name, folder, and available program   |
 | p                     | Show private phone pairing instructions and file paths  |
+| J                     | Open durable host jobs: list, details, history and form |
 | g                     | Create a group; choose root or a parent group           |
 | r / m                 | Rename / move the selected item                         |
 | d                     | Confirm deleting a session / deleting an empty group    |
@@ -65,6 +66,8 @@ The start menu initially observes the first session without taking control. Ente
 | z                     | Toggle full-screen terminal and workspace layouts       |
 | Esc                   | Confirm exit from navigation; cancel an open form first |
 | q / Ctrl+C            | Detach from navigation                                  |
+
+`J` opens the Jobs view beside the sidebar and owns the keyboard until Esc returns to navigation; its one-row footer lists each page's keys: ↑↓ select, Enter details, `n` new, `e` edit, Space pause/resume, `R` run now, `h` history, `c` cancel occurrence, `r` reload, Esc back. See [the Jobs view](../../docs/harness-jobs.md#jobs-view-in-the-tui).
 
 The empty workspace offers new session, group, and phone pairing actions. In the new-session form, Up/Down moves between name, folder, and program choices in both directions. Tab and Shift+Tab move through fields and footer buttons. Enter on the folder field opens a host-backed directory browser: type to filter the visible folders, Up/Down highlights a result, Enter chooses the highlighted path, Right enters the highlighted folder, Left returns to the parent, and F2 chooses the currently browsed path. Backspace edits the search; Ctrl+U clears it. **Use this folder** also chooses the currently browsed path. The initial path is the host workspace. Enter from the program field creates the session; footer buttons also respond to Enter. The host reports which programs are installed; unavailable programs cannot be launched. Older hosts without `directoryBrowser` keep the form open and show an update message instead of disconnecting. Agent programs use their own CLI subscription login. The current program is preselected when starting another session; a recognizable agent banner inside a shell also updates the local tab and sidebar label without changing the shell's colors or launcher identity.
 
@@ -88,7 +91,7 @@ Press `p` in navigation mode to see the exact private QR and pairing file paths 
 
 ## Modules and checks
 
-`main.rs` composes the CLI, `network.rs` handles pairing and the encrypted WebSocket, `model.rs` handles state and host events, `controller.rs` translates user intentions, and `launch.rs` owns launch choices and form editing. `input.rs` encodes keys, `terminal.rs` adapts VT state, `ui.rs` and `ui_launch.rs` only render, and `ui_controls.rs` shares control geometry with mouse hit testing. `brand.rs` renders the shared logo, `theme.rs` exposes generated colors, and `runner.rs` manages the event loop and terminal RAII cleanup. Rendering performs no I/O. Transport uses bounded queues and the shared `nesvo-wire` crate.
+`main.rs` composes the CLI, `network.rs` handles pairing and the encrypted WebSocket, `model.rs` handles state and host events, `controller.rs` translates user intentions, and `launch.rs` owns launch choices and form editing. `input.rs` encodes keys, `terminal.rs` adapts VT state, `ui.rs` and `ui_launch.rs` only render, and `ui_controls.rs` shares control geometry with mouse hit testing. `jobs.rs` holds Jobs view state and host replies, `jobs_controller.rs` maps its keys, and `ui_jobs.rs` renders it. `brand.rs` renders the shared logo, `theme.rs` exposes generated colors, and `runner.rs` manages the event loop and terminal RAII cleanup. Rendering performs no I/O. Transport uses bounded queues and the shared `nesvo-wire` crate.
 
 The event loop caches terminal dimensions and updates them from resize events, avoiding repeated synchronous Windows console queries. A fixed Ratatui viewport and `output.rs` batch frame text and cursor commands into one console write. Key releases, mouse motion, and successfully forwarded terminal input do not trigger redundant local redraws; host output updates the screen. Network draining has a time budget so high-volume output cannot monopolize input handling.
 

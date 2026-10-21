@@ -420,6 +420,8 @@ pub struct App {
     pub overlay: Option<crate::toolbox::Overlay>,
     pub status_filters: HashSet<usize>,
     pub schedules: Vec<Value>,
+    pub jobs: Option<crate::jobs::Jobs>,
+    pub host_features: Value,
     pub review: crate::review::ReviewState,
     pub client_id: u64,
     pub sessions: Vec<Session>,
@@ -475,6 +477,8 @@ impl App {
             palette_category: 0,
             status_filters: HashSet::new(),
             schedules: Vec::new(),
+            jobs: None,
+            host_features: Value::Null,
             client_id,
             sessions: vec![],
             groups: vec![],
@@ -1001,8 +1005,10 @@ impl App {
                 }
             }
             "capabilities" => {
+                self.host_features = event.clone();
                 self.capabilities = Some(serde_json::from_value(event)?);
             }
+            "workflow" => commands.extend(crate::jobs_controller::host_event(self, &event)),
             "directories" => {
                 if event["requestId"].as_str() == self.pending_directory.as_deref() {
                     self.pending_directory = None;
@@ -1237,6 +1243,7 @@ impl App {
                         self.dialog = Some(Dialog::NewSession(form));
                     }
                 }
+                commands.extend(crate::jobs_controller::host_event(self, &event));
             }
             _ => {}
         }
@@ -1257,6 +1264,16 @@ impl App {
         } else {
             message
         };
+        if let Some(key) = self
+            .jobs
+            .take()
+            .and_then(|jobs| jobs.unconfirmed_key().map(str::to_owned))
+        {
+            self.notice = format!(
+                "{} · Job change unconfirmed; inspect it with nesvo job mutation --key {key}",
+                self.notice
+            );
+        }
     }
 
     pub fn input(&mut self, data: String) -> Option<Value> {

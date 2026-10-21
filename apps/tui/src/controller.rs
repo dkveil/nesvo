@@ -45,6 +45,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     if app.overlay.is_some() {
         return crate::toolbox::event(app, event, area);
     }
+    if app.jobs.is_some() && app.dialog.is_none() {
+        return crate::jobs_controller::event(app, event);
+    }
     let mut outcome = Outcome::default();
     match &event {
         Event::Key(_) | Event::Resize(..) => app.selection = None,
@@ -1193,6 +1196,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             app.overlay = Some(crate::toolbox::Overlay::Schedules(0));
             outcome.commands.push(json!({"type":"listSchedules"}));
         }
+        KeyCode::Char('J') => crate::jobs_controller::open(app, outcome),
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,
         KeyCode::Char('z') => app.fullscreen = !app.fullscreen,

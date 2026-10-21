@@ -22,12 +22,13 @@ pub struct ResultRow {
     pub context: String,
 }
 pub const CATEGORIES: [&str; 4] = ["All", "Sessions", "Groups", "Commands"];
-pub const COMMANDS: [(char, &str); 9] = [
+pub const COMMANDS: [(char, &str); 10] = [
     ('n', "New session"),
     ('g', "New group"),
     ('D', "Review Git changes"),
     ('f', "Filter session statuses"),
     ('S', "Scheduled sessions"),
+    ('J', "Jobs"),
     ('H', "Getting started"),
     ('p', "Pair phone"),
     ('z', "Toggle focus mode"),
