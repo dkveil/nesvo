@@ -67,7 +67,7 @@ pub fn check_target(program: Program, target: &Target) -> Result<()> {
     Ok(())
 }
 
-pub fn check_launch(spec: &LaunchSpec) -> Result<()> {
+pub fn check_launch(spec: &LaunchSpec, lifecycle_hooks: bool) -> Result<()> {
     let Some(target) = &spec.resume else {
         return Ok(());
     };
@@ -79,10 +79,17 @@ pub fn check_launch(spec: &LaunchSpec) -> Result<()> {
         )
         .into());
     }
+    if !lifecycle_hooks {
+        return Err(Error::new(
+            "resume_unverifiable",
+            "Lifecycle hooks for this provider will not be installed, so the resumed conversation cannot be verified",
+        )
+        .into());
+    }
     Ok(())
 }
 
-pub fn prepare_restore(spec: &mut LaunchSpec, exact: bool) -> Result<()> {
+pub fn prepare_restore(spec: &mut LaunchSpec, exact: bool, lifecycle_hooks: bool) -> Result<()> {
     if !exact {
         spec.resume = None;
         return Ok(());
@@ -104,7 +111,7 @@ pub fn prepare_restore(spec: &mut LaunchSpec, exact: bool) -> Result<()> {
         )
         .into());
     }
-    check_launch(spec)
+    check_launch(spec, lifecycle_hooks)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -237,6 +244,14 @@ impl Gate {
         };
         true
     }
+    pub fn expire(&mut self, running: bool, elapsed: Duration) -> bool {
+        self.observe(Evidence {
+            start: None,
+            bound: None,
+            running,
+            elapsed,
+        })
+    }
     pub fn observe(&mut self, evidence: Evidence<'_>) -> bool {
         if !self.pending() {
             return false;
@@ -355,7 +370,7 @@ mod tests {
             resume: Some(target(Program::Claude)),
             ..Default::default()
         };
-        check_launch(&spec).unwrap();
+        check_launch(&spec, true).unwrap();
         for mutate in [
             |spec: &mut LaunchSpec| spec.prompt = "continue".into(),
             |spec: &mut LaunchSpec| spec.resume_picker = true,
@@ -365,14 +380,14 @@ mod tests {
         ] {
             let mut candidate = spec.clone();
             mutate(&mut candidate);
-            assert!(check_launch(&candidate).is_err());
+            assert!(check_launch(&candidate, true).is_err());
         }
         let gemini = LaunchSpec {
             program: Program::Gemini,
             resume: Some(target(Program::Gemini)),
             ..Default::default()
         };
-        let error = check_launch(&gemini).unwrap_err();
+        let error = check_launch(&gemini, true).unwrap_err();
         assert_eq!(error.downcast_ref::<Error>().unwrap().code, "unsupported");
         assert!(error.to_string().contains("Gemini"));
     }
@@ -385,18 +400,52 @@ mod tests {
             ..Default::default()
         };
         let mut fresh = spec.clone();
-        prepare_restore(&mut fresh, false).unwrap();
+        prepare_restore(&mut fresh, false, false).unwrap();
         assert!(fresh.resume.is_none());
-        prepare_restore(&mut spec, true).unwrap();
+        prepare_restore(&mut spec, true, true).unwrap();
         assert_eq!(spec.resume, Some(target(Program::Codex)));
         let mut missing = LaunchSpec {
             program: Program::Claude,
             ..Default::default()
         };
-        let error = prepare_restore(&mut missing, true).unwrap_err();
+        let error = prepare_restore(&mut missing, true, true).unwrap_err();
         assert_eq!(
             error.downcast_ref::<Error>().unwrap().code,
             "resume_unavailable"
+        );
+    }
+
+    #[test]
+    fn resume_launch_and_restore_refuse_an_exact_resume_without_lifecycle_hooks() {
+        let code = |result: Result<()>| result.unwrap_err().downcast::<Error>().unwrap().code;
+        let spec = LaunchSpec {
+            program: Program::Codex,
+            resume: Some(target(Program::Codex)),
+            ..Default::default()
+        };
+        assert_eq!(code(check_launch(&spec, false)), "resume_unverifiable");
+        let mut restored = spec.clone();
+        assert_eq!(
+            code(prepare_restore(&mut restored, true, false)),
+            "resume_unverifiable"
+        );
+        let mut fresh = spec.clone();
+        prepare_restore(&mut fresh, false, false).unwrap();
+        check_launch(&fresh, false).unwrap();
+    }
+
+    #[test]
+    fn resume_gate_expires_without_a_tracker_at_the_deadline_or_after_exit() {
+        let mut gate = Gate::new(target(Program::Codex));
+        assert!(!gate.expire(true, DEADLINE - Duration::from_millis(1)));
+        assert!(gate.pending());
+        assert!(gate.expire(true, DEADLINE));
+        assert_eq!(gate.refusal().unwrap().code, "resume_failed");
+        assert!(!gate.expire(false, DEADLINE));
+        let mut exited = Gate::new(target(Program::Codex));
+        assert!(exited.expire(false, Duration::from_secs(1)));
+        assert!(
+            matches!(exited.verification(), Verification::ResumeFailed { reason, .. } if reason.contains("exited"))
         );
     }
 

@@ -1375,6 +1375,36 @@ impl State {
                     .is_some_and(crate::codex_context::supported)
         })
     }
+    fn lifecycle_hooks_available(&self, program: Program) -> bool {
+        match program {
+            Program::Claude => true,
+            Program::Codex => self.codex_hooks_available(),
+            Program::Gemini => self.gemini_gate().ready,
+            Program::Shell => false,
+        }
+    }
+    fn expire_unobserved_resumes(&mut self) {
+        let expired: Vec<String> = self
+            .sessions
+            .iter_mut()
+            .filter_map(|(id, session)| {
+                let observed = session.agent_context.is_some() && lifecycle_eligible(session);
+                let running = session.info.running;
+                let elapsed = session
+                    .elapsed_at_exit
+                    .unwrap_or_else(|| session.started.elapsed());
+                (!observed && session.resume.as_mut()?.expire(running, elapsed)).then(|| id.clone())
+            })
+            .collect();
+        for id in &expired {
+            if let Err(error) = self.persist_session(&self.sessions[id]) {
+                eprintln!("Could not persist the conversation identity: {error}");
+            }
+        }
+        if !expired.is_empty() {
+            self.broadcast_list();
+        }
+    }
     fn gemini_gate(&self) -> crate::gemini_adapter::Gate {
         crate::gemini_adapter::gate(
             self.provider_versions
@@ -2664,15 +2694,7 @@ impl State {
         grant: Option<crate::tool_permissions::Grant>,
     ) -> Result<String> {
         let cwd = self.validate_launch(spec)?;
-        crate::resume::check_launch(spec)?;
-        if spec.resume.is_some() && spec.program == Program::Codex && !self.codex_hooks_available()
-        {
-            return Err(crate::api_error::Error::new(
-                "unsupported",
-                "Codex lifecycle hooks are unavailable, so a resumed conversation cannot be verified",
-            )
-            .into());
-        }
+        crate::resume::check_launch(spec, self.lifecycle_hooks_available(spec.program))?;
         ensure!(
             spec.claude_quota_capture.is_none() || spec.claude_quota_prepared.is_some(),
             "Declared Claude quota display profile was not prepared"
@@ -3265,7 +3287,8 @@ impl State {
                 {
                     spec.group_id = None;
                 }
-                let result = crate::resume::prepare_restore(&mut spec, exact)
+                let hooks = self.lifecycle_hooks_available(spec.program);
+                let result = crate::resume::prepare_restore(&mut spec, exact, hooks)
                     .and_then(|()| self.launch(&spec, pty_events));
                 self.metadata.finish_recovery(&id, result.is_ok())?;
                 let new_id = result?;
@@ -3876,6 +3899,13 @@ async fn flush_submission_updates(state: &Arc<Mutex<State>>) {
     }
 }
 
+fn lifecycle_eligible(session: &Session) -> bool {
+    session.info.running
+        || session
+            .elapsed_at_exit
+            .is_some_and(|at| session.started.elapsed().saturating_sub(at) < Duration::from_secs(2))
+}
+
 pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receiver<PtyEvent>) {
     let weak = Arc::downgrade(&state);
     // File I/O runs independently of PTY dispatch and outside the host mutex.
@@ -3887,24 +3917,18 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
             tick.tick().await;
             let Some(state) = weak.upgrade() else { break };
             flush_submission_updates(&state).await;
+            state.lock().unwrap().expire_unobserved_resumes();
             let reports: Vec<_> = {
                 let state = state.lock().unwrap();
-                let eligible = |session: &Session| {
-                    session.info.running
-                        || session.elapsed_at_exit.is_some_and(|at| {
-                            session.started.elapsed().saturating_sub(at) < Duration::from_secs(2)
-                        })
-                };
                 observers.retain(|id, _| {
-                    state
-                        .sessions
-                        .get(id)
-                        .is_some_and(|session| eligible(session) && session.agent_context.is_some())
+                    state.sessions.get(id).is_some_and(|session| {
+                        lifecycle_eligible(session) && session.agent_context.is_some()
+                    })
                 });
                 state
                     .sessions
                     .iter()
-                    .filter(|(_, session)| eligible(session))
+                    .filter(|(_, session)| lifecycle_eligible(session))
                     .filter_map(|(id, session)| {
                         session.agent_context.as_ref().map(|tracker| {
                             (
@@ -5382,10 +5406,26 @@ mod tests {
     }
 
     #[test]
-    fn resume_restore_refuses_gemini_and_missing_conversations_without_consuming_the_record() {
+    fn resume_restore_refuses_unverifiable_and_missing_conversations_without_consuming_the_record()
+    {
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
         let gemini = "a".repeat(32);
         let missing = "b".repeat(32);
+        let codex = "c".repeat(32);
+        metadata
+            .save_recovery(
+                &codex,
+                &crate::jobs::LaunchSpec {
+                    name: "Codex".into(),
+                    program: Program::Codex,
+                    resume: Some(crate::resume::Target {
+                        provider: Program::Codex,
+                        conversation_id: RESUME_ID.into(),
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         metadata
             .save_recovery(
                 &gemini,
@@ -5414,7 +5454,11 @@ mod tests {
         let mut receiver = owner_client(&mut state);
         assert_eq!(state.capabilities_event()["conversationResume"], true);
         let (events, _) = mpsc::channel(1);
-        for (id, code) in [(&gemini, "unsupported"), (&missing, "resume_unavailable")] {
+        for (id, code) in [
+            (&gemini, "unsupported"),
+            (&missing, "resume_unavailable"),
+            (&codex, "resume_unverifiable"),
+        ] {
             let error = state
                 .command(
                     1,
@@ -5441,10 +5485,70 @@ mod tests {
         let listed = receiver.try_recv().unwrap();
         assert_eq!(listed["type"], "recovery");
         let records = listed["records"].as_array().unwrap();
-        assert_eq!(records.len(), 2);
+        assert_eq!(records.len(), 3);
         assert!(records.iter().all(|record| record["state"] == "saved"));
         let gemini_record = records.iter().find(|r| r["id"] == gemini.as_str()).unwrap();
         assert_eq!(gemini_record["spec"]["resume"]["conversationId"], RESUME_ID);
+    }
+
+    #[test]
+    fn resume_gate_without_a_tracker_fails_at_the_deadline_and_after_exit() {
+        let workspace = std::env::temp_dir().canonicalize().unwrap();
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(
+            workspace,
+            metadata,
+            Launchers::discover_with_fixture_shell(),
+        );
+        let (events, _receiver) = mpsc::channel(128);
+        let id = state
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Untracked resume fixture".into(),
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        let target = crate::resume::Target {
+            provider: Program::Codex,
+            conversation_id: RESUME_ID.into(),
+        };
+        let verification =
+            |state: &State| json!(state.sessions[&id].resume.as_ref().unwrap().verification());
+        let session = state.sessions.get_mut(&id).unwrap();
+        assert!(session.agent_context.is_none());
+        session.resume = Some(crate::resume::Gate::new(target.clone()));
+        state.expire_unobserved_resumes();
+        assert_eq!(verification(&state)["state"], "pending");
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.started = std::time::Instant::now()
+            .checked_sub(crate::resume::DEADLINE)
+            .unwrap();
+        state.expire_unobserved_resumes();
+        assert_eq!(verification(&state)["state"], "resumeFailed");
+        assert!(
+            verification(&state)["reason"]
+                .as_str()
+                .unwrap()
+                .contains("60 seconds")
+        );
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.resume = Some(crate::resume::Gate::new(target));
+        session.kill().unwrap();
+        session.info.running = false;
+        session.elapsed_at_exit = Some(Duration::from_secs(1));
+        state.expire_unobserved_resumes();
+        assert_eq!(verification(&state)["state"], "resumeFailed");
+        assert!(
+            verification(&state)["reason"]
+                .as_str()
+                .unwrap()
+                .contains("exited")
+        );
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
     }
 
     #[test]
