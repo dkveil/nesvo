@@ -976,6 +976,9 @@
                       }
                     }
                   ]
+                },
+                "gate": {
+                  "$ref": "#/definitions/providerQuotaGate"
                 }
               }
             },
@@ -5657,6 +5660,104 @@
         "readerId": {
           "type": "string",
           "pattern": "^[a-f0-9]{32}$"
+        }
+      }
+    },
+    "providerQuotaGateProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "program",
+        "source",
+        "verdict",
+        "reason",
+        "resetsAt",
+        "freshUntil",
+        "sourceRevision"
+      ],
+      "properties": {
+        "program": {
+          "enum": ["codex", "claude", "gemini"]
+        },
+        "source": {
+          "enum": ["codexAppServer", "claudeStatusline", "unsupported"]
+        },
+        "verdict": {
+          "enum": ["allow", "hold", "unknown"]
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "resetsAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "freshUntil": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "sourceRevision": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "providerQuotaGateHold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "program", "reason", "resetsAt", "since", "checks"],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "kind": {
+          "enum": ["launch", "operation"]
+        },
+        "program": {
+          "enum": ["codex", "claude", "gemini"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "resetsAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "since": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checks": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "providerQuotaGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "providers", "holds"],
+      "properties": {
+        "revision": {
+          "$ref": "#/definitions/cursor"
+        },
+        "providers": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/definitions/providerQuotaGateProvider"
+          }
+        },
+        "holds": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/providerQuotaGateHold"
+          }
         }
       }
     },

@@ -64,6 +64,13 @@ no new read and returns the current revision plus the remaining wait. Refresh
 does not mean that quota is available. A source attempt, including an unchanged
 result or failure, increments its revision.
 
+Hosts that advertise `quotaGate:true` add `gate` to replies without a `directory`
+selector: the [host launch gate](harness-quota-jobs.md#host-wide-gate) view
+`{revision,providers,holds}`. Each provider reports `program`, `source`, `verdict`
+(`allow`, `hold` or `unknown`) and nullable `reason`, `resetsAt`, `freshUntil` and
+`sourceRevision`; each hold reports `id`, `kind` (`launch` or `operation`), `program`,
+`reason`, `resetsAt`, `since` and `checks`. Directory-selected replies omit `gate`.
+
 ## Freshness and authority
 
 Each view separates `attemptedAt` from the last successful `observedAt` and the
