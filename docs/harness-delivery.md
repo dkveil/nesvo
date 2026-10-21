@@ -3558,6 +3558,17 @@ test race, a completed-but-unavailable provider probe and a worker result after
 prompt dispatch. They are not one established startup cause. This tracing slice
 improves future evidence without claiming those publication failures are fixed.
 
+Publication `c8c79ef` passed app/browser/Linux/macOS and Windows formatting,
+Clippy, units, process conformance, build and the fresh/restart startup scenario.
+Windows SDK passed 62 of 64 cases. One precheck reached its real two-second
+execution policy with `commandStarted:true` and `cleanupConfirmed:true`, before
+the fixture marker was observed; no native provider worker was launched for that
+occurrence. Another scenario reported Windows sharing error 32 while removing
+its private fixture after successful host exit. The log identifies neither the
+locked child artifact nor its holder. Neither case contains a failed startup
+phase, and no common scheduling/filesystem/process cause is established. No CI
+rerun, command retry or timeout extension is claimed as a resolution.
+
 ### F03 retained retry boundary evidence
 
 The retry wait now preserves its last exact scoped occurrence pointers and
