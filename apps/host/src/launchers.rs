@@ -128,14 +128,16 @@ impl Launchers {
             .collect()
     }
     pub fn discover() -> Self {
-        let paths: Vec<PathBuf> = std::env::var_os("PATH")
-            .map(|path| {
-                std::env::split_paths(&path)
-                    .filter(|path| !path.as_os_str().is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-        Self::discover_in(&paths, shell())
+        Self::discover_in(&search_paths(), shell())
+    }
+
+    #[cfg(test)]
+    pub fn discover_with_fixture_shell() -> Self {
+        let shell = Launcher {
+            executable: process_fixture::executable().to_owned(),
+            args: vec!["hold".into()],
+        };
+        Self::discover_in(&search_paths(), Some(shell))
     }
 
     fn discover_in(paths: &[PathBuf], shell: Option<Launcher>) -> Self {
@@ -256,6 +258,21 @@ fn executable(path: &Path) -> Option<PathBuf> {
         }
     }
     Some(path)
+}
+
+fn search_paths() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod process_fixture {
+    include!("../../../crates/nesvo-process-fixture/src/locate.rs");
 }
 
 fn shell() -> Option<Launcher> {

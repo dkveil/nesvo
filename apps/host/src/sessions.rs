@@ -3979,7 +3979,7 @@ mod tests {
         let mut state = State::new(
             std::env::temp_dir().canonicalize().unwrap(),
             metadata,
-            Launchers::discover(),
+            Launchers::discover_with_fixture_shell(),
         );
         state.set_caller_url("ws://127.0.0.1:1".into());
         let (events, _output) = mpsc::channel(128);
@@ -4073,7 +4073,7 @@ mod tests {
         let mut state = State::new(
             std::env::temp_dir().canonicalize().unwrap(),
             metadata,
-            Launchers::discover(),
+            Launchers::discover_with_fixture_shell(),
         );
         let (events, _output) = mpsc::channel(128);
         let spec = crate::jobs::LaunchSpec {
@@ -4156,7 +4156,7 @@ mod tests {
         let mut state = State::new(
             std::env::temp_dir().canonicalize().unwrap(),
             metadata,
-            Launchers::discover(),
+            Launchers::discover_with_fixture_shell(),
         );
         state.set_caller_url("ws://127.0.0.1:1".into());
         let (events, _) = mpsc::channel(128);
@@ -4332,7 +4332,11 @@ mod tests {
         // One owned shell supplies native resource lifetime only; no model runs.
         let workspace = std::env::temp_dir().canonicalize().unwrap();
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
-        let mut state = State::new(workspace, metadata, Launchers::discover());
+        let mut state = State::new(
+            workspace,
+            metadata,
+            Launchers::discover_with_fixture_shell(),
+        );
         let (events, _receiver) = mpsc::channel(128);
         let id = state
             .launch(
@@ -4420,7 +4424,11 @@ mod tests {
         // starting any provider. All quota evidence below is explicit fixture data.
         let workspace = std::env::temp_dir().canonicalize().unwrap();
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
-        let mut state = State::new(workspace, metadata, Launchers::discover());
+        let mut state = State::new(
+            workspace,
+            metadata,
+            Launchers::discover_with_fixture_shell(),
+        );
         let (events, output) = mpsc::channel(128);
         let id = state
             .launch(

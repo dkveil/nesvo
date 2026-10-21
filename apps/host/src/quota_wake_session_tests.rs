@@ -115,7 +115,7 @@ impl Fixture {
         let mut state = OwnedState(State::new(
             workspace.clone(),
             MetadataStore::open(Path::new(":memory:")).unwrap(),
-            Launchers::discover(),
+            Launchers::discover_with_fixture_shell(),
         ));
         let (events, output) = mpsc::channel(128);
         let id = state
