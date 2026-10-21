@@ -22,9 +22,10 @@ pub struct ResultRow {
     pub context: String,
 }
 pub const CATEGORIES: [&str; 4] = ["All", "Sessions", "Groups", "Commands"];
-pub const COMMANDS: [(char, &str); 11] = [
+pub const COMMANDS: [(char, &str); 12] = [
     ('n', "New session"),
     ('N', "New session kind"),
+    ('L', "Layouts"),
     ('g', "New group"),
     ('D', "Review Git changes"),
     ('f', "Filter session statuses"),
@@ -247,7 +248,7 @@ mod ranking_tests {
         let mut app = App::new(1);
         app.event(snapshot).unwrap();
         // Test rank independently of the optional active-session tie breaker.
-        app.panes = [None, None];
+        app.panes = Default::default();
         app
     }
 
@@ -403,7 +404,7 @@ mod ranking_tests {
         value["revision"] = json!(2);
         value["sessions"][1]["attention"]["unread"] = json!(false);
         app.event(value).unwrap();
-        app.panes = [None, None];
+        app.panes = Default::default();
         assert_eq!(ranks(&mut app, ""), ["idle", "complete"]);
         assert_eq!(ranks(&mut app, "needle"), ["idle", "complete"]);
         assert_eq!(

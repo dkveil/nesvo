@@ -2,6 +2,7 @@
 use crate::{
     brand,
     launch::Program,
+    layouts::{MAX_LEAVES, Role},
     model::{App, Dialog, Mode, RowKind},
     status::{Source, State, Status},
     terminal::TerminalWidget,
@@ -20,7 +21,8 @@ pub struct Geometry {
     pub header: Rect,
     pub sidebar_header: Rect,
     pub tree: Rect,
-    pub panes: [Rect; 2],
+    pub panes: [Rect; MAX_LEAVES],
+    pub views: [Rect; MAX_LEAVES],
     pub footer: Rect,
     pub review: Rect,
 }
@@ -111,7 +113,14 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         .saturating_sub(header.height)
         .min(tree.height);
     let tree = Rect::new(tree.x, tree.y + inset, tree.width, tree.height - inset);
-    let (content, review) = if app.review.visible {
+    let pane_tree = app.pane_tree();
+    let review_leaf =
+        (!immersive && app.review.visible && !app.review.expanded && content.width >= 88)
+            .then(|| pane_tree.position(Role::Review))
+            .flatten();
+    let (content, review) = if review_leaf.is_some() {
+        (content, Rect::default())
+    } else if app.review.visible {
         if app.review.expanded || content.width < 88 {
             (Rect::default(), content)
         } else {
@@ -129,22 +138,29 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     } else {
         (content, Rect::default())
     };
-    let panes = if immersive {
-        let mut panes = [Rect::default(), Rect::default()];
-        panes[app.focused] = content;
-        panes
-    } else if app.split && content.width >= 40 {
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(content)
-    } else if app.split {
-        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(content)
+    let mut review = review;
+    let mut panes = [Rect::default(); MAX_LEAVES];
+    let mut views = [Rect::default(); MAX_LEAVES];
+    if immersive {
+        panes[app.focused.min(MAX_LEAVES - 1)] = content;
     } else {
-        [content, Rect::default()]
-    };
+        let areas = pane_tree.areas(content);
+        for (index, slot) in pane_tree.slots().iter().enumerate().take(MAX_LEAVES) {
+            if slot.role.hosts_session() {
+                panes[index] = areas[index];
+            } else if review_leaf == Some(index) {
+                review = areas[index];
+            } else {
+                views[index] = areas[index];
+            }
+        }
+    }
     Geometry {
         header,
         sidebar_header,
         tree,
         panes,
+        views,
         footer,
         review,
     }
@@ -246,7 +262,7 @@ fn footer_copy(app: &App) -> (&'static str, &'static str) {
         Mode::Input => (" SESSION INPUT ", " Ctrl+Q menu · F4 diff"),
         Mode::Navigate => (
             " NESVO MENU ",
-            " Enter resume · n new · N kind · / search · F4 diff · ? help",
+            " Enter resume · n new · N kind · L layouts · / search · F4 diff · ? help",
         ),
     }
 }
@@ -273,6 +289,7 @@ pub(crate) fn shortcut_spans(hint: &str) -> Vec<Span<'static>> {
                 | "[]"
                 | "n"
                 | "N"
+                | "L"
                 | "z"
                 | "w"
                 | "r"
@@ -374,6 +391,9 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     crate::toolbox::render(frame, app);
     if let Some(picker) = &app.session_kind {
         crate::ui_session_kind::render(frame, app, picker);
+    }
+    if let Some(picker) = &app.layout_picker {
+        crate::ui_layouts::render(frame, app, picker);
     }
     if let Some(selection) = &app.selection {
         selection.render(frame.buffer_mut(), app.theme.selection());
@@ -502,8 +522,20 @@ fn render_workspace(frame: &mut Frame, app: &App, logo_frame: usize) {
         }
         render_tree(frame, app, layout.tree);
     }
-    for index in 0..if app.split { 2 } else { 1 } {
-        render_pane(frame, app, index, layout.panes[index], logo_frame);
+    let slots = app.pane_tree().slots();
+    for (index, slot) in slots.iter().enumerate().take(MAX_LEAVES) {
+        if slot.role.hosts_session() {
+            render_pane(
+                frame,
+                app,
+                index,
+                slot.role,
+                layout.panes[index],
+                logo_frame,
+            );
+        } else {
+            render_view(frame, app, slot.role, layout.views[index]);
+        }
     }
     let (full_mode, full_hint) = footer_copy(app);
     let handle = fullscreen_handle_area(app, layout.footer);
@@ -739,7 +771,56 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_frame: usize) {
+fn render_view(frame: &mut Frame, app: &App, role: Role, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let content = pane_content(area, false);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::RIGHT | Borders::BOTTOM)
+            .border_style(Style::default().fg(BORDER)),
+        area,
+    );
+    frame.render_widget(
+        Paragraph::new(format!("{} pane", role.label())).style(Style::default().fg(MUTED)),
+        Rect::new(
+            content.x,
+            area.bottom().saturating_sub(1),
+            content.width,
+            area.height.min(1),
+        ),
+    );
+    let lines = vec![
+        Line::from(Span::styled(
+            role.label(),
+            Style::default()
+                .fg(app.theme.accent())
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            role.view_hint(app.shortcuts.keys[0]),
+            Style::default().fg(MUTED),
+        )),
+    ];
+    let height = content.height.min(4);
+    let top = content.y + content.height.saturating_sub(height) / 2;
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(ratatui::layout::Alignment::Center)
+            .wrap(Wrap { trim: true }),
+        Rect::new(content.x, top, content.width, height),
+    );
+}
+
+fn render_pane(
+    frame: &mut Frame,
+    app: &App,
+    index: usize,
+    role: Role,
+    area: Rect,
+    logo_frame: usize,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -764,7 +845,12 @@ fn render_pane(frame: &mut Frame, app: &App, index: usize, area: Rect, logo_fram
                 session.cols, session.rows, session.cwd
             )
         })
-        .unwrap_or_default();
+        .unwrap_or_else(|| match role {
+            Role::Agent | Role::Terminal => {
+                format!("{} pane · {}", role.label(), role.view_hint(0))
+            }
+            _ => String::new(),
+        });
     let content = pane_content(area, immersive(app));
     if !immersive(app) {
         frame.render_widget(
@@ -1351,7 +1437,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("F8  F9", "Templates / restore sessions"),
             ("S  J", "Scheduled sessions / jobs"),
             ("F2 / F3", "New session: options / save template"),
-            ("v  Tab", "Split / change pane"),
+            ("v  Tab  L", "Split / change pane / layouts"),
             ("i  t  x", "Type / take control / release"),
         ],
         &[

@@ -134,7 +134,11 @@ pub fn run(
     let mut saved_layout = layout_path
         .as_deref()
         .and_then(|path| crate::workspace_layout::WorkspaceLayout::load(path).ok());
+    if let Some(layout) = &saved_layout {
+        app.layouts = layout.library();
+    }
     let mut layout_loaded = false;
+    let mut project_default_pending = true;
     let mut layout_saved_at = Instant::now();
     let mut runtime_updated_at = Instant::now();
     let mut requested_sizes = HashMap::new();
@@ -205,6 +209,14 @@ pub fn run(
                             let commands = layout.apply(&mut app);
                             send_or_disconnect(&mut app, connection, commands);
                         }
+                        if std::mem::take(&mut project_default_pending)
+                            && let Some(default) =
+                                app.layouts.startup_layout(app.project_key().as_deref())
+                            && let Ok(commands) =
+                                crate::layouts::apply(&mut app, &default, area.width)
+                        {
+                            send_or_disconnect(&mut app, connection, commands);
+                        }
                         layout_loaded = true;
                     }
                     if is_snapshot
@@ -255,6 +267,7 @@ pub fn run(
                         layout_loaded = false;
                         let mut next_app = App::new(connection.client_id);
                         next_app.sidebar_width = app.sidebar_width;
+                        next_app.layouts = app.layouts.clone();
                         next_app.ascii_icons = app.ascii_icons;
                         next_app.shortcuts = app.shortcuts;
                         next_app.theme = app.theme;
@@ -406,7 +419,7 @@ fn logo_frame_for(app: &App, area: Rect, animate: bool, elapsed: Duration) -> us
         return 0;
     }
     let geometry = ui::geometry(area, app);
-    let visible = (0..if app.split { 2 } else { 1 }).any(|index| {
+    let visible = (0..app.leaf_count()).any(|index| {
         brand::area(ui::pane_content(geometry.panes[index], ui::immersive(app))).is_some()
     });
     if visible {
@@ -457,7 +470,7 @@ fn resize_commands(app: &App, area: Rect, requested: &mut RequestedSizes) -> Vec
     let mut commands = Vec::new();
     requested.retain(|id, _| app.owns(id));
     let geometry = ui::geometry(area, app);
-    for index in 0..if app.split { 2 } else { 1 } {
+    for index in 0..app.leaf_count() {
         if geometry.panes[index].is_empty() {
             continue;
         }

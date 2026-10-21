@@ -46,6 +46,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     if app.session_kind.is_some() {
         return session_kind_event(app, event, area);
     }
+    if app.layout_picker.is_some() {
+        return layouts_event(app, event, area);
+    }
     if app.overlay.is_some() {
         return crate::toolbox::event(app, event, area);
     }
@@ -325,7 +328,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                             (app.selected + 1).min(app.tree().len().saturating_sub(1))
                         };
                         preview_selected_session(app, &mut outcome);
-                    } else if let Some(index) = (0..if app.split { 2 } else { 1 }).find(|index| {
+                    } else if let Some(index) = (0..app.leaf_count()).find(|index| {
                         geometry.panes[*index].contains((mouse.column, mouse.row).into())
                     }) && let Some(id) = app.panes[index].as_ref()
                         && let Some(terminal) = app.terminals.get_mut(id)
@@ -1283,9 +1286,11 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
             }
         }
         KeyCode::Tab | KeyCode::BackTab if app.split => {
-            app.focused = 1 - app.focused;
+            app.focus_next(key.code == KeyCode::BackTab);
         }
+        KeyCode::Char('L') => crate::layouts::open(app),
         KeyCode::Char('v') => {
+            app.pane_layout = None;
             app.split = !app.split;
             if app.split {
                 app.focused = 1;
@@ -1299,7 +1304,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
                 }
             } else {
                 app.focused = 0;
-                app.panes[1] = None;
+                app.clear_hidden_panes();
                 if let Some(id) = app.active_id().map(str::to_owned) {
                     outcome.commands.extend(app.activate_session(&id));
                 }
@@ -1471,6 +1476,19 @@ fn close_selected(app: &mut App) {
         detail,
         command,
     });
+}
+
+fn layouts_event(app: &mut App, event: Event, area: Rect) -> Outcome {
+    let mut outcome = Outcome::default();
+    match event {
+        Event::Key(key) if key.kind != KeyEventKind::Release => {
+            outcome.commands = crate::layouts::key(app, key, area.width);
+        }
+        Event::Paste(text) => crate::layouts::paste(app, &text),
+        Event::Resize(..) => {}
+        _ => outcome.redraw = false,
+    }
+    outcome
 }
 
 fn session_kind_event(app: &mut App, event: Event, area: Rect) -> Outcome {
@@ -2408,7 +2426,7 @@ mod tests {
             .unwrap();
         app.split = true;
         app.focused = 0;
-        assert_eq!(app.panes, [Some("existing".into()), None]);
+        assert_eq!(app.panes[..2], [Some("existing".into()), None]);
 
         let area = Rect::new(0, 0, 120, 36);
         let opened = click(&mut app, area, Action::PaneNavigation { pane: 1, key: 'n' });
@@ -2425,7 +2443,10 @@ mod tests {
             existing,
             {"id":"new","name":"Second shell","cwd":"/work","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
         ]})).unwrap();
-        assert_eq!(app.panes, [Some("existing".into()), Some("new".into())]);
+        assert_eq!(
+            app.panes[..2],
+            [Some("existing".into()), Some("new".into())]
+        );
         assert!(
             subscribed
                 .iter()
@@ -3488,5 +3509,55 @@ mod tests {
         );
         assert!(matches!(&app.dialog, Some(Dialog::NewSession(form))
             if form.program == crate::launch::Program::Codex));
+    }
+
+    #[test]
+    fn layouts_key_and_palette_open_the_dialog_and_tab_skips_view_panes() {
+        let mut app = session_kind_app();
+        app.event(json!({"type":"sessions","revision":2,"groups":[],"sessions":[
+            {"id":"s1","name":"Terminal 1","cwd":"/work","program":"shell","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null},
+            {"id":"a1","name":"Agent","cwd":"/work","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
+        ]}))
+        .unwrap();
+        press(&mut app, KeyCode::Char('L'));
+        assert_eq!(app.layout_picker.as_ref().map(|p| p.selected), Some(0));
+        let applied = press(&mut app, KeyCode::Enter);
+        assert!(app.layout_picker.is_none());
+        assert!(
+            applied
+                .commands
+                .iter()
+                .all(|c| c["type"] != "acquireControl")
+        );
+        assert_eq!(app.panes[..2], [Some("a1".into()), Some("s1".into())]);
+        assert_eq!(app.focused, 0);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focused, 1);
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.focused, 0);
+
+        press(&mut app, KeyCode::Char('/'));
+        event(
+            &mut app,
+            Event::Paste("Layouts".into()),
+            Rect::new(0, 0, 100, 32),
+        );
+        press(&mut app, KeyCode::Enter);
+        assert!(app.layout_picker.is_some());
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.leaf_count(), 2);
+        assert_eq!(app.pane_tree().slots()[1].role, crate::layouts::Role::Files);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focused, 0);
+        assert_eq!(app.active_id(), Some("a1"));
+
+        press(&mut app, KeyCode::Char('v'));
+        assert!(!app.split && app.pane_layout.is_none());
+        assert_eq!(app.leaf_count(), 1);
+        assert_eq!(app.active_id(), Some("a1"));
+        press(&mut app, KeyCode::Char('v'));
+        assert_eq!(app.pane_tree(), crate::layouts::PaneTree::classic());
     }
 }

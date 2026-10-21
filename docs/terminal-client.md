@@ -1,6 +1,6 @@
 # Terminal client and synchronization
 
-**Status: initial groups and synchronization implementation; the TUI client lives in `apps/tui/`.** Shared groups, subgroups, session processes and control belong to the host. Pane layout is local to each client. Full screen snapshots and persistent window layouts remain future work.
+**Status: initial groups and synchronization implementation; the TUI client lives in `apps/tui/`.** Shared groups, subgroups, session processes and control belong to the host. Pane layout is local to each client. The TUI saves its split tree and named layouts per paired host; full screen snapshots remain future work.
 
 The Rust terminal client provides a group tree, split panes and fast session switching alongside the Expo app. Windows and macOS receive separate native binaries from one Rust codebase. Builds and tests run on native CI runners; interactive terminal behavior needs separate verification on each platform.
 
@@ -34,10 +34,10 @@ The initial TUI uses the existing WebSocket transport and pairing. It does not r
 | `Group { id, parentId, name, order }` | Implemented. The host rejects cycles and nonexistent parents; SQLite stores the metadata.                      |
 | `Session { id, groupId, cwd, ... }`   | Implemented. A PTY process, state, controller and canonical dimensions.                                        |
 | Workspace                             | Currently the initial directory selected by `--workspace`; a multi-project catalog is planned.                 |
-| Window / Layout                       | Persistent windows and a split tree are planned. The initial TUI has a local view of one or two sessions.      |
+| Window / Layout                       | The TUI keeps a local split tree of up to four panes with roles and saves named layouts per project.           |
 | Pane                                  | A local view referencing `sessionId`, independent of the process. It is not a synchronized protocol v2 object. |
 
-The host stores groups and their ordering. The phone opens one session at a time; the TUI can show two panes. Focus, scrolling and the open keyboard remain local. Persistent layouts and following another device's active pane will be separate features.
+The host stores groups and their ordering. The phone opens one session at a time; the TUI can show up to four panes. Focus, scrolling and the open keyboard remain local. Named layouts are saved by the TUI in its workspace file, keyed by the host-reported repository name; applying one never acquires control. Following another device's active pane will be a separate feature.
 
 Creating a session is one host request with a `requestId`; the response identifies its `sessionId`. Clients do not match new processes by name or create local copies of sessions. Metadata changes carry a revision number so conflicting edits cannot silently overwrite data.
 

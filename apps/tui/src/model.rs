@@ -120,6 +120,15 @@ impl RepositoryContext {
         }
     }
 
+    pub(crate) fn repository_name(&self) -> Option<&str> {
+        matches!(
+            self.state,
+            RepositoryState::Ready | RepositoryState::Detached
+        )
+        .then_some(self.name.as_deref())
+        .flatten()
+    }
+
     fn append_search_terms(&self, terms: &mut String) {
         if matches!(
             self.state,
@@ -438,7 +447,10 @@ pub struct App {
     pub templates: Vec<Value>,
     pub recoveries: Vec<Value>,
     pub recovery_next: Option<u64>,
-    pub panes: [Option<String>; 2],
+    pub panes: [Option<String>; crate::layouts::MAX_LEAVES],
+    pub pane_layout: Option<crate::layouts::PaneTree>,
+    pub layouts: crate::layouts::Library,
+    pub layout_picker: Option<crate::layouts::Picker>,
     pub split: bool,
     pub fullscreen: bool,
     pub fullscreen_default: bool,
@@ -495,7 +507,10 @@ impl App {
             templates: Vec::new(),
             recoveries: Vec::new(),
             recovery_next: None,
-            panes: [None, None],
+            panes: Default::default(),
+            pane_layout: None,
+            layouts: Default::default(),
+            layout_picker: None,
             split: false,
             fullscreen: false,
             fullscreen_default: false,
@@ -557,6 +572,123 @@ impl App {
     }
     pub fn active_terminal(&self) -> Option<&TerminalState> {
         self.active_id().and_then(|id| self.terminals.get(id))
+    }
+    pub fn pane_tree(&self) -> crate::layouts::PaneTree {
+        match &self.pane_layout {
+            Some(tree) if (tree.leaf_count() > 1) == self.split && tree.valid() => tree.clone(),
+            _ if self.split => crate::layouts::PaneTree::classic(),
+            _ => crate::layouts::PaneTree::single(),
+        }
+    }
+    pub fn leaf_count(&self) -> usize {
+        self.pane_tree()
+            .leaf_count()
+            .clamp(1, crate::layouts::MAX_LEAVES)
+    }
+    pub fn set_pane_layout(&mut self, tree: crate::layouts::PaneTree) {
+        self.split = tree.leaf_count() > 1;
+        self.pane_layout = Some(tree);
+        self.panes = Default::default();
+        self.focused = 0;
+    }
+    pub fn clear_hidden_panes(&mut self) {
+        let count = self.leaf_count();
+        for pane in &mut self.panes[count..] {
+            *pane = None;
+        }
+        self.focused = self.focused.min(count - 1);
+    }
+    pub fn focus_session_leaf(&mut self) {
+        let slots = self.pane_tree().slots();
+        if slots
+            .get(self.focused)
+            .is_some_and(|slot| slot.role.hosts_session())
+        {
+            return;
+        }
+        if let Some(index) = slots.iter().position(|slot| slot.role.hosts_session()) {
+            self.focused = index;
+        } else {
+            let mut replaced = slots;
+            if let Some(slot) = replaced.get_mut(self.focused) {
+                slot.role = crate::layouts::Role::Empty;
+                slot.provider = None;
+            }
+            self.pane_layout = Some(self.pane_tree().with_slots(&replaced));
+        }
+    }
+    pub fn focus_next(&mut self, backward: bool) {
+        let slots = self.pane_tree().slots();
+        let count = slots.len();
+        let step = if backward { count - 1 } else { 1 };
+        let mut index = self.focused.min(count - 1);
+        for _ in 1..count {
+            index = (index + step) % count;
+            if slots[index].role.hosts_session() {
+                self.focused = index;
+                return;
+            }
+        }
+    }
+    pub fn project_key(&self) -> Option<String> {
+        self.active_session()
+            .or_else(|| match self.selected_row().map(|row| row.kind) {
+                Some(RowKind::Session(id)) => self.session(&id),
+                _ => None,
+            })
+            .and_then(|session| session.repository_context.as_ref())
+            .and_then(RepositoryContext::repository_name)
+            .map(str::to_owned)
+    }
+    pub fn layout_candidates(&self) -> Vec<crate::layouts::Candidate> {
+        let mut ordered: Vec<&Session> = self
+            .recent_sessions
+            .iter()
+            .filter_map(|id| self.session(id))
+            .collect();
+        for session in &self.sessions {
+            if !ordered.iter().any(|known| known.id == session.id) {
+                ordered.push(session);
+            }
+        }
+        ordered
+            .into_iter()
+            .map(|session| crate::layouts::Candidate {
+                id: session.id.clone(),
+                program: self.effective_program(session),
+                running: session.running,
+            })
+            .collect()
+    }
+    pub fn current_layout(&self, name: &str) -> crate::layouts::NamedLayout {
+        let tree = self.pane_tree();
+        let slots: Vec<_> = tree
+            .slots()
+            .into_iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                match self.panes[index].as_deref().and_then(|id| self.session(id)) {
+                    Some(session) => match self.effective_program(session) {
+                        Program::Shell => crate::layouts::Slot {
+                            role: crate::layouts::Role::Terminal,
+                            provider: None,
+                        },
+                        program => crate::layouts::Slot {
+                            role: crate::layouts::Role::Agent,
+                            provider: Some(program),
+                        },
+                    },
+                    None => slot,
+                }
+            })
+            .collect();
+        crate::layouts::NamedLayout {
+            name: name.into(),
+            tree: tree.with_slots(&slots),
+            sidebar_mode: crate::layouts::SIDEBAR_SESSIONS.into(),
+            sidebar_width: self.sidebar_width,
+            min_columns: 0,
+        }
     }
     pub fn effective_program(&self, session: &Session) -> Program {
         if session.program != Program::Shell || !session.running {
@@ -883,23 +1015,32 @@ impl App {
         if !self.tabs.iter().any(|tab| tab == id) {
             self.tabs.push(id.into());
         }
-        if self.split && self.panes[1 - self.focused].as_deref() == Some(id) {
-            self.focused = 1 - self.focused;
+        let count = self.leaf_count();
+        self.focused = self.focused.min(count - 1);
+        if let Some(index) = (0..count)
+            .find(|index| *index != self.focused && self.panes[*index].as_deref() == Some(id))
+        {
+            self.focused = index;
         }
+        self.focus_session_leaf();
         self.panes[self.focused] = Some(id.into());
         self.mode = Mode::Navigate;
         let mut commands = Vec::new();
         if self.subscribed.insert(id.into()) {
             commands.push(json!({"type":"subscribe", "sessionId":id}));
         }
+        commands.extend(self.drop_hidden_subscriptions());
+        commands
+    }
+
+    pub fn drop_hidden_subscriptions(&mut self) -> Vec<Value> {
+        let mut commands = Vec::new();
+        let count = self.leaf_count();
         // Only currently visible panes are subscribed. Hidden shells keep running on the host.
         let stale: Vec<_> = self
             .subscribed
             .iter()
-            .filter(|id| {
-                self.panes[0].as_ref() != Some(id)
-                    && (!self.split || self.panes[1].as_ref() != Some(id))
-            })
+            .filter(|id| !self.panes[..count].iter().flatten().any(|pane| pane == *id))
             .cloned()
             .collect();
         for id in stale {
@@ -1197,6 +1338,7 @@ impl App {
                                 && self.dialog.is_none()
                                 && self.overlay.is_none()
                                 && self.session_kind.is_none()
+                                && self.layout_picker.is_none()
                                 && !self.review.focused
                             {
                                 self.mode = Mode::Input;
@@ -1268,6 +1410,7 @@ impl App {
         self.mode = Mode::Navigate;
         self.dialog = None;
         self.session_kind = None;
+        self.layout_picker = None;
         self.dialog_button = None;
         self.pending_directory = None;
         self.notice = if self.capabilities.is_none() {

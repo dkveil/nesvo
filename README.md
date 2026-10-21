@@ -101,7 +101,7 @@ One npm workspace lock and one Cargo workspace lock keep each ecosystem consiste
 
 ## current boundaries
 
-Groups, live sessions and control synchronize today. Pane layouts are local and are not saved yet. Reconnect replays bounded output rather than a complete terminal screen snapshot, so full-screen programs may need a redraw.
+Groups, live sessions and control synchronize today. Pane layouts are local to each TUI: the split tree (up to four panes), tabs and named layouts are saved per paired host, with layouts and a default per repository, and are never shared between devices. Reconnect replays bounded output rather than a complete terminal screen snapshot, so full-screen programs may need a redraw.
 
 Agent status detection is conservative and depends on the CLI's visible screen. Unrecognized states remain unknown; silence never means a task is complete. Status hints do not approve commands or answer questions automatically.
 

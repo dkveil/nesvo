@@ -61,6 +61,7 @@ The start menu initially observes the first session without taking control. Ente
 | r / m                 | Rename / move the selected item                         |
 | d                     | Confirm deleting a session / deleting an empty group    |
 | v / Tab               | Toggle two panes / change the focused pane              |
+| L                     | Layouts: apply, save, rename, delete, set the default   |
 | Page Up / Page Down   | Scroll local terminal history                           |
 | ?                     | Open help                                               |
 | F1                    | Return to the start menu                                |
@@ -82,7 +83,7 @@ Press `p` in navigation mode to see the exact private QR and pairing file paths 
 
 ## Synchronization and limits
 
-- Sessions use host-issued IDs. Groups, subgroups, names, and moves synchronize with other clients. Groups expand and collapse within the unified Sessions list. Tabs, the two-pane layout, and focus belong to this TUI only; layouts are not yet saved or shared between devices.
+- Sessions use host-issued IDs. Groups, subgroups, names, and moves synchronize with other clients. Groups expand and collapse within the unified Sessions list. Tabs, the split tree (up to four panes), named layouts and focus belong to this TUI only; they are saved per paired host and never shared between devices. Applying a layout fills Agent and Terminal panes from recent live sessions without acquiring control; Files and Overview panes are placeholders until their views land.
 - A single client controls each terminal. Only the current lease owner sends text, dimensions, or terminal query responses. Observers do not resize the shell. An observed terminal larger than its pane is clipped to the available area.
 - VT100 interprets cursor positioning, ANSI colors, the alternate screen, and 3000 lines of local scrollback. This is a screen emulator, not a raw output log. It does not support every modern terminal extension, such as images or the Kitty keyboard protocol.
 - The session screen uses the outer terminal's default foreground and background, while preserving explicit ANSI colors from the program. Because the outer terminal's RGB palette is unavailable, the client does not answer OSC 10/11 default-color queries on behalf of a program.
