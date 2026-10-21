@@ -13,6 +13,7 @@ async fn executor_bounds_known_failure_retries_and_never_retries_unknown_worktre
         let mut git=Command::new("git");git.args(["-C"]).arg(&fixture.directory).args(["rev-parse","--show-toplevel"]);#[cfg(windows)]git.creation_flags(0x08000000);
         ensure!(!git.output().await?.status.success(),"Owned temporary fixture must be outside Git; refusing worktree effects against an inherited repository");
         timeout(Duration::from_secs(5),async{loop{let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;if doctor["providerVersions"].as_array().is_some_and(|rows|rows.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        let uncertain=job_retries::repository_whose_worktree_checkout_fails(&fixture).await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"retry-executor-root","spec":{"name":"Retry coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("retry root")?;session_ready(&owner,root_id).await?;
@@ -24,7 +25,7 @@ async fn executor_bounds_known_failure_retries_and_never_retries_unknown_worktre
             let plan=data(call(&coordinator,"nesvo_set_run_plan",json!({"key":format!("retry-plan-{unknown}"),"runId":run,"expectedRevision":1,"tasks":tasks})).await?)?;
             data(call(&coordinator,"nesvo_set_run_budget",json!({"key":format!("retry-policy-{unknown}"),"runId":run,"expectedRevision":2,"limits":{"maxParallel":1,"maxAttemptsPerTask":2,"maxElapsedMs":null}})).await?)?;
             data(call(&coordinator,"nesvo_activate_run",json!({"key":format!("retry-active-{unknown}"),"runId":run,"expectedRevision":3})).await?)?;
-            let profiles:Vec<Value>=plan["data"]["tasks"].as_array().unwrap().iter().enumerate().map(|(i,t)|json!({"taskId":t["id"],"profile":{"program":"claude","workspace":if unknown && i==0 {"worktree"}else{"shared"},"cwd":if unknown {fixture.directory.clone()}else{fixture.directory.join("does-not-exist")},"harness":true}})).collect();
+            let profiles:Vec<Value>=plan["data"]["tasks"].as_array().unwrap().iter().enumerate().map(|(i,t)|json!({"taskId":t["id"],"profile":{"program":"claude","workspace":if unknown && i==0 {"worktree"}else{"shared"},"cwd":if unknown && i==0 {uncertain.clone()}else if unknown {fixture.directory.clone()}else{fixture.directory.join("does-not-exist")},"harness":true}})).collect();
             data(call(&coordinator,"nesvo_start_run_executor",json!({"key":format!("retry-start-{unknown}"),"runId":run,"expectedRevision":4,"spec":{"tasks":profiles,"retryFailed":true,"retryDelayMs":1000}})).await?)?;
             let observed=timeout(Duration::from_secs(10),async{loop{let view=run_view(&owner,run).await?;let expected=if unknown {"launchUnknown"}else{"launchFailed"};let count=if unknown {1}else{2};if view["tasks"][0]["state"]==expected && view["tasks"][0]["attempts"]==count {return Ok::<_,anyhow::Error>(view);}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
             assert_eq!(observed["run"]["budget"]["activeAttempts"],if unknown {1}else{0});

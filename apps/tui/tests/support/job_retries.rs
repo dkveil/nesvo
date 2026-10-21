@@ -21,6 +21,75 @@ fn spec(cwd: &Path, workspace: &str, retry: Option<Value>) -> Value {
     spec
 }
 
+async fn owned_git(repository: &Path, args: &[&str]) -> Result<()> {
+    let mut command = Command::new("git");
+    command
+        .current_dir(repository)
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let output = timeout(Duration::from_secs(5), command.output())
+        .await
+        .context("Owned Git fixture command deadline")??;
+    ensure!(
+        output.status.success(),
+        "Owned Git fixture command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(1024)
+            .collect::<String>()
+    );
+    Ok(())
+}
+
+pub(super) async fn repository_whose_worktree_checkout_fails(fixture: &Fixture) -> Result<PathBuf> {
+    let source = fixture.directory.join("uncertain-checkout");
+    std::fs::create_dir(&source)?;
+    std::fs::write(
+        source.join(".gitattributes"),
+        "blob.txt filter=nesvoFailedCheckout\n",
+    )?;
+    std::fs::write(source.join("blob.txt"), "owned checkout input\n")?;
+    for args in [
+        &["init", "--quiet"][..],
+        &["config", "--local", "core.autocrlf", "false"],
+        &["add", "--", ".gitattributes", "blob.txt"],
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=",
+            "commit",
+            "--quiet",
+            "-m",
+            "owned fixture source",
+        ],
+        &[
+            "config",
+            "--local",
+            "filter.nesvoFailedCheckout.smudge",
+            "false",
+        ],
+        &[
+            "config",
+            "--local",
+            "filter.nesvoFailedCheckout.required",
+            "true",
+        ],
+    ] {
+        owned_git(&source, args).await?;
+    }
+    Ok(source)
+}
+
 async fn ready(fixture: &Fixture) -> Result<()> {
     timeout(Duration::from_secs(5), async {
         loop {
@@ -642,6 +711,7 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
         );
         let owner = client(&fixture.pairing()).await?;
         let missing = fixture.directory.join("retry-always-absent");
+        let uncertain = repository_whose_worktree_checkout_fails(&fixture).await?;
         let mut envelopes = Vec::new();
         let (bounded_job, bounded_admission) = admit(
             &fixture,
@@ -681,7 +751,7 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
             ),
         ] {
             let cwd = if workspace == "worktree" {
-                &fixture.directory
+                &uncertain
             } else {
                 &missing
             };

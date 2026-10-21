@@ -191,6 +191,13 @@ has its own five-second termination bound. Only repository-local Git
 configuration changes; there are no injected native receipts or production
 delay hooks.
 
+The default-off job retry and run executor scenarios obtain their uncertain
+worktree effect the same way, from a private repository whose required smudge
+filter fails checkout. A folder outside Git cannot stand in for it: worktree
+planning resolves the repository toplevel before any Git write, so that launch
+is a proven no-effect `failed` receipt (`effectStarted:false`) that a
+`launchNoEffect` policy retries.
+
 A separate native scenario obtains actual `effectStarted:false` from failed
 preflight validation. It checks owner digest/acknowledgment, CLI/MCP replay,
 nonowner refusal, permanent generation retirement and an independent subsequent

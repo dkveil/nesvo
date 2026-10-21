@@ -1004,3 +1004,55 @@ fn quota_launches_release_the_native_run_gate_before_worktree_setup() {
         "the per-run native gate is released before setup runs"
     );
 }
+
+#[tokio::test]
+async fn a_derived_worktree_is_unknown_only_once_checkout_has_started() {
+    let scratch = scratch();
+    let outside = scratch.0.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let mut spec = LaunchSpec {
+        worktree: true,
+        ..LaunchSpec::default()
+    };
+    let refused = derive(&outside, "s", None, &mut spec).await.unwrap_err();
+    assert_eq!(
+        Failure::of(&refused).unwrap().receipt("s", None),
+        (
+            "failed",
+            json!({"code":"worktree_unconfirmed","message":"Inspect the repository before creating another worktree","effectStarted":false})
+        )
+    );
+    assert_eq!(std::fs::read_dir(&scratch.0).unwrap().count(), 1);
+    let repository = repository(&scratch, None).await;
+    std::fs::write(
+        repository.join(".gitattributes"),
+        "blob.txt filter=failedCheckout\n",
+    )
+    .unwrap();
+    std::fs::write(repository.join("blob.txt"), "checkout input\n").unwrap();
+    git_ok(&repository, &["add", "--", ".gitattributes", "blob.txt"]).await;
+    git_ok(
+        &repository,
+        &["-c", "core.hooksPath=", "commit", "-q", "-m", "filtered"],
+    )
+    .await;
+    git_ok(
+        &repository,
+        &["config", "filter.failedCheckout.smudge", "false"],
+    )
+    .await;
+    git_ok(
+        &repository,
+        &["config", "filter.failedCheckout.required", "true"],
+    )
+    .await;
+    let failed = derive(&repository, "s", None, &mut spec).await.unwrap_err();
+    assert_eq!(
+        Failure::of(&failed).unwrap().receipt("s", None),
+        (
+            "unknown",
+            json!({"code":"worktree_unconfirmed","message":"Inspect the repository before creating another worktree"})
+        )
+    );
+    assert!(spec.cwd.is_none() && spec.worktree);
+}
