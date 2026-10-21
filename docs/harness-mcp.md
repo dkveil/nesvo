@@ -102,7 +102,7 @@ and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
 [task launch](harness-task-launch.md).
-The current [catalog](harness-mcp-tools.json) contains 100 tools. Task instruction intents use
+The current [catalog](harness-mcp-tools.json) contains 109 tools. Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; see
 [guarded task delivery](harness-task-delivery.md).
 
@@ -205,12 +205,22 @@ These native flags are documented in the official
 | nesvo_list_recovery           | owner-only page of saved session descriptions            |
 | nesvo_restore_session         | owner-only new process, optional exact resume            |
 | nesvo_forget_recovery         | owner-only removal of one saved description              |
+| nesvo_list_attention_inbox    | owner-only needs-you page across sessions, runs and jobs |
+| nesvo_ack_attention_inbox     | owner-only durable receipts for inbox item revisions     |
+| nesvo_list_pending_decisions  | owner-only pending decisions across runs                 |
+| nesvo_decide                  | owner-only answer by decision ID without a run ID        |
 
 Worktree setup approval and revocation have no MCP tool: approving a digest is a
 human act through the owner CLI (`nesvo worktree approve-setup` and `revoke-setup`),
 so an agent can describe a setup but never approve its own repository-declared steps.
 The host also refuses every worktree command with `forbidden` for session-scoped and
 wake callers.
+
+`attentionInbox` and `decisions` gate the four owner inbox tools. Acknowledging
+hides one item revision durably and never answers a decision; `nesvo_decide`
+refuses answered or canceled decisions with `decision_resolved` and expired ones
+with `decision_expired`, so a retried call never answers twice. See
+[owner attention inbox](harness-cli.md#owner-attention-inbox-and-decisions).
 
 `conversationResume` adds `resume:true` to `nesvo_restore_session`. The session
 accepts no automated input until the provider confirms the exact conversation;

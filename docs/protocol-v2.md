@@ -220,6 +220,23 @@ as terminal `readSession` byte cursors. Only the requesting/subscribing connecti
 receives event packets, so legacy mobile clients never receive unknown packets
 without opting in.
 
+`attentionInbox:true` adds owner `attentionInbox {page?,limit?}` (reply
+`attentionInbox {items,page,limit,nextPage,total}`, at most 32 items and 60 KiB)
+and `acknowledgeInbox {items:[{id,revision}]}` (reply `inboxAcknowledged
+{acknowledged:[{id,revision,acknowledgedAt}]}`). Item IDs are stable
+(`session:`, `decision:RUN:DECISION`, `run:RUN:ATTEMPT`, `result:OCCURRENCE`);
+acknowledgements are durable receipts per revision, so a reconnect never repeats an
+acknowledged item. `decisions:true` adds `decisions {page?}` (reply `decisions
+{decisions,page,nextPage,total}`) and `decide {decisionId,choice,note?}` (reply
+`decided`), which need no run ID and refuse `decision_resolved` or
+`decision_expired`. `jobPages:true` adds `page` to the owner job `list` and
+`history` reads, with `page` and `nextPage` in the reply. A client that sends
+`attentionInbox` or `decisions` opts in to `attentionInboxChanged
+{reason,itemId?}`; no other client receives it. `registerPush` accepts optional
+`kinds:["decisionPending","resultReady"]`; only phones that registered a kind
+receive those metadata-only pushes (`data:{hostId,kind,itemId}`), and a
+registration without `kinds` keeps receiving session attention pushes only.
+
 Hosts advertising `sessionQueries:true` accept `getSession {sessionId}` and
 `readSession {sessionId,after?,maxBytes?}`. Both echo request IDs. The former
 returns `session {session}` using the snapshot DTO. The latter returns
