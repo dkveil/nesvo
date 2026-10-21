@@ -3400,6 +3400,34 @@ The complete 63-case serial SDK/native-host cohort also passes in 470.43 seconds
 including the three timeout scenarios with the new startup failure evidence.
 
 This slice fences review context. The inherited lifecycle in-flight epoch gap is
-a separate follow-up: an older PostToolUse/Stop or SessionStart can still be
-attributed at append time after a conversation rebind. Full F05 acceptance is
-not closed by context correctness alone.
+addressed separately below. Full F05 acceptance is not closed by context
+correctness alone.
+
+### F05 lifecycle callback entry fence
+
+Claude and Codex callbacks now capture a bounded private host/launch/provider/
+generation entry ticket before stdin. The existing IMMEDIATE append transaction
+compares all entry fields before any scope, native-turn, event, retention or
+rejection-counter mutation. A stale entry produces no sequence or shadow status
+file. Initial lifecycle binding remains possible only from an unchanged unbound
+entry; explicit Legacy and descriptor-less valid older journals retain their
+declared behavior. Context keeps its independent pre-input authority.
+
+Nine new deterministic tests exercise delayed Stop/PostToolUse/SessionStart,
+repeated native conversation IDs, unbound equal/foreign races, old-journal
+compatibility, replaced host/launch, bounded invalid scope and unchanged native
+Codex turn validation/deduplication/compaction. The preceding context ABA test
+now also requires that the delayed edit produces no lifecycle event. Tests reuse
+the same Codex native turn ID across generations so a native-turn mismatch alone
+cannot satisfy the epoch assertion.
+
+The entry-to-append guard does not identify a source-old callback that starts its
+helper only after rebinding, invent Claude turn identity, solve all same-generation
+late Stop cases or order status-file completion after an accepted commit. These
+limits remain explicit; full provider/F05 stage acceptance is still separate.
+
+Windows verification passes 736 workspace units (210 TUI, 523 host, 3 wire),
+warnings-denied all-target Clippy, locked build, formatting and all three exact
+process conformance cases. The full 63-case serial SDK/native-host cohort passes
+in 468.30 seconds, including the shared metadata recovery-profile preflight.
+These are controlled native fixtures; original-provider acceptance is separate.

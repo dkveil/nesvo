@@ -133,7 +133,70 @@ pub struct SourceEvent<'a> {
     pub prompt_digest: Option<&'a str>,
     pub paste_digest: Option<&'a str>,
 }
+
+/// A callback's conversation epoch, captured before reading its payload. This
+/// does not order callbacks within a generation or infer native turn identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EntryTicket {
+    host_session_id: String,
+    launch_id: String,
+    provider_session_id: Option<String>,
+    generation: u64,
+}
+impl EntryTicket {
+    pub(crate) fn matches_launch(&self, host_session: &str, launch: &str) -> bool {
+        self.host_session_id == host_session && self.launch_id == launch
+    }
+}
+
+pub(crate) fn begin_entry(report: &Path) -> Result<EntryTicket> {
+    let mut connection = open(report, false)?;
+    let transaction = connection.transaction()?;
+    let (host_session_id, launch_id, provider_session_id, generation) = quota_scope(&transaction)?;
+    ensure!(
+        !host_session_id.is_empty()
+            && host_session_id.len() <= 128
+            && !host_session_id.chars().any(char::is_control)
+            && launch_id.len() == 32
+            && launch_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && provider_session_id
+                .as_deref()
+                .is_none_or(|id| !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte)))
+            && generation > 0,
+        "Invalid lifecycle entry scope"
+    );
+    transaction.commit()?;
+    Ok(EntryTicket {
+        host_session_id,
+        launch_id,
+        provider_session_id,
+        generation,
+    })
+}
+
+pub(crate) fn append_entered(
+    report: &Path,
+    source: SourceEvent<'_>,
+    entry: &EntryTicket,
+) -> Result<Option<u64>> {
+    append_inner(report, source, Some(entry))
+}
+
+/// Direct trusted fixture appends have no stdin boundary to fence.
+#[cfg(test)]
 pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u64>> {
+    append_inner(report, source, None)
+}
+
+fn append_inner(
+    report: &Path,
+    source: SourceEvent<'_>,
+    entry: Option<&EntryTicket>,
+) -> Result<Option<u64>> {
     let SourceEvent {
         provider_session,
         provider_turn,
@@ -170,11 +233,21 @@ pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u6
     );
     let mut connection = open(report, true)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let (active, mut generation): (Option<String>, i64) = transaction.query_row(
-        "SELECT provider_session,generation FROM scope WHERE id=1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let (host_session, launch, active, mut generation): (String, String, Option<String>, i64) =
+        transaction.query_row(
+            "SELECT host_session,launch_id,provider_session,generation FROM scope WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+    if let Some(entry) = entry
+        && (!entry.matches_launch(&host_session, &launch)
+            || entry.provider_session_id != active
+            || i64::try_from(entry.generation)? != generation)
+    {
+        // No scope, native turn, event, rejection-counter or status mutation is
+        // allowed from an epoch that changed while the helper read its payload.
+        return Ok(None);
+    }
     let changed = active.as_deref() != provider_session;
     if changed
         && active.is_some()
@@ -1565,6 +1638,118 @@ mod tests {
         );
         std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
     }
+
+    #[test]
+    fn lifecycle_entry_matches_host_and_launch_before_any_rebinding_or_event_write() {
+        for replace_host in [false, true] {
+            let report = fixture();
+            initialize(&report, "host-session").unwrap();
+            append(
+                &report,
+                Some("a"),
+                "SessionStart",
+                StatusState::Idle,
+                false,
+                None,
+            )
+            .unwrap();
+            let entry = begin_entry(&report).unwrap();
+            let replacement_host = if replace_host {
+                "replacement-host"
+            } else {
+                "host-session"
+            };
+            let replacement_launch = if replace_host {
+                entry.launch_id.clone()
+            } else if entry.launch_id == "0".repeat(32) {
+                "1".repeat(32)
+            } else {
+                "0".repeat(32)
+            };
+            let connection = open(&report, true).unwrap();
+            connection
+                .execute(
+                    "UPDATE scope SET host_session=?1,launch_id=?2 WHERE id=1",
+                    params![replacement_host, replacement_launch],
+                )
+                .unwrap();
+            assert!(
+                append_entered(
+                    &report,
+                    SourceEvent {
+                        provider_session: Some("new-conversation"),
+                        provider_turn: None,
+                        event: "SessionStart",
+                        state: StatusState::Idle,
+                        allow_rebind: true,
+                        prompt_digest: None,
+                        paste_digest: None,
+                    },
+                    &entry
+                )
+                .unwrap()
+                .is_none()
+            );
+            let (host, launch, provider, generation) = quota_scope(&connection).unwrap();
+            assert_eq!(host, replacement_host);
+            assert_eq!(launch, replacement_launch);
+            assert_eq!(provider.as_deref(), Some("a"));
+            assert_eq!(generation, 1);
+            let rejected: i64 = connection
+                .query_row("SELECT rejected FROM scope WHERE id=1", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            let events: i64 = connection
+                .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(rejected, 0);
+            assert_eq!(events, 1);
+            drop(connection);
+            std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn lifecycle_entry_scope_is_bounded_checked_and_read_only() {
+        let report = fixture();
+        initialize(&report, "host-session").unwrap();
+        let entry = begin_entry(&report).unwrap();
+        assert!(entry.provider_session_id.is_none());
+        assert_eq!(entry.generation, 1);
+        let connection = open(&report, true).unwrap();
+        let events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            events, 0,
+            "capturing an entry must not bind or emit an event"
+        );
+        for (column, value) in [
+            ("host_session", "x".repeat(129)),
+            ("launch_id", "invalid-launch".into()),
+            ("provider_session", "invalid provider".into()),
+            ("provider_session", "x".repeat(129)),
+        ] {
+            connection
+                .execute(&format!("UPDATE scope SET {column}=?1 WHERE id=1"), [value])
+                .unwrap();
+            assert!(begin_entry(&report).is_err());
+            connection.execute("UPDATE scope SET host_session=?1,launch_id=?2,provider_session=NULL,generation=1 WHERE id=1",
+                params![entry.host_session_id, entry.launch_id]).unwrap();
+        }
+        connection
+            .execute("UPDATE scope SET generation=0", [])
+            .unwrap();
+        assert!(begin_entry(&report).is_err());
+        connection
+            .execute("UPDATE scope SET generation=-1", [])
+            .unwrap();
+        assert!(begin_entry(&report).is_err());
+        drop(connection);
+        std::fs::remove_dir_all(report.parent().unwrap()).unwrap();
+    }
+
     #[test]
     fn prompt_evidence_is_private_and_legacy_journals_keep_status_compatibility() {
         let report = fixture();

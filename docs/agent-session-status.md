@@ -163,12 +163,29 @@ already known conversation requires SessionStart from clear/resume/compact rathe
 than a replayed startup. Context reports from a different conversation are also
 ignored. Task/attempt authorization is a later orchestration boundary.
 
+Journal-backed Claude and Codex helpers capture the host session, launch nonce,
+optional bound provider and generation before reading stdin. The lifecycle write
+compares every entry field inside its existing transaction before any binding,
+turn, event or rejection-counter mutation. A callback delayed across a rebind
+cannot stop newer work or rewind its conversation, including A → B → A. A stale
+entry emits neither an event nor shadow status JSON. An unchanged unbound entry
+can still establish the first lifecycle binding; context authority remains
+separate. Existing native Codex turn checks still apply after the entry check.
+
+This guards the interval between helper entry and journal append. A source-old
+callback whose helper starts only after a rebind cannot be identified without
+additional provider evidence. It does not establish Claude turn identity,
+callback-start ordering within one generation, or status-file completion ordering
+after an already accepted commit. Same-generation late Stop requires its own
+provider correlation; this guard does not manufacture one.
+
 The journal retains 1024 records, reads at most 256 per batch and reports cursor
 gaps explicitly. Fast synchronous turns cannot overwrite each other between
 polls. UI coalescing need not draw every short intermediate state; run/turn event
 consumption is tracked separately. Diagnostics expose identities, cursor, gap,
-rejections and shadow sequence. Old launch scopes without a journal retain their
-legacy JSON helper contract. Cleanup validates ownership of the resolved private
+rejections and shadow sequence. Only explicitly marked legacy scopes use JSON
+compatibility; descriptor-less valid older journals retain lifecycle delivery.
+Missing current storage never selects legacy mode. Cleanup validates ownership of the resolved private
 temporary directory and briefly retries Windows read-handle races.
 
 An interrupt plus a newly visible idle prompt settles the prior work observation.

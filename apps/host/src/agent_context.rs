@@ -244,6 +244,23 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
     } else {
         Ok(None)
     };
+    let entry = if matches!(descriptor, Some(crate::scoped_context::Descriptor::Legacy)) {
+        None
+    } else {
+        Some(crate::agent_events::begin_entry(report).and_then(|entry| {
+            if let Some(crate::scoped_context::Descriptor::Journal {
+                host_session_id,
+                launch_id,
+            }) = &descriptor
+            {
+                anyhow::ensure!(
+                    entry.matches_launch(host_session_id, launch_id),
+                    "Lifecycle launch identity changed"
+                );
+            }
+            Ok(entry)
+        }))
+    };
     let mut bytes = Vec::new();
     input.take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > 2 * 1024 * 1024 {
@@ -268,8 +285,8 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
                     .and_then(crate::submission::claude_paste_digest)
             })
             .flatten();
-        let sequence = if !matches!(descriptor, Some(crate::scoped_context::Descriptor::Legacy)) {
-            match crate::agent_events::append_scoped(
+        let sequence = if let Some(entry) = entry {
+            match crate::agent_events::append_entered(
                 report,
                 crate::agent_events::SourceEvent {
                     provider_session: value["session_id"].as_str(),
@@ -287,6 +304,7 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
                     prompt_digest: digest.as_deref(),
                     paste_digest: paste_digest.as_deref(),
                 },
+                &entry?,
             )? {
                 Some(sequence) => sequence,
                 None => return Ok(()),
@@ -515,6 +533,363 @@ mod tests {
         .unwrap()
     }
 
+    fn emit(report: &Path, value: Value, codex: bool) -> Result<()> {
+        receive_inner(report, value.to_string().as_bytes(), codex)
+    }
+    fn root_start(report: &Path, provider: &str, codex: bool) {
+        emit(
+            report,
+            json!({"hook_event_name":"SessionStart", "session_id":provider, "source":"clear"}),
+            codex,
+        )
+        .unwrap();
+    }
+    fn root_prompt(report: &Path, provider: &str, codex: bool) {
+        let mut value = json!({"hook_event_name":"UserPromptSubmit", "session_id":provider});
+        if codex {
+            value["turn_id"] = "reused-native-turn".into();
+        }
+        emit(report, value, codex).unwrap();
+    }
+
+    #[test]
+    fn delayed_lifecycle_callbacks_cannot_stop_write_or_rebind_a_new_conversation() {
+        for event in ["Stop", "PostToolUse", "SessionStart"] {
+            let tracker =
+                Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+            let report = tracker.report();
+            root_start(&report, "a", false);
+            root_prompt(&report, "a", false);
+            let saved_status = std::cell::RefCell::new(Vec::new());
+            let input = json!({"hook_event_name":event, "session_id":"a", "source":"resume", "tool_name":"Bash"});
+            receive_from(
+                &report,
+                BeforeInput {
+                    action: Some(|| {
+                        root_start(&report, "b", false);
+                        root_prompt(&report, "b", false);
+                        *saved_status.borrow_mut() =
+                            std::fs::read(report.with_file_name("status.json")).unwrap();
+                    }),
+                    input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+                },
+            )
+            .unwrap();
+            let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+            assert_eq!(
+                batch.identity.provider_session_id.as_deref(),
+                Some("b"),
+                "{event}"
+            );
+            assert_eq!(batch.identity.generation, 2, "{event}");
+            assert_eq!(
+                batch.identity.rejected, 0,
+                "entry refusal is not a write into a later epoch"
+            );
+            assert_eq!(batch.head_sequence, 4, "{event}");
+            assert_eq!(
+                batch.events.last().unwrap().state,
+                crate::status::StatusState::Working,
+                "{event}"
+            );
+            assert_eq!(
+                std::fs::read(report.with_file_name("status.json")).unwrap(),
+                *saved_status.borrow(),
+                "{event}"
+            );
+        }
+    }
+
+    #[test]
+    fn delayed_aba_lifecycle_callbacks_are_fenced_for_claude_and_native_codex_turns() {
+        for codex in [false, true] {
+            for event in ["Stop", "PostToolUse", "SessionStart"] {
+                let mut command = CommandBuilder::new("fixture");
+                let tracker = if codex {
+                    Tracker::install_codex(&mut command, "owner")
+                } else {
+                    Tracker::install_for(&mut command, "owner")
+                }
+                .unwrap();
+                let report = tracker.report();
+                root_start(&report, "a", codex);
+                root_prompt(&report, "a", codex);
+                let saved_status = std::cell::RefCell::new(Vec::new());
+                let mut input = json!({"hook_event_name":event, "session_id":"a", "source":"resume", "tool_name":"Bash"});
+                if codex && event != "SessionStart" {
+                    input["turn_id"] = "reused-native-turn".into();
+                }
+                receive_inner(
+                    &report,
+                    BeforeInput {
+                        action: Some(|| {
+                            root_start(&report, "b", codex);
+                            root_start(&report, "a", codex);
+                            root_prompt(&report, "a", codex);
+                            *saved_status.borrow_mut() =
+                                std::fs::read(report.with_file_name("status.json")).unwrap();
+                        }),
+                        input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+                    },
+                    codex,
+                )
+                .unwrap();
+                let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+                assert_eq!(
+                    batch.identity.provider_session_id.as_deref(),
+                    Some("a"),
+                    "{codex}/{event}"
+                );
+                assert_eq!(batch.identity.generation, 3, "{codex}/{event}");
+                assert_eq!(batch.head_sequence, 5, "{codex}/{event}");
+                assert_eq!(
+                    batch.events.last().unwrap().state,
+                    crate::status::StatusState::Working,
+                    "{codex}/{event}"
+                );
+                assert_eq!(
+                    std::fs::read(report.with_file_name("status.json")).unwrap(),
+                    *saved_status.borrow(),
+                    "{codex}/{event}"
+                );
+                if codex {
+                    let turn: Option<String> = crate::agent_events::context_connection(&report)
+                        .unwrap()
+                        .query_row("SELECT provider_turn FROM scope WHERE id=1", [], |row| {
+                            row.get(0)
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        turn.as_deref(),
+                        Some("reused-native-turn"),
+                        "old Stop cannot clear a new generation's equal native turn ID"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unbound_lifecycle_entry_binds_once_and_cannot_borrow_a_later_equal_or_foreign_binding() {
+        for codex in [false, true] {
+            for winning_provider in ["a", "b"] {
+                let tracker =
+                    Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+                let report = tracker.report();
+                let input =
+                    json!({"hook_event_name":"SessionStart", "session_id":"a", "source":"clear"});
+                receive_inner(
+                    &report,
+                    BeforeInput {
+                        action: Some(|| {
+                            root_start(&report, winning_provider, codex);
+                            root_prompt(&report, winning_provider, codex);
+                        }),
+                        input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+                    },
+                    codex,
+                )
+                .unwrap();
+                let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+                assert_eq!(
+                    batch.identity.provider_session_id.as_deref(),
+                    Some(winning_provider)
+                );
+                assert_eq!(batch.identity.generation, 1);
+                assert_eq!(batch.head_sequence, 2);
+                assert_eq!(
+                    batch.events.last().unwrap().state,
+                    crate::status::StatusState::Working
+                );
+            }
+            let tracker =
+                Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+            root_start(&tracker.report(), "a", codex);
+            let batch = crate::agent_events::read(&tracker.report(), "owner", 0).unwrap();
+            assert_eq!(
+                batch.head_sequence, 1,
+                "unchanged unbound scope still accepts its initial root binding"
+            );
+            assert_eq!(batch.identity.generation, 1);
+            assert_eq!(batch.identity.provider_session_id.as_deref(), Some("a"));
+        }
+    }
+
+    #[test]
+    fn descriptorless_old_journal_lifecycle_has_the_same_pre_stdin_epoch_fence() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        std::fs::remove_file(report.with_file_name("context-scope.json")).unwrap();
+        crate::agent_events::capture_connection(&report)
+            .unwrap()
+            .execute_batch("DROP TABLE review_context")
+            .unwrap();
+        root_start(&report, "a", false);
+        let input = json!({"hook_event_name":"SessionStart", "session_id":"a", "source":"clear"});
+        receive_from(
+            &report,
+            BeforeInput {
+                action: Some(|| {
+                    root_start(&report, "b", false);
+                    root_start(&report, "a", false);
+                    root_prompt(&report, "a", false);
+                }),
+                input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+            },
+        )
+        .unwrap();
+        let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+        assert_eq!(batch.identity.generation, 3);
+        assert_eq!(batch.head_sequence, 4);
+        assert_eq!(
+            batch.events.last().unwrap().state,
+            crate::status::StatusState::Working
+        );
+        assert!(!report.exists());
+    }
+
+    #[test]
+    fn lifecycle_entry_refuses_a_foreign_launch_replaced_while_reading_stdin() {
+        let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        root_start(&report, "a", false);
+        let old_status = std::fs::read(report.with_file_name("status.json")).unwrap();
+        let input = json!({"hook_event_name":"Stop", "session_id":"a"});
+        receive_from(
+            &report,
+            BeforeInput {
+                action: Some(|| {
+                    let connection = crate::agent_events::capture_connection(&report).unwrap();
+                    let launch: String = connection
+                        .query_row("SELECT launch_id FROM scope WHERE id=1", [], |row| {
+                            row.get(0)
+                        })
+                        .unwrap();
+                    let replacement = if launch == "0".repeat(32) {
+                        "1".repeat(32)
+                    } else {
+                        "0".repeat(32)
+                    };
+                    connection
+                        .execute("UPDATE scope SET launch_id=?1 WHERE id=1", [replacement])
+                        .unwrap();
+                    // Trusted fixture append represents work in the replacement
+                    // launch; provider ID and generation deliberately stay equal.
+                    crate::agent_events::append(
+                        &report,
+                        Some("a"),
+                        "UserPromptSubmit",
+                        crate::status::StatusState::Working,
+                        false,
+                        None,
+                    )
+                    .unwrap();
+                }),
+                input: std::io::Cursor::new(serde_json::to_vec(&input).unwrap()),
+            },
+        )
+        .unwrap();
+        let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
+        assert_eq!(batch.head_sequence, 2);
+        assert_eq!(batch.identity.generation, 1);
+        assert_eq!(
+            batch.events.last().unwrap().state,
+            crate::status::StatusState::Working
+        );
+        assert_eq!(
+            std::fs::read(report.with_file_name("status.json")).unwrap(),
+            old_status
+        );
+        assert!(
+            emit(&report, input, false).is_err(),
+            "known immutable launch anchor also refuses a foreign launch at entry"
+        );
+    }
+
+    #[test]
+    fn missing_lifecycle_journal_never_downgrades_to_legacy_and_keeps_failure_metadata_fixed() {
+        for descriptor_present in [false, true] {
+            let tracker =
+                Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+            let report = tracker.report();
+            root_start(&report, "a", false);
+            let status = std::fs::read(report.with_file_name("status.json")).unwrap();
+            std::fs::remove_file(report.with_file_name("events.sqlite3")).unwrap();
+            if !descriptor_present {
+                std::fs::remove_file(report.with_file_name("context-scope.json")).unwrap();
+            }
+            let input = json!({"hook_event_name":"Stop", "session_id":"a", "unused":"PRIVATE_FAILURE_PAYLOAD"});
+            assert!(receive_adapter(&report, input.to_string().as_bytes(), false).is_err());
+            assert!(!report.with_file_name("events.sqlite3").exists());
+            assert_eq!(
+                std::fs::read(report.with_file_name("status.json")).unwrap(),
+                status
+            );
+            assert_eq!(
+                std::fs::read(report.with_file_name("diagnostic.json")).unwrap(),
+                br#"{"code":"hook_receive_failed"}"#
+            );
+        }
+    }
+
+    #[test]
+    fn codex_epoch_fence_retains_native_turn_validation_deduplication_and_compaction() {
+        let tracker = Tracker::install_codex(&mut CommandBuilder::new("fixture"), "owner").unwrap();
+        let report = tracker.report();
+        let native = |event: &str, turn: Option<&str>| {
+            let mut input = json!({"hook_event_name":event, "session_id":"a", "source":"compact"});
+            if let Some(turn) = turn {
+                input["turn_id"] = turn.into();
+            }
+            emit(&report, input, true)
+        };
+        root_start(&report, "a", true);
+        native("UserPromptSubmit", Some("turn-1")).unwrap();
+        native("UserPromptSubmit", Some("turn-1")).unwrap();
+        native("UserPromptSubmit", Some("turn-2")).unwrap();
+        native("Stop", Some("turn-1")).unwrap();
+        native("PreToolUse", Some("turn-1")).unwrap();
+        native("SessionStart", None).unwrap();
+        assert!(native("PostToolUse", None).is_err());
+        let working = crate::agent_events::read(&report, "owner", 0).unwrap();
+        assert_eq!(working.head_sequence, 4);
+        assert_eq!(working.identity.rejected, 2);
+        assert_eq!(
+            working.events.last().unwrap().state,
+            crate::status::StatusState::Working
+        );
+        let turn: Option<String> = crate::agent_events::context_connection(&report)
+            .unwrap()
+            .query_row("SELECT provider_turn FROM scope WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(turn.as_deref(), Some("turn-2"));
+        emit(&report, json!({"hook_event_name":"Stop", "session_id":"a", "turn_id":"turn-2", "agent_id":"child"}), true).unwrap();
+        assert_eq!(
+            crate::agent_events::read(&report, "owner", 0)
+                .unwrap()
+                .head_sequence,
+            4
+        );
+        native("Stop", Some("turn-2")).unwrap();
+        native("PreToolUse", Some("turn-2")).unwrap();
+        native("UserPromptSubmit", Some("turn-2")).unwrap();
+        let stopped = crate::agent_events::read(&report, "owner", 0).unwrap();
+        assert_eq!(stopped.head_sequence, 5);
+        assert_eq!(
+            stopped.events.last().unwrap().state,
+            crate::status::StatusState::Idle
+        );
+        let turn: Option<String> = crate::agent_events::context_connection(&report)
+            .unwrap()
+            .query_row("SELECT provider_turn FROM scope WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(turn.is_none());
+    }
+
     #[test]
     fn stdin_delay_cannot_rebind_cwd_context_to_a_new_generation() {
         let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
@@ -542,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn stdin_delay_cannot_reattribute_aba_edit_but_keeps_existing_lifecycle_behavior() {
+    fn stdin_delay_cannot_reattribute_aba_edit_or_lifecycle_to_a_new_generation() {
         let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
         let report = tracker.report();
         rebind(&report, "a");
@@ -561,7 +936,8 @@ mod tests {
         assert_eq!(current_context(&report).unwrap().directory, current);
         let batch = crate::agent_events::read(&report, "owner", 0).unwrap();
         assert_eq!(batch.identity.generation, 3);
-        assert_eq!(batch.events.last().unwrap().name, "PostToolUse");
+        assert_eq!(batch.head_sequence, 3);
+        assert_eq!(batch.events.last().unwrap().name, "SessionStart");
         for file in std::fs::read_dir(&tracker.0).unwrap() {
             let path = file.unwrap().path();
             if path.is_file() {
