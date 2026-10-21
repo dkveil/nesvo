@@ -55,7 +55,7 @@ pub fn message(
         return Ok(());
     }
     let enabled: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM workflow_wake_policies WHERE run_id=?1 AND enabled=1)",
+        "SELECT EXISTS(SELECT 1 FROM workflow_wake_policies WHERE run_id=?1 AND enabled=1 AND held=0)",
         [run],
         |r| r.get(0),
     )?;
@@ -137,7 +137,7 @@ pub fn canonical(
     let revision = previous.map_or(1, |(_, revision)| revision + 1);
     transaction.execute("INSERT INTO workflow_wake_signals(attempt_id,data,revision) VALUES(?1,?2,?3) ON CONFLICT(attempt_id) DO UPDATE SET data=excluded.data,revision=excluded.revision",params![attempt,encoded,revision])?;
     let enabled: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM workflow_wake_policies WHERE run_id=?1 AND enabled=1)",
+        "SELECT EXISTS(SELECT 1 FROM workflow_wake_policies WHERE run_id=?1 AND enabled=1 AND held=0)",
         [&run],
         |r| r.get(0),
     )?;

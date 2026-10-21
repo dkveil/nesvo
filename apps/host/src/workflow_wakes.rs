@@ -393,6 +393,18 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
                 )
                 .into());
             }
+            let held: bool = transaction.query_row(
+                "SELECT held FROM workflow_wake_policies WHERE id=?1",
+                [&previous.id],
+                |row| row.get(0),
+            )?;
+            if held && !matches!(actor.scope, orchestration::Scope::Owner) {
+                return Err(Error::new(
+                    "wake_policy_held",
+                    "The owner held this wake policy; only the owner can release it",
+                )
+                .into());
+            }
             if previous.coordinator != coordinator {
                 return Err(Error::new(
                     "scope_revoked",
@@ -425,9 +437,10 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
         transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='disabled',reason='user_disabled' WHERE id=?1",[&previous.id])?;
         previous.id
     };
-    if enable {
+    if enable || matches!(request, Request::Resume { .. }) {
         crate::workflow_wake_events::seed(&transaction, run, now)?;
     }
+
     let cursor = changed(&transaction, &id, now)?;
     let mut result = view(&transaction, &actor, run, 0)?;
     result["cursor"] = cursor.into();

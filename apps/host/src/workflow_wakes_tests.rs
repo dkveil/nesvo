@@ -719,7 +719,7 @@ fn sequences(batch: &Value) -> Vec<u64> {
 }
 
 #[test]
-fn held_delivery_buffers_and_each_batch_carries_only_deltas_since_the_last_checkpoint() {
+fn held_run_records_nothing_and_resume_resynchronises_only_deltas_since_the_last_checkpoint() {
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let run = prepare(&mut store);
     let (_, guard) = enable(&mut store, &run);
@@ -780,7 +780,8 @@ fn held_delivery_buffers_and_each_batch_carries_only_deltas_since_the_last_check
         send(&mut store, &run, &format!("held-{n}"), "question");
     }
     let buffered = current(&mut store, &run);
-    assert_eq!(buffered["pendingCount"], 10);
+    assert_eq!(buffered["pendingCount"], 0);
+    assert_eq!(count(&store, "workflow_wake_notices"), 3);
     assert_eq!(count(&store, "operation_receipts"), 1);
     let checkpoint = execute(
         &mut store,
@@ -796,6 +797,8 @@ fn held_delivery_buffers_and_each_batch_carries_only_deltas_since_the_last_check
     )
     .unwrap();
     let resumed_guard = pump.unwrap();
+    assert_eq!(resumed["pendingCount"], 10);
+    assert_eq!(count(&store, "workflow_wake_notices"), 13);
     assert_eq!(resumed["wakePolicy"]["held"], false);
     assert_eq!(resumed["wakePolicy"]["issuer"], "owner");
     error(
@@ -834,27 +837,96 @@ fn held_delivery_buffers_and_each_batch_carries_only_deltas_since_the_last_check
 }
 
 #[test]
-fn held_buffering_stays_within_the_existing_notice_retention() {
+fn held_run_never_consumes_shared_notice_retention() {
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let run = prepare(&mut store);
     enable(&mut store, &run);
     owner_change(&mut store, &run, json!({"action":"pause","key":"hold"})).unwrap();
-    store.0.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<8191) INSERT INTO workflow_wake_notices(id,run_id,source_key,kind,data,created_at) SELECT 'retention-'||i,?1,'fixture-retention-'||i,'question','{}',1 FROM n", [run["run"]["id"].as_str().unwrap()]).unwrap();
-    send(&mut store, &run, "last-buffered", "question");
-    assert_eq!(count(&store, "workflow_wake_notices"), 8192);
+    store.0.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<8192) INSERT INTO workflow_wake_notices(id,run_id,source_key,kind,data,created_at) SELECT 'retention-'||i,?1,'fixture-retention-'||i,'question','{}',1 FROM n", [run["run"]["id"].as_str().unwrap()]).unwrap();
     let messages = count(&store, "workflow_messages");
-    error(
-        worker(
-            &mut store,
-            "worker-1",
-            json!({"action":"inbox","request":{"action":"send","key":"over-retention","runId":run["run"]["id"],"correlationId":"c","kind":"question","body":"refused"}}),
-        )
-        .map(|_| ()),
-        "busy",
-    );
-    assert_eq!(count(&store, "workflow_messages"), messages);
+    for n in 0..20 {
+        send(&mut store, &run, &format!("held-{n}"), "question");
+    }
+    signal(&mut store, 2, Some("permission"), 0);
+    assert_eq!(count(&store, "workflow_messages"), messages + 20);
     assert_eq!(count(&store, "workflow_wake_notices"), 8192);
     assert_eq!(count(&store, "operation_receipts"), 0);
+    error(
+        owner_change(&mut store, &run, json!({"action":"resume","key":"resume"})).map(|_| ()),
+        "busy",
+    );
+    assert_eq!(current(&mut store, &run)["wakePolicy"]["held"], true);
+    store
+        .0
+        .execute(
+            "DELETE FROM workflow_wake_notices WHERE source_key LIKE 'fixture-retention-%'",
+            [],
+        )
+        .unwrap();
+    let (resumed, pump) = owner_change(
+        &mut store,
+        &run,
+        json!({"action":"resume","key":"resume-after"}),
+    )
+    .unwrap();
+    assert!(pump.is_some());
+    assert_eq!(resumed["pendingCount"], 21);
+}
+
+#[test]
+fn coordinator_cannot_clear_an_owner_hold_through_disable_and_enable() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = prepare(&mut store);
+    enable(&mut store, &run);
+    owner_change(&mut store, &run, json!({"action":"pause","key":"hold"})).unwrap();
+    let revision = current(&mut store, &run)["run"]["revision"].clone();
+    manage(
+        &mut store,
+        false,
+        json!({"action":"disable","key":"coordinator-off","runId":run["run"]["id"],"expectedRevision":revision}),
+    )
+    .unwrap();
+    let revision = current(&mut store, &run)["run"]["revision"].clone();
+    error(
+        manage(
+            &mut store,
+            false,
+            json!({"action":"enable","key":"coordinator-on","runId":run["run"]["id"],"expectedRevision":revision}),
+        )
+        .map(|_| ()),
+        "wake_policy_held",
+    );
+    let held: bool = store
+        .0
+        .query_row("SELECT held FROM workflow_wake_policies", [], |r| r.get(0))
+        .unwrap();
+    assert!(held);
+    send(&mut store, &run, "while-held", "question");
+    assert_eq!(count(&store, "workflow_wake_notices"), 0);
+    let (enabled, pump) = owner_change(
+        &mut store,
+        &run,
+        json!({"action":"enable","key":"owner-on"}),
+    )
+    .unwrap();
+    assert!(pump.is_some());
+    assert_eq!(enabled["wakePolicy"]["held"], false);
+    assert_eq!(enabled["pendingCount"], 1);
+    owner_change(
+        &mut store,
+        &run,
+        json!({"action":"pause","key":"hold-again"}),
+    )
+    .unwrap();
+    let (resumed, pump) = owner_change(
+        &mut store,
+        &run,
+        json!({"action":"resume","key":"owner-resume"}),
+    )
+    .unwrap();
+    assert!(pump.is_some());
+    assert_eq!(resumed["wakePolicy"]["held"], false);
+    assert_eq!(resumed["wakePolicy"]["enabled"], true);
 }
 
 #[test]
