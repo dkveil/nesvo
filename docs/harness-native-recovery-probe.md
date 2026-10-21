@@ -224,3 +224,28 @@ The host exited zero and all 135 observed owned descendants were gone within the
 revision 1/2 reports and the older five-second cleanup failure remain preserved.
 This confirms the bounded metadata scenario, not code editing, verified tests,
 general native-worker adoption, arbitrary profiles or full F01–F44 completion.
+
+## F05 entry-fence regression probe
+
+On 2026-10-21, the same checked profile passed again on original Claude 2.1.305
+and native Windows, against the frozen `073c895` host/client build. The complete
+63-case controlled SDK preflight had passed before this one original-model run.
+Only the private result filename changed in the controller; tools, prompts,
+process limits, time bounds and cleanup were unchanged. Standing owner approval
+covered this probe, and no native permission or configuration change was made.
+
+Both distinct task attempts reported and received their coordinator's literal
+metadata validations across replacement. Four exact provider conversations
+correlated successful native calls/results for launch, delivery, question,
+recovery, reports and validation. The replacement's final reply contained the
+proof stored only in the host goal. A separate read-only audit confirmed one
+addressed dependency message, the reviewer's read of that same message and its
+exact successful ACK. All seven tool-discovery calls were Nesvo-only; no
+undeclared assistant tool or provider-internal subagent was selected.
+
+The host exited zero and all 160 observed owned descendant identities were gone
+within the existing cleanup observation. Workflow and cleanup both passed. Each
+private result and audit is retained separately from earlier reports. This
+rechecks the metadata recovery path after the lifecycle/context fences; it does
+not exercise delayed original-provider callbacks, code editing, actual checks,
+other providers, phone behavior or every F05 ordering case.

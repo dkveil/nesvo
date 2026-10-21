@@ -3431,3 +3431,19 @@ warnings-denied all-target Clippy, locked build, formatting and all three exact
 process conformance cases. The full 63-case serial SDK/native-host cohort passes
 in 468.30 seconds, including the shared metadata recovery-profile preflight.
 These are controlled native fixtures; original-provider acceptance is separate.
+
+### Original Claude recovery after the F05 entry fence
+
+The frozen `073c895` build passed one checked-profile original Claude 2.1.305
+metadata recovery run on native Windows after its full 63-case SDK preflight.
+Two sequential coordinators and two workers stayed within four retained records,
+three live roots, one parallel task and the 180-second run budget. Both explicit
+attempt results and metadata validations survived coordinator replacement.
+Four exact native conversations correlate successful MCP calls/results, including
+the attempt-bound owner question and goal-only recovery proof. A separate audit
+matches the addressed dependency message to the reviewer's exact read and ACK;
+all seven discovery calls were Nesvo-only. Host exit was zero and all 160
+observed owned descendant identities were gone. This is bounded F12/F15/F18/F19/
+F26/F40/F41 regression evidence, not a completed source-work or provider matrix
+gate. The [probe profile](harness-native-recovery-probe.md) records its scope and
+limits; earlier failed results remain preserved.
