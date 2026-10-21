@@ -893,7 +893,7 @@ fn catalog() -> Vec<Tool> {
             "nesvo_report_task_result",
             "Report this worker's exact current attempt result. Include files/artifacts/checks/limitations, using empty arrays when none. Claims are not verification or validation. Reuse the original key after uncertainty; stale senders/replacement reports are refused. Result bound 4 KiB UTF-8.",
             object(
-                json!({"key":key,"attemptId":id,"result":{"type":"object","additionalProperties":false,"required":["outcome","summary","files","artifacts","checks","limitations"],"properties":{"outcome":{"enum":["succeeded","failed","blocked","canceled"]},"summary":{"type":"string","minLength":1,"maxLength":2048},"files":strings(32),"artifacts":strings(16),"checks":checks,"limitations":strings(16)}}}),
+                json!({"key":key,"attemptId":id,"result":{"type":"object","additionalProperties":false,"required":["outcome","summary","files","artifacts","checks","limitations"],"properties":{"outcome":{"enum":["succeeded","failed","blocked","canceled"]},"summary":{"type":"string","minLength":1,"maxLength":2048},"files":strings(32),"artifacts":strings(16),"checks":checks,"limitations":strings(16),"nextSteps":strings(8)}}}),
                 &["key", "attemptId", "result"],
             ),
             false,
@@ -934,6 +934,12 @@ fn catalog() -> Vec<Tool> {
         (
             "nesvo_get_run",
             "Read a visible run and its draft DAG by stable run ID. Planned/dependency-ready never means executed or successful.",
+            object(json!({"runId":id}), &["runId"]),
+            true,
+        ),
+        (
+            "nesvo_get_run_digest",
+            "Read a visible run's bounded 8 KiB digest: the final record stored when the run settled (succeeded, canceled, stopped or drained), otherwise a live working-state snapshot. Summarizes tasks, attempts, outcomes, decisions, budget and evidence pointers (journal cursor, worktree branches, checkpoints). Worker claims stay claims; reading never validates, acknowledges or dispatches.",
             object(json!({"runId":id}), &["runId"]),
             true,
         ),
@@ -1047,6 +1053,58 @@ mod workflow_template_tests {
                     .starts_with("Owner-only")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod run_digest_tests {
+    use super::*;
+
+    #[test]
+    fn run_digest_mcp_matches_cli_wire_and_is_a_strict_read_only_tool() {
+        assert_eq!(
+            command("nesvo_get_run_digest", json!({"runId":"run-1"})).unwrap(),
+            (
+                crate::workflow::tool("digest", json!({"runId":"run-1"})).unwrap(),
+                "workflow"
+            )
+        );
+        for arguments in [json!({}), json!({"runId":"run-1","kind":"final"})] {
+            assert!(command("nesvo_get_run_digest", arguments).is_err());
+        }
+        let tool = serde_json::to_value(
+            catalog()
+                .into_iter()
+                .find(|tool| tool.name == "nesvo_get_run_digest")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(tool["inputSchema"]["required"], json!(["runId"]));
+        assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+        assert_eq!(tool["annotations"]["readOnlyHint"], true);
+        assert_eq!(tool["annotations"]["destructiveHint"], false);
+        assert!(tool["description"].as_str().unwrap().contains("8 KiB"));
+        assert!(
+            published_tools()
+                .iter()
+                .any(|name| name == "nesvo_get_run_digest")
+        );
+        let report = serde_json::to_value(
+            catalog()
+                .into_iter()
+                .find(|tool| tool.name == "nesvo_report_task_result")
+                .unwrap(),
+        )
+        .unwrap();
+        let result = &report["inputSchema"]["properties"]["result"];
+        assert_eq!(result["properties"]["nextSteps"]["maxItems"], 8);
+        assert!(
+            !result["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "nextSteps")
+        );
     }
 }
 
@@ -1248,8 +1306,8 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 113);
-        assert_eq!(published_tools().len(), 113);
+        assert_eq!(catalog().len(), 114);
+        assert_eq!(published_tools().len(), 114);
     }
 }
 
@@ -1772,6 +1830,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         "nesvo_create_run"
         | "nesvo_list_runs"
         | "nesvo_get_run"
+        | "nesvo_get_run_digest"
         | "nesvo_set_run_plan"
         | "nesvo_get_run_mutation"
         | "nesvo_activate_run"
@@ -1785,6 +1844,7 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
                 "nesvo_create_run" => "create",
                 "nesvo_list_runs" => "list",
                 "nesvo_get_run" => "get",
+                "nesvo_get_run_digest" => "digest",
                 "nesvo_set_run_plan" => "setPlan",
                 "nesvo_activate_run" => "activate",
                 "nesvo_assign_task" => "assign",
@@ -2839,7 +2899,7 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 113);
+        assert_eq!(catalog().len(), 114);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

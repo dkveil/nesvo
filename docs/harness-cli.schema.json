@@ -291,6 +291,15 @@
                   }
                 },
                 {
+                  "required": ["run", "digest", "fingerprint", "stored"],
+                  "properties": {
+                    "run": { "type": "object", "required": ["id", "title", "revision", "state"] },
+                    "digest": { "$ref": "#/definitions/workflowDigest" },
+                    "fingerprint": { "type": "string", "minLength": 64, "maxLength": 64 },
+                    "stored": { "type": "boolean" }
+                  }
+                },
+                {
                   "required": ["run", "tasks"],
                   "properties": {
                     "launch": {
@@ -2666,6 +2675,116 @@
         }
       }
     },
+    "workflowDigest": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "kind",
+        "runId",
+        "title",
+        "state",
+        "sourceRevision",
+        "producedAt",
+        "tasks",
+        "taskDigests",
+        "omittedTasks",
+        "truncated",
+        "decisions",
+        "openDecisions",
+        "budget",
+        "inbox",
+        "evidence"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "enum": ["final", "workingState"] },
+        "runId": { "type": "string" },
+        "title": { "type": "string" },
+        "state": { "type": "string" },
+        "sourceRevision": { "type": "integer", "minimum": 1 },
+        "producedAt": { "type": "integer", "minimum": 0 },
+        "tasks": {
+          "type": "object",
+          "required": ["total", "byState"],
+          "properties": {
+            "total": { "type": "integer", "minimum": 0, "maximum": 64 },
+            "byState": {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "taskDigests": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "key",
+              "state",
+              "attempt",
+              "outcome",
+              "validation",
+              "summary",
+              "files",
+              "filesTotal",
+              "checks",
+              "limitations",
+              "nextSteps",
+              "decisionsAnswered",
+              "nativeOperations",
+              "workspace"
+            ],
+            "properties": {
+              "id": { "type": "string" },
+              "key": { "type": "string" },
+              "state": { "type": "string" },
+              "attempt": { "type": ["object", "null"] },
+              "outcome": { "enum": [null, "succeeded", "failed", "blocked", "canceled"] },
+              "validation": { "type": ["object", "null"] },
+              "summary": { "type": ["string", "null"], "maxLength": 240 },
+              "files": { "type": "array", "maxItems": 4, "items": { "type": "string" } },
+              "filesTotal": { "type": "integer", "minimum": 0 },
+              "checks": { "type": "object", "required": ["passed", "failed", "skipped"] },
+              "limitations": { "type": "integer", "minimum": 0 },
+              "nextSteps": { "type": "array", "maxItems": 3, "items": { "type": "string" } },
+              "decisionsAnswered": { "type": "integer", "minimum": 0 },
+              "nativeOperations": { "type": "integer", "minimum": 0 },
+              "workspace": {
+                "anyOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["kind", "directory", "branch"],
+                    "properties": {
+                      "kind": { "enum": ["shared", "worktree"] },
+                      "directory": { "type": ["string", "null"] },
+                      "branch": { "type": ["string", "null"] }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "omittedTasks": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "decisions": { "type": "object", "required": ["total", "pending", "answered", "closed"] },
+        "openDecisions": { "type": "array", "maxItems": 4 },
+        "budget": { "type": "object" },
+        "inbox": { "type": "object", "required": ["pendingCoordinatorMessages", "messageHead"] },
+        "evidence": {
+          "type": "object",
+          "required": ["journalCursor", "checkpointCount", "checkpoints"],
+          "properties": {
+            "journalCursor": { "type": "integer", "minimum": 0 },
+            "checkpointCount": { "type": "integer", "minimum": 0 },
+            "checkpoints": { "type": "array", "maxItems": 4 }
+          }
+        }
+      }
+    },
     "workflowAttempt": {
       "type": "object",
       "required": ["id", "taskId", "ordinal", "sessionId", "state", "result", "validation"],
@@ -3984,6 +4103,9 @@
               }
             }
           }
+        },
+        "workingState": {
+          "type": ["object", "null"]
         }
       },
       "type": "object",

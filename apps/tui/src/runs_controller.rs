@@ -217,6 +217,7 @@ mod tests {
             let body = match command["request"]["action"].as_str() {
                 Some("get") => fixtures::view(),
                 Some("decision") => json!({"decisions":fixtures::decisions(),"nextOffset":null}),
+                Some("digest") => fixtures::digest(),
                 _ => fixtures::inbox(),
             };
             reply(&mut app, &command, body);
@@ -229,7 +230,7 @@ mod tests {
         let mut app = opened();
         assert!(engaged(&app));
         assert_eq!(app.runs.as_ref().unwrap().runs.len(), 2);
-        assert!(press(&mut app, KeyCode::Char('j')).commands.len() == 3);
+        assert!(press(&mut app, KeyCode::Char('j')).commands.len() == 4);
         press(&mut app, KeyCode::Esc);
         assert!(!engaged(&app));
         assert!(app.runs.is_some());

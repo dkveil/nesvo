@@ -186,7 +186,9 @@ Outcomes: `succeeded|failed|blocked|canceled`; check outcomes:
 `passed|failed|skipped`. File/artifact/check claims are not host-verified
 provenance. Result bound: 4 KiB, summary 2048 bytes, 32 files, 16 artifacts,
 checks and limitations; list text 1024 bytes, check name 128 bytes. Use empty
-arrays when none apply, without fabricating performed checks.
+arrays when none apply, without fabricating performed checks. An optional
+`nextSteps` array (8 items of 1024 bytes) records what the worker would do next;
+it feeds the run digest and is omitted from stored results when empty.
 
 Only an owner/coordinator can validate the current reported attempt:
 `nesvo run validate RUN_ID ATTEMPT_ID --key KEY --revision REV --file VALIDATION.json
@@ -285,6 +287,57 @@ MCP parity: `nesvo_validate_task_result` accepts `hostChecks:true` with the same
 semantics and key namespace as the CLI flag. Older hosts fail the capability check
 instead of recording an attestation-only validation.
 
+## Run digest and working state
+
+`runDigests:true` advertises a bounded summary of a run that the host derives
+from its own records; it never reads provider transcripts or terminal output.
+
+```powershell
+nesvo run digest RUN_ID --json
+```
+
+MCP exposes the same read as `nesvo_get_run_digest {runId}`. Owners and the run's
+coordinator may read it; workers are refused and receive their inherited part
+through their task context instead. The reply is
+`{run:{id,title,revision,state}, digest, fingerprint, stored}`.
+
+- When a run settles (`succeeded`, `canceled`, `stopped` or `drained`), the host
+  records a `final` digest in the same transaction as the settling change and
+  journals `run.digest_recorded {runId,revision,state,fingerprint,bytes}`. One
+  record per run is kept; settling again at a newer revision (after `run resume`)
+  replaces it and journals again. A settle path without its own hook (an elapsed
+  timeout) is recorded on the next read. Reading a settled run returns the
+  stored record, `stored:true`, and repeated reads or settles at the same
+  revision change nothing.
+- Any other state returns a `workingState` snapshot computed on demand,
+  `stored:false`, without a journal write.
+
+The digest holds `schemaVersion`, `kind`, `runId`, `title`, `state`,
+`sourceRevision`, `producedAt`, task counts by state, one `taskDigests` entry per
+plan task (current attempt, reported outcome, validation source, summary clipped
+to 240 bytes, up to 4 claimed files and their total, check counts, limitation
+count, up to 3 `nextSteps` of 160 bytes, answered decisions, native operation
+receipts bound to the worker session, and the workspace kind, directory and
+worktree branch from the host worktree registry), decision totals with up to 4
+open questions, the run budget snapshot, coordinator inbox counts and evidence
+pointers: the journal cursor at production and the latest 4 checkpoints with
+their total. File and check entries remain worker claims.
+
+The encoded digest is at most 8 KiB. When it would exceed that, the host sets
+`truncated:true`, compacts every task entry (summary 80 bytes, no file list, one
+next step, no directory), then drops task entries from the end of the plan and
+counts them in `omittedTasks`, and finally empties the open-question and
+checkpoint lists. `fingerprint` is the SHA-256 of the digest without
+`producedAt` and the journal cursor, so an unchanged run yields the same value.
+
+A worker's `run context` (and its recovery task context) carries
+`workingState`: an `inherited` digest of the tasks its own task depends on,
+under the same 8 KiB bound, without decisions, budget, inbox or evidence, or
+`null` for a task without dependencies. It is context, not validation.
+
+The TUI Runs view reads the digest with the selected run, shows a headline under
+the run state and a digest section after the decisions.
+
 ## Wire and persistence
 
 Authenticated requests use the nested envelope:
@@ -307,7 +360,7 @@ Actions: `create {key,spec:{title,goal,coordinatorSessionId?}}`, `list {offset?}
 `get {runId}`, `setPlan {key,runId,expectedRevision,tasks}`, `mutation {key}`,
 `activate {key,runId,expectedRevision}`,
 `assign {key,runId,taskId,sessionId,expectedRevision}`,
-`task {runId,taskId,offset?}`, `context {}`,
+`task {runId,taskId,offset?}`, `digest {runId}`, `context {}`,
 `report {key,attemptId,result}`,
 `validate {key,runId,attemptId,expectedRevision,validation,hostChecks?}`.
 Replies have `type:"workflow"` and `{run,tasks}`, `{runs,nextOffset}`,

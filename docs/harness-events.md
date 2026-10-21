@@ -25,7 +25,8 @@ and a bounded metadata object `payload`. Current kinds include `host.started`,
 `response.settled`. A response event references its turn and has no task outcome.
 Durable receipts add `operation.changed` (`operationId`, `operation`, `phase`) and
 workflow mutations add `run.*` events (`runId`, `revision`) whose subject is the
-run's coordinator session.
+run's coordinator session. `run.digest_recorded` also carries the run state,
+digest fingerprint and byte size; read the digest itself with `nesvo run digest`.
 Prompts, response text and tool arguments are not journaled here.
 
 The default/maximum page is 32 events, each with at most 1024 encoded payload

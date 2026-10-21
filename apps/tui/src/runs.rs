@@ -67,6 +67,69 @@ pub struct Message {
     pub body: String,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Digest {
+    pub kind: String,
+    pub source_revision: u64,
+    pub total: u64,
+    pub accepted: u64,
+    pub omitted: u64,
+    pub decisions_pending: u64,
+    pub decisions_answered: u64,
+    pub time_state: String,
+    pub active_attempts: u64,
+    pub journal_cursor: u64,
+    pub checkpoints: u64,
+    pub next_steps: Vec<String>,
+    pub branches: Vec<String>,
+}
+
+impl Digest {
+    fn parse(body: &Value) -> Self {
+        let number = |value: &Value| value.as_u64().unwrap_or_default();
+        let tasks = body["taskDigests"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        Self {
+            kind: body["kind"].as_str().unwrap_or_default().to_owned(),
+            source_revision: number(&body["sourceRevision"]),
+            total: number(&body["tasks"]["total"]),
+            accepted: number(&body["tasks"]["byState"]["succeeded"]),
+            omitted: number(&body["omittedTasks"]),
+            decisions_pending: number(&body["decisions"]["pending"]),
+            decisions_answered: number(&body["decisions"]["answered"]),
+            time_state: body["budget"]["timeState"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            active_attempts: number(&body["budget"]["activeAttempts"]),
+            journal_cursor: number(&body["evidence"]["journalCursor"]),
+            checkpoints: number(&body["evidence"]["checkpointCount"]),
+            next_steps: tasks
+                .iter()
+                .flat_map(|task| {
+                    let key = task["key"].as_str().unwrap_or_default();
+                    task["nextSteps"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(move |step| format!("{key}: {step}"))
+                })
+                .collect(),
+            branches: tasks
+                .iter()
+                .filter_map(|task| task["workspace"]["branch"].as_str())
+                .map(str::to_owned)
+                .collect(),
+        }
+    }
+
+    pub fn settled(&self) -> bool {
+        self.kind == "final"
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Detail {
     pub goal: String,
@@ -76,6 +139,7 @@ pub struct Detail {
     pub pending_messages: u64,
     pub messages: Vec<Message>,
     pub inbox_loaded: bool,
+    pub digest: Option<Digest>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -119,6 +183,7 @@ enum Read {
     Run(String),
     Decisions(String, u64),
     Inbox(String),
+    Digest(String),
     Templates,
 }
 
@@ -375,6 +440,9 @@ impl Runs {
             json!({"request":{"action":"read","runId":id}}),
         ) {
             commands.push(self.read(Read::Inbox(id.to_owned()), pair));
+        }
+        if let Ok(pair) = self.workflow(features, "digest", json!({"runId":id})) {
+            commands.push(self.read(Read::Digest(id.to_owned()), pair));
         }
         commands
     }
@@ -724,6 +792,10 @@ impl Runs {
                 detail.inbox_loaded = true;
                 Effect::default()
             }
+            Read::Digest(id) => {
+                self.details.entry(id).or_default().digest = Some(Digest::parse(&event["digest"]));
+                Effect::default()
+            }
             Read::Templates => {
                 if let Some(templates) = &mut self.templates {
                     templates.load = Load::Ready;
@@ -791,7 +863,7 @@ impl Runs {
                     }
                     Effect::default()
                 }
-                Read::Decisions(id, _) | Read::Inbox(id) | Read::Run(id) => {
+                Read::Decisions(id, _) | Read::Inbox(id) | Read::Run(id) | Read::Digest(id) => {
                     let detail = self.details.entry(id).or_default();
                     detail.decisions_loaded = true;
                     detail.inbox_loaded = true;
@@ -832,8 +904,24 @@ pub(crate) mod tests {
             "workflowDecisions": true,
             "runControls": true,
             "runDrain": true,
+            "runDigests": true,
             "workflowTemplates": true
         })
+    }
+
+    pub(crate) fn digest() -> Value {
+        json!({"run":{"id":"run-a","title":"Branch review","revision":4,"state":"active"},"stored":false,"fingerprint":"f".repeat(64),"digest":{
+            "schemaVersion":1,"kind":"workingState","runId":"run-a","title":"Branch review","state":"active","sourceRevision":4,"producedAt":9,
+            "tasks":{"total":2,"byState":{"planned":1,"succeeded":1}},
+            "taskDigests":[
+                {"id":"t1","key":"implement","state":"succeeded","nextSteps":["Wire the parser into the CLI"],"workspace":{"kind":"worktree","directory":"C:/w","branch":"nesvo/0123456789abcdef"}},
+                {"id":"t2","key":"review","state":"planned","nextSteps":[],"workspace":null}
+            ],
+            "omittedTasks":0,"truncated":false,
+            "decisions":{"answered":1,"closed":0,"pending":1,"total":2},"openDecisions":[],
+            "budget":{"timeState":"open","activeAttempts":1},"inbox":{"pendingCoordinatorMessages":3,"messageHead":4},
+            "evidence":{"journalCursor":41,"checkpointCount":2,"checkpoints":[]}
+        }})
     }
 
     pub(crate) fn listed() -> Value {
@@ -888,6 +976,7 @@ pub(crate) mod tests {
             let body = match action.as_str() {
                 "get" => view(),
                 "decision" => json!({"decisions":decisions(),"nextOffset":null}),
+                "digest" => digest(),
                 _ => inbox(),
             };
             reply(&mut runs, &command, body);
@@ -915,6 +1004,7 @@ pub(crate) mod tests {
                 json!({"action":"get","runId":"run-a"}),
                 json!({"action":"decision","request":{"action":"list","runId":"run-a","attemptId":null,"offset":0}}),
                 json!({"action":"inbox","request":{"action":"read","runId":"run-a","attemptId":null,"after":null,"includeAcked":null}}),
+                json!({"action":"digest","runId":"run-a"}),
             ]
         );
         let loaded = loaded();
@@ -940,8 +1030,80 @@ pub(crate) mod tests {
         assert!(runs.move_selection(&features, 1).commands.is_empty());
         let fresh = runs.move_selection(&features, 1);
         assert_eq!(runs.selected.as_deref(), Some("run-b"));
-        assert_eq!(fresh.commands.len(), 3);
+        assert_eq!(fresh.commands.len(), 4);
         assert!(runs.move_selection(&features, 5).commands.is_empty());
+    }
+
+    #[test]
+    fn runs_read_the_selected_run_digest_and_skip_it_on_older_hosts() {
+        let runs = loaded();
+        let parsed = runs.selected_detail().unwrap().digest.clone().unwrap();
+        assert_eq!(
+            parsed,
+            Digest {
+                kind: "workingState".into(),
+                source_revision: 4,
+                total: 2,
+                accepted: 1,
+                omitted: 0,
+                decisions_pending: 1,
+                decisions_answered: 1,
+                time_state: "open".into(),
+                active_attempts: 1,
+                journal_cursor: 41,
+                checkpoints: 2,
+                next_steps: vec!["implement: Wire the parser into the CLI".into()],
+                branches: vec!["nesvo/0123456789abcdef".into()],
+            }
+        );
+        assert!(!parsed.settled());
+        let mut legacy = features();
+        legacy["runDigests"] = false.into();
+        let (mut older, list) = Runs::open(8, &legacy).unwrap();
+        older.runs = serde_json::from_value(listed()).unwrap();
+        older.selected = Some("run-a".into());
+        let commands = older.reload_selected(&legacy).commands;
+        assert_eq!(commands.len(), 3);
+        assert!(
+            commands
+                .iter()
+                .all(|command| command["request"]["action"] != "digest")
+        );
+        assert_eq!(list["request"]["action"], "list");
+        let mut failing = loaded();
+        let reread = failing.reload_selected(&features()).commands;
+        let digest_read = reread
+            .iter()
+            .find(|command| command["request"]["action"] == "digest")
+            .unwrap();
+        assert!(
+            failing
+                .failure(
+                    &features(),
+                    &json!({"type":"error","requestId":digest_read["requestId"],"code":"run_not_found","message":"gone"}),
+                )
+                .unwrap()
+                .notice
+                .is_none()
+        );
+        let mut settled = digest();
+        settled["digest"]["kind"] = "final".into();
+        let mut runs = loaded();
+        let read = runs
+            .reload_selected(&features())
+            .commands
+            .into_iter()
+            .find(|command| command["request"]["action"] == "digest")
+            .unwrap();
+        reply(&mut runs, &read, settled);
+        assert!(
+            runs.selected_detail()
+                .unwrap()
+                .digest
+                .as_ref()
+                .unwrap()
+                .settled()
+        );
     }
 
     #[test]

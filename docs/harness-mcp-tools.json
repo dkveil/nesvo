@@ -56,6 +56,7 @@
   "nesvo_get_run_budget",
   "nesvo_get_run_checkpoint",
   "nesvo_get_run_control",
+  "nesvo_get_run_digest",
   "nesvo_get_run_executor",
   "nesvo_get_run_mutation",
   "nesvo_get_run_wake_batch",

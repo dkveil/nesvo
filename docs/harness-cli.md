@@ -539,6 +539,13 @@ Decision revisions/deadlines are separate from execution revisions, and an answe
 does not type a native provider approval. See [decision contract](harness-decisions.md).
 `run blocked` and `run ask` are worker shortcuts over the same records; see
 [for agents](#for-agents).
+
+`nesvo run digest RUN_ID --json` reads the bounded run digest when `runDigests`
+is advertised: the final record the host stored when the run settled, otherwise
+a live working-state snapshot. Owner and coordinator only; it never validates,
+acknowledges or dispatches. Workers report `nextSteps` in their result file and
+read inherited working state through `run context`. See
+[run digest and working state](harness-workflows.md#run-digest-and-working-state).
 Launch-local instruction version 4 documents this boundary and explicit recovery.
 
 ## Literal send and receipt wait

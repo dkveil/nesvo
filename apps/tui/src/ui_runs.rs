@@ -1,6 +1,6 @@
 use crate::{
     model::App,
-    runs::{Detail, Load, Page, Runs, Summary, Templates},
+    runs::{Detail, Digest, Load, Page, Runs, Summary, Templates},
     theme::{BACKGROUND, BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, WARNING},
     ui::truncate_cells,
 };
@@ -259,6 +259,72 @@ fn task_line(task: &crate::runs::Task) -> String {
     format!(" {} {}  {}", state_mark(&task.state), task.key, attempt)
 }
 
+fn digest_label(digest: &Digest) -> &'static str {
+    if digest.settled() {
+        "final digest"
+    } else {
+        "working state"
+    }
+}
+
+fn digest_headline(digest: &Digest) -> String {
+    let next = digest
+        .next_steps
+        .first()
+        .map(|step| format!(" · next {step}"))
+        .unwrap_or_default();
+    format!(
+        "{} · {}/{} accepted{next}",
+        digest_label(digest),
+        digest.accepted,
+        digest.total
+    )
+}
+
+fn digest_section(frame: &mut Frame, area: Rect, mut y: u16, digest: &Digest) {
+    let heading = if digest.settled() {
+        "DIGEST"
+    } else {
+        "WORKING STATE"
+    };
+    text(
+        frame,
+        row(area, y),
+        &format!(
+            "{heading}  revision {} · journal {}",
+            digest.source_revision, digest.journal_cursor
+        ),
+        MUTED,
+    );
+    y += 1;
+    let omitted = if digest.omitted > 0 {
+        format!(" · {} omitted", digest.omitted)
+    } else {
+        String::new()
+    };
+    let lines = [
+        format!(
+            " tasks {}/{} accepted{omitted} · decisions {} pending, {} answered",
+            digest.accepted, digest.total, digest.decisions_pending, digest.decisions_answered
+        ),
+        format!(
+            " budget {} · {} active · {} checkpoints",
+            digest.time_state, digest.active_attempts, digest.checkpoints
+        ),
+    ];
+    for line in lines {
+        text(frame, row(area, y), &line, TEXT);
+        y += 1;
+    }
+    for step in digest.next_steps.iter().take(2) {
+        text(frame, row(area, y), &format!(" next {step}"), TEXT);
+        y += 1;
+    }
+    if let Some(branch) = digest.branches.first() {
+        text(frame, row(area, y), &format!(" branch {branch}"), MUTED);
+    }
+}
+
 fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Detail>) {
     text(frame, row(area, 0), "SELECTED RUN", MUTED);
     text(frame, row(area, 1), &run.title, TEXT);
@@ -272,6 +338,9 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
         text(frame, row(area, 4), "Loading tasks…", MUTED);
         return;
     };
+    if let Some(digest) = &detail.digest {
+        text(frame, row(area, 3), &digest_headline(digest), MUTED);
+    }
     let mut y = 4;
     text(
         frame,
@@ -348,6 +417,10 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
     }
     if !detail.decisions.is_empty() {
         text(frame, row(area, y), " a answers the first one", MUTED);
+        y += 1;
+    }
+    if let Some(digest) = &detail.digest {
+        digest_section(frame, area, y + 1, digest);
     }
 }
 
@@ -677,6 +750,55 @@ mod tests {
         assert!(all.contains("? Ship the migration now? (owner · implement)"));
         assert!(line(&buffer, 43).starts_with(" RUNS "));
         assert!(line(&buffer, 43).contains(" p  pause"));
+    }
+
+    #[test]
+    fn runs_render_the_selected_run_digest_at_150x44_100x32_and_80x24() {
+        let loaded = app(fixtures::loaded());
+        for (width, height, section) in [(150, 44, true), (100, 32, true), (80, 24, false)] {
+            let buffer = draw(&loaded, width, height);
+            let all = screen(&buffer);
+            let (_, state) = find(&buffer, "active · revision 4").unwrap();
+            let (_, line) = find(&buffer, "working state · 1/2")
+                .unwrap_or_else(|| panic!("{width}x{height}\n{all}"));
+            assert_eq!(line, state + 1, "{width}x{height}");
+            assert!(
+                all.contains("working state · 1/2 accepted · next implemen"),
+                "{width}x{height}\n{all}"
+            );
+            if section {
+                assert!(
+                    all.contains("WORKING STATE  revision 4 · journal 41"),
+                    "{width}x{height}\n{all}"
+                );
+                assert!(all.contains("tasks 1/2 accepted · decisions 1 pending, 1 answered"));
+                assert!(all.contains("budget open · 1 active · 2 checkpoints"));
+                assert!(all.contains(" next implement: Wire"));
+                assert_eq!(
+                    all.contains("branch nesvo/0123456789abcdef"),
+                    height >= 44,
+                    "{width}x{height}\n{all}"
+                );
+            }
+        }
+        let mut runs = fixtures::loaded();
+        let digest = runs
+            .details
+            .get_mut("run-a")
+            .unwrap()
+            .digest
+            .as_mut()
+            .unwrap();
+        digest.kind = "final".into();
+        digest.omitted = 3;
+        let all = screen(&draw(&app(runs), 150, 44));
+        assert!(all.contains("final digest · 1/2 accepted"));
+        assert!(all.contains("DIGEST  revision 4 · journal 41"));
+        assert!(all.contains("tasks 1/2 accepted · 3 omitted"));
+        let mut runs = fixtures::loaded();
+        runs.details.get_mut("run-a").unwrap().digest = None;
+        let all = screen(&draw(&app(runs), 150, 44));
+        assert!(!all.contains("WORKING STATE") && !all.contains("working state"));
     }
 
     #[test]

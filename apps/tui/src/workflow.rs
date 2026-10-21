@@ -139,6 +139,12 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Read the bounded digest of a run: final once settled, otherwise live working state.
+    Digest {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Replace a draft DAG from a JSON array; stable task keys retain their IDs.
     Plan {
         id: String,
@@ -258,6 +264,7 @@ impl Command {
             Self::Create { json, .. }
             | Self::List { json, .. }
             | Self::Get { json, .. }
+            | Self::Digest { json, .. }
             | Self::Plan { json, .. }
             | Self::Mutation { json, .. }
             | Self::Activate { json, .. }
@@ -385,6 +392,7 @@ impl Command {
                 offset: Some(offset),
             },
             Self::Get { id, .. } => Request::Get { run_id: id },
+            Self::Digest { id, .. } => Request::Digest { run_id: id },
             Self::Plan {
                 id,
                 key,
@@ -702,6 +710,8 @@ struct ResultSpec {
     artifacts: Vec<String>,
     checks: Vec<Check>,
     limitations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    next_steps: Vec<String>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -802,6 +812,9 @@ enum Request {
         offset: Option<u16>,
     },
     Get {
+        run_id: String,
+    },
+    Digest {
         run_id: String,
     },
     Mutation {
@@ -1083,6 +1096,7 @@ pub(crate) fn supported(caps: &Value, request: &Value) -> Result<()> {
         Some("recover") => Some("runRecovery"),
         Some("checkpoints") => Some("runCheckpoints"),
         Some("constraints") => Some("runConstraints"),
+        Some("digest") => Some("runDigests"),
         Some("launch") => Some("runLaunch"),
         Some("delivery") => Some("runDelivery"),
         Some("executor") => Some("runExecutor"),
@@ -1896,6 +1910,50 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn run_digest_cli_wire_matches_the_mcp_tool_and_requires_its_capability() {
+        use clap::Parser;
+        let parsed =
+            crate::Arguments::try_parse_from(["nesvo", "run", "digest", "run-1", "--json"])
+                .unwrap();
+        let Some(cli::Command::Run { command }) = parsed.command else {
+            panic!("Expected run command");
+        };
+        assert!(command.machine());
+        let wired = wire(command.request().unwrap()).unwrap();
+        assert_eq!(
+            wired,
+            json!({"type":"workflow","request":{"action":"digest","runId":"run-1"}})
+        );
+        assert_eq!(tool("digest", json!({"runId":"run-1"})).unwrap(), wired);
+        assert!(tool("digest", json!({})).is_err());
+        assert!(tool("digest", json!({"runId":"run-1","offset":0})).is_err());
+        assert!(crate::Arguments::try_parse_from(["nesvo", "run", "digest"]).is_err());
+        let caps = json!({"workflowPlans":true,"workflowAttempts":true,"runDigests":true});
+        supported(&caps, &wired).unwrap();
+        let mut older = caps.clone();
+        older["runDigests"] = false.into();
+        assert_eq!(
+            code_of(&supported(&older, &wired).unwrap_err()),
+            "unsupported"
+        );
+        let report = tool(
+            "report",
+            json!({"key":"k","attemptId":"a","result":{"outcome":"succeeded","summary":"x","files":[],"artifacts":[],"checks":[],"limitations":[],"nextSteps":["Wire the parser"]}}),
+        )
+        .unwrap();
+        assert_eq!(
+            report["request"]["result"]["nextSteps"],
+            json!(["Wire the parser"])
+        );
+        let legacy = tool(
+            "report",
+            json!({"key":"k","attemptId":"a","result":{"outcome":"succeeded","summary":"x","files":[],"artifacts":[],"checks":[],"limitations":[]}}),
+        )
+        .unwrap();
+        assert!(legacy["request"]["result"].get("nextSteps").is_none());
     }
 
     #[test]

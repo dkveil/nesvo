@@ -107,6 +107,11 @@ The tool count is the length of the [catalog](harness-mcp-tools.json). Task inst
 the task's own settled worker with the same refusals as `run deliver --session`; see
 [guarded task delivery](harness-task-delivery.md).
 
+`runDigests` adds read-only `nesvo_get_run_digest {runId}`, the same bounded
+final or working-state digest as `nesvo run digest`; `nesvo_report_task_result`
+accepts optional `nextSteps`. See
+[run digest and working state](harness-workflows.md#run-digest-and-working-state).
+
 `runRecovery` adds read-only `nesvo_recover_run_context {runId?,offset?,expectedDigest?}`.
 It resolves the authenticated worker binding or a uniquely bound coordinator run;
 several runs require explicit selection, and owner calls require runId. It never
