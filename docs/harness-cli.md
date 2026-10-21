@@ -273,6 +273,90 @@ nothing is submitted. Another client's lease, a shell, an exited process or an
 agent that is not ready and idle are refused with `control_busy`, `unsupported`,
 `process_exited` or `agent_not_ready`.
 
+## Worktree setup, run and archive
+
+A repository declares worktree preparation in a committed `nesvo.toml` at its
+root. Only the `[worktree]` table is defined; the parser accepts a strict TOML
+subset (comments, basic and literal single-line strings, string arrays that may
+span lines, decimal integers) and refuses unknown keys or tables:
+
+```toml
+[worktree]
+# Commands for the platform shell (cmd.exe on Windows, /bin/sh elsewhere).
+setup = ["npm ci", "cargo fetch --locked"]
+# Started on demand with `nesvo worktree run`.
+run = ["npm run dev"]
+# Untracked local files copied from the source checkout root, never committed.
+env_files = [".env", "apps/mobile/.env.local"]
+# Deadline for all steps of one setup or run, 1-3600 seconds, default 600.
+timeout_s = 600
+```
+
+At most 32 steps per list, 4096 bytes per step and 32 environment files of at most
+1 MiB each (relative `/` paths outside `.git` and `.nesvo`). The digest is the
+SHA-256 of the normalized values with the policy `platform-shell-v1`, so formatting
+and comments do not change it. The host reads the file from `HEAD` of the source
+repository, never from uncommitted edits.
+
+Trust follows the job precheck model: approving a digest authorizes arbitrary code
+with the host user's permissions, the host never approves repository files on its
+own, and a changed file needs a new approval. Steps inherit the host environment
+without `NESVO_*` and `POCKET_*` variables.
+
+```powershell
+nesvo worktree describe --directory C:\project --json
+nesvo worktree approve-setup --directory C:\project --digest INSPECTED_DIGEST --json
+nesvo worktree revoke-setup --directory C:\project --digest INSPECTED_DIGEST --json
+```
+
+`describe` returns `worktreeSetup { repository, configured, config, digest,
+approved, policy }` and runs nothing. `approve-setup` refuses with
+`digest_mismatch` when `HEAD` changed since inspection and returns
+`worktreeSetupApproved { repository, digest, approvedAt }`; `revoke-setup` returns
+`worktreeSetupRevoked { repository, digest, revoked }`. Approvals persist in
+`worktrees.json` next to the host pairing data.
+
+Every worktree launch (TUI, `session create --worktree`, MCP, workflow tasks and
+scheduled launches) checks the approval before creating anything: an unapproved
+declared setup fails with `worktree_setup_unapproved` and no effect. After the
+worktree exists the host copies `env_files`, runs `setup` in order and writes
+`<worktree>/.nesvo/setup.log` (64 KiB, a truncation marker when cut; `.nesvo` is
+ignored by its own `.gitignore`). The agent process is not started while setup
+runs. A failed, timed-out or cancelled setup never starts it: the receipt is
+`failed` with `worktree_setup_failed`, `worktree_setup_timed_out` or
+`worktree_setup_cancelled`, the log path and `reservedSessionId`. A passed setup
+records `worktreeSetup { digest, result, log }` in the prepared launch. The journal
+receives `worktreePrepared { sessionId, result: passed|failed|timedOut|cancelled,
+log, worktree, digest }`. `session create --worktree` waits up to 3630 seconds for
+the receipt.
+
+```powershell
+nesvo worktree run SESSION_ID --json
+nesvo worktree cancel SESSION_ID --json
+nesvo worktree archive SESSION_ID [--discard] --json
+nesvo worktree list --json
+```
+
+`run` starts the approved `run` steps after a passed (or absent) setup and returns
+`worktreeRunStarted { sessionId, worktree, log }` at once; the outcome is the
+journal event `worktreeRan { sessionId, result, log }` and the registry run state,
+with output in `.nesvo/run.log`. `cancel` terminates the active setup or run
+(`worktreeCancelled { sessionId, cancelled }`). At most four setups or runs execute
+at once. On Windows a step's whole process tree is terminated with it; on Unix a
+background process left behind by a finished step is not stopped.
+
+`archive` refuses while the session runs (`session_running`) and refuses
+`worktree_unsaved` when the worktree has uncommitted or untracked files,
+conflicts, or commits that no other branch, tag or remote reference contains.
+Copied environment files that are unchanged and `.nesvo` do not count. With
+`--discard` it removes the worktree and its `nesvo/` branch anyway. The reply and
+the journal event `worktreeArchived` carry `sessionId`, `worktree`, `branch`,
+`discarded`, `blockers` and `branchDeleted`. `list` returns `worktreeRegistry
+{ worktrees:[{ sessionId, worktree, branch, repository, createdAt, digest, setup,
+run, envFiles, archivedAt, discarded, present, sessionLive, active }] }`, newest
+first (128); `present` compares with `git worktree list`. All worktree commands are
+owner-only and need `worktrees:true`.
+
 ## Remaining delivery gates
 
 `events --after CURSOR --session SESSION_ID --json` reads a durable domain page;

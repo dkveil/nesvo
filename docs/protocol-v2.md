@@ -317,6 +317,22 @@ Additive `git:true` advertises one owner-only read command for the TUI Git view;
 
 `directory` is an absolute host folder inside a Git work tree and is echoed as sent. The command runs one `git log HEAD` without signatures, decorations or colour (10 s, 1 KiB of output per commit), newest first. `limit` defaults to 50 and is clamped to 1..200; `truncated` is true when more commits exist or the output was cut. `summary` is the subject line (200 characters), `author` the author name (80 characters), `committedMs` the committer time in Unix milliseconds and `parents` the parent ids (empty for a root commit, at most 8). An unborn branch returns an empty list. Errors are `{type:"error", code, message, requestId?}` with `invalid_argument`, `not_found`, `not_directory`, `not_repository`, `timeout`, `git_failed` or `busy`. A commit's diff is `getDiff { reviewId, scope:"commits", from: parent, to: oid }`.
 
+## Worktrees
+
+Additive `worktrees:true` advertises owner-only worktree commands; scoped session callers receive `forbidden`. Requests share the four-per-connection event request limit (`busy` beyond it). Errors are `{type:"error", code, message, requestId?}`.
+
+| Command                                      | Result                                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `describeWorktreeSetup { directory }`        | `worktreeSetup { repository, configured, config, digest, approved, policy }`           |
+| `approveWorktreeSetup { directory, digest }` | `worktreeSetupApproved { repository, digest, approvedAt }`                             |
+| `revokeWorktreeSetup { directory, digest }`  | `worktreeSetupRevoked { repository, digest, revoked }`                                 |
+| `runWorktree { sessionId }`                  | `worktreeRunStarted { sessionId, worktree, log }`                                      |
+| `cancelWorktree { sessionId }`               | `worktreeCancelled { sessionId, cancelled }`                                           |
+| `archiveWorktree { sessionId, discard? }`    | `worktreeArchived { sessionId, worktree, branch, discarded, blockers, branchDeleted }` |
+| `listWorktrees`                              | `worktreeRegistry { worktrees:[...] }`                                                 |
+
+`config` is `{ setup, run, envFiles, timeoutS }` from the committed `nesvo.toml`. A `launch` with `worktree:true` holds the agent spawn until the approved setup passes; a refused or failed setup replies `{type:"error", code, message, sessionId}` with the reserved session ID and starts no process. Journal events `worktreePrepared`, `worktreeRan` and `worktreeArchived` carry `sessionId`, `result` or archive facts and the log path. The [harness CLI](harness-cli.md#worktree-setup-run-and-archive) describes the file format, trust policy and refusals.
+
 ## Observed session status
 
 Session snapshots also include `status: { state, source, updatedAt }`. Older hosts may omit it; a client must not manufacture semantic agent state from `running` alone. `updatedAt` is the host's epoch-millisecond timestamp of the last state/source transition, not the last output byte. Status never increments the durable metadata revision.

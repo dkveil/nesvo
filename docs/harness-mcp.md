@@ -180,26 +180,33 @@ is visible through session queries/explain; prepared is separate from loaded.
 These native flags are documented in the official
 [Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
 
-| Tool                      | Host operation                                     |
-| ------------------------- | -------------------------------------------------- |
-| nesvo_list_sessions       | list visible sessions/groups/lifecycle             |
-| nesvo_get_session         | inspect one stable process identity                |
-| nesvo_get_current_session | get the authenticated process session              |
-| nesvo_read_session        | bounded terminal replay with byte cursors          |
-| nesvo_explain_session     | status/readiness/provider diagnostics              |
-| nesvo_read_diff           | host-side read-only diff with an explicit scope    |
-| nesvo_open_review         | owner-only local or GitHub pull request review     |
-| nesvo_deliver_review      | owner-only review feedback with one receipt        |
-| nesvo_read_events         | bounded durable metadata page with domain cursors  |
-| nesvo_create_session      | durable idempotent background create               |
-| nesvo_send_prompt         | durable literal prompt submission without control  |
-| nesvo_wait_prompt         | passive correlated send milestone wait             |
-| nesvo_interrupt_session   | durable single Ctrl+C without taking human control |
-| nesvo_stop_session        | durable native process stop request                |
-| nesvo_get_operation       | lookup by operation ID or original caller key      |
-| nesvo_list_recovery       | owner-only page of saved session descriptions      |
-| nesvo_restore_session     | owner-only new process, optional exact resume      |
-| nesvo_forget_recovery     | owner-only removal of one saved description        |
+| Tool                          | Host operation                                           |
+| ----------------------------- | -------------------------------------------------------- |
+| nesvo_list_sessions           | list visible sessions/groups/lifecycle                   |
+| nesvo_get_session             | inspect one stable process identity                      |
+| nesvo_get_current_session     | get the authenticated process session                    |
+| nesvo_read_session            | bounded terminal replay with byte cursors                |
+| nesvo_explain_session         | status/readiness/provider diagnostics                    |
+| nesvo_read_diff               | host-side read-only diff with an explicit scope          |
+| nesvo_open_review             | owner-only local or GitHub pull request review           |
+| nesvo_deliver_review          | owner-only review feedback with one receipt              |
+| nesvo_describe_worktree_setup | owner-only committed nesvo.toml, digest and approval     |
+| nesvo_approve_worktree_setup  | owner-only approval of one inspected setup digest        |
+| nesvo_revoke_worktree_setup   | owner-only revocation of a setup digest                  |
+| nesvo_run_worktree            | owner-only start of approved run steps                   |
+| nesvo_cancel_worktree         | owner-only cancellation of active setup or run           |
+| nesvo_archive_worktree        | owner-only archive; refuses unsaved work without discard |
+| nesvo_list_worktrees          | owner-only registry of host-created worktrees            |
+| nesvo_read_events             | bounded durable metadata page with domain cursors        |
+| nesvo_create_session          | durable idempotent background create                     |
+| nesvo_send_prompt             | durable literal prompt submission without control        |
+| nesvo_wait_prompt             | passive correlated send milestone wait                   |
+| nesvo_interrupt_session       | durable single Ctrl+C without taking human control       |
+| nesvo_stop_session            | durable native process stop request                      |
+| nesvo_get_operation           | lookup by operation ID or original caller key            |
+| nesvo_list_recovery           | owner-only page of saved session descriptions            |
+| nesvo_restore_session         | owner-only new process, optional exact resume            |
+| nesvo_forget_recovery         | owner-only removal of one saved description              |
 
 `conversationResume` adds `resume:true` to `nesvo_restore_session`. The session
 accepts no automated input until the provider confirms the exact conversation;
