@@ -965,7 +965,7 @@ fn catalog() -> Vec<Tool> {
     definitions.into_iter().map(|(name,description,schema,read_only)| {
         Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_archive_worktree"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only || name == "nesvo_get_provider_quota"))
             .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
-    }).chain(crate::job_trigger_tools::catalog()).chain(crate::session_recovery::catalog()).chain(cli::attention::catalog()).collect()
+    }).chain(crate::job_trigger_tools::catalog()).chain(crate::session_recovery::catalog()).chain(cli::attention::catalog()).chain(crate::project_commands::catalog()).collect()
 }
 
 #[cfg(test)]
@@ -1378,6 +1378,9 @@ fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
         return request;
     }
     if let Some(request) = crate::session_recovery::command(name, &arguments) {
+        return request;
+    }
+    if let Some(request) = crate::project_commands::command(name, &arguments) {
         return request;
     }
     Ok(match name {
@@ -2086,6 +2089,8 @@ impl HostTools {
             cli::attention::capability(&mut connection, &command).await?;
         } else if crate::session_recovery::TOOLS.contains(&name) {
             crate::session_recovery::capability(&mut connection, &command).await?;
+        } else if crate::project_commands::TOOLS.contains(&name) {
+            crate::project_commands::capability(&mut connection).await?;
         } else if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {
             cli::control_capability(&mut connection).await?;
         } else if matches!(name, "nesvo_send_prompt" | "nesvo_wait_prompt") {

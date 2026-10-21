@@ -460,6 +460,9 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
     {
         crate::ui_runs::render(frame, app, runs);
     }
+    if app.projects.open && app.connected && app.dialog.is_none() {
+        crate::ui_projects::render(frame, app);
+    }
     if app.connected
         && (app.overview.open || crate::overview::engaged(app))
         && !matches!(
@@ -1552,6 +1555,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("f  u", "Filter status / mute attention"),
             ("F8  F9", "Templates / restore sessions"),
             ("S  J  W  O", "Schedules / jobs / runs / overview"),
+            ("P", "Projects: launch, layout, worktree setup"),
             ("F2 / F3", "New session: options / save template"),
             ("v  Tab  L", "Split / change pane / layouts"),
             ("1  2  F", "Sessions / files sidebar"),

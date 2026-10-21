@@ -7,6 +7,7 @@ pub enum Target {
     Group(String),
     Command(char),
     File(String),
+    Project(String),
 }
 impl Target {
     pub fn session_id(&self) -> Option<&str> {
@@ -23,7 +24,7 @@ pub struct ResultRow {
     pub context: String,
 }
 pub const CATEGORIES: [&str; 4] = ["All", "Sessions", "Groups", "Commands"];
-pub const COMMANDS: [(char, &str); 17] = [
+pub const COMMANDS: [(char, &str); 18] = [
     ('n', "New session"),
     ('N', "New session kind"),
     ('L', "Layouts"),
@@ -34,6 +35,7 @@ pub const COMMANDS: [(char, &str); 17] = [
     ('S', "Scheduled sessions"),
     ('J', "Jobs"),
     ('W', "Runs"),
+    ('P', "Projects"),
     ('O', "Overview"),
     ('Y', "Git"),
     ('T', "Notes"),
@@ -68,12 +70,14 @@ fn text_matches(words: &[String], text: &str) -> bool {
 
 /// Checks only the saved identity; never builds or sorts the other results.
 pub fn eligible(app: &App, query: &str, target: &Target) -> bool {
-    if let Some(rows) = crate::files_controller::palette_rows(app, query) {
+    if let Some(rows) = crate::files_controller::palette_rows(app, query)
+        .or_else(|| crate::projects_controller::palette_rows(app, query))
+    {
         return rows.iter().any(|row| &row.target == target);
     }
     let category = category(app);
     match target {
-        Target::File(_) => false,
+        Target::File(_) | Target::Project(_) => false,
         Target::Session(id) => category <= 1 && app.session_search_matches(id, query),
         Target::Group(id) => {
             (category == 0 || category == 2)
@@ -93,7 +97,9 @@ pub fn eligible(app: &App, query: &str, target: &Target) -> bool {
 }
 
 pub fn results(app: &App, query: &str) -> Vec<ResultRow> {
-    if let Some(rows) = crate::files_controller::palette_rows(app, query) {
+    if let Some(rows) = crate::files_controller::palette_rows(app, query)
+        .or_else(|| crate::projects_controller::palette_rows(app, query))
+    {
         return rows;
     }
     let category = category(app);

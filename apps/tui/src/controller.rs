@@ -67,6 +67,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     if crate::runs_controller::engaged(app) && app.dialog.is_none() {
         return crate::runs_controller::event(app, event);
     }
+    if app.projects.open && app.dialog.is_none() {
+        return crate::projects_controller::event(app, event, area);
+    }
     if crate::git_pane::captures(app) {
         return crate::git_pane::event(app, event);
     }
@@ -440,6 +443,9 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     }
     outcome.commands.extend(crate::files_controller::sync(app));
     outcome.commands.extend(crate::notes_controller::sync(app));
+    outcome
+        .commands
+        .extend(crate::projects_controller::sync(app));
     for command in &outcome.commands {
         if command["type"] == "acquireControl" {
             app.pending_input = command["sessionId"].as_str().map(str::to_owned);
@@ -1237,6 +1243,9 @@ fn open_quick_choice(app: &mut App, area: Rect, outcome: &mut Outcome) {
         crate::palette::Target::Command('D') => toggle_review(app, area, outcome),
         crate::palette::Target::Command('F') => crate::files_controller::toggle_mode(app),
         crate::palette::Target::File(path) => crate::files_controller::open_found(app, &path),
+        crate::palette::Target::Project(root) => {
+            crate::projects_controller::reveal(app, &root, outcome)
+        }
         crate::palette::Target::Command(key) => navigation_key(
             app,
             KeyEvent::new(
@@ -1305,6 +1314,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         }
         KeyCode::Char('J') => crate::jobs_controller::open(app, outcome),
         KeyCode::Char('W') => crate::runs_controller::open(app, outcome),
+        KeyCode::Char('P') => crate::projects_controller::open(app, outcome),
         KeyCode::Char('O') => crate::overview::open(app, area.width),
         KeyCode::Char('Y') => outcome.commands.extend(crate::git_pane::open(app, true)),
         KeyCode::Char('T') => outcome
@@ -1595,6 +1605,9 @@ fn apply_session_kind(app: &mut App, choice: Choice, outcome: &mut Outcome) {
         return;
     }
     app.session_kind = None;
+    if !matches!(choice, Choice::Kind(_)) {
+        app.projects.launch_folder = None;
+    }
     match choice {
         Choice::Pending | Choice::Closed => {}
         Choice::Kind(kind) => open_session_form(app, kind),
@@ -1621,7 +1634,11 @@ fn open_session_form(app: &mut App, kind: SessionKind) {
         agent,
         app.sessions.iter().map(|session| session.name.as_str()),
     );
-    if let Some(form) = form {
+    let folder = app.projects.launch_folder.take();
+    if let Some(mut form) = form {
+        if let Some(folder) = folder {
+            form.cwd = folder;
+        }
         app.dialog = Some(Dialog::NewSession(form));
         app.dialog_button = None;
         app.notice.clear();

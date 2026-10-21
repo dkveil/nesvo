@@ -12,7 +12,7 @@ pub const MAX_HOST_LAYOUTS: usize = 16;
 pub const MAX_NAME_CHARS: usize = 40;
 pub const LIBRARY_BYTES: usize = 48 * 1024;
 pub const SIDEBAR_SESSIONS: &str = "sessions";
-const MAX_PROJECT_KEY_BYTES: usize = 128;
+const MAX_PROJECT_KEY_BYTES: usize = 4096;
 const QUAD_COLUMNS: u16 = 150;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,6 +410,30 @@ impl Library {
             };
             self.projects.remove(&oldest);
         }
+    }
+
+    pub fn project_key(&self, root: Option<&str>, name: Option<&str>) -> Option<String> {
+        match (root, name) {
+            (Some(root), Some(name))
+                if !self.projects.contains_key(root) && self.projects.contains_key(name) =>
+            {
+                Some(name.to_owned())
+            }
+            (Some(root), _) => Some(root.to_owned()),
+            (None, name) => name.map(str::to_owned),
+        }
+    }
+
+    pub fn project_default(&self, project: &str) -> Option<NamedLayout> {
+        let name = self.projects.get(project)?.default.clone()?;
+        self.named(Some(project), &name)
+    }
+
+    pub fn named(&self, project: Option<&str>, name: &str) -> Option<NamedLayout> {
+        self.entries(project)
+            .into_iter()
+            .find(|entry| entry.layout.name == name)
+            .map(|entry| entry.layout)
     }
 
     fn scope(&self, project: Option<&str>) -> Option<&Scope> {
@@ -921,6 +945,44 @@ mod tests {
                 PaneTree::leaf(Role::Terminal),
             ),
         )
+    }
+
+    #[test]
+    fn projects_layout_key_uses_the_root_with_a_legacy_name_fallback() {
+        let mut rooted = session("claude", "claude", true);
+        rooted["repositoryContext"]["root"] = json!("C:\\dev\\nesvo");
+        let mut app = app(vec![rooted]);
+        app.selected = 1;
+        assert_eq!(app.project_key().as_deref(), Some("C:\\dev\\nesvo"));
+        app.layouts.save(Some("nesvo"), named("Legacy")).unwrap();
+        app.layouts.toggle_default(Some("nesvo"), "Legacy");
+        assert_eq!(app.project_key().as_deref(), Some("nesvo"));
+        assert_eq!(
+            app.layouts
+                .project_default("nesvo")
+                .map(|layout| layout.name),
+            Some("Legacy".into())
+        );
+        app.layouts
+            .save(Some("C:\\dev\\nesvo"), named("Rooted"))
+            .unwrap();
+        assert_eq!(app.project_key().as_deref(), Some("C:\\dev\\nesvo"));
+        assert!(app.layouts.project_default("C:\\dev\\nesvo").is_none());
+        assert_eq!(
+            app.layouts
+                .named(Some("C:\\dev\\nesvo"), "Rooted")
+                .map(|layout| layout.name),
+            Some("Rooted".into())
+        );
+        let mut library = Library::default();
+        assert_eq!(
+            library.project_key(None, Some("nesvo")).as_deref(),
+            Some("nesvo")
+        );
+        assert_eq!(library.project_key(None, None), None);
+        let long_root = format!("C:\\{}", "d".repeat(300));
+        library.save(Some(&long_root), named("Deep")).unwrap();
+        assert!(library.projects.contains_key(&long_root));
     }
 
     #[test]

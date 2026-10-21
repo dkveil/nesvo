@@ -69,6 +69,8 @@ pub struct RepositoryContext {
     #[serde(deserialize_with = "required_nullable")]
     observed_at: Option<u64>,
     revision: u64,
+    #[serde(default)]
+    root: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -104,6 +106,15 @@ impl RepositoryContext {
         {
             return false;
         }
+        if self.root.is_some()
+            && !(label(&self.root, 4096)
+                && matches!(
+                    self.state,
+                    RepositoryState::Ready | RepositoryState::Detached
+                ))
+        {
+            return false;
+        }
         match self.state {
             RepositoryState::Ready => {
                 label(&self.name, 128) && label(&self.branch, 256) && self.observed_at.is_some()
@@ -127,6 +138,10 @@ impl RepositoryContext {
         )
         .then_some(self.name.as_deref())
         .flatten()
+    }
+
+    pub(crate) fn root(&self) -> Option<&str> {
+        self.repository_name().and(self.root.as_deref())
     }
 
     pub(crate) fn branch_name(&self) -> Option<&str> {
@@ -288,6 +303,7 @@ pub enum SearchScope {
     Terminals,
     Attention,
     Files,
+    Projects,
 }
 
 impl SearchScope {
@@ -298,6 +314,7 @@ impl SearchScope {
             Self::Terminals => "terminals",
             Self::Attention => "needs you",
             Self::Files => "files",
+            Self::Projects => "projects",
         }
     }
 }
@@ -309,6 +326,7 @@ pub fn search_scope(query: &str) -> (SearchScope, &str) {
         ('$', SearchScope::Terminals),
         ('!', SearchScope::Attention),
         ('#', SearchScope::Files),
+        ('%', SearchScope::Projects),
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
             return (scope, rest.trim_start());
@@ -441,6 +459,7 @@ pub struct App {
     pub schedules: Vec<Value>,
     pub jobs: Option<crate::jobs::Jobs>,
     pub runs: Option<crate::runs::Runs>,
+    pub projects: crate::projects::Projects,
     pub git: Option<crate::git_pane::GitPane>,
     pub host_features: Value,
     pub review: crate::review::ReviewState,
@@ -511,6 +530,7 @@ impl App {
             schedules: Vec::new(),
             jobs: None,
             runs: None,
+            projects: Default::default(),
             git: None,
             host_features: Value::Null,
             client_id,
@@ -662,8 +682,10 @@ impl App {
                 _ => None,
             })
             .and_then(|session| session.repository_context.as_ref())
-            .and_then(RepositoryContext::repository_name)
-            .map(str::to_owned)
+            .and_then(|context| {
+                self.layouts
+                    .project_key(context.root(), context.repository_name())
+            })
     }
     pub fn layout_candidates(&self) -> Vec<crate::layouts::Candidate> {
         let mut ordered: Vec<&Session> = self
@@ -839,10 +861,11 @@ impl App {
     }
 
     pub fn matches_status(&self, session: &Session) -> bool {
-        self.status_filters.is_empty()
+        (self.status_filters.is_empty()
             || self
                 .status_filters
-                .contains(&crate::toolbox::status_index(session))
+                .contains(&crate::toolbox::status_index(session)))
+            && self.projects.allows(session)
     }
 
     pub fn quick_switch_results(&self, query: &str) -> Vec<&Session> {
@@ -885,6 +908,7 @@ impl App {
     fn session_search_score(&self, session: &Session, search: &SessionSearch) -> Option<u32> {
         if !self.matches_status(session)
             || search.scope == SearchScope::Files
+            || search.scope == SearchScope::Projects
             || (search.scope == SearchScope::Attention && session.attention_priority() == 0)
         {
             return None;
@@ -978,7 +1002,10 @@ impl App {
         let mut rows = vec![TreeRow {
             kind: RowKind::Root,
             depth: 0,
-            label: "sessions".into(),
+            label: self.projects.filter.as_ref().map_or_else(
+                || "sessions".into(),
+                |filter| format!("sessions · {}", filter.name),
+            ),
         }];
         self.append_sessions(None, 1, &mut rows);
         self.append_children(None, 0, &mut rows, &mut HashSet::new());
@@ -1183,6 +1210,9 @@ impl App {
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
         let kind = if let Some(next) = crate::git_pane::host_event(self, &event) {
+            commands.extend(next);
+            ""
+        } else if let Some(next) = crate::projects_controller::host_event(self, &event) {
             commands.extend(next);
             ""
         } else if crate::review_session::host_event(self, &event).is_some()

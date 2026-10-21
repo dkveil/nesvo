@@ -86,6 +86,11 @@ pub enum Command {
         #[command(subcommand)]
         command: WorktreeCommand,
     },
+    #[command(about = "Owner project registry: list, pin, unpin and read per-repository defaults")]
+    Project {
+        #[command(subcommand)]
+        command: crate::project_commands::Command,
+    },
     #[command(about = "Owner needs-you inbox across sessions, runs, decisions and job results")]
     Inbox {
         #[command(subcommand)]
@@ -583,6 +588,7 @@ impl Command {
             Self::Budget { command } => command.machine(),
             Self::Worktree { command } => command.machine(),
             Self::Inbox { command } => command.machine(),
+            Self::Project { command } => command.machine(),
             Self::Decision { command } => command.machine(),
             Self::Workflow { command } => command.machine(),
             Self::Review { command } => match command {
@@ -686,6 +692,7 @@ pub(crate) async fn request(
             | "approveWorkflowTemplates"
             | "revokeWorkflowTemplates"
             | "startWorkflowTemplate",
+            | "projectDefaults",
         ) => Duration::from_secs(30),
         _ => Duration::from_secs(10),
     };
@@ -1700,6 +1707,9 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         Command::Review { command } => return review(command, connection).await,
         Command::Worktree { command } => return worktree(command, connection).await,
         Command::Inbox { command } => return attention::run_inbox(command, connection).await,
+        Command::Project { command } => {
+            return crate::project_commands::run(command, connection).await;
+        }
         Command::Decision { command } => {
             return attention::run_decision(command, connection).await;
         }
