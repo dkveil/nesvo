@@ -605,6 +605,30 @@ nesvo decision list --json
 nesvo decision decide DECISION_ID --choice "Use the main branch" --json
 ```
 
+## Projects
+
+Owner `project list` returns `type:"projects"`: up to 256 repository roots the
+host has seen through session repository contexts, launch folders and the
+worktree registry, pinned first and then by last activity, each with `name`,
+`defaultBranch`, `lastActivityAt`, `pinned`, `openSessions` and up to 64 running
+`sessions`. `project pin ROOT` and `project unpin ROOT` return
+`type:"projectPinned"`; at most 64 roots stay pinned (`project_limit`), and a
+pinned root is kept when the registry is full. `project defaults ROOT` returns
+`type:"projectDefaults"` with the usual `launchFolder`, recent `folders`, the
+host-wide `defaultLayout` and `worktreeSetup` (configured, approved digest, open
+worktrees); it runs nothing. `project layout ROOT NAME` or `--clear` sets that
+layout name (`type:"projectLayout"`) for clients without a local project
+default. `ROOT` is the absolute path shown by `list`; an unknown root returns
+`project_not_found` (exit 1) and hosts without `projects` return `unsupported`
+before sending.
+
+```powershell
+nesvo project list --json
+nesvo project pin C:\dev\nesvo --json
+nesvo project defaults C:\dev\nesvo --json
+nesvo project layout C:\dev\nesvo Quad --json
+```
+
 ## Interrupt and stop
 
 `session interrupt SESSION_ID --key KEY` writes one Ctrl+C through the confirmed

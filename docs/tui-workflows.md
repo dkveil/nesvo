@@ -8,7 +8,7 @@ For an isolated test, build with `cargo build --workspace --target-dir target/ve
 
 ## Keyboard and focus
 
-F4 opens Git review directly from terminal input as well as navigation: with the `reviews` capability and a content area of 88 columns or more it toggles a review tab, otherwise the diff dock. F4 hides either again, Escape closes the dock or returns focus from a tab, and `q` closes a tab; each restores input when review was opened from a terminal. A diff dock opened from a full-screen terminal hides the session sidebar until `Ctrl+Q`. F6–F9 are also global and F1 opens the main menu even while typing. Other shortcuts apply in navigation mode. Global bindings can be changed in Settings → `k`: Enter, then press an unused F3–F12 key (F1 and F2 are reserved); `r` restores the defaults. Dialogs and full views (Jobs, Overview, Git, Layouts, Session kind) retain exclusive focus. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K`, Page Up / Page Down and Escape, belongs to the program while typing.
+F4 opens Git review directly from terminal input as well as navigation: with the `reviews` capability and a content area of 88 columns or more it toggles a review tab, otherwise the diff dock. F4 hides either again, Escape closes the dock or returns focus from a tab, and `q` closes a tab; each restores input when review was opened from a terminal. A diff dock opened from a full-screen terminal hides the session sidebar until `Ctrl+Q`. F6–F9 are also global and F1 opens the main menu even while typing. Other shortcuts apply in navigation mode. Global bindings can be changed in Settings → `k`: Enter, then press an unused F3–F12 key (F1 and F2 are reserved); `r` restores the defaults. Dialogs and full views (Jobs, Projects, Overview, Git, Layouts, Session kind) retain exclusive focus. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K`, Page Up / Page Down and Escape, belongs to the program while typing.
 
 | Key                       | Action                                                 |
 | ------------------------- | ------------------------------------------------------ |
@@ -17,7 +17,7 @@ F4 opens Git review directly from terminal input as well as navigation: with the
 | `Ctrl+K`                  | Open expanded palette (navigation mode only)           |
 | `Tab` in expanded palette | All, sessions, groups, commands; Shift+Tab reverses    |
 | Arrows / Enter / Escape   | Highlight / confirm / dismiss; Ctrl+P / Ctrl+N move    |
-| `@ $ ! #` in palette      | Prefix: agents, terminals, needs attention, files      |
+| `@ $ ! # %` in palette    | Prefix: agents, terminals, attention, files, projects  |
 | `F4`                      | Toggle review: tab, or diff dock if narrow or old host |
 | `F6`                      | Toggle to the previously entered session               |
 | `F7`                      | Enter the oldest unread, unmuted attention event       |
@@ -56,6 +56,7 @@ F4 opens Git review directly from terminal input as well as navigation: with the
 | `e R h` in Jobs detail    | Edit / run now / history; Space pauses or resumes      |
 | `c` in Jobs history       | Cancel the selected occurrence; Enter inspects it      |
 | `W`                       | Runs: pause, resume, drain, answer, start templates    |
+| `P`, palette `%`          | Projects: launch, `l` layout, `w` setup, `s` sidebar   |
 | `O`                       | Overview table; `w` wake, `f` filters, `/` text filter |
 | `Enter` in Overview       | Jump to the session without control; Esc or `O` closes |
 | `u` in Overview           | Usage panel: provider quota windows, freshness, wake   |

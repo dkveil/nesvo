@@ -211,6 +211,8 @@ These native flags are documented in the official
 | nesvo_ack_attention_inbox     | owner-only durable receipts for inbox item revisions     |
 | nesvo_list_pending_decisions  | owner-only pending decisions across runs                 |
 | nesvo_decide                  | owner-only answer by decision ID without a run ID        |
+| nesvo_list_projects           | owner-only project registry, pinned first then activity  |
+| nesvo_project_defaults        | owner-only launch folder, layout and worktree setup      |
 
 Worktree setup approval and revocation have no MCP tool; they exist only in the owner
 CLI (`nesvo worktree approve-setup` and `revoke-setup`) and need owner authority. The
@@ -228,6 +230,10 @@ hides one item revision durably and never answers a decision; `nesvo_decide`
 refuses answered or canceled decisions with `decision_resolved` and expired ones
 with `decision_expired`, so a retried call never answers twice. See
 [owner attention inbox](harness-cli.md#owner-attention-inbox-and-decisions).
+
+`projects` gates `nesvo_list_projects` and `nesvo_project_defaults`. Both only read
+the host registry; pinning, unpinning and setting a host-wide default layout stay
+owner CLI acts. See [projects](harness-cli.md#projects).
 
 `conversationResume` adds `resume:true` to `nesvo_restore_session`. The session
 accepts no automated input until the provider confirms the exact conversation;

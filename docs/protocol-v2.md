@@ -206,6 +206,11 @@ original time. Checking/unavailable have null observation time. `revision` is a
 JavaScript-safe metadata revision, independent of workspace revision or native
 conversation generation. This advisory object grants no authority or readiness,
 commit or task-result proof. See [contextual search](harness-contextual-search.md).
+Ready and detached contexts from a projects-capable host add `root`: the
+absolute, canonical top-level path of the repository's main checkout (a linked
+worktree reports the checkout it belongs to), at most 4096 control-free bytes.
+Other states omit it. Clients key per-project state by `root` when present and
+by the repository name otherwise.
 
 The TUI ignores malformed optional context without rejecting a legacy session;
 mobile keeps its existing strict optional-field rule and rejects malformed-present
@@ -392,6 +397,20 @@ Additive `worktrees:true` advertises owner-only worktree commands; scoped sessio
 | `listWorktrees`                              | `worktreeRegistry { worktrees:[...] }`                                                 |
 
 `config` is `{ setup, run, envFiles, timeoutS }` from the committed `nesvo.toml`. A `launch` with `worktree:true` holds the agent spawn until the approved setup passes; a refused or failed setup replies `{type:"error", code, message, sessionId}` with the reserved session ID and starts no process. Journal events `worktreePrepared`, `worktreeRan` and `worktreeArchived` carry `sessionId`, `result` or archive facts and the log path. The [harness CLI](harness-cli.md#worktree-setup-run-and-archive) describes the file format, trust policy and refusals.
+
+## Projects
+
+Additive `projects:true` advertises an owner-only project registry keyed by repository root path; scoped session callers receive `forbidden`. The host derives entries from resolved session repository contexts, launch folders and the worktree registry, persists them in the metadata database (migration `0009_projects`) and keeps at most 256 roots, evicting the least recently active unpinned root first. At most 64 roots can be pinned (`project_limit`). Roots are matched after canonicalization; an unknown root is `project_not_found`.
+
+| Command                              | Result                                                                                                         |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `listProjects`                       | `projects { projects:[{ root, name, defaultBranch, lastActivityAt, pinned, openSessions, sessions }], limit }` |
+| `pinProject { root }`                | `projectPinned { root, pinned:true }`                                                                          |
+| `unpinProject { root }`              | `projectPinned { root, pinned:false }`                                                                         |
+| `projectDefaults { root }`           | `projectDefaults { root, name, defaultLayout, launchFolder, folders, worktreeSetup }`                          |
+| `setProjectLayout { root, layout? }` | `projectLayout { root, defaultLayout }`                                                                        |
+
+The list is sorted pinned first, then by last activity. `defaultBranch` is the branch last seen in the main checkout; `sessions` holds up to 64 running session IDs whose context root, worktree record or launch folder belongs to the project. `launchFolder` is the folder with the most distinct session launches (the root when none is recorded) and `folders` lists up to eight. `worktreeSetup` is `{ available, configured, digest, approved, openWorktrees, error? }` from the committed `nesvo.toml` and the worktree registry; reading it runs nothing. `defaultLayout` is a host-wide layout name of at most 40 characters that clients may use when they hold no local project default.
 
 ## Observed session status
 
