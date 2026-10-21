@@ -423,6 +423,15 @@ enum Work {
     },
     Stop(oneshot::Sender<()>),
 }
+fn reject_admitted(receiver: &mut mpsc::Receiver<Work>) -> Vec<oneshot::Sender<()>> {
+    let mut stops = Vec::new();
+    while let Some(work) = receiver.blocking_recv() {
+        if let Work::Stop(reply) = work {
+            stops.push(reply);
+        }
+    }
+    stops
+}
 fn notify_head(store: &Store, changed: &watch::Sender<u64>) {
     if let Ok((head, _)) = store.cursors() {
         let current = *changed.borrow();
@@ -1022,8 +1031,13 @@ impl Service {
                             let _ = reply.send(store.read(after, limit, session_id.as_deref()));
                         }
                         Work::Stop(reply) => {
+                            receiver.close();
                             drop(store);
-                            let _ = reply.send(());
+                            let mut stops = reject_admitted(&mut receiver);
+                            stops.push(reply);
+                            for stop in stops {
+                                let _ = stop.send(());
+                            }
                             return;
                         }
                     }
@@ -2023,5 +2037,45 @@ mod tests {
         assert_eq!(store.read(0, 32, None).unwrap().events.len(), 2);
         drop(store);
         std::fs::remove_file(path).unwrap();
+    }
+    async fn poll_until(deadline: Duration, ready: impl Fn() -> bool) {
+        let expires = tokio::time::Instant::now() + deadline;
+        while !ready() {
+            assert!(
+                tokio::time::Instant::now() < expires,
+                "condition not reached within {deadline:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+    #[tokio::test]
+    async fn request_admitted_before_stop_is_rejected_instead_of_stranded() {
+        let database = StartupDatabase::new();
+        let service = Service::open(database.path.clone()).await.unwrap();
+        let admitted = service.sender.clone().reserve_owned().await.unwrap();
+        let stopping = tokio::spawn({
+            let service = service.clone();
+            async move { service.shutdown().await }
+        });
+        poll_until(Duration::from_secs(5), || service.sender.is_closed()).await;
+        let (reply, answer) = oneshot::channel();
+        admitted.send(Work::Read {
+            after: 0,
+            limit: 1,
+            session_id: None,
+            reply,
+        });
+        let answered = tokio::time::timeout(Duration::from_secs(5), answer)
+            .await
+            .expect("a request admitted before Stop must not be stranded in the closed journal");
+        assert!(answered.is_err());
+        tokio::time::timeout(Duration::from_secs(5), stopping)
+            .await
+            .expect("Stop must finish once admitted requests are rejected")
+            .unwrap();
+        let closed = tokio::time::timeout(Duration::from_secs(5), service.read(0, 1, None))
+            .await
+            .expect("requests after Stop must fail without waiting");
+        assert!(closed.is_err());
     }
 }
