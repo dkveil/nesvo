@@ -86,6 +86,16 @@ pub enum Command {
         #[command(subcommand)]
         command: WorktreeCommand,
     },
+    #[command(about = "Owner needs-you inbox across sessions, runs, decisions and job results")]
+    Inbox {
+        #[command(subcommand)]
+        command: attention::InboxCommand,
+    },
+    #[command(about = "Owner pending decisions across runs, answered without a run ID")]
+    Decision {
+        #[command(subcommand)]
+        command: attention::DecisionCommand,
+    },
 }
 #[derive(Subcommand)]
 pub enum WorktreeCommand {
@@ -450,6 +460,8 @@ impl Command {
             Self::Job { command } => command.machine(),
             Self::Budget { command } => command.machine(),
             Self::Worktree { command } => command.machine(),
+            Self::Inbox { command } => command.machine(),
+            Self::Decision { command } => command.machine(),
             Self::Review { command } => match command {
                 ReviewCommand::Open { json, .. } | ReviewCommand::Deliver { json, .. } => *json,
             },
@@ -1518,6 +1530,10 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         }
         Command::Review { command } => return review(command, connection).await,
         Command::Worktree { command } => return worktree(command, connection).await,
+        Command::Inbox { command } => return attention::run_inbox(command, connection).await,
+        Command::Decision { command } => {
+            return attention::run_decision(command, connection).await;
+        }
         Command::Operation {
             id,
             receipt_id,
@@ -1701,6 +1717,535 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub(crate) mod attention {
+    use super::{failure, print_data, request};
+    use crate::network::Connection;
+    use anyhow::Result;
+    use clap::Subcommand;
+    use rmcp::model::{Tool, ToolAnnotations};
+    use serde::Deserialize;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    #[derive(Subcommand)]
+    pub enum InboxCommand {
+        #[command(
+            about = "List one page of needs-you items across sessions, runs, decisions and job results"
+        )]
+        List {
+            #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=1024))]
+            page: u16,
+            #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u16).range(1..=32))]
+            limit: u16,
+            #[arg(long)]
+            json: bool,
+        },
+        #[command(
+            about = "Acknowledge items as ID@REVISION; the receipt keeps them hidden across reconnects"
+        )]
+        Ack {
+            #[arg(required = true, num_args = 1..=32)]
+            items: Vec<String>,
+            #[arg(long)]
+            json: bool,
+        },
+    }
+
+    #[derive(Subcommand)]
+    pub enum DecisionCommand {
+        #[command(about = "List pending decisions across all runs, oldest first")]
+        List {
+            #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=512))]
+            page: u16,
+            #[arg(long)]
+            json: bool,
+        },
+        #[command(
+            about = "Answer one pending decision by ID; resolved or expired decisions are refused"
+        )]
+        Decide {
+            id: String,
+            #[arg(long)]
+            choice: String,
+            #[arg(long)]
+            note: Option<String>,
+            #[arg(long)]
+            json: bool,
+        },
+    }
+
+    impl InboxCommand {
+        pub fn machine(&self) -> bool {
+            match self {
+                Self::List { json, .. } | Self::Ack { json, .. } => *json,
+            }
+        }
+    }
+
+    impl DecisionCommand {
+        pub fn machine(&self) -> bool {
+            match self {
+                Self::List { json, .. } | Self::Decide { json, .. } => *json,
+            }
+        }
+    }
+
+    fn bounded_text(value: &str, max: usize) -> bool {
+        !value.trim().is_empty()
+            && value.len() <= max
+            && !value
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
+    }
+
+    fn mark(item: &str) -> Result<Value> {
+        let parsed = item.rsplit_once('@').and_then(|(id, revision)| {
+            let revision = revision.parse::<u64>().ok()?;
+            (!id.is_empty() && id.len() <= 200 && !id.chars().any(char::is_control))
+                .then(|| json!({"id":id,"revision":revision}))
+        });
+        parsed.ok_or_else(|| {
+            failure(
+                "invalid_argument",
+                "Acknowledge items as ID@REVISION from inbox list",
+            )
+        })
+    }
+
+    pub fn inbox_query(command: &InboxCommand) -> Result<(Value, &'static str)> {
+        Ok(match command {
+            InboxCommand::List { page, limit, .. } => (
+                json!({"type":"attentionInbox","page":page,"limit":limit}),
+                "attentionInbox",
+            ),
+            InboxCommand::Ack { items, .. } => {
+                if items.is_empty() || items.len() > 32 {
+                    return Err(failure("invalid_argument", "Acknowledge 1–32 items"));
+                }
+                let items = items
+                    .iter()
+                    .map(|item| mark(item))
+                    .collect::<Result<Vec<_>>>()?;
+                (
+                    json!({"type":"acknowledgeInbox","items":items}),
+                    "inboxAcknowledged",
+                )
+            }
+        })
+    }
+
+    pub fn decision_query(command: &DecisionCommand) -> Result<(Value, &'static str)> {
+        Ok(match command {
+            DecisionCommand::List { page, .. } => {
+                (json!({"type":"decisions","page":page}), "decisions")
+            }
+            DecisionCommand::Decide {
+                id, choice, note, ..
+            } => {
+                super::valid_id(id)
+                    .map_err(|_| failure("invalid_argument", "Invalid decision ID"))?;
+                if !bounded_text(choice, 2048)
+                    || note
+                        .as_deref()
+                        .is_some_and(|note| !bounded_text(note, 1024))
+                {
+                    return Err(failure(
+                        "invalid_argument",
+                        "Choice must be 1–2048 bytes and a note at most 1024 bytes",
+                    ));
+                }
+                let mut query = json!({"type":"decide","decisionId":id,"choice":choice});
+                if let Some(note) = note {
+                    query["note"] = note.clone().into();
+                }
+                (query, "decided")
+            }
+        })
+    }
+
+    pub fn check_capability(capabilities: &Value, query: &Value) -> Result<()> {
+        let flag = match query["type"].as_str() {
+            Some("decisions" | "decide") => "decisions",
+            _ => "attentionInbox",
+        };
+        if capabilities[flag] != true {
+            return Err(failure(
+                "unsupported",
+                "Host does not support the owner attention inbox and decisions; update nesvo-host",
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn capability(connection: &mut Connection, query: &Value) -> Result<()> {
+        let capabilities = request(
+            connection,
+            json!({"type":"getCapabilities"}),
+            "capabilities",
+        )
+        .await?;
+        check_capability(&capabilities, query)
+    }
+
+    async fn send(
+        machine: bool,
+        (query, kind): (Value, &str),
+        connection: &mut Connection,
+    ) -> Result<()> {
+        capability(connection, &query).await?;
+        print_data(machine, request(connection, query, kind).await?)
+    }
+
+    pub async fn run_inbox(command: InboxCommand, connection: &mut Connection) -> Result<()> {
+        send(command.machine(), inbox_query(&command)?, connection).await
+    }
+
+    pub async fn run_decision(command: DecisionCommand, connection: &mut Connection) -> Result<()> {
+        send(command.machine(), decision_query(&command)?, connection).await
+    }
+
+    pub const TOOLS: [&str; 4] = [
+        "nesvo_list_attention_inbox",
+        "nesvo_ack_attention_inbox",
+        "nesvo_list_pending_decisions",
+        "nesvo_decide",
+    ];
+
+    fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
+        serde_json::from_value(json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}))
+            .expect("constant attention input schema")
+    }
+
+    pub fn catalog() -> Vec<Tool> {
+        [
+            (
+                TOOLS[0],
+                "Owner-only: one page of needs-you items across sessions, runs, pending decisions and finished job results, sorted by priority. Each item has a stable id and a revision; follow nextPage. Acknowledged revisions stay hidden; a newer revision of the same item returns. Needs attentionInbox:true.",
+                object(
+                    json!({"page":{"type":"integer","minimum":0,"maximum":1024,"default":0},"limit":{"type":"integer","minimum":1,"maximum":32,"default":16}}),
+                    &[],
+                ),
+                true,
+            ),
+            (
+                TOOLS[1],
+                "Owner-only: acknowledge 1–32 inbox items by id and revision. Acknowledgements are durable receipts: repeating one returns the original acknowledgedAt, and reconnecting never shows the same revision again. Acknowledging does not answer a decision or validate a result.",
+                object(
+                    json!({"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["id","revision"],"properties":{"id":{"type":"string","minLength":1,"maxLength":200},"revision":{"type":"integer","minimum":0}}}}}),
+                    &["items"],
+                ),
+                false,
+            ),
+            (
+                TOOLS[2],
+                "Owner-only: pending decisions across all runs, oldest first, eight per page with their run and inbox id. No run ID is needed. Needs decisions:true.",
+                object(
+                    json!({"page":{"type":"integer","minimum":0,"maximum":512,"default":0}}),
+                    &[],
+                ),
+                true,
+            ),
+            (
+                TOOLS[3],
+                "Owner-only: answer one pending decision by its ID at its current revision. choice is the literal answer the worker receives; an optional note follows it after a blank line. Answered or canceled decisions are refused with decision_resolved and expired ones with decision_expired, so a retry never answers twice. Not a native permission grant.",
+                object(
+                    json!({"decisionId":{"type":"string","minLength":1,"maxLength":128},"choice":{"type":"string","minLength":1,"maxLength":2048},"note":{"type":"string","minLength":1,"maxLength":1024}}),
+                    &["decisionId", "choice"],
+                ),
+                false,
+            ),
+        ]
+        .into_iter()
+        .map(|(name, description, schema, read_only)| {
+            Tool::new(name, description, schema)
+                .with_annotations(
+                    ToolAnnotations::new()
+                        .read_only(read_only)
+                        .destructive(false)
+                        .idempotent(true)
+                        .open_world(!read_only),
+                )
+                .with_raw_output_schema(Arc::new(
+                    serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}}))
+                        .expect("constant attention result schema"),
+                ))
+        })
+        .collect()
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Page {
+        #[serde(default)]
+        page: u16,
+        #[serde(default)]
+        limit: Option<u16>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Marks {
+        items: Vec<Item>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Item {
+        id: String,
+        revision: u64,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Decide {
+        decision_id: String,
+        choice: String,
+        note: Option<String>,
+    }
+
+    fn parse<T: serde::de::DeserializeOwned>(arguments: &Value) -> Result<T> {
+        serde_json::from_value(arguments.clone()).map_err(|_| {
+            failure(
+                "invalid_argument",
+                "Attention arguments must match the strict tool schema",
+            )
+        })
+    }
+
+    pub fn command(name: &str, arguments: &Value) -> Option<Result<(Value, &'static str)>> {
+        let index = TOOLS.iter().position(|tool| *tool == name)?;
+        Some((|| match index {
+            0 => {
+                let Page { page, limit } = parse(arguments)?;
+                let limit = limit.unwrap_or(16);
+                if page > 1024 || !(1..=32).contains(&limit) {
+                    return Err(failure("invalid_argument", "page 0–1024, limit 1–32"));
+                }
+                inbox_query(&InboxCommand::List {
+                    page,
+                    limit,
+                    json: true,
+                })
+            }
+            1 => {
+                let Marks { items } = parse(arguments)?;
+                inbox_query(&InboxCommand::Ack {
+                    items: items
+                        .into_iter()
+                        .map(|item| format!("{}@{}", item.id, item.revision))
+                        .collect(),
+                    json: true,
+                })
+            }
+            2 => {
+                let Page { page, limit } = parse(arguments)?;
+                if page > 512 || limit.is_some() {
+                    return Err(failure("invalid_argument", "page must be 0–512"));
+                }
+                decision_query(&DecisionCommand::List { page, json: true })
+            }
+            _ => {
+                let Decide {
+                    decision_id,
+                    choice,
+                    note,
+                } = parse(arguments)?;
+                decision_query(&DecisionCommand::Decide {
+                    id: decision_id,
+                    choice,
+                    note,
+                    json: true,
+                })
+            }
+        })())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            command: crate::cli::Command,
+        }
+
+        fn parsed(arguments: &[&str]) -> crate::cli::Command {
+            let mut argv = vec!["nesvo"];
+            argv.extend_from_slice(arguments);
+            Cli::try_parse_from(argv).unwrap().command
+        }
+
+        #[test]
+        fn inbox_and_decision_cli_build_strict_owner_requests() {
+            let crate::cli::Command::Inbox { command } =
+                parsed(&["inbox", "list", "--page", "2", "--limit", "8", "--json"])
+            else {
+                panic!("inbox command expected");
+            };
+            assert!(command.machine());
+            assert_eq!(
+                inbox_query(&command).unwrap(),
+                (
+                    json!({"type":"attentionInbox","page":2,"limit":8}),
+                    "attentionInbox"
+                )
+            );
+            let crate::cli::Command::Inbox { command } =
+                parsed(&["inbox", "ack", "decision:run:one@3", "session:abc@0"])
+            else {
+                panic!("inbox command expected");
+            };
+            assert_eq!(
+                inbox_query(&command).unwrap(),
+                (
+                    json!({"type":"acknowledgeInbox","items":[{"id":"decision:run:one","revision":3},{"id":"session:abc","revision":0}]}),
+                    "inboxAcknowledged"
+                )
+            );
+            let crate::cli::Command::Decision { command } = parsed(&[
+                "decision", "decide", "abc", "--choice", "main", "--note", "keep API",
+            ]) else {
+                panic!("decision command expected");
+            };
+            assert_eq!(
+                decision_query(&command).unwrap(),
+                (
+                    json!({"type":"decide","decisionId":"abc","choice":"main","note":"keep API"}),
+                    "decided"
+                )
+            );
+            let crate::cli::Command::Decision { command } = parsed(&["decision", "list"]) else {
+                panic!("decision command expected");
+            };
+            assert_eq!(
+                decision_query(&command).unwrap(),
+                (json!({"type":"decisions","page":0}), "decisions")
+            );
+            for argv in [
+                vec!["nesvo", "inbox", "ack"],
+                vec!["nesvo", "inbox", "list", "--limit", "33"],
+                vec!["nesvo", "decision", "list", "--page", "513"],
+                vec!["nesvo", "decision", "decide", "abc"],
+            ] {
+                assert!(Cli::try_parse_from(argv).is_err());
+            }
+            for item in ["no-revision", "@1", "id@-1", "id@x"] {
+                assert!(
+                    inbox_query(&InboxCommand::Ack {
+                        items: vec![item.into()],
+                        json: true
+                    })
+                    .is_err(),
+                    "{item}"
+                );
+            }
+            assert!(
+                decision_query(&DecisionCommand::Decide {
+                    id: "abc".into(),
+                    choice: " ".into(),
+                    note: None,
+                    json: true
+                })
+                .is_err()
+            );
+        }
+
+        #[test]
+        fn attention_outputs_are_published_in_the_cli_schema() {
+            let schema: Value =
+                serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json"))
+                    .unwrap();
+            let kinds: Vec<&str> = schema["oneOf"][1]["properties"]["data"]["oneOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|shape| shape["properties"]["type"]["const"].as_str())
+                .collect();
+            for kind in [
+                "attentionInbox",
+                "inboxAcknowledged",
+                "decisions",
+                "decided",
+            ] {
+                assert!(kinds.contains(&kind), "{kind}");
+            }
+            let definitions = &schema["definitions"];
+            assert_eq!(
+                definitions["attentionItem"]["properties"]["kind"]["enum"],
+                json!(["session", "decision", "run", "result"])
+            );
+            assert_eq!(
+                definitions["attentionReceipt"]["required"],
+                json!(["id", "revision", "acknowledgedAt"])
+            );
+        }
+
+        #[test]
+        fn attention_commands_are_gated_by_capability_flags() {
+            let inbox = json!({"type":"attentionInbox"});
+            let decide = json!({"type":"decide"});
+            assert!(check_capability(&json!({}), &inbox).is_err());
+            assert!(check_capability(&json!({"decisions":true}), &inbox).is_err());
+            assert!(check_capability(&json!({"attentionInbox":true}), &decide).is_err());
+            assert!(check_capability(&json!({"attentionInbox":true}), &inbox).is_ok());
+            assert!(check_capability(&json!({"decisions":true}), &decide).is_ok());
+        }
+
+        #[test]
+        fn attention_mcp_tools_map_to_the_same_strict_requests() {
+            assert_eq!(
+                command("nesvo_list_attention_inbox", &json!({}))
+                    .unwrap()
+                    .unwrap(),
+                (
+                    json!({"type":"attentionInbox","page":0,"limit":16}),
+                    "attentionInbox"
+                )
+            );
+            assert_eq!(
+                command(
+                    "nesvo_ack_attention_inbox",
+                    &json!({"items":[{"id":"result:o","revision":2}]})
+                )
+                .unwrap()
+                .unwrap()
+                .0["items"],
+                json!([{"id":"result:o","revision":2}])
+            );
+            assert_eq!(
+                command("nesvo_list_pending_decisions", &json!({"page":1}))
+                    .unwrap()
+                    .unwrap(),
+                (json!({"type":"decisions","page":1}), "decisions")
+            );
+            assert_eq!(
+                command("nesvo_decide", &json!({"decisionId":"d","choice":"yes"}))
+                    .unwrap()
+                    .unwrap(),
+                (
+                    json!({"type":"decide","decisionId":"d","choice":"yes"}),
+                    "decided"
+                )
+            );
+            for (name, arguments) in [
+                ("nesvo_list_attention_inbox", json!({"limit":0})),
+                ("nesvo_list_attention_inbox", json!({"runId":"r"})),
+                ("nesvo_ack_attention_inbox", json!({"items":[]})),
+                ("nesvo_list_pending_decisions", json!({"limit":8})),
+                ("nesvo_decide", json!({"decisionId":"d"})),
+                (
+                    "nesvo_decide",
+                    json!({"decisionId":"d","choice":"x","runId":"r"}),
+                ),
+            ] {
+                assert!(command(name, &arguments).unwrap().is_err(), "{name}");
+            }
+            assert!(command("nesvo_list_sessions", &json!({})).is_none());
+            let names: Vec<String> = catalog().iter().map(|tool| tool.name.to_string()).collect();
+            assert_eq!(names, TOOLS);
+        }
+    }
 }
 
 #[cfg(test)]
