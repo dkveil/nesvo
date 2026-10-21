@@ -444,48 +444,75 @@ impl Registry {
     }
 }
 
+trait Inspector {
+    fn read<'a>(
+        &'a mut self,
+        directory: &'a std::path::Path,
+        stopped: &'a mut watch::Receiver<bool>,
+    ) -> impl std::future::Future<Output = crate::git_repository::Outcome> + Send + 'a;
+}
+
+struct GitInspector;
+impl Inspector for GitInspector {
+    fn read<'a>(
+        &'a mut self,
+        directory: &'a std::path::Path,
+        stopped: &'a mut watch::Receiver<bool>,
+    ) -> impl std::future::Future<Output = crate::git_repository::Outcome> + Send + 'a {
+        crate::git_repository::inspect(directory, stopped)
+    }
+}
+
+async fn run(
+    state: Arc<Mutex<crate::sessions::State>>,
+    mut demand: tokio::sync::mpsc::Receiver<()>,
+    mut stopped: watch::Receiver<bool>,
+    mut inspector: impl Inspector,
+    now: impl Fn() -> u64,
+) -> bool {
+    loop {
+        if *stopped.borrow() {
+            return true;
+        }
+        let (work, expires) = match state.lock() {
+            Ok(mut state) => state.repository_next(now()),
+            Err(_) => return false,
+        };
+        if let Some(work) = work {
+            let outcome = inspector.read(&work.directory, &mut stopped).await;
+            if let Ok(mut state) = state.lock() {
+                state.repository_finished(&work, outcome, crate::status::now_millis(), now());
+            }
+            continue;
+        }
+        tokio::select! {
+            biased;
+            _ = stopped.changed() => return true,
+            requested = demand.recv() => if requested.is_none() { return true; },
+            _ = async {
+                if let Some(deadline) = expires {
+                    tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(now()))).await;
+                } else { std::future::pending::<()>().await; }
+            } => {},
+        }
+    }
+}
+
 pub(crate) struct Runtime {
     stop: watch::Sender<bool>,
     task: Option<tokio::task::JoinHandle<bool>>,
 }
 impl Runtime {
     pub(crate) fn start(state: Arc<Mutex<crate::sessions::State>>) -> Self {
-        let (stop, mut stopped) = watch::channel(false);
-        let mut demand = state.lock().unwrap().repository_runtime();
-        let task = tokio::spawn(async move {
-            loop {
-                if *stopped.borrow() {
-                    return true;
-                }
-                let (work, expires) = match state.lock() {
-                    Ok(mut state) => state.repository_next(crate::event_log::monotonic_millis()),
-                    Err(_) => return false,
-                };
-                if let Some(work) = work {
-                    let outcome =
-                        crate::git_repository::inspect(&work.directory, &mut stopped).await;
-                    if let Ok(mut state) = state.lock() {
-                        state.repository_finished(
-                            &work,
-                            outcome,
-                            crate::status::now_millis(),
-                            crate::event_log::monotonic_millis(),
-                        );
-                    }
-                    continue;
-                }
-                tokio::select! {
-                    biased;
-                    _ = stopped.changed() => return true,
-                    requested = demand.recv() => if requested.is_none() { return true; },
-                    _ = async {
-                        if let Some(deadline) = expires {
-                            tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(crate::event_log::monotonic_millis()))).await;
-                        } else { std::future::pending::<()>().await; }
-                    } => {},
-                }
-            }
-        });
+        let (stop, stopped) = watch::channel(false);
+        let demand = state.lock().unwrap().repository_runtime();
+        let task = tokio::spawn(run(
+            state,
+            demand,
+            stopped,
+            GitInspector,
+            crate::event_log::monotonic_millis,
+        ));
         Self {
             stop,
             task: Some(task),
@@ -516,6 +543,247 @@ mod tests {
     use super::*;
     use crate::git_repository::Outcome;
     use serde_json::json;
+
+    struct RuntimeFixture {
+        state: Arc<Mutex<crate::sessions::State>>,
+        root: PathBuf,
+        events: tokio::sync::mpsc::Sender<crate::sessions::PtyEvent>,
+        _output: tokio::sync::mpsc::Receiver<crate::sessions::PtyEvent>,
+        _owner_events: tokio::sync::mpsc::Receiver<Value>,
+    }
+    impl RuntimeFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "nesvo-repository-runtime-{}",
+                hex::encode(crate::wire::random::<16>())
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let root = root.canonicalize().unwrap();
+            let state = crate::sessions::State::new(
+                root.clone(),
+                crate::storage::MetadataStore::open(std::path::Path::new(":memory:")).unwrap(),
+                crate::launchers::Launchers::discover(),
+            );
+            let (events, output) = tokio::sync::mpsc::channel(128);
+            let (owner_events, received) = tokio::sync::mpsc::channel(128);
+            let (cancelled, _cancel) = watch::channel(false);
+            let fixture = Self {
+                state: Arc::new(Mutex::new(state)),
+                root,
+                events,
+                _output: output,
+                _owner_events: received,
+            };
+            fixture.state.lock().unwrap().clients.insert(
+                1,
+                crate::sessions::Client {
+                    events: owner_events,
+                    cancelled,
+                    authority: crate::caller::Authority::Owner,
+                },
+            );
+            for name in ["a", "b"] {
+                let directory = fixture.root.join(name);
+                std::fs::create_dir(&directory).unwrap();
+                fixture
+                    .state
+                    .lock()
+                    .unwrap()
+                    .launch(
+                        &crate::jobs::LaunchSpec {
+                            name: format!("Repository runtime {name}"),
+                            cwd: Some(crate::process::display_path(&directory)),
+                            program: crate::launchers::Program::Shell,
+                            harness: Some(false),
+                            ..Default::default()
+                        },
+                        &fixture.events,
+                    )
+                    .unwrap();
+            }
+            fixture
+        }
+        fn list(&self, client: u64) {
+            self.state
+                .lock()
+                .unwrap()
+                .command(client, crate::protocol::Command::List, None, &self.events)
+                .unwrap();
+        }
+        fn cleanup(&self) -> bool {
+            let workers = self
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .shutdown();
+            let mut joined = true;
+            for worker in workers {
+                joined &= worker.join().is_ok();
+            }
+            let owned = std::env::temp_dir().canonicalize().is_ok_and(|temporary| {
+                self.root.parent() == Some(temporary.as_path())
+                    && self
+                        .root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("nesvo-repository-runtime-"))
+            });
+            joined && owned && (!self.root.exists() || std::fs::remove_dir_all(&self.root).is_ok())
+        }
+    }
+    impl Drop for RuntimeFixture {
+        fn drop(&mut self) {
+            // Also retire both owned shell lifetimes on an assertion unwind.
+            let _ = self.cleanup();
+        }
+    }
+
+    struct ActiveRead(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for ActiveRead {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    struct BlockingInspector {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        active: Arc<std::sync::atomic::AtomicUsize>,
+        first: Option<tokio::sync::oneshot::Receiver<()>>,
+    }
+    impl Inspector for BlockingInspector {
+        async fn read<'a>(
+            &'a mut self,
+            _directory: &'a std::path::Path,
+            _stopped: &'a mut watch::Receiver<bool>,
+        ) -> Outcome {
+            use std::sync::atomic::Ordering;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.active.fetch_add(1, Ordering::SeqCst);
+            let _active = ActiveRead(self.active.clone());
+            if let Some(first) = self.first.take() {
+                let _ = first.await;
+            }
+            ready()
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_last_disconnect_drains_admitted_read_without_admitting_queued_directory() {
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+        // Real State/client authorization and two owned shell subscriptions;
+        // the inspector is the sole substituted adapter. No Git/provider runs.
+        let fixture = RuntimeFixture::new();
+        let clock = Arc::new(AtomicU64::new(crate::event_log::monotonic_millis()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let active = Arc::new(AtomicUsize::new(0));
+        let (release, first) = tokio::sync::oneshot::channel();
+        let (stop, stopped) = watch::channel(false);
+        let demand = fixture.state.lock().unwrap().repository_runtime();
+        let read_clock = clock.clone();
+        let mut worker = Box::pin(run(
+            fixture.state.clone(),
+            demand,
+            stopped,
+            BlockingInspector {
+                calls: calls.clone(),
+                active: active.clone(),
+                first: Some(first),
+            },
+            move || read_clock.load(Ordering::SeqCst),
+        ));
+        fixture.list(1);
+        fixture.list(1);
+        assert!(futures_util::poll!(&mut worker).is_pending());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "The first real admission reached the adapter"
+        );
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        let checking = fixture.state.lock().unwrap().list()["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|session| session["repositoryContext"]["state"] == "checking")
+            .count();
+        assert_eq!(
+            checking, 2,
+            "Both distinct directories have explicit demand"
+        );
+        fixture.state.lock().unwrap().disconnect(1);
+        release.send(()).unwrap();
+        assert!(futures_util::poll!(&mut worker).is_pending());
+        assert_eq!(
+            active.load(Ordering::SeqCst),
+            0,
+            "The admitted read drained"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "The other directory lost its last authorized demand"
+        );
+        clock.fetch_add(TTL_MS + 1, Ordering::SeqCst);
+        // A late close notification exercises the real bounded wake channel;
+        // it must not turn the advanced expiry clock into a new demand.
+        fixture.state.lock().unwrap().disconnect(1);
+        assert!(futures_util::poll!(&mut worker).is_pending());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let (next, expiry) = fixture
+            .state
+            .lock()
+            .unwrap()
+            .repository_next(clock.load(Ordering::SeqCst));
+        assert!(next.is_none());
+        assert_eq!(expiry, None);
+        stop.send_replace(true);
+        assert!(worker.await);
+
+        // Aborting this same production loop while an admitted adapter future
+        // is blocked also drops that future. Native Git cleanup is separately
+        // covered by the real adapter's command-scope conformance tests.
+        let (events, _received) = tokio::sync::mpsc::channel(128);
+        let (cancelled, _cancel) = watch::channel(false);
+        fixture.state.lock().unwrap().clients.insert(
+            2,
+            crate::sessions::Client {
+                events,
+                cancelled,
+                authority: crate::caller::Authority::Owner,
+            },
+        );
+        let (_release, first) = tokio::sync::oneshot::channel();
+        let (stop, stopped) = watch::channel(false);
+        let demand = fixture.state.lock().unwrap().repository_runtime();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let read_clock = clock.clone();
+        let mut worker = Box::pin(run(
+            fixture.state.clone(),
+            demand,
+            stopped,
+            BlockingInspector {
+                calls: calls.clone(),
+                active: active.clone(),
+                first: Some(first),
+            },
+            move || read_clock.load(Ordering::SeqCst),
+        ));
+        fixture.list(2);
+        assert!(futures_util::poll!(&mut worker).is_pending());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        fixture.state.lock().unwrap().disconnect(2);
+        stop.send_replace(true);
+        drop(worker);
+        assert_eq!(
+            active.load(Ordering::SeqCst),
+            0,
+            "Dropping the worker drops the blocked read"
+        );
+        assert!(
+            fixture.cleanup(),
+            "The exact owned shell fixture retires on success and unwind"
+        );
+    }
 
     fn binding(id: &str, directory: &str, incarnation: u8) -> Binding {
         Binding {

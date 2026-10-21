@@ -3673,3 +3673,24 @@ of an earlier CPU incident. The fixture PATH has no Git, so CPU evidence alone
 does not prove zero closed-client inspection attempts. The source manifests and
 reports remain outside the repository. Physical-phone, interactive other-platform
 and current-provider-cwd acceptance remain open; this is not the whole F31 gate.
+
+### F31 closed-client runtime admission
+
+The retained production loop now has a private, allocation-free inspector/clock
+seam. A deterministic regression uses real State, owner List/disconnect and two
+owned native shell sessions. After the first read blocks, the final disconnect
+drops demand for the other directory. Draining the admitted read, advancing the
+clock beyond cooldown and delivering a stale close wake never admits that second
+directory. A separate blocked-loop drop checks future ownership; native process
+cleanup remains the Git adapter's conformance boundary. The fixture joins its
+owned shell shutdown workers and validates its private temporary root on cleanup.
+
+Windows formatting and warnings-denied all-target Clippy pass. All 23 ordinary
+repository-related regressions pass, and the actual Git/CLI/MCP cooldown scenario
+passes again in 32.68 seconds after rebuilding the extracted runtime. No model,
+production counter, new polling, timeout or authority change is introduced. This
+deterministic admission proof complements rather than relabels the earlier CPU
+measurement, whose PATH contains no Git. A controlled Windows ConPTY attempt
+stopped at its Unicode search-input observation; its private report is retained.
+Interactive acceptance remains pending while the harness observer/input and
+cleanup boundaries are investigated; it is not reported as a passing smoke test.

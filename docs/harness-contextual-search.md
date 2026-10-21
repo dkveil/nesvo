@@ -54,6 +54,16 @@ are not searchable. Rendering, PTY output and publication never request Git.
 Disconnect drops queued interest; an admitted read may finish bounded cleanup,
 but cannot schedule another read. Elapsed wall time never renews evidence.
 
+A deterministic test drives the actual retained runtime with real host State,
+owner List requests and two owned shell sessions. Only the inspector and
+monotonic clock are substituted. It blocks the first admitted read, disconnects
+the final client, drains that read, advances past the cooldown and delivers a
+stale wake. The second directory never reaches the inspector. Dropping a later
+blocked runtime also drops its adapter future; native Git cleanup is established
+by the separate command-scope conformance test. No production counter, extra
+polling, environment hook or additional task is introduced. This is admission
+proof, not measured Git subprocess counts during the CPU benchmark.
+
 Inspection uses literal `rev-parse --path-format=absolute --show-toplevel
 --git-common-dir` and `symbolic-ref --quiet HEAD` builtins, no shell composition,
 network, hooks, changes or direct model APIs. An unborn symbolic branch is valid;
