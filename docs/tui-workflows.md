@@ -8,31 +8,62 @@ For an isolated test, build with `cargo build --workspace --target-dir target/ve
 
 ## Keyboard and focus
 
-F4 opens Git review directly from terminal input as well as navigation; F4 or Escape closes it and restores input when opened from a terminal. The session sidebar is hidden during review. F6–F9 are also global. Other shortcuts apply in navigation mode. Global bindings can be changed in Settings → `k`; dialogs retain exclusive focus. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K` and Escape, belongs to the program while typing.
+F4 opens Git review directly from terminal input as well as navigation: with the `reviews` capability and a content area of 88 columns or more it toggles a review tab, otherwise the diff dock. F4 hides either again, Escape closes the dock or returns focus from a tab, and `q` closes a tab; each restores input when review was opened from a terminal. A diff dock opened from a full-screen terminal hides the session sidebar until `Ctrl+Q`. F6–F9 are also global and F1 opens the main menu even while typing. Other shortcuts apply in navigation mode. Global bindings can be changed in Settings → `k`: Enter, then press an unused F3–F12 key (F1 and F2 are reserved); `r` restores the defaults. Dialogs and full views (Jobs, Overview, Git, Layouts, Session kind) retain exclusive focus. `Ctrl+Q` returns from terminal input to navigation; normal input, including `Ctrl+K`, Page Up / Page Down and Escape, belongs to the program while typing.
 
 | Key                       | Action                                                 |
 | ------------------------- | ------------------------------------------------------ |
-| `/`                       | Compact session/group search                           |
-| `F2` in search            | Expand without losing the query                        |
-| `Ctrl+K`                  | Open expanded palette                                  |
-| `Tab` in expanded palette | All, sessions, groups, commands                        |
-| Arrows / Enter / Escape   | Highlight / confirm / dismiss                          |
-| `F4`                      | Open or close Git changes                              |
+| `/`                       | Expanded palette: sessions, groups and commands        |
+| `F2` / `Tab` in search    | Expand without losing the query                        |
+| `Ctrl+K`                  | Open expanded palette (navigation mode only)           |
+| `Tab` in expanded palette | All, sessions, groups, commands; Shift+Tab reverses    |
+| Arrows / Enter / Escape   | Highlight / confirm / dismiss; Ctrl+P / Ctrl+N move    |
+| `@ $ ! #` in palette      | Prefix: agents, terminals, needs attention, files      |
+| `F4`                      | Toggle review: tab, or diff dock if narrow or old host |
 | `F6`                      | Toggle to the previously entered session               |
 | `F7`                      | Enter the oldest unread, unmuted attention event       |
 | `F8`                      | Saved launch templates                                 |
 | `F9`                      | Explicitly restore sessions from previous host runs    |
+| Settings, then `k`        | Rebind F4, F6-F9 to an unused F3-F12; `r` resets       |
+| `F1` or `M`               | Main menu; F1 also works while typing                  |
+| `?`                       | Keyboard reference; Left / Right change its page       |
+| `Ctrl+Q`                  | From typing: back to navigation, reveals the sidebar   |
+| Typing in a session       | Only Ctrl+Q, F1 and global F-keys are intercepted      |
+| `j` / `k`, `Enter`        | Select and preview / open a session or fold a group    |
+| `h` / `l`                 | Collapse / expand a group (also Left / Right)          |
+| `i` / `t` / `x`           | Type (acquire control) / take over / release           |
+| `g`, `r`, `m`, `d`        | New group / rename / move / delete (asks first)        |
+| `v`, `Tab`                | Toggle two panes; Tab cycles them or focuses a review  |
+| `p` / `z`                 | Phone pairing details / full-screen sessions on or off |
+| `[` / `]`                 | Sidebar narrower / wider; diff dock wider / narrower   |
+| `PgUp` / `PgDn`           | Scroll local terminal history by 12 lines              |
+| `Esc`, `q` / `Ctrl+C`     | Esc asks to leave nesvo; q or Ctrl+C detach directly   |
 | `u`                       | Mute/unmute alerts for the current session             |
 | `f`                       | Select status filters; empty selection means all       |
 | `n`, then `F2`            | New session and advanced launch options                |
+| `F3` in new session       | Save the form as a launch template                     |
 | `N`                       | Session kind: agent with profile, terminal or review   |
+| `1`-`3` in session kind   | Pick directly; in Review, `1` is local, `2` a PR URL   |
 | `L`                       | Layouts: apply, save, rename, delete, set default      |
+| `s r d D` in Layouts      | Save current, rename, delete, default; Enter applies   |
 | `1` / `2`, `F`            | Files sidebar: preview, paste path, pin `o`, find `#`  |
+| `p` / `P` in Files        | Paste relative / absolute path into the session        |
+| `. r o` in Files          | Hidden files / refresh / pin or unpin the folder       |
+| `Enter` / `Esc` in Files  | Preview or fold / close preview, then back to sessions |
+| `Ctrl+P` in Files         | Find files (same as `#` in the palette)                |
 | `S`                       | Scheduled sessions; refresh or cancel a pending launch |
-| `J`                       | Jobs: list, details, history, form                     |
+| `J`                       | Jobs: list, details, history, form; Esc steps back     |
+| `n` / `r` in Jobs list    | New once-job form / reload; Enter opens details        |
+| `e R h` in Jobs detail    | Edit / run now / history; Space pauses or resumes      |
+| `c` in Jobs history       | Cancel the selected occurrence; Enter inspects it      |
 | `O`                       | Overview table; `w` wake, `f` filters, `/` text filter |
+| `Enter` in Overview       | Jump to the session without control; Esc or `O` closes |
 | `u` in Overview           | Usage panel: provider quota windows, freshness, wake   |
 | `Y`                       | Git view: branch, changes, commits, diff; read-only    |
+| `Tab` / `Enter` in Git    | Next section (Shift+Tab back) / open the selected diff |
+| `J` / `K` in Git          | Scroll the open diff (also PgDn / PgUp)                |
+| `r`, `Esc`, `q` in Git    | Refresh / close diff, then view / close view           |
+| Review tab keys           | Listed under Git review below                          |
+| Diff dock keys            | Listed under Git review below                          |
 | `H`                       | Replay onboarding                                      |
 | `w` when offered          | Confirm arming or disabling quota wake                 |
 
@@ -42,9 +73,9 @@ Search highlights preview sessions without activating another tab. Enter confirm
 
 On a host with the `reviews` capability, `F4` (content area of 88 columns or more), `N` → Review → Local changes, `N` → Review → GitHub PR URL, and `nesvo review open` from the CLI or MCP each open a review tab (◆ in the tab strip) bound to the host `reviewId`. The header shows scope, base, head, revision, readiness blockers and PR checks; the file list marks edit provenance (`A` this session's agent, `O` another agent, `?` uncertain, `·` unattributed). A layout's Review leaf hosts the shown review tab; otherwise it replaces the panes.
 
-Review tab keys follow reviewr: `j`/`k`, `]`/`[` change, `f`/`F` file, Tab pane, `/` search, `w` wrap, `|` side by side (137+ columns), `u`/`b`/`t` scope uncommitted / branch / this turn, `B` base, `v` select, `c` comment, `C` summary, `e`/`d` edit / delete, `n`/`N` next / previous comment, `l` list, `y` copy, `s` send, `r` refresh, `q` close, Esc back to navigation. Comments are anchored to path, lines, snippet and revision; a refresh with a new revision relocates or marks them drifted. They persist in `<config>/nesvo/review-<reviewId>.json` (64 KiB). `s` picks an agent in the palette (`@`) and calls `deliverReview`: a lease-bound paste up to 32 KiB when this client controls it, otherwise an 8192-byte send; longer reviews are truncated with a marker and the footer shows the receipt or refusal.
+Review tab keys follow reviewr: `j`/`k` or Up/Down move, Page Up/Page Down page and `Ctrl+D`/`Ctrl+U` half-page, `]`/`[` change, `f`/`F` file, Tab pane, `/` search, `w` wrap, `|` side by side (137+ columns), `u`/`b`/`t` scope uncommitted / branch / this turn, `B` base, `v` select, `c` comment, `C` summary, `e`/`d` edit / delete the comment on the cursor line, `n`/`N` next / previous comment, `l` list (`j`/`k`, Enter jump, `e`, `d`, Esc), `y` copy the review text, `s` send, `r` refresh, `q` close the tab, `F4` hide it, Esc step back (it first clears a line selection, then a message, then returns focus to navigation). While typing a comment, summary, search or base, Enter saves, Esc cancels, `Ctrl+U` clears, and `Ctrl+J` or Alt/Shift+Enter add a newline to comments and summaries. Comments are anchored to path, lines, snippet and revision; a refresh with a new revision relocates or marks them drifted. They persist in `<config>/nesvo/review-<reviewId>.json` (64 KiB). `s` picks an agent in the palette (`@`) and calls `deliverReview`: a lease-bound paste up to 32 KiB when this client controls it, otherwise an 8192-byte send; longer reviews are truncated with a marker and the footer shows the receipt or refusal.
 
-Without that capability, or below 88 columns, `F4` opens the diff dock. `e` expands review; `s` switches side-by-side when at least 100 columns are available. Up/Down selects files, Left/Right selects a hunk, Space folds that hunk, Page Up/Down scrolls, `c` switches scope, `r` refreshes, Tab changes focus and Escape closes.
+Without that capability, or below 88 columns, `F4` opens the diff dock. `e` expands review; `s` switches side-by-side when at least 100 columns are available. Up/Down selects files, Left/Right selects a hunk, Space folds that hunk, Page Up/Down scrolls, `c` switches scope, `r` refreshes, `y` copies the selected file's patch, `o` pins the review folder (`a` returns it to Auto), `[`/`]` widen / narrow the dock, Tab changes focus and Escape closes.
 
 Scopes are explicitly **unstaged**, **staged**, or **untracked**, not an inferred agent turn. Rename, deletion, additions, binary indicators and a clean repository are handled. File statistics describe the included patch and can be partial. Limits are 128 files, 8 KiB per patch, 24 KiB of total raw patches, and a serialized response below the wire limit of 64 KiB. Truncated results are labelled. Git commands time out after 10 seconds; unusually slow repositories can return an error. Non-UTF-8 filenames are not supported by the JSON path representation.
 
@@ -120,7 +151,7 @@ To produce the cache, copy `scripts/nesvo_usage_cache.py` beside your Python Cla
 
 ## Compact workspace and review target
 
-The workspace header and footer each use one row. Click unused sidebar space or its heading to return to navigation without switching sessions. Git review defaults to a narrow panel; `[` / `]` resize it and `e` expands it. `o` edits the review directory on the host (empty resets to the session launch directory). The panel displays its directory and scope; it does not infer repositories from agent prose. `c` switches unstaged/staged/untracked. Refresh continues in fullscreen mode and retries requests unanswered for 15 seconds.
+The workspace header and footer each use one row. Click unused sidebar space or its heading to return to navigation without switching sessions. Git review defaults to a narrow panel; `[` / `]` resize it and `e` expands it. `o` edits the review directory on the host (empty resets to the session launch directory); `a` resets it to Auto at once. The panel displays its directory and scope; it does not infer repositories from agent prose. `c` switches unstaged/staged/untracked. Refresh continues in fullscreen mode and retries requests unanswered for 15 seconds.
 
 ## Pointer scrolling, appearance and copy
 
@@ -128,7 +159,7 @@ Wheel input above a session preserves focus. Ordinary terminals use local scroll
 
 Settings → Theme opens the full list with live preview. Enter applies the selection; Escape restores the original. Preview values are not persisted. The sidebar uses a compact solid-cell rendering of the canonical pixel wordmark; the intro retains its shared subtle logo animation and adds live session/connection context. No continuous workspace animation is added.
 
-Shortcut keycaps use balanced inner padding and an outer gap in the footer, review, palette, workflow overlays and keyboard reference. Review hints wrap as complete key/description pairs. Diff additions/deletions have brighter text while retaining the existing backgrounds. In focused review, `y` copies the selected file's complete available patch (including only the returned portion when marked partial). Windows uses a hidden clipboard helper off the render loop with a five-second timeout and a single in-flight request; other platforms request OSC 52 clipboard copying, subject to terminal support. No remote host command is involved. Clipboard content delivery was not verified against the user's clipboard.
+Shortcut keycaps use balanced inner padding and an outer gap in the footer, review, palette, workflow overlays and keyboard reference. Review hints wrap as complete key/description pairs. Diff additions/deletions have brighter text while retaining the existing backgrounds. In the focused diff dock, `y` copies the selected file's complete available patch (including only the returned portion when marked partial); in a review tab it copies the comments as text. Windows uses a hidden clipboard helper off the render loop with a five-second timeout and a single in-flight request; other platforms request OSC 52 clipboard copying, subject to terminal support. No remote host command is involved. Clipboard content delivery was not verified against the user's clipboard.
 
 ## Selection and focus refinements
 
