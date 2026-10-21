@@ -45,6 +45,8 @@ pub struct LaunchSpec {
     pub prompt: String,
     #[serde(default)]
     pub worktree: bool,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub(crate) worktree_setup: Option<crate::worktrees::SetupFact>,
     #[serde(default)]
     pub auto_title: bool,
     #[serde(default)]
@@ -105,17 +107,12 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>) {
                 "Launch no longer valid: check folder, group, installed program and session capacity."
             )),
         };
+        let session_id = hex::encode(crate::wire::random::<16>());
         let result = match cwd {
             Ok(cwd) => {
                 if spec.worktree {
-                    match crate::git::create_worktree(&cwd).await {
-                        Ok(path) => {
-                            spec.cwd = Some(crate::process::display_path(&path));
-                            spec.worktree = false;
-                            Ok(())
-                        }
-                        Err(error) => Err(error),
-                    }
+                    let log = state.lock().ok().and_then(|state| state.event_log().ok());
+                    crate::worktrees::derive(&cwd, &session_id, log, &mut spec).await
                 } else {
                     Ok(())
                 }
@@ -123,7 +120,8 @@ pub async fn run(state: Arc<Mutex<State>>, events: mpsc::Sender<PtyEvent>) {
             Err(error) => Err(error),
         };
         if let Ok(mut state) = state.lock() {
-            let result = result.and_then(|()| state.launch(&spec, &events));
+            let result =
+                result.and_then(|()| state.launch_reserved(&spec, &events, &session_id, None));
             state.finish_job(&id, result);
         }
     }
@@ -160,6 +158,28 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&resumed).unwrap()["resume"],
             serde_json::json!({"provider":"claude","conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e"})
+        );
+    }
+    #[test]
+    fn worktree_setup_evidence_is_host_written_and_never_changes_legacy_fingerprints() {
+        let mut supplied = serde_json::json!({"name":"Worktree","cwd":null,"groupId":null,"program":"shell","prompt":"","worktree":true,"autoTitle":false,"muted":false,"resumePicker":false});
+        let legacy = supplied.clone();
+        supplied["worktreeSetup"] =
+            serde_json::json!({"digest":"forged","result":"passed","log":"forged"});
+        let spec: LaunchSpec = serde_json::from_value(supplied).unwrap();
+        assert!(spec.worktree_setup.is_none());
+        assert_eq!(serde_json::to_value(&spec).unwrap(), legacy);
+        let prepared = LaunchSpec {
+            worktree_setup: Some(crate::worktrees::SetupFact {
+                digest: "d".repeat(64),
+                result: "passed",
+                log: "setup.log".into(),
+            }),
+            ..spec
+        };
+        assert_eq!(
+            serde_json::to_value(prepared).unwrap()["worktreeSetup"],
+            serde_json::json!({"digest":"d".repeat(64),"result":"passed","log":"setup.log"})
         );
     }
     #[test]

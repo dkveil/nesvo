@@ -95,6 +95,7 @@ mod workflow_wake_batches;
 mod workflow_wake_events;
 mod workflow_wake_runtime;
 mod workflow_wakes;
+mod worktrees;
 use nesvo_host::wire;
 
 use anyhow::{Context, Result, ensure};
@@ -398,6 +399,9 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     private_write(&qr_path, svg.as_bytes())?;
     span.end(true);
 
+    if let Err(error) = worktrees::configure(&pairing_dir) {
+        eprintln!("Worktree registry is unavailable: {error}");
+    }
     let span = trace.begin(Phase::MetadataOpen);
     let metadata = span.result(storage::MetadataStore::open(
         &pairing_dir.join("metadata.sqlite3"),

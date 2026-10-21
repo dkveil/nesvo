@@ -953,7 +953,9 @@ async fn dispatch_quota_create(
     let mut spawn_attempted = false;
     let result: Result<String> = async {
         let gate = continuation.ready(&directory, false).await?;
+        let mut worktree_plan = None;
         if derived_worktree {
+            worktree_plan = Some(crate::worktrees::plan(&directory).await?);
             // From this boundary Git may have left real repository artifacts.
             // Every later refusal remains uncertain about effects, even when
             // no native process was spawned.
@@ -967,6 +969,15 @@ async fn dispatch_quota_create(
         }
         spec.cwd = Some(crate::process::display_path(&directory));
         spec.worktree = false;
+        if let Some(plan) = worktree_plan {
+            spec.worktree_setup = crate::worktrees::prepare(
+                plan,
+                &directory,
+                &claim.receipt.session_id,
+                Some(log.clone()),
+            )
+            .await?;
+        }
         log.launch(crate::workflow_launches::Work::PreparedWorkspace {
             operation_id: claim.receipt.id.clone(),
             token: claim.token.clone(),
@@ -1012,6 +1023,9 @@ async fn dispatch_quota_create(
     match result {
         Ok(id) => ("created", json!({"sessionId":id,"taskResult":null})),
         Err(error) => {
+            if let Some(failure) = crate::worktrees::Failure::of(&error) {
+                return failure.receipt(&claim.receipt.session_id, spec.cwd.as_deref());
+            }
             let typed = error.downcast_ref::<crate::api_error::Error>();
             let no_effect = !setup_started && !spawn_attempted && typed.is_some();
             (
@@ -1078,18 +1092,26 @@ pub(crate) async fn dispatch_create(
         ),
         Ok(directory) => {
             let setup = if spec.worktree {
-                crate::git::create_worktree(&directory).await.map(|path| {
-                    spec.cwd = Some(crate::process::display_path(&path));
-                    spec.worktree = false;
-                })
+                crate::worktrees::derive(
+                    &directory,
+                    &claim.receipt.session_id,
+                    Some(log.clone()),
+                    &mut spec,
+                )
+                .await
             } else {
                 Ok(())
             };
             match setup {
-                Err(_) => (
-                    "unknown",
-                    json!({"code":"worktree_unconfirmed","message":"Inspect the repository before creating another worktree"}),
-                ),
+                Err(error) => match crate::worktrees::Failure::of(&error) {
+                    Some(failure) => {
+                        failure.receipt(&claim.receipt.session_id, spec.cwd.as_deref())
+                    }
+                    None => (
+                        "unknown",
+                        json!({"code":"worktree_unconfirmed","message":"Inspect the repository before creating another worktree"}),
+                    ),
+                },
                 Ok(()) => {
                     let launched = state.lock().unwrap().launch_authorized(
                         &context.authority,

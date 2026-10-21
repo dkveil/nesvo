@@ -179,6 +179,29 @@ pub enum Command {
         #[serde(default)]
         limit: Option<usize>,
     },
+    DescribeWorktreeSetup {
+        directory: String,
+    },
+    ApproveWorktreeSetup {
+        directory: String,
+        digest: String,
+    },
+    RevokeWorktreeSetup {
+        directory: String,
+        digest: String,
+    },
+    RunWorktree {
+        session_id: String,
+    },
+    CancelWorktree {
+        session_id: String,
+    },
+    ArchiveWorktree {
+        session_id: String,
+        #[serde(default)]
+        discard: bool,
+    },
+    ListWorktrees,
     Create {
         name: String,
         cwd: Option<String>,

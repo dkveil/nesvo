@@ -1452,6 +1452,7 @@ impl State {
         event["workflowPlans"] = true.into();
         event["reviews"] = true.into();
         event["files"] = true.into();
+        event["worktrees"] = crate::worktrees::available().into();
         event["git"] = true.into();
         event
     }
@@ -2621,7 +2622,7 @@ impl State {
     ) -> Result<String> {
         self.launch_inner(spec, events, None, None)
     }
-    fn launch_reserved(
+    pub(crate) fn launch_reserved(
         &mut self,
         spec: &crate::jobs::LaunchSpec,
         events: &mpsc::Sender<PtyEvent>,
@@ -3052,6 +3053,15 @@ impl State {
             }
             Command::ListCommits { .. } => {
                 return Err(anyhow!("Commit history requires asynchronous dispatch."));
+            }
+            Command::DescribeWorktreeSetup { .. }
+            | Command::ApproveWorktreeSetup { .. }
+            | Command::RevokeWorktreeSetup { .. }
+            | Command::RunWorktree { .. }
+            | Command::CancelWorktree { .. }
+            | Command::ArchiveWorktree { .. }
+            | Command::ListWorktrees => {
+                return Err(anyhow!("Worktrees require asynchronous dispatch."));
             }
             Command::AcknowledgeAttention {
                 session_id,

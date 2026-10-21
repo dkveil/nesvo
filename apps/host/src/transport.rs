@@ -448,10 +448,19 @@ pub async fn handle(
                             let permit = git_gate.clone().try_acquire_owned();
                             let state = state.clone();
                             let events = pty_events.clone();
+                            let reserved = hex::encode(wire::random::<16>());
+                            let log = state.lock().unwrap().event_log().ok();
                             tokio::spawn(async move {
                                 let result = match (directory, permit) {
-                                    (Ok(directory), Ok(_permit)) => {
-                                        if spec.worktree { crate::git::create_worktree(&directory).await }
+                                    (Ok(directory), Ok(permit)) => {
+                                        if spec.worktree {
+                                            let created = async { let plan = crate::worktrees::plan(&directory).await?; let path = crate::git::create_worktree(&directory).await?; Ok::<_, anyhow::Error>((plan, path)) }.await;
+                                            drop(permit);
+                                            match created {
+                                                Ok((plan, path)) => crate::worktrees::prepare(plan, &path, &reserved, log).await.map(|fact| { spec.worktree_setup = fact; path }),
+                                                Err(error) => Err(error),
+                                            }
+                                        }
                                         else { Ok(directory) }
                                     }
                                     (Err(error), _) => Err(error),
@@ -461,11 +470,14 @@ pub async fn handle(
                                     let result = result.and_then(|path| {
                                         spec.cwd = Some(crate::process::display_path(&path));
                                         spec.worktree = false;
-                                        state.launch(&spec, &events)
+                                        state.launch_reserved(&spec, &events, &reserved, None)
                                     });
                                     let mut event = match result {
                                         Ok(id) => json!({"type":"created", "sessionId":id}),
-                                        Err(error) => json!({"type":"error", "message":error.to_string()}),
+                                        Err(error) => match crate::worktrees::error_code(&error) {
+                                            Some(code) => json!({"type":"error", "code":code, "message":error.to_string(), "sessionId":reserved}),
+                                            None => json!({"type":"error", "message":error.to_string()}),
+                                        },
                                     };
                                     if let Some(request_id) = request_id { event["requestId"] = request_id.into(); }
                                     state.send(id, event);
@@ -510,6 +522,11 @@ pub async fn handle(
                         if matches!(command, Command::ListEntries { .. } | Command::ReadFile { .. } | Command::FindFiles { .. }) {
                             let permit = files_gate.clone().try_acquire_owned().ok();
                             tokio::spawn(crate::files::serve(state.clone(), id, command, request_id, permit));
+                            continue;
+                        }
+                        if crate::worktrees::handles(&command) {
+                            let permit = event_gate.clone().try_acquire_owned().ok();
+                            tokio::spawn(crate::worktrees::serve(state.clone(), id, command, request_id, permit));
                             continue;
                         }
                         if matches!(command, Command::ListCommits { .. }) {

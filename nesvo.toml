@@ -1,0 +1,5 @@
+[worktree]
+setup = ["cargo fetch --locked"]
+run = ["cargo check --workspace --locked"]
+env_files = []
+timeout_s = 900
