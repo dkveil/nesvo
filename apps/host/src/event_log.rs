@@ -263,6 +263,7 @@ impl Store {
         crate::workflow_wakes::recover(&mut connection)?;
         crate::workflow_controls::recover(&mut connection)?;
         crate::job_definitions::recover(&mut connection, crate::status::now_millis())?;
+        crate::attention_inbox::recover(&connection)?;
         Ok(Self(connection))
     }
     fn cursors(&self) -> Result<(u64, u64)> {

@@ -282,23 +282,6 @@ fn decide(
         .ok_or_else(|| Error::new("decision_not_found", "Decision is unavailable"))?;
     expire(connection, &json!({ "id": run_id }), None, now)?;
     let current = load(connection, &run_id, &decision_id)?;
-    match current["state"].as_str() {
-        Some("pending") => {}
-        Some("expired") => {
-            return Err(Error::new(
-                "decision_expired",
-                "Decision expired before an answer was recorded",
-            )
-            .into());
-        }
-        _ => {
-            return Err(Error::new(
-                "decision_resolved",
-                "Decision was already answered or canceled",
-            )
-            .into());
-        }
-    }
     let answer = match note.as_deref().map(str::trim) {
         Some(note) if !note.is_empty() => format!(
             "{choice}
@@ -310,20 +293,55 @@ fn decide(
     let revision = current["revision"]
         .as_u64()
         .ok_or_else(|| invalid("Missing decision revision"))?;
-    let mut result = execute(
-        connection,
-        actor,
-        Request::Answer {
-            key: format!("decide:{decision_id}:{revision}"),
-            run_id: run_id.clone(),
-            decision_id: decision_id.clone(),
-            expected_revision: revision,
-            answer,
-        },
-        now,
-    )?;
+    let request = |revision: u64, answer: String| Request::Answer {
+        key: format!("decide:{decision_id}:{revision}"),
+        run_id: run_id.clone(),
+        decision_id: decision_id.clone(),
+        expected_revision: revision,
+        answer,
+    };
+    match current["state"].as_str() {
+        Some("pending") => {}
+        Some("expired") => {
+            return Err(Error::new(
+                "decision_expired",
+                "Decision expired before an answer was recorded",
+            )
+            .into());
+        }
+        _ => {
+            let original = request(revision.saturating_sub(1), answer);
+            let replayed = match &original {
+                Request::Answer { key, .. } => {
+                    orchestration::replay(connection, &actor, key, &digest(&original)?)
+                        .ok()
+                        .flatten()
+                }
+                _ => None,
+            };
+            let Some(mut result) = replayed else {
+                return Err(Error::new(
+                    "decision_resolved",
+                    "Decision was already answered or canceled",
+                )
+                .into());
+            };
+            result["inboxId"] = inbox_id(&run_id, &decision_id).into();
+            return Ok(result);
+        }
+    }
+    let mut result = execute(connection, actor, request(revision, answer), now)?;
     result["inboxId"] = inbox_id(&run_id, &decision_id).into();
     Ok(result)
+}
+fn digest(request: &Request) -> Result<String> {
+    Ok(hex::encode(
+        ring::digest::digest(
+            &ring::digest::SHA256,
+            &serde_json::to_vec(&json!({"action":"decision","request":request}))?,
+        )
+        .as_ref(),
+    ))
 }
 pub fn summary(connection: &Connection, attempt: &str) -> Result<Value> {
     let (total,pending,unresolved):(i64,i64,i64) = connection.query_row("SELECT count(*),COALESCE(SUM(state='pending'),0),COALESCE(SUM(state!='answered'),0) FROM workflow_decisions WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
@@ -486,13 +504,7 @@ pub fn execute(
         _ => unreachable!(),
     };
     orchestration::validate_key(key)?;
-    let digest = hex::encode(
-        ring::digest::digest(
-            &ring::digest::SHA256,
-            &serde_json::to_vec(&json!({"action":"decision","request":request}))?,
-        )
-        .as_ref(),
-    );
+    let digest = digest(&request)?;
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     if let Some(previous) = orchestration::replay(&transaction, &actor, key, &digest)? {

@@ -207,7 +207,7 @@ fn attention_inbox_aggregates_sessions_decisions_runs_and_results_in_pages_under
 }
 
 #[test]
-fn inbox_acknowledgements_are_receipts_that_survive_a_reconnect_and_a_host_restart() {
+fn inbox_acknowledgements_survive_a_reconnect_and_only_journal_items_survive_a_host_restart() {
     let path = std::env::temp_dir().join(format!(
         "nesvo-attention-{}.sqlite3",
         hex::encode(crate::wire::random::<8>())
@@ -238,7 +238,9 @@ fn inbox_acknowledgements_are_receipts_that_survive_a_reconnect_and_a_host_resta
     assert_eq!(again["acknowledged"][0]["acknowledgedAt"], NOW + 10);
     drop(store);
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(read(&mut store, 0, 16, live.clone())["total"], 0);
+    let restarted = read(&mut store, 0, 16, live.clone());
+    assert_eq!(restarted["total"], 1);
+    assert_eq!(restarted["items"][0]["id"], session);
     let newer = read(&mut store, 0, 16, sessions(1, 5));
     assert_eq!(newer["total"], 1);
     assert_eq!(newer["items"][0]["id"], session);
@@ -276,7 +278,8 @@ fn inbox_acknowledgements_are_receipts_that_survive_a_reconnect_and_a_host_resta
 }
 
 #[test]
-fn owner_decisions_list_and_decide_without_a_run_id_and_refuse_resolved_or_expired() {
+fn owner_decisions_list_and_decide_without_a_run_id_replay_a_lost_reply_and_refuse_resolved_or_expired()
+ {
     let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let (run, attempt) = run_with_worker(&mut store, "asks");
     let asked = ask(&mut store, "asks", &attempt, "Which branch?", NOW);
@@ -318,9 +321,9 @@ fn owner_decisions_list_and_decide_without_a_run_id_and_refuse_resolved_or_expir
         "main\n\nKeep the public API stable"
     );
     assert_eq!(decided["inboxId"], workflow_decisions::inbox_id(&run, &id));
-    error(
-        decide(&mut store, owner(), &id, "main", NOW + 3),
-        "decision_resolved",
+    assert_eq!(
+        decide(&mut store, owner(), &id, "main", NOW + 3).unwrap(),
+        decided
     );
     error(
         decide(&mut store, owner(), &id, "other", NOW + 3),
@@ -445,4 +448,61 @@ fn journal_signals_name_inbox_items_and_only_new_needs_request_a_push() {
     );
     assert!(attention_inbox::signal(&event("agent.attention", json!({}))).is_none());
     assert_eq!(attention_inbox::clip("\"ab\"", 6), "\"ab");
+}
+
+#[test]
+fn result_ready_pushes_once_per_occurrence_while_every_change_still_notifies() {
+    let event = |occurrence: &str, phase: &str| crate::event_log::Event {
+        sequence: 1,
+        session_id: None,
+        kind: "job.changed".into(),
+        at: NOW,
+        payload: json!({"jobId":"j","occurrenceId":occurrence,"phase":phase}),
+    };
+    let mut pushed = attention_inbox::Pushed::default();
+    let mut admit = |occurrence: &str, phase: &str| {
+        pushed.admit(attention_inbox::signal(&event(occurrence, phase)).unwrap())
+    };
+    assert_eq!(
+        admit("o", "needsValidation").push,
+        Some(attention_inbox::PUSH_RESULT)
+    );
+    let validated = admit("o", "succeeded");
+    assert_eq!(validated.push, None);
+    assert_eq!(validated.item.as_deref(), Some("result:o"));
+    assert_eq!(
+        admit("p", "failed").push,
+        Some(attention_inbox::PUSH_RESULT)
+    );
+}
+
+#[test]
+fn acknowledging_items_the_host_no_longer_lists_is_bounded() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    error(
+        ack(
+            &mut store,
+            json!([{"id":"result:resolved-elsewhere","revision":3}]),
+            Vec::new(),
+            NOW,
+        ),
+        "invalid_argument",
+    );
+    let session = format!("session:{:032x}", 7);
+    let echoed = ack(
+        &mut store,
+        json!([{"id":session,"revision":9_000_000}]),
+        Vec::new(),
+        NOW + 1,
+    )
+    .unwrap();
+    assert_eq!(echoed["acknowledged"][0]["revision"], 9_000_000);
+    let receipts: i64 = store
+        .0
+        .query_row("SELECT count(*) FROM attention_receipts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(receipts, 0);
+    let mut live = sessions(8, 1);
+    live[7].revision = 1;
+    assert_eq!(read(&mut store, 0, 16, live)["total"], 8);
 }

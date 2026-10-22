@@ -258,19 +258,25 @@ and `acknowledgeInbox {items:[{id,revision}]}` (reply `inboxAcknowledged
 {acknowledged:[{id,revision,acknowledgedAt}]}`). Item IDs are stable
 (`session:`, `decision:RUN:DECISION`, `run:RUN:ATTEMPT`, `result:OCCURRENCE`);
 acknowledgements are durable receipts per revision, so a reconnect never repeats an
-acknowledged item. Hosts may add item kinds, programs and decision states: mobile drops
+acknowledged item. Session revisions advance when the session's attention reason
+changes or more children block, and are process-local: a host restart clears
+session receipts while journal item receipts survive. Hosts may add item kinds,
+programs and decision states: mobile drops
 an inbox item of unknown `kind` or a decision of unknown `state` one by one, counts
 them as `skipped` for the inbox badge, omits an unknown item `program`, and keeps
 the connection; malformed known items still reject the frame. `decisions:true` adds `decisions {page?}` (reply `decisions
 {decisions,page,nextPage,total}`) and `decide {decisionId,choice,note?}` (reply
-`decided`), which need no run ID and refuse `decision_resolved` or
-`decision_expired`. `jobPages:true` adds `page` to the owner job `list` and
+`decided`), which need no run ID, replay the original `decided` reply for the
+exact answer that resolved the decision and otherwise refuse `decision_resolved`
+or `decision_expired`. `jobPages:true` adds `page` to the owner job `list` and
 `history` reads, with `page` and `nextPage` in the reply. A client that sends
 `attentionInbox` or `decisions` opts in to `attentionInboxChanged
 {reason,itemId?}`; no other client receives it. `registerPush` accepts optional
 `kinds:["decisionPending","resultReady"]`; only phones that registered a kind
-receive those metadata-only pushes (`data:{hostId,kind,itemId}`), and a
-registration without `kinds` keeps receiving session attention pushes only. Mobile
+receive those metadata-only pushes (`data:{hostId,kind,itemId}`); `resultReady` is
+pushed once per occurrence even when validation later settles it, and a
+registration without `kinds` clears any kinds the phone chose earlier, so it keeps
+receiving session attention pushes only. Mobile
 requests each kind only when its own capability is advertised: `decisionPending`
 needs `decisions:true` and `resultReady` needs `attentionInbox:true`, because a
 result push opens an inbox item while a decision push needs the decision commands.

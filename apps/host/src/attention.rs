@@ -24,6 +24,9 @@ pub struct Attention {
     sequence: u64,
     last_response_sequence: u64,
     last_response_turn: Option<String>,
+    projected: Option<&'static str>,
+    projected_children: usize,
+    projection_sequence: u64,
 }
 
 impl Attention {
@@ -91,9 +94,26 @@ impl Attention {
         });
         true
     }
+    pub fn project(&mut self, reason: Option<&'static str>, blocked_children: usize) -> bool {
+        let renewed = reason.is_some()
+            && (reason != self.projected || blocked_children > self.projected_children);
+        self.projected = reason;
+        self.projected_children = blocked_children;
+        if renewed {
+            self.sequence += 1;
+            self.projection_sequence = self.sequence;
+        }
+        renewed
+    }
+    pub fn revision(&self) -> u64 {
+        self.event
+            .as_ref()
+            .map_or(0, |event| event.sequence)
+            .max(self.projection_sequence)
+    }
     pub fn acknowledge(&mut self, sequence: u64) {
         if let Some(event) = &mut self.event
-            && event.sequence == sequence
+            && event.sequence <= sequence
         {
             event.unread = false;
         }
@@ -162,5 +182,25 @@ mod tests {
         attention.acknowledge(1);
         assert!(attention.event.as_ref().unwrap().unread);
         assert_eq!(attention.event.as_ref().unwrap().sequence, 2);
+    }
+    #[test]
+    fn blocked_children_and_startup_projections_renew_the_inbox_revision() {
+        let mut attention = Attention::default();
+        assert!(!attention.project(None, 0));
+        assert_eq!(attention.revision(), 0);
+        assert!(attention.project(Some("child"), 1));
+        let first = attention.revision();
+        assert!(first > 0);
+        assert!(!attention.project(Some("child"), 1));
+        assert_eq!(attention.revision(), first);
+        assert!(attention.project(Some("child"), 2));
+        let second = attention.revision();
+        assert!(second > first);
+        assert!(!attention.project(None, 0));
+        assert!(attention.project(Some("child"), 1));
+        let third = attention.revision();
+        assert!(third > second);
+        assert!(attention.project(Some("startup"), 0));
+        assert!(attention.revision() > third);
     }
 }

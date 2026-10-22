@@ -48,6 +48,12 @@ impl MetadataStore {
         }
         Ok(())
     }
+    pub fn clear_push_kinds(&self, token: &str) -> Result<()> {
+        self.push_kind_table()?;
+        self.connection
+            .execute("DELETE FROM push_device_kinds WHERE token=?1", [token])?;
+        Ok(())
+    }
     fn push_kind_table(&self) -> Result<()> {
         self.connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS push_device_kinds (token TEXT PRIMARY KEY, kinds TEXT NOT NULL);",

@@ -994,8 +994,12 @@ fn owner_disable_of_a_held_policy_drops_the_hold() {
     let run = prepare(&mut store);
     enable(&mut store, &run);
     owner_change(&mut store, &run, json!({"action":"pause","key":"hold"})).unwrap();
-    let (disabled, pump) =
-        owner_change(&mut store, &run, json!({"action":"disable","key":"owner-off"})).unwrap();
+    let (disabled, pump) = owner_change(
+        &mut store,
+        &run,
+        json!({"action":"disable","key":"owner-off"}),
+    )
+    .unwrap();
     assert!(pump.is_none());
     assert_eq!(disabled["wakePolicy"]["enabled"], false);
     assert_eq!(disabled["wakePolicy"]["held"], false);

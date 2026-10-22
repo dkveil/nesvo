@@ -8,12 +8,12 @@ use crate::{
     workflow_decisions, workflow_inbox,
 };
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     cmp::Reverse,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 use tokio::sync::OwnedSemaphorePermit;
@@ -29,6 +29,8 @@ const TITLE_BYTES: usize = 160;
 const SUMMARY_BYTES: usize = 480;
 const RECEIPT_RETENTION: i64 = 1024;
 const RECEIPT_CAPACITY: i64 = 4096;
+const JOURNAL_REVISION: u64 = 2;
+const PUSHED_ITEMS: usize = 256;
 const PREFIXES: [&str; 4] = ["session:", "decision:", "run:", "result:"];
 pub const PUSH_DECISION: &str = "decisionPending";
 pub const PUSH_RESULT: &str = "resultReady";
@@ -235,6 +237,21 @@ fn candidates(connection: &Connection, sessions: Vec<SessionItem>) -> Result<Vec
     Ok(items)
 }
 
+pub fn recover(connection: &Connection) -> Result<()> {
+    let present: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='attention_receipts')",
+        [],
+        |r| r.get(0),
+    )?;
+    if present {
+        connection.execute(
+            "DELETE FROM attention_receipts WHERE item_id LIKE 'session:%'",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn receipts(connection: &Connection) -> Result<HashMap<String, u64>> {
     let mut statement = connection.prepare("SELECT item_id,revision FROM attention_receipts")?;
     let rows = statement
@@ -275,9 +292,17 @@ pub fn read(
     let reply =
         json!({"items":page,"page":window.page,"limit":window.limit,"nextPage":next,"total":total});
     if serde_json::to_vec(&reply)?.len() > PAGE_BYTES {
-        return Err(Error::new("busy", "Inbox page exceeds the frame budget").into());
+        return Err(Error::new(
+            "page_too_large",
+            "Inbox page exceeds the frame budget; request a smaller limit",
+        )
+        .into());
     }
     Ok(reply)
+}
+
+fn session_mark(id: &str) -> bool {
+    id.starts_with("session:")
 }
 
 fn validate(marks: &[Mark]) -> Result<()> {
@@ -316,10 +341,9 @@ pub fn acknowledge(
         .into_iter()
         .map(|item| (item.id, item.revision))
         .collect();
-    if marks.iter().any(|mark| {
-        current
-            .get(&mark.id)
-            .is_some_and(|revision| mark.revision > *revision)
+    if marks.iter().any(|mark| match current.get(&mark.id) {
+        Some(revision) => mark.revision > *revision,
+        None => !session_mark(&mark.id) && mark.revision > JOURNAL_REVISION,
     }) {
         return Err(invalid("Inbox item revision is ahead of the host"));
     }
@@ -346,6 +370,22 @@ pub fn acknowledge(
     }
     let mut acknowledged = Vec::new();
     for mark in &marks {
+        if session_mark(&mark.id) && !current.contains_key(&mark.id) {
+            let existing: Option<(i64, i64)> = transaction
+                .query_row(
+                    "SELECT revision,acknowledged_at FROM attention_receipts WHERE item_id=?1",
+                    [&mark.id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            acknowledged.push(match existing {
+                Some((revision, at)) => {
+                    json!({"id":mark.id,"revision":revision,"acknowledgedAt":at})
+                }
+                None => json!({"id":mark.id,"revision":mark.revision,"acknowledgedAt":now}),
+            });
+            continue;
+        }
         transaction.execute("INSERT INTO attention_receipts(item_id,revision,acknowledged_at) VALUES(?1,?2,?3) ON CONFLICT(item_id) DO UPDATE SET revision=excluded.revision,acknowledged_at=excluded.acknowledged_at WHERE excluded.revision>attention_receipts.revision",params![mark.id,mark.revision as i64,now as i64])?;
         let (revision, at): (i64, i64) = transaction.query_row(
             "SELECT revision,acknowledged_at FROM attention_receipts WHERE item_id=?1",
@@ -536,16 +576,49 @@ pub(crate) fn signal(event: &Event) -> Option<Signal> {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Pushed {
+    order: VecDeque<String>,
+    items: HashSet<String>,
+}
+
+impl Pushed {
+    pub(crate) fn admit(&mut self, mut signal: Signal) -> Signal {
+        if signal.push == Some(PUSH_RESULT)
+            && let Some(item) = &signal.item
+        {
+            if self.items.contains(item) {
+                signal.push = None;
+            } else {
+                self.items.insert(item.clone());
+                self.order.push_back(item.clone());
+                if self.order.len() > PUSHED_ITEMS
+                    && let Some(oldest) = self.order.pop_front()
+                {
+                    self.items.remove(&oldest);
+                }
+            }
+        }
+        signal
+    }
+}
+
 pub async fn watch(state: Arc<Mutex<State>>, log: Service) {
     let mut changed = log.subscribe();
     let mut cursor = *changed.borrow_and_update();
+    let mut pushed = Pushed::default();
     while changed.changed().await.is_ok() {
         loop {
             let Ok(page) = log.read(cursor, 32, None).await else {
                 break;
             };
             cursor = page.next_cursor;
-            let signals: Vec<Signal> = page.events.iter().filter_map(signal).collect();
+            let signals: Vec<Signal> = page
+                .events
+                .iter()
+                .filter_map(signal)
+                .map(|signal| pushed.admit(signal))
+                .collect();
             if !signals.is_empty()
                 && let Ok(mut state) = state.lock()
             {

@@ -332,7 +332,8 @@ template approval follows the same rule (`nesvo workflow approve-templates` and
 
 `attentionInbox` and `decisions` gate the four owner inbox tools. Acknowledging
 hides one item revision durably and never answers a decision; `nesvo_decide`
-refuses answered or canceled decisions with `decision_resolved` and expired ones
+replays the original reply when the exact answer is repeated, refuses any other
+answer for answered or canceled decisions with `decision_resolved` and expired ones
 with `decision_expired`, so a retried call never answers twice. See
 [owner attention inbox](harness-cli.md#owner-attention-inbox-and-decisions).
 

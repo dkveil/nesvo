@@ -622,16 +622,22 @@ Each item has a stable `id` (`session:SESSION_ID`, `decision:RUN_ID:DECISION_ID`
 `run:RUN_ID:ATTEMPT_ID`, `result:OCCURRENCE_ID`), a `revision`, `kind`, `priority`,
 `reason`, `at` and a clipped `title` and `summary`; a page stays under 60 KiB.
 `inbox ack ID@REVISION...` stores up to 32 receipts (`type:"inboxAcknowledged"`):
-repeating one returns the original `acknowledgedAt`, a reconnect or host restart
-never shows that revision again, and a newer revision of the item returns.
-Acknowledging marks a session's attention read; it never answers a decision.
+repeating one returns the original `acknowledgedAt`, a reconnect never shows that
+revision again, and a newer revision of the item returns. A
+session item's revision also advances when its reason changes or more child
+sessions block. Session revisions live in host memory, so a host restart clears
+session receipts and a session that still needs you returns; decision, run and
+result receipts survive. Acknowledging marks a session's attention read; it never
+answers a decision.
 
 `decision list [--page N]` returns `type:"decisions"` with eight pending decisions
 per page across all runs, each with `inboxId` and its `run`. `decision decide ID
 --choice TEXT|--choice-file PATH [--note TEXT|--note-file PATH]` answers at the current revision without a run ID and
-returns `type:"decided"`; the note follows the choice after a blank line. Answered
-or canceled decisions return `decision_resolved` and expired ones
-`decision_expired`. Hosts without `attentionInbox` or `decisions` return
+returns `type:"decided"`; the note follows the choice after a blank line. Repeating
+the exact choice and note that answered a decision replays the original `decided`
+reply, so a retry after a lost reply never fails or answers twice. Any other
+request for an answered or canceled decision returns `decision_resolved` and an
+expired one `decision_expired`. Hosts without `attentionInbox` or `decisions` return
 `unsupported` before sending.
 
 ```powershell

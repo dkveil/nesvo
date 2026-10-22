@@ -1978,6 +1978,7 @@ impl State {
         let mut changed = self.wake_after_reset();
         let mut renamed = Vec::new();
         let mut alerts = Vec::new();
+        let mut inbox_renewed = false;
         for session in self.sessions.values_mut() {
             changed |= session.status.refresh(now);
             changed |= session.freshness.refresh(session.status.status(), now);
@@ -2008,6 +2009,14 @@ impl State {
                 renamed.push(session.info.id.clone());
                 changed = true;
             }
+            let projection = session.current_attention();
+            if session
+                .attention
+                .project(projection.reason, projection.blocked_children)
+            {
+                changed = true;
+                inbox_renewed |= !session.attention.muted && session.info.program != Program::Shell;
+            }
             let attention_changed = session
                 .attention
                 .observe(session.status.status(), session.status.rate_limited());
@@ -2020,6 +2029,9 @@ impl State {
                     alerts.push((session.info.id.clone(), event.clone()));
                 }
             }
+        }
+        if inbox_renewed && alerts.is_empty() {
+            self.notify_attention("session", None);
         }
         if !alerts.is_empty() {
             self.notify_attention("session", None);
@@ -3037,7 +3049,7 @@ impl State {
                     program: s.info.program,
                     priority,
                     reason,
-                    revision: s.attention.event.as_ref().map_or(0, |e| e.sequence),
+                    revision: s.attention.revision(),
                     at: s.attention.event.as_ref().map_or(0, |e| e.at),
                 })
             })
@@ -3364,6 +3376,8 @@ impl State {
                 let mut event = json!({"type":"pushRegistered","enabled":enabled});
                 if let Some(kinds) = kinds.filter(|_| enabled) {
                     event["kinds"] = json!(self.metadata.set_push_kinds(&token, &kinds)?);
+                } else {
+                    self.metadata.clear_push_kinds(&token)?;
                 }
                 self.respond(client_id, event, request_id);
             }
@@ -4993,6 +5007,49 @@ mod tests {
         for worker in workers {
             worker.join().unwrap();
         }
+    }
+
+    #[test]
+    fn push_registration_without_kinds_clears_the_previous_kinds() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        let (events, _receiver) = mpsc::channel(8);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(
+            1,
+            Client {
+                events,
+                cancelled,
+                authority: Default::default(),
+            },
+        );
+        let (pty_events, _) = mpsc::channel(1);
+        let token = "ExpoPushToken[clearedphone1]";
+        for kinds in [
+            Some(vec![crate::attention_inbox::PUSH_DECISION.into()]),
+            None,
+        ] {
+            state
+                .command(
+                    1,
+                    Command::RegisterPush {
+                        token: token.into(),
+                        enabled: true,
+                        kinds,
+                    },
+                    None,
+                    &pty_events,
+                )
+                .unwrap();
+        }
+        assert!(
+            state
+                .metadata
+                .push_tokens_for(crate::attention_inbox::PUSH_DECISION)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(state.metadata.push_tokens().unwrap(), [token]);
     }
 
     #[test]
