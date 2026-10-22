@@ -448,7 +448,7 @@ pub(crate) fn parse(text: &str) -> Result<Vec<Template>> {
                     draft.tasks.push(TaskDraft::default());
                     Section::Task
                 }
-                (false, "worktree") => Section::Other,
+                (false, "worktree") | (true, "mcp.server") => Section::Other,
                 _ => return Err(fail(format!("unsupported table {name}"))),
             };
             continue;
