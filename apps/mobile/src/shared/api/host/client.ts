@@ -1,4 +1,5 @@
 import { decodeServerMessage } from './messages';
+import { pushKindsFor } from './push-kinds';
 import { randomBytes } from './random';
 import type {
   ClientCommand,
@@ -6,7 +7,6 @@ import type {
   InboxFeatures,
   InboxMark,
   Pairing,
-  PushKind,
   SessionControl,
   SessionGroup,
   SessionLaunchOptions,
@@ -33,7 +33,6 @@ const NO_INBOX_FEATURES: InboxFeatures = {
   decisions: false,
   jobPages: false,
 };
-const INBOX_PUSH_KINDS: PushKind[] = ['decisionPending', 'resultReady'];
 const MAX_INBOX_MARKS = 32;
 
 /** Sessions live on the host. Reconnect is explicit: input is never queued or replayed. */
@@ -285,9 +284,10 @@ export class HostClient {
   }
 
   registerPush(token: string, enabled: boolean, requestId: string) {
+    const kinds = enabled ? pushKindsFor(this.features) : [];
     this.send(
-      enabled && this.features.decisions
-        ? { type: 'registerPush', token, enabled, requestId, kinds: INBOX_PUSH_KINDS }
+      kinds.length > 0
+        ? { type: 'registerPush', token, enabled, requestId, kinds }
         : { type: 'registerPush', token, enabled, requestId },
     );
   }

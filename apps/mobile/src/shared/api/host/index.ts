@@ -1,4 +1,5 @@
 export { HostClient } from './client';
+export { pushKindsFor } from './push-kinds';
 export { parsePairing } from './wire';
 export type {
   AttentionEvent,

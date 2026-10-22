@@ -270,7 +270,10 @@ the connection; malformed known items still reject the frame. `decisions:true` a
 {reason,itemId?}`; no other client receives it. `registerPush` accepts optional
 `kinds:["decisionPending","resultReady"]`; only phones that registered a kind
 receive those metadata-only pushes (`data:{hostId,kind,itemId}`), and a
-registration without `kinds` keeps receiving session attention pushes only.
+registration without `kinds` keeps receiving session attention pushes only. Mobile
+requests each kind only when its own capability is advertised: `decisionPending`
+needs `decisions:true` and `resultReady` needs `attentionInbox:true`, because a
+result push opens an inbox item while a decision push needs the decision commands.
 
 Hosts advertising `sessionQueries:true` accept `getSession {sessionId}` and
 `readSession {sessionId,after?,maxBytes?}`. Both echo request IDs. The former

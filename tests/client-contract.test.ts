@@ -1075,6 +1075,24 @@ test('inbox commands stay unsent until the host advertises their capability flag
       requestId: 'inbox-a',
     });
     assert.equal(peer.client.requestDecisions(0), null);
+    peer.client.registerPush('ExponentPushToken[abcdefghijkl]', true, 'push-results');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'registerPush',
+      token: 'ExponentPushToken[abcdefghijkl]',
+      enabled: true,
+      requestId: 'push-results',
+      kinds: ['resultReady'],
+    });
+    peer.receive({ ...legacy, decisions: true });
+    peer.client.registerPush('ExponentPushToken[abcdefghijkl]', true, 'push-decisions');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'registerPush',
+      token: 'ExponentPushToken[abcdefghijkl]',
+      enabled: true,
+      requestId: 'push-decisions',
+      kinds: ['decisionPending'],
+    });
+    peer.receive({ ...legacy, attentionInbox: true });
     assert.equal(peer.client.acknowledgeInbox([]), null);
     assert.equal(
       peer.client.acknowledgeInbox(

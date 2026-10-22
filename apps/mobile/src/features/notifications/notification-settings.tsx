@@ -11,6 +11,7 @@ import { Text, View } from 'react-native';
 
 import { useWorkspace } from '@entities/workspace';
 
+import { type PushKind, pushKindsFor } from '@shared/api/host';
 import {
   type NotificationTarget,
   observePush,
@@ -21,6 +22,11 @@ import {
   saveRegistration,
 } from '@shared/notifications';
 import { Button, common } from '@shared/ui';
+
+const PUSH_KIND_LABELS: Record<PushKind, string> = {
+  decisionPending: 'pending decisions',
+  resultReady: 'finished job results',
+};
 
 const Context = createContext<{
   enabled: boolean;
@@ -160,7 +166,9 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     client,
     setNotice,
   ]);
-  const wantsInboxKinds = hostCapabilities?.decisions === true;
+  const missingKinds = pushKindsFor(hostCapabilities ?? {}).filter(
+    kind => !registration?.kinds?.includes(kind),
+  ).length;
   useEffect(() => {
     if (!connected) kindsUpgraded.current = false;
   }, [connected]);
@@ -169,10 +177,9 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       !connected ||
       !enabled ||
       !registration ||
-      !wantsInboxKinds ||
+      missingKinds === 0 ||
       busy ||
-      kindsUpgraded.current ||
-      (registration.kinds?.length ?? 0) > 0
+      kindsUpgraded.current
     )
       return;
     kindsUpgraded.current = true;
@@ -180,14 +187,15 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     pending.current = { id, registration, enabled: true, silent: true };
     setBusy(true);
     client.registerPush(registration.token, true, id);
-  }, [connected, enabled, registration, wantsInboxKinds, busy, client]);
+  }, [connected, enabled, registration, missingKinds, busy, client]);
   useEffect(() => {
     if (!busy) return;
     const timer = setTimeout(() => {
+      const silent = pending.current?.silent === true;
       operation.current += 1;
       pending.current = null;
       setBusy(false);
-      setStatus('Timed out. Check the connection and try again.');
+      if (!silent) setStatus('Timed out. Check the connection and try again.');
     }, 30000);
     return () => clearTimeout(timer);
   }, [busy]);
@@ -221,6 +229,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
 export function NotificationSettings() {
   const { enabled, busy, status, toggle } = useContext(Context);
   const { connected, hostCapabilities } = useWorkspace();
+  const inboxKinds = pushKindsFor(hostCapabilities ?? {});
   return (
     <View style={{ gap: 12 }}>
       <Text style={common.heading}>Session notifications</Text>
@@ -228,10 +237,10 @@ export function NotificationSettings() {
         Questions, permissions, finished work and limits. Sent through Expo without terminal
         content. Tapping opens the right session.
       </Text>
-      {hostCapabilities?.decisions ? (
+      {inboxKinds.length > 0 ? (
         <Text style={common.body}>
-          This host also notifies you about pending decisions and finished job results. Tapping
-          opens the inbox.
+          This host also notifies you about{' '}
+          {inboxKinds.map(kind => PUSH_KIND_LABELS[kind]).join(' and ')}. Tapping opens the inbox.
         </Text>
       ) : null}
       {!pushAvailable ? (
