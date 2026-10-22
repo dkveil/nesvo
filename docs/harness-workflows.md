@@ -111,8 +111,9 @@ line number. The worktree setup ignores `[[workflow]]` entries and keeps its own
 The template digest is the SHA-256 of the normalized templates, so formatting and
 comments do not change it; declared `checks` are part of it, a template without
 checks keeps its earlier digest. Approval follows the worktree setup flow: it is an
-owner CLI act stored in `workflow-templates.json` next to the host pairing data, and a
-changed template needs a new approval.
+owner CLI act stored in `workflow-templates.json` next to the host pairing data, which
+every write replaces atomically like the worktree registry (an owner-only temporary
+file, synced, then renamed), and a changed template needs a new approval.
 
 ```powershell
 nesvo workflow templates --directory C:\project --json

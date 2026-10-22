@@ -4,6 +4,7 @@ use crate::{
     orchestration::{Request, RunSpec, TaskSpec},
     process::display_path,
     protocol::Command,
+    registry_files::{Registry, owner_only},
     sessions::{PtyEvent, State},
     workflow_budget::{self, Limits},
     workflow_executor::{self, Spec, TaskProfile},
@@ -525,62 +526,39 @@ struct Document {
 }
 
 pub(crate) struct Store {
-    path: PathBuf,
-    document: Mutex<Document>,
+    registry: Registry<Document>,
 }
 
 impl Store {
     pub(crate) fn open(directory: &Path) -> Result<Self> {
-        use std::io::Read;
-        let path = directory.join(STORE_FILE);
-        let document = match std::fs::File::open(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Document {
-                version: 1,
-                ..Document::default()
-            },
-            Err(error) => return Err(error.into()),
-            Ok(file) => {
-                let mut bytes = Vec::new();
-                file.take(STORE_LIMIT + 1).read_to_end(&mut bytes)?;
-                anyhow::ensure!(
-                    bytes.len() as u64 <= STORE_LIMIT,
-                    "Workflow template approvals are too large"
-                );
-                let document: Document = serde_json::from_slice(&bytes)?;
-                anyhow::ensure!(
-                    document.version == 1,
-                    "Unsupported workflow template approvals"
-                );
-                document
-            }
-        };
         Ok(Self {
-            path,
-            document: Mutex::new(document),
+            registry: Registry::open(
+                directory,
+                STORE_FILE,
+                "Workflow template approval registry",
+                STORE_LIMIT,
+                || Document {
+                    version: 1,
+                    ..Document::default()
+                },
+                |document| document.version == 1,
+            )?,
         })
     }
 
     fn update<T>(&self, change: impl FnOnce(&mut Document) -> T) -> Result<T> {
-        let mut document = self
-            .document
-            .lock()
-            .map_err(|_| anyhow!("Workflow template approvals are unavailable"))?;
-        let mut next = document.clone();
-        let value = change(&mut next);
-        let temporary = self.path.with_extension("json.tmp");
-        std::fs::write(&temporary, serde_json::to_vec_pretty(&next)?)?;
-        std::fs::rename(&temporary, &self.path)?;
-        *document = next;
-        Ok(value)
+        self.registry.update(|document| Ok(change(document)))
     }
 
     pub(crate) fn approved(&self, repository: &str, digest: &str) -> bool {
-        self.document.lock().is_ok_and(|document| {
-            document
-                .approvals
-                .iter()
-                .any(|approval| approval.repository == repository && approval.digest == digest)
-        })
+        self.registry
+            .read(|document| {
+                document
+                    .approvals
+                    .iter()
+                    .any(|approval| approval.repository == repository && approval.digest == digest)
+            })
+            .unwrap_or(false)
     }
 
     fn approve(&self, repository: &str, digest: &str) -> Result<u64> {
@@ -632,13 +610,16 @@ impl Store {
     }
 
     pub(crate) fn binding(&self, run_id: &str) -> Option<RunChecks> {
-        self.document.lock().ok().and_then(|document| {
-            document
-                .runs
-                .iter()
-                .find(|run| run.run_id == run_id)
-                .cloned()
-        })
+        self.registry
+            .read(|document| {
+                document
+                    .runs
+                    .iter()
+                    .find(|run| run.run_id == run_id)
+                    .cloned()
+            })
+            .ok()
+            .flatten()
     }
 }
 
@@ -996,6 +977,15 @@ fn error_event(error: &anyhow::Error) -> Value {
     json!({"type":"error","code":worktrees::error_code(error).unwrap_or("workflow_templates_unavailable"),"message":error.to_string()})
 }
 
+pub(crate) fn admit(authority: &Authority) -> Result<()> {
+    owner_only(authority, |_| {
+        command_failure(
+            "forbidden",
+            "Workflow templates require owner authority; approval is a human act through the owner CLI",
+        )
+    })
+}
+
 async fn start(
     state: Arc<Mutex<State>>,
     events: mpsc::Sender<PtyEvent>,
@@ -1057,17 +1047,14 @@ pub async fn serve(
     permit: Option<OwnedSemaphorePermit>,
 ) {
     let log = state.lock().ok().and_then(|state| state.event_log().ok());
-    let result = match (&authority, STORE.get(), permit) {
-        (Authority::Session { .. } | Authority::RunWake { .. }, _, _) => Err(command_failure(
-            "forbidden",
-            "Workflow templates require owner authority; approval is a human act through the owner CLI",
-        )),
-        (_, _, None) => Err(command_failure("busy", "Workflow template service is busy")),
-        (_, None, _) => Err(command_failure(
+    let result = match (admit(&authority), STORE.get(), permit) {
+        (Err(error), _, _) => Err(error),
+        (Ok(()), _, None) => Err(command_failure("busy", "Workflow template service is busy")),
+        (Ok(()), None, _) => Err(command_failure(
             "unsupported",
             "The host workflow template registry is unavailable",
         )),
-        (Authority::Owner, Some(store), Some(_permit)) => match command {
+        (Ok(()), Some(store), Some(_permit)) => match command {
             Command::ListWorkflowTemplates { directory } => inspect(&directory)
                 .await
                 .map(|source| describe(store, &source)),

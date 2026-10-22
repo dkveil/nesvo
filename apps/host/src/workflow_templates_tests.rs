@@ -518,7 +518,8 @@ fn a_failed_approval_write_leaves_approvals_unchanged_in_memory() {
     let store = store(&scratch);
     let digest = "a".repeat(64);
     store.approve("repository", &digest).unwrap();
-    let blocker = store.path.with_extension("json.tmp");
+    let blocker = scratch.0.join("host").join(STORE_FILE);
+    std::fs::remove_file(&blocker).unwrap();
     std::fs::create_dir(&blocker).unwrap();
     let other = "b".repeat(64);
     assert!(store.approve("repository", &other).is_err());

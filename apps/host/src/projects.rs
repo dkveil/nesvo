@@ -585,12 +585,9 @@ pub(crate) fn handles(command: &Command) -> bool {
 }
 
 pub(crate) fn admit(authority: &Authority) -> Result<()> {
-    match authority {
-        Authority::Owner => Ok(()),
-        Authority::Session { .. } | Authority::RunWake { .. } => {
-            Err(failure("forbidden", "Projects require owner authority"))
-        }
-    }
+    crate::registry_files::owner_only(authority, |_| {
+        failure("forbidden", "Projects require owner authority")
+    })
 }
 
 pub(crate) fn valid_root(root: &str) -> Result<()> {

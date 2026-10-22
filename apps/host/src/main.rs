@@ -64,6 +64,7 @@ mod readiness;
 mod receipts;
 mod recipes;
 mod refreshing_cache;
+mod registry_files;
 mod replay;
 mod resume;
 mod review;

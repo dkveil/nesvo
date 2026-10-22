@@ -1,6 +1,12 @@
 use crate::{
-    caller::Authority, command_scope, event_log, git, handle_paths::without_links,
-    jobs::LaunchSpec, process::display_path, protocol::Command, sessions::State,
+    caller::Authority,
+    command_scope, event_log, git,
+    handle_paths::without_links,
+    jobs::LaunchSpec,
+    process::display_path,
+    protocol::Command,
+    registry_files::{self, Registry},
+    sessions::State,
     status::now_millis,
 };
 use anyhow::{Result, anyhow};
@@ -33,6 +39,7 @@ const APPROVAL_LIMIT: usize = 256;
 const RECORD_LIMIT: usize = 512;
 const REGISTRY_PAGE: usize = 128;
 const STORE_LIMIT: u64 = 4 * 1024 * 1024;
+const STORE_FILE: &str = "worktrees.json";
 const GIT_DEADLINE: Duration = Duration::from_secs(10);
 const REMOVE_DEADLINE: Duration = Duration::from_secs(60);
 const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
@@ -544,31 +551,8 @@ struct Document {
 }
 
 pub struct Store {
-    path: PathBuf,
-    document: Mutex<Document>,
-    updating: tokio::sync::Mutex<()>,
+    registry: Registry<Document>,
     active: Mutex<HashMap<String, watch::Sender<bool>>>,
-}
-
-fn replace_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let temporary = path.with_extension("json.tmp");
-    match std::fs::remove_file(&temporary) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
-        _ => {}
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&temporary, path)
 }
 
 fn registry_full(stage: Stage) -> anyhow::Error {
@@ -583,61 +567,36 @@ fn registry_full(stage: Stage) -> anyhow::Error {
 
 impl Store {
     pub fn open(directory: &Path) -> Result<Self> {
-        use std::io::Read;
-        let path = directory.join("worktrees.json");
-        let mut document = match std::fs::File::open(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Document {
+        let mut registry = Registry::open(
+            directory,
+            STORE_FILE,
+            "Worktree registry",
+            STORE_LIMIT,
+            || Document {
                 version: 1,
                 ..Document::default()
             },
-            Err(error) => return Err(error.into()),
-            Ok(file) => {
-                let mut bytes = Vec::new();
-                file.take(STORE_LIMIT + 1).read_to_end(&mut bytes)?;
-                anyhow::ensure!(
-                    bytes.len() as u64 <= STORE_LIMIT,
-                    "Worktree registry is too large"
-                );
-                let document: Document = serde_json::from_slice(&bytes)?;
-                anyhow::ensure!(document.version == 1, "Unsupported worktree registry");
-                document
-            }
-        };
-        for record in &mut document.worktrees {
-            for phase in std::iter::once(&mut record.setup).chain(record.run.as_mut()) {
-                if phase.state == "running" {
-                    phase.state = "interrupted".into();
+            |document: &Document| document.version == 1,
+        )?;
+        registry.amend(|document| {
+            for record in &mut document.worktrees {
+                for phase in std::iter::once(&mut record.setup).chain(record.run.as_mut()) {
+                    if phase.state == "running" {
+                        phase.state = "interrupted".into();
+                    }
                 }
             }
-        }
+        });
         Ok(Self {
-            path,
-            document: Mutex::new(document),
-            updating: tokio::sync::Mutex::new(()),
+            registry,
             active: Mutex::new(HashMap::new()),
         })
     }
     async fn update<T>(&self, change: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
-        let _updating = self.updating.lock().await;
-        let mut next = self.read(Document::clone)?;
-        let value = change(&mut next)?;
-        let bytes = serde_json::to_vec_pretty(&next)?;
-        let path = self.path.clone();
-        tokio::task::spawn_blocking(move || replace_private(&path, &bytes))
-            .await
-            .map_err(|_| anyhow!("Worktree registry write was interrupted"))??;
-        *self
-            .document
-            .lock()
-            .map_err(|_| anyhow!("Worktree registry is unavailable"))? = next;
-        Ok(value)
+        self.registry.update_async(change).await
     }
     fn read<T>(&self, view: impl FnOnce(&Document) -> T) -> Result<T> {
-        let document = self
-            .document
-            .lock()
-            .map_err(|_| anyhow!("Worktree registry is unavailable"))?;
-        Ok(view(&document))
+        self.registry.read(view)
     }
     pub(crate) fn approved(&self, repository: &str, digest: &str) -> bool {
         self.read(|document| {
@@ -1018,45 +977,9 @@ fn copy_env_files(root: &Path, worktree: &Path, files: &[String]) -> Result<Vec<
     Ok(copied)
 }
 
-fn linked_state() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::PermissionDenied,
-        "the worktree state folder must be a plain folder inside the worktree",
-    )
-}
-
 fn state_folder(worktree: &Path) -> std::io::Result<PathBuf> {
-    let directory = worktree.join(STATE_DIR);
-    match std::fs::create_dir(&directory) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(error),
-    }
-    let metadata = std::fs::symlink_metadata(&directory)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(linked_state());
-    }
-    let resolved = std::fs::canonicalize(&directory)?;
     let base = std::fs::canonicalize(worktree)?;
-    if resolved.parent() != Some(base.as_path()) {
-        return Err(linked_state());
-    }
-    Ok(resolved)
-}
-
-pub(crate) fn open_plain(path: &Path) -> std::io::Result<std::fs::File> {
-    let directory = path.parent().ok_or_else(linked_state)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true);
-    without_links(&mut options);
-    let file = options.open(path)?;
-    if !crate::handle_paths::opened_inside(&file, directory)
-        || !crate::handle_paths::plain_file(&file)?
-    {
-        return Err(linked_state());
-    }
-    file.set_len(0)?;
-    Ok(file)
+    Ok(registry_files::walk(&base, &[STATE_DIR], true)?)
 }
 
 pub(crate) async fn state_dir(worktree: &Path) -> std::io::Result<PathBuf> {
@@ -1064,7 +987,7 @@ pub(crate) async fn state_dir(worktree: &Path) -> std::io::Result<PathBuf> {
     let worktree = worktree.to_owned();
     tokio::task::spawn_blocking(move || {
         let directory = state_folder(&worktree)?;
-        open_plain(&directory.join(".gitignore"))?.write_all(b"*\n")?;
+        registry_files::open_plain(&directory.join(".gitignore"))?.write_all(b"*\n")?;
         Ok(directory)
     })
     .await
@@ -1291,7 +1214,7 @@ impl Log {
     }
     pub(crate) async fn tailed(path: &Path, tail_limit: usize) -> std::io::Result<Self> {
         let path = path.to_owned();
-        let file = tokio::task::spawn_blocking(move || open_plain(&path))
+        let file = tokio::task::spawn_blocking(move || registry_files::open_plain(&path))
             .await
             .map_err(std::io::Error::other)??;
         Ok(Self {
@@ -1741,23 +1664,21 @@ fn owner_action(command: &Command) -> &'static str {
 }
 
 pub(crate) fn admit(authority: &Authority, command: &Command) -> Result<()> {
-    let scope = match authority {
-        Authority::Owner => return Ok(()),
-        Authority::Session { id, .. } | Authority::RunWake { id, .. } => id,
-    };
-    if target_session(command).is_some_and(|target| target != scope) {
-        return Err(command_failure(
+    registry_files::owner_only(authority, |scope| {
+        if target_session(command).is_some_and(|target| target != scope) {
+            return command_failure(
+                "forbidden",
+                "The target worktree session is outside the caller's session scope",
+            );
+        }
+        command_failure(
             "forbidden",
-            "The target worktree session is outside the caller's session scope",
-        ));
-    }
-    Err(command_failure(
-        "forbidden",
-        format!(
-            "{} requires owner authority; setup approval is a human act through the owner CLI",
-            owner_action(command)
-        ),
-    ))
+            format!(
+                "{} requires owner authority; setup approval is a human act through the owner CLI",
+                owner_action(command)
+            ),
+        )
+    })
 }
 
 pub(crate) fn host_directory(value: &str) -> Result<PathBuf> {

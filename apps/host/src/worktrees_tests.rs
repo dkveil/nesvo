@@ -1,4 +1,5 @@
 use super::*;
+use crate::registry_files::link_directory;
 
 mod process_fixture {
     include!("../../../crates/nesvo-process-fixture/src/locate.rs");
@@ -942,11 +943,13 @@ fn step_helper_entry() {
 #[tokio::test]
 async fn registry_eviction_keeps_every_active_record_and_refuses_when_none_is_archived() {
     let scratch = scratch();
-    let store = store(&scratch);
+    let mut store = store(&scratch);
     let repository = repository(&scratch, None).await;
-    store.document.lock().unwrap().worktrees = (0..RECORD_LIMIT)
-        .map(|index| record(&format!("{index:032}")))
-        .collect();
+    store.registry.amend(|document| {
+        document.worktrees = (0..RECORD_LIMIT)
+            .map(|index| record(&format!("{index:032}")))
+            .collect();
+    });
     let refused = store.insert(record("new")).await.unwrap_err();
     assert_eq!(code(&refused), "worktree_registry_full");
     assert!(!store.has_room());
@@ -955,18 +958,23 @@ async fn registry_eviction_keeps_every_active_record_and_refuses_when_none_is_ar
         "worktree_registry_full"
     );
     let archived = format!("{:032}", 7);
-    store.document.lock().unwrap().worktrees[7].archived_at = Some(1);
+    store
+        .registry
+        .amend(|document| document.worktrees[7].archived_at = Some(1));
     assert!(store.has_room());
     store.insert(record("new")).await.unwrap();
-    let document = store.document.lock().unwrap();
-    assert_eq!(document.worktrees.len(), RECORD_LIMIT);
-    assert!(
-        document
-            .worktrees
-            .iter()
-            .all(|record| record.archived_at.is_none() && record.session_id != archived)
-    );
-    assert_eq!(document.worktrees.last().unwrap().session_id, "new");
+    store
+        .read(|document| {
+            assert_eq!(document.worktrees.len(), RECORD_LIMIT);
+            assert!(
+                document
+                    .worktrees
+                    .iter()
+                    .all(|record| record.archived_at.is_none() && record.session_id != archived)
+            );
+            assert_eq!(document.worktrees.last().unwrap().session_id, "new");
+        })
+        .unwrap();
 }
 
 #[tokio::test]
@@ -982,7 +990,13 @@ async fn registry_writes_replace_the_file_atomically_and_keep_the_newest_state()
     .await
     .unwrap();
     let host = scratch.0.join("host");
-    assert!(!host.join("worktrees.json.tmp").exists());
+    assert_eq!(
+        std::fs::read_dir(&host)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        ["worktrees.json"]
+    );
     let reopened = Store::open(&host).unwrap();
     assert!(
         digests
@@ -1122,25 +1136,6 @@ async fn a_derived_worktree_is_unknown_only_once_checkout_has_started() {
     assert!(spec.cwd.is_none() && spec.worktree);
 }
 
-fn link_directory(target: &Path, link: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link).is_ok()
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_dir(target, link).is_ok()
-            || std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(display_path(link))
-                .arg(display_path(target))
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-    }
-}
-
 #[tokio::test]
 async fn a_linked_state_folder_is_refused_without_touching_its_target() {
     let worktree = scratch();
@@ -1226,7 +1221,8 @@ async fn a_failed_registry_write_leaves_approvals_unchanged_in_memory() {
     let store = store(&scratch);
     let digest = "a".repeat(64);
     store.approve("repository", &digest).await.unwrap();
-    let blocker = store.path.with_extension("json.tmp");
+    let blocker = scratch.0.join("host").join(STORE_FILE);
+    std::fs::remove_file(&blocker).unwrap();
     std::fs::create_dir(&blocker).unwrap();
     let other = "b".repeat(64);
     assert!(store.approve("repository", &other).await.is_err());

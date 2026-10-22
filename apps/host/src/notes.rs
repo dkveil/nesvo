@@ -1,11 +1,17 @@
-use crate::{process::display_path, protocol::Command, sessions::State};
+use crate::{
+    caller::Authority,
+    process::display_path,
+    protocol::Command,
+    registry_files::{self, Refusal},
+    sessions::State,
+};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
     fmt,
-    fs::{File, OpenOptions},
-    io::{Read, Write},
+    fs::File,
+    io::Read,
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
     time::UNIX_EPOCH,
@@ -77,9 +83,16 @@ pub fn handles(command: &Command) -> bool {
     )
 }
 
+pub(crate) fn admit(authority: &Authority) -> Result<()> {
+    registry_files::owner_only(authority, |_| {
+        failure("forbidden", "Notes require owner authority")
+    })
+}
+
 pub async fn serve(
     state: Arc<Mutex<State>>,
     client: u64,
+    authority: Authority,
     command: Command,
     request_id: Option<String>,
     permit: Option<OwnedSemaphorePermit>,
@@ -88,16 +101,19 @@ pub async fn serve(
         .lock()
         .map(|state| state.metadata.host_id.clone())
         .unwrap_or_default();
-    let result = match (permit, config_base()) {
-        (None, _) => Err(failure(
+    let result = match (admit(&authority), permit, config_base()) {
+        (Err(error), _, _) => Err(error),
+        (Ok(()), None, _) => Err(failure(
             "busy",
             "Another notes request is running on this connection",
         )),
-        (Some(_), None) => Err(failure(
+        (Ok(()), Some(_), None) => Err(failure(
             "unsupported",
             "Cannot find a user configuration directory",
         )),
-        (Some(_permit), Some(config)) => dispatch(command, &Roots::new(&config, &host_id)).await,
+        (Ok(()), Some(_permit), Some(config)) => {
+            dispatch(command, &Roots::new(&config, &host_id)).await
+        }
     };
     let mut event = result.unwrap_or_else(|error| error_event(&error));
     if let Some(request_id) = request_id {
@@ -283,61 +299,29 @@ fn missing(error: &anyhow::Error) -> bool {
         .is_some_and(|failure| failure.code == "not_found")
 }
 
-fn descend(path: &Path, create: bool) -> Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(linked()),
-        Ok(metadata) if metadata.is_dir() => Ok(()),
-        Ok(_) => Err(failure(
-            "not_directory",
-            "A notes folder level is not a folder",
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
-            match std::fs::create_dir(path) {
-                Ok(()) => descend(path, false),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    descend(path, false)
-                }
-                Err(_) => Err(failure(
-                    "not_writable",
-                    "The notes folder cannot be created",
-                )),
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(failure("not_found", "This note does not exist"))
-        }
-        Err(_) => Err(failure(
-            "not_readable",
-            "The notes folder cannot be inspected",
-        )),
+fn folder_refusal(refusal: Refusal) -> anyhow::Error {
+    match refusal {
+        Refusal::Linked => linked(),
+        Refusal::NotDirectory => failure("not_directory", "A notes folder level is not a folder"),
+        Refusal::Missing => failure("not_found", "This note does not exist"),
+        Refusal::Unwritable(_) => failure("not_writable", "The notes folder cannot be created"),
+        Refusal::Unreadable(_) => failure("not_readable", "The notes folder cannot be inspected"),
     }
 }
 
 fn secure(roots: &Roots, location: &Location, create: bool) -> Result<PathBuf> {
-    let (mut directory, levels) = match location {
-        Location::Repository(root) => (
-            root.clone(),
-            vec![PROJECT_DIRECTORY.to_owned(), NOTES_DIRECTORY.to_owned()],
-        ),
-        Location::Host => (
-            std::fs::canonicalize(&roots.config)
+    let walked = match location {
+        Location::Repository(root) => {
+            registry_files::walk(root, &[PROJECT_DIRECTORY, NOTES_DIRECTORY], create)
+        }
+        Location::Host => registry_files::walk(
+            &std::fs::canonicalize(&roots.config)
                 .map_err(|_| failure("not_found", "The configuration folder does not exist"))?,
-            vec![
-                "nesvo".to_owned(),
-                NOTES_DIRECTORY.to_owned(),
-                roots.host.clone(),
-            ],
+            &["nesvo", NOTES_DIRECTORY, &roots.host],
+            create,
         ),
     };
-    for level in levels {
-        directory.push(level);
-        descend(&directory, create)?;
-    }
-    let resolved = std::fs::canonicalize(&directory).map_err(|_| linked())?;
-    if lexical(&resolved) != lexical(&directory) {
-        return Err(linked());
-    }
-    Ok(directory)
+    walked.map_err(folder_refusal)
 }
 
 struct Target {
@@ -597,36 +581,12 @@ fn store_with(
     if actual.as_deref() != expected {
         return Err(Stale { revision: actual }.into());
     }
-    let temporary = directory.join(format!(
-        ".{}.{}.tmp",
-        target.name,
-        hex::encode(crate::wire::random::<6>())
-    ));
-    let written = (|| -> std::io::Result<bool> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        if !crate::handle_paths::opened_inside(&file, &directory) {
-            return Ok(false);
+    registry_files::replace(&directory, &target.name, text.as_bytes()).map_err(|refusal| {
+        match refusal {
+            Refusal::Linked => linked(),
+            _ => failure("not_writable", "The note cannot be written"),
         }
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temporary, &path)?;
-        Ok(true)
-    })();
-    match written {
-        Ok(true) => {}
-        Ok(false) => {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(linked());
-        }
-        Err(_) => {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(failure("not_writable", "The note cannot be written"));
-        }
-    }
+    })?;
     let metadata = std::fs::symlink_metadata(&path)
         .map_err(|_| failure("not_readable", "The saved note cannot be inspected"))?;
     Ok(Stored {
@@ -699,6 +659,7 @@ async fn delete_note(roots: &Roots, path: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry_files::link_directory;
 
     fn temporary(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -956,23 +917,14 @@ mod tests {
         assert_eq!(names, ["Plan 2.md"]);
     }
 
-    fn link_directory(target: &Path, link: &Path) -> bool {
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(target, link).is_ok()
-        }
-        #[cfg(windows)]
-        {
-            std::os::windows::fs::symlink_dir(target, link).is_ok()
-                || std::process::Command::new("cmd")
-                    .args(["/C", "mklink", "/J"])
-                    .arg(display_path(link))
-                    .arg(display_path(target))
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .is_ok_and(|status| status.success())
-        }
+    #[test]
+    fn notes_admit_only_the_owner() {
+        assert!(admit(&Authority::Owner).is_ok());
+        let scoped = Authority::Session {
+            id: "session".into(),
+            scope_id: "scope".into(),
+        };
+        assert_eq!(code(&admit(&scoped).unwrap_err()), "forbidden");
     }
 
     #[tokio::test]

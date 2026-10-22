@@ -537,7 +537,7 @@ pub async fn handle(
                         }
                         if crate::notes::handles(&command) {
                             let permit = notes_gate.clone().try_acquire_owned().ok();
-                            tokio::spawn(crate::notes::serve(state.clone(), id, command, request_id, permit));
+                            tokio::spawn(crate::notes::serve(state.clone(), id, authority.clone(), command, request_id, permit));
                             continue;
                         }
                         if crate::worktrees::handles(&command) {
