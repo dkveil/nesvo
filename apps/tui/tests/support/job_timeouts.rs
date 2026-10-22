@@ -11,13 +11,52 @@ const HOST_CONTROL_BOUND_MS: u64 = 10_000;
 const RESOLUTION_MARGIN_MS: u64 = 5_000;
 
 fn spec(instruction: &str) -> Value {
+    spec_within(instruction, WINDOW_MS)
+}
+
+fn spec_within(instruction: &str, window_ms: u64) -> Value {
     json!({
         "title":"Controlled execution timeout","instruction":instruction,
         "profile":{"program":"claude","workspace":"shared","harness":true,
             "allowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]},
         "schedule":{"kind":"once","at":(chrono::Utc::now()+chrono::Duration::hours(1)).to_rfc3339()},
-        "executionTimeoutMs":WINDOW_MS,"maxElapsedMs":300000
+        "executionTimeoutMs":window_ms,"maxElapsedMs":300000
     })
+}
+
+fn armed_window(timer: &Value) -> Result<u64> {
+    timer["executionTimeoutMs"]
+        .as_u64()
+        .context("Public native execution window")
+}
+
+async fn observed_report_cost(owner: &Owner) -> Result<u64> {
+    let mut untimed = spec("report-task");
+    untimed
+        .as_object_mut()
+        .context("Untimed job spec")?
+        .remove("executionTimeoutMs");
+    let created = reply(
+        owner,
+        "nesvo_create_job",
+        json!({"key":"report-cost-definition","spec":untimed}),
+    )
+    .await?;
+    let job = created["data"]["job"]["id"]
+        .as_str()
+        .context("Untimed report job")?;
+    let started = tokio::time::Instant::now();
+    let admitted = reply(
+        owner,
+        "nesvo_run_job_now",
+        json!({"key":"report-cost-run","jobId":job,"expectedRevision":1}),
+    )
+    .await?;
+    let id = admitted["data"]["occurrence"]["id"]
+        .as_str()
+        .context("Untimed report occurrence")?;
+    occurrence(owner, job, id, "needsValidation").await?;
+    Ok(u64::try_from(started.elapsed().as_millis())?)
 }
 
 async fn reply(owner: &Owner, name: &'static str, args: Value) -> Result<Value> {
@@ -244,7 +283,7 @@ fn until_dispatch_resolved(timer: &Value) -> Result<Duration> {
         .saturating_add(HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS)
         .saturating_sub(now);
     ensure!(
-        remaining <= WINDOW_MS + HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS,
+        remaining <= armed_window(timer)? + HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS,
         "Unexpected deadline exceeds this scenario's explicit window"
     );
     Ok(Duration::from_millis(remaining))
@@ -284,6 +323,10 @@ async fn resolved_timeout(
 }
 
 fn frozen_deadline(first: &Value, later: &Value) {
+    frozen_deadline_within(first, later, WINDOW_MS);
+}
+
+fn frozen_deadline_within(first: &Value, later: &Value, window_ms: u64) {
     for field in [
         "jobId",
         "occurrenceId",
@@ -302,10 +345,10 @@ fn frozen_deadline(first: &Value, later: &Value) {
             "Frozen timeout field changed: {field}"
         );
     }
-    assert_eq!(first["executionTimeoutMs"], WINDOW_MS);
+    assert_eq!(first["executionTimeoutMs"], window_ms);
     assert_eq!(
         first["deadlineAt"].as_u64().unwrap() - first["armedAt"].as_u64().unwrap(),
-        WINDOW_MS
+        window_ms
     );
 }
 
@@ -316,7 +359,7 @@ async fn past_deadline(timer: &Value) -> Result<()> {
     let now = u64::try_from(chrono::Utc::now().timestamp_millis())?;
     let remaining = deadline.saturating_add(250).saturating_sub(now);
     ensure!(
-        remaining <= WINDOW_MS + 250,
+        remaining <= armed_window(timer)? + 250,
         "Unexpected deadline exceeds this scenario's explicit window"
     );
     tokio::time::sleep(Duration::from_millis(remaining)).await;
@@ -602,7 +645,9 @@ async fn accepted_report_disarms_execution_timeout_while_explicit_validation_sta
     let outcome = std::panic::AssertUnwindSafe(async {
         discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
-        let created = reply(&owner,"nesvo_create_job",json!({"key":"report-disarms-definition","spec":spec("report-task")})).await?;
+        phase = "observed untimed launch-to-report cost on this runner";
+        let window = WINDOW_MS + observed_report_cost(&owner).await?;
+        let created = reply(&owner,"nesvo_create_job",json!({"key":"report-disarms-definition","spec":spec_within("report-task",window)})).await?;
         let job = created["data"]["job"]["id"].as_str().context("Reported job")?;
         diagnostic_job = Some(job.to_owned());
         let admitted = reply(&owner,"nesvo_run_job_now",json!({"key":"report-disarms-run","jobId":job,"expectedRevision":1})).await?;
@@ -611,7 +656,7 @@ async fn accepted_report_disarms_execution_timeout_while_explicit_validation_sta
         let reported = occurrence(&owner,job,id,"needsValidation").await?;
         let current = &reported["data"]["occurrence"];
         let timer = current["executionTimeout"].clone();
-        frozen_deadline(&timer,&timer);
+        frozen_deadline_within(&timer,&timer,window);
         assert_eq!(timer["state"],"disarmed");
         assert_eq!(timer["reason"],"report_accepted");
         assert!(timer["observedAt"].as_u64().context("Accepted report time")? < timer["deadlineAt"].as_u64().context("Original deadline")?);

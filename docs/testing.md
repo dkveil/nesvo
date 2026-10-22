@@ -195,7 +195,11 @@ and continue only on `revision_conflict`. The fixed bounds that remain are
 derived from host-published values (`deadlineAt`, due times, retry delays,
 precheck budgets), absence windows (`holds_throughout`), documented product
 bounds that the scenario asserts, cleanup confirmation after an explicit kill
-and host startup readiness. Scenarios carry no outer time limit: every wait fails
+and host startup readiness. Where a scenario must choose a window, it adds the
+observed cost on the same runner: the accepted-report timeout scenario first runs
+an identical untimed job and arms the nominal ten-second execution window plus
+that launch-to-report cost, and the hung-display check allows the product
+statusline's ten-second self-exit plus the cost of an ordinary forwarded run. Scenarios carry no outer time limit: every wait fails
 on its own terminal state, so only a host that stops making progress without
 settling anything reaches the CI step's `timeout-minutes`, which is then a real
 defect rather than a slow runner.
