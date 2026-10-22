@@ -752,7 +752,7 @@ pub fn key(
         }
         KeyCode::Enter => enter(app),
         KeyCode::Char('p') => paste(app, false, outcome),
-        KeyCode::Char('P') => paste(app, true, outcome),
+        KeyCode::Char('A') => paste(app, true, outcome),
         KeyCode::Char('.') => toggle_hidden(app),
         KeyCode::Char('r') => refresh(app),
         KeyCode::Char('o') => pin(app),
@@ -993,13 +993,29 @@ mod tests {
         assert_eq!(relative[0]["leaseId"], "lease");
         assert!(relative[0]["data"].as_str().unwrap().contains("a.txt"));
         assert!(!relative[0]["data"].as_str().unwrap().contains("/work"));
-        let absolute = press(&mut app, KeyCode::Char('P'));
+        let absolute = press(&mut app, KeyCode::Char('A'));
         assert!(
             absolute[0]["data"]
                 .as_str()
                 .unwrap()
                 .contains("/work/a.txt")
         );
+    }
+
+    #[test]
+    fn files_sidebar_leaves_capital_p_to_the_projects_view() {
+        let mut app = app();
+        app.event(json!({"type":"capabilities","workspace":"/work","programs":[],"files":true,"projects":true}))
+            .unwrap();
+        listed(&mut app);
+        let shifted = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT);
+        let area = Rect::new(0, 0, 120, 40);
+        assert!(!key(&mut app, shifted, area, &mut Outcome::default()));
+        let outcome =
+            crate::controller::event(&mut app, crossterm::event::Event::Key(shifted), area);
+        assert!(app.projects.open, "{}", app.notice);
+        assert_eq!(outcome.commands[0]["type"], "listProjects");
+        assert_eq!(app.files.mode, SidebarMode::Files);
     }
 
     #[test]

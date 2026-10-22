@@ -19,6 +19,8 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(20);
 const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_DELAY: Duration = Duration::from_millis(400);
 const TIMEOUT_MESSAGE: &str = "The host did not answer the Git request; r retries.";
+const BUSY_RETRIES: u8 = 10;
+const BUSY_MESSAGE: &str = "Host Git is busy; r retries.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -144,6 +146,8 @@ pub struct GitPane {
     commits_retry_at: Option<Instant>,
     retry_at: Option<Instant>,
     outbox: VecDeque<Value>,
+    busy_retries: u8,
+    commits_busy_retries: u8,
 }
 
 impl GitPane {
@@ -262,6 +266,9 @@ impl GitPane {
         self.loaded = [false; 4];
         self.retry_at = None;
         self.commits_retry_at = None;
+        self.busy_retries = 0;
+        self.commits_busy_retries = 0;
+        self.outbox.clear();
         self.queue_refresh();
         if self.review_id.is_none() && !self.queue.contains(&Request::Open) {
             self.queue.push_front(Request::Open);
@@ -424,8 +431,24 @@ pub fn tick(app: &mut App) -> Option<Value> {
 }
 
 fn retry(pane: &mut GitPane, request: Request) {
+    if pane.busy_retries >= BUSY_RETRIES {
+        pane.queue.clear();
+        pane.error = Some(BUSY_MESSAGE.into());
+        return;
+    }
+    pane.busy_retries += 1;
     pane.queue.push_front(request);
     pane.retry_at = Some(Instant::now() + RETRY_DELAY);
+}
+
+fn retry_commits(pane: &mut GitPane) {
+    if pane.commits_busy_retries >= BUSY_RETRIES {
+        pane.loaded[Section::Commits.index()] = true;
+        pane.error = Some(BUSY_MESSAGE.into());
+        return;
+    }
+    pane.commits_busy_retries += 1;
+    pane.commits_retry_at = Some(Instant::now() + RETRY_DELAY);
 }
 
 fn busy(event: &Value) -> bool {
@@ -450,8 +473,9 @@ pub fn host_event(app: &mut App, event: &Value) -> Option<Vec<Value>> {
                 pane.commits_truncated = event["truncated"] == true;
                 pane.received_ms = now_ms();
                 pane.loaded[Section::Commits.index()] = true;
+                pane.commits_busy_retries = 0;
             }
-            _ if busy(event) => pane.commits_retry_at = Some(Instant::now() + RETRY_DELAY),
+            _ if busy(event) => retry_commits(pane),
             _ => {
                 pane.loaded[Section::Commits.index()] = true;
                 pane.error = Some(format!(
@@ -474,6 +498,7 @@ fn accept(pane: &mut GitPane, sent: Request, event: &Value) {
     if busy(event) {
         return retry(pane, sent);
     }
+    pane.busy_retries = 0;
     if kind == "error" && event["code"] == "review_not_found" && sent != Request::Open {
         pane.review_id = None;
         pane.queue.push_front(sent);
@@ -836,6 +861,37 @@ pub mod tests {
         key(&mut app, KeyCode::Esc);
         assert!(app.git.is_none());
         assert!(!captures(&app));
+    }
+
+    #[test]
+    fn git_pane_stops_retrying_a_busy_host_and_refresh_starts_over() {
+        let mut app = loaded();
+        let busy = json!({"type":"error","code":"busy","message":"busy"});
+        let mut sent = key(&mut app, KeyCode::Char('r')).commands.remove(0);
+        for _ in 0..BUSY_RETRIES {
+            assert_eq!(sent["type"], "reviewContext");
+            reply(&mut app, &sent, busy.clone());
+            app.git.as_mut().unwrap().retry_at = Some(Instant::now());
+            sent = tick(&mut app).unwrap();
+        }
+        reply(&mut app, &sent, busy.clone());
+        let pane = app.git.as_mut().unwrap();
+        assert_eq!(pane.error.as_deref(), Some(BUSY_MESSAGE));
+        assert!(pane.queue.is_empty());
+        pane.retry_at = Some(Instant::now());
+        pane.outbox.push_back(json!({"type":"stale"}));
+        assert!(std::iter::from_fn(|| tick(&mut app)).all(|command| command["type"] == "stale"));
+        app.git
+            .as_mut()
+            .unwrap()
+            .outbox
+            .push_back(json!({"type":"stale"}));
+        let refreshed = key(&mut app, KeyCode::Char('r')).commands;
+        assert_eq!(refreshed[0]["type"], "reviewContext");
+        let pane = app.git.as_ref().unwrap();
+        assert!(pane.error.is_none());
+        assert_eq!(pane.busy_retries, 0);
+        assert!(pane.outbox.is_empty());
     }
 
     #[test]

@@ -34,12 +34,12 @@ pub fn footer_copy(app: &App) -> Option<(&'static str, &'static str)> {
     Some(if files_controller::preview_docked(app) {
         (
             " FILES ",
-            " PgUp PgDn scroll · Esc close preview · p P paste path · r refresh",
+            " PgUp PgDn scroll · Esc close preview · p A paste path · r refresh",
         )
     } else {
         (
             " FILES ",
-            " Enter preview · h l fold · p P paste path · o pin · . hidden · Ctrl+P find · Esc sessions",
+            " Enter preview · h l fold · p A paste path · o pin · . hidden · Ctrl+P find · Esc sessions",
         )
     })
 }
