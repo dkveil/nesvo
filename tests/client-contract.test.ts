@@ -734,7 +734,6 @@ const inboxCapabilities = {
   decisions: true,
   jobPages: true,
 };
-// Hand-written: no host test captures attentionInbox/decisions replies like events.jsonl; that needs an attention_inbox_tests.rs golden writer with injected decision IDs.
 const sessionItem = {
   kind: 'session',
   reason: 'question',
