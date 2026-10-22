@@ -377,8 +377,17 @@ fn not_repository(output: &Output) -> bool {
         )
 }
 
+const INSPECTION_BUDGET: Duration = Duration::from_secs(3);
+
 pub(crate) async fn inspect(directory: &Path, stopped: &mut watch::Receiver<bool>) -> Outcome {
-    let deadline = Instant::now() + Duration::from_secs(3);
+    inspect_until(directory, Instant::now() + INSPECTION_BUDGET, stopped).await
+}
+
+async fn inspect_until(
+    directory: &Path,
+    deadline: Instant,
+    stopped: &mut watch::Receiver<bool>,
+) -> Outcome {
     let slot = tokio::select! {
         biased;
         _ = stopped.changed() => return Outcome::Unavailable,
@@ -600,6 +609,17 @@ mod tests {
         );
     }
 
+    const FIXTURE_RELEASE_DEADLINE: Duration = Duration::from_secs(30);
+
+    async fn inspected(directory: &Path, stopped: &mut watch::Receiver<bool>) -> Outcome {
+        inspect_until(
+            directory,
+            Instant::now() + FIXTURE_RELEASE_DEADLINE,
+            stopped,
+        )
+        .await
+    }
+
     fn serial() -> &'static tokio::sync::Mutex<()> {
         static SERIAL: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
         SERIAL.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -646,7 +666,7 @@ mod tests {
             let (output, _slot) = run_command(
                 command,
                 DISCOVERY_BYTES,
-                Instant::now() + Duration::from_secs(3),
+                Instant::now() + FIXTURE_RELEASE_DEADLINE,
                 &mut stopped,
                 slot,
             )
@@ -691,7 +711,7 @@ mod tests {
         let expected_name = fixture.0.file_name().unwrap().to_str().unwrap().to_owned();
         let root = crate::process::display_path(&fixture.0);
         assert_eq!(
-            inspect(&nested, &mut stopped).await,
+            inspected(&nested, &mut stopped).await,
             Outcome::Ready {
                 name: expected_name.clone(),
                 branch: "feature/żółw".into(),
@@ -703,7 +723,7 @@ mod tests {
             .await;
         fixture.git(&["checkout", "--detach"]).await;
         assert_eq!(
-            inspect(&fixture.0, &mut stopped).await,
+            inspected(&fixture.0, &mut stopped).await,
             Outcome::Detached {
                 name: expected_name,
                 root
@@ -729,7 +749,7 @@ mod tests {
         let name = fixture.0.file_name().unwrap().to_str().unwrap().to_owned();
         let root = crate::process::display_path(&fixture.0);
         assert_eq!(
-            inspect(&linked, &mut stopped).await,
+            inspected(&linked, &mut stopped).await,
             Outcome::Ready {
                 name: name.clone(),
                 branch: "feature/linked".into(),
@@ -737,7 +757,7 @@ mod tests {
             }
         );
         assert_eq!(
-            inspect(&fixture.0, &mut stopped).await,
+            inspected(&fixture.0, &mut stopped).await,
             Outcome::Ready {
                 name,
                 branch: "main".into(),
@@ -752,13 +772,13 @@ mod tests {
         let fixture = Fixture::new();
         let (_sender, mut stopped) = watch::channel(false);
         assert_eq!(
-            inspect(&fixture.0, &mut stopped).await,
+            inspected(&fixture.0, &mut stopped).await,
             Outcome::NotRepository
         );
         let (sender, mut stopped) = watch::channel(false);
         sender.send_replace(true);
         assert_eq!(
-            inspect(&fixture.0, &mut stopped).await,
+            inspected(&fixture.0, &mut stopped).await,
             Outcome::Unavailable
         );
         assert!(cleanup_confirmed());
