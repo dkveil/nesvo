@@ -6,8 +6,14 @@ use crate::{
     notes::{self, Editor, LastNote, Saved, Summary},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use nesvo_wire::views::{
+    self, HostError, ReplyHeader,
+    notes::{
+        DeleteNote, ListNotes, NoteList, NoteSummary, NoteText, ReadNote, StaleNote, WriteNote,
+    },
+};
 use ratatui::layout::Rect;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
@@ -178,10 +184,10 @@ enum Want {
 }
 
 impl Want {
-    fn command(&self) -> Value {
+    fn command(&self, app: &mut App) -> Value {
         match self {
-            Self::List(root) => json!({"type":"listNotes","root":root}),
-            Self::Read(path, _) => json!({"type":"readNote","path":path}),
+            Self::List(root) => app.typed_request(&ListNotes { root }),
+            Self::Read(path, _) => app.typed_request(&ReadNote { path }),
             Self::Save {
                 path,
                 text,
@@ -192,10 +198,24 @@ impl Want {
                 path,
                 text,
                 expected,
-            } => {
-                json!({"type":"writeNote","path":path,"text":text,"expectedRevision":expected})
-            }
-            Self::Delete(path) => json!({"type":"deleteNote","path":path}),
+            } => app.typed_request(&WriteNote {
+                path,
+                text,
+                expected_revision: expected.as_deref(),
+            }),
+            Self::Delete(path) => app.typed_request(&DeleteNote { path }),
+        }
+    }
+}
+
+impl From<NoteSummary> for Summary {
+    fn from(note: NoteSummary) -> Self {
+        Self {
+            name: note.name,
+            path: note.path,
+            size: note.size,
+            modified_ms: note.modified_ms,
+            first_line: note.first_line,
         }
     }
 }
@@ -536,11 +556,9 @@ fn dispatch(app: &mut App, limit: usize) -> Vec<Value> {
         let Some(want) = app.notes.queue.pop_front() else {
             break;
         };
-        let command = app.request(want.command());
-        if let Some(id) = command["requestId"].as_str() {
-            app.notes
-                .pending
-                .insert(id.to_owned(), (want, Instant::now()));
+        let command = want.command(app);
+        if let Some(id) = ReplyHeader::of(&command).request_id {
+            app.notes.pending.insert(id, (want, Instant::now()));
         }
         commands.push(command);
     }
@@ -570,13 +588,12 @@ pub fn expire(app: &mut App) -> bool {
     !expired.is_empty()
 }
 
-fn loaded(event: &Value) -> Loaded {
-    Loaded::new(
-        event["text"].as_str().unwrap_or_default().to_owned(),
-        event["revision"].as_str().unwrap_or_default().to_owned(),
-        event["size"].as_u64().unwrap_or(0),
-        event["modifiedMs"].as_u64(),
-    )
+fn note_text(event: &Value) -> NoteText {
+    views::decode(event).unwrap_or_default()
+}
+
+fn loaded(note: NoteText) -> Loaded {
+    Loaded::new(note.text, note.revision, note.size, note.modified_ms)
 }
 
 fn name_of(path: &str) -> String {
@@ -611,22 +628,28 @@ fn remember_path(app: &mut App, path: &str) {
 }
 
 pub fn host_event(app: &mut App, event: &Value) -> bool {
-    let Some(id) = event["requestId"].as_str() else {
+    let header = ReplyHeader::of(event);
+    let Some(id) = header.request_id.as_deref() else {
         return false;
     };
     let Some((want, _)) = app.notes.pending.remove(id) else {
         return false;
     };
     app.notes.error = None;
-    match (want, event["type"].as_str().unwrap_or_default()) {
+    match (want, header.kind.as_deref().unwrap_or_default()) {
         (Want::List(root), "notes") => {
+            let list: NoteList = views::decode(event).unwrap_or_default();
             let listing = Listing {
                 root: root.clone(),
-                directory: event["directory"].as_str().unwrap_or_default().to_owned(),
-                location: event["location"].as_str().unwrap_or_default().to_owned(),
-                repository: event["repository"].as_str().map(str::to_owned),
-                notes: serde_json::from_value(event["notes"].clone()).unwrap_or_default(),
-                truncated: event["truncated"] == true,
+                directory: list.directory,
+                location: list.location,
+                repository: list.repository,
+                notes: list
+                    .notes
+                    .into_iter()
+                    .filter_map(|note| note.0.map(Summary::from))
+                    .collect(),
+                truncated: list.truncated,
             };
             let directory = listing.directory.clone();
             if app.notes.root.as_deref() == Some(root.as_str()) {
@@ -642,7 +665,7 @@ pub fn host_event(app: &mut App, event: &Value) -> bool {
             }
         }
         (Want::Read(path, purpose), "note") => {
-            let loaded = loaded(event);
+            let loaded = loaded(note_text(event));
             match purpose {
                 Purpose::Capture => continue_capture(app, &path, Some(loaded)),
                 Purpose::Edit => {
@@ -656,15 +679,11 @@ pub fn host_event(app: &mut App, event: &Value) -> bool {
         }
         (Want::Save { draft, text, .. }, "noteSaved") => saved(app, event, &text, draft),
         (Want::Capture { path, text, .. }, "noteSaved") => {
-            let revision = event["revision"].as_str().unwrap_or_default().to_owned();
+            let note = note_text(event);
+            let revision = note.revision;
             app.notes.cache(
                 path.clone(),
-                Loaded::new(
-                    text.clone(),
-                    revision.clone(),
-                    event["size"].as_u64().unwrap_or(0),
-                    event["modifiedMs"].as_u64(),
-                ),
+                Loaded::new(text.clone(), revision.clone(), note.size, note.modified_ms),
             );
             if let Some(draft) = app.notes.draft.as_mut()
                 && draft.path.as_deref() == Some(path.as_str())
@@ -715,8 +734,9 @@ pub fn host_event(app: &mut App, event: &Value) -> bool {
 }
 
 fn saved(app: &mut App, event: &Value, text: &str, generation: u64) {
-    let path = event["path"].as_str().unwrap_or_default().to_owned();
-    let revision = event["revision"].as_str().unwrap_or_default().to_owned();
+    let note = note_text(event);
+    let path = note.path;
+    let revision = note.revision;
     let current = app.notes.current_draft(generation).is_some();
     if let Some(draft) = app.notes.current_draft(generation) {
         draft.saving = false;
@@ -729,12 +749,7 @@ fn saved(app: &mut App, event: &Value, text: &str, generation: u64) {
     }
     app.notes.cache(
         path.clone(),
-        Loaded::new(
-            text.to_owned(),
-            revision,
-            event["size"].as_u64().unwrap_or(0),
-            event["modifiedMs"].as_u64(),
-        ),
+        Loaded::new(text.to_owned(), revision, note.size, note.modified_ms),
     );
     if current {
         app.notes.selected = Some(path.clone());
@@ -778,20 +793,21 @@ fn describe(code: &str, message: &str) -> String {
 }
 
 pub fn host_error(app: &mut App, event: &Value) {
-    let Some(id) = event["requestId"].as_str() else {
+    let error = HostError::of(event);
+    let Some(id) = error.request_id.as_deref() else {
         return;
     };
     let Some((want, _)) = app.notes.pending.remove(id) else {
         return;
     };
-    let code = event["code"].as_str().unwrap_or_default();
+    let code = error.code();
     let message = describe(
         code,
-        event["message"]
-            .as_str()
-            .unwrap_or("The host refused the notes request."),
+        error.message_or("The host refused the notes request."),
     );
-    let revision = event["revision"].as_str().map(str::to_owned);
+    let revision = views::decode::<StaleNote>(event)
+        .unwrap_or_default()
+        .revision;
     fail(app, want, code, message, revision);
 }
 
@@ -1350,6 +1366,7 @@ pub fn apply_layout(app: &mut App) -> Vec<Value> {
 pub mod tests {
     use super::*;
     use crate::controller;
+    use serde_json::json;
 
     pub const PLAN: &str = "/w/.nesvo/notes/plan.md";
     pub const IDEAS: &str = "/w/.nesvo/notes/ideas.md";
