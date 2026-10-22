@@ -3005,6 +3005,43 @@ mod review_tests {
     }
 
     #[test]
+    fn review_model_reopens_a_broadcast_review_with_only_the_source_the_host_accepts() {
+        let url = "https://github.com/o/r/pull/5";
+        let pull = json!({"kind":"pull","url":url,"owner":"o","repo":"r","number":5,"title":"Fix",
+            "state":"OPEN","headRef":"f","baseRef":"main","headOid":"abc"});
+        let local = json!({"kind":"local","sessionId":"s","context":"Automatic"});
+        let folder = json!({"kind":"local","sessionId":null,"context":"Automatic"});
+        let cases = [
+            (pull, json!({"kind":"pull","url":url})),
+            (local, json!({"kind":"local","sessionId":"s"})),
+            (folder, json!({"kind":"local","directory":"/w"})),
+        ];
+        for (source, expected) in cases {
+            let mut app = app(true);
+            let mut event = opened(None, "pull-o-r-5", "branch");
+            event["source"] = source;
+            let diff = app.event(event).unwrap().remove(0);
+            assert_eq!(diff["type"], "getDiff");
+            app.event(json!({"type":"error","requestId":diff["requestId"],
+                "code":"review_not_found","message":"gone"}))
+                .unwrap();
+            assert!(app.reviews.tabs[0].review_id.is_none());
+            let reopen = review_session::key(
+                &mut app,
+                crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Char('r'),
+                    crossterm::event::KeyModifiers::NONE,
+                ),
+                10,
+            )
+            .commands
+            .remove(0);
+            assert_eq!(reopen["type"], "openReview");
+            assert_eq!(reopen["source"], expected);
+        }
+    }
+
+    #[test]
     fn review_model_broadcast_review_opened_opens_one_tab_and_loads_saved_notes() {
         let directory = std::env::temp_dir().join(format!(
             "nesvo-review-broadcast-{}-{}",

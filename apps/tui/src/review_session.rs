@@ -459,8 +459,32 @@ pub struct ReviewTab {
     refreshed_at: Option<Instant>,
 }
 
+fn request_source(source: &ReviewSource, directory: Option<&str>) -> ReviewSource {
+    match (&source.kind, &source.session_id, &source.url) {
+        (ReviewSourceKind::Pull, _, Some(url)) => ReviewSource::pull(url),
+        (_, Some(session_id), _) => ReviewSource::local(session_id),
+        _ => {
+            let mut rest = serde_json::Map::new();
+            if let Some(directory) = source
+                .rest
+                .get("directory")
+                .and_then(Value::as_str)
+                .or(directory)
+            {
+                rest.insert("directory".into(), directory.into());
+            }
+            ReviewSource {
+                session_id: None,
+                rest,
+                ..ReviewSource::local("")
+            }
+        }
+    }
+}
+
 impl ReviewTab {
     fn new(label: String, source: ReviewSource) -> Self {
+        let source = request_source(&source, None);
         Self {
             review_id: None,
             label,
@@ -1014,7 +1038,9 @@ pub fn open(app: &mut App, source: Source) -> Vec<Value> {
 }
 
 fn restart_open(app: &mut App, index: usize) {
-    let source = app.reviews.tabs[index].source.clone();
+    let tab = &app.reviews.tabs[index];
+    let directory = tab.opened.as_ref().map(|opened| opened.directory.as_str());
+    let source = request_source(&tab.source, directory);
     let command = app.typed_request(&OpenReview { source: &source });
     let tab = &mut app.reviews.tabs[index];
     tab.opening = command["requestId"].as_str().map(str::to_owned);
