@@ -1743,24 +1743,18 @@ impl App {
                     form.name.trim()
                 };
                 let error = if name.is_empty() || name.chars().count() > 80 {
-                    Some("Use a name of 1–80 characters.")
+                    Some("Use a name of 1–80 characters.".to_owned())
                 } else if !self.connected {
-                    Some("Reconnect to the host before creating a session.")
+                    Some("Reconnect to the host before creating a session.".to_owned())
                 } else if self.capabilities.is_none() {
-                    Some("Waiting for available programs from the host.")
-                } else if !self
-                    .capabilities
-                    .as_ref()
-                    .is_some_and(|caps| caps.available(form.program))
-                {
-                    Some(
-                        "This program is unavailable on the host. Install it and restart the host.",
-                    )
+                    Some("Waiting for available programs from the host.".to_owned())
                 } else {
-                    None
+                    self.capabilities
+                        .as_ref()
+                        .and_then(|caps| caps.launch_refusal(form.program))
                 };
                 if let Some(message) = error {
-                    self.notice = message.into();
+                    self.notice = message;
                     self.dialog = Some(Dialog::NewSession(form));
                     return None;
                 }

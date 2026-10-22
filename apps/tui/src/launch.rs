@@ -91,6 +91,77 @@ where
         .collect())
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderState {
+    Ok,
+    NoCli,
+    NotLoggedIn,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ProviderAvailability {
+    #[serde(default)]
+    pub state: ProviderState,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+impl ProviderAvailability {
+    pub fn label(&self) -> String {
+        match (self.state, self.version.as_deref()) {
+            (ProviderState::Ok, Some(version)) => format!("ok · {version}"),
+            (ProviderState::Ok, None) => "ok".into(),
+            (ProviderState::NoCli, _) => "CLI not found".into(),
+            (ProviderState::NotLoggedIn, _) => "not logged in".into(),
+            (ProviderState::Unknown, _) => "login unknown".into(),
+        }
+    }
+
+    pub fn hint(&self) -> Option<String> {
+        let reason = self.reason.as_deref().unwrap_or("no detail from the host");
+        match self.state {
+            ProviderState::Ok => None,
+            ProviderState::NoCli => Some(format!("Cannot launch: {reason}")),
+            ProviderState::NotLoggedIn | ProviderState::Unknown => {
+                Some(format!("Launch allowed · {reason}"))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct Providers {
+    #[serde(default, deserialize_with = "provider_availability")]
+    pub claude: Option<ProviderAvailability>,
+    #[serde(default, deserialize_with = "provider_availability")]
+    pub codex: Option<ProviderAvailability>,
+    #[serde(default, deserialize_with = "provider_availability")]
+    pub gemini: Option<ProviderAvailability>,
+}
+
+fn provider_availability<'de, D>(deserializer: D) -> Result<Option<ProviderAvailability>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<Value>::deserialize(deserializer)?
+        .and_then(|entry| serde_json::from_value(entry).ok()))
+}
+
+fn providers<'de, D>(deserializer: D) -> Result<Providers, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<Value>::deserialize(deserializer)?
+        .and_then(|entry| serde_json::from_value(entry).ok())
+        .unwrap_or_default())
+}
+
 #[derive(Default, Debug, Deserialize)]
 pub struct Capabilities {
     pub workspace: String,
@@ -121,6 +192,8 @@ pub struct Capabilities {
         deserialize_with = "profile_support"
     )]
     pub launch_profile_support: Vec<ProfileSupport>,
+    #[serde(default, deserialize_with = "providers")]
+    pub providers: Providers,
 }
 
 impl Capabilities {
@@ -128,6 +201,34 @@ impl Capabilities {
         self.programs
             .iter()
             .any(|item| item.id == program && item.available)
+            && self
+                .provider(program)
+                .is_none_or(|provider| provider.state != ProviderState::NoCli)
+    }
+
+    pub fn provider(&self, program: Program) -> Option<&ProviderAvailability> {
+        match program {
+            Program::Claude => self.providers.claude.as_ref(),
+            Program::Codex => self.providers.codex.as_ref(),
+            Program::Gemini => self.providers.gemini.as_ref(),
+            Program::Shell => None,
+        }
+    }
+
+    pub fn launch_refusal(&self, program: Program) -> Option<String> {
+        if self.available(program) {
+            return None;
+        }
+        Some(
+            match self
+                .provider(program)
+                .and_then(|provider| provider.reason.as_deref())
+            {
+                Some(reason) => format!("Cannot launch: {reason}."),
+                None => "This program is unavailable on the host. Install it and restart the host."
+                    .into(),
+            },
+        )
     }
 
     pub fn profile_efforts(&self, program: Program) -> Option<Vec<String>> {
@@ -347,6 +448,64 @@ mod tests {
             ]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn launch_provider_availability_gates_no_cli_and_tolerates_malformed_entries() {
+        let caps: Capabilities = serde_json::from_value(serde_json::json!({
+            "workspace": "/work",
+            "programs": [
+                {"id":"claude","available":true},
+                {"id":"codex","available":true},
+                {"id":"gemini","available":true}
+            ],
+            "providers": {
+                "claude": {"state":"ok","version":"2.1.3"},
+                "codex": {"state":"noCli","reason":"codex was not found on the host PATH"},
+                "gemini": {"state":"futureState","reason":"later"},
+                "extra": {"state":"ok"}
+            }
+        }))
+        .unwrap();
+        assert!(caps.available(Program::Claude));
+        assert!(!caps.available(Program::Codex));
+        assert!(caps.available(Program::Gemini));
+        assert_eq!(
+            caps.provider(Program::Claude).unwrap().label(),
+            "ok · 2.1.3"
+        );
+        assert_eq!(caps.provider(Program::Claude).unwrap().hint(), None);
+        assert_eq!(
+            caps.provider(Program::Gemini).unwrap().state,
+            ProviderState::Unknown
+        );
+        assert_eq!(
+            caps.launch_refusal(Program::Codex).unwrap(),
+            "Cannot launch: codex was not found on the host PATH."
+        );
+        assert_eq!(caps.launch_refusal(Program::Claude), None);
+        assert_eq!(caps.launch_refusal(Program::Gemini), None);
+        let malformed: Capabilities = serde_json::from_value(serde_json::json!({
+            "workspace": "/work",
+            "programs": [{"id":"claude","available":true}],
+            "providers": {"claude": "broken"}
+        }))
+        .unwrap();
+        assert!(malformed.provider(Program::Claude).is_none());
+        assert!(malformed.available(Program::Claude));
+        let legacy: Capabilities = serde_json::from_value(serde_json::json!({
+            "workspace": "/w",
+            "programs": [{"id":"codex","available":false}],
+            "providers": 7
+        }))
+        .unwrap();
+        assert!(legacy.provider(Program::Codex).is_none());
+        assert!(
+            legacy
+                .launch_refusal(Program::Codex)
+                .unwrap()
+                .contains("Install it")
+        );
     }
 
     #[test]

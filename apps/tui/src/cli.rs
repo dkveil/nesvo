@@ -342,6 +342,11 @@ pub enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Show whether each provider CLI is installed and has a stored login; runs no provider.
+    Providers {
+        #[arg(long)]
+        json: bool,
+    },
     /// Show source, freshness, delivery and protocol diagnostics (no prompts).
     Explain {
         id: String,
@@ -609,7 +614,8 @@ impl Command {
                 | SessionCommand::Current { json }
                 | SessionCommand::Read { json, .. }
                 | SessionCommand::Diff { json, .. }
-                | SessionCommand::Explain { json, .. } => *json,
+                | SessionCommand::Explain { json, .. }
+                | SessionCommand::Providers { json } => *json,
                 SessionCommand::Recover { command } => command.machine(),
             },
         }
@@ -739,6 +745,35 @@ pub(crate) async fn request(
             "Host request timed out; no operation was retried",
         )
     })?
+}
+
+pub(crate) fn provider_availability(capabilities: &Value) -> Result<Value> {
+    let Some(providers) = capabilities
+        .get("providers")
+        .filter(|providers| providers.is_object())
+    else {
+        return Err(failure(
+            "unsupported",
+            "Host does not report provider availability; update nesvo-host",
+        ));
+    };
+    Ok(json!({"type":"providers","providers":providers}))
+}
+
+fn provider_availability_text(data: &Value) -> String {
+    ["claude", "codex", "gemini"]
+        .into_iter()
+        .map(|name| {
+            let entry = &data["providers"][name];
+            let state = entry["state"].as_str().unwrap_or("unknown");
+            let version = entry["version"].as_str().unwrap_or("-");
+            let reason = entry["reason"].as_str().unwrap_or("");
+            format!("{name:<7} {state:<12} {version:<10} {reason}")
+                .trim_end()
+                .to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(crate) fn valid_id(id: &str) -> Result<()> {
@@ -1105,6 +1140,7 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
             )
         }
         SessionCommand::Explain { .. }
+        | SessionCommand::Providers { .. }
         | SessionCommand::Recover { .. }
         | SessionCommand::Wake { .. }
         | SessionCommand::Interrupt(_)
@@ -1841,6 +1877,22 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         Command::Session {
             command: SessionCommand::Recover { command },
         } => return crate::session_recovery::run(command, connection).await,
+        Command::Session {
+            command: SessionCommand::Providers { json },
+        } => {
+            let capabilities = request(
+                connection,
+                json!({"type":"getCapabilities"}),
+                "capabilities",
+            )
+            .await?;
+            let data = provider_availability(&capabilities)?;
+            if json {
+                return print_data(true, data);
+            }
+            println!("{}", provider_availability_text(&data));
+            return Ok(());
+        }
         Command::Session { command } => return session_query(command, connection).await,
     };
     let capabilities = request(
@@ -2610,6 +2662,55 @@ mod quota_tests;
 #[cfg(test)]
 #[path = "quota_wake_cli_tests.rs"]
 mod quota_wake_tests;
+
+#[cfg(test)]
+mod provider_availability_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn session_providers_cli_wire_reads_capabilities_and_publishes_schema() {
+        let parsed =
+            crate::Arguments::try_parse_from(["nesvo", "session", "providers", "--json"]).unwrap();
+        let command = parsed.command.unwrap();
+        assert!(command.machine());
+        assert!(matches!(
+            command,
+            Command::Session {
+                command: SessionCommand::Providers { json: true }
+            }
+        ));
+        assert!(crate::Arguments::try_parse_from(["nesvo", "session", "providers", "x"]).is_err());
+        let capabilities = json!({"type":"capabilities","requestId":"cli-1","providers":{
+            "claude":{"state":"ok","version":"2.1.3"},
+            "codex":{"state":"noCli","reason":"codex was not found on the host PATH"},
+            "gemini":{"state":"notLoggedIn","version":"0.65.0","reason":"Gemini has no stored login"}
+        }});
+        let data = provider_availability(&capabilities).unwrap();
+        assert_eq!(
+            data,
+            json!({"type":"providers","providers":capabilities["providers"]})
+        );
+        let text = provider_availability_text(&data);
+        assert_eq!(text.lines().count(), 3);
+        assert!(text.starts_with("claude  ok           2.1.3"), "{text}");
+        assert!(text.contains("codex   noCli        -          codex was not found"));
+        assert!(text.contains("gemini  notLoggedIn  0.65.0"));
+        for legacy in [json!({"type":"capabilities"}), json!({"providers":[]})] {
+            let error = provider_availability(&legacy).unwrap_err();
+            assert!(error.to_string().contains("update nesvo-host"), "{error}");
+        }
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
+        assert!(
+            schema["oneOf"][1]["properties"]["data"]["oneOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|variant| variant["properties"]["type"]["const"] == "providers")
+        );
+    }
+}
 
 #[cfg(test)]
 mod worktree_tests {

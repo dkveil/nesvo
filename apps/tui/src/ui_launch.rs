@@ -199,10 +199,16 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
             row(area, 9),
         );
     }
+    let provider_hint = (programs.len() > 1)
+        .then(|| app.capabilities.as_ref()?.provider(form.program)?.hint())
+        .flatten();
     if form.kind == Some(SessionKind::Agent) {
+        let caption = provider_hint.as_deref().map_or_else(
+            || "   Coding agents · Clean terminal opens a shell".to_owned(),
+            |hint| format!("   {hint}"),
+        );
         frame.render_widget(
-            Paragraph::new("   Coding agents · Clean terminal opens a shell")
-                .style(Style::default().fg(MUTED)),
+            Paragraph::new(caption).style(Style::default().fg(MUTED)),
             row(area, 10),
         );
     }
@@ -212,9 +218,12 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         .filter(|(_, program)| programs.len() > 1 && programs.contains(program))
     {
         let availability = match &app.capabilities {
-            None => "checking…",
-            Some(caps) if caps.available(program) => "available",
-            Some(_) => "not installed",
+            None => "checking…".to_owned(),
+            Some(caps) => match caps.provider(program) {
+                Some(provider) => provider.label(),
+                None if caps.available(program) => "available".to_owned(),
+                None => "not installed".to_owned(),
+            },
         };
         let selected = form.program == program;
         frame.render_widget(
@@ -254,8 +263,11 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         .style(Style::default().fg(MUTED)),
         row(area, 15),
     );
+    let notice = provider_hint
+        .filter(|_| app.notice.is_empty() && form.kind != Some(SessionKind::Agent))
+        .unwrap_or_else(|| app.notice.clone());
     frame.render_widget(
-        Paragraph::new(app.notice.as_str()).style(Style::default().fg(MUTED)),
+        Paragraph::new(notice).style(Style::default().fg(MUTED)),
         row(area, 16),
     );
 }
@@ -493,6 +505,83 @@ mod tests {
             assert!(!screen.contains("MODEL"));
             assert!(screen.contains("update the host for model profiles"));
         }
+    }
+
+    fn provider_app() -> App {
+        let mut app = App::new(9);
+        app.event(json!({"type":"capabilities","workspace":"C:/work","programs":[
+            {"id":"shell","available":true},{"id":"claude","available":true},
+            {"id":"codex","available":false},{"id":"gemini","available":true}
+        ],"advancedLaunch":true,"providers":{
+            "claude":{"state":"ok","version":"2.1.3"},
+            "codex":{"state":"noCli","reason":"codex was not found on the host PATH"},
+            "gemini":{"state":"notLoggedIn","version":"0.65.0","reason":"Gemini has no stored login"}
+        }}))
+        .unwrap();
+        app.dialog = None;
+        app.onboarded = true;
+        app.connected = true;
+        app
+    }
+
+    #[test]
+    fn launch_agent_menu_shows_provider_availability_and_hints() {
+        for (width, height) in [(80, 24), (100, 32), (150, 44)] {
+            let mut app = provider_app();
+            open(&mut app, SessionKind::Agent, Program::Claude);
+            let screen = text(&app, width, height);
+            assert!(screen.contains("ok · 2.1.3"), "{width}x{height}\n{screen}");
+            assert!(
+                screen.contains("CLI not found"),
+                "{width}x{height}\n{screen}"
+            );
+            assert!(
+                screen.contains("not logged in"),
+                "{width}x{height}\n{screen}"
+            );
+            assert!(!screen.contains("Launch allowed"), "{screen}");
+            let mut gemini = provider_app();
+            open(&mut gemini, SessionKind::Agent, Program::Gemini);
+            let screen = text(&gemini, width, height);
+            assert!(
+                screen.contains("Launch allowed"),
+                "{width}x{height}\n{screen}"
+            );
+            let mut codex = provider_app();
+            open(&mut codex, SessionKind::Agent, Program::Codex);
+            let screen = text(&codex, width, height);
+            assert!(
+                screen.contains("Cannot launch"),
+                "{width}x{height}\n{screen}"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_submit_refuses_no_cli_with_reason_and_allows_not_logged_in() {
+        let mut app = provider_app();
+        open(&mut app, SessionKind::Agent, Program::Codex);
+        if let Some(Dialog::NewSession(form)) = app.dialog.as_mut() {
+            form.model.clear();
+            form.effort.clear();
+        }
+        assert!(app.submit_dialog().is_none());
+        assert_eq!(
+            app.notice,
+            "Cannot launch: codex was not found on the host PATH."
+        );
+        assert!(matches!(app.dialog, Some(Dialog::NewSession(_))));
+        app.notice.clear();
+        let mut gemini = provider_app();
+        open(&mut gemini, SessionKind::Agent, Program::Gemini);
+        if let Some(Dialog::NewSession(form)) = gemini.dialog.as_mut() {
+            form.model.clear();
+            form.effort.clear();
+        }
+        let command = gemini
+            .submit_dialog()
+            .expect("not logged in still launches");
+        assert_eq!(command["spec"]["program"], "gemini", "{command}");
     }
 
     #[test]
