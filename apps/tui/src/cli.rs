@@ -569,7 +569,7 @@ pub(crate) fn exit_code(code: &str) -> i32 {
 }
 
 fn failure_envelope(code: &str, message: &str, receipt: Option<&Value>) -> Value {
-    let mut envelope = json!({"schemaVersion":1,"ok":false,"error":{"code":code,"message":message,"retryable":matches!(code,"host_unavailable"|"disconnected"|"timeout")}});
+    let mut envelope = json!({"schemaVersion":1,"ok":false,"error":{"code":code,"message":message,"retryable":exit_code(code) == EXIT_HOST_UNREACHABLE}});
     if let Some(receipt) = receipt {
         envelope["error"]["receipt"] = receipt.clone();
     }
@@ -3085,6 +3085,16 @@ mod agent_convention_tests {
             ("two\nlines\n", "two\nlines"),
         ] {
             assert_eq!(without_line_ending(raw.into()), choice, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn host_unreachable_failures_are_retryable_and_others_are_not() {
+        for code in HOST_UNREACHABLE_CODES {
+            assert_eq!(failure_receipt(code, "m", None)["error"]["retryable"], true, "{code}");
+        }
+        for code in ["busy", "operation_unconfirmed", "revision_conflict", "forbidden"] {
+            assert_eq!(failure_receipt(code, "m", None)["error"]["retryable"], false, "{code}");
         }
     }
 

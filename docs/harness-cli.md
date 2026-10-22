@@ -244,8 +244,8 @@ Exit statuses follow the [agent table](#for-agents): 0 success, 1 bad request,
 Error codes distinguish `invalid_argument`, `no_current_session`, `forbidden`, `scope_revoked`,
 `pairing_unavailable`, `host_unavailable`, `disconnected`, `session_not_found`,
 `invalid_cursor`, `git_unavailable`, `request_rejected`, `timeout`, `unsupported`
-and `operation_failed`. Only connection/disconnect/timeout errors are marked
-retryable. No command retries input. Pairing keys are never printed.
+and `operation_failed`. Exactly the exit-2 codes are marked `retryable`: the host was
+unreachable, so look up the same key or receipt again later. No command retries input. Pairing keys are never printed.
 
 ## Bounded terminal reads
 
