@@ -67,7 +67,7 @@ pub fn valid_root(root: &str) -> Result<()> {
     if root.is_empty()
         || root.len() > ROOT_BYTES
         || root.chars().any(char::is_control)
-        || !std::path::Path::new(root).is_absolute()
+        || !host_absolute(root)
     {
         return Err(failure(
             "invalid_argument",
@@ -75,6 +75,16 @@ pub fn valid_root(root: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn host_absolute(root: &str) -> bool {
+    let drive = root.as_bytes();
+    root.starts_with('/')
+        || root.starts_with("\\\\")
+        || (drive.len() >= 3
+            && drive[0].is_ascii_alphabetic()
+            && drive[1] == b':'
+            && matches!(drive[2], b'\\' | b'/'))
 }
 
 fn valid_layout(name: &str) -> Result<()> {
@@ -266,6 +276,26 @@ mod tests {
         }
         assert!(check_capability(&json!({"projects":true})).is_ok());
         assert!(check_capability(&json!({})).is_err());
+    }
+
+    #[test]
+    fn roots_in_any_host_path_syntax_pass_and_the_host_canonicalizes_them() {
+        for root in [
+            "/home/owner/repo",
+            "C:\\dev\\nesvo",
+            "c:/dev/nesvo",
+            "\\\\server\\share\\repo",
+            "\\\\?\\C:\\dev\\nesvo",
+        ] {
+            assert!(valid_root(root).is_ok(), "{root}");
+            assert_eq!(
+                query(&project(&["defaults", root])).unwrap().0["root"],
+                root
+            );
+        }
+        for root in ["", "repo", "relative/repo", "C:relative", "1:\\dev", "~/repo"] {
+            assert!(valid_root(root).is_err(), "{root}");
+        }
     }
 
     #[test]
