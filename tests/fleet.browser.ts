@@ -73,11 +73,39 @@ const olderOccurrence = {
 };
 const futureOccurrence = { ...olderOccurrence, id: 'occurrence-0', state: 'archived' };
 
+const liveSession = (
+  id: string,
+  name: string,
+  status: { state: string; source: string },
+  parentSessionId: string | null,
+) => ({
+  id,
+  name,
+  cwd: '/workspace/app',
+  createdAt: '2026-10-22T08:00:00Z',
+  cols: 80,
+  rows: 24,
+  running: true,
+  groupId: null,
+  controllerId: null,
+  program: 'claude',
+  role: parentSessionId ? 'worker' : 'coordinator',
+  parentSessionId,
+  status: { ...status, updatedAt: 1_792_713_600_000 },
+});
+const sessions = [
+  liveSession('worker-a', 'Worker A', { state: 'blocked', source: 'screen' }, 'coordinator'),
+  liveSession('shell', 'Shell', { state: 'idle', source: 'activity' }, null),
+  liveSession('coordinator', 'Coordinator', { state: 'working', source: 'hook' }, null),
+  liveSession('reviewer', 'Reviewer', { state: 'question', source: 'hook' }, 'worker-a'),
+];
+
 type JobsRequest = Extract<ClientCommand, { type: 'workflow' }>['request']['request'];
 
 const startHost = (key: Buffer) => {
   const server = new WebSocketServer({ port: 0 });
   const reads: JobsRequest[] = [];
+  const subscriptions: string[] = [];
   server.on('connection', socket => {
     const challenge = randomBytes(32).toString('hex');
     let received = 0;
@@ -120,7 +148,18 @@ const startHost = (key: Buffer) => {
           });
           break;
         case 'list':
-          send({ type: 'sessions', sessions: [], groups: [], revision: 0 });
+          send({ type: 'sessions', sessions, groups: [], revision: 0 });
+          break;
+        case 'subscribe':
+          subscriptions.push(command.sessionId);
+          send({ type: 'subscribed', sessionId: command.sessionId, cols: 80, rows: 24 });
+          send({
+            type: 'control',
+            sessionId: command.sessionId,
+            controllerId: null,
+            cols: 80,
+            rows: 24,
+          });
           break;
         case 'workflow': {
           const read = command.request.request;
@@ -157,7 +196,7 @@ const startHost = (key: Buffer) => {
       }
     });
   });
-  return { server, reads };
+  return { server, reads, subscriptions };
 };
 
 const connect = async (page: Page, port: number, key: Buffer) => {
@@ -181,7 +220,7 @@ const expectNoHorizontalOverflow = async (page: Page) => {
 
 async function main() {
   const key = randomBytes(32);
-  const { server, reads } = startHost(key);
+  const { server, reads, subscriptions } = startHost(key);
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
@@ -209,6 +248,49 @@ async function main() {
     await page.getByRole('button', { name: 'Close navigation', exact: true }).click();
 
     await connect(page, address.port, key);
+    const rows = page.getByRole('button', { name: /^Open session / });
+    await rows.first().waitFor();
+    assert.deepEqual(
+      await rows.evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))),
+      [
+        'Open session Shell',
+        'Open session Coordinator',
+        'Open session Worker A, child of Coordinator',
+        'Open session Reviewer, child of Worker A',
+      ],
+    );
+    const child = page.getByRole('button', {
+      name: 'Open session Worker A, child of Coordinator',
+      exact: true,
+    });
+    const grandchild = page.getByRole('button', {
+      name: 'Open session Reviewer, child of Worker A',
+      exact: true,
+    });
+    assert.equal(await child.getByTestId('child-session-marker').count(), 1);
+    assert.equal(
+      await page
+        .getByRole('button', { name: 'Open session Coordinator', exact: true })
+        .getByTestId('child-session-marker')
+        .count(),
+      0,
+    );
+    await child.getByLabel(/^Blocked\./).waitFor();
+    await grandchild.getByLabel(/^Question\./).waitFor();
+    const parentBox = await page
+      .getByRole('button', { name: 'Open session Coordinator', exact: true })
+      .boundingBox();
+    const childBox = await child.boundingBox();
+    const grandchildBox = await grandchild.boundingBox();
+    assert.ok(parentBox && childBox && grandchildBox);
+    assert.ok(childBox.x > parentBox.x && grandchildBox.x > childBox.x, 'Children are indented');
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: 'artifacts/child-sessions.png' });
+    await child.click();
+    await page.frameLocator('iframe[title="Session terminal"]').locator('.xterm-screen').waitFor();
+    assert.deepEqual(subscriptions, ['worker-a'], 'Tapping a child opens that child session');
+    await page.getByRole('button', { name: 'Back to sessions', exact: true }).click();
+    await child.waitFor();
     await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     await page.getByRole('button', { name: 'Jobs', exact: true }).click();
     await page.getByRole('button', { name: 'Open job Nightly review', exact: true }).waitFor();
@@ -251,7 +333,9 @@ async function main() {
     await page.getByRole('button', { name: 'Open job Weekly cleanup', exact: true }).waitFor();
 
     assert.deepEqual(errors, []);
-    console.log('PASS: jobs menu gating, paged job list and read-only job detail.');
+    console.log(
+      'PASS: child sessions under their parent, jobs menu gating, paged job list and read-only job detail.',
+    );
   } finally {
     await browser?.close();
     for (const socket of server.clients) socket.terminate();

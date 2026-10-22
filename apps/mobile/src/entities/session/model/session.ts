@@ -47,6 +47,7 @@ export type Session = {
   preview: string;
   cwd: string;
   groupId?: string | null;
+  parentSessionId?: string | null;
   live?: boolean;
   running?: boolean;
   hibernated?: boolean;

@@ -23,6 +23,7 @@ import { useInbox } from '@entities/inbox';
 import {
   sessionAgentColor,
   sessionLastKnownLabel,
+  sessionLineageRows,
   SessionStatusBadge,
   SessionStatusDot,
   statusNeedsAttention,
@@ -37,6 +38,8 @@ import { DashboardNavigation, type DashboardTab } from './dashboard-navigation';
 import { SessionLaunchpad } from './session-launchpad';
 
 export type { DashboardTab } from './dashboard-navigation';
+
+const CHILD_INDENT_PX = 18;
 
 function limitWindowLabel(minutes: number): string {
   if (minutes % 1440 === 0) return `${minutes / 1440}d`;
@@ -121,10 +124,12 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
         .toLocaleLowerCase()
         .includes(query.toLocaleLowerCase()),
   );
-  const sections = [...new Set(visible.map(session => session.groupId ?? null))].map(id => ({
+  const lineage = sessionLineageRows(visible);
+  const sessionNames = new Map(visible.map(session => [session.id, session.name]));
+  const sections = [...new Set(lineage.map(row => row.root.groupId ?? null))].map(id => ({
     id,
     name: groupPath(groups, id),
-    sessions: visible.filter(session => (session.groupId ?? null) === id),
+    rows: lineage.filter(row => (row.root.groupId ?? null) === id),
   }));
   const attentionCount = sessions.filter(session =>
     statusNeedsAttention(session.status, session.currentAttention),
@@ -370,17 +375,30 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                       {section.name}
                     </Text>
                     <Text style={s.sectionCount}>
-                      {section.sessions.length.toString().padStart(2, '0')}
+                      {section.rows.length.toString().padStart(2, '0')}
                     </Text>
                   </View>
-                  {section.sessions.map(session => (
+                  {section.rows.map(({ session, depth }) => (
                     <Pressable
                       key={session.id}
                       accessibilityRole="button"
-                      accessibilityLabel={`Open session ${session.name}`}
+                      accessibilityLabel={
+                        depth > 0
+                          ? `Open session ${session.name}, child of ${sessionNames.get(session.parentSessionId ?? '') ?? 'another session'}`
+                          : `Open session ${session.name}`
+                      }
                       onPress={() => openSession(session.id)}
-                      style={({ pressed }) => [s.sessionRow, pressed && s.pressed]}
+                      style={({ pressed }) => [
+                        s.sessionRow,
+                        depth > 0 && { marginLeft: depth * CHILD_INDENT_PX },
+                        pressed && s.pressed,
+                      ]}
                     >
+                      {depth > 0 ? (
+                        <View style={s.childSlot} testID="child-session-marker">
+                          <Icon name="return-down-forward-outline" size={14} color={c.faint} />
+                        </View>
+                      ) : null}
                       <View style={s.statusSlot}>
                         <SessionStatusDot
                           status={session.status}
@@ -873,6 +891,7 @@ const s = StyleSheet.create({
     gap: 12,
   },
   statusSlot: { paddingTop: 7 },
+  childSlot: { paddingTop: 4, marginRight: -6 },
   sessionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sessionTitle: {
     color: c.text,

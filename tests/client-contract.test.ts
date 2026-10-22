@@ -43,6 +43,10 @@ import {
   nextLoadablePage,
 } from '../apps/mobile/src/entities/job/model/job-pages';
 import {
+  MAX_LINEAGE_DEPTH,
+  sessionLineageRows,
+} from '../apps/mobile/src/entities/session/model/session-lineage';
+import {
   sessionLastKnownLabel,
   sessionReadinessLabel,
   sessionStateFreshness,
@@ -1891,4 +1895,42 @@ test('job detail labels name the schedule, attempts and retry class', () => {
   assert.equal(retryClassLabel(finished, undefined), 'No retry policy');
   assert.equal(jobStateLabel(jobDefinition), 'Next start 2026-10-24 00:00 UTC');
   assert.equal(jobStateLabel(externalJob), 'Paused');
+});
+
+test('child sessions follow their parent and keep the parent group section', () => {
+  const node = (id: string, parentSessionId?: string | null, groupId: string | null = null) => ({
+    id,
+    parentSessionId,
+    groupId,
+  });
+  const rows = sessionLineageRows([
+    node('worker-b', 'coordinator', 'mobile'),
+    node('shell'),
+    node('coordinator', null, 'server'),
+    node('reviewer', 'worker-b'),
+    node('orphan', 'closed-parent', 'mobile'),
+  ]);
+  assert.deepEqual(
+    rows.map(row => [row.session.id, row.root.id, row.depth]),
+    [
+      ['shell', 'shell', 0],
+      ['coordinator', 'coordinator', 0],
+      ['worker-b', 'coordinator', 1],
+      ['reviewer', 'coordinator', 2],
+      ['orphan', 'orphan', 0],
+    ],
+  );
+  const chain = Array.from({ length: 6 }, (_, index) =>
+    node(`level-${index}`, index === 0 ? null : `level-${index - 1}`),
+  );
+  assert.equal(Math.max(...sessionLineageRows(chain).map(row => row.depth)), MAX_LINEAGE_DEPTH);
+  const cycle = sessionLineageRows([node('a', 'b'), node('b', 'a'), node('self', 'self')]);
+  assert.deepEqual(
+    cycle.map(row => [row.session.id, row.depth]),
+    [
+      ['self', 0],
+      ['a', 0],
+      ['b', 1],
+    ],
+  );
 });

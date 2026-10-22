@@ -13,6 +13,7 @@ export {
   sessionStatusDetail,
   statusNeedsAttention,
 } from './model/status-presentation';
+export { type LineageRow, MAX_LINEAGE_DEPTH, sessionLineageRows } from './model/session-lineage';
 export { sessionAgentColor } from './ui/agent-presentation';
 export { SessionStatusBadge, SessionStatusDot } from './ui/session-status-badge';
 export { demoSessions, type DemoSession } from './model/demo-session';
