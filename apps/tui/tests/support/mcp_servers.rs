@@ -10,6 +10,10 @@ use tokio_tungstenite::{
 type Owner = RunningService<RoleClient, ()>;
 
 const SERVER_SOURCE: &str = include_str!("../../../../tests/fixtures/mcp-stdio-server.cjs");
+#[cfg(target_os = "macos")]
+const PLATFORM_INJECTED_VARIABLES: [&str; 1] = ["__CF_USER_TEXT_ENCODING"];
+#[cfg(not(target_os = "macos"))]
+const PLATFORM_INJECTED_VARIABLES: [&str; 0] = [];
 const ISOLATED_VARIABLES: [&str; 14] = [
     "PATH",
     "PATHEXT",
@@ -402,7 +406,8 @@ fn assert_isolated(run: &Exercise, repo: &Path) -> Result<()> {
             .context("Variable name")?
             .to_ascii_uppercase();
         assert!(
-            ISOLATED_VARIABLES.contains(&name.as_str()),
+            ISOLATED_VARIABLES.contains(&name.as_str())
+                || PLATFORM_INJECTED_VARIABLES.contains(&name.as_str()),
             "{name} leaked into the server environment"
         );
     }
@@ -476,6 +481,19 @@ async fn approved_external_servers_reach_the_provider_through_the_pool() -> Resu
             .clone();
         assert_eq!(listed_attachment["repository"], repository_key.as_str());
         assert_eq!(listed_attachment["mode"], "cold");
+        let cli_listing = owner_cli(&fixture, &["mcp", "servers", "--directory", &directory, "--json"]).await?;
+        assert_eq!(cli_listing["data"]["type"], "mcpServers", "{cli_listing}");
+        assert_eq!(cli_listing["data"]["approved"], true);
+        assert_eq!(cli_listing["data"]["servers"][0]["state"], "approved");
+        assert!(cli_listing["data"]["servers"][0]["resolvedCommand"].is_string());
+        assert!(
+            cli_listing["data"]["attached"]
+                .as_array()
+                .is_some_and(|attached| attached.iter().any(|item| item["sessionId"] == cold.as_str()))
+        );
+        validate(vec![cli_listing.clone()]).await?;
+        let tool_listing = data(call(&owner, "nesvo_list_mcp_servers", json!({"directory":repo})).await?)?;
+        assert_eq!(tool_listing["data"], cli_listing["data"]);
         let first = exercise(&entry).await?;
         assert_isolated(&first, &repo)?;
         let mut dedicated = vec![first.initialize_ms];
