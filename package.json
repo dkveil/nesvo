@@ -17,7 +17,7 @@
     "typecheck": "npm run typecheck --workspace @nesvo/mobile",
     "lint": "eslint apps/mobile/src --max-warnings 0",
     "format:check": "prettier --check \"apps/mobile/**/*.{ts,tsx,json,js,mjs}\" \"packages/**/*.{json,md}\" \"tests/*.{ts,mjs}\" \"scripts/*.{js,mjs,cjs}\" \"*.{json,js,md}\" \"docs/*.md\" \"apps/*/README.md\" \".github/workflows/*.yml\"",
-    "test:client": "node --import tsx --test tests/client-replay.test.ts tests/client-contract.test.ts tests/client-control.test.ts",
+    "test:client": "node --import tsx --test --test-timeout=180000 --test-force-exit tests/client-replay.test.ts tests/client-contract.test.ts tests/client-control.test.ts",
     "test:web": "node tests/app.browser.mjs",
     "test:create-session": "node --import tsx tests/create-session.browser.ts",
     "test:live": "tsx tests/live.browser.ts",
