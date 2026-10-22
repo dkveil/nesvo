@@ -354,20 +354,7 @@ fn describe(frame: &mut Frame, app: &App, area: Rect, project: &Project) {
 }
 
 fn hints(projects: &Projects) -> Vec<(&'static str, &'static str)> {
-    match (&projects.load, projects.items.is_empty()) {
-        (Load::Ready, false) => vec![
-            ("↑↓ Home End", "select"),
-            ("Enter", "new session"),
-            ("l", "layout"),
-            ("w", "worktree setup"),
-            ("s", "filter"),
-            ("p", "pin"),
-            ("r", "refresh"),
-            ("Esc", "back"),
-        ],
-        (Load::Failed(_), _) | (Load::Ready, true) => vec![("r", "refresh"), ("Esc", "back")],
-        _ => vec![("Esc", "back")],
-    }
+    crate::key_table::hints(crate::projects_controller::keys(projects))
 }
 
 fn footer(frame: &mut Frame, app: &App, area: Rect) {

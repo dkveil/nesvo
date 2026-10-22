@@ -133,6 +133,8 @@ Press `p` in navigation mode to see the exact private QR and pairing file paths 
 
 `main.rs` composes the CLI, `network.rs` handles pairing and the encrypted WebSocket, `model.rs` handles state and host events, `controller.rs` translates user intentions, and `launch.rs` owns launch choices and form editing. `input.rs` encodes keys, `terminal.rs` adapts VT state, `ui.rs` and `ui_launch.rs` only render, and `ui_controls.rs` shares control geometry with mouse hit testing. `jobs.rs` holds Jobs view state and host replies, `jobs_controller.rs` maps its keys, and `ui_jobs.rs` renders it. `brand.rs` renders the shared logo, `theme.rs` exposes generated colors, and `runner.rs` manages the event loop and terminal RAII cleanup. Rendering performs no I/O. Transport uses bounded queues and the shared `nesvo-wire` crate.
 
+Notes, Runs, Projects and Worktree actions dispatch their keys through one table per page (`keys()` in each controller, built on `key_table.rs`), and their footers list that same table, so a footer cannot advertise a key the handler ignores.
+
 The event loop caches terminal dimensions and updates them from resize events, avoiding repeated synchronous Windows console queries. A fixed Ratatui viewport and `output.rs` batch frame text and cursor commands into one console write. Key releases, mouse motion, and successfully forwarded terminal input do not trigger redundant local redraws; host output updates the screen. Network draining has a time budget so high-volume output cannot monopolize input handling.
 
 ```sh

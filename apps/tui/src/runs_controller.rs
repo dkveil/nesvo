@@ -1,5 +1,6 @@
 use crate::{
     controller::Outcome,
+    key_table::{self, Binding, bind, plain, unlisted},
     layouts::Role,
     model::App,
     runs::{ANSWER_BYTES, Effect, Load, Page, Runs},
@@ -7,6 +8,113 @@ use crate::{
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use serde_json::Value;
 use std::time::Instant;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunKey {
+    Previous,
+    Next,
+    Templates,
+    Reload,
+    Pause,
+    Resume,
+    Drain,
+    Answer,
+    Wakes,
+    Delivery,
+    Refresh,
+    Start,
+    Retry,
+    Submit,
+    Back,
+}
+
+const MOVE: [Binding<RunKey>; 2] = [
+    bind(
+        &[plain(KeyCode::Up), plain(KeyCode::Char('k'))],
+        "↑↓",
+        "select",
+        RunKey::Previous,
+    ),
+    unlisted(
+        &[plain(KeyCode::Down), plain(KeyCode::Char('j'))],
+        RunKey::Next,
+    ),
+];
+const BACK: Binding<RunKey> = bind(&[plain(KeyCode::Esc)], "Esc", "back", RunKey::Back);
+const ANSWER_KEYS: [Binding<RunKey>; 2] = [
+    bind(&[plain(KeyCode::Enter)], "Enter", "answer", RunKey::Submit),
+    bind(&[plain(KeyCode::Esc)], "Esc", "cancel", RunKey::Back),
+];
+const RUN_CONTROLS: [Binding<RunKey>; 5] = [
+    bind(&[plain(KeyCode::Enter)], "Enter", "reload", RunKey::Reload),
+    bind(&[plain(KeyCode::Char('p'))], "p", "pause", RunKey::Pause),
+    bind(&[plain(KeyCode::Char('r'))], "r", "resume", RunKey::Resume),
+    bind(&[plain(KeyCode::Char('d'))], "d", "drain", RunKey::Drain),
+    bind(&[plain(KeyCode::Char('a'))], "a", "answer", RunKey::Answer),
+];
+const WAKE_CONTROLS: [Binding<RunKey>; 2] = [
+    bind(&[plain(KeyCode::Char('w'))], "w", "wakes", RunKey::Wakes),
+    bind(
+        &[plain(KeyCode::Char('f'))],
+        "f",
+        "delivery",
+        RunKey::Delivery,
+    ),
+];
+
+const RELOAD_TEMPLATES: Binding<RunKey> =
+    bind(&[plain(KeyCode::F(5))], "F5", "reload", RunKey::Refresh);
+const REFRESH_RUNS: Binding<RunKey> =
+    bind(&[plain(KeyCode::F(5))], "F5", "refresh", RunKey::Refresh);
+const START: Binding<RunKey> = bind(&[plain(KeyCode::Enter)], "Enter", "start", RunKey::Start);
+const RETRY: Binding<RunKey> = bind(&[plain(KeyCode::Char('r'))], "r", "retry", RunKey::Retry);
+const OPEN_TEMPLATES: Binding<RunKey> = bind(
+    &[plain(KeyCode::Enter), plain(KeyCode::Char('n'))],
+    "Enter n",
+    "templates",
+    RunKey::Templates,
+);
+const NEW_FROM_TEMPLATE: Binding<RunKey> = bind(
+    &[plain(KeyCode::Char('n'))],
+    "n",
+    "template",
+    RunKey::Templates,
+);
+
+pub fn keys(runs: &Runs) -> Vec<Binding<RunKey>> {
+    let mut keys = Vec::new();
+    match runs.page {
+        Page::Answer => keys.extend(ANSWER_KEYS),
+        Page::Templates => {
+            keys.extend(MOVE);
+            keys.extend([START, RELOAD_TEMPLATES]);
+            if runs
+                .templates
+                .as_ref()
+                .is_some_and(|templates| matches!(templates.load, Load::Failed(_)))
+            {
+                keys.push(RETRY);
+            }
+            keys.push(BACK);
+        }
+        Page::Runs if runs.selected.is_none() => {
+            keys.extend(MOVE);
+            keys.extend([OPEN_TEMPLATES, REFRESH_RUNS, BACK]);
+        }
+        Page::Runs => {
+            keys.extend(MOVE);
+            keys.extend(RUN_CONTROLS);
+            if runs
+                .selected_detail()
+                .is_some_and(|detail| detail.wakes.loaded || detail.wakes.error.is_some())
+            {
+                keys.extend(WAKE_CONTROLS);
+            }
+            keys.extend([NEW_FROM_TEMPLATE, REFRESH_RUNS, BACK]);
+        }
+    }
+    keys
+}
 
 pub fn engaged(app: &App) -> bool {
     app.runs.as_ref().is_some_and(|runs| runs.open)
@@ -112,51 +220,41 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     let Some(runs) = app.runs.as_mut() else {
         return;
     };
+    let action = key_table::action(&keys(runs), &key);
     if runs.page == Page::Answer {
-        let effect = answer_key(runs, features, key, outcome);
+        let effect = answer_key(runs, features, action, key, outcome);
         return apply(app, outcome, effect);
     }
-    if key.code == KeyCode::Esc {
+    if action == Some(RunKey::Back) {
         runs.back();
         app.notice.clear();
         return;
     }
-    if key.code != KeyCode::Char('p') && runs.cancel_confirm() {
+    if action != Some(RunKey::Pause) && runs.cancel_confirm() {
         app.notice.clear();
     }
-    let effect = match (runs.page, key.code) {
-        (_, KeyCode::F(5)) => runs.refresh(features),
-        (Page::Runs, KeyCode::Up | KeyCode::Char('k')) => runs.move_selection(features, -1),
-        (Page::Runs, KeyCode::Down | KeyCode::Char('j')) => runs.move_selection(features, 1),
-        (Page::Runs, KeyCode::Enter) if runs.selected.is_none() => {
-            runs.open_templates(features, directory)
-        }
-        (Page::Runs, KeyCode::Char('n')) => runs.open_templates(features, directory),
-        (Page::Runs, KeyCode::Enter) => runs.reload_selected(features),
-        (Page::Runs, KeyCode::Char('p')) => runs.pause(features),
-        (Page::Runs, KeyCode::Char('r')) => runs.resume(features),
-        (Page::Runs, KeyCode::Char('d')) => runs.drain(features),
-        (Page::Runs, KeyCode::Char('a')) => runs.begin_answer(),
-        (Page::Runs, KeyCode::Char('w')) => runs.toggle_wakes(features),
-        (Page::Runs, KeyCode::Char('f')) => runs.toggle_delivery(features),
-        (Page::Templates, KeyCode::Up | KeyCode::Char('k')) => {
+    let effect = match action {
+        Some(RunKey::Refresh) => runs.refresh(features),
+        Some(RunKey::Previous) if runs.page == Page::Templates => {
             runs.move_template(-1);
             Effect::default()
         }
-        (Page::Templates, KeyCode::Down | KeyCode::Char('j')) => {
+        Some(RunKey::Next) if runs.page == Page::Templates => {
             runs.move_template(1);
             Effect::default()
         }
-        (Page::Templates, KeyCode::Enter) => runs.start_selected(features),
-        (Page::Templates, KeyCode::Char('r'))
-            if runs
-                .templates
-                .as_ref()
-                .is_some_and(|templates| matches!(templates.load, Load::Failed(_))) =>
-        {
-            runs.open_templates(features, directory)
-        }
-        _ => {
+        Some(RunKey::Previous) => runs.move_selection(features, -1),
+        Some(RunKey::Next) => runs.move_selection(features, 1),
+        Some(RunKey::Templates | RunKey::Retry) => runs.open_templates(features, directory),
+        Some(RunKey::Reload) => runs.reload_selected(features),
+        Some(RunKey::Pause) => runs.pause(features),
+        Some(RunKey::Resume) => runs.resume(features),
+        Some(RunKey::Drain) => runs.drain(features),
+        Some(RunKey::Answer) => runs.begin_answer(),
+        Some(RunKey::Wakes) => runs.toggle_wakes(features),
+        Some(RunKey::Delivery) => runs.toggle_delivery(features),
+        Some(RunKey::Start) => runs.start_selected(features),
+        Some(RunKey::Submit | RunKey::Back) | None => {
             outcome.redraw = false;
             Effect::default()
         }
@@ -167,15 +265,17 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
 fn answer_key(
     runs: &mut Runs,
     features: &serde_json::Value,
+    action: Option<RunKey>,
     key: KeyEvent,
     outcome: &mut Outcome,
 ) -> Effect {
-    if key.code == KeyCode::Enter {
-        return runs.submit_answer(features);
-    }
-    if key.code == KeyCode::Esc {
-        runs.back();
-        return Effect::notice(String::new());
+    match action {
+        Some(RunKey::Submit) => return runs.submit_answer(features),
+        Some(RunKey::Back) => {
+            runs.back();
+            return Effect::notice(String::new());
+        }
+        _ => {}
     }
     let Some(form) = runs.answer.as_mut() else {
         return Effect::default();
@@ -251,6 +351,33 @@ mod tests {
             reply(&mut app, &command, body);
         }
         app
+    }
+
+    #[test]
+    fn runs_keys_come_from_one_table_per_page() {
+        let line = |runs: &Runs| {
+            let keys = keys(runs);
+            crate::key_table::assert_unambiguous(&keys);
+            crate::key_table::line(&keys)
+        };
+        let mut runs = fixtures::loaded();
+        assert_eq!(
+            line(&runs),
+            "↑↓ select · Enter reload · p pause · r resume · d drain · a answer · n template · F5 refresh · Esc back"
+        );
+        assert!(line(&fixtures::loaded_with_wakes()).contains("w wakes · f delivery"));
+        runs.selected = None;
+        assert_eq!(
+            line(&runs),
+            "↑↓ select · Enter n templates · F5 refresh · Esc back"
+        );
+        runs.page = Page::Answer;
+        assert_eq!(line(&runs), "Enter answer · Esc cancel");
+        runs.page = Page::Templates;
+        assert_eq!(
+            line(&runs),
+            "↑↓ select · Enter start · F5 reload · Esc back"
+        );
     }
 
     #[test]

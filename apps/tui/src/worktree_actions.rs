@@ -1,5 +1,6 @@
 use crate::{
     controller::Outcome,
+    key_table::{self, Binding, bind, plain, unlisted},
     model::{App, Dialog},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -238,6 +239,113 @@ impl Action {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogKey {
+    Previous,
+    Next,
+    Pick,
+    Choose,
+    Refresh,
+    Close,
+    Confirm,
+    Back,
+    ScrollUp,
+    ScrollDown,
+    PageUp,
+    PageDown,
+    Reload,
+}
+
+const MENU_KEYS: [Binding<DialogKey>; 6] = [
+    bind(
+        &[
+            plain(KeyCode::Up),
+            plain(KeyCode::BackTab),
+            plain(KeyCode::Char('k')),
+        ],
+        "↑↓",
+        "select",
+        DialogKey::Previous,
+    ),
+    unlisted(
+        &[
+            plain(KeyCode::Down),
+            plain(KeyCode::Tab),
+            plain(KeyCode::Char('j')),
+        ],
+        DialogKey::Next,
+    ),
+    unlisted(
+        &[
+            plain(KeyCode::Char('1')),
+            plain(KeyCode::Char('2')),
+            plain(KeyCode::Char('3')),
+            plain(KeyCode::Char('4')),
+            plain(KeyCode::Char('5')),
+            plain(KeyCode::Char('6')),
+        ],
+        DialogKey::Pick,
+    ),
+    bind(
+        &[plain(KeyCode::Enter)],
+        "Enter",
+        "choose",
+        DialogKey::Choose,
+    ),
+    bind(
+        &[plain(KeyCode::Char('r'))],
+        "r",
+        "refresh",
+        DialogKey::Refresh,
+    ),
+    bind(&[plain(KeyCode::Esc)], "Esc", "close", DialogKey::Close),
+];
+
+const CONFIRM_KEYS: [Binding<DialogKey>; 2] = [
+    bind(
+        &[plain(KeyCode::Enter)],
+        "Enter",
+        "discard and archive",
+        DialogKey::Confirm,
+    ),
+    bind(&[plain(KeyCode::Esc)], "Esc", "back", DialogKey::Back),
+];
+
+const LOG_KEYS: [Binding<DialogKey>; 6] = [
+    bind(
+        &[plain(KeyCode::Up), plain(KeyCode::Char('k'))],
+        "↑↓",
+        "scroll",
+        DialogKey::ScrollUp,
+    ),
+    unlisted(
+        &[plain(KeyCode::Down), plain(KeyCode::Char('j'))],
+        DialogKey::ScrollDown,
+    ),
+    bind(
+        &[plain(KeyCode::PageUp)],
+        "PgUp/PgDn",
+        "page",
+        DialogKey::PageUp,
+    ),
+    unlisted(&[plain(KeyCode::PageDown)], DialogKey::PageDown),
+    bind(
+        &[plain(KeyCode::Char('r'))],
+        "r",
+        "reload",
+        DialogKey::Reload,
+    ),
+    bind(&[plain(KeyCode::Esc)], "Esc", "back", DialogKey::Back),
+];
+
+pub fn keys(page: &Page) -> &'static [Binding<DialogKey>] {
+    match page {
+        Page::Menu => &MENU_KEYS,
+        Page::Confirm { .. } => &CONFIRM_KEYS,
+        Page::Log { .. } => &LOG_KEYS,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Menu,
@@ -344,7 +452,7 @@ impl Worktrees {
         self.record(session_id).map(Record::stage)
     }
 
-    fn acting_record(&self, session_id: &str) -> Option<Record> {
+    pub fn acting_record(&self, session_id: &str) -> Option<Record> {
         let mut record = self.record(session_id).cloned()?;
         if self.run_started.as_deref() == Some(session_id) {
             record.active = true;
@@ -817,16 +925,17 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
     let Some(dialog) = app.worktrees.dialog.as_mut() else {
         return;
     };
+    let action = key_table::action(keys(&dialog.page), &key);
     match &mut dialog.page {
-        Page::Menu => menu_key(app, key, outcome),
-        Page::Confirm { typed, mismatch } => match key.code {
-            KeyCode::Esc => dialog.page = Page::Menu,
-            KeyCode::Backspace => {
+        Page::Menu => menu_key(app, action, key, outcome),
+        Page::Confirm { typed, mismatch } => match (action, key.code) {
+            (Some(DialogKey::Back), _) => dialog.page = Page::Menu,
+            (Some(DialogKey::Confirm), _) => confirm_discard(app, outcome),
+            (_, KeyCode::Backspace) => {
                 typed.pop();
                 *mismatch = false;
             }
-            KeyCode::Enter => confirm_discard(app, outcome),
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::ALT) => {
+            (_, KeyCode::Char(c)) if !key.modifiers.contains(KeyModifiers::ALT) => {
                 if typed.chars().count() < CONFIRM_LIMIT {
                     typed.push(c);
                 }
@@ -836,43 +945,45 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
         },
         Page::Log { scroll, text, .. } => {
             let lines = text.as_deref().map_or(0, |text| text.lines().count());
-            match key.code {
-                KeyCode::Esc => dialog.page = Page::Menu,
-                KeyCode::Up | KeyCode::Char('k') => *scroll = (*scroll + 1).min(lines),
-                KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_sub(1),
-                KeyCode::PageUp => *scroll = (*scroll + LOG_PAGE).min(lines),
-                KeyCode::PageDown => *scroll = scroll.saturating_sub(LOG_PAGE),
-                KeyCode::Char('r') => reload_log(app, outcome),
+            match action {
+                Some(DialogKey::Back) => dialog.page = Page::Menu,
+                Some(DialogKey::ScrollUp) => *scroll = (*scroll + 1).min(lines),
+                Some(DialogKey::ScrollDown) => *scroll = scroll.saturating_sub(1),
+                Some(DialogKey::PageUp) => *scroll = (*scroll + LOG_PAGE).min(lines),
+                Some(DialogKey::PageDown) => *scroll = scroll.saturating_sub(LOG_PAGE),
+                Some(DialogKey::Reload) => reload_log(app, outcome),
                 _ => outcome.redraw = false,
             }
         }
     }
 }
 
-fn menu_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
+fn menu_key(app: &mut App, action: Option<DialogKey>, key: KeyEvent, outcome: &mut Outcome) {
     let Some(dialog) = app.worktrees.dialog.as_mut() else {
         return;
     };
     let rows = Action::ALL.len();
-    match key.code {
-        KeyCode::Esc => {
+    match action {
+        Some(DialogKey::Close) => {
             app.worktrees.dialog = None;
         }
-        KeyCode::Up | KeyCode::BackTab | KeyCode::Char('k') => {
+        Some(DialogKey::Previous) => {
             dialog.selected = (dialog.selected + rows - 1) % rows;
         }
-        KeyCode::Down | KeyCode::Tab | KeyCode::Char('j') => {
+        Some(DialogKey::Next) => {
             dialog.selected = (dialog.selected + 1) % rows;
         }
-        KeyCode::Char('r') => {
+        Some(DialogKey::Refresh) => {
             app.worktrees.due = true;
             dialog.notice = Some(Notice::Info("Refreshing the worktree registry…".into()));
         }
-        KeyCode::Char(c @ '1'..='6') => {
-            dialog.selected = c as usize - '1' as usize;
-            choose(app, outcome);
+        Some(DialogKey::Pick) => {
+            if let KeyCode::Char(c @ '1'..='6') = key.code {
+                dialog.selected = c as usize - '1' as usize;
+                choose(app, outcome);
+            }
         }
-        KeyCode::Enter => choose(app, outcome),
+        Some(DialogKey::Choose) => choose(app, outcome),
         _ => outcome.redraw = false,
     }
 }
@@ -1071,6 +1182,35 @@ pub(crate) mod tests {
         serde_json::from_value::<Record>(record(setup, run))
             .unwrap()
             .stage()
+    }
+
+    #[test]
+    fn worktree_dialog_keys_come_from_one_table_per_page() {
+        let log = Page::Log {
+            action: Action::RunLog,
+            path: String::new(),
+            text: None,
+            scroll: 0,
+        };
+        let confirm = Page::Confirm {
+            typed: String::new(),
+            mismatch: false,
+        };
+        for page in [&Page::Menu, &confirm, &log] {
+            key_table::assert_unambiguous(keys(page));
+        }
+        assert_eq!(
+            key_table::line(keys(&Page::Menu)),
+            "↑↓ select · Enter choose · r refresh · Esc close"
+        );
+        assert_eq!(
+            key_table::line(keys(&confirm)),
+            "Enter discard and archive · Esc back"
+        );
+        assert_eq!(
+            key_table::line(keys(&log)),
+            "↑↓ scroll · PgUp/PgDn page · r reload · Esc back"
+        );
     }
 
     #[test]
@@ -1309,9 +1449,7 @@ pub(crate) mod tests {
             &run[0],
             json!({"type":"worktreeRunStarted","sessionId":"s1","worktree":"w","log":"C:/w/.nesvo/run.log"}),
         );
-        let busy = Some(Notice::Info(
-            "Run steps: a step is already running.".into(),
-        ));
+        let busy = Some(Notice::Info("Run steps: a step is already running.".into()));
         assert!(press(&mut app, KeyCode::Enter).is_empty());
         assert_eq!(notice(&app), busy);
         reply(

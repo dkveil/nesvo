@@ -1,12 +1,86 @@
 use crate::{
     controller::Outcome,
+    key_table::{self, Binding, bind, plain, unlisted},
     model::{App, Dialog},
     palette::{ResultRow, Target},
-    projects::{Defaults, Intent, Load, Project, Request},
+    projects::{Defaults, Intent, Load, Project, Projects, Request},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use serde_json::{Value, json};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectKey {
+    Previous,
+    Next,
+    First,
+    Last,
+    Launch,
+    Layout,
+    Setup,
+    Filter,
+    Pin,
+    Refresh,
+    Back,
+}
+
+const REFRESH: Binding<ProjectKey> = bind(
+    &[plain(KeyCode::Char('r'))],
+    "r",
+    "refresh",
+    ProjectKey::Refresh,
+);
+const BACK: Binding<ProjectKey> = bind(&[plain(KeyCode::Esc)], "Esc", "back", ProjectKey::Back);
+const IDLE_KEYS: [Binding<ProjectKey>; 2] = [REFRESH, BACK];
+const LISTED_KEYS: [Binding<ProjectKey>; 11] = [
+    bind(
+        &[plain(KeyCode::Up), plain(KeyCode::Char('k'))],
+        "↑↓ Home End",
+        "select",
+        ProjectKey::Previous,
+    ),
+    unlisted(
+        &[plain(KeyCode::Down), plain(KeyCode::Char('j'))],
+        ProjectKey::Next,
+    ),
+    unlisted(&[plain(KeyCode::Home)], ProjectKey::First),
+    unlisted(&[plain(KeyCode::End)], ProjectKey::Last),
+    bind(
+        &[plain(KeyCode::Enter)],
+        "Enter",
+        "new session",
+        ProjectKey::Launch,
+    ),
+    bind(
+        &[plain(KeyCode::Char('l'))],
+        "l",
+        "layout",
+        ProjectKey::Layout,
+    ),
+    bind(
+        &[plain(KeyCode::Char('w'))],
+        "w",
+        "worktree setup",
+        ProjectKey::Setup,
+    ),
+    bind(
+        &[plain(KeyCode::Char('s'))],
+        "s",
+        "filter",
+        ProjectKey::Filter,
+    ),
+    bind(&[plain(KeyCode::Char('p'))], "p", "pin", ProjectKey::Pin),
+    REFRESH,
+    BACK,
+];
+
+pub fn keys(projects: &Projects) -> &'static [Binding<ProjectKey>] {
+    if projects.load == Load::Ready && !projects.items.is_empty() {
+        &LISTED_KEYS
+    } else {
+        &IDLE_KEYS
+    }
+}
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -157,34 +231,32 @@ fn key_event(app: &mut App, key: KeyEvent, width: u16, outcome: &mut Outcome) {
         outcome.quit = true;
         return;
     }
-    if key.code == KeyCode::Esc {
-        return close(app);
+    let action = key_table::action(keys(&app.projects), &key);
+    match action {
+        Some(ProjectKey::Back) => return close(app),
+        Some(ProjectKey::Refresh) => {
+            outcome.commands.push(request_list(app));
+            return;
+        }
+        _ => {}
     }
-    if key.code == KeyCode::Char('r') {
-        outcome.commands.push(request_list(app));
-        return;
-    }
-    if app.projects.load != Load::Ready {
-        outcome.redraw = false;
-        return;
-    }
-    let Some(project) = app.projects.selected_project().cloned() else {
+    let (Some(action), Some(project)) = (action, app.projects.selected_project().cloned()) else {
         outcome.redraw = false;
         return;
     };
     let cached = app.projects.defaults.get(&project.root).cloned();
-    match key.code {
-        KeyCode::Up | KeyCode::Char('k') => app.projects.move_selection(-1),
-        KeyCode::Down | KeyCode::Char('j') => app.projects.move_selection(1),
-        KeyCode::Home => app.projects.selected = 0,
-        KeyCode::End => app.projects.move_selection(isize::MAX),
-        KeyCode::Enter => match cached {
+    match action {
+        ProjectKey::Previous => app.projects.move_selection(-1),
+        ProjectKey::Next => app.projects.move_selection(1),
+        ProjectKey::First => app.projects.selected = 0,
+        ProjectKey::Last => app.projects.move_selection(isize::MAX),
+        ProjectKey::Launch => match cached {
             Some(defaults) => launch(app, defaults.launch_folder),
             None => outcome
                 .commands
                 .push(request_defaults(app, project.root, Intent::Launch)),
         },
-        KeyCode::Char('l') => {
+        ProjectKey::Layout => {
             if layout_for(app, &project, None).is_some() || cached.is_some() {
                 let host = cached.and_then(|defaults| defaults.default_layout);
                 outcome
@@ -198,7 +270,7 @@ fn key_event(app: &mut App, key: KeyEvent, width: u16, outcome: &mut Outcome) {
                 ));
             }
         }
-        KeyCode::Char('w') => {
+        ProjectKey::Setup => {
             if app.projects.detail.as_deref() == Some(project.root.as_str()) {
                 app.projects.detail = None;
             } else {
@@ -207,9 +279,9 @@ fn key_event(app: &mut App, key: KeyEvent, width: u16, outcome: &mut Outcome) {
                     .push(request_defaults(app, project.root, Intent::Setup));
             }
         }
-        KeyCode::Char('s') => toggle_filter(app),
-        KeyCode::Char('p') => outcome.commands.extend(toggle_pin(app)),
-        _ => outcome.redraw = false,
+        ProjectKey::Filter => toggle_filter(app),
+        ProjectKey::Pin => outcome.commands.extend(toggle_pin(app)),
+        ProjectKey::Refresh | ProjectKey::Back => {}
     }
 }
 
@@ -373,6 +445,19 @@ pub(crate) mod tests {
     fn reply(app: &mut App, command: &Value, mut response: Value) -> Vec<Value> {
         response["requestId"] = command["requestId"].clone();
         app.event(response).unwrap()
+    }
+
+    #[test]
+    fn projects_keys_come_from_one_table_per_state() {
+        let idle = Projects::default();
+        crate::key_table::assert_unambiguous(keys(&idle));
+        assert_eq!(crate::key_table::line(keys(&idle)), "r refresh · Esc back");
+        let app = loaded();
+        crate::key_table::assert_unambiguous(keys(&app.projects));
+        assert_eq!(
+            crate::key_table::line(keys(&app.projects)),
+            "↑↓ Home End select · Enter new session · l layout · w worktree setup · s filter · p pin · r refresh · Esc back"
+        );
     }
 
     #[test]

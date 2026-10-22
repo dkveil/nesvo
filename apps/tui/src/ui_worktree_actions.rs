@@ -4,7 +4,7 @@ use crate::{
     theme::{BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, WARNING},
     ui::{shortcut_spans, truncate_cells},
     worktree_actions::{
-        APPROVAL_HINT, Action, Actions, Notice, Page, Record, SetupCheck, Tone, supported,
+        self, APPROVAL_HINT, Action, Actions, Notice, Page, Record, SetupCheck, Tone, supported,
     },
 };
 use ratatui::{
@@ -103,7 +103,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         outer,
     );
     let body = body(size);
-    let record = app.worktrees.record(&dialog.session_id);
+    let acting = app.worktrees.acting_record(&dialog.session_id);
+    let record = acting.as_ref();
     match &dialog.page {
         Page::Menu => render_menu(frame, app, dialog, record, body),
         Page::Confirm { typed, mismatch } => {
@@ -155,13 +156,14 @@ fn heading(frame: &mut Frame, app: &App, body: Rect, title: &str) {
     );
 }
 
-fn footer(frame: &mut Frame, body: Rect, hint: &str) {
+fn footer(frame: &mut Frame, body: Rect, page: &Page) {
     if body.height > 0 {
+        let hint = crate::key_table::line(worktree_actions::keys(page));
         line(
             frame,
             body,
             body.height - 1,
-            Line::from(shortcut_spans(hint)),
+            Line::from(shortcut_spans(&hint)),
             Style::default(),
         );
     }
@@ -295,11 +297,7 @@ fn render_menu(
         APPROVAL_HINT,
         Style::default().fg(MUTED),
     );
-    footer(
-        frame,
-        body,
-        "↑↓ select · Enter choose · r refresh · Esc close",
-    );
+    footer(frame, body, &dialog.page);
 }
 
 fn render_confirm(
@@ -368,7 +366,7 @@ fn render_confirm(
         );
     }
     render_notice(frame, dialog, body, 11);
-    footer(frame, body, "Enter discard and archive · Esc back");
+    footer(frame, body, &dialog.page);
 }
 
 fn render_log(
@@ -425,11 +423,9 @@ fn render_log(
     {
         render_notice(frame, dialog, body, body.height.saturating_sub(4));
     }
-    footer(
-        frame,
-        body,
-        "↑↓ scroll · PgUp/PgDn page · r reload · Esc back",
-    );
+    if let Some(dialog) = app.worktrees.dialog.as_ref() {
+        footer(frame, body, &dialog.page);
+    }
 }
 
 pub fn render_setup_check(frame: &mut Frame, app: &App, area: Rect) {

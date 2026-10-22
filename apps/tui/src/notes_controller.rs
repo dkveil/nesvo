@@ -1,5 +1,6 @@
 use crate::{
     controller::Outcome,
+    key_table::{self, Binding, bind, control, plain, unlisted},
     layouts::Role,
     model::{App, Mode, Surface},
     notes::{self, Editor, LastNote, Saved, Summary},
@@ -27,6 +28,127 @@ pub enum View {
     Search,
     Edit,
     ConfirmDelete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteKey {
+    Next,
+    Previous,
+    Edit,
+    New,
+    Delete,
+    Search,
+    Copy,
+    PastePath,
+    ScrollUp,
+    ScrollDown,
+    Refresh,
+    Close,
+    KeepFilter,
+    ClearFilter,
+    ConfirmDelete,
+    KeepNote,
+    Leave,
+    Save,
+}
+
+const BROWSE_KEYS: [Binding<NoteKey>; 12] = [
+    bind(
+        &[plain(KeyCode::Down), plain(KeyCode::Char('j'))],
+        "j k",
+        "move",
+        NoteKey::Next,
+    ),
+    unlisted(
+        &[plain(KeyCode::Up), plain(KeyCode::Char('k'))],
+        NoteKey::Previous,
+    ),
+    bind(&[plain(KeyCode::Enter)], "Enter", "edit", NoteKey::Edit),
+    bind(&[plain(KeyCode::Char('n'))], "n", "new", NoteKey::New),
+    bind(&[plain(KeyCode::Char('d'))], "d", "delete", NoteKey::Delete),
+    bind(&[plain(KeyCode::Char('/'))], "/", "search", NoteKey::Search),
+    bind(&[plain(KeyCode::Char('y'))], "y", "copy", NoteKey::Copy),
+    bind(
+        &[plain(KeyCode::Char('p'))],
+        "p",
+        "paste path",
+        NoteKey::PastePath,
+    ),
+    bind(
+        &[plain(KeyCode::PageUp)],
+        "PgUp PgDn",
+        "scroll",
+        NoteKey::ScrollUp,
+    ),
+    unlisted(&[plain(KeyCode::PageDown)], NoteKey::ScrollDown),
+    bind(
+        &[plain(KeyCode::Char('r'))],
+        "r",
+        "refresh",
+        NoteKey::Refresh,
+    ),
+    bind(
+        &[plain(KeyCode::Esc), plain(KeyCode::Char('q'))],
+        "Esc q",
+        "close",
+        NoteKey::Close,
+    ),
+];
+
+const SEARCH_KEYS: [Binding<NoteKey>; 4] = [
+    bind(&[plain(KeyCode::Up)], "↑↓", "move", NoteKey::Previous),
+    unlisted(&[plain(KeyCode::Down)], NoteKey::Next),
+    bind(
+        &[plain(KeyCode::Enter)],
+        "Enter",
+        "keep filter",
+        NoteKey::KeepFilter,
+    ),
+    bind(&[plain(KeyCode::Esc)], "Esc", "clear", NoteKey::ClearFilter),
+];
+
+const CONFIRM_KEYS: [Binding<NoteKey>; 2] = [
+    bind(
+        &[plain(KeyCode::Char('y')), plain(KeyCode::Enter)],
+        "y Enter",
+        "delete",
+        NoteKey::ConfirmDelete,
+    ),
+    bind(
+        &[plain(KeyCode::Char('n')), plain(KeyCode::Esc)],
+        "n Esc",
+        "keep",
+        NoteKey::KeepNote,
+    ),
+];
+
+const EDIT_KEYS: [Binding<NoteKey>; 2] = [
+    bind(
+        &[plain(KeyCode::Esc), control(KeyCode::Esc)],
+        "Esc",
+        "save and leave",
+        NoteKey::Leave,
+    ),
+    bind(
+        &[
+            control(KeyCode::Char('s')),
+            control(KeyCode::Char('S')),
+            plain(KeyCode::Char('\u{13}')),
+            control(KeyCode::Char('\u{13}')),
+        ],
+        "Ctrl+S",
+        "save",
+        NoteKey::Save,
+    ),
+];
+
+pub fn keys(view: View) -> &'static [Binding<NoteKey>] {
+    match view {
+        View::Browse => &BROWSE_KEYS,
+        View::Search => &SEARCH_KEYS,
+        View::ConfirmDelete => &CONFIRM_KEYS,
+        View::Edit => &EDIT_KEYS,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -943,7 +1065,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     outcome
 }
 
-fn plain(key: &KeyEvent) -> bool {
+fn unmodified(key: &KeyEvent) -> bool {
     !key.modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
@@ -988,12 +1110,16 @@ fn key_event(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
         }
         return;
     }
+    let Some(action) = key_table::action(keys(View::Browse), &key) else {
+        outcome.redraw = false;
+        return;
+    };
     let preview = page(app, area);
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => escape(app),
-        KeyCode::Down | KeyCode::Char('j') => move_selection(app, 1),
-        KeyCode::Up | KeyCode::Char('k') => move_selection(app, -1),
-        KeyCode::PageDown => {
+    match action {
+        NoteKey::Close => escape(app),
+        NoteKey::Next => move_selection(app, 1),
+        NoteKey::Previous => move_selection(app, -1),
+        NoteKey::ScrollDown => {
             let last = app
                 .notes
                 .selected
@@ -1002,18 +1128,18 @@ fn key_event(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
                 .map_or(0, |loaded| loaded.text.lines().count().saturating_sub(1));
             app.notes.preview_scroll = (app.notes.preview_scroll + preview).min(last);
         }
-        KeyCode::PageUp => {
+        NoteKey::ScrollUp => {
             app.notes.preview_scroll = app.notes.preview_scroll.saturating_sub(preview);
         }
-        KeyCode::Enter => edit_selected(app),
-        KeyCode::Char('n') => new_note(app),
-        KeyCode::Char('d') if app.notes.selected.is_some() => {
+        NoteKey::Edit => edit_selected(app),
+        NoteKey::New => new_note(app),
+        NoteKey::Delete if app.notes.selected.is_some() => {
             app.notes.view = View::ConfirmDelete;
         }
-        KeyCode::Char('/') => start_search(app),
-        KeyCode::Char('y') => copy(app, outcome),
-        KeyCode::Char('p') => paste_path(app, outcome),
-        KeyCode::Char('r') => {
+        NoteKey::Search => start_search(app),
+        NoteKey::Copy => copy(app, outcome),
+        NoteKey::PastePath => paste_path(app, outcome),
+        NoteKey::Refresh => {
             app.notes.failed.clear();
             app.notes.refresh();
         }
@@ -1022,45 +1148,43 @@ fn key_event(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
 }
 
 fn search_key(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Esc => {
+    match key_table::action(keys(View::Search), &key) {
+        Some(NoteKey::ClearFilter) => {
             app.notes.query.clear();
             app.notes.view = View::Browse;
         }
-        KeyCode::Enter => app.notes.view = View::Browse,
-        KeyCode::Backspace => {
-            app.notes.query.pop();
-        }
-        KeyCode::Down => move_selection(app, 1),
-        KeyCode::Up => move_selection(app, -1),
-        KeyCode::Char(c) if plain(&key) => search_text(app, &c.to_string()),
-        _ => {}
+        Some(NoteKey::KeepFilter) => app.notes.view = View::Browse,
+        Some(NoteKey::Next) => move_selection(app, 1),
+        Some(NoteKey::Previous) => move_selection(app, -1),
+        _ => match key.code {
+            KeyCode::Backspace => {
+                app.notes.query.pop();
+            }
+            KeyCode::Char(c) if unmodified(&key) => search_text(app, &c.to_string()),
+            _ => {}
+        },
     }
     keep_selection_visible(app);
 }
 
 fn confirm_key(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Enter => {
+    match key_table::action(keys(View::ConfirmDelete), &key) {
+        Some(NoteKey::ConfirmDelete) => {
             if let Some(path) = app.notes.selected.clone() {
                 app.notes.enqueue(Want::Delete(path), true);
             }
             app.notes.view = View::Browse;
         }
-        KeyCode::Char('n') | KeyCode::Esc => app.notes.view = View::Browse,
+        Some(NoteKey::KeepNote) => app.notes.view = View::Browse,
         _ => {}
     }
 }
 
 fn edit_key(app: &mut App, key: KeyEvent, area: Rect) {
-    let control = key.modifiers.contains(KeyModifiers::CONTROL);
-    if key.code == KeyCode::Esc {
-        return leave_edit(app);
-    }
-    if (control && matches!(key.code, KeyCode::Char('s' | 'S')))
-        || key.code == KeyCode::Char('\u{13}')
-    {
-        return save(app);
+    match key_table::action(keys(View::Edit), &key) {
+        Some(NoteKey::Leave) => return leave_edit(app),
+        Some(NoteKey::Save) => return save(app),
+        _ => {}
     }
     let height = page(app, area);
     let Some(draft) = app.notes.draft.as_mut() else {
@@ -1070,7 +1194,7 @@ fn edit_key(app: &mut App, key: KeyEvent, area: Rect) {
     let editor = &mut draft.editor;
     let mut changed = false;
     match key.code {
-        KeyCode::Char(c) if plain(&key) => {
+        KeyCode::Char(c) if unmodified(&key) => {
             if editor.insert(&c.to_string()) {
                 changed = true;
             } else {
@@ -1199,7 +1323,7 @@ pub fn capture_event(app: &mut App, event: Event, screen: Rect) -> Outcome {
             KeyCode::Backspace => {
                 input.text.pop();
             }
-            KeyCode::Char(c) if plain(&key) && room > 0 => input.text.push(c),
+            KeyCode::Char(c) if unmodified(&key) && room > 0 => input.text.push(c),
             _ => {}
         },
         Event::Paste(text) => input.text.extend(

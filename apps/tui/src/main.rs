@@ -14,6 +14,7 @@ mod job_trigger_tools;
 mod job_triggers;
 mod jobs;
 mod jobs_controller;
+mod key_table;
 mod launch;
 mod layouts;
 mod mcp;

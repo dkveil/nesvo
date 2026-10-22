@@ -641,45 +641,7 @@ fn answer(frame: &mut Frame, app: &App, area: Rect, runs: &Runs) {
 }
 
 fn hints(runs: &Runs) -> Vec<(&'static str, &'static str)> {
-    match runs.page {
-        Page::Answer => vec![("Enter", "answer"), ("Esc", "cancel")],
-        Page::Templates => {
-            let mut hints = vec![("↑↓", "select"), ("Enter", "start"), ("F5", "reload")];
-            if runs
-                .templates
-                .as_ref()
-                .is_some_and(|templates| matches!(templates.load, Load::Failed(_)))
-            {
-                hints.push(("r", "retry"));
-            }
-            hints.push(("Esc", "back"));
-            hints
-        }
-        Page::Runs if runs.selected.is_none() => vec![
-            ("↑↓", "select"),
-            ("Enter n", "templates"),
-            ("F5", "refresh"),
-            ("Esc", "back"),
-        ],
-        Page::Runs => {
-            let mut hints = vec![
-                ("↑↓", "select"),
-                ("Enter", "reload"),
-                ("p", "pause"),
-                ("r", "resume"),
-                ("d", "drain"),
-                ("a", "answer"),
-            ];
-            if runs
-                .selected_detail()
-                .is_some_and(|detail| detail.wakes.loaded)
-            {
-                hints.extend([("w", "wakes"), ("f", "delivery")]);
-            }
-            hints.extend([("n", "template"), ("F5", "refresh"), ("Esc", "back")]);
-            hints
-        }
-    }
+    crate::key_table::hints(&crate::runs_controller::keys(runs))
 }
 
 fn footer(frame: &mut Frame, app: &App, area: Rect, runs: &Runs) {

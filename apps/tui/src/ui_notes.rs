@@ -1,7 +1,8 @@
 use crate::{
+    key_table,
     model::App,
     notes::{self, Editor},
-    notes_controller::{NotesState, View},
+    notes_controller::{self, NoteKey, NotesState, View},
     theme::{BACKGROUND, BORDER, DANGER, MUTED, SURFACE, TEXT, WARNING},
 };
 use ratatui::{
@@ -14,28 +15,7 @@ use ratatui::{
 
 const SPLIT_COLUMNS: u16 = 44;
 const WIDE_FOOTER: u16 = 120;
-const BROWSE_WIDE: [(&str, &str); 10] = [
-    ("j k", "move"),
-    ("Enter", "edit"),
-    ("n", "new"),
-    ("d", "delete"),
-    ("/", "search"),
-    ("y", "copy"),
-    ("p", "paste path"),
-    ("PgUp PgDn", "scroll"),
-    ("r", "refresh"),
-    ("Esc q", "close"),
-];
-const BROWSE_NARROW: [(&str, &str); 4] = [
-    ("Enter", "edit"),
-    ("n", "new"),
-    ("/", "search"),
-    ("Esc", "close"),
-];
-const EDIT_HINTS: [(&str, &str); 2] = [("Esc", "save and leave"), ("Ctrl+S", "save")];
-const SEARCH_HINTS: [(&str, &str); 3] =
-    [("↑↓", "move"), ("Enter", "keep filter"), ("Esc", "clear")];
-const CONFIRM_HINTS: [(&str, &str); 2] = [("y Enter", "delete"), ("n Esc", "keep")];
+const BRIEF: [NoteKey; 4] = [NoteKey::Edit, NoteKey::New, NoteKey::Search, NoteKey::Close];
 
 pub fn leaf_area(area: Rect, app: &App) -> Option<Rect> {
     let index = crate::notes_controller::leaf_index(app)?;
@@ -170,14 +150,12 @@ fn hint_line(view: View, wide: bool) -> String {
     format!("Notes pane · {}", parts.join(" · "))
 }
 
-fn hints(view: View, wide: bool) -> &'static [(&'static str, &'static str)] {
-    match view {
-        View::Edit => &EDIT_HINTS,
-        View::Search => &SEARCH_HINTS,
-        View::ConfirmDelete => &CONFIRM_HINTS,
-        View::Browse if wide => &BROWSE_WIDE,
-        View::Browse => &BROWSE_NARROW,
-    }
+fn hints(view: View, wide: bool) -> Vec<(&'static str, &'static str)> {
+    let brief = !wide && view == View::Browse;
+    key_table::listed(notes_controller::keys(view))
+        .filter(|binding| !brief || BRIEF.contains(&binding.action))
+        .map(|binding| (binding.hint, binding.label))
+        .collect()
 }
 
 fn row(area: Rect, offset: u16) -> Rect {
@@ -582,6 +560,28 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn notes_footer_lists_the_controller_keys_and_the_brief_subset_is_bound() {
+        for view in [View::Browse, View::Search, View::Edit, View::ConfirmDelete] {
+            key_table::assert_unambiguous(notes_controller::keys(view));
+        }
+        let listed: Vec<NoteKey> = key_table::listed(notes_controller::keys(View::Browse))
+            .map(|binding| binding.action)
+            .collect();
+        assert!(BRIEF.iter().all(|action| listed.contains(action)));
+        assert_eq!(
+            hint_line(View::Browse, false),
+            "Notes pane · Enter edit · n new · / search · Esc q close"
+        );
+        assert_eq!(
+            hint_line(View::Browse, true),
+            format!(
+                "Notes pane · {}",
+                key_table::line(notes_controller::keys(View::Browse))
+            )
+        );
     }
 
     #[test]
