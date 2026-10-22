@@ -474,18 +474,38 @@ fn busy_backoff(retries: u32) -> std::time::Duration {
     (BUSY_BACKOFF_CEILING / 8).saturating_mul(1 << retries.min(3))
 }
 
+#[derive(Clone, Copy)]
+struct FenceTarget<'a> {
+    session_id: &'a str,
+    operation: &'a str,
+    settles_by: tokio::time::Instant,
+}
+
+impl<'a> FenceTarget<'a> {
+    fn from_submission(session_id: &'a str, operation: &'a str) -> Self {
+        Self {
+            session_id,
+            operation,
+            settles_by: tokio::time::Instant::now() + SETTLEMENT_BOUND,
+        }
+    }
+}
+
 async fn enqueue_fenced(
     state: &Arc<Mutex<State>>,
     log: &Service,
     path: Option<std::path::PathBuf>,
-    session_id: &str,
-    operation: &str,
+    target: FenceTarget<'_>,
     text: Option<&str>,
     cancellation: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(tokio::sync::oneshot::Receiver<bool>, bool)> {
     use crate::api_error::Error;
+    let FenceTarget {
+        session_id,
+        operation,
+        settles_by: bound,
+    } = target;
     let mut changed = log.subscribe();
-    let mut bound = tokio::time::Instant::now() + SETTLEMENT_BOUND;
     let mut busy_retries = 0;
     loop {
         if *cancellation.borrow() {
@@ -494,10 +514,6 @@ async fn enqueue_fenced(
                 "Submission was preempted before queue admission",
             )
             .into());
-        }
-        let activity = state.lock().unwrap().terminal_activity_age(session_id);
-        if let Some(age) = activity {
-            bound = bound.max(tokio::time::Instant::now() + SETTLEMENT_BOUND.saturating_sub(age));
         }
         let final_attempt = tokio::time::Instant::now() >= bound;
         changed.borrow_and_update();
@@ -676,8 +692,7 @@ async fn dispatch_send_inner(
             &state,
             &log,
             path.clone(),
-            &session_id,
-            &claim.receipt.id,
+            FenceTarget::from_submission(&session_id, &claim.receipt.id),
             Some(&prompt),
             &mut cancellation,
         )
@@ -697,8 +712,7 @@ async fn dispatch_send_inner(
             &state,
             &log,
             path,
-            &session_id,
-            &claim.receipt.id,
+            FenceTarget::from_submission(&session_id, &claim.receipt.id),
             None,
             &mut cancellation,
         )
@@ -1296,8 +1310,7 @@ mod tests {
             &state,
             &log,
             Some(report),
-            "host-session",
-            "operation",
+            FenceTarget::from_submission("host-session", "operation"),
             Some("PRIVATE_PROMPT"),
             &mut cancellation,
         );
@@ -1342,8 +1355,7 @@ mod tests {
             &state,
             &log,
             Some(report),
-            "host-session",
-            "operation",
+            FenceTarget::from_submission("host-session", "operation"),
             Some("PRIVATE_PROMPT"),
             &mut cancellation,
         );
@@ -1366,6 +1378,71 @@ mod tests {
             "submission_preempted"
         );
         blocker.execute_batch("ROLLBACK").unwrap();
+        log.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn fresh_terminal_activity_never_extends_a_fence_past_its_submission_window() {
+        let directory = FenceDirectory::new();
+        let report = directory.0.join("context.json");
+        crate::agent_events::initialize(&report, "host-session").unwrap();
+        let log = Service::open(directory.0.join("metadata.sqlite3"))
+            .await
+            .unwrap();
+        let (events, _output) = mpsc::channel(128);
+        let mut owned = State::new(
+            directory.0.clone(),
+            crate::storage::MetadataStore::open(std::path::Path::new(":memory:")).unwrap(),
+            crate::launchers::Launchers::discover_with_fixture_shell(),
+        );
+        let session = owned
+            .launch(
+                &crate::jobs::LaunchSpec {
+                    name: "Fence activity".into(),
+                    ..Default::default()
+                },
+                &events,
+            )
+            .unwrap();
+        owned
+            .dispatch_control(
+                &session,
+                ControlAction::Interrupt,
+                &crate::caller::Authority::Owner,
+            )
+            .unwrap();
+        let state = Arc::new(Mutex::new(owned));
+        let blocker = rusqlite::Connection::open(report.with_file_name("events.sqlite3")).unwrap();
+        blocker.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        let (_cancel, mut cancellation) = tokio::sync::watch::channel(false);
+        let window = Duration::from_secs(1);
+        let submitted = tokio::time::Instant::now();
+        let target = FenceTarget {
+            session_id: &session,
+            operation: "operation",
+            settles_by: submitted + window,
+        };
+        let error = tokio::time::timeout(
+            SETTLEMENT_BOUND / 2,
+            enqueue_fenced(
+                &state,
+                &log,
+                Some(report),
+                target,
+                Some("PRIVATE_PROMPT"),
+                &mut cancellation,
+            ),
+        )
+        .await
+        .expect("Terminal activity kept the fence open past its submission window")
+        .expect_err("A locked lifecycle journal cannot admit input");
+        assert!(submitted.elapsed() >= window);
+        projected_fence(error, false, "lifecycleRead", "sqlBusy");
+        blocker.execute_batch("ROLLBACK").unwrap();
+        let workers = state.lock().unwrap().shutdown();
+        for worker in workers {
+            worker.join().unwrap();
+        }
         log.shutdown().await;
     }
 
