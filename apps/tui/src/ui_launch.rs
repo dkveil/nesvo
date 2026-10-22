@@ -220,9 +220,14 @@ pub fn render_form(frame: &mut Frame, app: &App, form: &SessionForm, area: Rect)
         let availability = match &app.capabilities {
             None => "checking…".to_owned(),
             Some(caps) => match caps.provider(program) {
-                Some(provider) => provider.label(),
+                Some(provider)
+                    if caps.available(program)
+                        || provider.state != crate::launch::ProviderState::Ok =>
+                {
+                    provider.label()
+                }
                 None if caps.available(program) => "available".to_owned(),
-                None => "not installed".to_owned(),
+                _ => "not installed".to_owned(),
             },
         };
         let selected = form.program == program;
@@ -555,6 +560,23 @@ mod tests {
                 "{width}x{height}\n{screen}"
             );
         }
+    }
+
+    #[test]
+    fn launch_menu_never_reports_ok_for_a_program_the_host_lists_unavailable() {
+        let mut app = provider_app();
+        app.event(
+            json!({"type":"capabilities","workspace":"C:/work","programs":[
+            {"id":"shell","available":true},{"id":"claude","available":false},
+            {"id":"codex","available":true}
+        ],"advancedLaunch":true,"providers":{"claude":{"state":"ok","version":"2.1.3"}}}),
+        )
+        .unwrap();
+        app.dialog = None;
+        open(&mut app, SessionKind::Agent, Program::Codex);
+        let screen = text(&app, 100, 32);
+        assert!(!screen.contains("ok · 2.1.3"), "{screen}");
+        assert!(screen.contains("not installed"), "{screen}");
     }
 
     #[test]
