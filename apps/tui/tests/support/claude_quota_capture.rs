@@ -159,9 +159,17 @@ impl Drop for MissingJournal {
     }
 }
 
-const STATUSLINE_SELF_EXIT: Duration = Duration::from_secs(10);
+const STATUSLINE_SELF_EXIT: Duration = Duration::from_secs(11);
 
 async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::process::Output> {
+    generated_after(command, input, cwd, async { Ok(()) }).await
+}
+async fn generated_after(
+    command: &str,
+    input: &[u8],
+    cwd: &Path,
+    input_gate: impl std::future::Future<Output = Result<()>>,
+) -> Result<std::process::Output> {
     #[cfg(windows)]
     let (mut shell, release) = {
         let system = PathBuf::from(
@@ -214,6 +222,7 @@ async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::proce
     let mut output = Vec::new();
     let mut diagnostic = Vec::new();
     let result = async {
+        input_gate.await.map_err(std::io::Error::other)?;
         stdin.write_all(input).await?;
         stdin.flush().await?;
         drop(stdin);
@@ -604,6 +613,23 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
         assert_eq!(recovered["nativeQuotaCallback"]["snapshot"]["reason"], "observed");
         assert!(recovered["nativeQuotaCallback"]["ordinaryUsageAllowed"].is_null());
         private_capture(&recovered);
+        let recovered_attempt = recovered["claudeQuotaCapture"]["delivery"]["latestCompleted"]["attemptSequence"]
+            .as_u64().context("Recovered capture attempt")?;
+        let delayed = generated_after(command, &input, &fixture.directory, async {
+            explained(&owner, id, |view| {
+                view["claudeQuotaCapture"]["delivery"]["latestStarted"]["attemptSequence"]
+                    .as_u64().is_some_and(|attempt| attempt > recovered_attempt)
+            }).await.context("Helper began its capture attempt before any input arrived")?;
+            Ok(())
+        }).await?;
+        assert!(delayed.status.code() == Some(7) && delayed.stdout == expected_input,
+            "Input released after the helper began reading failed: {}", forwarding_evidence(&delayed, &expected_input));
+        let delayed_view = explained(&owner, id, |view| {
+            let completed = &view["claudeQuotaCapture"]["delivery"]["latestCompleted"];
+            completed["outcome"] == "recorded"
+                && completed["attemptSequence"].as_u64().is_some_and(|attempt| attempt > recovered_attempt)
+        }).await.context("Delayed input completes its own capture attempt")?;
+        private_capture(&delayed_view);
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{id}.txt")))?);
         let scoped=scoped_client(&context,id).await?;
         let refused=call(&scoped,"nesvo_create_session",json!({"key":"capture-scoped-refused","spec":{"name":"Refused scoped capture","program":"claude","claudeQuotaCapture":{"displayProfile":profile}}})).await?;
