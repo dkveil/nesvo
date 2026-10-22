@@ -49,7 +49,7 @@ import {
   parseNotificationTarget,
   parseTarget,
 } from '../apps/mobile/src/shared/notifications/target';
-import { formatAge, formatRemaining } from '../apps/mobile/src/shared/ui/format-age';
+import { formatAge, formatRemaining, hasElapsed } from '../apps/mobile/src/shared/ui/format-age';
 
 const groups: SessionGroup[] = [
   { id: 'child', name: 'Mobile', parentId: 'root', order: 1 },
@@ -831,11 +831,6 @@ test('inbox, acknowledgement, decision and change events decode from host-shaped
     requestId: 'decisions-1',
   };
   assert.deepEqual(decodeServerMessage(decisionsPage), decisionsPage);
-  const withChoices = {
-    ...decisionsPage,
-    decisions: [{ ...pendingDecision, choices: ['main', 'release/1.0'] }],
-  };
-  assert.deepEqual(decodeServerMessage(withChoices), withChoices);
   const decided = {
     type: 'decided',
     run: { id: 'run-1' },
@@ -903,8 +898,6 @@ test('malformed inbox and decision payloads are refused before reaching state', 
     { ...pendingDecision, state: 7 },
     { ...pendingDecision, audience: 'everyone' },
     { ...pendingDecision, run: null },
-    { ...pendingDecision, choices: ['main', 'main'] },
-    { ...pendingDecision, choices: [''] },
   ])
     assert.throws(
       () =>
@@ -1297,6 +1290,12 @@ test('list ages and decision deadlines accept millisecond and second host timest
   assert.equal(formatRemaining(now + 10 * 60_000, now), 'in 10 min');
   assert.equal(formatRemaining(now + 5_000, now), 'in under a minute');
   assert.equal(formatRemaining(now - 1, now), 'now');
+  const inSeconds = (at: number) => Math.floor(at / 1000);
+  assert.equal(formatRemaining(inSeconds(now + 2 * 3_600_000), now), 'in 2 h');
+  assert.equal(hasElapsed(now + 60_000, now), false);
+  assert.equal(hasElapsed(inSeconds(now + 60_000), now), false);
+  assert.equal(hasElapsed(now, now), true);
+  assert.equal(hasElapsed(inSeconds(now - 60_000), now), true);
 });
 
 test('inbox fixtures used by the client match the published host schema', () => {

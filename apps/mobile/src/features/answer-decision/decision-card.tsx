@@ -1,12 +1,12 @@
 import { useState } from 'react';
 
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { MAX_DECISION_CHOICE_LENGTH, MAX_DECISION_NOTE_LENGTH } from '@entities/inbox';
 
 import type { PendingDecision } from '@shared/api/host';
 import { colors, mono } from '@shared/theme';
-import { Button, common, formatAge, formatRemaining, Pill } from '@shared/ui';
+import { Button, common, formatAge, formatRemaining, hasElapsed, Pill } from '@shared/ui';
 
 type DecisionCardProps = {
   decision: PendingDecision;
@@ -34,8 +34,7 @@ export const DecisionCard = ({
 }: DecisionCardProps) => {
   const [answer, setAnswer] = useState('');
   const [note, setNote] = useState('');
-  const presets = decision.choices ?? [];
-  const expired = decision.expiresAt <= now;
+  const expired = hasElapsed(decision.expiresAt, now);
   const locked = !!submission || !connected || expired;
   return (
     <View style={[common.card, focused && styles.focused]} testID={`decision-${decision.id}`}>
@@ -58,27 +57,6 @@ export const DecisionCard = ({
       <Text style={styles.provenance} selectable>
         decision {decision.id} · revision {decision.revision} · run {decision.run.id}
       </Text>
-      {presets.length > 0 ? (
-        <View style={styles.choices} accessibilityRole="radiogroup">
-          {presets.map(choice => (
-            <Pressable
-              key={choice}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: answer === choice, disabled: locked }}
-              disabled={locked}
-              onPress={() => setAnswer(choice)}
-              style={({ pressed }) => [
-                styles.choice,
-                answer === choice && styles.choiceSelected,
-                pressed && styles.pressed,
-                locked && styles.disabled,
-              ]}
-            >
-              <Text style={styles.choiceText}>{choice}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
       <View>
         <Text style={common.label}>Answer</Text>
         <TextInput
@@ -87,7 +65,7 @@ export const DecisionCard = ({
           editable={!locked}
           maxLength={MAX_DECISION_CHOICE_LENGTH}
           multiline
-          placeholder={presets.length > 0 ? 'Pick above or type' : 'Type an answer'}
+          placeholder="Type an answer"
           placeholderTextColor={colors.faint}
           accessibilityLabel="Decision answer"
           style={[common.input, styles.multiline]}
@@ -124,19 +102,5 @@ const styles = StyleSheet.create({
   run: { color: colors.muted, fontFamily: mono, fontSize: 13 },
   question: { color: colors.text, fontSize: 16, lineHeight: 24 },
   provenance: { color: colors.faint, fontFamily: mono, fontSize: 11 },
-  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  choice: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    justifyContent: 'center',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-  },
-  choiceSelected: { borderColor: colors.accent, backgroundColor: colors.selection },
-  choiceText: { color: colors.text, fontFamily: mono, fontSize: 13 },
-  pressed: { opacity: 0.7 },
-  disabled: { opacity: 0.4 },
   multiline: { minHeight: 64, textAlignVertical: 'top' },
 });

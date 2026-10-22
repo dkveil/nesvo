@@ -126,7 +126,6 @@ export type PendingDecision = {
   answer: string | null;
   inboxId: string;
   run: { id: string; title: string; state: string };
-  choices?: string[];
 };
 export type PushKind = 'decisionPending' | 'resultReady';
 

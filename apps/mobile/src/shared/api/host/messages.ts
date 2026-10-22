@@ -398,12 +398,6 @@ const decisionRun = (value: unknown) =>
   boundedString(value.title, MAX_INBOX_TEXT_LENGTH) &&
   boundedString(value.state, 64);
 
-const choices = (value: unknown) =>
-  Array.isArray(value) &&
-  value.length <= 8 &&
-  value.every(item => text(item, 200)) &&
-  new Set(value).size === value.length;
-
 const pendingDecision = (value: unknown): value is RecordValue =>
   record(value) &&
   text(value.id) &&
@@ -420,8 +414,7 @@ const pendingDecision = (value: unknown): value is RecordValue =>
   (value.answer === null || boundedString(value.answer, MAX_QUESTION_LENGTH)) &&
   itemId(value.inboxId) &&
   value.inboxId.startsWith('decision:') &&
-  decisionRun(value.run) &&
-  optional(value.choices, choices);
+  decisionRun(value.run);
 
 const decisions = (value: RecordValue) => {
   if (

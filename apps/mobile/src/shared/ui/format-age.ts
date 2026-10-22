@@ -20,6 +20,8 @@ export const formatAge = (at: number, now: number) => {
   return `${formatSpan(span)} ago`;
 };
 
+export const hasElapsed = (until: number, now: number) => epochMillis(until) <= now;
+
 export const formatRemaining = (until: number, now: number) => {
   const span = epochMillis(until) - now;
   if (span <= 0) return 'now';
