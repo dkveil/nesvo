@@ -1018,9 +1018,15 @@ pub fn execute_at(
 fn refresh(transaction: &Transaction<'_>, now: u64) -> Result<()> {
     crate::job_timeouts::refresh(transaction, now)?;
     crate::job_cancellations::refresh(transaction, now)?;
+    project(transaction, None, now)
+}
+pub(crate) fn settle_run(transaction: &Transaction<'_>, run: &str, now: u64) -> Result<()> {
+    project(transaction, Some(run), now)
+}
+fn project(transaction: &Transaction<'_>, run: Option<&str>, now: u64) -> Result<()> {
     let rows = {
-        let mut q=transaction.prepare(&format!("SELECT o.id,r.state,(SELECT a.state FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=r.id ORDER BY a.ordinal DESC LIMIT 1),e.reason,o.state FROM harness_job_occurrences o JOIN workflow_runs r ON r.id=o.run_id LEFT JOIN workflow_executors e ON e.run_id=r.id WHERE o.state IN ({ACTIVE})"))?;
-        q.query_map([], |r| {
+        let mut q=transaction.prepare(&format!("SELECT o.id,r.state,(SELECT a.state FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE t.run_id=r.id ORDER BY a.ordinal DESC LIMIT 1),e.reason,o.state FROM harness_job_occurrences o JOIN workflow_runs r ON r.id=o.run_id LEFT JOIN workflow_executors e ON e.run_id=r.id WHERE o.state IN ({ACTIVE}) AND (?1 IS NULL OR o.run_id=?1)"))?;
+        q.query_map([run], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,

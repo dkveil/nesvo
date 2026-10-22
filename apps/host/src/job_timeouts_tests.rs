@@ -287,6 +287,44 @@ fn accepted_report_replay_survives_timeout_projection_and_retains_validation() {
 }
 
 #[test]
+fn accepted_report_projects_its_occurrence_without_waiting_for_a_host_tick() {
+    for timeout in [None, Some(604_800_000)] {
+        let (mut store, identity) = armed_fixture(timeout);
+        let actor = crate::orchestration::Actor {
+            issuer: "worker".into(),
+            scope: crate::orchestration::Scope::Worker(identity.session_id.clone()),
+        };
+        let request=serde_json::from_value(json!({"action":"report","key":"projected-result","attemptId":identity.attempt_id,"result":super::orchestration_tests::report()})).unwrap();
+        crate::orchestration::execute_at(&mut store.0, actor, request, NOW + 1).unwrap();
+        let projected: (String, Option<String>, Option<i64>) = store
+            .0
+            .query_row(
+                "SELECT state,reason,finished_at FROM harness_job_occurrences WHERE id=?1",
+                [&identity.occurrence_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            projected,
+            (
+                "needsValidation".into(),
+                Some("validation_pending".into()),
+                None
+            )
+        );
+        let attempt: String = store
+            .0
+            .query_row(
+                "SELECT state FROM harness_job_attempts WHERE id=?1",
+                [&identity.job_attempt_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(attempt, "needsValidation");
+    }
+}
+
+#[test]
 fn exact_boolean_no_effect_disarms_without_claiming_a_stop_or_resetting_the_deadline() {
     for effect in [Value::Bool(false), json!(0)] {
         let (mut store, identity) = armed_fixture(Some(1000));

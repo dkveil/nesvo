@@ -670,6 +670,7 @@ fn execute_inner(
         }],
     )?;
     crate::workflow_digest::settle(&transaction, &id, now)?;
+    crate::job_definitions::settle_run(&transaction, &id, now)?;
     let mut result = result;
     if let Request::Validate {
         host_attestation: Some(checks),

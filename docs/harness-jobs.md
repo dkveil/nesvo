@@ -456,7 +456,10 @@ archive policies and broader overlap modes remain future work.
 from terminal `succeeded`, `failed`, `skipped` and `canceled`. Process creation,
 PTY silence and idle are never job success. A succeeded worker report still needs
 an explicit matching result validation; the existing workflow rules require
-passed checks. `maxElapsedMs` is the run's admission/input budget. It does not
+passed checks. A run mutation such as a worker report or a result validation
+projects its bound occurrence in the same transaction, so `needsValidation` and
+`succeeded` never wait for the next host tick; the tick still projects clock-driven
+and native-process outcomes. `maxElapsedMs` is the run's admission/input budget. It does not
 claim a hard process timeout or automatic termination after a completed result.
 Completed worker processes remain available for owner inspection and count toward
 host process budgets until explicitly stopped/closed; cleanup policy is pending.
