@@ -129,6 +129,10 @@ fn origin_allowed(origin: Option<&str>, extra: &[String]) -> bool {
     })
 }
 
+fn answers_proof_without_state(authority: &crate::caller::Authority) -> bool {
+    !matches!(authority, crate::caller::Authority::Session { .. })
+}
+
 struct Cleanup {
     state: Arc<Mutex<State>>,
     id: u64,
@@ -230,7 +234,7 @@ pub async fn handle(
             }),
         _ => None,
     };
-    if client_nonce.is_none() {
+    let Some(client_nonce) = client_nonce else {
         let _ = timeout(
             Duration::from_secs(1),
             websocket.close(Some(CloseFrame {
@@ -240,8 +244,21 @@ pub async fn handle(
         )
         .await;
         return Err(anyhow!("Authentication failed"));
-    }
+    };
     let id = NEXT_CLIENT.fetch_add(1, Ordering::Relaxed);
+    let connected =
+        json!({"type":"connected", "clientNonce":client_nonce, "clientId":id, "protocolVersion":2});
+    let mut outgoing_seq = 0;
+    let answered = answers_proof_without_state(&authority);
+    if answered {
+        outgoing_seq += 1;
+        let frame = wire::encode(connected.clone(), &key, &challenge, outgoing_seq)?;
+        timeout(
+            Duration::from_secs(3),
+            websocket.send(Message::Text(frame.into())),
+        )
+        .await??;
+    }
     let (event_tx, mut event_rx) = mpsc::channel(CLIENT_EVENT_CAPACITY);
     let (cancel_tx, mut cancelled) = watch::channel(false);
     {
@@ -254,10 +271,9 @@ pub async fn handle(
                 authority: authority.clone(),
             },
         );
-        state.send(
-            id,
-            json!({"type":"connected", "clientNonce":client_nonce.unwrap(), "clientId":id, "protocolVersion":2}),
-        );
+        if !answered {
+            state.send(id, connected);
+        }
         let _ = state.repository_view_requested(id);
         state.send(id, state.list());
     }
@@ -268,7 +284,6 @@ pub async fn handle(
     let (mut outgoing, mut incoming) = websocket.split();
     let git_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
     let mut incoming_seq = 1;
-    let mut outgoing_seq = 0;
     let mut rate_start = Instant::now();
     let mut rate_count = 0u32;
     let event_gate = Arc::new(tokio::sync::Semaphore::new(4));
@@ -594,6 +609,128 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct HeldState {
+        release: std::sync::mpsc::Sender<()>,
+        holder: std::thread::JoinHandle<()>,
+    }
+    impl HeldState {
+        fn hold(state: Arc<Mutex<State>>) -> Self {
+            let (held, acquired) = std::sync::mpsc::channel();
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            let holder = std::thread::spawn(move || {
+                let _guard = state.lock().unwrap();
+                held.send(()).unwrap();
+                let _ = released.recv();
+            });
+            acquired.recv().unwrap();
+            Self { release, holder }
+        }
+        fn release(self) {
+            self.release.send(()).unwrap();
+            self.holder.join().unwrap();
+        }
+    }
+
+    async fn host_frame<S>(socket: &mut S) -> String
+    where
+        S: futures_util::Stream<
+                Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>,
+            > + Unpin,
+    {
+        let frame = timeout(Duration::from_secs(60), socket.next())
+            .await
+            .expect("the host answers without waiting on shared host state");
+        match frame {
+            Some(Ok(Message::Text(text))) => text.to_string(),
+            other => panic!("Expected a host text frame, got {other:?}"),
+        }
+    }
+
+    fn authenticate_while_state_is_held(
+        address: std::net::SocketAddr,
+        key: [u8; 32],
+        state: Arc<Mutex<State>>,
+    ) -> u64 {
+        let client = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        client.block_on(async move {
+            let stream = TcpStream::connect(address).await.unwrap();
+            let (mut socket, _) =
+                tokio_tungstenite::client_async(format!("ws://{address}/"), stream)
+                    .await
+                    .unwrap();
+            let hello: serde_json::Value =
+                serde_json::from_str(&host_frame(&mut socket).await).unwrap();
+            let challenge = hello["challenge"].as_str().unwrap().to_owned();
+            let held = HeldState::hold(state.clone());
+            let client_nonce = hex::encode(wire::random::<32>());
+            let auth = wire::encode_client(
+                json!({"type":"auth", "clientNonce":client_nonce}),
+                &key,
+                &challenge,
+                1,
+            )
+            .unwrap();
+            socket.send(Message::Text(auth.into())).await.unwrap();
+            let connected =
+                wire::decode_host(&host_frame(&mut socket).await, &key, &challenge, 1).unwrap();
+            assert_eq!(connected["type"], "connected");
+            assert_eq!(connected["clientNonce"], client_nonce);
+            assert_eq!(connected["protocolVersion"], 2);
+            let client_id = connected["clientId"].as_u64().unwrap();
+            held.release();
+            let listed =
+                wire::decode_host(&host_frame(&mut socket).await, &key, &challenge, 2).unwrap();
+            assert_eq!(listed["type"], "sessions");
+            assert!(state.lock().unwrap().clients.contains_key(&client_id));
+            client_id
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn owner_auth_proof_is_answered_while_a_long_operation_holds_host_state() {
+        let state = Arc::new(Mutex::new(State::new(
+            std::env::temp_dir(),
+            crate::storage::MetadataStore::open(std::path::Path::new(":memory:")).unwrap(),
+            crate::launchers::Launchers::discover_with_fixture_shell(),
+        )));
+        let key = wire::random::<32>();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (pty_events, _pty_rx) = mpsc::channel(8);
+        let server = tokio::spawn({
+            let state = state.clone();
+            async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                handle(socket, key, state, pty_events, Vec::new()).await
+            }
+        });
+        let client_id = tokio::task::spawn_blocking({
+            let state = state.clone();
+            move || authenticate_while_state_is_held(address, key, state)
+        })
+        .await
+        .unwrap();
+        server.await.unwrap().unwrap();
+        assert!(!state.lock().unwrap().clients.contains_key(&client_id));
+    }
+
+    #[test]
+    fn only_a_scoped_session_proof_is_projected_through_host_state() {
+        assert!(answers_proof_without_state(
+            &crate::caller::Authority::Owner
+        ));
+        assert!(!answers_proof_without_state(
+            &crate::caller::Authority::Session {
+                id: "session".into(),
+                scope_id: "scope".into(),
+            }
+        ));
+    }
+
     #[test]
     fn browser_origins_are_constrained() {
         assert!(origin_allowed(None, &[]));
