@@ -258,7 +258,10 @@ and `acknowledgeInbox {items:[{id,revision}]}` (reply `inboxAcknowledged
 {acknowledged:[{id,revision,acknowledgedAt}]}`). Item IDs are stable
 (`session:`, `decision:RUN:DECISION`, `run:RUN:ATTEMPT`, `result:OCCURRENCE`);
 acknowledgements are durable receipts per revision, so a reconnect never repeats an
-acknowledged item. `decisions:true` adds `decisions {page?}` (reply `decisions
+acknowledged item. Hosts may add item kinds, programs and decision states: mobile drops
+an inbox item of unknown `kind` or a decision of unknown `state` one by one, counts
+them as `skipped` for the inbox badge, omits an unknown item `program`, and keeps
+the connection; malformed known items still reject the frame. `decisions:true` adds `decisions {page?}` (reply `decisions
 {decisions,page,nextPage,total}`) and `decide {decisionId,choice,note?}` (reply
 `decided`), which need no run ID and refuse `decision_resolved` or
 `decision_expired`. `jobPages:true` adds `page` to the owner job `list` and

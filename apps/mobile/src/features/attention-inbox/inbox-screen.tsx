@@ -25,6 +25,7 @@ export const InboxScreen = ({ onBack }: InboxScreenProps) => {
     connected,
     sections,
     total,
+    skipped,
     nextPage,
     receivedAt,
     loading,
@@ -72,6 +73,13 @@ export const InboxScreen = ({ onBack }: InboxScreenProps) => {
         ListHeaderComponent={
           <View style={styles.intro}>
             <FreshnessBadge receivedAt={receivedAt} connected={connected} />
+            {supported && skipped > 0 ? (
+              <Text style={common.body}>
+                {skipped === 1
+                  ? '1 item needs a newer nesvo app.'
+                  : `${skipped} items need a newer nesvo app.`}
+              </Text>
+            ) : null}
             {notice ? (
               <View style={styles.notice} accessibilityLiveRegion="polite">
                 <Text style={styles.noticeText}>{notice}</Text>

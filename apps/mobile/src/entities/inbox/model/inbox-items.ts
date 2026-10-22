@@ -6,6 +6,7 @@ export type InboxSection = { priority: InboxPriority; items: InboxItem[] };
 
 export const INBOX_PAGE_LIMIT = 16;
 export const MAX_INBOX_PAGE_LIMIT = 32;
+export const MAX_HIDDEN_MARKS = 64;
 
 export const markKey = ({ id, revision }: InboxMark) => `${id}@${revision}`;
 
@@ -33,6 +34,15 @@ export const mergeInboxPage = (
   if (replace) return visible;
   const incomingIds = new Set(visible.map(item => item.id));
   return [...current.filter(item => !incomingIds.has(item.id)), ...visible];
+};
+
+export const rememberMark = (marks: Set<string>, key: string) => {
+  marks.delete(key);
+  marks.add(key);
+  for (const oldest of marks) {
+    if (marks.size <= MAX_HIDDEN_MARKS) break;
+    marks.delete(oldest);
+  }
 };
 
 export const withoutItems = (items: InboxItem[], removed: InboxItem[]) => {

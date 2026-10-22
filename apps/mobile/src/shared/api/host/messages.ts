@@ -319,6 +319,34 @@ const itemId = (value: unknown): value is string =>
   text(value, MAX_ITEM_ID_LENGTH) && !/[\u0000-\u001f\u007f]/.test(value);
 const optional = (value: unknown, check: (item: unknown) => boolean) =>
   value === undefined || check(value);
+const unknownValue = (field: string, known: readonly string[]) => (value: unknown) =>
+  record(value) && typeof value[field] === 'string' && !known.includes(value[field]);
+
+type KnownEntries = { entries: RecordValue[]; skipped: number };
+const knownEntries = (
+  values: unknown[],
+  isUnknown: (value: unknown) => boolean,
+  decode: (value: unknown) => RecordValue | null,
+): KnownEntries | null => {
+  const entries: RecordValue[] = [];
+  let skipped = 0;
+  for (const value of values) {
+    if (isUnknown(value)) {
+      skipped += 1;
+      continue;
+    }
+    const entry = decode(value);
+    if (!entry) return null;
+    entries.push(entry);
+  }
+  return { entries, skipped };
+};
+const withSkipped = (value: RecordValue, skipped: number) =>
+  skipped > 0 ? { ...value, skipped } : value;
+const withoutUnknownProgram = (value: RecordValue): RecordValue =>
+  typeof value.program !== 'string' || program(value.program)
+    ? value
+    : Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'program'));
 
 const inboxItem = (value: unknown): value is RecordValue =>
   record(value) &&
@@ -337,17 +365,29 @@ const inboxItem = (value: unknown): value is RecordValue =>
   optional(value.decisionId, item => text(item)) &&
   optional(value.runId, nullableId) &&
   optional(value.expiresAt, item => integer(item)) &&
-  optional(value.program, item => item === 'claude' || item === 'gemini' || item === 'codex');
+  optional(value.program, program);
 
-const attentionInbox = (value: RecordValue) =>
-  Array.isArray(value.items) &&
-  integer(value.page, 0, 1024) &&
-  integer(value.limit, 1, 32) &&
-  value.items.length <= value.limit &&
-  value.items.every(inboxItem) &&
-  new Set(value.items.map(item => item.id)).size === value.items.length &&
-  nextPage(value.nextPage, 1025) &&
-  integer(value.total);
+const knownInboxItem = (value: unknown) => {
+  if (!record(value)) return null;
+  const item = withoutUnknownProgram(value);
+  return inboxItem(item) ? item : null;
+};
+
+const attentionInbox = (value: RecordValue) => {
+  if (
+    !Array.isArray(value.items) ||
+    !integer(value.page, 0, 1024) ||
+    !integer(value.limit, 1, 32) ||
+    value.items.length > value.limit ||
+    !nextPage(value.nextPage, 1025) ||
+    !integer(value.total)
+  )
+    return null;
+  const known = knownEntries(value.items, unknownValue('kind', INBOX_KINDS), knownInboxItem);
+  if (!known || new Set(known.entries.map(item => item.id)).size !== known.entries.length)
+    return null;
+  return withSkipped({ ...value, items: known.entries }, known.skipped);
+};
 
 const inboxReceipt = (value: unknown) =>
   record(value) && itemId(value.id) && integer(value.revision) && integer(value.acknowledgedAt);
@@ -364,7 +404,7 @@ const choices = (value: unknown) =>
   value.every(item => text(item, 200)) &&
   new Set(value).size === value.length;
 
-const pendingDecision = (value: unknown) =>
+const pendingDecision = (value: unknown): value is RecordValue =>
   record(value) &&
   text(value.id) &&
   text(value.runId) &&
@@ -383,20 +423,26 @@ const pendingDecision = (value: unknown) =>
   decisionRun(value.run) &&
   optional(value.choices, choices);
 
-const decisions = (value: RecordValue) =>
-  Array.isArray(value.decisions) &&
-  value.decisions.length <= 32 &&
-  value.decisions.every(pendingDecision) &&
-  integer(value.page, 0, 512) &&
-  nextPage(value.nextPage, 513) &&
-  integer(value.total);
+const decisions = (value: RecordValue) => {
+  if (
+    !Array.isArray(value.decisions) ||
+    value.decisions.length > 32 ||
+    !integer(value.page, 0, 512) ||
+    !nextPage(value.nextPage, 513) ||
+    !integer(value.total)
+  )
+    return null;
+  const known = knownEntries(value.decisions, unknownValue('state', DECISION_STATES), decision =>
+    pendingDecision(decision) ? decision : null,
+  );
+  return known && withSkipped({ ...value, decisions: known.entries }, known.skipped);
+};
 
 const decided = (value: RecordValue) =>
   record(value.decision) &&
   text(value.decision.id) &&
   integer(value.decision.revision, 1) &&
-  typeof value.decision.state === 'string' &&
-  DECISION_STATES.includes(value.decision.state) &&
+  text(value.decision.state, 64) &&
   itemId(value.inboxId) &&
   value.inboxId.startsWith('decision:');
 
@@ -410,6 +456,7 @@ export function decodeServerMessage(value: unknown): ServerMessage {
     throw new Error('Invalid host message.');
   }
   let valid = false;
+  let message = value;
   switch (value.type) {
     case 'pushRegistered':
       valid =
@@ -419,9 +466,12 @@ export function decodeServerMessage(value: unknown): ServerMessage {
           kinds => Array.isArray(kinds) && kinds.length <= 8 && kinds.every(kind => text(kind, 64)),
         );
       break;
-    case 'attentionInbox':
-      valid = attentionInbox(value);
+    case 'attentionInbox': {
+      const page = attentionInbox(value);
+      valid = !!page;
+      message = page ?? value;
       break;
+    }
     case 'inboxAcknowledged':
       valid =
         Array.isArray(value.acknowledged) &&
@@ -429,9 +479,12 @@ export function decodeServerMessage(value: unknown): ServerMessage {
         value.acknowledged.length <= 32 &&
         value.acknowledged.every(inboxReceipt);
       break;
-    case 'decisions':
-      valid = decisions(value);
+    case 'decisions': {
+      const page = decisions(value);
+      valid = !!page;
+      message = page ?? value;
       break;
+    }
     case 'decided':
       valid = decided(value);
       break;
@@ -489,5 +542,5 @@ export function decodeServerMessage(value: unknown): ServerMessage {
   }
   if (!valid) throw new Error('Invalid host message.');
   // Every field consumed by state/UI has been checked above; extras are ignored.
-  return value as ServerMessage;
+  return message as ServerMessage;
 }

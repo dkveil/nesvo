@@ -10,6 +10,7 @@ import {
   markKey,
   mergeInboxPage,
   refreshLimit,
+  rememberMark,
   restoreItems,
   withoutItems,
 } from './inbox-items';
@@ -20,6 +21,7 @@ type InboxStatus = 'idle' | 'loading' | 'ready' | 'error';
 type InboxSnapshot = {
   items: InboxItem[];
   total: number;
+  skipped: number;
   nextPage: number | null;
   limit: number;
   receivedAt: number | null;
@@ -30,6 +32,7 @@ type PageRequest = { id: string; replace: boolean };
 const EMPTY_SNAPSHOT: InboxSnapshot = {
   items: [],
   total: 0,
+  skipped: 0,
   nextPage: null,
   limit: INBOX_PAGE_LIMIT,
   receivedAt: null,
@@ -102,7 +105,7 @@ export const useInboxState = () => {
     (item: InboxItem) => {
       const requestId = client.requestId();
       acknowledgements.current.set(requestId, [item]);
-      hiddenMarks.current.add(markKey(item));
+      rememberMark(hiddenMarks.current, markKey(item));
       setSnapshot(current => ({
         ...current,
         items: withoutItems(current.items, [item]),
@@ -125,6 +128,7 @@ export const useInboxState = () => {
           setSnapshot(current => ({
             items: mergeInboxPage(current.items, event.items, request.replace, hiddenMarks.current),
             total: event.total,
+            skipped: (request.replace ? 0 : current.skipped) + (event.skipped ?? 0),
             nextPage: event.nextPage,
             limit: event.limit,
             receivedAt: Date.now(),
@@ -182,6 +186,7 @@ export const useInboxState = () => {
     items,
     sections: groupInboxItems(items),
     total: visible ? snapshot.total : 0,
+    skipped: visible ? snapshot.skipped : 0,
     nextPage: visible ? snapshot.nextPage : null,
     receivedAt: visible ? snapshot.receivedAt : null,
     loading: status === 'loading',

@@ -22,8 +22,10 @@ import {
 import {
   groupInboxItems,
   markKey,
+  MAX_HIDDEN_MARKS,
   mergeInboxPage,
   refreshLimit,
+  rememberMark,
   restoreItems,
   withoutItems,
 } from '../apps/mobile/src/entities/inbox/model/inbox-items';
@@ -732,6 +734,7 @@ const inboxCapabilities = {
   decisions: true,
   jobPages: true,
 };
+// Hand-written: no host test captures attentionInbox/decisions replies like events.jsonl; that needs an attention_inbox_tests.rs golden writer with injected decision IDs.
 const sessionItem = {
   kind: 'session',
   reason: 'question',
@@ -860,7 +863,9 @@ test('inbox, acknowledgement, decision and change events decode from host-shaped
 
 test('malformed inbox and decision payloads are refused before reaching state', () => {
   const invalidItems = [
-    { ...sessionItem, kind: 'banner' },
+    { ...sessionItem, kind: 7 },
+    { ...sessionItem, program: 7 },
+    'session:x',
     { ...sessionItem, id: `decision:${SESSION_ID}` },
     { ...sessionItem, id: 'session:' },
     { ...sessionItem, priority: 0 },
@@ -895,7 +900,7 @@ test('malformed inbox and decision payloads are refused before reaching state', 
   for (const decision of [
     { ...pendingDecision, inboxId: 'run:run-1:question-1' },
     { ...pendingDecision, revision: 0 },
-    { ...pendingDecision, state: 'approved' },
+    { ...pendingDecision, state: 7 },
     { ...pendingDecision, audience: 'everyone' },
     { ...pendingDecision, run: null },
     { ...pendingDecision, choices: ['main', 'main'] },
@@ -916,6 +921,11 @@ test('malformed inbox and decision payloads are refused before reaching state', 
     { type: 'decided', decision: { id: 'question-1', revision: 2, state: 'answered' } },
     {
       type: 'decided',
+      decision: { id: 'question-1', revision: 2, state: '' },
+      inboxId: 'decision:run-1:question-1',
+    },
+    {
+      type: 'decided',
       decision: { id: 'question-1', revision: 2, state: 'answered' },
       inboxId: 'session:x',
     },
@@ -924,6 +934,49 @@ test('malformed inbox and decision payloads are refused before reaching state', 
     { type: 'pushRegistered', enabled: true, kinds: 'decisionPending' },
   ])
     assert.throws(() => decodeServerMessage(value), /Invalid host message/);
+});
+
+test('unknown inbox kinds, programs and decision states are skipped item by item', () => {
+  const futureItem = { ...sessionItem, kind: 'review', id: 'review:1' };
+  const futureProgram = { ...sessionItem, program: 'aider' };
+  const { program: _program, ...withoutProgram } = sessionItem;
+  assert.deepEqual(
+    decodeServerMessage({ ...inboxPage, items: [futureItem, futureProgram, decisionItem] }),
+    { ...inboxPage, items: [withoutProgram, decisionItem], skipped: 1 },
+  );
+  const shellItem = { ...sessionItem, program: 'shell' };
+  assert.deepEqual(decodeServerMessage({ ...inboxPage, items: [shellItem] }), {
+    ...inboxPage,
+    items: [shellItem],
+  });
+  assert.deepEqual(decodeServerMessage({ ...inboxPage, items: [futureItem, futureItem] }), {
+    ...inboxPage,
+    items: [],
+    skipped: 2,
+  });
+  assert.throws(
+    () =>
+      decodeServerMessage({ ...inboxPage, items: [futureItem, { ...sessionItem, priority: 9 }] }),
+    /Invalid host message/,
+  );
+  const decisionsPage = {
+    type: 'decisions',
+    decisions: [{ ...pendingDecision, state: 'superseded' }, pendingDecision],
+    page: 0,
+    nextPage: null,
+    total: 2,
+  };
+  assert.deepEqual(decodeServerMessage(decisionsPage), {
+    ...decisionsPage,
+    decisions: [pendingDecision],
+    skipped: 1,
+  });
+  const decided = {
+    type: 'decided',
+    decision: { id: 'question-1', revision: 2, state: 'superseded' },
+    inboxId: 'decision:run-1:question-1',
+  };
+  assert.deepEqual(decodeServerMessage(decided), decided);
 });
 
 test('inbox capability flags are optional booleans and legacy capabilities still decode', () => {
@@ -1110,6 +1163,27 @@ test('a reconnect forgets advertised inbox flags until the new host repeats them
   }
 });
 
+test('an unknown inbox item kind inside a valid page keeps the connection open', () => {
+  const peer = connectInboxPeer();
+  try {
+    peer.receive(inboxCapabilities);
+    const futureItem = { ...sessionItem, kind: 'review', id: 'review:1' };
+    peer.receive({ ...inboxPage, items: [futureItem, decisionItem] });
+    assert.equal(peer.client.isConnected, true);
+    assert.deepEqual(peer.events.at(-1), { ...inboxPage, items: [decisionItem], skipped: 1 });
+    assert.equal(
+      peer.events.some(event => event.type === 'error' || event.type === 'disconnected'),
+      false,
+    );
+    const changed = { type: 'attentionInboxChanged', reason: 'decision' };
+    peer.receive(changed);
+    assert.deepEqual(peer.events.at(-1), changed);
+    assert.equal(peer.client.isConnected, true);
+  } finally {
+    peer.cleanup();
+  }
+});
+
 test('unknown inbox event types still disconnect a legacy-shaped session', () => {
   const peer = connectInboxPeer();
   try {
@@ -1155,6 +1229,12 @@ test('inbox lists group by priority, hide acknowledged revisions and roll back r
     appended.map(item => item.id),
     items.map(item => item.id),
   );
+  const marks = new Set<string>();
+  for (let index = 0; index < MAX_HIDDEN_MARKS + 10; index += 1)
+    rememberMark(marks, `session:${index}@1`);
+  assert.equal(marks.size, MAX_HIDDEN_MARKS);
+  assert.equal(marks.has('session:0@1'), false);
+  assert.equal(marks.has(`session:${MAX_HIDDEN_MARKS + 9}@1`), true);
   assert.equal(refreshLimit(0), 16);
   assert.equal(refreshLimit(20), 20);
   assert.equal(refreshLimit(90), 32);

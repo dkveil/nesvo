@@ -107,7 +107,7 @@ export type InboxItem = {
   decisionId?: string;
   runId?: string | null;
   expiresAt?: number;
-  program?: Exclude<SessionProgram, 'shell'>;
+  program?: SessionProgram;
 };
 export type InboxMark = { id: string; revision: number };
 export type InboxReceipt = InboxMark & { acknowledgedAt: number };
@@ -186,6 +186,7 @@ export type HostEvent =
       limit: number;
       nextPage: number | null;
       total: number;
+      skipped?: number;
       requestId?: string;
     }
   | { type: 'inboxAcknowledged'; acknowledged: InboxReceipt[]; requestId?: string }
@@ -195,11 +196,12 @@ export type HostEvent =
       page: number;
       nextPage: number | null;
       total: number;
+      skipped?: number;
       requestId?: string;
     }
   | {
       type: 'decided';
-      decision: { id: string; revision: number; state: DecisionState };
+      decision: { id: string; revision: number; state: string };
       inboxId: string;
       requestId?: string;
     }
