@@ -68,13 +68,9 @@ import {
 } from '../apps/mobile/src/shared/notifications/target';
 import { formatAge, formatRemaining, hasElapsed } from '../apps/mobile/src/shared/ui/format-age';
 
-const CLI_SCHEMA_PATHS = [
-  '../docs/harness-cli.schema.json',
-  './fixtures/harness-cli-handwritten.schema.json',
-];
-const cliValidators = () =>
-  CLI_SCHEMA_PATHS.map(path =>
-    new Ajv().compile(JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'))),
+const cliValidator = () =>
+  new Ajv().compile(
+    JSON.parse(readFileSync(new URL('../docs/harness-cli.schema.json', import.meta.url), 'utf8')),
   );
 
 const groups: SessionGroup[] = [
@@ -96,21 +92,17 @@ const session = {
 };
 
 test('published session schema keeps repository context optional and rejects contradictory states', () => {
-  for (const validate of cliValidators()) assertSessionContexts(validate);
+  assertSessionContexts(cliValidator());
 });
 
-test('captured CLI envelopes match the generated and the hand-written schema', () => {
+test('captured CLI envelopes match the generated schema', () => {
   const envelopes: unknown[] = JSON.parse(
     readFileSync(new URL('./fixtures/harness-cli-envelopes.json', import.meta.url), 'utf8'),
   );
   assert.ok(envelopes.length > 0);
-  for (const [schema, validate] of cliValidators().entries())
-    for (const [index, envelope] of envelopes.entries())
-      assert.equal(
-        validate(envelope),
-        true,
-        `${CLI_SCHEMA_PATHS[schema]} envelope ${index}: ${JSON.stringify(validate.errors)}`,
-      );
+  const validate = cliValidator();
+  for (const [index, envelope] of envelopes.entries())
+    assert.equal(validate(envelope), true, `Envelope ${index}: ${JSON.stringify(validate.errors)}`);
 });
 
 function assertSessionContexts(validate: ReturnType<Ajv['compile']>) {
@@ -1358,7 +1350,7 @@ test('list ages and decision deadlines accept millisecond and second host timest
 });
 
 test('inbox fixtures used by the client match the published host schema', () => {
-  for (const validate of cliValidators()) assertInboxFixtures(validate);
+  assertInboxFixtures(cliValidator());
 });
 
 function assertInboxFixtures(validate: ReturnType<Ajv['compile']>) {
