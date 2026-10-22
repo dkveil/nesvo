@@ -216,9 +216,12 @@ struct Attachment {
     entry_id: Option<String>,
 }
 
+type Key = (Program, String, PathBuf);
+
 #[derive(Default)]
 struct Inner {
     entries: Vec<Entry>,
+    starting: Vec<Key>,
     sessions: VecDeque<Attachment>,
     closed: bool,
     reaping: bool,
@@ -291,7 +294,7 @@ impl Pool {
             .iter()
             .position(|entry| entry.warm() && entry.serves(spec, &digest))
         else {
-            return match self.prepare(&mut inner, spec, &digest) {
+            return match self.prepare(&mut inner, spec, &digest, &runtime) {
                 Ok(()) => cold("notPrepared"),
                 Err(reason) => cold(reason),
             };
@@ -335,7 +338,7 @@ impl Pool {
             stdout,
             cancelled,
         ));
-        let _ = self.prepare(&mut inner, spec, &digest);
+        let _ = self.prepare(&mut inner, spec, &digest, &runtime);
         json!({"mode":"pooled","entryId":id,"endpoint":address,"token":hex::encode(token)})
     }
 
@@ -344,33 +347,68 @@ impl Pool {
         inner: &mut Inner,
         spec: &Spec,
         digest: &str,
+        runtime: &tokio::runtime::Handle,
     ) -> Result<(), &'static str> {
+        let key = (spec.program, digest.to_owned(), spec.root.clone());
         let warm = inner
             .entries
             .iter()
             .filter(|entry| entry.warm() && entry.serves(spec, digest))
-            .count();
+            .count()
+            + inner
+                .starting
+                .iter()
+                .filter(|starting| **starting == key)
+                .count();
         if warm >= self.bounds.warm_per_key {
             return Ok(());
         }
-        if inner.entries.len() >= self.bounds.processes {
+        if inner.entries.len() + inner.starting.len() >= self.bounds.processes {
             return Err("boundReached");
         }
-        let (process, stdin, stdout) = spawn(spec).ok_or("spawnFailed")?;
+        inner.starting.push(key.clone());
+        let pool = self.clone();
+        let spec = spec.clone();
+        let handle = runtime.clone();
+        runtime.spawn_blocking(move || {
+            let spawned = spawn(&spec);
+            pool.started(&key, spec, spawned, &handle);
+        });
+        Ok(())
+    }
+
+    fn started(
+        self: &Arc<Self>,
+        key: &Key,
+        spec: Spec,
+        spawned: Option<(Process, ChildStdin, ChildStdout)>,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(index) = inner.starting.iter().position(|starting| starting == key) {
+            inner.starting.remove(index);
+        }
+        let Some((process, stdin, stdout)) = spawned else {
+            return;
+        };
+        if inner.closed {
+            drop(inner);
+            process.retire();
+            return;
+        }
         inner.entries.push(Entry {
             id: hex::encode(crate::wire::random::<16>()),
-            spec: spec.clone(),
-            digest: digest.into(),
+            spec,
+            digest: key.1.clone(),
             since: Instant::now(),
             slot: Slot::Warm { stdin, stdout },
             process,
         });
         if !inner.reaping {
             inner.reaping = true;
-            tokio::spawn(reap(Arc::downgrade(self), self.changed.clone()));
+            runtime.spawn(reap(Arc::downgrade(self), self.changed.clone()));
         }
         self.changed.notify_one();
-        Ok(())
     }
 
     fn reap_stale(&self, inner: &mut Inner, spec: &Spec, digest: &str) {
@@ -592,7 +630,6 @@ fn known_reason(reason: &str) -> Option<&'static str> {
         "closed",
         "notPrepared",
         "boundReached",
-        "spawnFailed",
         "endpointUnavailable",
     ]
     .into_iter()

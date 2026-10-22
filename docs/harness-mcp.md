@@ -101,13 +101,14 @@ environment, and with its own new `nesvo-mcp-*` temporary root as `TEMP`, `TMP`
 and `TMPDIR`, removed after it exits.
 
 **Attach and refusal.** The first attach for a key returns
-`{mode:"cold", code:"mcp_pool_unavailable", reason:"notPrepared"}` and warms one
-spare for the next session; a later attach leases that spare and warms its
-replacement within the bounds. When the process bound is reached the reason is
-`boundReached`; `commandUnavailable`, `spawnFailed`, `endpointUnavailable` and
-`closed` are the other cold reasons. A cold reply means the provider starts the
-server itself as it does today; attach never waits for a process start or a
-connection.
+`{mode:"cold", code:"mcp_pool_unavailable", reason:"notPrepared"}` and starts one
+spare for the next session on a blocking worker; a later attach leases a ready
+spare and starts its replacement the same way. Starting processes count against
+the bounds, and a spare that fails to start simply never appears. When the
+process bound is reached the reason is `boundReached`; `commandUnavailable`,
+`endpointUnavailable` and `closed` are the other cold reasons. A cold reply means
+the provider starts the server itself as it does today; attach never waits for a
+process start or a connection.
 
 **Relay.** A lease returns
 `{mode:"pooled", entryId, endpoint, token}`: a one-connection local endpoint (a

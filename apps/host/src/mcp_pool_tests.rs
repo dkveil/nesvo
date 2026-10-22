@@ -132,6 +132,10 @@ fn processes(pool: &Pool) -> Value {
     pool.status()["processes"].clone()
 }
 
+async fn settle(pool: &Pool, warm: u64, leased: u64) {
+    until(|| processes(pool) == json!({"warm":warm,"leased":leased})).await;
+}
+
 #[tokio::test]
 async fn a_second_session_attaches_to_the_warm_process_prepared_by_the_first() {
     let (_scratch, log) = journal().await;
@@ -141,7 +145,7 @@ async fn a_second_session_attaches_to_the_warm_process_prepared_by_the_first() {
         first,
         json!({"mode":"cold","code":"mcp_pool_unavailable","reason":"notPrepared"})
     );
-    assert_eq!(processes(&pool), json!({"warm":1,"leased":0}));
+    settle(&pool, 1, 0).await;
     let warm = pool.status()["entries"][0]["entryId"].clone();
     let started = Instant::now();
     let second = pool.attach(&lines(), &session('2'));
@@ -150,8 +154,8 @@ async fn a_second_session_attaches_to_the_warm_process_prepared_by_the_first() {
     assert_eq!(second["entryId"], warm);
     let mut bridge = Bridge::attach(&second).await;
     assert_eq!(bridge.exchange("ping").await, "> ping");
+    settle(&pool, 1, 1).await;
     let status = pool.status();
-    assert_eq!(status["processes"], json!({"warm":1,"leased":1}));
     let leased = status["entries"]
         .as_array()
         .unwrap()
@@ -178,6 +182,7 @@ async fn releasing_a_lease_kills_its_process_and_never_reuses_it() {
     let (_scratch, log) = journal().await;
     let pool = pool(bounds(), &log);
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let lease = pool.attach(&lines(), &session('2'));
     let mut bridge = Bridge::attach(&lease).await;
     let temp = PathBuf::from(bridge.exchange("env TMP").await);
@@ -220,7 +225,9 @@ async fn each_lease_gets_a_fresh_environment_and_temp_root() {
         })
         .expect("the test process has a host-only variable");
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let first = pool.attach(&lines(), &session('2'));
+    settle(&pool, 1, 1).await;
     let second = pool.attach(&lines(), &session('3'));
     assert_eq!(first["mode"], "pooled");
     assert_eq!(second["mode"], "pooled");
@@ -252,12 +259,13 @@ async fn idle_warm_processes_are_reaped_past_the_bound() {
     let (_scratch, log) = journal().await;
     let pool = pool(
         Bounds {
-            idle: Duration::from_millis(200),
+            idle: Duration::from_millis(600),
             ..bounds()
         },
         &log,
     );
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let entry = pool.status()["entries"][0].clone();
     until(|| processes(&pool) == json!({"warm":0,"leased":0})).await;
     let events = log.settled(1).await;
@@ -276,13 +284,14 @@ async fn a_changed_config_digest_reaps_the_stale_warm_process_before_reuse() {
     let (_scratch, log) = journal().await;
     let pool = pool(bounds(), &log);
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let stale = pool.status()["entries"][0].clone();
     let mut changed = lines();
     changed.env.insert("MODE".into(), "changed".into());
     let reply = pool.attach(&changed, &session('2'));
     assert_eq!(reply["reason"], "notPrepared");
+    settle(&pool, 1, 0).await;
     let status = pool.status();
-    assert_eq!(status["processes"], json!({"warm":1,"leased":0}));
     assert_ne!(status["entries"][0]["digest"], stale["digest"]);
     assert_ne!(status["entries"][0]["entryId"], stale["entryId"]);
     let events = log.settled(1).await;
@@ -307,6 +316,7 @@ async fn the_process_bound_refuses_without_blocking_and_falls_back_to_cold() {
         &log,
     );
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let started = Instant::now();
     let other = pool.attach(&spec("other", &["lines", "3e20"]), &session('2'));
     assert!(started.elapsed() < Duration::from_secs(1));
@@ -367,6 +377,7 @@ async fn a_wrong_token_is_refused_and_the_leased_process_is_retired() {
     let (_scratch, log) = journal().await;
     let pool = pool(bounds(), &log);
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let lease = pool.attach(&lines(), &session('2'));
     let mut bridge = Bridge::open(&lease, &"0".repeat(64)).await;
     assert!(bridge.closed().await);
@@ -383,6 +394,7 @@ async fn closing_the_session_cancels_its_lease() {
     let (_scratch, log) = journal().await;
     let pool = pool(bounds(), &log);
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let lease = pool.attach(&lines(), &session('2'));
     let mut bridge = Bridge::attach(&lease).await;
     assert_eq!(bridge.exchange("ready").await, "> ready");
@@ -432,9 +444,11 @@ async fn shutdown_journals_every_pooled_process_and_refuses_new_attaches() {
     let (_scratch, log) = journal().await;
     let pool = pool(bounds(), &log);
     pool.attach(&lines(), &session('1'));
+    settle(&pool, 1, 0).await;
     let lease = pool.attach(&lines(), &session('2'));
     let mut bridge = Bridge::attach(&lease).await;
     assert_eq!(bridge.exchange("ready").await, "> ready");
+    settle(&pool, 1, 1).await;
     pool.shutdown().await;
     assert!(bridge.closed().await);
     assert_eq!(
