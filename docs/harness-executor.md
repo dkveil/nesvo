@@ -153,8 +153,8 @@ constraints; native and validation guards remain independent.
 Native input admission refreshes already received PTY evidence before each write,
 instead of relying on the last coalesced UI status tick. After an owned paste,
 screen-only I/O activity waits for fresh idle editor evidence until the editor
-settles, a guard refuses or the session stays without terminal activity for the
-45-second provider readiness bound. It
+settles, a guard refuses or 45 seconds (the provider readiness bound) have
+passed since the paste, however busy the terminal stays. It
 never qualifies as idle itself. The paste is not repeated; all run, lifecycle,
 conversation, human and authority guards are checked again before Enter. Semantic
 working/permission evidence refuses Enter immediately, retaining an unknown

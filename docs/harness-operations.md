@@ -149,9 +149,12 @@ remain unchanged. The fence has no wall-clock guess of its own: it rechecks
 queue-domain `lifecycle_pending`/`editor_pending` refusals and a `lifecycleRead`
 that is `sqlBusy` or `sqlLocked` (for example while a hook commits) until the
 evidence settles or a guard refuses (run budget, preemption, human control, exit,
-host stop). Only as a hang guard does it end once the session has shown no
-terminal activity for the host's 45-second provider readiness bound, after one
-final check that reports that check's own refusal or busy reason. Busy retries
+host stop). Only as a hang guard does each fence end once the host's 45-second
+provider readiness bound has passed since that fence began (the paste fence
+from the submission, the Enter fence from the flushed paste), after one final
+check that reports that check's own refusal or busy reason. Terminal output and
+input never extend that bound, so a provider that keeps redrawing a spinner or
+answering cursor queries cannot hold a submission open indefinitely. Busy retries
 back off from 31 to 250 ms. No bytes are queued before the fence passes.
 Lookup/replay returns the same retained diagnostic and never retries input.
 An absent field on older receipts does not identify which boundary failed;
@@ -241,7 +244,7 @@ Queue admission refreshes received PTY status/readiness before each write rather
 than relying on the last coalesced publication tick. Publication remains coalesced.
 After an owned paste invalidates screen-only idle evidence, Enter waits for fresh
 idle editor evidence, bounded only by the guards above and the readiness hang
-guard counted from the session's latest terminal activity; a slow redraw is not a
+guard counted from the flushed paste; a slow redraw within that bound is not a
 refusal. I/O activity never qualifies as idle.
 Every check retains run, authority, conversation and human-control fences; paste
 is never repeated. Semantic work/permission evidence refuses Enter immediately,

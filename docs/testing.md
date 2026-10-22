@@ -193,6 +193,13 @@ helpers live in `apps/tui/tests/support/waits.rs`:
   with the original timeout and the receipt if that settles `failed`, `unknown` or
   `interrupted`. `waits::cli` runs a CLI with no test clock, so the CLI's own
   connection and request bounds decide and its structured error is reported.
+- `waits::Trail` leaves evidence for a wait that never ends. Every shared helper,
+  the calendar report wait and the fixture's host reap write one
+  `NESVO_WAIT <what> observed <state>` line to stderr when the observed state
+  changes (receipt phase and result, session running/readiness/status/controller,
+  occurrence or delivery state, missing output or file), never on a timer. When
+  nextest ends a hung scenario after five minutes, the last such line names the
+  wait and the state it was stuck in.
 
 Tool calls never carry an extra test clock: an MCP call is bounded by the
 adapter's documented per-kind request bound and a CLI call by the CLI's connection
