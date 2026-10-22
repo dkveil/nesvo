@@ -174,7 +174,7 @@ pub fn read(connection: &Connection, run: &str) -> Result<Option<Policy>> {
                 reason,
                 created_at: u64::try_from(at)?,
                 delivery,
-                held: enabled && held,
+                held,
             })
         },
     )
@@ -379,31 +379,19 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
                 "Bind a live native coordinator before enabling model wakes",
             )
         })?;
-        let active: i64 = transaction.query_row(
-            "SELECT count(*) FROM workflow_wake_policies WHERE enabled=1",
-            [],
-            |row| row.get(0),
-        )?;
-        if active >= 16 {
-            return Err(Error::new("busy", "At most 16 wake policies may be enabled").into());
-        }
+        enabled_capacity(&transaction)?;
         if let Some(previous) = &previous {
+            if previous.held && !matches!(actor.scope, orchestration::Scope::Owner) {
+                return Err(Error::new(
+                    "wake_policy_held",
+                    "The owner held this wake policy; only the owner can release it",
+                )
+                .into());
+            }
             if previous.enabled {
                 return Err(Error::new(
                     "wake_state_conflict",
                     "Wake policy is already enabled; inspect it",
-                )
-                .into());
-            }
-            let held: bool = transaction.query_row(
-                "SELECT held FROM workflow_wake_policies WHERE id=?1",
-                [&previous.id],
-                |row| row.get(0),
-            )?;
-            if held && !matches!(actor.scope, orchestration::Scope::Owner) {
-                return Err(Error::new(
-                    "wake_policy_held",
-                    "The owner held this wake policy; only the owner can release it",
                 )
                 .into());
             }
@@ -436,7 +424,14 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
     } else {
         let previous =
             previous.ok_or_else(|| Error::new("wake_not_found", "Run has no wake policy"))?;
-        transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='disabled',reason='user_disabled' WHERE id=?1",[&previous.id])?;
+        if previous.held && !matches!(actor.scope, orchestration::Scope::Owner) {
+            return Err(Error::new(
+                "wake_policy_held",
+                "The owner held this wake policy; only the owner can disable or release it",
+            )
+            .into());
+        }
+        transaction.execute("UPDATE workflow_wake_policies SET enabled=0,held=0,generation=generation+1,phase='disabled',reason='user_disabled' WHERE id=?1",[&previous.id])?;
         previous.id
     };
     if enable || matches!(request, Request::Resume { .. }) {
@@ -454,6 +449,17 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
     orchestration::remember(&transaction, &actor, key, &digest, &result)?;
     transaction.commit()?;
     Ok(Reply::Managed { view: result, pump })
+}
+fn enabled_capacity(connection: &Connection) -> Result<()> {
+    let active: i64 = connection.query_row(
+        "SELECT count(*) FROM workflow_wake_policies WHERE enabled=1",
+        [],
+        |row| row.get(0),
+    )?;
+    if active >= 16 {
+        return Err(Error::new("busy", "At most 16 wake policies may be enabled").into());
+    }
+    Ok(())
 }
 fn hold_or_deliver(
     transaction: &Transaction<'_>,
@@ -499,7 +505,10 @@ fn hold_or_deliver(
                 )
                 .into());
             }
-            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
+            if !previous.enabled {
+                enabled_capacity(transaction)?;
+            }
+            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
         }
         Request::SetDelivery { delivery, .. } => {
             if previous.delivery == delivery.as_str() {
@@ -529,7 +538,7 @@ pub fn recover(connection: &mut Connection) -> Result<()> {
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for id in rows {
-        transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='paused',reason='host_restart' WHERE id=?1",[&id])?;
+        transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase=CASE WHEN held=1 THEN 'held' ELSE 'paused' END,reason=CASE WHEN held=1 THEN 'owner_held' ELSE 'host_restart' END WHERE id=?1",[&id])?;
         changed(&transaction, &id, crate::status::now_millis())?;
     }
     transaction.execute("UPDATE workflow_wake_batches SET phase=CASE WHEN (SELECT phase FROM operation_receipts WHERE id=operation_id) IN ('settled','failed','interrupted') THEN (SELECT phase FROM operation_receipts WHERE id=operation_id) ELSE 'unknown' END,reason='host_restart' WHERE phase='dispatching'",[])?;

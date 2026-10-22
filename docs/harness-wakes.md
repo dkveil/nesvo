@@ -115,9 +115,12 @@ clears the hold under a fresh generation, re-checks the bound coordinator, run s
 and elapsed budget, and resynchronises from current state exactly as an enable
 does: unacknowledged coordinator-addressed inbox messages and live blockers are
 seeded (deduplicated by source), while transient changes during the hold are not
-replayed. A hold survives Disable, Enable and host restart: only the owner can
-release it, through `resume` or an owner `enable`; a non-owner enable of a held
-policy is refused with `wake_policy_held`. Disable still stops delivery entirely.
+replayed. A hold survives host restart: the restart clears `enabled` but `held`
+stays `true` with phase `held`, and the owner's `resume` re-enables the policy under
+the same checks plus the 16-enabled-policy cap. Only the owner can release a hold,
+through `resume` or an owner `enable`; a non-owner `enable` or `disable` of a held
+policy is refused with `wake_policy_held`. An owner `disable` stops delivery entirely
+and drops the hold.
 
 `delivery` selects `delta` (default) or `full`. Both send only notices that no
 earlier batch claimed. Each batch records `afterSequence`, the highest notice

@@ -898,12 +898,19 @@ fn coordinator_cannot_clear_an_owner_hold_through_disable_and_enable() {
     enable(&mut store, &run);
     owner_change(&mut store, &run, json!({"action":"pause","key":"hold"})).unwrap();
     let revision = current(&mut store, &run)["run"]["revision"].clone();
-    manage(
-        &mut store,
-        false,
-        json!({"action":"disable","key":"coordinator-off","runId":run["run"]["id"],"expectedRevision":revision}),
-    )
-    .unwrap();
+    error(
+        manage(
+            &mut store,
+            false,
+            json!({"action":"disable","key":"coordinator-off","runId":run["run"]["id"],"expectedRevision":revision}),
+        )
+        .map(|_| ()),
+        "wake_policy_held",
+    );
+    let held_policy = current(&mut store, &run)["wakePolicy"].clone();
+    assert_eq!(held_policy["phase"], "held");
+    assert_eq!(held_policy["reason"], "owner_held");
+    workflow_wakes::recover(&mut store.0).unwrap();
     let revision = current(&mut store, &run)["run"]["revision"].clone();
     error(
         manage(
@@ -945,6 +952,57 @@ fn coordinator_cannot_clear_an_owner_hold_through_disable_and_enable() {
     assert!(pump.is_some());
     assert_eq!(resumed["wakePolicy"]["held"], false);
     assert_eq!(resumed["wakePolicy"]["enabled"], true);
+}
+
+#[test]
+fn restart_keeps_the_owner_hold_visible_and_owner_resume_releases_it() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = prepare(&mut store);
+    enable(&mut store, &run);
+    owner_change(&mut store, &run, json!({"action":"pause","key":"hold"})).unwrap();
+    workflow_wakes::recover(&mut store.0).unwrap();
+    let policy = current(&mut store, &run)["wakePolicy"].clone();
+    assert_eq!(policy["enabled"], false);
+    assert_eq!(policy["held"], true);
+    assert_eq!(policy["phase"], "held");
+    assert_eq!(policy["reason"], "owner_held");
+    let revision = current(&mut store, &run)["run"]["revision"].clone();
+    error(
+        manage(
+            &mut store,
+            false,
+            json!({"action":"disable","key":"coordinator-off","runId":run["run"]["id"],"expectedRevision":revision}),
+        )
+        .map(|_| ()),
+        "wake_policy_held",
+    );
+    let (resumed, pump) = owner_change(
+        &mut store,
+        &run,
+        json!({"action":"resume","key":"resume-after-restart"}),
+    )
+    .unwrap();
+    assert!(pump.is_some());
+    assert_eq!(resumed["wakePolicy"]["enabled"], true);
+    assert_eq!(resumed["wakePolicy"]["held"], false);
+    assert_eq!(resumed["wakePolicy"]["phase"], "enabled");
+}
+
+#[test]
+fn owner_disable_of_a_held_policy_drops_the_hold() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let run = prepare(&mut store);
+    enable(&mut store, &run);
+    owner_change(&mut store, &run, json!({"action":"pause","key":"hold"})).unwrap();
+    let (disabled, pump) =
+        owner_change(&mut store, &run, json!({"action":"disable","key":"owner-off"})).unwrap();
+    assert!(pump.is_none());
+    assert_eq!(disabled["wakePolicy"]["enabled"], false);
+    assert_eq!(disabled["wakePolicy"]["held"], false);
+    error(
+        owner_change(&mut store, &run, json!({"action":"resume","key":"resume"})).map(|_| ()),
+        "wake_state_conflict",
+    );
 }
 
 #[test]
