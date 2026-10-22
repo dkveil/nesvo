@@ -4,6 +4,8 @@ use std::{fs, path::PathBuf};
 
 const PRINT_WIDTH: usize = 100;
 const REGENERATE: &str = "NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts";
+const KINDS_START: &str = "<!-- generated:event-kinds:start -->";
+const KINDS_END: &str = "<!-- generated:event-kinds:end -->";
 
 fn repository_file(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -188,8 +190,6 @@ fn kind_section() -> String {
         })
         .collect();
     [
-        "## Event kinds",
-        "",
         "This table is generated from `nesvo_wire::events::Event`, which the host uses for every",
         "append, together with [harness-events.schema.json](harness-events.schema.json). Regenerate",
         &format!("both with `{REGENERATE}`;"),
@@ -202,9 +202,23 @@ fn kind_section() -> String {
         "Enumerated payload types:",
         "",
         &enums.join("\n"),
-        "",
     ]
     .join("\n")
+}
+
+fn between_markers(document: &str, content: &str) -> String {
+    let start = document
+        .find(KINDS_START)
+        .unwrap_or_else(|| panic!("docs/harness-events.md lost the {KINDS_START} marker"));
+    let end = document[start..]
+        .find(KINDS_END)
+        .map(|offset| start + offset)
+        .unwrap_or_else(|| panic!("docs/harness-events.md lost the {KINDS_END} marker"));
+    format!(
+        "{}{KINDS_START}\n\n{content}\n\n{}",
+        &document[..start],
+        &document[end..]
+    )
 }
 
 #[test]
@@ -213,8 +227,15 @@ fn event_kind_table_matches_the_harness_events_doc() {
     let current = fs::read_to_string(repository_file(path))
         .unwrap()
         .replace("\r\n", "\n");
-    let prose = current
-        .find("\n## Event kinds\n")
-        .map_or(current.as_str(), |start| &current[..start]);
-    check_contract(path, &format!("{}\n\n{}", prose.trim_end(), kind_section()));
+    check_contract(path, &between_markers(&current, &kind_section()));
+}
+
+#[test]
+fn regeneration_keeps_prose_after_the_generated_block() {
+    let document =
+        format!("## Event kinds\n\n{KINDS_START}\n\nold\n\n{KINDS_END}\n\n## Later\n\nKept.\n");
+    assert_eq!(
+        between_markers(&document, "new"),
+        format!("## Event kinds\n\n{KINDS_START}\n\nnew\n\n{KINDS_END}\n\n## Later\n\nKept.\n")
+    );
 }

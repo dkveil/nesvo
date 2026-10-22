@@ -97,6 +97,17 @@ at-least-once delivery are unchanged. See the
 
 ## Event kinds
 
+Version 1 evolves additively. A release can add a kind or add a payload field; it never
+removes or renames a kind or field, changes a field's type or meaning, or makes a new field
+required for an existing kind. Readers skip records whose kind they do not know and ignore
+payload fields they do not use, so an older client keeps working against a newer host. The
+committed schema is closed (`additionalProperties: false`) so that it describes exactly what
+the current host writes; it is a drift check for the host, not a rule for readers to reject
+newer records. A change outside these additive rules bumps the schema `$id` from
+`urn:nesvo:harness-events:v1` to `urn:nesvo:harness-events:v2`.
+
+<!-- generated:event-kinds:start -->
+
 This table is generated from `nesvo_wire::events::Event`, which the host uses for every
 append, together with [harness-events.schema.json](harness-events.schema.json). Regenerate
 both with `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts`;
@@ -166,3 +177,5 @@ Enumerated payload types:
 
 - `AgentState`: `working`, `idle`, `done`, `blocked`, `question`, `failed`, `unknown`.
 - `Program`: `shell`, `claude`, `gemini`, `codex`.
+
+<!-- generated:event-kinds:end -->
