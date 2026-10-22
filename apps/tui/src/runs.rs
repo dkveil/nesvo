@@ -1,11 +1,18 @@
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 const DECISION_PAGES: u64 = 8;
-const ANSWER_BYTES: usize = 2048;
+pub const ANSWER_BYTES: usize = 2048;
 const BUSY: &str = "Waiting for the host to confirm the previous run change.";
+const READ_TIMEOUT: Duration = Duration::from_secs(20);
+const CHANGE_TIMEOUT: Duration = Duration::from_secs(30);
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
+const TIMEOUT_MESSAGE: &str = "The host did not answer in time; F5 retries.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -14,8 +21,9 @@ pub enum Page {
     Answer,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Load {
+    #[default]
     Loading,
     Ready,
     Failed(String),
@@ -157,6 +165,7 @@ pub struct WakeBatch {
 #[derive(Clone, Debug, Default)]
 pub struct Wakes {
     pub loaded: bool,
+    pub error: Option<String>,
     pub policy: Option<WakePolicy>,
     pub pending: u64,
     pub delivered_through: u64,
@@ -179,6 +188,9 @@ impl Wakes {
     }
 
     pub fn summary(&self) -> String {
+        if let Some(error) = &self.error {
+            return format!("Wakes · unavailable: {error}");
+        }
         if !self.loaded {
             return "Wakes · loading".into();
         }
@@ -211,12 +223,14 @@ impl Wakes {
 pub struct Detail {
     pub goal: String,
     pub tasks: Vec<Task>,
+    pub tasks_load: Load,
     pub decisions: Vec<Decision>,
-    pub decisions_loaded: bool,
+    pub decisions_load: Load,
     pub pending_messages: u64,
     pub messages: Vec<Message>,
-    pub inbox_loaded: bool,
+    pub inbox_load: Load,
     pub digest: Option<Digest>,
+    pub digest_error: Option<String>,
     pub wakes: Wakes,
 }
 
@@ -259,7 +273,7 @@ pub struct AnswerForm {
 enum Read {
     List,
     Run(String),
-    Decisions(String, u64),
+    Decisions { run: String, offset: u64, page: u64 },
     Inbox(String),
     Digest(String),
     Wakes(String),
@@ -334,6 +348,13 @@ struct Mutation {
     request_id: String,
     key: String,
     change: Change,
+    sent: Instant,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Expiry {
+    pub changed: bool,
+    pub notice: Option<String>,
 }
 
 #[derive(Default, Debug)]
@@ -438,11 +459,14 @@ pub struct Runs {
     pub templates: Option<Templates>,
     pub answer: Option<AnswerForm>,
     pub confirm_pause: bool,
+    pub snapshot_at: Option<Instant>,
+    pub clock: Option<Instant>,
     prefix: String,
     counter: u64,
-    reads: HashMap<String, Read>,
+    reads: HashMap<String, (Read, Instant)>,
     mutation: Option<Mutation>,
     unconfirmed: Option<(String, Change)>,
+    listed: Option<Instant>,
 }
 
 impl Runs {
@@ -458,11 +482,14 @@ impl Runs {
             templates: None,
             answer: None,
             confirm_pause: false,
+            snapshot_at: None,
+            clock: None,
             prefix: format!("tui-{client_id}-runs"),
             counter: 0,
             reads: HashMap::new(),
             mutation: None,
             unconfirmed: None,
+            listed: None,
         };
         let command = runs.list(features)?;
         Ok((runs, command))
@@ -532,14 +559,77 @@ impl Runs {
     }
 
     fn read(&mut self, read: Read, (id, command): (String, Value)) -> Value {
-        self.reads.retain(|_, pending| *pending != read);
-        self.reads.insert(id, read);
+        self.reads.retain(|_, (pending, _)| *pending != read);
+        self.reads.insert(id, (read, Instant::now()));
         command
     }
 
     fn list(&mut self, features: &Value) -> Result<Value> {
+        self.listed = Some(Instant::now());
         let pair = self.workflow(features, "list", json!({"offset":0}))?;
         Ok(self.read(Read::List, pair))
+    }
+
+    pub fn poll(&mut self, features: &Value) -> Option<Value> {
+        let listing = self.reads.values().any(|(read, _)| *read == Read::List);
+        if listing || self.listed.is_some_and(|at| at.elapsed() < POLL_INTERVAL) {
+            return None;
+        }
+        self.list(features).ok()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn age_poll(&mut self) {
+        self.listed = self
+            .listed
+            .and_then(|at| at.checked_sub(POLL_INTERVAL + Duration::from_secs(1)));
+    }
+
+    pub fn snapshot_age(&self) -> Option<String> {
+        let seconds = self
+            .clock?
+            .saturating_duration_since(self.snapshot_at?)
+            .as_secs();
+        Some(match seconds {
+            0..5 => "updated just now".into(),
+            5..60 => format!("updated {seconds}s ago"),
+            60..3600 => format!("updated {}m ago", seconds / 60),
+            _ => format!("updated {}h ago", seconds / 3600),
+        })
+    }
+
+    pub fn expire(&mut self, now: Instant) -> Expiry {
+        let before = self.snapshot_age();
+        self.clock = Some(now);
+        let expired: Vec<String> = self
+            .reads
+            .iter()
+            .filter(|(_, (_, sent))| now.saturating_duration_since(*sent) > READ_TIMEOUT)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &expired {
+            if let Some((read, _)) = self.reads.remove(id) {
+                self.read_failure(read, TIMEOUT_MESSAGE.into());
+            }
+        }
+        let mut notice = None;
+        if self
+            .mutation
+            .as_ref()
+            .is_some_and(|mutation| now.saturating_duration_since(mutation.sent) > CHANGE_TIMEOUT)
+            && let Some(mutation) = self.mutation.take()
+        {
+            notice = Some(unconfirmed_notice(
+                "The host did not answer",
+                &mutation.change,
+                &mutation.key,
+            ));
+            self.unconfirmed = Some((mutation.key, mutation.change));
+        }
+        Expiry {
+            changed: !expired.is_empty() || notice.is_some() || before != self.snapshot_age(),
+            notice,
+        }
     }
 
     fn run_reads(&mut self, features: &Value, id: &str) -> Vec<Value> {
@@ -548,7 +638,12 @@ impl Runs {
             commands.push(self.read(Read::Run(id.to_owned()), pair));
         }
         if let Ok(pair) = self.decisions(features, id, 0) {
-            commands.push(self.read(Read::Decisions(id.to_owned(), 0), pair));
+            let read = Read::Decisions {
+                run: id.to_owned(),
+                offset: 0,
+                page: 0,
+            };
+            commands.push(self.read(read, pair));
         }
         if let Ok(pair) = self.workflow(
             features,
@@ -748,6 +843,7 @@ impl Runs {
                     request_id,
                     key,
                     change,
+                    sent: Instant::now(),
                 });
                 Effect {
                     commands: vec![command],
@@ -793,6 +889,9 @@ impl Runs {
         let Some(wakes) = self.selected_detail().map(|detail| detail.wakes.clone()) else {
             return Effect::default();
         };
+        if wakes.error.is_some() {
+            return Effect::notice("Wake policy is unavailable; Enter reloads the run.");
+        }
         if !wakes.loaded {
             return Effect::notice("Wake policy is still loading.");
         }
@@ -895,7 +994,7 @@ impl Runs {
 
     pub fn response(&mut self, features: &Value, event: &Value) -> Option<Effect> {
         let request_id = event["requestId"].as_str()?;
-        if let Some(read) = self.reads.remove(request_id) {
+        if let Some((read, _)) = self.reads.remove(request_id) {
             return Some(self.read_response(features, read, event));
         }
         if self
@@ -916,6 +1015,7 @@ impl Runs {
                 self.runs = serde_json::from_value(event["runs"].clone()).unwrap_or_default();
                 self.more = event["nextOffset"].is_u64();
                 self.load = Load::Ready;
+                self.snapshot_at = Some(Instant::now());
                 let kept = self
                     .selected
                     .as_deref()
@@ -923,12 +1023,16 @@ impl Runs {
                 if initial || !kept {
                     self.selected = self.runs.first().map(|run| run.id.clone());
                 }
+                let runs = &self.runs;
+                self.details
+                    .retain(|id, _| runs.iter().any(|run| run.id == *id));
                 self.reload_selected(features)
             }
             Read::Run(id) => {
                 let detail = self.details.entry(id.clone()).or_default();
                 detail.goal = event["run"]["goal"].as_str().unwrap_or_default().to_owned();
                 detail.tasks = serde_json::from_value(event["tasks"].clone()).unwrap_or_default();
+                detail.tasks_load = Load::Ready;
                 if let Some(row) = self.runs.iter_mut().find(|run| run.id == id)
                     && let Ok(summary) = serde_json::from_value::<Summary>(event["run"].clone())
                 {
@@ -936,29 +1040,36 @@ impl Runs {
                 }
                 Effect::default()
             }
-            Read::Decisions(id, offset) => {
-                let page: Vec<Decision> =
+            Read::Decisions { run, offset, page } => {
+                let decisions: Vec<Decision> =
                     serde_json::from_value(event["decisions"].clone()).unwrap_or_default();
-                let detail = self.details.entry(id.clone()).or_default();
+                let detail = self.details.entry(run.clone()).or_default();
                 if offset == 0 {
                     detail.decisions.clear();
                 }
                 detail.decisions.extend(
-                    page.into_iter()
+                    decisions
+                        .into_iter()
                         .filter(|decision| decision.state == "pending"),
                 );
                 let next = event["nextOffset"]
                     .as_u64()
-                    .filter(|next| *next < DECISION_PAGES * 8);
-                detail.decisions_loaded = next.is_none();
-                match next.map(|next| (next, self.decisions(features, &id, next))) {
-                    Some((next, Ok(pair))) => Effect {
-                        commands: vec![self.read(Read::Decisions(id, next), pair)],
-                        notice: None,
-                    },
+                    .filter(|next| *next > offset && page + 1 < DECISION_PAGES);
+                match next.map(|next| (next, self.decisions(features, &run, next))) {
+                    Some((next, Ok(pair))) => {
+                        let read = Read::Decisions {
+                            run,
+                            offset: next,
+                            page: page + 1,
+                        };
+                        Effect {
+                            commands: vec![self.read(read, pair)],
+                            notice: None,
+                        }
+                    }
                     _ => {
-                        if let Some(detail) = self.details.get_mut(&id) {
-                            detail.decisions_loaded = true;
+                        if let Some(detail) = self.details.get_mut(&run) {
+                            detail.decisions_load = Load::Ready;
                         }
                         Effect::default()
                     }
@@ -969,16 +1080,19 @@ impl Runs {
                 detail.pending_messages = event["pendingCount"].as_u64().unwrap_or_default();
                 detail.messages =
                     serde_json::from_value(event["messages"].clone()).unwrap_or_default();
-                detail.inbox_loaded = true;
+                detail.inbox_load = Load::Ready;
                 Effect::default()
             }
             Read::Digest(id) => {
-                self.details.entry(id).or_default().digest = Some(Digest::parse(&event["digest"]));
+                let detail = self.details.entry(id).or_default();
+                detail.digest = Some(Digest::parse(&event["digest"]));
+                detail.digest_error = None;
                 Effect::default()
             }
             Read::Wakes(id) => {
                 let wakes = &mut self.details.entry(id).or_default().wakes;
                 wakes.loaded = true;
+                wakes.error = None;
                 wakes.policy = serde_json::from_value(event["wakePolicy"].clone()).ok();
                 wakes.pending = event["pendingCount"].as_u64().unwrap_or_default();
                 wakes.delivered_through = event["deliveredThrough"].as_u64().unwrap_or_default();
@@ -1036,35 +1150,39 @@ impl Runs {
         effect
     }
 
+    fn read_failure(&mut self, read: Read, message: String) {
+        match read {
+            Read::List => self.load = Load::Failed(message),
+            Read::Templates => {
+                if let Some(templates) = &mut self.templates {
+                    templates.load = Load::Failed(message);
+                }
+            }
+            Read::Run(id) => self.details.entry(id).or_default().tasks_load = Load::Failed(message),
+            Read::Decisions { run, .. } => {
+                self.details.entry(run).or_default().decisions_load = Load::Failed(message);
+            }
+            Read::Inbox(id) => {
+                self.details.entry(id).or_default().inbox_load = Load::Failed(message)
+            }
+            Read::Digest(id) => self.details.entry(id).or_default().digest_error = Some(message),
+            Read::Wakes(id) => {
+                let wakes = &mut self.details.entry(id).or_default().wakes;
+                wakes.loaded = false;
+                wakes.error = Some(message);
+            }
+        }
+    }
+
     pub fn failure(&mut self, features: &Value, event: &Value) -> Option<Effect> {
         let request_id = event["requestId"].as_str()?;
         let message = event["message"]
             .as_str()
             .unwrap_or("Host rejected the request")
             .to_owned();
-        if let Some(read) = self.reads.remove(request_id) {
-            return Some(match read {
-                Read::List => {
-                    self.load = Load::Failed(message);
-                    Effect::default()
-                }
-                Read::Templates => {
-                    if let Some(templates) = &mut self.templates {
-                        templates.load = Load::Failed(message);
-                    }
-                    Effect::default()
-                }
-                Read::Decisions(id, _) | Read::Inbox(id) | Read::Run(id) | Read::Digest(id) => {
-                    let detail = self.details.entry(id).or_default();
-                    detail.decisions_loaded = true;
-                    detail.inbox_loaded = true;
-                    Effect::default()
-                }
-                Read::Wakes(id) => {
-                    self.details.entry(id).or_default().wakes.loaded = true;
-                    Effect::default()
-                }
-            });
+        if let Some((read, _)) = self.reads.remove(request_id) {
+            self.read_failure(read, message);
+            return Some(Effect::default());
         }
         if !self
             .mutation
@@ -1344,8 +1462,142 @@ pub(crate) mod tests {
         assert_eq!(detail.decisions.len(), 1);
         assert_eq!(detail.decisions[0].id, "d2");
         assert_eq!(detail.pending_messages, 3);
-        assert!(detail.decisions_loaded && detail.inbox_loaded);
+        assert_eq!(
+            (
+                &detail.decisions_load,
+                &detail.inbox_load,
+                &detail.tasks_load
+            ),
+            (&Load::Ready, &Load::Ready, &Load::Ready)
+        );
         assert!(Runs::open(1, &json!({})).is_err());
+    }
+
+    fn fail(runs: &mut Runs, command: &Value, message: &str) {
+        runs.failure(
+            &features(),
+            &json!({"type":"error","requestId":command["requestId"],"code":"internal","message":message}),
+        );
+    }
+
+    #[test]
+    fn runs_failed_section_reads_stay_failed_instead_of_reporting_zero() {
+        let (mut runs, list) = Runs::open(7, &features()).unwrap();
+        let reads = reply(&mut runs, &list, json!({"runs":listed(),"nextOffset":null}));
+        for command in &reads.commands {
+            match command["request"]["action"].as_str().unwrap() {
+                "get" | "digest" => fail(&mut runs, command, "read failed"),
+                "decision" => {
+                    reply(
+                        &mut runs,
+                        command,
+                        json!({"decisions":decisions(),"nextOffset":null}),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let detail = runs.selected_detail().unwrap();
+        assert_eq!(detail.tasks_load, Load::Failed("read failed".into()));
+        assert_eq!(detail.digest_error.as_deref(), Some("read failed"));
+        assert_eq!(detail.decisions_load, Load::Ready);
+        assert_eq!(detail.inbox_load, Load::Loading);
+        let inbox = reads
+            .commands
+            .iter()
+            .find(|command| command["request"]["action"] == "inbox")
+            .unwrap();
+        fail(&mut runs, inbox, "inbox down");
+        assert_eq!(
+            runs.selected_detail().unwrap().inbox_load,
+            Load::Failed("inbox down".into())
+        );
+    }
+
+    #[test]
+    fn runs_decision_paging_counts_pages_instead_of_assuming_the_host_page_size() {
+        let (mut runs, list) = Runs::open(7, &features()).unwrap();
+        let reads = reply(&mut runs, &list, json!({"runs":listed(),"nextOffset":null}));
+        let mut read = reads
+            .commands
+            .into_iter()
+            .find(|command| command["request"]["action"] == "decision")
+            .unwrap();
+        let mut pages = 1;
+        loop {
+            let offset = read["request"]["request"]["offset"].as_u64().unwrap();
+            let next = reply(
+                &mut runs,
+                &read,
+                json!({"decisions":decisions(),"nextOffset":offset + 3}),
+            );
+            match next.commands.into_iter().next() {
+                Some(command) => {
+                    read = command;
+                    pages += 1;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(pages, DECISION_PAGES);
+        assert_eq!(runs.selected_detail().unwrap().decisions_load, Load::Ready);
+    }
+
+    #[test]
+    fn runs_details_are_pruned_to_the_listed_runs() {
+        let mut runs = loaded();
+        runs.details.insert("run-gone".into(), Detail::default());
+        let list = runs.refresh(&features()).commands.remove(0);
+        reply(&mut runs, &list, json!({"runs":listed(),"nextOffset":null}));
+        assert!(!runs.details.contains_key("run-gone"));
+        assert!(runs.details.contains_key("run-a"));
+    }
+
+    #[test]
+    fn runs_expired_reads_fail_and_an_expired_change_becomes_unconfirmed() {
+        let features = features();
+        let mut runs = loaded();
+        runs.reload_selected(&features);
+        runs.pause(&features);
+        let pause = runs.pause(&features).commands.remove(0);
+        assert_eq!(runs.resume(&features).notice.as_deref(), Some(BUSY));
+        let early = runs.expire(Instant::now());
+        assert!(early.notice.is_none());
+        let later = Instant::now() + CHANGE_TIMEOUT + Duration::from_secs(1);
+        let expiry = runs.expire(later);
+        assert!(expiry.changed);
+        assert!(expiry.notice.unwrap().contains("Run change unconfirmed"));
+        assert!(runs.reads.is_empty());
+        assert_eq!(
+            runs.selected_detail().unwrap().tasks_load,
+            Load::Failed(TIMEOUT_MESSAGE.into())
+        );
+        let (key, change) = runs.unconfirmed_key().unwrap();
+        assert!(matches!(change, Change::Pause { .. }));
+        let key = key.to_owned();
+        let retry = runs.pause(&features);
+        assert!(retry.commands.is_empty());
+        let retry = runs.pause(&features).commands.remove(0);
+        assert_eq!(retry["request"]["request"]["key"], key.as_str());
+        assert_ne!(retry["requestId"], pause["requestId"]);
+    }
+
+    #[test]
+    fn runs_poll_relists_after_the_interval_and_reports_the_snapshot_age() {
+        let features = features();
+        let mut runs = loaded();
+        assert!(runs.poll(&features).is_none());
+        runs.age_poll();
+        let poll = runs.poll(&features).unwrap();
+        assert_eq!(poll["request"]["action"], "list");
+        assert!(runs.poll(&features).is_none());
+        assert_eq!(runs.load, Load::Ready);
+        let taken = runs.snapshot_at.unwrap();
+        runs.expire(taken + Duration::from_secs(2));
+        assert_eq!(runs.snapshot_age().as_deref(), Some("updated just now"));
+        assert!(runs.expire(taken + Duration::from_secs(42)).changed);
+        assert_eq!(runs.snapshot_age().as_deref(), Some("updated 42s ago"));
+        assert!(!runs.expire(taken + Duration::from_secs(42)).changed);
     }
 
     #[test]

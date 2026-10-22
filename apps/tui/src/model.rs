@@ -679,6 +679,7 @@ impl App {
             | crate::worktree_actions::expire(self)
             | crate::notes_controller::expire(self)
             | crate::projects_controller::expire(self)
+            | crate::runs_controller::expire(self)
     }
 
     pub fn top_surface(&self) -> Surface {
@@ -1718,6 +1719,7 @@ impl App {
                 .or_else(|| crate::usage_panel::tick(self))
                 .or_else(|| crate::worktree_actions::tick(self))
                 .or_else(|| crate::notes_controller::tick(self))
+                .or_else(|| crate::runs_controller::tick(self))
         }
     }
 

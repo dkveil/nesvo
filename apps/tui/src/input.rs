@@ -108,6 +108,25 @@ pub fn encode_key(key: KeyEvent, screen: &vt100::Screen) -> Option<String> {
     Some(encoded)
 }
 
+pub fn append_field(field: &mut String, input: &str, max_bytes: usize) {
+    for c in input
+        .chars()
+        .map(|c| {
+            if matches!(c, '\r' | '\n' | '\t') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .filter(|c| !c.is_control())
+    {
+        if field.len() + c.len_utf8() > max_bytes {
+            break;
+        }
+        field.push(c);
+    }
+}
+
 pub fn encode_paste(text: &str, screen: &vt100::Screen) -> String {
     // Remove embedded escapes so a paste cannot terminate its own bracket.
     let text = text

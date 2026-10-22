@@ -1,12 +1,38 @@
 use crate::{
     controller::Outcome,
+    layouts::Role,
     model::App,
-    runs::{Effect, Load, Page, Runs},
+    runs::{ANSWER_BYTES, Effect, Load, Page, Runs},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use serde_json::Value;
+use std::time::Instant;
 
 pub fn engaged(app: &App) -> bool {
     app.runs.as_ref().is_some_and(|runs| runs.open)
+}
+
+fn watched(app: &App) -> bool {
+    engaged(app) || app.pane_tree().position(Role::Runs).is_some()
+}
+
+pub fn tick(app: &mut App) -> Option<Value> {
+    if !app.connected || !watched(app) {
+        return None;
+    }
+    let features = &app.host_features;
+    app.runs.as_mut()?.poll(features)
+}
+
+pub fn expire(app: &mut App) -> bool {
+    let Some(runs) = app.runs.as_mut() else {
+        return false;
+    };
+    let expiry = runs.expire(Instant::now());
+    if let Some(notice) = expiry.notice {
+        app.notice = notice;
+    }
+    expiry.changed
 }
 
 fn template_directory(app: &App) -> String {
@@ -67,7 +93,7 @@ pub fn event(app: &mut App, event: Event) -> Outcome {
         Event::Key(key) if key.kind != KeyEventKind::Release => key_event(app, key, &mut outcome),
         Event::Paste(text) => {
             if let Some(form) = app.runs.as_mut().and_then(|runs| runs.answer.as_mut()) {
-                form.text.push_str(&text);
+                crate::input::append_field(&mut form.text, &text, ANSWER_BYTES);
             }
         }
         Event::Resize(..) => {}
@@ -164,7 +190,7 @@ fn answer_key(
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
         {
-            form.text.push(character)
+            crate::input::append_field(&mut form.text, &character.to_string(), ANSWER_BYTES);
         }
         _ => outcome.redraw = false,
     }
@@ -342,5 +368,55 @@ mod tests {
         );
         assert_eq!(app.runs.as_ref().unwrap().page, Page::Runs);
         assert!(app.notice.contains("Started template review"));
+    }
+
+    #[test]
+    fn runs_answer_typing_and_paste_drop_controls_and_stop_at_the_host_cap() {
+        let mut app = opened();
+        press(&mut app, KeyCode::Char('a'));
+        crate::controller::event(
+            &mut app,
+            Event::Paste("a\u{7}b\r\nc\u{1b}".into()),
+            Rect::new(0, 0, 150, 44),
+        );
+        assert_eq!(
+            app.runs.as_ref().unwrap().answer.as_ref().unwrap().text,
+            "ab  c"
+        );
+        crate::controller::event(
+            &mut app,
+            Event::Paste("x".repeat(ANSWER_BYTES * 2)),
+            Rect::new(0, 0, 150, 44),
+        );
+        press(&mut app, KeyCode::Char('y'));
+        let text = &app.runs.as_ref().unwrap().answer.as_ref().unwrap().text;
+        assert_eq!(text.len(), ANSWER_BYTES);
+        assert!(!text.ends_with('y'));
+    }
+
+    #[test]
+    fn runs_poll_only_while_the_view_or_a_runs_leaf_is_shown() {
+        let mut app = opened();
+        app.connected = true;
+        let age = |app: &mut App| app.runs.as_mut().unwrap().age_poll();
+        age(&mut app);
+        let poll = tick(&mut app).unwrap();
+        assert_eq!(poll["request"]["action"], "list");
+        assert!(tick(&mut app).is_none());
+        reply(
+            &mut app,
+            &poll,
+            json!({"runs":fixtures::listed(),"nextOffset":null}),
+        );
+        press(&mut app, KeyCode::Esc);
+        assert!(!engaged(&app));
+        age(&mut app);
+        assert!(tick(&mut app).is_none());
+        app.set_pane_layout(crate::layouts::PaneTree::split(
+            crate::layouts::Direction::Horizontal,
+            crate::layouts::PaneTree::leaf(Role::Agent),
+            crate::layouts::PaneTree::leaf(Role::Runs),
+        ));
+        assert_eq!(tick(&mut app).unwrap()["request"]["action"], "list");
     }
 }

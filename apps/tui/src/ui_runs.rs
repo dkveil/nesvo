@@ -156,6 +156,11 @@ fn run_row(frame: &mut Frame, area: Rect, run: &Summary, selected: bool, app: &A
     );
 }
 
+fn age_suffix(runs: &Runs) -> String {
+    runs.snapshot_age()
+        .map_or_else(String::new, |age| format!("  · {age}"))
+}
+
 fn overview(frame: &mut Frame, app: &App, area: Rect, runs: &Runs) {
     let wide = area.width >= 96;
     let list_width = if wide { area.width * 2 / 5 } else { area.width };
@@ -164,7 +169,7 @@ fn overview(frame: &mut Frame, app: &App, area: Rect, runs: &Runs) {
     text(
         frame,
         row(list, 0),
-        &format!("RUNS  {}{more}", runs.runs.len()),
+        &format!("RUNS  {}{more}{}", runs.runs.len(), age_suffix(runs)),
         MUTED,
     );
     let capacity = if wide {
@@ -325,6 +330,14 @@ fn digest_section(frame: &mut Frame, area: Rect, mut y: u16, digest: &Digest) {
     }
 }
 
+fn section(title: &str, load: &Load, ready: impl FnOnce() -> String) -> String {
+    match load {
+        Load::Loading => format!("{title}  loading"),
+        Load::Ready => format!("{title}  {}", ready()),
+        Load::Failed(message) => format!("{title}  unavailable: {message}"),
+    }
+}
+
 fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Detail>) {
     text(frame, row(area, 0), "SELECTED RUN", MUTED);
     text(frame, row(area, 1), &run.title, TEXT);
@@ -338,12 +351,20 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
         text(frame, row(area, 4), "Loading tasks…", MUTED);
         return;
     };
+    let has_digest_line = detail.digest.is_some() || detail.digest_error.is_some();
     if let Some(digest) = &detail.digest {
         text(frame, row(area, 3), &digest_headline(digest), MUTED);
+    } else if let Some(error) = &detail.digest_error {
+        text(
+            frame,
+            row(area, 3),
+            &format!("digest unavailable: {error}"),
+            WARNING,
+        );
     }
     let mut y = 4;
-    if detail.wakes.loaded {
-        let line = if detail.digest.is_some() { 4 } else { 3 };
+    if detail.wakes.loaded || detail.wakes.error.is_some() {
+        let line = if has_digest_line { 4 } else { 3 };
         text(
             frame,
             row(area, line),
@@ -355,7 +376,9 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
     text(
         frame,
         row(area, y),
-        &format!("TASKS  {}", detail.tasks.len()),
+        &section("TASKS", &detail.tasks_load, || {
+            detail.tasks.len().to_string()
+        }),
         MUTED,
     );
     y += 1;
@@ -379,11 +402,9 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
         y += 1;
     }
     y += 1;
-    let inbox = if detail.inbox_loaded {
-        format!("INBOX  {} pending", detail.pending_messages)
-    } else {
-        "INBOX  loading".into()
-    };
+    let inbox = section("INBOX", &detail.inbox_load, || {
+        format!("{} pending", detail.pending_messages)
+    });
     text(frame, row(area, y), &inbox, MUTED);
     y += 1;
     for message in detail.messages.iter().take(2) {
@@ -400,11 +421,9 @@ fn run_detail(frame: &mut Frame, area: Rect, run: &Summary, detail: Option<&Deta
         y += 1;
     }
     y += 1;
-    let decisions = if detail.decisions_loaded {
-        format!("DECISIONS  {} pending", detail.decisions.len())
-    } else {
-        "DECISIONS  loading".into()
-    };
+    let decisions = section("DECISIONS", &detail.decisions_load, || {
+        format!("{} pending", detail.decisions.len())
+    });
     text(frame, row(area, y), &decisions, MUTED);
     y += 1;
     for decision in detail.decisions.iter().take(2) {
@@ -715,7 +734,7 @@ pub fn render_leaf(frame: &mut Frame, app: &App, area: Rect) -> bool {
     text(
         frame,
         row(area, 0),
-        &format!("RUNS  {}", runs.runs.len()),
+        &format!("RUNS  {}{}", runs.runs.len(), age_suffix(runs)),
         MUTED,
     );
     for (offset, run) in runs.runs.iter().enumerate() {
