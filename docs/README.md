@@ -24,6 +24,7 @@ the one named here is the source and the other links to it.
 | [Host protocol v2](protocol-v2.md)                                | Wire commands, replies and every capability flag         |
 | [Terminal client and synchronization](terminal-client.md)         | Shared groups, local layouts, watching and control       |
 | [Agent session status](agent-session-status.md)                   | Status evidence, freshness and provider adapter limits   |
+| [Provider status signals](provider-signals.md)                    | Which mechanism backs each status signal, per provider   |
 | [Durable domain events](harness-events.md)                        | Event kinds, cursors, retention and the generated schema |
 | [Durable session operations](harness-operations.md)               | Create, send and wait receipts and the journal drill     |
 | [Shared SQLite writer admission](harness-transactions.md)         | Immediate transactions and numbered migrations           |

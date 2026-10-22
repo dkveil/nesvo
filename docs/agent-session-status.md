@@ -22,7 +22,7 @@ The wire contract remains compatible with older v2 clients: confirmed reports us
 - Existing Claude sessions: current prompt and permission-mode footer identify idle; the interrupt footer identifies work. A real cursor at the prompt is required for idle.
 - Codex 0.156.0: launch-local native lifecycle adapter plus conservative screen inference. Native hooks require the provider's user trust review; configured is separate from observed. Other/unprobed versions retain screen/protocol fallback. See the adapter boundary below.
 - Gemini 0.65.0: launch-local lifecycle adapter through an extension the owner links once, plus versioned screen rules. Other versions and unlinked installs keep screen inference only. See the adapter boundary below.
-- Agents started manually inside a generic shell do not inherit a dedicated provider adapter.
+- Agents started manually inside a generic shell do not inherit a dedicated provider adapter. A shell whose prompt emits OSC 133 marks is idle at its prompt and working during a command; see [provider status signals](provider-signals.md) for every signal's source.
 - Hooks disabled by user/managed settings fall back to screen inference. Unknown is deliberately retained when there is no trustworthy evidence.
 
 References: [Claude hooks](https://code.claude.com/docs/en/hooks), [Gemini hook reference](https://geminicli.com/docs/hooks/reference/).
@@ -36,12 +36,12 @@ evidence was received), `ageMs` at projection time, `source`, `stale`,
 `apps/host/src/freshness.rs`, which capabilities also advertise as
 `sessionFreshnessBounds`.
 
-| Source    | Selected state                                      | Measured from                       | Stale after                                                                |
-| --------- | --------------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
-| `hook`    | provider lifecycle hook (Claude, Codex, Gemini)     | last successful launch-journal read | 4000 ms: twice the 2 s lifecycle drain bound; the reader runs every 500 ms |
-| `process` | observed process exit                               | exit observation                    | never; exit is final                                                       |
-| `journal` | last hook record once the journal is no longer read | that record's host receipt          | 4000 ms, so a disconnected projection is always stale                      |
-| `unknown` | screen rule, OSC 7501 report or terminal I/O        | last state transition               | no bound; no freshness claim                                               |
+| Source    | Selected state                                                  | Measured from                       | Stale after                                                                |
+| --------- | --------------------------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
+| `hook`    | provider lifecycle hook (Claude, Codex, Gemini)                 | last successful launch-journal read | 4000 ms: twice the 2 s lifecycle drain bound; the reader runs every 500 ms |
+| `process` | observed process exit                                           | exit observation                    | never; exit is final                                                       |
+| `journal` | last hook record once the journal is no longer read             | that record's host receipt          | 4000 ms, so a disconnected projection is always stale                      |
+| `unknown` | screen rule, shell prompt mark, OSC 7501 report or terminal I/O | last state transition               | no bound; no freshness claim                                               |
 
 Providers send no heartbeat. Agent silence while the journal is still read is
 not staleness: a long tool call stays `working` with a growing age, consistent
@@ -171,13 +171,15 @@ working. AfterAgent precedes other hooks' retry decisions and can be followed by
 more work. Prompts, responses, tool arguments and transcripts are never stored
 or read.
 
-Screen rules (revision 2026-10-21.1) cover the 0.65.0 sign-in choice and
+Screen rules (revision 2026-10-22.1) cover the 0.65.0 sign-in choice and
 authentication wait (blocked, rule reason `login`), model selection (question),
-folder trust (blocked, setup) and command, edit, fetch and MCP approvals
-(blocked, permission). Their fixtures are synthesized from strings and layout in
-the installed 0.65.0 package, not captured from a running session. No idle or
-working prompt rule is certified, so readiness stays unconfirmed until the first
-hook state.
+folder trust (blocked, setup), command, edit, fetch and MCP approvals
+(blocked, permission), the response timer (working) and the empty input prompt
+(idle, refused while the timer, an embedded shell or an approval choice is
+visible). Their fixtures are synthesized from strings and layout in the installed
+0.65.0 package, not captured from a running session. Esc followed by a newly
+drawn empty prompt settles a cancelled response; an empty prompt alone never
+overrides confirmed work.
 
 No real Gemini hook delivery has been observed yet: the provider has no login on
 this host. Live acceptance needs the owner's login and extension link, then one

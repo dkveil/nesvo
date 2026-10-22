@@ -377,6 +377,19 @@ $env:NESVO_UPDATE_CONTRACTS = "1"
 cargo test --package nesvo --test mcp_host --locked decision_replay::real_inbox_and_decision_replies_match_the_client_contract_goldens -- --ignored --exact
 ```
 
+### Native provider signals
+
+```powershell
+cargo test --package nesvo --test mcp_host --locked provider_signals:: -- --ignored --test-threads=1
+```
+
+`provider_signals` writes OSC 133 command-start, finish (exit code 3) and prompt
+marks from the host's real shell through the native PTY. It waits until the host
+publishes `working` and then `idle` with `source: screen` and the matching
+`shellMarks` in `nesvo_explain_session`, and checks that the shell gains no hook
+evidence, readiness or attention. The other rows of the
+[provider signal matrix](provider-signals.md) are host unit tests or owner runs.
+
 ### Mobile contract types
 
 `npm run test:client` also runs the mobile contract checks; regenerate the types with `npm run contracts:types` after a schema change:
