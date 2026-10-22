@@ -469,8 +469,10 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
             .await,
     )?;
     let span = trace.begin(Phase::LauncherDiscover);
-    let launchers = launchers::Launchers::discover();
+    let mut launchers = launchers::Launchers::discover();
     let version_probes = launchers.version_probes();
+    let (version_prober, version_requests) = launchers::VersionProber::channel();
+    launchers.attach_prober(version_prober);
     span.end(true);
     let span = trace.begin(Phase::StateInitialize);
     let state = Arc::new(Mutex::new(sessions::State::new(
@@ -518,13 +520,17 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     };
     let span = trace.begin(Phase::RuntimesInstall);
     {
-        let state = state.clone();
-        tokio::spawn(async move {
-            for (program, executable, args) in version_probes {
-                let version = launchers::read_version(program, executable, args).await;
-                state.lock().unwrap().provider_version(version);
-            }
-        });
+        let state = Arc::downgrade(&state);
+        tokio::spawn(version_requests.run(
+            version_probes,
+            provider_availability::REFRESH,
+            launchers::read_version,
+            move |version| {
+                if let Some(state) = state.upgrade() {
+                    state.lock().unwrap().provider_version(version);
+                }
+            },
+        ));
     }
     tokio::spawn(sessions::dispatch_output(state.clone(), event_rx));
     tokio::spawn(jobs::run(state.clone(), event_tx.clone()));

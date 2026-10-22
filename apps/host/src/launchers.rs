@@ -4,8 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
     fs,
+    future::Future,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
+use tokio::{sync::mpsc, task::JoinSet};
 
 const PER_SPAWN_CALLER_BINDING_VARIABLES: [&str; 5] = [
     "NESVO_AGENT_CONTEXT",
@@ -106,6 +109,7 @@ fn leave_color_to_each_cli(command: &mut CommandBuilder) {
 
 pub struct Launchers {
     entries: Vec<(Program, Option<Launcher>)>,
+    prober: Option<VersionProber>,
 }
 
 impl Launchers {
@@ -154,7 +158,20 @@ impl Launchers {
         for program in Program::ALL.into_iter().skip(1) {
             entries.push((program, find_program(program, paths)));
         }
-        Self { entries }
+        Self {
+            entries,
+            prober: None,
+        }
+    }
+
+    pub fn attach_prober(&mut self, prober: VersionProber) {
+        self.prober = Some(prober);
+    }
+
+    pub fn request_version(&self, program: Program, demand: Demand) {
+        if let Some(prober) = &self.prober {
+            prober.request(program, demand);
+        }
     }
 
     pub fn capabilities(&self) -> Vec<Capability> {
@@ -196,7 +213,178 @@ impl Launchers {
             })
     }
 }
-const VERSION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+const VERSION_DEADLINE: Duration = Duration::from_secs(10);
+const PROBE_REQUESTS: usize = 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Demand {
+    Launch,
+    Availability,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Attempt {
+    Running,
+    Answered,
+    Failed(Instant),
+}
+
+pub(crate) struct ProbeSchedule {
+    period: Duration,
+    attempts: Vec<(Program, Attempt)>,
+}
+
+impl ProbeSchedule {
+    pub(crate) fn new(period: Duration) -> Self {
+        Self {
+            period,
+            attempts: Vec::new(),
+        }
+    }
+
+    pub(crate) fn claim(&mut self, program: Program, demand: Demand, now: Instant) -> bool {
+        let due = match self.attempt(program) {
+            None => true,
+            Some(Attempt::Running | Attempt::Answered) => false,
+            Some(Attempt::Failed(at)) => {
+                demand == Demand::Launch || now.saturating_duration_since(at) >= self.period
+            }
+        };
+        if due {
+            self.record(program, Attempt::Running);
+        }
+        due
+    }
+
+    pub(crate) fn finish(&mut self, program: Program, version: Option<&Version>, now: Instant) {
+        let answered = version.is_some_and(|version| version.status == "ready");
+        self.record(
+            program,
+            if answered {
+                Attempt::Answered
+            } else {
+                Attempt::Failed(now)
+            },
+        );
+    }
+
+    fn attempt(&self, program: Program) -> Option<Attempt> {
+        self.attempts
+            .iter()
+            .find(|(id, _)| *id == program)
+            .map(|(_, attempt)| *attempt)
+    }
+
+    fn record(&mut self, program: Program, attempt: Attempt) {
+        match self.attempts.iter_mut().find(|(id, _)| *id == program) {
+            Some(entry) => entry.1 = attempt,
+            None => self.attempts.push((program, attempt)),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct VersionProber(mpsc::Sender<(Program, Demand)>);
+
+impl VersionProber {
+    pub fn channel() -> (Self, ProbeRequests) {
+        let (sender, receiver) = mpsc::channel(PROBE_REQUESTS);
+        (Self(sender), ProbeRequests(receiver))
+    }
+
+    fn request(&self, program: Program, demand: Demand) {
+        let _ = self.0.try_send((program, demand));
+    }
+}
+
+pub struct ProbeRequests(mpsc::Receiver<(Program, Demand)>);
+
+#[cfg(test)]
+impl ProbeRequests {
+    pub(crate) fn try_next(&mut self) -> Option<(Program, Demand)> {
+        self.0.try_recv().ok()
+    }
+}
+
+struct Probing<P> {
+    probes: Vec<(Program, PathBuf, Vec<OsString>)>,
+    schedule: ProbeSchedule,
+    running: JoinSet<Version>,
+    owners: Vec<(tokio::task::Id, Program)>,
+    probe: P,
+}
+
+impl<P, F> Probing<P>
+where
+    P: Fn(Program, PathBuf, Vec<OsString>) -> F,
+    F: Future<Output = Version> + Send + 'static,
+{
+    fn start(&mut self, program: Program, demand: Demand) {
+        let Some((_, executable, args)) = self.probes.iter().find(|(id, _, _)| *id == program)
+        else {
+            return;
+        };
+        if self.schedule.claim(program, demand, Instant::now()) {
+            let task = (self.probe)(program, executable.clone(), args.clone());
+            let handle = self.running.spawn(task);
+            self.owners.push((handle.id(), program));
+        }
+    }
+
+    fn settle(&mut self, id: tokio::task::Id, version: Option<&Version>) -> Option<Program> {
+        let index = self.owners.iter().position(|(owner, _)| *owner == id)?;
+        let (_, program) = self.owners.swap_remove(index);
+        self.schedule.finish(program, version, Instant::now());
+        Some(program)
+    }
+}
+
+impl ProbeRequests {
+    pub async fn run<P, F>(
+        mut self,
+        probes: Vec<(Program, PathBuf, Vec<OsString>)>,
+        period: Duration,
+        probe: P,
+        mut update: impl FnMut(Version),
+    ) where
+        P: Fn(Program, PathBuf, Vec<OsString>) -> F,
+        F: Future<Output = Version> + Send + 'static,
+    {
+        let mut probing = Probing {
+            probes,
+            schedule: ProbeSchedule::new(period),
+            running: JoinSet::new(),
+            owners: Vec::new(),
+            probe,
+        };
+        for program in Program::ALL {
+            probing.start(program, Demand::Launch);
+        }
+        loop {
+            tokio::select! {
+                request = self.0.recv() => match request {
+                    Some((program, demand)) => probing.start(program, demand),
+                    None => break,
+                },
+                Some(done) = probing.running.join_next_with_id() => match done {
+                    Ok((id, version)) => {
+                        probing.settle(id, Some(&version));
+                        update(version);
+                    }
+                    Err(error) => {
+                        if let Some(program) = probing.settle(error.id(), None) {
+                            update(Version {
+                                program,
+                                status: "unavailable",
+                                version: None,
+                            });
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
 
 pub async fn read_version(program: Program, executable: PathBuf, args: Vec<OsString>) -> Version {
     use tokio::io::AsyncReadExt;
@@ -532,6 +720,97 @@ mod tests {
         let version = probe.await.unwrap();
         assert_eq!(version.status, "ready");
         assert_eq!(version.version.as_deref(), Some("2.1.303"));
+    }
+
+    #[test]
+    fn version_schedule_retries_a_failed_probe_on_launch_and_after_the_period() {
+        let period = Duration::from_secs(2);
+        let mut schedule = ProbeSchedule::new(period);
+        let start = Instant::now();
+        let failed = Version {
+            program: Program::Codex,
+            status: "unavailable",
+            version: None,
+        };
+        assert!(schedule.claim(Program::Codex, Demand::Availability, start));
+        assert!(!schedule.claim(Program::Codex, Demand::Launch, start));
+        schedule.finish(Program::Codex, Some(&failed), start);
+        let within = start + Duration::from_millis(1999);
+        assert!(!schedule.claim(Program::Codex, Demand::Availability, within));
+        assert!(schedule.claim(Program::Codex, Demand::Launch, within));
+        schedule.finish(Program::Codex, None, within);
+        assert!(schedule.claim(Program::Codex, Demand::Availability, within + period));
+        let ready = Version {
+            program: Program::Codex,
+            status: "ready",
+            version: Some("0.130.0".into()),
+        };
+        schedule.finish(Program::Codex, Some(&ready), within + period);
+        let later = within + period * 10;
+        assert!(!schedule.claim(Program::Codex, Demand::Launch, later));
+        assert!(!schedule.claim(Program::Codex, Demand::Availability, later));
+    }
+
+    async fn probe_until_ready(period: Duration, demand: Demand) -> (Vec<Version>, usize) {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let probe = move |program: Program, _: PathBuf, _: Vec<OsString>| {
+            let call = counted.fetch_add(1, Ordering::SeqCst) + 1;
+            async move {
+                Version {
+                    program,
+                    status: if call > 1 { "ready" } else { "unavailable" },
+                    version: (call > 1).then(|| "2.1.303".to_owned()),
+                }
+            }
+        };
+        let (prober, requests) = VersionProber::channel();
+        let (updates, mut observed) = mpsc::unbounded_channel();
+        let runtime = tokio::spawn(requests.run(
+            vec![(Program::Claude, PathBuf::from("claude"), Vec::new())],
+            period,
+            probe,
+            move |version| {
+                let _ = updates.send(version);
+            },
+        ));
+        let bound = Duration::from_secs(10);
+        let mut versions = vec![
+            tokio::time::timeout(bound, observed.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+        ];
+        prober.request(Program::Claude, demand);
+        versions.push(
+            tokio::time::timeout(bound, observed.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        prober.request(Program::Claude, Demand::Launch);
+        prober.request(Program::Shell, Demand::Launch);
+        drop(prober);
+        tokio::time::timeout(bound, runtime).await.unwrap().unwrap();
+        (versions, calls.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn version_probe_failure_is_retried_until_a_healthy_cli_is_ready() {
+        for (period, demand) in [
+            (Duration::from_secs(3600), Demand::Launch),
+            (Duration::ZERO, Demand::Availability),
+        ] {
+            let (versions, calls) = probe_until_ready(period, demand).await;
+            assert_eq!(versions[0].status, "unavailable", "{demand:?}");
+            assert_eq!(versions[1].status, "ready", "{demand:?}");
+            assert_eq!(versions[1].version.as_deref(), Some("2.1.303"));
+            assert_eq!(calls, 2, "a ready CLI is not probed again");
+        }
     }
 
     #[cfg(windows)]

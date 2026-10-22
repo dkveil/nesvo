@@ -40,7 +40,10 @@ The host requires a completed installed-CLI version probe before using an
 explicit profile. `doctor.launchProfileSupport` and the capabilities event expose
 the probed version, adapter support, flag form and effort source. Shell/Gemini and
 unconfirmed versions are unsupported by this first adapter, rather than quietly
-ignoring fields.
+ignoring fields. A probe that failed or timed out is not final: the host reruns it
+at the next launch of that provider and, when capabilities are read, at most once
+per two-second availability period, so a CLI that answers later becomes `ready`
+without a host restart.
 
 - Claude: verified `--model MODEL --effort LEVEL` grammar for Claude Code
   2.1.303+ within 2.1. Levels: low, medium, high, xhigh and max. `ultracode` is not

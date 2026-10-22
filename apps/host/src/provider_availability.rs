@@ -1,5 +1,5 @@
 use crate::{
-    launchers::{Launchers, Program, Version},
+    launchers::{Demand, Launchers, Program, Version},
     refreshing_cache::{RefreshingCache, refresh_in_background},
 };
 use serde::Serialize;
@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const REFRESH: Duration = Duration::from_secs(2);
+pub(crate) const REFRESH: Duration = Duration::from_secs(2);
 const SETTINGS_LIMIT: u64 = 256 * 1024;
 const PROVIDERS: [Program; 3] = [Program::Claude, Program::Codex, Program::Gemini];
 const CLAUDE_ENVIRONMENT: [&str; 6] = [
@@ -285,7 +285,7 @@ fn resolve(
     if version.is_some_and(|version| version.status == "unavailable") {
         return availability(
             State::Unknown,
-            Some("the version command failed; the installed launcher may be broken"),
+            Some("the version command failed; the host retries it at the next launch"),
         );
     }
     match login {
@@ -336,6 +336,12 @@ pub fn warm() {
 }
 
 pub fn capabilities(launchers: &Launchers, versions: &[Version]) -> Value {
+    for version in versions
+        .iter()
+        .filter(|version| version.status == "unavailable")
+    {
+        launchers.request_version(version.program, Demand::Availability);
+    }
     report(launchers, versions, cached())
 }
 
@@ -577,6 +583,33 @@ mod tests {
                 .unwrap()["state"],
             "noCli"
         );
+    }
+
+    #[test]
+    fn provider_availability_read_requests_a_retry_of_each_failed_version_probe() {
+        let fixture = Fixture::new();
+        let mut launchers = Launchers::locate(&[fixture.0.join("bin")]);
+        let (prober, mut requests) = crate::launchers::VersionProber::channel();
+        launchers.attach_prober(prober);
+        let failed = Version {
+            program: Program::Codex,
+            status: "unavailable",
+            version: None,
+        };
+        let pending = Version {
+            program: Program::Gemini,
+            status: "checking",
+            version: None,
+        };
+        capabilities(
+            &launchers,
+            &[ready(Program::Claude, "2.1.303"), failed, pending],
+        );
+        assert_eq!(
+            requests.try_next(),
+            Some((Program::Codex, Demand::Availability))
+        );
+        assert_eq!(requests.try_next(), None);
     }
 
     #[test]

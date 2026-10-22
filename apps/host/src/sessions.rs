@@ -1388,6 +1388,16 @@ impl State {
             *current = version;
         }
     }
+    fn request_failed_version(&self, program: Program) {
+        if self
+            .provider_versions
+            .iter()
+            .any(|version| version.program == program && version.status == "unavailable")
+        {
+            self.launchers
+                .request_version(program, crate::launchers::Demand::Launch);
+        }
+    }
     pub fn provider_probes_pending(&self) -> bool {
         self.provider_versions
             .iter()
@@ -2805,6 +2815,7 @@ impl State {
         grant: Option<crate::tool_permissions::Grant>,
         origin: LaunchOrigin,
     ) -> Result<String> {
+        self.request_failed_version(spec.program);
         let cwd = self.validate_launch(spec)?;
         crate::resume::check_launch(spec, self.lifecycle_hooks_available(spec.program))?;
         ensure!(
@@ -3549,6 +3560,7 @@ impl State {
                 group_id,
                 program,
             } => {
+                self.request_failed_version(program);
                 let name = valid_name(&name)?;
                 self.valid_group(group_id.as_deref())?;
                 self.admit_launch(program, crate::caller::Role::Worker)?;
@@ -4501,6 +4513,62 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
         }
     }
     lifecycle_task.abort();
+}
+
+#[cfg(test)]
+mod version_retry_tests {
+    use super::*;
+
+    #[test]
+    fn a_launch_attempt_requests_a_retry_of_a_failed_version_probe() {
+        let directory = std::env::temp_dir().join(format!(
+            "nesvo-launch-version-retry-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        let bin = directory.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let binary = bin.join(if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        });
+        std::fs::write(&binary, "not a runnable program").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut launchers = Launchers::locate(std::slice::from_ref(&bin));
+        let (prober, mut requests) = crate::launchers::VersionProber::channel();
+        launchers.attach_prober(prober);
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            MetadataStore::open(Path::new(":memory:")).unwrap(),
+            launchers,
+        );
+        let (events, _output) = mpsc::channel(128);
+        let spec = crate::jobs::LaunchSpec {
+            name: "Version retry fixture".into(),
+            program: Program::Claude,
+            ..Default::default()
+        };
+        let _ = state.launch(&spec, &events);
+        assert_eq!(requests.try_next(), None);
+        state.provider_version(crate::launchers::Version {
+            program: Program::Claude,
+            status: "unavailable",
+            version: None,
+        });
+        let _ = state.launch(&spec, &events);
+        assert_eq!(
+            requests.try_next(),
+            Some((Program::Claude, crate::launchers::Demand::Launch))
+        );
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+        let _ = std::fs::remove_dir_all(directory);
+    }
 }
 
 #[cfg(test)]
