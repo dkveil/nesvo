@@ -459,21 +459,32 @@ fn observe(app: &mut App, event: &Value) {
     }
 }
 
-fn journal_fact(app: &mut App, event: &Value) -> bool {
-    let kind = event["type"].as_str().unwrap_or_default();
-    if !matches!(kind, "worktreePrepared" | "worktreeRan") || !event["requestId"].is_null() {
-        return false;
+fn journal_facts(app: &mut App, event: &Value) {
+    if event["type"] != "events" {
+        return;
     }
-    let (Some(id), Some(result)) = (event["sessionId"].as_str(), event["result"].as_str()) else {
-        return true;
+    for record in event["events"].as_array().into_iter().flatten() {
+        journal_fact(app, record);
+    }
+}
+
+fn journal_fact(app: &mut App, event: &Value) {
+    let kind = event["kind"].as_str().unwrap_or_default();
+    if !matches!(kind, "worktree.prepared" | "worktree.ran") {
+        return;
+    }
+    let payload = &event["payload"];
+    let (Some(id), Some(result)) = (payload["sessionId"].as_str(), payload["result"].as_str())
+    else {
+        return;
     };
-    let log = event["log"].as_str().map(str::to_owned);
+    let log = payload["log"].as_str().map(str::to_owned);
     if let Some(record) = app.worktrees.record_mut(id) {
         let phase = Phase {
             state: result.to_owned(),
             log,
         };
-        if kind == "worktreePrepared" {
+        if kind == "worktree.prepared" {
             record.setup = phase;
         } else {
             record.run = Some(phase);
@@ -481,7 +492,6 @@ fn journal_fact(app: &mut App, event: &Value) -> bool {
         }
     }
     app.worktrees.due = true;
-    true
 }
 
 fn registry_reply(app: &mut App, event: &Value) {
@@ -607,9 +617,7 @@ fn action_reply(app: &mut App, event: &Value, action: Action) {
 
 pub fn host_event(app: &mut App, event: &Value) -> bool {
     observe(app, event);
-    if journal_fact(app, event) {
-        return true;
-    }
+    journal_facts(app, event);
     let Some(request) = event["requestId"].as_str() else {
         return false;
     };
@@ -1146,9 +1154,60 @@ pub(crate) mod tests {
             {"id":"s2","name":"Other","cwd":".","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null}
         ]})).unwrap();
         assert_eq!(tick(&mut app).unwrap()["type"], "listWorktrees");
-        app.event(json!({"type":"worktreeRan","sessionId":"s1","result":"passed","log":"x"}))
-            .unwrap();
+        app.event(journal_page(vec![journal_record(
+            "worktree.ran",
+            json!({"sessionId":"s1","result":"passed","log":"x"}),
+        )]))
+        .unwrap();
         assert_eq!(app.worktrees.stage("s1"), Some(Stage::RunPassed));
+    }
+
+    fn journal_record(kind: &str, payload: Value) -> Value {
+        json!({"sequence":7,"sessionId":"s1","kind":kind,"at":1,"payload":payload})
+    }
+
+    fn journal_page(events: Vec<Value>) -> Value {
+        json!({"type":"events","events":events,"nextCursor":7,"headCursor":7,"floorCursor":0,
+            "gap":false,"more":false,"subscribed":true,"health":{"observationDrops":0,"writeFailures":0}})
+    }
+
+    #[test]
+    fn worktree_journal_pages_apply_setup_and_run_facts_and_ignore_other_kinds() {
+        let mut app = app();
+        load(&mut app, vec![record("running", None)]);
+        assert_eq!(app.worktrees.stage("s1"), Some(Stage::SetupRunning));
+        app.worktrees.due = false;
+        let ignored = journal_page(vec![
+            journal_record("future.kind", json!({"sessionId":"s1","result":"failed"})),
+            journal_record(
+                "worktreePrepared",
+                json!({"sessionId":"s1","result":"failed","log":"x"}),
+            ),
+            journal_record("worktree.archived", json!({"sessionId":"s1"})),
+        ]);
+        assert!(app.event(ignored).unwrap().is_empty());
+        assert_eq!(app.worktrees.stage("s1"), Some(Stage::SetupRunning));
+        assert!(!app.worktrees.due);
+        app.event(journal_page(vec![
+            journal_record(
+                "worktree.prepared",
+                json!({"sessionId":"s1","result":"passed","log":"setup.log","worktree":"w","digest":"d1"}),
+            ),
+            journal_record(
+                "worktree.ran",
+                json!({"sessionId":"s1","result":"failed","log":"run.log"}),
+            ),
+        ]))
+        .unwrap();
+        assert_eq!(app.worktrees.stage("s1"), Some(Stage::RunFailed));
+        let record = app.worktrees.record("s1").unwrap();
+        assert_eq!(record.setup.log.as_deref(), Some("setup.log"));
+        assert_eq!(
+            record.run.as_ref().and_then(|run| run.log.as_deref()),
+            Some("run.log")
+        );
+        assert!(!record.active);
+        assert!(app.worktrees.due, "polling reconciles after a journal fact");
     }
 
     #[test]
