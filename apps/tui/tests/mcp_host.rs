@@ -77,6 +77,8 @@ mod mcp_cancellation;
 mod mcp_events;
 #[path = "support/mcp_pool.rs"]
 mod mcp_pool;
+#[path = "support/mcp_servers.rs"]
+mod mcp_servers;
 #[path = "support/model_profiles.rs"]
 mod model_profiles;
 #[path = "support/native_tool_permissions.rs"]
