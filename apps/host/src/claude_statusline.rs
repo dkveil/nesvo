@@ -844,8 +844,36 @@ mod tests {
     fn executable() -> PathBuf {
         std::env::current_exe().unwrap()
     }
+    fn fixture_executable() -> &'static Path {
+        static COMPILED: OnceLock<PathBuf> = OnceLock::new();
+        COMPILED.get_or_init(|| compiled_fixture(process_fixture::executable()))
+    }
+    fn compiled_fixture(uplifted: &Path) -> PathBuf {
+        let compiled = uplifted.with_file_name("deps").join(format!(
+            "nesvo_process_fixture{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        if compiled.is_file() {
+            compiled
+        } else {
+            uplifted.to_owned()
+        }
+    }
+    #[test]
+    fn statusline_fixture_runs_the_compiled_artifact_cargo_never_replaces() {
+        let uplifted = process_fixture::executable();
+        let fixture = fixture_executable();
+        assert!(fixture.is_file());
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(
+                fixture.parent().and_then(Path::file_name),
+                Some(std::ffi::OsStr::new("deps"))
+            );
+            assert_ne!(fixture, uplifted);
+        }
+    }
     fn fixture_command(args: &[&str]) -> tokio::process::Command {
-        let mut command = tokio::process::Command::new(process_fixture::executable());
+        let mut command = tokio::process::Command::new(fixture_executable());
         command.args(args);
         command
     }
@@ -1139,7 +1167,7 @@ mod tests {
         let input = collect(&report, std::io::Cursor::new(original)).unwrap();
         assert_eq!(input, original);
         let declared = Display {
-            program: process_fixture::executable().to_owned(),
+            program: fixture_executable().to_owned(),
             args: vec!["echo".into(), "7".into()],
         };
         let output = tokio::time::timeout(UNBOUNDED_EXCHANGE, display(declared, input))
@@ -1216,7 +1244,7 @@ mod tests {
         input: &[u8],
         environment: &[(&str, &Path)],
     ) -> WrapperRun {
-        let fixture = process_fixture::executable();
+        let fixture = fixture_executable();
         let shell = PathBuf::from(crate::command_scope::system_root().unwrap())
             .join("System32")
             .join("cmd.exe");
@@ -1309,7 +1337,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "real PowerShell statusline wrapper; nightly native cohort only"]
     async fn generated_windows_command_inherits_raw_standard_handles() {
-        let fixture = process_fixture::executable().to_str().unwrap();
+        let fixture = fixture_executable().to_str().unwrap();
         let prefix = "\u{1b}[35mZażółć 日本語\u{1b}[0m\r\n".as_bytes();
         let original = b"{\"literal\":\"stdin\nbytes\"}\n";
         let encoded_prefix = hex::encode(prefix);
