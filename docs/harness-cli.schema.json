@@ -4555,10 +4555,24 @@
           "$ref": "#/definitions/id"
         },
         "attemptId": {
-          "$ref": "#/definitions/id"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
         },
         "launchReceiptId": {
-          "$ref": "#/definitions/id"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
         },
         "decidedAt": {
           "$ref": "#/definitions/cursor"
@@ -4567,12 +4581,156 @@
           "$ref": "#/definitions/cursor"
         },
         "nextOrdinal": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 2,
           "maximum": 8
+        },
+        "class": {
+          "enum": ["noEffect", "uncertainEffect"]
+        },
+        "probe": {
+          "$ref": "#/definitions/jobRetryProbe"
         }
       },
-      "description": "Immutable outgoing retry decision facts. These do not authorize replay; current occurrence state identifies waiting, cancellation or a later generation."
+      "description": "Immutable outgoing retry decision facts. These do not authorize replay; current occurrence state identifies waiting, cancellation or a later generation. A noEffect decision always names its native attempt, receipt and next ordinal; an uncertainEffect decision carries its deciding probe and has a null next ordinal when it was blocked or exhausted."
+    },
+    "jobRetryProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observedAt",
+        "result",
+        "launchKey",
+        "runId",
+        "executorAccepted",
+        "attemptId",
+        "attemptState",
+        "sessionId",
+        "launchReceiptId"
+      ],
+      "properties": {
+        "observedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "result": {
+          "enum": ["absent", "noEffectProven", "attemptFound", "sessionFound"]
+        },
+        "launchKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runId": {
+          "type": ["string", "null"]
+        },
+        "executorAccepted": {
+          "type": "boolean"
+        },
+        "attemptId": {
+          "type": ["string", "null"]
+        },
+        "attemptState": {
+          "type": ["string", "null"]
+        },
+        "sessionId": {
+          "type": ["string", "null"]
+        },
+        "launchReceiptId": {
+          "type": ["string", "null"]
+        }
+      },
+      "description": "Journal-only probe keyed by the generation's launch idempotency key. It never contacts a process or provider."
+    },
+    "jobRetryClassification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "class",
+        "failure",
+        "launchKey",
+        "decision",
+        "decidedAt",
+        "notBefore",
+        "nextOrdinal",
+        "probe"
+      ],
+      "properties": {
+        "class": {
+          "enum": ["noEffect", "uncertainEffect", "definiteEffect"]
+        },
+        "failure": {
+          "type": ["string", "null"]
+        },
+        "launchKey": {
+          "type": ["string", "null"]
+        },
+        "decision": {
+          "enum": ["probing", "adopted", "retryWaiting", "blocked", "canceled"]
+        },
+        "decidedAt": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "notBefore": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "nextOrdinal": {
+          "type": ["integer", "null"],
+          "minimum": 2,
+          "maximum": 8
+        },
+        "probe": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryProbe"
+            }
+          ]
+        },
+        "state": {
+          "enum": ["waiting", "claimed", "canceled", "blocked", "adopted"]
+        },
+        "retryJobAttemptId": {
+          "type": ["string", "null"]
+        },
+        "claimProbe": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryProbe"
+            }
+          ]
+        }
+      },
+      "description": "Retry class ledger for one generation. Attempt records carry the immutable facts; the launch reconciliation diagnostic adds the live state, retry generation and claim probe."
+    },
+    "jobRetryAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceJobAttemptId", "class", "claimProbe"],
+      "properties": {
+        "sourceJobAttemptId": {
+          "$ref": "#/definitions/id"
+        },
+        "class": {
+          "enum": ["noEffect", "uncertainEffect"]
+        },
+        "claimProbe": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryProbe"
+            }
+          ]
+        }
+      },
+      "description": "Names the failed generation and class that admitted this retry generation."
     },
     "jobDefinition": {
       "type": "object",
@@ -5048,6 +5206,26 @@
             }
           ]
         },
+        "retryClassification": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryClassification"
+            }
+          ]
+        },
+        "retryAdmission": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryAdmission"
+            }
+          ]
+        },
         "executionTimeout": {
           "$ref": "#/definitions/jobOccurrence/properties/executionTimeout"
         },
@@ -5453,6 +5631,9 @@
           "minLength": 64,
           "maxLength": 64,
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "retryClassification": {
+          "$ref": "#/definitions/jobRetryClassification"
         }
       }
     },
