@@ -189,7 +189,7 @@ mod tests {
         assert!(commands.iter().all(|c| c["type"] != "acquireControl"));
     }
 
-    fn restarted(app: &mut App, hibernated: bool) {
+    fn restarted(app: &mut App, hibernated: bool) -> Vec<Value> {
         let mut queued = json!({"id":"h","name":"queued","cwd":".","program":"claude","running":!hibernated,"cols":80,"rows":24,"groupId":null,"controllerId":null});
         if hibernated {
             queued["hibernation"] = json!({"state":"hibernated","hibernatedAt":1,"conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e","trigger":"shutdown","lastResumeFailure":null});
@@ -197,7 +197,7 @@ mod tests {
         app.event(json!({"type":"sessions","groups":[],"sessions":[
             {"id":"a","name":"agent","cwd":".","program":"claude","running":true,"cols":80,"rows":24,"groupId":null,"controllerId":null},
             queued
-        ]})).unwrap();
+        ]})).unwrap()
     }
 
     #[test]
@@ -209,29 +209,24 @@ mod tests {
             focused: 1,
             ..Default::default()
         };
+        let subscribes = |commands: &[Value], id: &str| {
+            commands
+                .iter()
+                .any(|c| c["type"] == "subscribe" && c["sessionId"] == id)
+        };
         let mut app = App::new(2);
-        restarted(&mut app, true);
-        let commands = saved.apply(&mut app);
+        let mut commands = restarted(&mut app, true);
+        commands.extend(saved.apply(&mut app));
         assert_eq!(app.panes[..2], [Some("a".into()), Some("h".into())]);
         assert_eq!(app.tabs, ["a", "h"]);
-        assert!(
-            commands
-                .iter()
-                .any(|c| c["type"] == "subscribe" && c["sessionId"] == "a")
-        );
-        assert!(
-            commands
-                .iter()
-                .all(|c| !(c["type"] == "subscribe" && c["sessionId"] == "h"))
-        );
+        assert!(subscribes(&commands, "a"));
+        assert!(!subscribes(&commands, "h"));
         assert!(app.subscribed.contains("a") && !app.subscribed.contains("h"));
-        restarted(&mut app, false);
+        let mut resumed = restarted(&mut app, false);
         assert_eq!(app.panes[1].as_deref(), Some("h"));
-        assert!(
-            app.open_session("h")
-                .iter()
-                .any(|c| c["type"] == "subscribe" && c["sessionId"] == "h")
-        );
+        resumed.extend(app.open_session("h"));
+        assert!(subscribes(&resumed, "h"));
+        assert!(app.subscribed.contains("h"));
     }
 
     #[test]
