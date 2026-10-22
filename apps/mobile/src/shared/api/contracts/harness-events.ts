@@ -304,6 +304,21 @@ export type HarnessEventRecord = {
       payload: McpPoolReaped;
       [k: string]: unknown | undefined;
     }
+  | {
+      kind: 'mcp.server_attached';
+      payload: McpServerAttached;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      kind: 'mcp.server_released';
+      payload: McpServerReleased;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      kind: 'mcp.server_reaped';
+      payload: McpServerReaped;
+      [k: string]: unknown | undefined;
+    }
 );
 export type AgentState =
   'working' | 'idle' | 'done' | 'blocked' | 'question' | 'failed' | 'unknown';
@@ -358,6 +373,27 @@ export type McpPoolReaped = {
 export type McpPoolReleased = {
   entryId: string;
   reason: string;
+  server: string;
+};
+export type McpServerAttached = {
+  digest: string;
+  entryId: string | null;
+  mode: string;
+  reason: string | null;
+  repository: string;
+  root: string;
+  server: string;
+};
+export type McpServerReaped = {
+  digest: string;
+  entryId: string;
+  reason: string;
+  repository: string;
+  server: string;
+};
+export type McpServerReleased = {
+  reason: string;
+  repository: string;
   server: string;
 };
 export type OperationChanged = {

@@ -619,6 +619,13 @@ export type HarnessCliEnvelope =
             approved: boolean;
             config: {
               envFiles: string[];
+              mcpServers?: {
+                args: string[];
+                command: string;
+                cwd: string;
+                env: string[];
+                name: string;
+              }[];
               run: string[];
               setup: string[];
               timeoutS: number;
