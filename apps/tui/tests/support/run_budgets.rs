@@ -7,14 +7,14 @@ async fn run_policy_drain_and_deadline_fence_native_workers_without_killing_them
     let outcome=std::panic::AssertUnwindSafe(async {
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"run-budget-root","spec":{"name":"Run coordinator","role":"coordinator","program":"claude","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"run-budget-root","spec":{"name":"Run coordinator","role":"coordinator","program":"claude","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("run coordinator")?;
         session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&context,root_id).await?;
         let mut children=Vec::new();
         for index in 0..2 {
-            let child=data(call(&coordinator,"nesvo_create_session",json!({"key":format!("run-worker-{index}"),"spec":{"name":format!("Run worker {index}"),"program":"claude"}})).await?)?;
+            let child=waits::operation(&coordinator,"nesvo_create_session",json!({"key":format!("run-worker-{index}"),"spec":{"name":format!("Run worker {index}"),"program":"claude"}})).await?;
             let id=child["data"]["receipt"]["sessionId"].as_str().context("run worker")?.to_owned();
             session_ready(&owner,&id).await?;
             children.push(id);

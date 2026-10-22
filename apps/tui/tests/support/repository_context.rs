@@ -144,10 +144,10 @@ async fn launch_repository_context_is_native_shared_and_refreshes_after_its_cool
         let empty = list(caller).await?;
         assert!(empty["data"]["sessions"].as_array().context("Fresh isolated host session list")?.is_empty());
         let before_any_possible_inspection = tokio::time::Instant::now();
-        let created = data(call(caller,"nesvo_create_session",json!({
+        let created = waits::operation(caller,"nesvo_create_session",json!({
             "key":"repository-context-native","spec":{"name":"Repository context fixture",
                 "program":"claude","cwd":directory,"harness":false}
-        })).await?)?;
+        })).await?;
         let id = created["data"]["receipt"]["sessionId"].as_str().context("Original controlled session identity")?.to_owned();
         assert_eq!(created["data"]["receipt"]["phase"],"created");
         let physical = data(call(caller,"nesvo_get_session",json!({"sessionId":id})).await?)?;

@@ -309,11 +309,11 @@ async fn scoped_context_helpers_follow_current_root_without_losing_external_edit
         let cwd = unborn_repository_with_untracked_marker(&fixture, "changed cwd repo łódź", "F05_CWD_MARKER").await?;
         let pin = unborn_repository_with_untracked_marker(&fixture, "explicit pin repo", "F05_PIN_MARKER").await?;
         let owner = client(&fixture.pairing()).await?;
-        let created = data(call(&owner, "nesvo_create_session", json!({
+        let created = waits::operation(&owner, "nesvo_create_session", json!({
             "key":"f05-scoped-review-once",
             "spec":{"name":"Scoped review context","program":"claude","role":"coordinator",
                 "harness":true,"cwd":launch},
-        })).await?)?;
+        })).await?;
         let id = created["data"]["receipt"]["sessionId"].as_str().context("Owned session ID")?;
         session_ready(&owner, id).await?;
         let settings = launch_settings(&fixture, id)?;

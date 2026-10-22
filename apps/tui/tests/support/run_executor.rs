@@ -36,7 +36,7 @@ async fn executor_bounds_known_failure_retries_and_never_retries_unknown_worktre
         waits::provider(&fixture,"claude").await?;
         let uncertain=job_retries::repository_whose_worktree_checkout_fails(&fixture).await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"retry-executor-root","spec":{"name":"Retry coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"retry-executor-root","spec":{"name":"Retry coordinator","program":"claude","role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("retry root")?;session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);let coordinator=scoped_client(&context,root_id).await?;
         for unknown in [false,true] {
@@ -88,7 +88,7 @@ async fn executor_cannot_send_after_quick_human_takeover_or_rearm_a_paused_instr
     let outcome=std::panic::AssertUnwindSafe(async{
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"human-executor-root","spec":{"name":"Human priority coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"human-executor-root","spec":{"name":"Human priority coordinator","program":"claude","role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&context,root_id).await?;
@@ -170,11 +170,11 @@ async fn executor_launches_only_ready_tasks_and_waits_for_validation_without_tou
     let outcome=std::panic::AssertUnwindSafe(async{
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"executor-root","spec":{"name":"Executor coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"executor-root","spec":{"name":"Executor coordinator","program":"claude","role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("executor root")?;session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&context,root_id).await?;
-        let manual=data(call(&coordinator,"nesvo_create_session",json!({"key":"manual-worker","spec":{"name":"Manual worker","program":"claude"}})).await?)?;
+        let manual=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"manual-worker","spec":{"name":"Manual worker","program":"claude"}})).await?;
         let manual_id=manual["data"]["receipt"]["sessionId"].as_str().context("manual worker")?;session_ready(&owner,manual_id).await?;
         let created=data(call(&coordinator,"nesvo_create_run",json!({"key":"executor-run","spec":{"title":"Automatic implement and review","goal":"Observed worker results require independent validation"}})).await?)?;
         let run=created["data"]["run"]["id"].as_str().context("executor run")?;

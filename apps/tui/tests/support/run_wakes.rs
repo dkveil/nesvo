@@ -145,10 +145,10 @@ async fn simple_run(
     owner: &RunningService<RoleClient, ()>,
 ) -> Result<(String, String)> {
     provider(fixture).await?;
-    let created = data(call(owner, "nesvo_create_session", json!({
+    let created = waits::operation(owner, "nesvo_create_session", json!({
         "key":"simple-wake-coordinator",
         "spec":{"name":"Wake fence coordinator","program":"claude","role":"coordinator","harness":true}
-    })).await?)?;
+    })).await?;
     let id = created["data"]["receipt"]["sessionId"]
         .as_str()
         .context("wake coordinator")?
@@ -366,22 +366,22 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
     let outcome=std::panic::AssertUnwindSafe(async{
         provider(&fixture).await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"wake-root","spec":{"name":"Wake coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"wake-root","spec":{"name":"Wake coordinator","program":"claude","role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("wake root")?;session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&context,root_id).await?;
-        let child=data(call(&coordinator,"nesvo_create_session",json!({"key":"wake-worker","spec":{"name":"Reporter","program":"claude","harness":true}})).await?)?;
+        let child=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"wake-worker","spec":{"name":"Reporter","program":"claude","harness":true}})).await?;
         let child_id=child["data"]["receipt"]["sessionId"].as_str().context("wake worker")?;session_ready(&owner,child_id).await?;
         let created=data(call(&coordinator,"nesvo_create_run",json!({"key":"wake-run","spec":{"title":"Delta wake fixture","goal":"No silent ACK or fabricated validation"}})).await?)?;
         let run=created["data"]["run"]["id"].as_str().context("wake run")?;
         let plan=mutation(&coordinator,run,"nesvo_set_run_plan",json!({"key":"wake-plan","tasks":[{"key":"implement","title":"Implement","instruction":"report-task"},{"key":"review","title":"Review","instruction":"Must wait","dependencies":["implement"]}]})).await?;
         mutation(&coordinator,run,"nesvo_activate_run",json!({"key":"wake-active"})).await?;
         mutation(&coordinator,run,"nesvo_assign_task",json!({"key":"wake-assign","taskId":plan["tasks"][0]["id"],"sessionId":child_id})).await?;
-        data(call(&owner,"nesvo_send_prompt",json!({"sessionId":root_id,"key":"wake-hold","prompt":"held-natural-response"})).await?)?;
+        waits::operation(&owner,"nesvo_send_prompt",json!({"sessionId":root_id,"key":"wake-hold","prompt":"held-natural-response"})).await?;
         observed_output(&owner,root_id,"FIXTURE_HOLDING_NATURAL_RESPONSE").await?;
         let enabled=mutation(&coordinator,run,"nesvo_enable_run_wakes",json!({"key":"wake-enable"})).await?;
         message(&coordinator,run,"delta-question","question").await?;message(&coordinator,run,"delta-error","error").await?;
-        data(call(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"wake-worker-report","prompt":"report-task"})).await?)?;
+        waits::operation(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"wake-worker-report","prompt":"report-task"})).await?;
         task_state(&coordinator,run,0,"reported").await?;
         let pending=wake_view(&coordinator,run).await?;assert_eq!(pending["pendingCount"],3);
         assert!(!fixture.directory.join("callers").join(format!("{root_id}.wake-inputs.jsonl")).exists(),"Working coordinator gets no input");
@@ -441,9 +441,9 @@ async fn native_worker_question_and_resolution_share_the_canonical_wake_projecti
     let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&fixture.pairing()).await?;
         let (id, run) = simple_run(&fixture, &owner).await?;
-        let child = data(call(&owner, "nesvo_create_session", json!({
+        let child = waits::operation(&owner, "nesvo_create_session", json!({
             "key":"question-wake-worker","spec":{"name":"Question worker","program":"claude","harness":true}
-        })).await?)?;
+        })).await?;
         let child_id = child["data"]["receipt"]["sessionId"].as_str().context("question worker")?;
         session_ready(&owner, child_id).await?;
         let task = view(&owner, &run).await?["tasks"][0]["id"].clone();
@@ -451,10 +451,10 @@ async fn native_worker_question_and_resolution_share_the_canonical_wake_projecti
             "key":"question-wake-assignment","taskId":task,"sessionId":child_id
         })).await?;
         let attempt = assigned["tasks"][0]["currentAttempt"]["id"].clone();
-        data(call(&owner, "nesvo_send_prompt", json!({"sessionId":id,"key":"question-wake-hold","prompt":"held-natural-response"})).await?)?;
+        waits::operation(&owner, "nesvo_send_prompt", json!({"sessionId":id,"key":"question-wake-hold","prompt":"held-natural-response"})).await?;
         observed_output(&owner, &id, "FIXTURE_HOLDING_NATURAL_RESPONSE").await?;
         mutation(&owner, &run, "nesvo_enable_run_wakes", json!({"key":"question-wake-enable"})).await?;
-        data(call(&owner, "nesvo_send_prompt", json!({"sessionId":child_id,"key":"question-wake-input","prompt":"question-task"})).await?)?;
+        waits::operation(&owner, "nesvo_send_prompt", json!({"sessionId":child_id,"key":"question-wake-input","prompt":"question-task"})).await?;
         observed_output(&owner, child_id, "FIXTURE_AWAITING_DECISION").await?;
         let blocked = notices_until(&owner, &run, child_id, |notices| notices.iter().any(|notice| {
             notice["kind"] == "blocker" && notice["reference"]["attention"]["reason"] == "question"

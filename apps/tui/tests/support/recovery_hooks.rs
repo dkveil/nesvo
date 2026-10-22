@@ -139,7 +139,7 @@ async fn native_recovery_collects_all_current_context_without_replay_and_fails_o
             let text=if index==9 {"LAST_OWNER_RULE literal $(not executable) łódź".to_owned()} else {format!("Owner rule {index}: preserve the current user's instruction.")};
             run_checkpoints::mutate(&owner,&run,"nesvo_add_run_constraint",json!({"key":format!("hook-rule-{index}"),"text":text})).await?;
         }
-        data(call(&owner,"nesvo_send_prompt",json!({"key":"controlled-compact","sessionId":id,"prompt":"fixture-compact"})).await?)?;
+        waits::operation(&owner,"nesvo_send_prompt",json!({"key":"controlled-compact","sessionId":id,"prompt":"fixture-compact"})).await?;
         observed_output(&owner,&id,"FIXTURE_CONTEXT_COMPACTED").await?;
         let evidence=last_recovery(&fixture,&id)?;
         assert_eq!(evidence["source"],"compact");

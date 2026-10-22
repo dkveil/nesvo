@@ -16,7 +16,7 @@ async fn launch_reserves_before_spawn_replays_once_and_obeys_validation_and_run_
         std::fs::write(repository.join("source.txt"),"keep source edits\n")?;
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"launch-root","spec":{"name":"Launch coordinator","program":"claude","cwd":repository,"role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"launch-root","spec":{"name":"Launch coordinator","program":"claude","cwd":repository,"role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("launch root")?;
         session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
@@ -51,7 +51,7 @@ async fn launch_reserves_before_spawn_replays_once_and_obeys_validation_and_run_
         assert_eq!(denied.structured_content.context("parallel refusal")?["error"]["code"],"parallel_budget_exhausted");
         let early_review=call(&coordinator,"nesvo_launch_task",json!({"key":"review-too-early","runId":run,"taskId":plan["data"]["tasks"][2]["id"],"expectedRevision":current["data"]["run"]["revision"],"profile":{"program":"shell","workspace":"worktree","harness":false}})).await?;
         assert_eq!(early_review.structured_content.context("dependency refusal")?["error"]["code"],"dependencies_unmet");
-        data(call(&coordinator,"nesvo_send_prompt",json!({"key":"launch-work","sessionId":child,"prompt":"report-task"})).await?)?;
+        waits::operation(&coordinator,"nesvo_send_prompt",json!({"key":"launch-work","sessionId":child,"prompt":"report-task"})).await?;
         let reported=waits::until(async || {
             let view=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
             let task=&view["data"]["tasks"][0];
@@ -93,7 +93,7 @@ async fn launch_reserves_before_spawn_replays_once_and_obeys_validation_and_run_
         let orphan_id=orphan_run["data"]["run"]["id"].as_str().context("orphan run")?;
         let orphan_plan=data(call(&owner,"nesvo_set_run_plan",json!({"key":"lost-coordinator-plan","runId":orphan_id,"expectedRevision":1,"tasks":[{"key":"work","title":"Work","instruction":"No implicit coordinator adoption"}]})).await?)?;
         let orphan_active=data(call(&owner,"nesvo_activate_run",json!({"key":"lost-coordinator-active","runId":orphan_id,"expectedRevision":orphan_plan["data"]["run"]["revision"]})).await?)?;
-        data(call(&owner,"nesvo_stop_session",json!({"key":"deliberate-coordinator-stop","sessionId":root_id})).await?)?;
+        waits::operation(&owner,"nesvo_stop_session",json!({"key":"deliberate-coordinator-stop","sessionId":root_id})).await?;
         waits::session(&owner,root_id,waits::Session::Stopped).await?;
         let refused=data(call(&owner,"nesvo_launch_task",json!({"key":"owner-cannot-revive-coordinator","runId":orphan_id,"taskId":orphan_plan["data"]["tasks"][0]["id"],"expectedRevision":orphan_active["data"]["run"]["revision"],"profile":{"program":"shell","workspace":"shared","harness":false}})).await?)?;
         let receipt=data(call(&owner,"nesvo_get_operation",json!({"id":refused["data"]["launch"]["receiptId"]})).await?)?;

@@ -17,14 +17,12 @@ async fn replacement(
     if let Some(directory) = directory {
         spec["cwd"] = directory.to_string_lossy().as_ref().into();
     }
-    let created = data(
-        call(
-            owner,
-            "nesvo_create_session",
-            json!({"key":format!("replacement-{}",directory.is_some()),"spec":spec}),
-        )
-        .await?,
-    )?;
+    let created = waits::operation(
+        owner,
+        "nesvo_create_session",
+        json!({"key":format!("replacement-{}",directory.is_some()),"spec":spec}),
+    )
+    .await?;
     let id = created["data"]["receipt"]["sessionId"]
         .as_str()
         .context("replacement ID")?
@@ -37,14 +35,12 @@ async fn replacement(
     Ok((id, context, client))
 }
 async fn stop(owner: &RunningService<RoleClient, ()>, id: &str) -> Result<()> {
-    data(
-        call(
-            owner,
-            "nesvo_stop_session",
-            json!({"key":format!("stop-{id}"),"sessionId":id}),
-        )
-        .await?,
-    )?;
+    waits::operation(
+        owner,
+        "nesvo_stop_session",
+        json!({"key":format!("stop-{id}"),"sessionId":id}),
+    )
+    .await?;
     waits::session(owner, id, waits::Session::Stopped).await?;
     Ok(())
 }

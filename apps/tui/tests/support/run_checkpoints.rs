@@ -206,7 +206,7 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         safe_phase.set("owner MCP nesvo_list_run_checkpoints");
         let pages=data(call(&owner,"nesvo_list_run_checkpoints",json!({"runId":run})).await?)?;assert_eq!(pages["data"]["checkpoints"].as_array().context("single retained checkpoint")?.len(),1);
         safe_phase.set("coordinator MCP nesvo_send_prompt: deliberate input after ACK");
-        data(call(&coordinator,"nesvo_send_prompt",json!({"key":"deliberate-post-context-input","sessionId":child,"prompt":"ONLY_AFTER_ACK"})).await?)?;
+        waits::operation(&coordinator,"nesvo_send_prompt",json!({"key":"deliberate-post-context-input","sessionId":child,"prompt":"ONLY_AFTER_ACK"})).await?;
         safe_phase.set("owner MCP nesvo_read_session: deliberate response observation");
         observed_output(&owner,&child,"FIXTURE_RESPONSE ONLY_AFTER_ACK").await?;
         safe_phase.set("coordinator MCP nesvo_get_run: task selection");
@@ -239,7 +239,7 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         safe_phase.set("coordinator CLI explicit recovery selection");
         let selected=inbox::scoped_cli(&path,&["run","recover",&run,"--json"]).await?;assert_eq!(selected["data"]["page"]["run"]["id"],run);
         safe_phase.set("owner MCP nesvo_stop_session: owned coordinator");
-        data(call(&owner,"nesvo_stop_session",json!({"key":"owned-coordinator-exit","sessionId":id})).await?)?;
+        waits::operation(&owner,"nesvo_stop_session",json!({"key":"owned-coordinator-exit","sessionId":id})).await?;
         safe_phase.set("owner MCP nesvo_get_session: coordinator exit observation");
         waits::session(&owner,&id,waits::Session::Stopped).await?;
         safe_phase.set("owner MCP nesvo_read_run_context: retained historical context");

@@ -24,14 +24,14 @@ async fn owner_budgets_bound_native_and_scoped_creation_without_terminating_work
         let path=fixture.directory.join("owner budget łódź.json");std::fs::write(&path,serde_json::to_vec(&large)?)?;
         let replay=owner_cli(&fixture,&["budget","set","--key","large-budget","--revision","1","--file",path.to_str().context("budget path")?,"--json"]).await?;
         assert_eq!(replay["data"],saved["data"]);
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"budget-root","spec":{"name":"Budget coordinator","program":"claude","role":"coordinator"}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"budget-root","spec":{"name":"Budget coordinator","program":"claude","role":"coordinator"}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("budget root")?;
         session_ready(&owner,root_id).await?;
         let root_context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&root_context,root_id).await?;
         let denied=call(&coordinator,"nesvo_get_host_budget",json!({})).await?;
         assert_eq!(denied.structured_content.context("coordinator budget scope")?["error"]["code"],"forbidden");
-        let child=data(call(&owner,"nesvo_create_session",json!({"key":"budget-worker","spec":{"name":"Budget worker","program":"claude"}})).await?)?;
+        let child=waits::operation(&owner,"nesvo_create_session",json!({"key":"budget-worker","spec":{"name":"Budget worker","program":"claude"}})).await?;
         let worker_id=child["data"]["receipt"]["sessionId"].as_str().context("budget worker")?;
         session_ready(&owner,worker_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{worker_id}.txt")))?);
@@ -40,7 +40,7 @@ async fn owner_budgets_bound_native_and_scoped_creation_without_terminating_work
         assert_eq!(denied.structured_content.context("worker budget scope")?["error"]["code"],"forbidden");
         let mut shells=Vec::new();
         for index in 0..8 {
-            let shell=data(call(&owner,"nesvo_create_session",json!({"key":format!("budget-shell-{index}"),"spec":{"name":format!("Shell {index}"),"program":"shell"}})).await?)?;
+            let shell=waits::operation(&owner,"nesvo_create_session",json!({"key":format!("budget-shell-{index}"),"spec":{"name":format!("Shell {index}"),"program":"shell"}})).await?;
             shells.push(shell["data"]["receipt"]["sessionId"].as_str().context("budget shell")?.to_owned());
         }
         let before=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;
@@ -55,9 +55,9 @@ async fn owner_budgets_bound_native_and_scoped_creation_without_terminating_work
         let current=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;
         assert_eq!(current["data"]["sessions"].as_array().context("preserved native work")?.len(),10);
         assert!(current["data"]["sessions"].as_array().unwrap().iter().all(|s|s["running"]==true&&s["controllerId"].is_null()),"Policy changes do not kill work or acquire control");
-        data(call(&owner,"nesvo_stop_session",json!({"key":"budget-stop","sessionId":shells[0]})).await?)?;
+        waits::operation(&owner,"nesvo_stop_session",json!({"key":"budget-stop","sessionId":shells[0]})).await?;
         waits::session(&owner,&shells[0],waits::Session::Stopped).await?;
-        data(call(&coordinator,"nesvo_create_session",json!({"key":"released-provider-slot","spec":{"name":"Allowed fresh child","program":"shell"}})).await?)?;
+        waits::operation(&coordinator,"nesvo_create_session",json!({"key":"released-provider-slot","spec":{"name":"Allowed fresh child","program":"shell"}})).await?;
         data(call(&owner,"nesvo_set_host_budget",json!({"key":"retention-limit","expectedRevision":4,"limits":limits(1,16,16)})).await?)?;
         let historical=owner_cli(&fixture,&["run","mutation","--key","large-budget","--json"]).await?;
         assert_eq!(historical["data"],saved["data"]);

@@ -36,19 +36,19 @@ async fn controls_only_bound_workers_preserves_human_drafts_and_never_replays_si
     let outcome=std::panic::AssertUnwindSafe(async {
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"control-root","spec":{"name":"Control coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"control-root","spec":{"name":"Control coordinator","program":"claude","role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("control root")?;
         session_ready(&owner,root_id).await?;
         let root_context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&root_context,root_id).await?;
         let mut children=Vec::new();
         for (index,program) in ["claude","shell","shell"].into_iter().enumerate() {
-            let child=data(call(&coordinator,"nesvo_create_session",json!({"key":format!("control-child-{index}"),"spec":{"name":format!("Control child {index}"),"program":program,"harness":program=="claude"}})).await?)?;
+            let child=waits::operation(&coordinator,"nesvo_create_session",json!({"key":format!("control-child-{index}"),"spec":{"name":format!("Control child {index}"),"program":program,"harness":program=="claude"}})).await?;
             let id=child["data"]["receipt"]["sessionId"].as_str().context("control child")?.to_owned();
             if program=="claude" {session_ready(&owner,&id).await?;}
             children.push(id);
         }
-        let foreign=data(call(&owner,"nesvo_create_session",json!({"key":"control-foreign","spec":{"name":"Foreign shell","program":"shell","parentSessionId":root_id}})).await?)?;
+        let foreign=waits::operation(&owner,"nesvo_create_session",json!({"key":"control-foreign","spec":{"name":"Foreign shell","program":"shell","parentSessionId":root_id}})).await?;
         let foreign_id=foreign["data"]["receipt"]["sessionId"].as_str().context("foreign")?;
         let created=data(call(&coordinator,"nesvo_create_run",json!({"key":"native-control-run","spec":{"title":"Native stop and cancel","goal":"Bounded physical control only"}})).await?)?;
         let run=created["data"]["run"]["id"].as_str().context("control run")?;
@@ -79,14 +79,14 @@ async fn controls_only_bound_workers_preserves_human_drafts_and_never_replays_si
         let second_id=second["data"]["control"]["id"].as_str().context("second control")?;
         let draft_blocked=control_state(&owner,run,second_id,"blocked").await?;
         assert_eq!(draft_blocked["data"]["targets"][0]["code"],"control_busy","Run stop protects a draft even after its lease is released");
-        data(call(&owner,"nesvo_stop_session",json!({"key":"explicit-human-draft-stop","sessionId":children[0]})).await?)?;
+        waits::operation(&owner,"nesvo_stop_session",json!({"key":"explicit-human-draft-stop","sessionId":children[0]})).await?;
         let stopped=control_state(&owner,run,second_id,"completed").await?;
         assert_eq!(stopped["data"]["run"]["state"],"stopped");
         let forbidden=call(&coordinator,"nesvo_resume_run",json!({"key":"coordinator-bypass","runId":run,"expectedRevision":stopped["data"]["run"]["revision"]})).await?;
         assert_eq!(forbidden.structured_content.context("owner stop latch")?["error"]["code"],"forbidden");
         let resumed=data(call(&owner,"nesvo_resume_run",json!({"key":"owner-reopens-stopped","runId":run,"expectedRevision":stopped["data"]["run"]["revision"]})).await?)?;
         assert_eq!(resumed["data"]["run"]["budget"]["startedAt"],started);
-        let fresh=data(call(&coordinator,"nesvo_create_session",json!({"key":"fresh-control-worker","spec":{"name":"Fresh retry worker","program":"shell","harness":false}})).await?)?;
+        let fresh=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"fresh-control-worker","spec":{"name":"Fresh retry worker","program":"shell","harness":false}})).await?;
         let fresh_id=fresh["data"]["receipt"]["sessionId"].as_str().context("fresh worker")?;
         let assigned=data(call(&coordinator,"nesvo_assign_task",json!({"key":"fresh-control-attempt","runId":run,"expectedRevision":resumed["data"]["run"]["revision"],"taskId":plan["data"]["tasks"][0]["id"],"sessionId":fresh_id})).await?)?;
         assert_eq!(assigned["data"]["tasks"][0]["currentAttempt"]["ordinal"],2);

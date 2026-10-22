@@ -33,7 +33,7 @@ async fn owner_child_tool_policy_is_explicit_process_scoped_and_never_delegates_
         assert_eq!(root["data"]["session"]["harness"]["childToolPolicy"]["allow"],policy);
         assert_eq!(actual(&fixture,id)?,json!(["mcp__nesvo__nesvo_create_session"]),"The child policy must not expand the coordinator's own allow list");
         let coordinator=scoped_client(&caller(&fixture,id)?,id).await?;
-        let child=data(call(&coordinator,"nesvo_create_session",json!({"key":"derived-policy-child","spec":{"name":"Derived policy child","program":"claude"}})).await?)?;
+        let child=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"derived-policy-child","spec":{"name":"Derived policy child","program":"claude"}})).await?;
         let child_id=child["data"]["receipt"]["sessionId"].as_str().context("derived policy child")?;session_ready(&owner,child_id).await?;
         let configured=effective(&owner,child_id).await?;
         assert_eq!(configured["allow"],policy);assert_eq!(configured["source"],"ownerChildPolicy");assert_eq!(configured["originSessionId"],id);
@@ -46,10 +46,10 @@ async fn owner_child_tool_policy_is_explicit_process_scoped_and_never_delegates_
             let mut spec=json!({"name":"Cannot replace policy","program":"claude"});spec[field]=json!([]);
             refused_before_or_after_durable_identity(&coordinator,json!({"key":format!("cannot-replace-{field}"),"spec":spec}),"forbidden").await?;
         }
-        let metadata=data(call(&owner,"nesvo_create_session",json!({"key":"metadata-is-not-delegation","spec":{"name":"Owner metadata child","program":"claude","harness":true,"parentSessionId":id}})).await?)?;
+        let metadata=waits::operation(&owner,"nesvo_create_session",json!({"key":"metadata-is-not-delegation","spec":{"name":"Owner metadata child","program":"claude","harness":true,"parentSessionId":id}})).await?;
         let metadata=metadata["data"]["receipt"]["sessionId"].as_str().context("metadata child")?;session_ready(&owner,metadata).await?;
         assert_eq!(actual(&fixture,metadata)?,json!([]));assert_eq!(effective(&owner,metadata).await?["source"],"none");
-        let opted=data(call(&coordinator,"nesvo_create_session",json!({"key":"explicit-tools-optout","spec":{"name":"No harness tools","program":"claude","harness":false}})).await?)?;
+        let opted=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"explicit-tools-optout","spec":{"name":"No harness tools","program":"claude","harness":false}})).await?;
         let opted=opted["data"]["receipt"]["sessionId"].as_str().context("opted out child")?;session_ready(&owner,opted).await?;
         assert_eq!(actual(&fixture,opted)?,json!([]));
         let run=data(call(&coordinator,"nesvo_create_run",json!({"key":"child-policy-task-run","spec":{"title":"Delegated task tools","goal":"Owner policy stays separate from worker authority"}})).await?)?;
@@ -61,14 +61,14 @@ async fn owner_child_tool_policy_is_explicit_process_scoped_and_never_delegates_
         assert_eq!(effective(&owner,task_worker).await?["source"],"ownerChildPolicy");
         assert_eq!(effective(&owner,task_worker).await?["originSessionId"],id);
         assert_eq!(actual(&fixture,task_worker)?,actual(&fixture,child_id)?);
-        let other=data(call(&owner,"nesvo_create_session",json!({"key":"another-coordinator-policy","spec":{"name":"Another owner policy","program":"claude","role":"coordinator","harness":false,"childAllowedNesvoTools":["nesvo_get_session"]}})).await?)?;
+        let other=waits::operation(&owner,"nesvo_create_session",json!({"key":"another-coordinator-policy","spec":{"name":"Another owner policy","program":"claude","role":"coordinator","harness":false,"childAllowedNesvoTools":["nesvo_get_session"]}})).await?;
         let other_id=other["data"]["receipt"]["sessionId"].as_str().context("other coordinator")?;session_ready(&owner,other_id).await?;
         let other_client=scoped_client(&caller(&fixture,other_id)?,other_id).await?;
-        let other_child=data(call(&other_client,"nesvo_create_session",json!({"key":"other-derived-child","spec":{"name":"Other policy child","program":"claude","harness":true}})).await?)?;
+        let other_child=waits::operation(&other_client,"nesvo_create_session",json!({"key":"other-derived-child","spec":{"name":"Other policy child","program":"claude","harness":true}})).await?;
         let other_child=other_child["data"]["receipt"]["sessionId"].as_str().context("other child")?;session_ready(&owner,other_child).await?;
         assert_eq!(actual(&fixture,other_child)?,json!(["mcp__nesvo__nesvo_get_session"]));assert_eq!(effective(&owner,other_child).await?["originSessionId"],other_id);
         refused_before_or_after_durable_identity(&other_client,json!({"key":"cannot-select-another-parent-policy","spec":{"name":"Forged policy origin","program":"claude","harness":true,"parentSessionId":id}}),"forbidden").await?;
-        let shell=data(call(&coordinator,"nesvo_create_session",json!({"key":"policy-does-not-affect-shell","spec":{"name":"Passive shell child","program":"shell","harness":false}})).await?)?;
+        let shell=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"policy-does-not-affect-shell","spec":{"name":"Passive shell child","program":"shell","harness":false}})).await?;
         let shell=shell["data"]["receipt"]["sessionId"].as_str().context("passive policy shell")?;
         assert_eq!(effective(&owner,shell).await?["allow"],json!([]));
         refused_before_or_after_durable_identity(&owner,json!({"key":"worker-cannot-declare-child-policy","spec":{"name":"Wrong role","program":"claude","harness":true,"childAllowedNesvoTools":[]}}),"invalid_argument").await?;
@@ -122,7 +122,7 @@ async fn owner_native_permissions_are_literal_process_additions_not_child_or_hos
         let owner=client(&fixture.pairing()).await?;
         waits::provider(&fixture,"claude").await?;
         let args=json!({"key":"explicit-native-policy","spec":{"name":"Owner approved coordinator","program":"claude","harness":true,"role":"coordinator","allowedNesvoTools":["nesvo_create_session"]}});
-        let created=data(call(&owner,"nesvo_create_session",args.clone()).await?)?;
+        let created=waits::operation(&owner,"nesvo_create_session",args.clone()).await?;
         let id=created["data"]["receipt"]["sessionId"].as_str().context("approved coordinator")?;
         session_ready(&owner,id).await?;
         assert_eq!(actual(&fixture,id)?,json!(["mcp__nesvo__nesvo_create_session"]));
@@ -133,10 +133,10 @@ async fn owner_native_permissions_are_literal_process_additions_not_child_or_hos
         assert_eq!(settings["inheritedByChildren"],false);
         assert_eq!(settings["restrictsOtherTools"],false);
         assert_eq!(settings["providerRulesStillApply"],true);
-        let same=data(call(&owner,"nesvo_create_session",args).await?)?;
+        let same=waits::operation(&owner,"nesvo_create_session",args).await?;
         assert_eq!(same["data"]["receipt"]["id"],created["data"]["receipt"]["id"]);
         let coordinator=scoped_client(&caller(&fixture,id)?,id).await?;
-        let child=data(call(&coordinator,"nesvo_create_session",json!({"key":"normal-child","spec":{"name":"Inherit harness only","program":"claude"}})).await?)?;
+        let child=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"normal-child","spec":{"name":"Inherit harness only","program":"claude"}})).await?;
         let child_id=child["data"]["receipt"]["sessionId"].as_str().context("ordinary child")?;
         session_ready(&owner,child_id).await?;
         assert_eq!(effective(&owner,child_id).await?["allow"],json!([]));

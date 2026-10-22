@@ -33,17 +33,15 @@ async fn create(fixture: &Fixture, owner: &Owner) -> Result<(Value, String)> {
     waits::provider(fixture, "codex")
         .await
         .context("Controlled Codex version readiness")?;
-    let created = data(
-        call(
-            owner,
-            "nesvo_create_session",
-            json!({"key":"quota-wake-native-once","spec":{
-                "name":"Quota continuation existing process","program":"codex",
-                "cwd":fixture.directory
-            }}),
-        )
-        .await?,
-    )?;
+    let created = waits::operation(
+        owner,
+        "nesvo_create_session",
+        json!({"key":"quota-wake-native-once","spec":{
+            "name":"Quota continuation existing process","program":"codex",
+            "cwd":fixture.directory
+        }}),
+    )
+    .await?;
     let id = created["data"]["receipt"]["sessionId"]
         .as_str()
         .context("Controlled quota session identity")?
@@ -98,14 +96,12 @@ async fn near_reset_started_when_refresh_is_admitted(
 }
 
 async fn blocked_prompt(owner: &Owner, session: &str) -> Result<(Value, String)> {
-    let sent = data(
-        call(
-            owner,
-            "nesvo_send_prompt",
-            json!({"sessionId":session,"key":"quota-blocked-original","prompt":"quota-wait"}),
-        )
-        .await?,
-    )?;
+    let sent = waits::operation(
+        owner,
+        "nesvo_send_prompt",
+        json!({"sessionId":session,"key":"quota-blocked-original","prompt":"quota-wait"}),
+    )
+    .await?;
     let id = sent["data"]["receipt"]["id"]
         .as_str()
         .context("Original correlated send")?
@@ -216,14 +212,12 @@ async fn paused(owner: &Owner, session: &str) -> Result<Value> {
 }
 
 async fn stop(owner: &Owner, session: &str) -> Result<()> {
-    data(
-        call(
-            owner,
-            "nesvo_stop_session",
-            json!({"sessionId":session,"key":"quota-fixture-stop"}),
-        )
-        .await?,
-    )?;
+    waits::operation(
+        owner,
+        "nesvo_stop_session",
+        json!({"sessionId":session,"key":"quota-fixture-stop"}),
+    )
+    .await?;
     waits::session(owner, session, waits::Session::Stopped)
         .await
         .context("Owned controlled quota process must exit")?;
@@ -295,9 +289,9 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
         assert_eq!(replay.is_error, Some(true));
         let replay = replay.structured_content.context("Original send replay evidence")?;
         assert_eq!(replay["error"]["receipt"], old);
-        let create_replay=data(call(&owner,"nesvo_create_session",json!({"key":"quota-wake-native-once","spec":{
+        let create_replay=waits::operation(&owner,"nesvo_create_session",json!({"key":"quota-wake-native-once","spec":{
             "name":"Quota continuation existing process","program":"codex","cwd":fixture.directory
-        }})).await?)?;
+        }})).await?;
         assert_eq!(create_replay["data"]["receipt"], created["data"]["receipt"]);
         let listed=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;
         let sessions=listed["data"]["sessions"].as_array().context("One native session")?;

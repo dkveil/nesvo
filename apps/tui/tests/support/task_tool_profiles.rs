@@ -74,7 +74,7 @@ async fn task_tool_selection_is_a_policy_subset_or_explicit_owner_intent_and_sur
     let outcome=std::panic::AssertUnwindSafe(async {
         let owner=client(&fixture.pairing()).await?;
         waits::provider(&fixture,"claude").await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"task-tools-root","spec":{"name":"Task tools coordinator","program":"claude","role":"coordinator","harness":true,"childAllowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"task-tools-root","spec":{"name":"Task tools coordinator","program":"claude","role":"coordinator","harness":true,"childAllowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]}})).await?;
         let root=root["data"]["receipt"]["sessionId"].as_str().context("root")?;
         session_ready(&owner,root).await?;
         let root_context=context(&fixture,root)?;

@@ -430,7 +430,7 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
         std::fs::write(&global,global_bytes)?;
         let profile=display_profile(&fixture,"echo")?;
         let spec=json!({"name":"Explicit capture","program":"claude","role":"coordinator","harness":true,"claudeQuotaCapture":{"displayProfile":profile}});
-        let created=data(call(&owner,"nesvo_create_session",json!({"key":"capture-once","spec":spec})).await?)?;
+        let created=waits::operation(&owner,"nesvo_create_session",json!({"key":"capture-once","spec":spec})).await?;
         let id=created["data"]["receipt"]["sessionId"].as_str().context("Capture session")?;
         session_ready(&owner,id).await?;
         let settings=launch_settings(&fixture,id)?;
@@ -482,7 +482,7 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
         assert!(human.contains("Claude capture: reader readable"));
         assert!(human.contains("payload scope rejected"));
         std::fs::write(&profile,b"changed invalid source manifest")?;
-        let replay=data(call(&owner,"nesvo_create_session",json!({"key":"capture-once","spec":spec})).await?)?;
+        let replay=waits::operation(&owner,"nesvo_create_session",json!({"key":"capture-once","spec":spec})).await?;
         assert_eq!(replay["data"]["receipt"]["id"],created["data"]["receipt"]["id"]);
         assert_eq!(generated(command,foreign,&fixture.directory).await?.stdout,expected,"Bound private manifest is not reread on replay");
         let mut missing_journal = MissingJournal::take(&settings).await?;
@@ -532,11 +532,11 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
         let scoped=scoped_client(&context,id).await?;
         let refused=call(&scoped,"nesvo_create_session",json!({"key":"capture-scoped-refused","spec":{"name":"Refused scoped capture","program":"claude","claudeQuotaCapture":{"displayProfile":profile}}})).await?;
         assert_eq!(refused.structured_content.context("Scoped refusal")?["error"]["code"],"forbidden");
-        let default=data(call(&owner,"nesvo_create_session",json!({"key":"default-display-untouched","spec":{"name":"Default display","program":"claude"}})).await?)?;
+        let default=waits::operation(&owner,"nesvo_create_session",json!({"key":"default-display-untouched","spec":{"name":"Default display","program":"claude"}})).await?;
         let default=default["data"]["receipt"]["sessionId"].as_str().context("Default session")?;session_ready(&owner,default).await?;
         assert!(launch_settings(&fixture,default)?.get("statusLine").is_none());
         let hang=display_profile(&fixture,"hang")?;
-        let created=data(call(&owner,"nesvo_create_session",json!({"key":"capture-hang","spec":{"name":"Bounded display hang","program":"claude","claudeQuotaCapture":{"displayProfile":hang}}})).await?)?;
+        let created=waits::operation(&owner,"nesvo_create_session",json!({"key":"capture-hang","spec":{"name":"Bounded display hang","program":"claude","claudeQuotaCapture":{"displayProfile":hang}}})).await?;
         let hang=created["data"]["receipt"]["sessionId"].as_str().context("Hang session")?;session_ready(&owner,hang).await?;
         let settings=launch_settings(&fixture,hang)?;
         let started=tokio::time::Instant::now();

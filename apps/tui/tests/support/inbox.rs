@@ -15,12 +15,12 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
     let outcome=std::panic::AssertUnwindSafe(async {
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"inbox-root","spec":{"name":"Inbox coordinator","role":"coordinator","program":"claude","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"inbox-root","spec":{"name":"Inbox coordinator","role":"coordinator","program":"claude","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("inbox root")?;
         session_ready(&owner,root_id).await?;
         let root_context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&root_context,root_id).await?;
-        let child=data(call(&coordinator,"nesvo_create_session",json!({"key":"inbox-worker","spec":{"name":"Inbox worker","program":"claude"}})).await?)?;
+        let child=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"inbox-worker","spec":{"name":"Inbox worker","program":"claude"}})).await?;
         let child_id=child["data"]["receipt"]["sessionId"].as_str().context("inbox child")?;
         session_ready(&owner,child_id).await?;
         let child_context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{child_id}.txt")))?);
@@ -83,7 +83,7 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
         let repeat=data(call(&worker,"nesvo_ack_messages",json!({"runId":run_id,"ids":[message_id]})).await?)?;
         assert_eq!(ack["data"]["acknowledged"],repeat["data"]["acknowledged"]);
         let question=data(call(&worker,"nesvo_send_message",json!({"key":"question-1","runId":run_id,"correlationId":attempt,"kind":"question","body":"Controlled question, not a permission grant"})).await?)?;
-        let holding=data(call(&owner,"nesvo_send_prompt",json!({"key":"root-hold","sessionId":root_id,"prompt":"hold-response"})).await?)?;
+        let holding=waits::operation(&owner,"nesvo_send_prompt",json!({"key":"root-hold","sessionId":root_id,"prompt":"hold-response"})).await?;
         waits::receipt(&owner,&holding["data"]["receipt"]["id"],root_id,"started").await?;
         report_from_controlled_worker(&coordinator,&fixture.directory,child_id).await?;
         let working=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
@@ -99,9 +99,9 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
         data(call(&reconnected,"nesvo_ack_messages",json!({"runId":run_id,"ids":[question["data"]["message"]["id"]]})).await?)?;
         let task=data(call(&reconnected,"nesvo_get_run",json!({"runId":run_id})).await?)?;
         assert_eq!(task["data"]["tasks"][0]["state"],"reported");assert_eq!(task["data"]["tasks"][0]["taskResult"],Value::Null);
-        data(call(&owner,"nesvo_interrupt_session",json!({"key":"release-root-hold","sessionId":root_id})).await?)?;
+        waits::operation(&owner,"nesvo_interrupt_session",json!({"key":"release-root-hold","sessionId":root_id})).await?;
         session_ready(&owner,root_id).await?;
-        data(call(&owner,"nesvo_stop_session",json!({"key":"stop-inbox-root","sessionId":root_id})).await?)?;
+        waits::operation(&owner,"nesvo_stop_session",json!({"key":"stop-inbox-root","sessionId":root_id})).await?;
         waits::session(&owner,root_id,waits::Session::Stopped).await?;
         let revoked=call(&reconnected,"nesvo_read_inbox",json!({"runId":run_id})).await?;assert_eq!(revoked.is_error,Some(true));
         let retained=data(call(&owner,"nesvo_read_inbox",json!({"runId":run_id})).await?)?;

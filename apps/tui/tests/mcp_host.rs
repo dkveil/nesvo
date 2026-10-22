@@ -571,14 +571,12 @@ async fn report_from_controlled_worker(
     session_ready(client, id)
         .await
         .context("Task fixture readiness before its first submission")?;
-    let sent = data(
-        call(
-            client,
-            "nesvo_send_prompt",
-            json!({"sessionId":id,"key":format!("task-report-{id}"),"prompt":"report-task"}),
-        )
-        .await?,
-    )?;
+    let sent = waits::operation(
+        client,
+        "nesvo_send_prompt",
+        json!({"sessionId":id,"key":format!("task-report-{id}"),"prompt":"report-task"}),
+    )
+    .await?;
     waits::receipt(client, &sent["data"]["receipt"]["id"], id, "settled")
         .await
         .context("Controlled report turn did not settle")?;
@@ -612,20 +610,20 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let initial = data(call(&mcp, "nesvo_list_sessions", json!({})).await?)?;
         assert_eq!(initial["data"]["sessions"], json!([]));
         let spec = json!({"name":"MCP shell łódź","program":"shell","cwd":fixture.directory});
-        let created = data(call(
+        let created = waits::operation(
                 &mcp,
                 "nesvo_create_session",
                 json!({"key":"sdk-once","spec":spec}),
-            ).await?)?;
+            ).await?;
         assert_eq!(created["data"]["receipt"]["phase"], "created");
         let id = created["data"]["receipt"]["sessionId"]
             .as_str()
             .context("created session")?;
-        let replay = data(call(
+        let replay = waits::operation(
                 &mcp,
                 "nesvo_create_session",
                 json!({"key":"sdk-once","spec":spec}),
-            ).await?)?;
+            ).await?;
         assert_eq!(replay, created);
         let cli = Command::new(env!("CARGO_BIN_EXE_nesvo"))
             .arg("--pairing")
@@ -657,7 +655,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
             1
         );
         let receipt = data(call(&mcp, "nesvo_get_operation", json!({"key":"sdk-once"})).await?)?;
-        let child = data(call(&mcp,"nesvo_create_session",json!({"key":"sdk-child","spec":{"name":"MCP child","program":"shell","cwd":fixture.directory,"parentSessionId":id}})).await?)?;
+        let child = waits::operation(&mcp,"nesvo_create_session",json!({"key":"sdk-child","spec":{"name":"MCP child","program":"shell","cwd":fixture.directory,"parentSessionId":id}})).await?;
         let child_id=child["data"]["receipt"]["sessionId"].as_str().context("child ID")?;
         let replay_child=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing())
             .args(["session","create","MCP child","--key","sdk-child","--parent",id,"--cwd"]).arg(&fixture.directory).arg("--json").output().await?;
@@ -673,7 +671,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         // Wait for this fixture's prompt, rather than equate PTY creation with readiness.
         #[cfg(windows)]
         observed_output(&mcp,id,"PS ").await?;
-        let sent = data(call(&mcp,"nesvo_send_prompt",json!({"sessionId":id,"key":"sdk-send","prompt":"echo NESVO_MCP_SEND"})).await?)?;
+        let sent = waits::operation(&mcp,"nesvo_send_prompt",json!({"sessionId":id,"key":"sdk-send","prompt":"echo NESVO_MCP_SEND"})).await?;
         assert_eq!(sent["data"]["receipt"]["phase"],"delivered");
         assert_eq!(sent["data"]["receipt"]["result"]["nativeWriteFlushed"],true);
         let replay_send = Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing())
@@ -731,14 +729,14 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
             rejected.structured_content.context("error")?["error"]["code"],
             "session_not_found"
         );
-        let interrupted=data(call(&mcp,"nesvo_interrupt_session",json!({"sessionId":id,"key":"sdk-interrupt"})).await?)?;
+        let interrupted=waits::operation(&mcp,"nesvo_interrupt_session",json!({"sessionId":id,"key":"sdk-interrupt"})).await?;
         assert_eq!(interrupted["data"]["receipt"]["phase"],"delivered");
         assert_eq!(interrupted["data"]["receipt"]["result"]["agentStopped"],Value::Null);
         // Ctrl+C is allowed to exit the original shell, especially on Windows.
         // Exercise actual native stop on a separate process that was not interrupted.
-        let stop_fixture=data(call(&mcp,"nesvo_create_session",json!({"key":"sdk-stop-fixture","spec":{"name":"Stop fixture","program":"shell","cwd":fixture.directory}})).await?)?;
+        let stop_fixture=waits::operation(&mcp,"nesvo_create_session",json!({"key":"sdk-stop-fixture","spec":{"name":"Stop fixture","program":"shell","cwd":fixture.directory}})).await?;
         let stop_id=stop_fixture["data"]["receipt"]["sessionId"].as_str().context("stop fixture")?;
-        let stopped=data(call(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-stop"})).await?)?;
+        let stopped=waits::operation(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-stop"})).await?;
         assert_eq!(stopped["data"]["receipt"]["phase"],"stopRequested");
         let replay_stop=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing())
             .args(["session","stop",stop_id,"--key","sdk-stop","--json"]).output().await?;
@@ -746,7 +744,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let replay_stop:Value=serde_json::from_slice(&replay_stop.stdout)?;
         assert_eq!(replay_stop["data"]["receipt"],stopped["data"]["receipt"]);
         waits::session(&mcp,stop_id,waits::Session::Stopped).await?;
-        let already_stopped=data(call(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-already-stopped"})).await?)?;
+        let already_stopped=waits::operation(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-already-stopped"})).await?;
         assert_eq!(already_stopped["data"]["receipt"]["phase"],"stopped");
         assert_eq!(already_stopped["data"]["receipt"]["result"]["processExited"],true);
         assert_eq!(already_stopped["data"]["receipt"]["result"]["nativeStopRequested"],false);
@@ -869,14 +867,14 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         std::fs::create_dir(&workspace)?;
         let owner=client(&fixture.pairing()).await?;
         waits::provider(&fixture,"claude").await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"coordinator","spec":{"name":"Coordinator fixture","program":"claude","role":"coordinator","harness":true,"cwd":workspace}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"coordinator","spec":{"name":"Coordinator fixture","program":"claude","role":"coordinator","harness":true,"cwd":workspace}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator ID")?;
         session_ready(&owner,root_id).await?;
         let root_view=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
         assert_eq!(root_view["data"]["session"]["role"],"coordinator");
         assert_eq!(root_view["data"]["session"]["harness"]["enabled"],true);
         assert_eq!(root_view["data"]["session"]["harness"]["loaded"],Value::Null,"prepared configuration does not prove model pickup");
-        data(call(&owner,"nesvo_send_prompt",json!({"sessionId":root_id,"key":"spawn-child","prompt":"spawn-child"})).await?)?;
+        waits::operation(&owner,"nesvo_send_prompt",json!({"sessionId":root_id,"key":"spawn-child","prompt":"spawn-child"})).await?;
         let result_path=fixture.directory.join("callers").join(format!("{root_id}.child.json"));
         let spawned=waits::caller_file(&owner,root_id,&result_path).await.context("Managed process did not create its child through the CLI")?;
         let child_id=spawned["data"]["receipt"]["sessionId"].as_str().context("managed child")?;
@@ -907,15 +905,15 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         assert_eq!(child["data"]["session"]["harness"]["enabled"],true,"coordinator profile is inherited by default");
         assert_eq!(child["data"]["session"]["controllerId"],Value::Null);
         assert_eq!(std::fs::canonicalize(child["data"]["session"]["cwd"].as_str().context("child cwd")?)?,workspace.canonicalize()?);
-        let replay=data(call(&coordinator,"nesvo_create_session",json!({"key":"agent-child-once","spec":{"name":"Scoped child","program":"claude"}})).await?)?;
+        let replay=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"agent-child-once","spec":{"name":"Scoped child","program":"claude"}})).await?;
         assert_eq!(replay["data"]["receipt"],spawned["data"]["receipt"]);
-        let metadata=data(call(&owner,"nesvo_create_session",json!({"key":"metadata-only","spec":{"name":"Not shared","program":"claude","cwd":workspace,"parentSessionId":root_id}})).await?)?;
+        let metadata=waits::operation(&owner,"nesvo_create_session",json!({"key":"metadata-only","spec":{"name":"Not shared","program":"claude","cwd":workspace,"parentSessionId":root_id}})).await?;
         let foreign_id=metadata["data"]["receipt"]["sessionId"].as_str().context("metadata-only ID")?;
         let forbidden=call(&coordinator,"nesvo_get_session",json!({"sessionId":foreign_id})).await?;
         assert_eq!(forbidden.structured_content.context("foreign refusal")?["error"]["code"],"forbidden","parent metadata alone does not grant access");
         let visible=data(call(&coordinator,"nesvo_list_sessions",json!({})).await?)?;
         assert_eq!(visible["data"]["sessions"].as_array().context("filtered list")?.len(),2,"metadata-only child must not appear in coordinator snapshots");
-        let opt_out=data(call(&coordinator,"nesvo_create_session",json!({"key":"opt-out","spec":{"name":"No harness worker","program":"claude","harness":false}})).await?)?;
+        let opt_out=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"opt-out","spec":{"name":"No harness worker","program":"claude","harness":false}})).await?;
         let opted_id=opt_out["data"]["receipt"]["sessionId"].as_str().context("opt-out child")?;
         let opted=data(call(&coordinator,"nesvo_get_session",json!({"sessionId":opted_id})).await?)?;
         assert_eq!(opted["data"]["session"]["harness"]["enabled"],false);
@@ -926,12 +924,12 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         session_ready(&owner,cli_id).await?;
         let cli_view=data(call(&owner,"nesvo_get_session",json!({"sessionId":cli_id})).await?)?;
         assert_eq!(cli_view["data"]["session"]["harness"]["enabled"],true);
-        let native_codex=data(call(&owner,"nesvo_create_session",json!({"key":"codex-adapter","spec":{"name":"Native Codex adapter fixture","program":"codex","cwd":workspace}})).await?)?;
+        let native_codex=waits::operation(&owner,"nesvo_create_session",json!({"key":"codex-adapter","spec":{"name":"Native Codex adapter fixture","program":"codex","cwd":workspace}})).await?;
         let codex_id=native_codex["data"]["receipt"]["sessionId"].as_str().context("Codex ID")?;
         session_ready(&owner,codex_id).await?;
         let explained=data(call(&owner,"nesvo_explain_session",json!({"sessionId":codex_id})).await?)?;
         assert_eq!(explained["data"]["report"]["sessions"][0]["integration"]["adapter"],"codex-hooks-v1");
-        let codex_sent=data(call(&owner,"nesvo_send_prompt",json!({"sessionId":codex_id,"key":"native-codex-turn","prompt":"literal native Codex prompt"})).await?)?;
+        let codex_sent=waits::operation(&owner,"nesvo_send_prompt",json!({"sessionId":codex_id,"key":"native-codex-turn","prompt":"literal native Codex prompt"})).await?;
         let codex_done=waits::receipt(&owner,&codex_sent["data"]["receipt"]["id"],codex_id,"settled").await?;
         assert_eq!(codex_done["data"]["receipt"]["phase"],"settled");
         let unsupported=call(&owner,"nesvo_create_session",json!({"key":"unsupported-harness","spec":{"name":"Unsupported shell harness","program":"shell","harness":true}})).await?;
@@ -955,7 +953,7 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         drop(human.stdin.take());
         ensure!(human.wait().await?.success(),"Human fixture shutdown");
         waits::session(&owner,child_id,waits::Session::Released).await?;
-        let sent=data(call(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"child-turn","prompt":"literal child prompt"})).await?)?;
+        let sent=waits::operation(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"child-turn","prompt":"literal child prompt"})).await?;
         let completed=waits::receipt(&coordinator,&sent["data"]["receipt"]["id"],child_id,"settled").await?;
         assert_eq!(completed["data"]["receipt"]["phase"],"settled");
         let events=data(call(&coordinator,"nesvo_read_events",json!({"sessionId":child_id,"after":0})).await?)?;
@@ -1004,7 +1002,7 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let reconnected=scoped_client(&context,root_id).await?;
         let replay=data(call(&reconnected,"nesvo_get_operation",json!({"key":"agent-child-once"})).await?)?;
         assert_eq!(replay["data"]["receipt"],spawned["data"]["receipt"]);
-        data(call(&owner,"nesvo_stop_session",json!({"sessionId":root_id,"key":"stop-coordinator"})).await?)?;
+        waits::operation(&owner,"nesvo_stop_session",json!({"sessionId":root_id,"key":"stop-coordinator"})).await?;
         waits::session(&owner,root_id,waits::Session::Stopped).await?;
         let revoked=call(&reconnected,"nesvo_get_session",json!({"sessionId":child_id})).await?;
         assert_eq!(revoked.is_error,Some(true));

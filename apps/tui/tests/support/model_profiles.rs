@@ -34,15 +34,15 @@ async fn model_profiles_are_literal_versioned_and_never_inherited_or_claimed_as_
         session_ready(&owner,id).await?;
         let actual=argv(&fixture,id)?;assert!(has_pair(&actual,"--model",model));assert!(has_pair(&actual,"--effort","low"));
         let info=selection(&owner,id).await?;assert_eq!(info["requested"]["model"],model);assert_eq!(info["requested"]["effort"],"low");assert!(info["resolved"].is_null());assert_eq!(info["inheritedByChildren"],false);
-        let replay=data(call(&owner,"nesvo_create_session",json!({"key":"native-model-profile","spec":{"name":"Explicit model coordinator","program":"claude","role":"coordinator","harness":true,"model":model,"effort":"low","worktree":false,"prompt":"","groupId":null}})).await?)?;
+        let replay=waits::operation(&owner,"nesvo_create_session",json!({"key":"native-model-profile","spec":{"name":"Explicit model coordinator","program":"claude","role":"coordinator","harness":true,"model":model,"effort":"low","worktree":false,"prompt":"","groupId":null}})).await?;
         assert_eq!(replay["data"]["receipt"]["id"],created["data"]["receipt"]["id"]);
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{id}.txt")))?);
         let coordinator=scoped_client(&context,id).await?;
-        let child=data(call(&coordinator,"nesvo_create_session",json!({"key":"model-default-child","spec":{"name":"Provider defaults","program":"claude"}})).await?)?;
+        let child=waits::operation(&coordinator,"nesvo_create_session",json!({"key":"model-default-child","spec":{"name":"Provider defaults","program":"claude"}})).await?;
         let child=child["data"]["receipt"]["sessionId"].as_str().context("default child")?;session_ready(&owner,child).await?;
         assert!(!argv(&fixture,child)?.iter().any(|arg|arg=="--model"||arg=="--effort"));
         assert_eq!(selection(&owner,child).await?["source"],"providerDefaults");
-        let codex=data(call(&owner,"nesvo_create_session",json!({"key":"codex-model-profile","spec":{"name":"Codex profile","program":"codex","model":"gpt-native-test","effort":"max"}})).await?)?;
+        let codex=waits::operation(&owner,"nesvo_create_session",json!({"key":"codex-model-profile","spec":{"name":"Codex profile","program":"codex","model":"gpt-native-test","effort":"max"}})).await?;
         let codex=codex["data"]["receipt"]["sessionId"].as_str().context("Codex profile")?;session_ready(&owner,codex).await?;
         let actual=argv(&fixture,codex)?;assert!(has_pair(&actual,"--model","gpt-native-test"));assert!(has_pair(&actual,"-c","model_reasoning_effort=\"max\""));assert!(actual.iter().any(|arg|arg.starts_with("hooks=")));
         let run=data(call(&coordinator,"nesvo_create_run",json!({"key":"model-run","spec":{"title":"Model task","goal":"Explicit task profiles"}})).await?)?;

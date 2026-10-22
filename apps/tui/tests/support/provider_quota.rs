@@ -446,7 +446,7 @@ async fn native_quota_rejects_malformed_secondary_and_sparse_notifications_witho
 
         // The controlled original process exercises the actual scoped caller,
         // rather than supplying an invented owner identity to an internal helper.
-        let created = data(call(&owner,"nesvo_create_session",json!({"key":"quota-owner-only-worker","spec":{"name":"Quota owner-only fixture","program":"claude","harness":true}})).await?)?;
+        let created = waits::operation(&owner,"nesvo_create_session",json!({"key":"quota-owner-only-worker","spec":{"name":"Quota owner-only fixture","program":"claude","harness":true}})).await?;
         let id = created["data"]["receipt"]["sessionId"].as_str().context("Quota scoped worker")?;
         session_ready(&owner, id).await?;
         let context = PathBuf::from(std::fs::read_to_string(f.directory.join("callers").join(format!("{id}.txt")))?);

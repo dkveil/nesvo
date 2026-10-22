@@ -303,17 +303,17 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
         phase.set("owner CLI doctor: controlled provider readiness");
         waits::provider(&fixture, "claude").await?;
         phase.set("owner MCP nesvo_create_session: controlled PTY");
-        let created = data(call(owner, "nesvo_create_session", json!({
+        let created = waits::operation(owner, "nesvo_create_session", json!({
             "key":"cancel-wait-session","spec":{"name":"Passive cancellation fixture","program":"claude","harness":true}
-        })).await?)?;
+        })).await?;
         let session = created["data"]["receipt"]["sessionId"].as_str().context("Cancellation session")?;
         release = Some(fixture.directory.join("callers").join(format!("{session}.release")));
         phase.set("owner MCP nesvo_get_session: controlled provider readiness");
         session_ready(owner, session).await?;
         phase.set("owner MCP nesvo_send_prompt: sole native submission");
-        let sent = data(call(owner, "nesvo_send_prompt", json!({
+        let sent = waits::operation(owner, "nesvo_send_prompt", json!({
             "sessionId":session,"key":"cancel-wait-original","prompt":"held-natural-response"
-        })).await?)?;
+        })).await?;
         phase.set("owner MCP nesvo_read_session: held natural response marker");
         observed_output(owner, session, "FIXTURE_HOLDING_NATURAL_RESPONSE").await?;
         phase.set("owner MCP nesvo_wait_prompt: original receipt started");

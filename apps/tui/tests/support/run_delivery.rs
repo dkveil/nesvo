@@ -18,7 +18,7 @@ async fn queued_task_instruction_delivers_once_and_never_resumes_over_human_cont
     let outcome=std::panic::AssertUnwindSafe(async{
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"delivery-root","spec":{"name":"Delivery coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"delivery-root","spec":{"name":"Delivery coordinator","program":"claude","role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&context,root_id).await?;
@@ -47,7 +47,7 @@ async fn queued_task_instruction_delivers_once_and_never_resumes_over_human_cont
         assert_eq!(output["data"]["page"]["data"].as_str().unwrap().matches("FIXTURE_RESPONSE report-task").count(),1);
         let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
         assert_eq!(current["data"]["tasks"][0]["state"],"reported");assert!(current["data"]["tasks"][0]["taskResult"].is_null());
-        data(call(&coordinator,"nesvo_send_prompt",json!({"key":"hold-before-takeover","sessionId":workers[1],"prompt":"hold-response"})).await?)?;
+        waits::operation(&coordinator,"nesvo_send_prompt",json!({"key":"hold-before-takeover","sessionId":workers[1],"prompt":"hold-response"})).await?;
         observed_output(&owner,&workers[1],"FIXTURE_HOLDING_RESPONSE").await?;
         let queued=data(call(&owner,"nesvo_deliver_task",json!({"key":"human-wins","runId":run,"taskId":tasks[1]["id"],"expectedRevision":current["data"]["run"]["revision"]})).await?)?;
         let mut human=human_control(&fixture.pairing(),&workers[1]).await?;
@@ -56,7 +56,7 @@ async fn queued_task_instruction_delivers_once_and_never_resumes_over_human_cont
         assert!(paused["data"]["attempts"][0]["delivery"]["receiptId"].is_null());
         assert!(queued["data"]["delivery"]["receiptId"].is_null());
         for index in 2..4 {
-            data(call(&coordinator,"nesvo_send_prompt",json!({"key":format!("hold-{index}"),"sessionId":workers[index],"prompt":"hold-response"})).await?)?;
+            waits::operation(&coordinator,"nesvo_send_prompt",json!({"key":format!("hold-{index}"),"sessionId":workers[index],"prompt":"hold-response"})).await?;
             observed_output(&owner,&workers[index],"FIXTURE_HOLDING_RESPONSE").await?;
             let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
             let queued=data(call(&coordinator,"nesvo_deliver_task",json!({"key":format!("waiting-{index}"),"runId":run,"taskId":tasks[index]["id"],"expectedRevision":current["data"]["run"]["revision"],"timeoutMs":if index==2 {300000}else{150}})).await?)?;
@@ -252,7 +252,7 @@ async fn settled_worker_session_is_reused_for_a_new_attempt_once_and_refused_whe
     let outcome=std::panic::AssertUnwindSafe(async{
         waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
-        let root=data(call(&owner,"nesvo_create_session",json!({"key":"reuse-root","spec":{"name":"Reuse coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
+        let root=waits::operation(&owner,"nesvo_create_session",json!({"key":"reuse-root","spec":{"name":"Reuse coordinator","program":"claude","role":"coordinator","harness":true}})).await?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;session_ready(&owner,root_id).await?;
         let context=PathBuf::from(std::fs::read_to_string(fixture.directory.join("callers").join(format!("{root_id}.txt")))?);
         let coordinator=scoped_client(&context,root_id).await?;

@@ -249,14 +249,11 @@ async fn sdk_clients_receive_event_resource_updates_with_cursors() -> Result<()>
         legacy.peer().send_request(subscribe()).await?;
         ensure!(legacy_update(&mut legacy_rx).await?["ready"] == true);
 
-        let created = data(
-            call(
+        let created = waits::operation(
                 &owner,
                 "nesvo_create_session",
                 json!({"key":"events-bridge","spec":{"name":"Events bridge","program":"shell","cwd":fixture.directory}}),
-            )
-            .await?,
-        )?;
+            ).await?;
         let receipt = &created["data"]["receipt"];
         let operation = receipt["id"].as_str().context("operation")?;
         let (modern, page) = delta_for(&modern_client, async || modern_update(&mut subscription, OPERATIONS).await, operation).await?;
@@ -287,7 +284,7 @@ async fn sdk_clients_receive_event_resource_updates_with_cursors() -> Result<()>
         }
 
         let id = receipt["sessionId"].as_str().context("session")?;
-        data(call(&owner, "nesvo_stop_session", json!({"key":"events-bridge-stop","sessionId":id})).await?)?;
+        waits::operation(&owner, "nesvo_stop_session", json!({"key":"events-bridge-stop","sessionId":id})).await?;
         drop(subscription);
         modern_client.cancel().await?;
         legacy.cancel().await?;
@@ -317,14 +314,14 @@ async fn worker_event_subscriptions_keep_their_subject_and_refuse_foreign_sessio
     let outcome = std::panic::AssertUnwindSafe(async {
         repository_context::provider_ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
-        let root = data(call(&owner, "nesvo_create_session", json!({"key":"events-coordinator","spec":{"name":"Events coordinator","role":"coordinator","program":"claude","harness":true}})).await?)?;
+        let root = waits::operation(&owner, "nesvo_create_session", json!({"key":"events-coordinator","spec":{"name":"Events coordinator","role":"coordinator","program":"claude","harness":true}})).await?;
         let root_id = root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;
         session_ready(&owner, root_id).await?;
         let coordinator = scoped_client(&caller_context(&fixture, root_id)?, root_id).await?;
-        let child = data(call(&coordinator, "nesvo_create_session", json!({"key":"events-worker","spec":{"name":"Events worker","program":"claude"}})).await?)?;
+        let child = waits::operation(&coordinator, "nesvo_create_session", json!({"key":"events-worker","spec":{"name":"Events worker","program":"claude"}})).await?;
         let child_id = child["data"]["receipt"]["sessionId"].as_str().context("worker")?;
         session_ready(&owner, child_id).await?;
-        let foreign = data(call(&owner, "nesvo_create_session", json!({"key":"events-foreign","spec":{"name":"Foreign events","program":"shell","cwd":fixture.directory}})).await?)?;
+        let foreign = waits::operation(&owner, "nesvo_create_session", json!({"key":"events-foreign","spec":{"name":"Foreign events","program":"shell","cwd":fixture.directory}})).await?;
         let foreign_id = foreign["data"]["receipt"]["sessionId"].as_str().context("foreign")?;
         let foreign_uri = format!("nesvo://events/session/{foreign_id}");
         let own = "nesvo://events";
@@ -352,7 +349,7 @@ async fn worker_event_subscriptions_keep_their_subject_and_refuse_foreign_sessio
             .await?;
         let ready = modern_update(&mut subscription, own).await?;
         ensure!(ready["ready"] == true, "A refused listen releases its streams: {ready}");
-        let sent = data(call(&coordinator, "nesvo_send_prompt", json!({"sessionId":child_id,"key":"events-worker-turn","prompt":"literal worker prompt"})).await?)?;
+        let sent = waits::operation(&coordinator, "nesvo_send_prompt", json!({"sessionId":child_id,"key":"events-worker-turn","prompt":"literal worker prompt"})).await?;
         data(call(&coordinator, "nesvo_wait_prompt", json!({"id":sent["data"]["receipt"]["id"],"sessionId":child_id,"timeoutMs":5000})).await?)?;
         let mut delta = ready;
         for _ in 0..8 {

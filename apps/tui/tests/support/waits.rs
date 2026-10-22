@@ -285,6 +285,77 @@ pub(super) async fn provider(fixture: &Fixture, program: &str) -> Result<Value> 
     .await
 }
 
+fn exceeded_adapter_bound(result: &CallToolResult) -> bool {
+    result.is_error == Some(true)
+        && result.structured_content.as_ref().is_some_and(|reply| {
+            reply["error"]["code"] == "timeout" && reply["error"].get("receipt").is_none()
+        })
+}
+
+pub(super) async fn operation(client: &Client, name: &'static str, args: Value) -> Result<Value> {
+    let key = args["key"].clone();
+    let result = call(client, name, args).await?;
+    if !exceeded_adapter_bound(&result) {
+        return data(result);
+    }
+    let bound = result.structured_content.unwrap_or_default();
+    until(async || {
+        let view = data(call(client, "nesvo_get_operation", json!({"key":key})).await?)?;
+        let phase = &view["data"]["receipt"]["phase"];
+        if matches!(phase.as_str(), Some("accepted" | "dispatching")) {
+            return Ok(None);
+        }
+        ensure!(
+            !matches!(phase.as_str(), Some("failed" | "unknown" | "interrupted")),
+            "Original key settled as {phase}: {view}"
+        );
+        Ok(Some(view))
+    })
+    .await
+    .with_context(|| {
+        format!("{name} exceeded the adapter request bound ({bound}); inspected its original key")
+    })
+}
+
+#[test]
+fn only_a_receiptless_adapter_timeout_is_recovered_through_its_original_key() {
+    let bound = json!({"schemaVersion":1,"ok":false,"error":{"code":"timeout",
+        "message":"Host request timed out; no operation was retried","retryable":true}});
+    assert!(exceeded_adapter_bound(&CallToolResult::structured_error(
+        bound.clone()
+    )));
+    let mut milestone = bound.clone();
+    milestone["error"]["receipt"] = json!({"id":"1".repeat(32),"phase":"received"});
+    assert!(!exceeded_adapter_bound(&CallToolResult::structured_error(
+        milestone
+    )));
+    let mut refused = bound.clone();
+    refused["error"]["code"] = json!("operation_failed");
+    assert!(!exceeded_adapter_bound(&CallToolResult::structured_error(
+        refused
+    )));
+    assert!(!exceeded_adapter_bound(&CallToolResult::structured(bound)));
+}
+
+#[test]
+fn receipt_milestones_follow_the_host_wait_rules() {
+    let receipt = |phase: &str, result: Value| json!({"phase":phase,"result":result});
+    let flushed = receipt("delivered", json!({"nativeWriteFlushed":true}));
+    assert!(receipt_reached(&flushed, "delivered"));
+    assert!(!receipt_reached(&flushed, "received"));
+    let observed = receipt("received", json!({"providerPromptObserved":true}));
+    assert!(receipt_reached(&observed, "delivered"));
+    assert!(receipt_reached(&observed, "received"));
+    assert!(!receipt_reached(&observed, "started"));
+    let processing = receipt(
+        "started",
+        json!({"providerPromptObserved":true,"processingObserved":true}),
+    );
+    assert!(receipt_reached(&processing, "started"));
+    assert!(!receipt_reached(&processing, "settled"));
+    assert!(receipt_reached(&receipt("settled", json!({})), "settled"));
+}
+
 pub(super) async fn cli(mut command: Command) -> Result<Value> {
     command.stdin(Stdio::null()).kill_on_drop(true);
     #[cfg(windows)]
