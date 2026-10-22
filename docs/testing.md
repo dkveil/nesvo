@@ -377,6 +377,14 @@ $env:NESVO_UPDATE_CONTRACTS = "1"
 cargo test --package nesvo --test mcp_host --locked decision_replay::real_inbox_and_decision_replies_match_the_client_contract_goldens -- --ignored --exact
 ```
 
+### Mobile contract types
+
+`npm run test:client` also runs the mobile contract checks; regenerate the types with `npm run contracts:types` after a schema change:
+
+- `tests/contract-types.test.mjs` (alone: `npm run test:contract-types`) compares the checked-in `apps/mobile/src/shared/api/contracts/*.ts` with a fresh `json-schema-to-typescript` generation and fails on drift or on a comment in the output.
+- `tests/client-schema.test.ts` validates the schema-typed fixtures in `tests/fixtures/mobile-wire-fixtures.ts`, which `npm run typecheck` compiles, against `docs/harness-cli.schema.json` with ajv. It decodes every published enum member as known and, for inbox items, receipts, decisions, job pages, job history, job detail and session snapshots, proves that an unknown field is ignored, an unknown enum member lies outside the schema and is handled as [protocol v2](protocol-v2.md) documents, and a malformed known field is refused by both the schema and the decoder.
+- `tests/client-contract.test.ts` validates its inbox, job and session snapshot fixtures and the captured envelopes in `tests/fixtures/harness-cli-envelopes.json` against the same schema.
+
 ### Ultraviolet checks
 
 `npm run test:brand` checks the shared palette, exact SVG-to-terminal glyph geometry and six-second motion timeline. `npm run test:brand:web` checks the rendered logo, full violet visor during blinking, session creation from the launchpad, narrow layout, reduced motion and animation suspension when hidden or offscreen. These checks run in CI alongside the existing application and terminal tests.

@@ -71,4 +71,10 @@ Claude Code's documented hooks provide a starting point for an adapter, includin
 
 Mosh bootstraps through an authenticated connection and then communicates with its server over UDP. Its network behavior needs separate server setup and client integration. [Mosh protocol paper](https://mosh.org/mosh-paper.pdf)
 
+## Generated contract types
+
+Mobile wire models come from the published host contracts, not hand-written copies. `npm run contracts:types` compiles `docs/harness-cli.schema.json` and `docs/harness-events.schema.json` with the pinned `json-schema-to-typescript` package into `apps/mobile/src/shared/api/contracts/harness-cli.ts` and `harness-events.ts`, without comments; schema objects that accept extra members keep an index signature. `apps/mobile/src/shared/api/host/types.ts` picks the fields each model consumes from those types, and the decoder lists its known enum members as exhaustive records of the generated unions, so a schema that adds or removes a member fails `npm run typecheck` until the decoder follows it. Runtime tolerance stays as documented in [protocol v2](protocol-v2.md). Shapes that only the WebSocket protocol defines (capabilities, push devices, session status, lifecycle and attention) remain hand-written because no schema publishes them.
+
+After a schema change, regenerate the Rust contracts first, then run `npm run contracts:types` and commit both outputs. `tests/contract-types.test.mjs` fails when the checked-in types differ from a fresh generation.
+
 See [design direction](design.md) for the visual rules, [architecture](architecture.md) for existing ownership boundaries and [testing](testing.md) for verified behavior. This document adds priorities, not completed features.
