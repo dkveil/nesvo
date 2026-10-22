@@ -137,7 +137,10 @@ owner client is closed, preservation of an independent process, report disarming
 while validation is pending, active human leases/drafts and quick takeover/release.
 They check exact control/native receipts, one generation without retry, actual
 owned process liveness, retained history and the published response schema.
-Failures retain bounded phase/host/job diagnostics before cleanup. They complement
+Failures retain bounded phase/host/job diagnostics before cleanup. They read
+through one owner MCP connection, at most four calls at a time, within one
+3.8-second collection bound; a cold CLI process per query exceeded a one-second
+bound on a loaded Windows runner exactly when the evidence mattered. They complement
 the injected-clock and restart storage regressions; they are not original-provider
 or native-phone acceptance. See the [timeout contract](harness-job-timeouts.md).
 
@@ -148,8 +151,10 @@ delivery and the worker's scoped CLI calls, whose duration depends on the
 platform, so the host's own bounds (execution timeout, delivery deadline, worker
 exit) and the scenario's outer limit bound it instead of a fixed per-wait window.
 
-The readiness helper polls the exact reserved ID within its original seven-second
-bound. Before physical creation, only the current structured MCP
+The controlled-hold helper polls the exact reserved ID until the timed worker is
+working. Its bound is the armed timer's published deadline, after which no hold
+can precede the timeout, and it fails at once if the occurrence settles first.
+Before physical creation, only the current structured MCP
 `session_not_found` refusal is pending; other refusals, malformed messages,
 foreign identities and transport errors remain failures. An ordinary regression
 covers that boundary separately from the three native timeout scenarios.

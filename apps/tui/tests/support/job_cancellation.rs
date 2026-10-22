@@ -29,7 +29,7 @@ pub(super) async fn occurrence(
     }
 }
 
-const SETTLED_OCCURRENCE: [&str; 4] = ["succeeded", "failed", "skipped", "canceled"];
+pub(super) const SETTLED_OCCURRENCE: [&str; 4] = ["succeeded", "failed", "skipped", "canceled"];
 
 fn diagnostic_fields(value: &Value, fields: &[&str]) -> Value {
     Value::Object(
@@ -150,9 +150,10 @@ pub(super) async fn process_alive(fixture: &Fixture, pid: u64) -> Result<bool> {
         "try { process.kill(Number(process.argv[1]), 0); process.stdout.write('alive'); } catch (error) { if (error.code !== 'ESRCH') throw error; process.stdout.write('gone'); }",
         &pid.to_string(),
     ]);
+    command.kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(2), command.output()).await??;
+    let output = command.output().await?;
     ensure!(
         output.status.success(),
         "Read-only owned PID probe failed: {}",

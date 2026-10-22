@@ -1,6 +1,6 @@
 //! Explicit native job execution windows; controlled workers, never model calls.
 use super::*;
-use job_cancellation::{occurrence, process_alive};
+use job_cancellation::{SETTLED_OCCURRENCE, occurrence, process_alive};
 
 type Owner = RunningService<RoleClient, ()>;
 type ScenarioOutcome =
@@ -166,28 +166,38 @@ fn working_session(result: CallToolResult, worker: &str) -> Result<Option<Value>
 }
 
 async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
-    let mut last = Value::Null;
-    timeout(Duration::from_millis(WORKING_MS), async {
-        loop {
-            let current = read_occurrence(owner, job, id).await?;
-            let row = &current["data"]["occurrence"];
-            if row["executionTimeout"]["state"] == "armed"
-                && let Some(worker) = row["sessionId"].as_str()
-            {
+    loop {
+        let current = read_occurrence(owner, job, id).await?;
+        let row = &current["data"]["occurrence"];
+        let timer = &row["executionTimeout"];
+        if timer["state"] == "armed" {
+            if let Some(worker) = row["sessionId"].as_str() {
                 let observed =
                     call(owner, "nesvo_get_session", json!({"sessionId":worker})).await?;
                 if let Some(session) = working_session(observed, worker)?
                     && session["data"]["session"]["status"]["state"] == "working"
                 {
-                    return Ok::<_, anyhow::Error>((current, session));
+                    return Ok((current, session));
                 }
             }
-            last = current;
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            let deadline = timer["deadlineAt"]
+                .as_u64()
+                .context("Public native deadline")?;
+            ensure!(
+                u64::try_from(chrono::Utc::now().timestamp_millis())? < deadline,
+                "Timed worker never reached controlled hold before its native deadline; last: {current}"
+            );
+        } else {
+            ensure!(
+                timer.is_null()
+                    && !row["state"]
+                        .as_str()
+                        .is_some_and(|state| SETTLED_OCCURRENCE.contains(&state)),
+                "Timed worker settled before controlled hold; last: {current}"
+            );
         }
-    })
-    .await
-    .with_context(|| format!("Timed worker never reached controlled hold; last: {last}"))?
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 #[test]

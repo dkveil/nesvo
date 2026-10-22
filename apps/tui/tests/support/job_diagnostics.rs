@@ -1,25 +1,14 @@
 use super::*;
 
-async fn diagnostic_cli(fixture: &Fixture, args: &[&str]) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
-    command
-        .arg("--pairing")
-        .arg(fixture.pairing())
-        .args(args)
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    match timeout(Duration::from_secs(1), command.output()).await {
-        Ok(Ok(output)) => json!({
-            "exitCode":output.status.code(),
-            "reply":serde_json::from_slice::<Value>(&output.stdout).unwrap_or_else(|_| {
-                json!({"unparsedStdout":String::from_utf8_lossy(&output.stdout).chars().take(1024).collect::<String>()})
-            }),
-            "stderr":String::from_utf8_lossy(&output.stderr).chars().take(1024).collect::<String>()
-        }),
-        Ok(Err(error)) => json!({"error":error.to_string()}),
-        Err(_) => json!({"error":"Diagnostic CLI query exceeded one second"}),
+type Owner = RunningService<RoleClient, ()>;
+
+async fn diagnostic_read(owner: &Owner, name: &'static str, arguments: Value) -> Value {
+    match call(owner, name, arguments).await {
+        Ok(result) => match result.structured_content {
+            Some(reply) => json!({"reply":reply}),
+            None => json!({"error":"Diagnostic MCP reply had no structured content"}),
+        },
+        Err(error) => json!({"error":error.to_string()}),
     }
 }
 
@@ -31,20 +20,18 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
     };
     let mut diagnostics = json!({"host":host});
     let observed = timeout(Duration::from_millis(3800), async {
-        let history_args = ["job", "history", job, "--json"];
-        let definition_args = ["job", "show", job, "--json"];
-        let (history, doctor, definition) = tokio::join!(
-            diagnostic_cli(fixture, &history_args),
-            diagnostic_cli(fixture, &["doctor", "--json"]),
-            diagnostic_cli(fixture, &definition_args),
+        let owner = match client(&fixture.pairing()).await {
+            Ok(owner) => owner,
+            Err(error) => {
+                diagnostics["connection"] = json!({"error":error.to_string()});
+                return;
+            }
+        };
+        let (history, definition) = tokio::join!(
+            diagnostic_read(&owner, "nesvo_get_job_history", json!({"jobId":job})),
+            diagnostic_read(&owner, "nesvo_get_job", json!({"jobId":job})),
         );
         diagnostics["history"] = history;
-        diagnostics["providerProbe"] = json!({
-            "exitCode":doctor["exitCode"],"stderr":doctor["stderr"],"error":doctor["error"],
-            "providerVersions":doctor["reply"]["providerVersions"],
-            "eventJournal":doctor["reply"]["eventJournal"],
-            "replyError":doctor["reply"]["error"]
-        });
         diagnostics["job"] = definition;
         let occurrence = &diagnostics["history"]["reply"]["data"]["occurrences"][0];
         let run_id = occurrence["runId"].as_str().map(str::to_owned);
@@ -53,14 +40,16 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
         let (run, receipt, transcript, session_state) = tokio::join!(
             async {
                 match run_id.as_deref() {
-                    Some(run) => diagnostic_cli(fixture, &["run", "get", run, "--json"]).await,
+                    Some(run) => {
+                        diagnostic_read(&owner, "nesvo_get_run", json!({"runId":run})).await
+                    }
                     None => Value::Null,
                 }
             },
             async {
-                match receipt {
+                match receipt.as_deref() {
                     Some(receipt) => {
-                        diagnostic_cli(fixture, &["operation", &receipt, "--json"]).await
+                        diagnostic_read(&owner, "nesvo_get_operation", json!({"id":receipt})).await
                     }
                     None => Value::Null,
                 }
@@ -68,9 +57,10 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
             async {
                 match session.as_deref() {
                     Some(session) => {
-                        diagnostic_cli(
-                            fixture,
-                            &["session", "read", session, "--max-bytes", "2048", "--json"],
+                        diagnostic_read(
+                            &owner,
+                            "nesvo_read_session",
+                            json!({"sessionId":session,"maxBytes":2048}),
                         )
                         .await
                     }
@@ -80,7 +70,8 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
             async {
                 match session.as_deref() {
                     Some(session) => {
-                        diagnostic_cli(fixture, &["session", "get", session, "--json"]).await
+                        diagnostic_read(&owner, "nesvo_get_session", json!({"sessionId":session}))
+                            .await
                     }
                     None => Value::Null,
                 }
@@ -90,13 +81,36 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
         diagnostics["launchReceipt"] = receipt;
         diagnostics["controlledWorkerOutput"] = transcript;
         diagnostics["session"] = session_state;
+        let explain = match session.as_deref() {
+            Some(session) => {
+                diagnostic_read(
+                    &owner,
+                    "nesvo_explain_session",
+                    json!({"sessionId":session}),
+                )
+                .await
+            }
+            None => Value::Null,
+        };
+        let report = &explain["reply"]["data"]["report"];
+        diagnostics["providerProbe"] = json!({
+            "error":explain["error"],
+            "providerVersions":report["providerVersions"],
+            "eventJournal":report["eventJournal"],
+            "replyError":explain["reply"]["error"]
+        });
         let task_id = diagnostics["run"]["reply"]["data"]["tasks"][0]["id"]
             .as_str()
             .map(str::to_owned);
         if let (Some(run), Some(task)) = (run_id, task_id) {
-            diagnostics["taskAttempts"] =
-                diagnostic_cli(fixture, &["run", "task", &run, &task, "--json"]).await;
+            diagnostics["taskAttempts"] = diagnostic_read(
+                &owner,
+                "nesvo_get_task_attempts",
+                json!({"runId":run,"taskId":task}),
+            )
+            .await;
         }
+        let _ = owner.cancel().await;
     })
     .await;
     if observed.is_err() {
