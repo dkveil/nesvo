@@ -228,8 +228,12 @@ async fn lost_executor_reply_pauses_the_old_run_and_admits_one_fresh_generation(
             .to_owned();
         owner.cancel().await?;
         restart_with_reply_drop(&mut fixture, &job).await?;
-        waits::provider(&fixture, "claude").await?;
         let owner = client(&fixture.pairing()).await?;
+        let restarted = data(call(&owner, "nesvo_get_job", json!({"jobId":job})).await?)?;
+        assert_eq!(restarted["data"]["job"]["id"], job.as_str());
+        waits::provider(&fixture, "claude")
+            .await
+            .context("Controlled provider discovery after the fault-hook restart")?;
         let admitted = budgets::owner_cli(
             &fixture,
             &[
