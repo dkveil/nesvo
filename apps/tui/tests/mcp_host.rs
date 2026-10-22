@@ -43,6 +43,8 @@ mod calendars;
 mod claude_quota_capture;
 #[path = "support/decision_replay.rs"]
 mod decision_replay;
+#[path = "support/executor_pause.rs"]
+mod executor_pause;
 #[path = "support/hibernation.rs"]
 mod hibernation;
 #[path = "support/host_checks.rs"]
