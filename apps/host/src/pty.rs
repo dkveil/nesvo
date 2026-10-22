@@ -4,7 +4,7 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 use std::time::Duration;
 use std::{
     io::{Read, Write},
-    sync::mpsc as sync_mpsc,
+    sync::{Arc, Mutex, mpsc as sync_mpsc},
     thread,
 };
 use tokio::sync::{mpsc, oneshot};
@@ -21,11 +21,13 @@ pub enum PtyEvent {
     InputError(String),
 }
 
+type Console = Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>;
+
 pub struct Pty {
     process_id: Option<u32>,
     // Drop order: the input channel must close before ConPTY's potentially blocking destructor.
     input: sync_mpsc::SyncSender<Input>,
-    master: Box<dyn MasterPty + Send>,
+    console: Console,
     killer: Box<dyn ChildKiller + Send + Sync>,
     #[cfg(test)]
     trace: Option<input_trace::Trace>,
@@ -143,6 +145,8 @@ impl Pty {
         events: mpsc::Sender<PtyEvent>,
         #[cfg(test)] trace: Option<input_trace::Trace>,
     ) -> Result<Self> {
+        #[cfg(windows)]
+        crate::process::system_conpty()?;
         let pair = native_pty_system().openpty(size)?;
         let mut child = pair.slave.spawn_command(command)?;
         let process_id = child.process_id();
@@ -167,9 +171,13 @@ impl Pty {
         thread::spawn(move || {
             let mut buffer = [0u8; 8192];
             let mut pending = Vec::new();
+            let mut delivering = true;
             while let Ok(length) = reader.read(&mut buffer) {
                 if length == 0 {
                     break;
+                }
+                if !delivering {
+                    continue;
                 }
                 pending.extend_from_slice(&buffer[..length]);
                 let (valid, keep) = match std::str::from_utf8(&pending) {
@@ -185,19 +193,29 @@ impl Pty {
                         .blocking_send(PtyEvent::Data(reader_id.to_owned(), valid))
                         .is_err()
                 {
-                    break;
+                    delivering = false;
+                    continue;
                 }
                 pending.drain(..pending.len() - keep);
             }
         });
+        let console: Console = Arc::new(Mutex::new(Some(pair.master)));
         let wait_id = id.to_owned();
         #[cfg(windows)]
         let mut descendants = killer.clone_killer();
+        #[cfg(windows)]
+        let exited_console = Arc::downgrade(&console);
         thread::spawn(move || {
             let exit = child.wait().ok().map(|status| status.exit_code());
             #[cfg(windows)]
-            if let Err(error) = descendants.kill() {
-                eprintln!("Native session descendant cleanup failed: {error}");
+            {
+                if let Err(error) = descendants.kill() {
+                    eprintln!("Native session descendant cleanup failed: {error}");
+                }
+                let released = exited_console
+                    .upgrade()
+                    .and_then(|console| console.lock().unwrap().take());
+                drop(released);
             }
             let _ = events.blocking_send(PtyEvent::Exited(wait_id, exit));
         });
@@ -205,7 +223,7 @@ impl Pty {
         Ok(Self {
             process_id,
             input: input_tx,
-            master: pair.master,
+            console,
             killer,
             #[cfg(test)]
             trace,
@@ -263,7 +281,10 @@ impl Pty {
     }
 
     pub fn resize(&self, size: PtySize) -> Result<()> {
-        self.master.resize(size)
+        match self.console.lock().unwrap().as_ref() {
+            Some(console) => console.resize(size),
+            None => Ok(()),
+        }
     }
     pub fn kill(&mut self) -> Result<()> {
         Ok(self.killer.kill()?)

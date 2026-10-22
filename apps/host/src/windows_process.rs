@@ -11,8 +11,26 @@ use windows_sys::Win32::System::{
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         SetInformationJobObject, TerminateJobObject,
     },
+    LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories},
     Threading::{GetExitCodeProcess, TerminateProcess},
 };
+
+pub fn system_conpty() -> Result<()> {
+    static FAILURE: std::sync::OnceLock<Option<i32>> = std::sync::OnceLock::new();
+    let failure = *FAILURE.get_or_init(|| {
+        // SAFETY: a documented constant flag; the call only narrows this process's DLL search.
+        (unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) } == 0).then(|| {
+            io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or_default()
+        })
+    });
+    match failure {
+        None => Ok(()),
+        Some(code) => Err(io::Error::from_raw_os_error(code))
+            .context("Restrict ConPTY to the operating system's console host"),
+    }
+}
 
 #[derive(Debug)]
 struct WindowsKiller(Arc<OwnedHandle>);

@@ -10,14 +10,106 @@ use std::{
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
-    Foundation::FILETIME,
-    System::Threading::{
-        GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess,
-        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, TerminateProcess,
+    Foundation::{FILETIME, INVALID_HANDLE_VALUE, WAIT_OBJECT_0},
+    System::{
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+        LibraryLoader::GetModuleHandleW,
+        Threading::{
+            DETACHED_PROCESS, GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+            TerminateProcess, WaitForMultipleObjects, WaitForSingleObject,
+        },
     },
 };
 
 const HELPER: &str = "process::windows::tests::native_tree_fixture";
+const CONSOLE_FIXTURE: &str = "process::windows::tests::native_console_fixture";
+const CLEANUP_BOUND: Duration = Duration::from_secs(5);
+
+struct ConsoleHost {
+    name: String,
+    handle: OwnedHandle,
+}
+impl ConsoleHost {
+    fn ended_within(&self, bound: Duration) -> bool {
+        // SAFETY: the pinned synchronize handle stays valid for this bounded wait.
+        let signaled =
+            unsafe { WaitForSingleObject(self.handle.as_raw_handle(), bound.as_millis() as u32) };
+        signaled == WAIT_OBJECT_0
+    }
+}
+
+fn console_hosts(parent: &std::process::Child) -> Vec<ConsoleHost> {
+    let parent_created = creation(parent.as_raw_handle());
+    // SAFETY: a process snapshot takes only the documented flag and no process identity.
+    let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    assert_ne!(
+        raw,
+        INVALID_HANDLE_VALUE,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: a successful snapshot returns an independently owned handle.
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    let mut hosts = Vec::new();
+    // SAFETY: the entry carries its exact size and the owned snapshot outlives the walk.
+    let mut listed = unsafe { Process32FirstW(snapshot.as_raw_handle(), &mut entry) } != 0;
+    while listed {
+        let length = entry.szExeFile.iter().position(|unit| *unit == 0);
+        let name = String::from_utf16_lossy(&entry.szExeFile[..length.unwrap_or(260)]);
+        if entry.th32ParentProcessID == parent.id()
+            && ["conhost.exe", "openconsole.exe"].contains(&name.to_ascii_lowercase().as_str())
+        {
+            // SAFETY: opens a listed child; its creation time below rules out a reused parent id.
+            let raw = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    0,
+                    entry.th32ProcessID,
+                )
+            };
+            if !raw.is_null() {
+                // SAFETY: a successful OpenProcess returns an independently owned handle.
+                let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+                if creation(handle.as_raw_handle()) >= parent_created {
+                    hosts.push(ConsoleHost { name, handle });
+                }
+            }
+        }
+        // SAFETY: same initialized entry and owned snapshot as the first call.
+        listed = unsafe { Process32NextW(snapshot.as_raw_handle(), &mut entry) } != 0;
+    }
+    hosts
+}
+
+fn first_ended(hosts: &[ConsoleHost]) -> usize {
+    let handles: Vec<_> = hosts
+        .iter()
+        .map(|host| host.handle.as_raw_handle())
+        .collect();
+    // SAFETY: every pinned synchronize handle outlives this bounded wait.
+    let signaled = unsafe {
+        WaitForMultipleObjects(
+            handles.len() as u32,
+            handles.as_ptr(),
+            0,
+            CLEANUP_BOUND.as_millis() as u32,
+        )
+    };
+    let index = signaled.wrapping_sub(WAIT_OBJECT_0) as usize;
+    assert!(
+        index < handles.len(),
+        "No console host ended within {CLEANUP_BOUND:?}"
+    );
+    index
+}
 
 fn creation(handle: std::os::windows::io::RawHandle) -> u64 {
     let mut created = FILETIME::default();
@@ -189,6 +281,7 @@ fn native_host_fixture() {
         .unwrap();
     runtime.block_on(async {
         let mut tree = FixturePty::start(&directory, "root");
+        let _unanswered_startup_query = FixturePty::start(&directory, "unanswered");
         let _processes = tree
             .ready(&directory, &["root", "child", "grandchild"])
             .await;
@@ -221,7 +314,7 @@ async fn abrupt_owned_host_death_closes_noninherited_jobs_and_reaps_observed_des
                 "--ignored",
             ])
             .env("NESVO_PROCESS_FIXTURE", &directory)
-            .creation_flags(0x08000000)
+            .creation_flags(DETACHED_PROCESS)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -242,6 +335,15 @@ async fn abrupt_owned_host_death_closes_noninherited_jobs_and_reaps_observed_des
     }
     let processes =
         ["root", "child", "grandchild"].map(|role| PinnedProcess::read(&directory, role));
+    let consoles = console_hosts(&host.0);
+    assert_eq!(
+        consoles
+            .iter()
+            .map(|host| host.name.to_ascii_lowercase())
+            .collect::<Vec<_>>(),
+        ["conhost.exe", "conhost.exe"],
+        "Both pseudo consoles, including one whose startup query was never answered, use the system host"
+    );
     host.0.kill().unwrap();
     host.0.wait().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -252,6 +354,12 @@ async fn abrupt_owned_host_death_closes_noninherited_jobs_and_reaps_observed_des
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    assert!(
+        consoles
+            .iter()
+            .all(|console| console.ended_within(CLEANUP_BOUND)),
+        "A console host survived its owned host's death"
+    );
     drop(host);
     drop(processes);
     fs::remove_dir_all(directory).unwrap();
@@ -297,4 +405,96 @@ async fn stopping_or_exiting_one_pty_reaps_its_descendants_and_preserves_another
         drop(independent);
         fs::remove_dir_all(directory).unwrap();
     }
+}
+
+#[test]
+#[ignore = "owned host-state subprocess; driven by the console host ownership test"]
+fn native_console_fixture() {
+    if std::env::var_os("NESVO_CONSOLE_FIXTURE").is_none() {
+        return;
+    }
+    let mut state = crate::sessions::State::new(
+        std::env::temp_dir().canonicalize().unwrap(),
+        crate::storage::MetadataStore::open(Path::new(":memory:")).unwrap(),
+        crate::launchers::Launchers::discover_with_fixture_shell(),
+    );
+    let (events, _output) = tokio::sync::mpsc::channel(128);
+    let mut launch = |name: &str| {
+        let spec = crate::jobs::LaunchSpec {
+            name: name.into(),
+            ..Default::default()
+        };
+        state.launch(&spec, &events).unwrap()
+    };
+    let stopped = launch("Stopped console fixture");
+    launch("Dropped console fixture");
+    let module: Vec<u16> = "conpty.dll\0".encode_utf16().collect();
+    // SAFETY: a NUL-terminated module name; the call only inspects already loaded modules.
+    let sideloaded = unsafe { GetModuleHandleW(module.as_ptr()) };
+    assert!(
+        sideloaded.is_null(),
+        "ConPTY must be the system implementation, never a conpty.dll found on PATH"
+    );
+    let mut commands = std::io::stdin().lines();
+    let mut stage = |reached: &str, next: &str| {
+        println!("console-fixture {reached}");
+        assert_eq!(commands.next().unwrap().unwrap(), next);
+    };
+    stage("launched", "stop");
+    state
+        .dispatch_control(
+            &stopped,
+            crate::operations::ControlAction::Stop,
+            &crate::caller::Authority::Owner,
+        )
+        .unwrap();
+    stage("stopped", "drop");
+    drop(state);
+    println!("console-fixture dropped");
+}
+
+#[test]
+fn console_hosts_end_with_their_stopped_session_and_with_the_dropped_host_state() {
+    use std::{
+        io::{BufRead, Write},
+        os::windows::process::CommandExt,
+    };
+    let mut fixture = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", CONSOLE_FIXTURE, "--ignored", "--nocapture"])
+        .env("NESVO_CONSOLE_FIXTURE", "owned")
+        .creation_flags(DETACHED_PROCESS)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut commands = fixture.stdin.take().unwrap();
+    let mut stages = std::io::BufReader::new(fixture.stdout.take().unwrap())
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| line.strip_prefix("console-fixture ").map(str::to_owned));
+    assert_eq!(stages.next().as_deref(), Some("launched"));
+    let consoles = console_hosts(&fixture);
+    assert_eq!(
+        consoles
+            .iter()
+            .map(|console| console.name.to_ascii_lowercase())
+            .collect::<Vec<_>>(),
+        ["conhost.exe", "conhost.exe"],
+        "Each session owns exactly one system console host"
+    );
+    writeln!(commands, "stop").unwrap();
+    assert_eq!(stages.next().as_deref(), Some("stopped"));
+    let remaining = &consoles[1 - first_ended(&consoles)];
+    assert!(
+        !remaining.ended_within(Duration::ZERO),
+        "Stopping one session must keep the other session's console host"
+    );
+    writeln!(commands, "drop").unwrap();
+    assert_eq!(stages.next().as_deref(), Some("dropped"));
+    assert!(
+        remaining.ended_within(CLEANUP_BOUND),
+        "Dropping the host state must end the remaining console host"
+    );
+    assert!(fixture.wait().unwrap().success());
 }

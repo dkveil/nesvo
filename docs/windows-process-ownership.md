@@ -18,8 +18,26 @@ No process-name enumeration, PID-based tree killing, global console operation,
 breakaway permission, UI restriction, CPU/memory limit or priority change is used.
 Other sessions have separate jobs. This does not make Nesvo a sandbox or change
 provider tool permissions. Unix keeps the existing portable-pty process-group
-behavior. Windows builds use two additional features of the existing
-`windows-sys` dependency, without adding a package.
+behavior. Windows builds use additional features of the existing `windows-sys`
+dependency, without adding a package.
+
+## Console host lifetime and teardown order
+
+portable-pty 0.9.0 loads `conpty.dll` by bare name, so a third-party copy on
+`PATH` (WezTerm ships one with its `OpenConsole.exe`) silently replaced the
+system ConPTY. That console host is not a job member and waits for the answer to
+its startup cursor query; when its pipes closed first (host exit, a dropped
+session or a test ending) it spun at full CPU forever and `ClosePseudoConsole`
+blocked waiting for it. Before the first pseudo console the host therefore
+restricts its DLL search to System32, so every session uses the system
+`conhost.exe`, which exits when its pseudo console closes or the host process
+dies. Teardown runs in this order: a stop answers a still pending startup query
+and terminates the session job; the wait thread observes the root exit,
+terminates remaining job members and closes the pseudo console before publishing
+the exit; dropping a session closes its input channel and then the pseudo console
+if the exit was not observed; the output reader keeps draining until EOF even
+after its event channel is gone, because `ClosePseudoConsole` waits until its
+final frame is read. Resizing an exited session's released console is a no-op.
 
 ## Failure and boundary conditions
 
@@ -67,3 +85,12 @@ terminating that exact host handle must also end its pinned root/child/grandchil
 within five seconds, without cooperation or inherited job handles. This scenario
 passes locally as well; it exercises OS handle lifetime rather than graceful
 host shutdown alone.
+
+Console hosts are observed only by tests: a detached fixture process lists its
+direct `conhost.exe`/`OpenConsole.exe` children through a process snapshot and
+pins them by handle, rejecting any created before the fixture. A host-state
+fixture with two shell sessions must have exactly two system console hosts and no
+loaded `conpty.dll`; stopping one session ends exactly one of them within five
+seconds and dropping the state ends the other. The host-death fixture adds a
+pseudo console whose startup query is never answered, and both of its console
+hosts must end within five seconds of the hard kill.
