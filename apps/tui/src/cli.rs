@@ -18,7 +18,10 @@ pub enum Command {
         command: crate::budgets::Command,
     },
     /// Serve scoped host tools over MCP stdio. No global provider setup is changed.
-    Mcp,
+    Mcp {
+        #[command(subcommand)]
+        command: Option<McpCommand>,
+    },
     /// Durable workflow plans (separate run/task identities, no automatic launch).
     Run {
         #[command(subcommand)]
@@ -107,6 +110,24 @@ pub enum Command {
     Workflow {
         #[command(subcommand)]
         command: WorkflowCommand,
+    },
+}
+#[derive(Subcommand)]
+pub enum McpCommand {
+    #[command(about = "Owner-only view of the host's warm MCP server pool")]
+    Pool {
+        #[command(subcommand)]
+        command: McpPoolCommand,
+    },
+}
+#[derive(Subcommand)]
+pub enum McpPoolCommand {
+    #[command(
+        about = "Show pool bounds, warm and leased processes and each session's pooled, cold or dedicated mode"
+    )]
+    Status {
+        #[arg(long)]
+        json: bool,
     },
 }
 #[derive(Subcommand)]
@@ -593,7 +614,13 @@ fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Optio
 impl Command {
     fn machine(&self) -> bool {
         match self {
-            Self::Mcp => false,
+            Self::Mcp { command: None } => false,
+            Self::Mcp {
+                command:
+                    Some(McpCommand::Pool {
+                        command: McpPoolCommand::Status { json },
+                    }),
+            } => *json,
             Self::Run { command } => command.machine(),
             Self::Job { command } => command.machine(),
             Self::Budget { command } => command.machine(),
@@ -636,7 +663,7 @@ pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -
     ) {
         return crate::recovery_hook::execute(pairing_path, url).await;
     }
-    if matches!(command, Command::Mcp) {
+    if matches!(command, Command::Mcp { command: None }) {
         return match crate::mcp::serve(pairing_path.to_owned(), url.map(str::to_owned)).await {
             Ok(()) => 0,
             Err(_) => {
@@ -1822,7 +1849,31 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
             )
             .await;
         }
-        Command::Mcp => {
+        Command::Mcp {
+            command:
+                Some(McpCommand::Pool {
+                    command: McpPoolCommand::Status { json },
+                }),
+        } => {
+            if request(
+                connection,
+                json!({"type":"getCapabilities"}),
+                "capabilities",
+            )
+            .await?["mcpPool"]
+                != true
+            {
+                return Err(failure(
+                    "unsupported",
+                    "Host does not keep an MCP server pool; update nesvo-host",
+                ));
+            }
+            return print_data(
+                json,
+                request(connection, json!({"type":"mcpPoolStatus"}), "mcpPool").await?,
+            );
+        }
+        Command::Mcp { command: None } => {
             return Err(failure(
                 "invalid_argument",
                 "MCP uses its own stdio entrypoint",
@@ -3261,6 +3312,7 @@ mod reply_kind_tests {
 
     const SAMPLES: &[&[&str]] = &[
         &["operation", "op-1"],
+        &["mcp", "pool", "status"],
         &["events"],
         &["quota"],
         &["session", "create", "Shell", "--key", "k"],
@@ -3379,7 +3431,8 @@ mod reply_kind_tests {
         let built = |result: Result<(Value, &'static str)>| vec![result.expect("Sample builds").1];
         match command {
             Command::Job { .. } | Command::Budget { .. } | Command::Run { .. } => vec!["workflow"],
-            Command::Mcp | Command::Doctor { .. } => Vec::new(),
+            Command::Mcp { command: None } | Command::Doctor { .. } => Vec::new(),
+            Command::Mcp { command: Some(_) } => vec!["mcpPool"],
             Command::Operation { .. } => vec!["operation"],
             Command::Events { .. } => vec!["events"],
             Command::Quota { .. } => vec!["providerQuota"],
@@ -3483,5 +3536,44 @@ mod reply_kind_tests {
         ] {
             assert!(kinds.contains(&kind), "{kind} is not reached by a sample");
         }
+    }
+}
+
+#[cfg(test)]
+mod mcp_pool_cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn bare_mcp_still_serves_stdio_and_pool_status_is_a_machine_query() {
+        let serve = crate::Arguments::try_parse_from(["nesvo", "mcp"])
+            .unwrap()
+            .command
+            .unwrap();
+        assert!(matches!(serve, Command::Mcp { command: None }));
+        assert!(!serve.machine());
+        let status = crate::Arguments::try_parse_from(["nesvo", "mcp", "pool", "status", "--json"])
+            .unwrap()
+            .command
+            .unwrap();
+        assert!(status.machine());
+        assert!(matches!(
+            status,
+            Command::Mcp {
+                command: Some(McpCommand::Pool {
+                    command: McpPoolCommand::Status { json: true }
+                })
+            }
+        ));
+        assert!(crate::Arguments::try_parse_from(["nesvo", "mcp", "pool"]).is_err());
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
+        assert!(
+            schema["oneOf"][1]["properties"]["data"]["oneOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|variant| variant["properties"]["type"]["const"] == "mcpPool")
+        );
     }
 }

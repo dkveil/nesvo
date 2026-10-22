@@ -67,6 +67,8 @@ mod jobs;
 mod mcp_cancellation;
 #[path = "support/mcp_events.rs"]
 mod mcp_events;
+#[path = "support/mcp_pool.rs"]
+mod mcp_pool;
 #[path = "support/model_profiles.rs"]
 mod model_profiles;
 #[path = "support/native_tool_permissions.rs"]

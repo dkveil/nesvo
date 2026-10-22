@@ -2303,6 +2303,137 @@
                   ]
                 }
               }
+            },
+            {
+              "type": "object",
+              "required": ["type", "available", "bounds", "processes", "entries", "sessions"],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "const": "mcpPool"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "bounds": {
+                  "type": "object",
+                  "required": ["processes", "warmPerKey", "idleMs", "connectMs", "sessions"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "processes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "warmPerKey": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "idleMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "connectMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sessions": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "processes": {
+                  "type": "object",
+                  "required": ["warm", "leased"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "warm": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "leased": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "entries": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "entryId",
+                      "server",
+                      "program",
+                      "digest",
+                      "root",
+                      "state",
+                      "sessionId",
+                      "ageMs"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "entryId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{32}$"
+                      },
+                      "server": {
+                        "type": "string"
+                      },
+                      "program": {
+                        "enum": ["shell", "claude", "gemini", "codex"]
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "root": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "enum": ["warm", "leased"]
+                      },
+                      "sessionId": {
+                        "type": ["string", "null"]
+                      },
+                      "ageMs": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                },
+                "sessions": {
+                  "type": "array",
+                  "maxItems": 256,
+                  "items": {
+                    "type": "object",
+                    "required": ["sessionId", "server", "program", "mode", "reason", "entryId"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "sessionId": {
+                        "type": "string"
+                      },
+                      "server": {
+                        "type": "string"
+                      },
+                      "program": {
+                        "enum": ["shell", "claude", "gemini", "codex"]
+                      },
+                      "mode": {
+                        "enum": ["pooled", "cold", "dedicated"]
+                      },
+                      "reason": {
+                        "type": ["string", "null"]
+                      },
+                      "entryId": {
+                        "type": ["string", "null"]
+                      }
+                    }
+                  }
+                }
+              }
             }
           ]
         }
