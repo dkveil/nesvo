@@ -4,14 +4,14 @@ These are project rules, not a requirement to introduce a framework for every ab
 
 ## Workspace layout
 
-| Path                | Responsibility                                                                |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `apps/mobile`       | Expo application, npm workspace `@nesvo/mobile`                               |
-| `apps/host`         | Rust `nesvo-host` executable; authoritative processes and metadata            |
-| `apps/tui`          | Rust `nesvo` executable; native terminal client                               |
-| `crates/nesvo-wire` | Shared authenticated frame codec; no sockets, processes or credential storage |
-| `tests`             | Cross-application contracts, integration and browser checks                   |
-| `scripts`           | Repository tooling, terminal bundle generation and lint conventions           |
+| Path                | Responsibility                                                                                        |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| `apps/mobile`       | Expo application, npm workspace `@nesvo/mobile`                                                       |
+| `apps/host`         | Rust `nesvo-host` executable; authoritative processes and metadata                                    |
+| `apps/tui`          | Rust `nesvo` executable; native terminal client                                                       |
+| `crates/nesvo-wire` | Shared authenticated frame codec and typed domain events; no sockets, processes or credential storage |
+| `tests`             | Cross-application contracts, integration and browser checks                                           |
+| `scripts`           | Repository tooling, terminal bundle generation and lint conventions                                   |
 
 Install JavaScript dependencies at the repository root using its `package-lock.json`. Root npm scripts forward application commands to `@nesvo/mobile`. Rust packages share the root Cargo workspace, dependency declarations, `Cargo.lock` and `target/` directory. Use locked builds; do not recreate independent application lockfiles.
 
@@ -83,6 +83,8 @@ Root commands are the common entrypoints: `npm run typecheck`, `npm run lint`, `
 ## Protocol, persistence and tests
 
 The [protocol contract](protocol-v2.md) is shared by mobile and TUI. Changes must preserve declared compatibility or explicitly version it. Authenticate before accepting commands; preserve challenge, direction and sequence checks. Never log pairing keys, leases or shell content as routine telemetry.
+
+Domain events are typed once in `nesvo_wire::events::Event`, one variant per kind with a payload struct; the host appends only through that model and clients keep reading the same JSON. `crates/nesvo-wire/tests/fixtures/events.jsonl` holds golden wire records captured from the host before the model existed, and per-kind tests prove the model and the host append path reproduce them byte for byte. `docs/harness-events.schema.json` and the kind table in [harness-events.md](harness-events.md#event-kinds) are generated from the model with `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts`; CI fails on drift, and `tests/client-contract.test.ts` validates the golden records against the schema. A new or changed kind updates the model, adds its golden record and regenerates both files.
 
 The host journal schema lives in numbered SQL files under `apps/host/migrations/`, registered in order in `apps/host/src/migrations.rs` and recorded in `schema_migrations`. Add a schema change as the next number in one new file and register it; startup applies pending files in order inside the journal's immediate transaction and refuses a database recorded by a newer host. Never edit, renumber or delete a merged migration; correct it with a later one. The per-module initializers are frozen at the pre-migration shape and only adopt databases created before the ledger existed.
 

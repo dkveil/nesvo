@@ -27,7 +27,8 @@ Durable receipts add `operation.changed` (`operationId`, `operation`, `phase`) a
 workflow mutations add `run.*` events (`runId`, `revision`) whose subject is the
 run's coordinator session. `run.digest_recorded` also carries the run state,
 digest fingerprint and byte size; read the digest itself with `nesvo run digest`.
-Prompts, response text and tool arguments are not journaled here.
+Prompts, response text and tool arguments are not journaled here. Every kind and its
+payload fields are listed in [Event kinds](#event-kinds).
 
 The default/maximum page is 32 events, each with at most 1024 encoded payload
 bytes. Output fits the authenticated frame budget. A future cursor or a limit
