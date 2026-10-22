@@ -4,6 +4,7 @@ use crate::{
     theme::{BACKGROUND, BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, WARNING},
     ui::truncate_cells,
 };
+use nesvo_wire::views::runs::{DependencyState, WakeBatchPhase, WakeDelivery};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -258,7 +259,9 @@ fn task_line(task: &crate::runs::Task) -> String {
             "attempt {}/{} {} · {}",
             attempt.ordinal, task.attempts, attempt.state, attempt.session_id
         ),
-        None if task.dependency_state == "waiting" => "waiting on dependencies".into(),
+        None if task.dependency_state == DependencyState::Waiting => {
+            "waiting on dependencies".into()
+        }
         None => "ready, no attempt".into(),
     };
     format!(" {} {}  {}", state_mark(&task.state), task.key, attempt)
@@ -480,7 +483,7 @@ fn wake_color(wakes: &crate::runs::Wakes) -> Color {
 
 fn batch_line(batch: &crate::runs::WakeBatch) -> String {
     let id: String = batch.id.chars().take(8).collect();
-    let delivery = if batch.delivery == "full" {
+    let delivery = if batch.delivery == Some(WakeDelivery::Full) {
         "full"
     } else {
         "delta"
@@ -491,16 +494,20 @@ fn batch_line(batch: &crate::runs::WakeBatch) -> String {
         .map_or_else(String::new, |reason| format!(" ({reason})"));
     format!(
         " {} {id} · {} notices · {}{reason} · {delivery}",
-        if batch.phase == "settled" { "✓" } else { "!" },
+        if batch.phase == WakeBatchPhase::Settled {
+            "✓"
+        } else {
+            "!"
+        },
         batch.notice_count,
-        batch.phase
+        batch.phase.as_str()
     )
 }
 
 fn batch_color(batch: &crate::runs::WakeBatch) -> Color {
-    match batch.phase.as_str() {
-        "settled" => TEXT,
-        "dispatching" => WARNING,
+    match batch.phase {
+        WakeBatchPhase::Settled => TEXT,
+        WakeBatchPhase::Dispatching => WARNING,
         _ => DANGER,
     }
 }

@@ -1,6 +1,13 @@
 use anyhow::Result;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use nesvo_wire::views::{
+    self, HostError, ReplyHeader, Tolerant,
+    runs::{
+        ControlKind, ControlRequest, DecisionPage, DecisionRequest, DecisionState, DigestReply,
+        InboxPage, InboxRequest, RunCall, RunChanged, RunDigest, RunPage, RunView, TemplateRequest,
+        WakeDelivery, WakeRequest, WakeState, WorkflowTemplate, WorkflowTemplates,
+    },
+};
+use serde_json::Value;
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
@@ -29,50 +36,13 @@ pub enum Load {
     Failed(String),
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Summary {
-    pub id: String,
-    pub title: String,
-    pub state: String,
-    pub revision: u64,
-}
+pub use nesvo_wire::views::runs::{
+    Decision, InboxMessage as Message, RunSummary as Summary, RunTask as Task, WakeBatch,
+    WakePolicy,
+};
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Attempt {
-    pub ordinal: u64,
-    pub session_id: String,
-    pub state: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Task {
-    pub id: String,
-    pub key: String,
-    pub state: String,
-    pub dependency_state: String,
-    pub attempts: u64,
-    pub current_attempt: Option<Attempt>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Decision {
-    pub id: String,
-    pub task_id: String,
-    pub audience: String,
-    pub question: String,
-    pub revision: u64,
-    pub state: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Message {
-    pub kind: String,
-    pub body: String,
+fn kept<T>(items: Vec<Tolerant<T>>) -> Vec<T> {
+    items.into_iter().filter_map(|item| item.0).collect()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -92,74 +62,42 @@ pub struct Digest {
     pub branches: Vec<String>,
 }
 
-impl Digest {
-    fn parse(body: &Value) -> Self {
-        let number = |value: &Value| value.as_u64().unwrap_or_default();
-        let tasks = body["taskDigests"]
-            .as_array()
-            .map_or(&[][..], Vec::as_slice);
+impl From<RunDigest> for Digest {
+    fn from(body: RunDigest) -> Self {
+        let tasks = kept(body.task_digests);
         Self {
-            kind: body["kind"].as_str().unwrap_or_default().to_owned(),
-            source_revision: number(&body["sourceRevision"]),
-            total: number(&body["tasks"]["total"]),
-            accepted: number(&body["tasks"]["byState"]["succeeded"]),
-            omitted: number(&body["omittedTasks"]),
-            decisions_pending: number(&body["decisions"]["pending"]),
-            decisions_answered: number(&body["decisions"]["answered"]),
-            time_state: body["budget"]["timeState"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
-            active_attempts: number(&body["budget"]["activeAttempts"]),
-            journal_cursor: number(&body["evidence"]["journalCursor"]),
-            checkpoints: number(&body["evidence"]["checkpointCount"]),
+            kind: body.kind,
+            source_revision: body.source_revision,
+            total: body.tasks.total,
+            accepted: body.tasks.by_state.succeeded,
+            omitted: body.omitted_tasks,
+            decisions_pending: body.decisions.pending,
+            decisions_answered: body.decisions.answered,
+            time_state: body.budget.time_state,
+            active_attempts: body.budget.active_attempts,
+            journal_cursor: body.evidence.journal_cursor,
+            checkpoints: body.evidence.checkpoint_count,
             next_steps: tasks
                 .iter()
                 .flat_map(|task| {
-                    let key = task["key"].as_str().unwrap_or_default();
-                    task["nextSteps"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str)
-                        .map(move |step| format!("{key}: {step}"))
+                    task.next_steps
+                        .iter()
+                        .filter_map(|step| step.0.as_deref())
+                        .map(|step| format!("{}: {step}", task.key))
                 })
                 .collect(),
             branches: tasks
-                .iter()
-                .filter_map(|task| task["workspace"]["branch"].as_str())
-                .map(str::to_owned)
+                .into_iter()
+                .filter_map(|task| task.workspace?.branch)
                 .collect(),
         }
     }
+}
 
+impl Digest {
     pub fn settled(&self) -> bool {
         self.kind == "final"
     }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WakePolicy {
-    pub enabled: bool,
-    #[serde(default)]
-    pub held: bool,
-    pub phase: String,
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub delivery: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WakeBatch {
-    pub id: String,
-    pub phase: String,
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub delivery: String,
-    #[serde(default)]
-    pub notice_count: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -176,7 +114,7 @@ impl Wakes {
     pub fn full(&self) -> bool {
         self.policy
             .as_ref()
-            .is_some_and(|policy| policy.delivery == "full")
+            .is_some_and(|policy| policy.delivery == Some(WakeDelivery::Full))
     }
 
     pub fn delivery_label(&self) -> &'static str {
@@ -234,14 +172,7 @@ pub struct Detail {
     pub wakes: Wakes,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Template {
-    pub name: String,
-    pub title: String,
-    pub start: String,
-    pub tasks: Vec<serde::de::IgnoredAny>,
-}
+pub type Template = WorkflowTemplate;
 
 #[derive(Clone, Debug)]
 pub struct Templates {
@@ -321,12 +252,33 @@ pub enum WakeAction {
 }
 
 impl WakeAction {
-    fn request(self) -> &'static str {
+    fn request(self, key: String, run_id: String, expected_revision: u64) -> WakeRequest {
         match self {
-            Self::Enable => "enable",
-            Self::Hold => "pause",
-            Self::Resume => "resume",
-            Self::Delta | Self::Full => "setDelivery",
+            Self::Enable => WakeRequest::Enable {
+                key,
+                run_id,
+                expected_revision,
+            },
+            Self::Hold => WakeRequest::Pause {
+                key,
+                run_id,
+                expected_revision,
+            },
+            Self::Resume => WakeRequest::Resume {
+                key,
+                run_id,
+                expected_revision,
+            },
+            Self::Delta | Self::Full => WakeRequest::SetDelivery {
+                key,
+                run_id,
+                expected_revision,
+                delivery: if self == Self::Full {
+                    WakeDelivery::Full
+                } else {
+                    WakeDelivery::Delta
+                },
+            },
         }
     }
 
@@ -427,25 +379,22 @@ pub(crate) fn template_command(
             "Use a template name of 1-64 letters, digits, '_' or '-' and a start key of 1-96 bytes",
         ));
     }
-    Ok(match (action, digest, start) {
-        ("list", None, None) => (
-            json!({"type":"listWorkflowTemplates","directory":directory}),
-            "workflowTemplates",
-        ),
-        ("approve", Some(digest), None) => (
-            json!({"type":"approveWorkflowTemplates","directory":directory,"digest":digest}),
-            "workflowTemplatesApproved",
-        ),
-        ("revoke", Some(digest), None) => (
-            json!({"type":"revokeWorkflowTemplates","directory":directory,"digest":digest}),
-            "workflowTemplatesRevoked",
-        ),
-        ("start", None, Some((name, key))) => (
-            json!({"type":"startWorkflowTemplate","directory":directory,"name":name,"key":key}),
-            "workflowTemplateStarted",
-        ),
+    let request = match (action, digest, start) {
+        ("list", None, None) => TemplateRequest::ListWorkflowTemplates { directory },
+        ("approve", Some(digest), None) => {
+            TemplateRequest::ApproveWorkflowTemplates { directory, digest }
+        }
+        ("revoke", Some(digest), None) => {
+            TemplateRequest::RevokeWorkflowTemplates { directory, digest }
+        }
+        ("start", None, Some((name, key))) => TemplateRequest::StartWorkflowTemplate {
+            directory,
+            name,
+            key,
+        },
         _ => return Err(invalid("Invalid workflow template request")),
-    })
+    };
+    Ok((views::encode(&request), request.reply()))
 }
 
 pub struct Runs {
@@ -533,7 +482,7 @@ impl Runs {
         self.selected_detail()?
             .decisions
             .iter()
-            .find(|decision| decision.state == "pending")
+            .find(|decision| decision.state == DecisionState::Pending)
     }
 
     fn next_id(&mut self) -> String {
@@ -541,13 +490,8 @@ impl Runs {
         format!("{}-{}", self.prefix, self.counter)
     }
 
-    fn workflow(
-        &mut self,
-        features: &Value,
-        action: &str,
-        arguments: Value,
-    ) -> Result<(String, Value)> {
-        let mut command = crate::workflow::tool(action, arguments)?;
+    fn workflow(&mut self, features: &Value, call: RunCall) -> Result<(String, Value)> {
+        let mut command = crate::workflow::tool(call.action(), views::encode(&call))?;
         crate::workflow::supported(features, &command)?;
         let id = self.next_id();
         command["requestId"] = id.clone().into();
@@ -573,7 +517,7 @@ impl Runs {
 
     fn list(&mut self, features: &Value) -> Result<Value> {
         self.listed = Some(Instant::now());
-        let pair = self.workflow(features, "list", json!({"offset":0}))?;
+        let pair = self.workflow(features, RunCall::List { offset: 0 })?;
         Ok(self.read(Read::List, pair))
     }
 
@@ -641,8 +585,9 @@ impl Runs {
 
     fn run_reads(&mut self, features: &Value, id: &str) -> Vec<Value> {
         let mut commands = Vec::new();
-        if let Ok(pair) = self.workflow(features, "get", json!({"runId":id})) {
-            commands.push(self.read(Read::Run(id.to_owned()), pair));
+        let run_id = || id.to_owned();
+        if let Ok(pair) = self.workflow(features, RunCall::Get { run_id: run_id() }) {
+            commands.push(self.read(Read::Run(run_id()), pair));
         }
         if let Ok(pair) = self.decisions(features, id, 0) {
             let read = Read::Decisions {
@@ -652,34 +597,35 @@ impl Runs {
             };
             commands.push(self.read(read, pair));
         }
-        if let Ok(pair) = self.workflow(
-            features,
-            "inbox",
-            json!({"request":{"action":"read","runId":id}}),
-        ) {
-            commands.push(self.read(Read::Inbox(id.to_owned()), pair));
+        let inbox = RunCall::Inbox {
+            request: InboxRequest::Read { run_id: run_id() },
+        };
+        if let Ok(pair) = self.workflow(features, inbox) {
+            commands.push(self.read(Read::Inbox(run_id()), pair));
         }
-        if let Ok(pair) = self.workflow(features, "digest", json!({"runId":id})) {
-            commands.push(self.read(Read::Digest(id.to_owned()), pair));
+        if let Ok(pair) = self.workflow(features, RunCall::Digest { run_id: run_id() }) {
+            commands.push(self.read(Read::Digest(run_id()), pair));
         }
+        let wakes = RunCall::Wakes {
+            request: WakeRequest::Get {
+                run_id: run_id(),
+                after: None,
+            },
+        };
         if features["runWakes"] == true
-            && let Ok(pair) = self.workflow(
-                features,
-                "wakes",
-                json!({"request":{"action":"get","runId":id,"after":null}}),
-            )
+            && let Ok(pair) = self.workflow(features, wakes)
         {
-            commands.push(self.read(Read::Wakes(id.to_owned()), pair));
+            commands.push(self.read(Read::Wakes(run_id()), pair));
         }
         commands
     }
 
     fn decisions(&mut self, features: &Value, id: &str, offset: u64) -> Result<(String, Value)> {
-        self.workflow(
-            features,
-            "decision",
-            json!({"request":{"action":"list","runId":id,"offset":offset}}),
-        )
+        let request = DecisionRequest::List {
+            run_id: id.to_owned(),
+            offset,
+        };
+        self.workflow(features, RunCall::Decision { request })
     }
 
     pub fn refresh(&mut self, features: &Value) -> Effect {
@@ -787,54 +733,57 @@ impl Runs {
     }
 
     fn build(&mut self, features: &Value, change: &Change, key: &str) -> Result<(String, Value)> {
-        match change {
-            Change::Pause { run, revision } => self.workflow(
-                features,
-                "control",
-                json!({"request":{"action":"start","key":key,"runId":run,"expectedRevision":revision,"kind":"stop"}}),
-            ),
-            Change::Resume { run, revision } => self.workflow(
-                features,
-                "resume",
-                json!({"key":key,"runId":run,"expectedRevision":revision}),
-            ),
-            Change::Drain { run, revision } => self.workflow(
-                features,
-                "drain",
-                json!({"key":key,"runId":run,"expectedRevision":revision}),
-            ),
+        let key = key.to_owned();
+        let call = match change {
+            Change::Pause { run, revision } => RunCall::Control {
+                request: ControlRequest::Start {
+                    key,
+                    run_id: run.clone(),
+                    expected_revision: *revision,
+                    kind: ControlKind::Stop,
+                },
+            },
+            Change::Resume { run, revision } => RunCall::Resume {
+                key,
+                run_id: run.clone(),
+                expected_revision: *revision,
+            },
+            Change::Drain { run, revision } => RunCall::Drain {
+                key,
+                run_id: run.clone(),
+                expected_revision: *revision,
+            },
             Change::Answer {
                 run,
                 decision,
                 revision,
                 answer,
-            } => self.workflow(
-                features,
-                "decision",
-                json!({"request":{"action":"answer","key":key,"runId":run,"decisionId":decision,"expectedRevision":revision,"answer":answer}}),
-            ),
+            } => RunCall::Decision {
+                request: DecisionRequest::Answer {
+                    key,
+                    run_id: run.clone(),
+                    decision_id: decision.clone(),
+                    expected_revision: *revision,
+                    answer: answer.clone(),
+                },
+            },
             Change::Wake {
                 run,
                 revision,
                 action,
-            } => {
-                let mut request = json!({"action":action.request(),"key":key,"runId":run,"expectedRevision":revision});
-                match action {
-                    WakeAction::Delta => request["delivery"] = "delta".into(),
-                    WakeAction::Full => request["delivery"] = "full".into(),
-                    _ => {}
-                }
-                self.workflow(features, "wakes", json!({ "request": request }))
-            }
+            } => RunCall::Wakes {
+                request: action.request(key, run.clone(), *revision),
+            },
             Change::Start { directory, name } => {
                 Self::templates_supported(features)?;
                 let (mut command, _) =
-                    template_command("start", directory, None, Some((name, key)))?;
+                    template_command("start", directory, None, Some((name, &key)))?;
                 let id = self.next_id();
                 command["requestId"] = id.clone().into();
-                Ok((id, command))
+                return Ok((id, command));
             }
-        }
+        };
+        self.workflow(features, call)
     }
 
     fn change(&mut self, features: &Value, change: Change) -> Effect {
@@ -1000,7 +949,8 @@ impl Runs {
     }
 
     pub fn response(&mut self, features: &Value, event: &Value) -> Option<Effect> {
-        let request_id = event["requestId"].as_str()?;
+        let header = ReplyHeader::of(event);
+        let request_id = header.request_id.as_deref()?;
         if let Some((read, _)) = self.reads.remove(request_id) {
             return Some(self.read_response(features, read, event));
         }
@@ -1019,8 +969,9 @@ impl Runs {
         match read {
             Read::List => {
                 let initial = self.runs.is_empty() && self.selected.is_none();
-                self.runs = serde_json::from_value(event["runs"].clone()).unwrap_or_default();
-                self.more = event["nextOffset"].is_u64();
+                let page: RunPage = views::decode(event).unwrap_or_default();
+                self.runs = kept(page.runs);
+                self.more = page.next_offset.is_some();
                 self.load = Load::Ready;
                 self.snapshot_at = Some(Instant::now());
                 let kept = self
@@ -1039,19 +990,24 @@ impl Runs {
                 let Some(detail) = self.listed_detail(&id) else {
                     return Effect::default();
                 };
-                detail.goal = event["run"]["goal"].as_str().unwrap_or_default().to_owned();
-                detail.tasks = serde_json::from_value(event["tasks"].clone()).unwrap_or_default();
+                let view: RunView = views::decode(event).unwrap_or_default();
+                detail.goal = view
+                    .run
+                    .0
+                    .as_ref()
+                    .map(|run| run.goal.clone())
+                    .unwrap_or_default();
+                detail.tasks = kept(view.tasks);
                 detail.tasks_load = Load::Ready;
                 if let Some(row) = self.runs.iter_mut().find(|run| run.id == id)
-                    && let Ok(summary) = serde_json::from_value::<Summary>(event["run"].clone())
+                    && let Some(summary) = view.run.0
                 {
                     *row = summary;
                 }
                 Effect::default()
             }
             Read::Decisions { run, offset, page } => {
-                let decisions: Vec<Decision> =
-                    serde_json::from_value(event["decisions"].clone()).unwrap_or_default();
+                let reply: DecisionPage = views::decode(event).unwrap_or_default();
                 let Some(detail) = self.listed_detail(&run) else {
                     return Effect::default();
                 };
@@ -1059,12 +1015,12 @@ impl Runs {
                     detail.decisions.clear();
                 }
                 detail.decisions.extend(
-                    decisions
+                    kept(reply.decisions)
                         .into_iter()
-                        .filter(|decision| decision.state == "pending"),
+                        .filter(|decision| decision.state == DecisionState::Pending),
                 );
-                let next = event["nextOffset"]
-                    .as_u64()
+                let next = reply
+                    .next_offset
                     .filter(|next| *next > offset && page + 1 < DECISION_PAGES);
                 match next.map(|next| (next, self.decisions(features, &run, next))) {
                     Some((next, Ok(pair))) => {
@@ -1090,9 +1046,9 @@ impl Runs {
                 let Some(detail) = self.listed_detail(&id) else {
                     return Effect::default();
                 };
-                detail.pending_messages = event["pendingCount"].as_u64().unwrap_or_default();
-                detail.messages =
-                    serde_json::from_value(event["messages"].clone()).unwrap_or_default();
+                let inbox: InboxPage = views::decode(event).unwrap_or_default();
+                detail.pending_messages = inbox.pending_count;
+                detail.messages = kept(inbox.messages);
                 detail.inbox_load = Load::Ready;
                 Effect::default()
             }
@@ -1100,7 +1056,8 @@ impl Runs {
                 let Some(detail) = self.listed_detail(&id) else {
                     return Effect::default();
                 };
-                detail.digest = Some(Digest::parse(&event["digest"]));
+                let reply: DigestReply = views::decode(event).unwrap_or_default();
+                detail.digest = Some(reply.digest.into());
                 detail.digest_error = None;
                 Effect::default()
             }
@@ -1108,25 +1065,24 @@ impl Runs {
                 let Some(detail) = self.listed_detail(&id) else {
                     return Effect::default();
                 };
+                let state: WakeState = views::decode(event).unwrap_or_default();
                 let wakes = &mut detail.wakes;
                 wakes.loaded = true;
                 wakes.error = None;
-                wakes.policy = serde_json::from_value(event["wakePolicy"].clone()).ok();
-                wakes.pending = event["pendingCount"].as_u64().unwrap_or_default();
-                wakes.delivered_through = event["deliveredThrough"].as_u64().unwrap_or_default();
-                wakes.batches =
-                    serde_json::from_value(event["batches"].clone()).unwrap_or_default();
+                wakes.policy = state.wake_policy;
+                wakes.pending = state.pending_count;
+                wakes.delivered_through = state.delivered_through;
+                wakes.batches = kept(state.batches);
                 Effect::default()
             }
             Read::Templates => {
                 if let Some(templates) = &mut self.templates {
+                    let reply: WorkflowTemplates = views::decode(event).unwrap_or_default();
                     templates.load = Load::Ready;
-                    templates.repository =
-                        event["repository"].as_str().unwrap_or_default().to_owned();
-                    templates.digest = event["digest"].as_str().map(str::to_owned);
-                    templates.approved = event["approved"] == true;
-                    templates.items =
-                        serde_json::from_value(event["templates"].clone()).unwrap_or_default();
+                    templates.repository = reply.repository;
+                    templates.digest = reply.digest;
+                    templates.approved = reply.approved;
+                    templates.items = kept(reply.templates);
                     let count = templates.startable().len();
                     templates.selected = templates.selected.min(count.saturating_sub(1));
                 }
@@ -1150,15 +1106,16 @@ impl Runs {
             }
             Change::Start { name, .. } => {
                 self.page = Page::Runs;
-                if let Some(id) = event["run"]["id"].as_str() {
-                    self.selected = Some(id.to_owned());
-                    self.details.remove(id);
+                let run = views::decode::<RunChanged>(event).unwrap_or_default().run;
+                if let Some(id) = run.id {
+                    self.details.remove(&id);
+                    self.selected = Some(id);
                 }
                 return Effect {
                     commands: self.list(features).into_iter().collect(),
                     notice: Some(format!(
                         "Started template {name} as run {}.",
-                        event["run"]["title"].as_str().unwrap_or(name)
+                        run.title.as_deref().unwrap_or(name)
                     )),
                 };
             }
@@ -1206,11 +1163,9 @@ impl Runs {
     }
 
     pub fn failure(&mut self, features: &Value, event: &Value) -> Option<Effect> {
-        let request_id = event["requestId"].as_str()?;
-        let message = event["message"]
-            .as_str()
-            .unwrap_or("Host rejected the request")
-            .to_owned();
+        let error = HostError::of(event);
+        let request_id = error.request_id.as_deref()?;
+        let message = error.message_or("Host rejected the request").to_owned();
         if let Some((read, _)) = self.reads.remove(request_id) {
             self.read_failure(read, message);
             return Some(Effect::default());
@@ -1223,7 +1178,7 @@ impl Runs {
             return None;
         }
         let mutation = self.mutation.take()?;
-        if event["code"] == "revision_conflict" {
+        if error.code() == "revision_conflict" {
             let mut effect = Effect::notice(
                 "This run changed on the host; review the current revision and retry.",
             );
@@ -1239,6 +1194,7 @@ impl Runs {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use serde_json::json;
 
     pub(crate) fn features() -> Value {
         json!({

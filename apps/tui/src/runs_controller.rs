@@ -6,6 +6,7 @@ use crate::{
     runs::{ANSWER_BYTES, Effect, Load, Page, Runs},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use nesvo_wire::views::ReplyHeader;
 use serde_json::Value;
 use std::time::Instant;
 
@@ -170,11 +171,11 @@ pub fn open(app: &mut App, outcome: &mut Outcome) {
     }
 }
 
-pub fn host_event(app: &mut App, event: &serde_json::Value) -> Vec<serde_json::Value> {
+pub fn host_event(app: &mut App, event: &Value) -> Vec<Value> {
     let Some(runs) = app.runs.as_mut() else {
         return Vec::new();
     };
-    let effect = if event["type"] == "error" {
+    let effect = if ReplyHeader::of(event).kind.as_deref() == Some("error") {
         runs.failure(&app.host_features, event)
     } else {
         runs.response(&app.host_features, event)
@@ -264,7 +265,7 @@ fn key_event(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
 
 fn answer_key(
     runs: &mut Runs,
-    features: &serde_json::Value,
+    features: &Value,
     action: Option<RunKey>,
     key: KeyEvent,
     outcome: &mut Outcome,
