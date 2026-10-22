@@ -122,6 +122,8 @@ is never persisted.
 | `provider.quota_changed`       | `revision` integer                                                                                                                       | yes       |
 | `session.created`              | `program` Program; `parentSessionId` string or null, optional                                                                            | yes       |
 | `session.closed`               | none                                                                                                                                     | yes       |
+| `session.hibernated`           | `program` Program; `conversationId` string; `trigger` HibernationTrigger                                                                 | yes       |
+| `session.resumed`              | `program` Program; `conversationId` string                                                                                               | yes       |
 | `process.exited`               | `exitCode` integer or null                                                                                                               | yes       |
 | `response.settled`             | `turnId` string; `taskResult` null                                                                                                       | yes       |
 | `agent.lifecycle`              | `event` string; `state` AgentState; `generation` integer; `sourceSequence` integer; `submissionEvidence` boolean                         | yes       |
@@ -179,6 +181,7 @@ is never persisted.
 Enumerated payload types:
 
 - `AgentState`: `working`, `idle`, `done`, `blocked`, `question`, `failed`, `unknown`.
+- `HibernationTrigger`: `owner`, `idlePolicy`.
 - `Program`: `shell`, `claude`, `gemini`, `codex`.
 
 <!-- generated:event-kinds:end -->

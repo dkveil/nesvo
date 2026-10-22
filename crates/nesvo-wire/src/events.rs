@@ -66,6 +66,8 @@ events! {
     ProviderQuotaChanged(RevisionChanged) = "provider.quota_changed",
     SessionCreated(SessionCreated) = "session.created",
     SessionClosed(SessionClosed) = "session.closed",
+    SessionHibernated(SessionHibernated) = "session.hibernated",
+    SessionResumed(SessionResumed) = "session.resumed",
     ProcessExited(ProcessExited) = "process.exited",
     ResponseSettled(ResponseSettled) = "response.settled",
     AgentLifecycle(AgentLifecycle) = "agent.lifecycle",
@@ -202,6 +204,28 @@ fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Option<S
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionClosed {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum HibernationTrigger {
+    Owner,
+    IdlePolicy,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionHibernated {
+    pub program: Program,
+    pub conversation_id: String,
+    pub trigger: HibernationTrigger,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionResumed {
+    pub program: Program,
+    pub conversation_id: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

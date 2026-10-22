@@ -56,6 +56,10 @@
       "enum": ["working", "idle", "done", "blocked", "question", "failed", "unknown"],
       "type": "string"
     },
+    "HibernationTrigger": {
+      "enum": ["owner", "idlePolicy"],
+      "type": "string"
+    },
     "HostStarted": {
       "additionalProperties": false,
       "properties": {
@@ -495,6 +499,35 @@
       "required": ["program"],
       "type": "object"
     },
+    "SessionHibernated": {
+      "additionalProperties": false,
+      "properties": {
+        "conversationId": {
+          "type": "string"
+        },
+        "program": {
+          "$ref": "#/definitions/Program"
+        },
+        "trigger": {
+          "$ref": "#/definitions/HibernationTrigger"
+        }
+      },
+      "required": ["program", "conversationId", "trigger"],
+      "type": "object"
+    },
+    "SessionResumed": {
+      "additionalProperties": false,
+      "properties": {
+        "conversationId": {
+          "type": "string"
+        },
+        "program": {
+          "$ref": "#/definitions/Program"
+        }
+      },
+      "required": ["program", "conversationId"],
+      "type": "object"
+    },
     "WorktreeArchived": {
       "additionalProperties": false,
       "properties": {
@@ -623,6 +656,32 @@
         },
         "payload": {
           "$ref": "#/definitions/SessionClosed"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session.hibernated",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/SessionHibernated"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session.resumed",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/SessionResumed"
         }
       },
       "required": ["kind", "payload"],
