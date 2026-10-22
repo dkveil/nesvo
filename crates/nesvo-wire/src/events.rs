@@ -116,6 +116,9 @@ events! {
     WorktreePrepared(WorktreePrepared) = "worktree.prepared",
     WorktreeRan(WorktreeRan) = "worktree.ran",
     WorktreeArchived(WorktreeArchived) = "worktree.archived",
+    McpPoolAttached(McpPoolAttached) = "mcp.pool_attached",
+    McpPoolReleased(McpPoolReleased) = "mcp.pool_released",
+    McpPoolReaped(McpPoolReaped) = "mcp.pool_reaped",
 }
 
 pub fn journaled_kind(kind: &str) -> bool {
@@ -419,6 +422,33 @@ pub struct WorktreeArchived {
     pub discarded: bool,
     pub blockers: Vec<String>,
     pub branch_deleted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpPoolAttached {
+    pub entry_id: String,
+    pub server: String,
+    pub program: Program,
+    pub digest: String,
+    pub root: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpPoolReleased {
+    pub entry_id: String,
+    pub server: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpPoolReaped {
+    pub entry_id: String,
+    pub server: String,
+    pub digest: String,
+    pub reason: String,
 }
 
 #[cfg(test)]

@@ -111,6 +111,63 @@
       "required": ["triggerId", "deliveryId", "disposition"],
       "type": "object"
     },
+    "McpPoolAttached": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "entryId": {
+          "type": "string"
+        },
+        "program": {
+          "$ref": "#/definitions/Program"
+        },
+        "root": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": ["entryId", "server", "program", "digest", "root"],
+      "type": "object"
+    },
+    "McpPoolReaped": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "entryId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": ["entryId", "server", "digest", "reason"],
+      "type": "object"
+    },
+    "McpPoolReleased": {
+      "additionalProperties": false,
+      "properties": {
+        "entryId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": ["entryId", "server", "reason"],
+      "type": "object"
+    },
     "OperationChanged": {
       "additionalProperties": false,
       "properties": {
@@ -1216,6 +1273,45 @@
         },
         "payload": {
           "$ref": "#/definitions/WorktreeArchived"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "mcp.pool_attached",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/McpPoolAttached"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "mcp.pool_released",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/McpPoolReleased"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "mcp.pool_reaped",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/McpPoolReaped"
         }
       },
       "required": ["kind", "payload"],

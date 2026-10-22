@@ -172,6 +172,9 @@ is never persisted.
 | `worktree.prepared`            | `sessionId` string; `result` string; `log` string; `worktree` string; `digest` string                                                    | yes       |
 | `worktree.ran`                 | `sessionId` string; `result` string; `log` string                                                                                        | yes       |
 | `worktree.archived`            | `sessionId` string; `worktree` string; `branch` string or null; `discarded` boolean; `blockers` array of string; `branchDeleted` boolean | yes       |
+| `mcp.pool_attached`            | `entryId` string; `server` string; `program` Program; `digest` string; `root` string                                                     | yes       |
+| `mcp.pool_released`            | `entryId` string; `server` string; `reason` string                                                                                       | yes       |
+| `mcp.pool_reaped`              | `entryId` string; `server` string; `digest` string; `reason` string                                                                      | yes       |
 
 Enumerated payload types:
 
