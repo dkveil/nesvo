@@ -1998,10 +1998,8 @@ pub(crate) mod attention {
     use crate::network::Connection;
     use anyhow::Result;
     use clap::Subcommand;
-    use rmcp::model::{Tool, ToolAnnotations};
     use serde::Deserialize;
     use serde_json::{Value, json};
-    use std::sync::Arc;
 
     #[derive(Subcommand)]
     pub enum InboxCommand {
@@ -2242,68 +2240,6 @@ pub(crate) mod attention {
         "nesvo_list_pending_decisions",
         "nesvo_decide",
     ];
-
-    fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
-        serde_json::from_value(json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}))
-            .expect("constant attention input schema")
-    }
-
-    pub fn catalog() -> Vec<Tool> {
-        [
-            (
-                TOOLS[0],
-                "Owner-only: one page of needs-you items across sessions, runs, pending decisions and finished job results, sorted by priority. Each item has a stable id and a revision; follow nextPage. Acknowledged revisions stay hidden; a newer revision of the same item returns. Needs attentionInbox:true.",
-                object(
-                    json!({"page":{"type":"integer","minimum":0,"maximum":1024,"default":0},"limit":{"type":"integer","minimum":1,"maximum":32,"default":16}}),
-                    &[],
-                ),
-                true,
-            ),
-            (
-                TOOLS[1],
-                "Owner-only: acknowledge 1–32 inbox items by id and revision. Acknowledgements are durable receipts: repeating one returns the original acknowledgedAt, and reconnecting never shows the same revision again. Acknowledging does not answer a decision or validate a result.",
-                object(
-                    json!({"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["id","revision"],"properties":{"id":{"type":"string","minLength":1,"maxLength":200},"revision":{"type":"integer","minimum":0}}}}}),
-                    &["items"],
-                ),
-                false,
-            ),
-            (
-                TOOLS[2],
-                "Owner-only: pending decisions across all runs, oldest first, eight per page with their run and inbox id. No run ID is needed. Needs decisions:true.",
-                object(
-                    json!({"page":{"type":"integer","minimum":0,"maximum":512,"default":0}}),
-                    &[],
-                ),
-                true,
-            ),
-            (
-                TOOLS[3],
-                "Owner-only: answer one pending decision by its ID at its current revision. choice is the literal answer the worker receives; an optional note follows it after a blank line. Answered or canceled decisions are refused with decision_resolved and expired ones with decision_expired, so a retry never answers twice. Not a native permission grant.",
-                object(
-                    json!({"decisionId":{"type":"string","minLength":1,"maxLength":128},"choice":{"type":"string","minLength":1,"maxLength":2048},"note":{"type":"string","minLength":1,"maxLength":1024}}),
-                    &["decisionId", "choice"],
-                ),
-                false,
-            ),
-        ]
-        .into_iter()
-        .map(|(name, description, schema, read_only)| {
-            Tool::new(name, description, schema)
-                .with_annotations(
-                    ToolAnnotations::new()
-                        .read_only(read_only)
-                        .destructive(false)
-                        .idempotent(true)
-                        .open_world(!read_only),
-                )
-                .with_raw_output_schema(Arc::new(
-                    serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}}))
-                        .expect("constant attention result schema"),
-                ))
-        })
-        .collect()
-    }
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -2649,7 +2585,10 @@ pub(crate) mod attention {
                 assert!(command(name, &arguments).unwrap().is_err(), "{name}");
             }
             assert!(command("nesvo_list_sessions", &json!({})).is_none());
-            let names: Vec<String> = catalog().iter().map(|tool| tool.name.to_string()).collect();
+            let names: Vec<String> = crate::mcp_tools::catalog_named(&TOOLS)
+                .iter()
+                .map(|tool| tool.name.to_string())
+                .collect();
             assert_eq!(names, TOOLS);
         }
     }

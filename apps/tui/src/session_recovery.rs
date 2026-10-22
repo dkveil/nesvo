@@ -4,10 +4,8 @@ use crate::{
 };
 use anyhow::Result;
 use clap::Subcommand;
-use rmcp::model::{Tool, ToolAnnotations};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::sync::Arc;
 
 #[derive(Subcommand)]
 pub enum Command {
@@ -119,57 +117,6 @@ pub const TOOLS: [&str; 3] = [
     "nesvo_restore_session",
     "nesvo_forget_recovery",
 ];
-
-fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
-    serde_json::from_value(json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}))
-        .expect("constant recovery input schema")
-}
-
-pub fn catalog() -> Vec<Tool> {
-    let id = json!({"type":"string","pattern":"^[0-9a-f]{32}$"});
-    [
-        (
-            TOOLS[0],
-            "Owner-only: list a bounded page of saved launch descriptions for sessions that are not running. A record shows spec.resume when an exact provider conversation was observed. Follow nextOffset. Never starts a process.",
-            object(
-                json!({"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
-                &[],
-            ),
-            true,
-        ),
-        (
-            TOOLS[1],
-            "Owner-only: start one new process from a saved description in its recorded folder. Old prompts and worktree creation are never replayed. resume:true asks the provider for the exact recorded conversation; the session stays closed to automated input until the provider confirms that conversation, otherwise it is marked resumeFailed. Gemini and records without a conversation are refused. A claimed record is never restarted twice.",
-            object(
-                json!({"id":id,"resume":{"type":"boolean","default":false}}),
-                &["id"],
-            ),
-            false,
-        ),
-        (
-            TOOLS[2],
-            "Owner-only: forget one saved description. Running processes, conversations and project files are untouched.",
-            object(json!({"id":id}), &["id"]),
-            false,
-        ),
-    ]
-    .into_iter()
-    .map(|(name, description, schema, read_only)| {
-        Tool::new(name, description, schema)
-            .with_annotations(
-                ToolAnnotations::new()
-                    .read_only(read_only)
-                    .destructive(name == TOOLS[2])
-                    .idempotent(name != TOOLS[1])
-                    .open_world(!read_only),
-            )
-            .with_raw_output_schema(Arc::new(
-                serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}}))
-                    .expect("constant recovery result schema"),
-            ))
-    })
-    .collect()
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -301,7 +248,7 @@ mod tests {
 
     #[test]
     fn recovery_mcp_tools_are_strict_owner_only_and_published() {
-        let tools = catalog();
+        let tools = crate::mcp_tools::catalog_named(&TOOLS);
         assert_eq!(tools.len(), 3);
         let published: Vec<String> =
             serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json")).unwrap();

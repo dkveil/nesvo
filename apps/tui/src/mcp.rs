@@ -1,6 +1,15 @@
 //! MCP is a transport adapter to the authenticated host, never a session engine.
 use crate::{
     cli, mcp_events,
+    mcp_tools::{
+        self, Handler, Request, Scope,
+        args::{
+            CreateSession, DeliverReview, GetOperation, NoArgs, OpenReview, ProviderQuota,
+            ReadDiff, ReadEvents, ReadSession, SendPrompt, SessionArgs, SessionControl,
+            SetQuotaWake, StartWorkflowTemplate, WaitPrompt, WorktreeSession, WorktreeSetup,
+        },
+        catalog, parse,
+    },
     network::{Connection, Pairing, open_failure_message},
 };
 use anyhow::Result;
@@ -11,15 +20,13 @@ use rmcp::{
         CallToolRequestParams, CallToolResponse, CallToolResult, Implementation,
         ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
         ReadResourceRequestParams, ReadResourceResponse, ServerCapabilities, ServerConfig,
-        SubscribeRequestParams, SubscriptionFilter, Tool, ToolAnnotations,
-        UnsubscribeRequestParams,
+        SubscribeRequestParams, SubscriptionFilter, Tool, UnsubscribeRequestParams,
     },
     service::{RequestContext, RxJsonRpcMessage, SubscriptionContext, TxJsonRpcMessage},
     transport::async_rw::JsonRpcMessageCodec,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use tokio::sync::Semaphore;
 use tokio_util::{
     codec::{FramedRead, FramedWrite},
@@ -32,949 +39,25 @@ const MAX_MESSAGE: usize = 64 * 1024;
 #[path = "quota_job_cli_tests.rs"]
 mod quota_job_cli_tests;
 
+#[cfg(test)]
 fn published_tools() -> Vec<String> {
-    // Compile-time bundled contract, never a client-supplied document.
-    serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json"))
-        .expect("Bundled MCP catalog contract is valid")
+    mcp_tools::published_names()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 fn valid_permission_additions(value: &Value) -> bool {
     let Some(tools) = value.as_array() else {
         return false;
     };
-    let known = published_tools();
+    let known = mcp_tools::published_names();
     let mut seen = std::collections::HashSet::new();
     tools.len() <= 32
         && tools.iter().all(|v| {
             v.as_str()
-                .is_some_and(|t| known.iter().any(|k| k == t) && seen.insert(t))
+                .is_some_and(|t| known.contains(&t) && seen.insert(t))
         })
-}
-
-fn capture_schema() -> Value {
-    json!({"type":"object","additionalProperties":false,"required":["displayProfile"],"properties":{"displayProfile":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host path to an owner-declared bounded display manifest. Explicit Claude-only opt-in; pins declared executable/argv/presentation for this launch, without guessing or modifying global statusLine. Callback is display evidence only, not fresh account permission."}}})
-}
-fn launch_schema() -> Value {
-    json!({
-        "type":"object", "required":["name"], "additionalProperties":false,
-        "properties": {
-            "name":{"type":"string","minLength":1,"maxLength":80},
-            "program":{"enum":["shell","claude","codex","gemini"],"default":"shell"},
-            "role":{"enum":["worker","coordinator"],"default":"worker","description":"Only owner access may grant coordinator at launch; a coordinator cannot create coordinators"},
-            "harness":{"type":"boolean","description":"Launch-local Nesvo MCP/instructions on supported Claude; inherits coordinator setting when omitted"},
-            "allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Owner-only exact native permission additions for this explicit harness process, not inherited by children or restored processes. Does not grant host authority or bypass provider deny/ask rules."},
-            "childAllowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Owner-only immutable coordinator policy for authenticated supported Claude harness children. Not copied from the coordinator's own native permissions. Never delegates host roles, allows recursive coordinators or applies merely from parent metadata. Other programs/opt-out children receive no additions."},
-            "model":{"type":"string","minLength":1,"maxLength":256,"description":"Explicit launch-local native model alias/ID, not resolved account availability"},
-            "effort":{"type":"string","minLength":1,"maxLength":32,"description":"Requires explicit model; provider-specific native reasoning level"},
-            "claudeQuotaCapture":capture_schema(),
-            "cwd":{"type":"string"}, "groupId":{"type":["string","null"]},
-            "parentSessionId":{"type":["string","null"],"description":"Lineage only; scoped creation binds the authenticated parent automatically"},
-            "prompt":{"type":"string","description":"Literal agent prompt, at most 8192 UTF-8 bytes; not a shell command"},
-            "worktree":{"type":"boolean","default":false},
-            "autoTitle":{"type":"boolean","default":false},
-            "muted":{"type":"boolean","default":false},
-            "resumePicker":{"type":"boolean","default":false}
-        }
-    })
-}
-
-fn task_profile_schema(include_shell: bool) -> Value {
-    let mut schema = json!({"type":"object","additionalProperties":false,"required":["program","workspace"],"properties":{"name":{"type":"string","minLength":1,"maxLength":80},"cwd":{"type":"string","maxLength":4096},"program":{"enum":["claude","codex","gemini"]},"workspace":{"enum":["shared","worktree"]},"harness":{"type":"boolean"},"model":{"type":"string","minLength":1,"maxLength":256},"effort":{"type":"string","minLength":1,"maxLength":32},"allowedNesvoTools":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","enum":published_tools()},"description":"Exact task-native additions: coordinator policy subset or explicit owner coordinatorless intent; [] chooses none. Does not grant host authority or bypass provider policy."}}});
-    schema["properties"]["claudeQuotaCapture"] = capture_schema();
-    if include_shell {
-        schema["properties"]["program"]["enum"] = json!(["shell", "claude", "codex", "gemini"]);
-    }
-    schema
-}
-fn precheck_command_schema() -> Value {
-    let codes = json!({"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":255}});
-    json!(object(
-        json!({
-            "version":{"type":"integer","const":1,"default":1},"title":{"type":"string","minLength":1,"maxLength":80},
-            "executable":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute executable on host; Windows requires .exe/.com. No implicit shell."},
-            "cwd":{"type":"string","minLength":1,"maxLength":4096,"description":"Exact absolute host directory, not an ambient/focused session path"},
-            "arguments":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":2048},"default":[]},
-            "timeoutMs":{"type":"integer","minimum":100,"maximum":10000,"default":2000},
-            "passExitCodes":codes,"skipExitCodes":codes,
-        "environment":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","maxLength":2048},"description":"Explicit additions to isolated-platform-v1. No ambient inheritance. Windows adds OS-derived SystemRoot. Overrides and NESVO_/POCKET_ keys forbidden; ASCII alphanumeric/underscore names, unique without regard to case. Not a sandbox."}
-        }),
-        &["title", "executable", "cwd"]
-    ))
-}
-fn job_spec_schema() -> Value {
-    let zone = json!({"type":"string","maxLength":64,"default":"Europe/Warsaw","description":"IANA time zone. Gaps are skipped; folds use the first instant only."});
-    let schedule = json!({"oneOf":[
-        object(json!({"kind":{"const":"once"},"at":{"type":"string","maxLength":64,"description":"Future RFC3339 instant with an explicit UTC offset, at most 366 days ahead"}}), &["kind","at"]),
-        object(json!({"kind":{"const":"cron"},"expression":{"type":"string","minLength":1,"maxLength":256,"description":"Five fields: minute hour day month weekday"},"timeZone":zone}), &["kind","expression"]),
-        object(json!({"kind":{"const":"rrule"},"rule":{"type":"string","minLength":1,"maxLength":1024,"description":"Uppercase Gregorian RFC5545 RRULE; MINUTELY or coarser, COUNT<=10000, UTC UNTIL. Bounded search can explicitly refuse complex/old dense rules."},"start":{"type":"string","minLength":19,"maxLength":19,"description":"Existing local DTSTART as YYYY-MM-DDTHH:MM:SS"},"timeZone":zone}), &["kind","rule","start"]),
-        object(json!({"kind":{"const":"external","description":"No timer schedule; requires jobExternalTriggers:true. Only explicit run-now or authenticated configured external delivery admits an occurrence."}}), &["kind"])
-    ]});
-    let retry = object(
-        json!({
-            "on":{"enum":["launchNoEffect"],"description":"Retries an exact failed native create receipt with effectStarted:false, and an uncertain launch only after journal probes find no attempt or session and fence its Run; found work is adopted, never relaunched; no process or result retry"},
-            "maxAttempts":{"type":"integer","minimum":1,"maximum":8,"description":"Total dispatch generations, including the first"},
-            "initialDelayMs":{"type":"integer","minimum":1000,"maximum":3600000},
-            "maxDelayMs":{"type":"integer","minimum":1000,"maximum":86400000,"description":"At least initialDelayMs; capped exponential delay is persisted once per outgoing retry decision"}
-        }),
-        &["on", "maxAttempts", "initialDelayMs", "maxDelayMs"],
-    );
-    let mut schema = json!({"type":"object","additionalProperties":false,"required":["title","instruction","profile","schedule"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"profile":task_profile_schema(false),"schedule":schedule,"precheckId":{"type":"string","minLength":32,"maxLength":32,"description":"Previously owner-approved immutable command ID. Combining with retry explicitly authorizes bounded repeated execution before each fresh generation and requires jobPrecheckGenerations:true. Each begin checks current approval and records fresh authorization; prior passes cannot release a new Run."},"retry":retry,"misfire":{"enum":["skip","catchUp"],"default":"catchUp"},"graceMs":{"type":"integer","minimum":0,"maximum":86400000,"default":60000},"overlap":{"enum":["skip","queue"],"default":"skip"},"maxElapsedMs":{"type":"integer","minimum":1000,"maximum":604800000,"default":300000,"description":"Per-Run admission/input budget, not a hard process timeout"},"executionTimeoutMs":{"type":"integer","minimum":1000,"maximum":604800000,"description":"Optional per-generation execution window from native launch admission, including preparation/readiness and excluding prechecks. An accepted explicit worker report before the deadline disarms it while validation may remain pending. Expiry requests exact bound-worker cleanup subject to human control; acceptance is not observed exit. Requires jobExecutionTimeouts:true. Omission adds no execution timeout; maxElapsedMs remains independent."}}});
-    schema["properties"]["quotaPolicy"] = json!({
-        "type":"object","additionalProperties":false,"required":["mode","contextId","accountFingerprint"],
-        "properties":{"mode":{"const":"wait"},"contextId":quota_binding_schema(),"accountFingerprint":quota_binding_schema()},
-        "description":"Explicit owner opt-in to wait for configured-reader quota evidence; currently Codex only. Bind inspected contextId/accountFingerprint, never credentials. Requires jobQuotaAdmission:true; providerQuotaObservations or quotaWake alone is insufficient. Omission preserves legacy intent. This observation is not an immutable native-account lease or a guarantee that the provider will accept work."
-    });
-    schema
-}
-fn quota_binding_schema() -> Value {
-    json!({"type":"string","pattern":"^[0-9a-f]{64}$","minLength":64,"maxLength":64})
-}
-fn object(properties: Value, required: &[&str]) -> serde_json::Map<String, Value> {
-    let mut schema = serde_json::Map::new();
-    schema.insert("type".into(), json!("object"));
-    schema.insert("properties".into(), properties);
-    schema.insert("required".into(), json!(required));
-    schema.insert("additionalProperties".into(), false.into());
-    schema
-}
-fn provider_quota_schema() -> serde_json::Map<String, Value> {
-    let mut schema = object(
-        json!({"program":{"enum":["codex","claude","gemini"]},"directory":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host folder to resolve a separate Codex configured-account reader. Does not start a model or alter configuration."},"refresh":{"type":"boolean","default":false}}),
-        &[],
-    );
-    schema.insert("allOf".into(), json!([{"if":{"required":["refresh"],"properties":{"refresh":{"const":true}}},"then":{"required":["program"]}},{"if":{"required":["directory"]},"then":{"required":["program"],"properties":{"program":{"const":"codex"}}}}]));
-    schema
-}
-fn catalog() -> Vec<Tool> {
-    let id = json!({"type":"string","minLength":1,"maxLength":128,"description":"Stable host-issued ID for the named field; run/task/attempt/session IDs are distinct, never names or UI focus"});
-    let cursor = json!({"type":"integer","minimum":0,"maximum":9_007_199_254_740_991_u64});
-    let key = json!({"type":"string","minLength":1,"maxLength":128});
-    let revision = json!({"type":"integer","minimum":1});
-    let worktree_directory = json!({"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host folder inside the Git repository"});
-    let checks = json!({"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["name","outcome","details"],"properties":{"name":{"type":"string","minLength":1,"maxLength":128},"outcome":{"enum":["passed","failed","skipped"]},"details":{"type":"string","minLength":1,"maxLength":1024}}}});
-    let strings = |count: usize| json!({"type":"array","maxItems":count,"items":{"type":"string","minLength":1,"maxLength":1024}});
-    let definitions = [
-        (
-            "nesvo_get_provider_quota",
-            "Owner-only provider quota observations with source, freshness and completeness evidence. Optional refresh requires an installed explicit program and asynchronously queues or coalesces one bounded original-provider read; queued/pending/cooldown does not mean refreshed. Inspect a later revision. Does not request models, login, switch accounts or release queued jobs. Reader account evidence does not bind a native process account.",
-            provider_quota_schema(),
-            true,
-        ),
-        (
-            "nesvo_set_quota_wake",
-            "Owner-only explicit enable/disable of one durable native Codex quota wake; requires durableQuotaWake:true. Enable requires a live bound lifecycle, the exact captured configured reader, a fresh complete five-hour window at >=90% with a future reset, and no human lease or draft. One ordinary native send receipt may resume the same process only after a fresh matching-account read started after reset affirmatively permits usage. Unknown effects, human takeover and known identity changes never retry input. Disable does not undo an already accepted send. No Claude/Gemini support, account lock, purchase or limit bypass.",
-            object(
-                json!({"sessionId":id,"enabled":{"type":"boolean"}}),
-                &["sessionId", "enabled"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_quota_wake",
-            "Owner-only read of the retained quota wake and its linked native send receipt identity for one stable session. Requires durableQuotaWake:true. Returns null when no arm is retained. Does not arm, refresh provider evidence, send input, resume a process or replay effects; a wake phase is not task success.",
-            object(json!({"sessionId":id}), &["sessionId"]),
-            true,
-        ),
-        (
-            "nesvo_describe_precheck",
-            "Owner-only normalization/digest of a proposed command. Does not approve or execute it. Review literal executable/cwd/argv/environment; file contents and called code remain mutable, not sandboxed.",
-            object(json!({"spec":precheck_command_schema()}), &["spec"]),
-            true,
-        ),
-        (
-            "nesvo_approve_precheck",
-            "Explicit owner trust for this exact command/cwd/argv/environment/duration/exit policy. Arbitrary OS code, not sandboxed. Requires previously inspected normalized digest. Separate from loading a job/repository config. Never delegated to coordinators/workers; no execution now.",
-            object(
-                json!({"key":key,"spec":precheck_command_schema(),"expectedDigest":{"type":"string","minLength":64,"maxLength":64}}),
-                &["key", "spec", "expectedDigest"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_precheck",
-            "Owner-only immutable command approval, including revoked intent. No execution.",
-            object(json!({"id":id}), &["id"]),
-            true,
-        ),
-        (
-            "nesvo_list_prechecks",
-            "Owner-only bounded approval summaries without command arguments or execution.",
-            object(
-                json!({"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
-                &[],
-            ),
-            true,
-        ),
-        (
-            "nesvo_revoke_precheck",
-            "Owner-only exact-revision refusal of future executions. Already authorized checks may finish; does not undo effects or terminate a process.",
-            object(
-                json!({"id":id,"key":key,"expectedRevision":revision}),
-                &["id", "key", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_precheck_mutation",
-            "Recover immutable original precheck approval/revocation acceptance. Does not execute/reapprove or reflect current enabled state.",
-            object(json!({"key":key}), &["key"]),
-            true,
-        ),
-        (
-            "nesvo_abandon_job_precheck",
-            "Owner-only explicit acknowledgement of an uncertain precheck's effects, abandoning its exact current generation before its Run was bound. Requires inspection/digest and acknowledgement. jobAttemptId requires jobPrecheckGenerations:true and is mandatory after generation 1; omission preserves legacy generation-1 requests. Does not kill detached commands, undo effects, repeat a check, resume work or create a model.",
-            object(
-                json!({"key":key,"jobId":id,"occurrenceId":id,"jobAttemptId":id,"expectedDigest":{"type":"string","minLength":64,"maxLength":64},"acknowledgeUnknownEffects":{"type":"boolean","const":true}}),
-                &[
-                    "key",
-                    "jobId",
-                    "occurrenceId",
-                    "expectedDigest",
-                    "acknowledgeUnknownEffects",
-                ],
-            ),
-            false,
-        ),
-        (
-            "nesvo_abandon_job_launch",
-            "Owner-only logical abandonment of exact no-effect launch cleanup. Inspect the current generation's launchReconciliation descriptor, require available:true and its digest, and explicitly acknowledge unknown effects. jobAttemptId is always required; needs jobLaunchReconciliation:true. Only the exact native create receipt's JSON boolean effectStarted:false and finished producers qualify. Releases overlap for a separate occurrence without claiming process exit, completing a native stop, retrying, repeating prechecks or granting model/native permissions. Existing precheck effects and original native receipts remain retained. Recover the original job mutation key.",
-            object(
-                json!({"key":key,"jobId":id,"occurrenceId":id,"jobAttemptId":id,"expectedDigest":{"type":"string","minLength":64,"maxLength":64,"pattern":"^[0-9a-f]{64}$"},"acknowledgeUnknownEffects":{"type":"boolean","const":true}}),
-                &[
-                    "key",
-                    "jobId",
-                    "occurrenceId",
-                    "jobAttemptId",
-                    "expectedDigest",
-                    "acknowledgeUnknownEffects",
-                ],
-            ),
-            false,
-        ),
-        (
-            "nesvo_create_job",
-            "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional executionTimeoutMs requires jobExecutionTimeouts and starts at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Combining with precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution before each fresh generation. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
-            object(
-                json!({"key":key,"spec":job_spec_schema()}),
-                &["key", "spec"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_authorize_job_quota",
-            "Owner-only explicit reader-context/account reauthorization of one queued or retry-waiting quota occurrence. Compare the exact prior binding and select inspected new fingerprints. Requires jobQuotaAdmission:true. Original mutation replay returns its immutable acceptance; this does not retry native effects, change other occurrences, create a model or bypass provider limits.",
-            object(
-                json!({"key":key,"jobId":id,"occurrenceId":id,"expectedContextId":quota_binding_schema(),"expectedAccountFingerprint":quota_binding_schema(),"contextId":quota_binding_schema(),"accountFingerprint":quota_binding_schema()}),
-                &[
-                    "key",
-                    "jobId",
-                    "occurrenceId",
-                    "expectedContextId",
-                    "expectedAccountFingerprint",
-                    "contextId",
-                    "accountFingerprint",
-                ],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_job",
-            "Owner-only read of a persisted definition and requested profile, without dispatch.",
-            object(json!({"jobId":id}), &["jobId"]),
-            true,
-        ),
-        (
-            "nesvo_list_jobs",
-            "Owner-only bounded job definition summaries. No prompts, dispatch or input ownership.",
-            object(
-                json!({"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
-                &[],
-            ),
-            true,
-        ),
-        (
-            "nesvo_update_job",
-            "Owner-only exact-revision replacement of future job intent, including optional launchNoEffect retry policy and executionTimeoutMs. Execution timeouts require jobExecutionTimeouts and start at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Existing occurrences keep their immutable spec; does not change running processes. Combining retry and precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution with fresh approval checks before each generation.",
-            object(
-                json!({"key":key,"jobId":id,"expectedRevision":revision,"spec":job_spec_schema()}),
-                &["key", "jobId", "expectedRevision", "spec"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_set_job_enabled",
-            "Owner-only enable/disable of future automatic admissions. Already admitted work may finish; no terminal input or native resume. Exact revision/key required.",
-            object(
-                json!({"key":key,"jobId":id,"expectedRevision":revision,"enabled":{"type":"boolean"}}),
-                &["key", "jobId", "expectedRevision", "enabled"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_run_job_now",
-            "Owner-only deliberate new occurrence, including a disabled definition. Distinct key is a distinct intent, subject to overlap skip/one-deep queue; not a retry of an uncertain effect.",
-            object(
-                json!({"key":key,"jobId":id,"expectedRevision":revision}),
-                &["key", "jobId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_cancel_job_occurrence",
-            "Owner-only cancellation of one admitted job occurrence by stable job/occurrence IDs. Fences further model admissions and requests bounded precheck/native cleanup. Acceptance is intent, not proof of process exit; inspect the occurrence's current cancellation/receipts. Unknown effects require reconciliation. Original mutation replay never repeats native effects or creates a replacement run.",
-            object(
-                json!({"key":key,"jobId":id,"occurrenceId":id}),
-                &["key", "jobId", "occurrenceId"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_job_history",
-            "Owner-only bounded occurrence history with state, reason and workflow run pointer. Started/idle is not succeeded; reported results need explicit validation.",
-            object(
-                json!({"jobId":id,"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
-                &["jobId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_job_occurrence",
-            "Owner-only immutable occurrence profile and run pointer, including nullable launchReconciliation and retained launchResolution evidence. An available launch descriptor/digest can be inspected before a separate explicit owner acknowledgement. Reads never release overlap, dispatch effects or adopt a process.",
-            object(
-                json!({"jobId":id,"occurrenceId":id}),
-                &["jobId", "occurrenceId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_job_attempts",
-            "Owner-only read of eight retained dispatch generations for one exact job occurrence, including nullable launchReconciliation and launchResolution evidence. Ordinal 1 is the first dispatch; queued intent has no generation yet. Summaries omit precheck stdout/stderr. Does not create a retry, release overlap, repeat a command, launch/adopt a process or change native permissions.",
-            object(
-                json!({"jobId":id,"occurrenceId":id,"offset":{"type":"integer","minimum":0,"maximum":4096,"default":0}}),
-                &["jobId", "occurrenceId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_job_attempt",
-            "Owner-only detail of one retained job dispatch generation, including bounded precheck evidence and nullable launchReconciliation/launchResolution. jobAttemptId is distinct from a workflow task attempt/session ID. Reads never retry, release overlap, launch/adopt a process, repeat native effects or infer success from process silence.",
-            object(
-                json!({"jobId":id,"occurrenceId":id,"jobAttemptId":id}),
-                &["jobId", "occurrenceId", "jobAttemptId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_job_mutation",
-            "Owner-only recovery of an original job mutation acceptance. Does not reapply its effects or reflect later state.",
-            object(json!({"key":key}), &["key"]),
-            true,
-        ),
-        (
-            "nesvo_rebind_run_coordinator",
-            "Owner-only binding of retained run context to a different live native coordinator after the previous process is unavailable. Exact source ID (null for unbound), revision and mutation key required. Preserves inbox/results/constraints/budgets; pauses executor/wakes and queued input, fences earlier native input. No native worker authority, process/conversation adoption, ACK, validation, prompt or policy enable is restored. Target must match retained workspace/group. Recover the original workflow mutation key.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"expectedCoordinatorSessionId":{"anyOf":[{"type":"null"},id.clone()]},"coordinatorSessionId":id}),
-                &[
-                    "key",
-                    "runId",
-                    "expectedRevision",
-                    "expectedCoordinatorSessionId",
-                    "coordinatorSessionId",
-                ],
-            ),
-            false,
-        ),
-        (
-            "nesvo_add_run_constraint",
-            "Owner-only append of literal manual constraints at the current run revision. Pauses executor/wakes and queued task input; earlier native input cannot rearm after acknowledgement. No user text is discarded or treated as task success/native permission. Existing model work may finish. Recover immutable acceptance with the original workflow mutation key.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"text":{"type":"string","minLength":1,"maxLength":1024}}),
-                &["key", "runId", "expectedRevision", "text"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_list_run_constraints",
-            "Read eight append-only owner constraints and current acknowledgement revision. after is a constraint revision, not an event/inbox cursor. Read does not acknowledge, clear drafts, enable scheduling or grant native authority. Workers receive own constraints in their current task context.",
-            object(
-                json!({"runId":id,"after":{"type":"integer","minimum":0,"maximum":16}}),
-                &["runId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_acknowledge_run_constraints",
-            "Deliberately attest reading the exact current constraint revision, using the current run revision. Only owner or this run's coordinator. No policy auto-enable, old delivery replay, native permission, inbox ACK or task validation. Earlier/pre-ACK native receipts remain fenced even after this acknowledgement.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"constraintRevision":{"type":"integer","minimum":1,"maximum":16}}),
-                &["key", "runId", "expectedRevision", "constraintRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_save_run_checkpoint",
-            "Capture an immutable bounded run metadata manifest once at the exact source revision. Includes goal, owner constraints, plan, attempt/validation and decision/native-uncertainty pointers. A caller summary is an attestation, not verified progress. Does not send input, ACK, launch/adopt processes or replay effects. Recover with the original workflow mutation key.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"summary":{"type":"string","minLength":1,"maxLength":2048}}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_list_run_checkpoints",
-            "Read eight immutable checkpoint headers in a visible run. Source run revision and journal cursor describe capture, not current process authority. No native effects or implicit restoration.",
-            object(
-                json!({"runId":id,"offset":{"type":"integer","minimum":0,"maximum":32}}),
-                &["runId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_run_checkpoint",
-            "Read an immutable historical checkpoint page, at most eight parts / 24 KiB. Current constraint revision is reported separately; history never replaces it. Receipt pointers retain issuer scope. Persisted attempt state is not current process evidence and no native effect is restored.",
-            object(
-                json!({"runId":id,"checkpointId":id,"offset":{"type":"integer","minimum":0,"maximum":16384}}),
-                &["runId", "checkpointId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_read_run_context",
-            "Read current authoritative context for resume/compaction without input, process adoption, effect replay, inbox ACK or task validation. An optional checkpoint is a comparison baseline only; parts always reflect current constraints/state. Continue with returned nextOffset and the same expectedDigest; context_changed requires starting at zero, never mixing pages.",
-            object(
-                json!({"runId":id,"checkpointId":id,"offset":{"type":"integer","minimum":0,"maximum":16384},"expectedDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"}}),
-                &["runId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_enable_run_wakes",
-            "Opt in to coalesced notices for the run's live coordinator. Only new result/question/error/decision/blocker deltas produce native input; no unchanged-state model heartbeat. Pending messages remain durable, never auto-ACKed or validated. Human takeover pauses the policy. Restart disables it; explicit enable never replays old batches or grants native permission.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_run_wakes",
-            "Read wake policy and at most eight notice references. after is a wake-notice cursor, not an inbox cursor or ACK. No model/input effects. Inspect a batch by its actual ID for exact inbox message sequences and current native receipt phase.",
-            object(json!({"runId":id,"after":cursor}), &["runId"]),
-            true,
-        ),
-        (
-            "nesvo_disable_run_wakes",
-            "Disable future coordinator wake input using the exact current run revision. Does not undo bytes, stop processes, ACK messages or validate results. Retain/inspect batch and receipt uncertainty.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_run_wake_batch",
-            "Inspect one wake batch, up to eight immutable notice references, and native receipt pointer/current phase. Knowing an owner-issued ID grants no receipt authority. Input settlement is not ACK, task success, validation or native permission approval.",
-            object(json!({"runId":id,"batchId":id}), &["runId", "batchId"]),
-            true,
-        ),
-        (
-            "nesvo_start_run_executor",
-            "Opt in to automatic dependency-ready task launch and immutable instruction delivery for an active run. Explicit profile for every task; agents only, shared/worktree required. No model heartbeat, self-validation or permission approval. Human/decision/time/retry/native guards still apply. Stable workflow key recovers acceptance; inspect current executor/task/native receipts. Restart disables scheduling without replay. Already admitted work may finish after disabling.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"spec":{"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["taskId","profile"],"properties":{"taskId":id,"profile":task_profile_schema(false)}}},"retryFailed":{"type":"boolean","default":false},"retryDelayMs":{"type":"integer","minimum":1000,"maximum":60000,"default":1000},"readinessTimeoutMs":{"type":"integer","minimum":1,"maximum":300000,"default":60000}}}}),
-                &["key", "runId", "expectedRevision", "spec"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_run_executor",
-            "Inspect current executor policy/state. Never dispatches or acknowledges success.",
-            object(json!({"runId":id}), &["runId"]),
-            true,
-        ),
-        (
-            "nesvo_disable_run_executor",
-            "Disable new executor scheduling admissions at the exact run revision. Already admitted startup/instruction may finish. Does not kill processes, undo bytes or clear uncertainty; native run stop/cancel is separate.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_enable_run_executor",
-            "Explicitly enable a fresh authenticated generation for an active run. Does not rearm paused deliveries or repeat existing native effects; startup after restart remains gated by actual process/authority evidence.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_deliver_task",
-            "Queue the immutable instruction of a current assigned task once. Host waits up to timeoutMs (default 60000, max 300000) for idle and ready, with no human control/draft or decision gate. No prompt is accepted from the caller. Acceptance is not delivery or task success. Inspect task attempt.delivery and its native receipt; unknown effects are never retried. Client disconnect keeps this intent, host restart pauses it without replay. Agent sessions only. Optional sessionId reuses this task's own worker for a new attempt only when its previous attempt and native input are settled, it is idle and ready with no human control or draft, and its conversation is the one recorded for the task; otherwise session_busy, session_foreign, identity_mismatch, attempt_unsettled or resume_pending is returned and nothing is queued.",
-            object(
-                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"timeoutMs":{"type":"integer","minimum":1,"maximum":300000},"sessionId":id}),
-                &["key", "runId", "taskId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_cancel_task_delivery",
-            "Cancel an unclaimed task instruction intent in an authorized run. Requires its current run revision. Does not interrupt or replay native input; a claimed/sent/unknown intent must be inspected through its original receipt.",
-            object(
-                json!({"key":key,"runId":id,"deliveryId":id,"expectedRevision":revision}),
-                &["key", "runId", "deliveryId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_launch_task",
-            "Reserve a dependency-ready task, run parallel/retry capacity and a native create identity atomically, then launch its visible worker once. Explicitly choose shared checkout or isolated worktree. No initial prompt is sent. Reply is immutable acceptance; inspect run/task history and the returned native receipt before sending work. Unknown launches keep capacity and cannot be retried with a fresh key. Does not take human focus/control or grant coordinator roles.",
-            object(
-                json!({"key":key,"runId":id,"taskId":id,"expectedRevision":revision,"profile":task_profile_schema(true)}),
-                &["key", "runId", "taskId", "expectedRevision", "profile"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_stop_run",
-            "Accept a durable stop intent for only this run's bound worker processes. Native stop receipts precede observed exits; reply is immutable acceptance, not proof of termination. Inspect nesvo_get_run_control. Human leases/drafts and owner drain are protected. Same-key replay/reconnect never dispatches again. Stopped runs may resume with fresh attempts, preserving budgets/history; unknown control must be reconciled first.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_cancel_run",
-            "Accept durable run cancellation and native stop of its bound workers only. Does not touch the coordinator, unassigned children or foreign sessions. The run becomes canceled only after exit proof, and cannot resume. Immutable acceptance is not termination; inspect nesvo_get_run_control. Never bypass human input or resubmit uncertain effects under new keys.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_run_control",
-            "Inspect at most eight target receipts/exit observations and aggregate native control state. Refreshes actual host exit/unavailable evidence but never sends signals or replays input. Missing processes after restart are unavailable, not assumed stopped. Page through targets; use original operationKey/receiptId for native recovery. Worker scopes cannot inspect parent control.",
-            object(
-                json!({"runId":id,"controlId":id,"offset":{"type":"integer","minimum":0,"maximum":4096}}),
-                &["runId", "controlId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_run_budget",
-            "Read a visible run's current policy, active attempts and activation/deadline clock. Workers use their own task context. Reads may persist observed time exhaustion; never start/stop a process.",
-            object(json!({"runId":id}), &["runId"]),
-            true,
-        ),
-        (
-            "nesvo_set_run_budget",
-            "Replace a visible run's parallel, per-task attempt and elapsed limits at its exact run revision. Coordinator can only tighten; only owner can relax or extend an exhausted deadline. Reported results occupy parallel slots until validated. Elapsed time includes draining and resume never resets the clock. This neither grants global capacity nor kills current work. Recover the original key through nesvo_get_run_mutation.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision,"limits":{"type":"object","additionalProperties":false,"required":["maxParallel","maxAttemptsPerTask","maxElapsedMs"],"properties":{"maxParallel":{"type":"integer","minimum":1,"maximum":16},"maxAttemptsPerTask":{"type":"integer","minimum":1,"maximum":16},"maxElapsedMs":{"type":["integer","null"],"minimum":1000,"maximum":604_800_000}}}}),
-                &["key", "runId", "expectedRevision", "limits"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_drain_run",
-            "Block new task assignments; allow assigned workers to report and parents to validate. Does not stop, interrupt or send input to native processes. Owner drain remains owner-controlled even after coordinator drains again. Exact run revision and original mutation key are required.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_resume_run",
-            "Resume new assignments after drain without resetting time/retry history or relaxing budgets. Only owner may undo an owner drain; coordinator can resume its own drain. No process is launched and no input replayed.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_host_budget",
-            "Read the explicit owner's persisted host admission policy and its revision. Coordinators/workers cannot inspect or raise global budgets. This changes no live process, focus or input control.",
-            object(json!({}), &[]),
-            true,
-        ),
-        (
-            "nesvo_set_host_budget",
-            "Owner-only replacement of future admission limits at the exact budget revision. maxSessions counts retained session slots (1–16); maxWorkers counts running worker-role processes (0–16); provider caps count running processes including coordinators (0–16). Reducing limits never terminates existing work. Same-key replay is historical and cannot restore an old active policy; recover through nesvo_get_run_mutation.",
-            object(
-                json!({"key":key,"expectedRevision":revision,"limits":{"type":"object","additionalProperties":false,"required":["maxSessions","maxWorkers","providers"],"properties":{"maxSessions":{"type":"integer","minimum":1,"maximum":16},"maxWorkers":{"type":"integer","minimum":0,"maximum":16},"providers":{"type":"object","additionalProperties":false,"required":["shell","claude","codex","gemini"],"properties":{"shell":{"type":"integer","minimum":0,"maximum":16},"claude":{"type":"integer","minimum":0,"maximum":16},"codex":{"type":"integer","minimum":0,"maximum":16},"gemini":{"type":"integer","minimum":0,"maximum":16}}}}}}),
-                &["key", "expectedRevision", "limits"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_ask_decision",
-            "Ask one durable question for this worker's exact current attempt. Audience owner requires an explicit human answer; coordinator permits that run's coordinator or owner. Answered is data, not native permission approval. Pending/canceled/expired gates prevent successful result reporting. No input or model wake occurs. Recover a lost reply with nesvo_get_run_mutation and the original key.",
-            object(
-                json!({"key":key,"attemptId":id,"audience":{"enum":["owner","coordinator"]},"question":{"type":"string","minLength":1,"maxLength":2048},"timeoutMs":{"type":"integer","minimum":1000,"maximum":604_800_000}}),
-                &["key", "attemptId", "audience", "question", "timeoutMs"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_list_decisions",
-            "Read up to eight retained questions and answers in a run. A worker sees only its own current attempt. Deadline expiration is persisted when observed; pagination does not approve or acknowledge anything.",
-            object(
-                json!({"runId":id,"attemptId":id,"offset":{"type":"integer","minimum":0,"maximum":4096}}),
-                &["runId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_decision",
-            "Read the exact decision revision, audience and state before answering. Current-attempt authority is enforced by the host. This does not send input or imply native permission approval.",
-            object(
-                json!({"runId":id,"decisionId":id}),
-                &["runId", "decisionId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_answer_decision",
-            "Record a literal answer at the decision's exact revision. Worker self-answer and coordinator answers to owner-only questions are refused. Answer and worker notice commit together; replay the original key after uncertainty. This does not type an approval, validate work or resume native input.",
-            object(
-                json!({"key":key,"runId":id,"decisionId":id,"expectedRevision":revision,"answer":{"type":"string","minLength":1,"maxLength":2048}}),
-                &["key", "runId", "decisionId", "expectedRevision", "answer"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_cancel_decision",
-            "Withdraw a pending question at its exact revision, retaining a reason. The current worker may withdraw its own question; addressed authority may cancel. Canceled is not approval: report a non-success result and deliberately retry rather than claiming success.",
-            object(
-                json!({"key":key,"runId":id,"decisionId":id,"expectedRevision":revision,"reason":{"type":"string","minLength":1,"maxLength":2048}}),
-                &["key", "runId", "decisionId", "expectedRevision", "reason"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_read_inbox",
-            "Read up to eight durable messages, without ACK or input. Worker defaults to its own current attempt; owner/coordinator defaults to the run coordinator mailbox. Optional attemptId inspects a worker mailbox. Pending messages repeat until explicit ACK. After consumer restart read from zero; cursors paginate, not acknowledge.",
-            object(
-                json!({"runId":id,"attemptId":id,"after":cursor,"includeAcked":{"type":"boolean","default":false}}),
-                &["runId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_send_message",
-            "Persist one addressed message for a stable key/correlation. Optional attemptId targets a current worker; omission addresses the coordinator. Workers may send only to their own coordinator. Host supplies authenticated sender. Questions are messages, not approval/decision grants. No PTY/LLM execution. Recover uncertainty through nesvo_get_run_mutation with the original key.",
-            object(
-                json!({"key":key,"runId":id,"attemptId":id,"correlationId":key,"kind":{"enum":["note","question","error"],"default":"note"},"body":{"type":"string","minLength":1,"maxLength":4096}}),
-                &["key", "runId", "correlationId", "body"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_ack_messages",
-            "ACK 1–32 exact IDs in the receiving mailbox. Worker defaults to its own attempt; coordinator to its run inbox. Coordinator cannot ACK on behalf of a worker; owner may explicitly override. Retry the same IDs after loss: first ACK identity/time are preserved. ACK is delivery only, never task execution or validation.",
-            object(
-                json!({"runId":id,"attemptId":id,"ids":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":id}}),
-                &["runId", "ids"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_list_sessions",
-            "List visible session IDs, groups and lifecycle without acquiring control.",
-            object(json!({}), &[]),
-            true,
-        ),
-        (
-            "nesvo_get_session",
-            "Inspect one visible session and its independent process/agent/turn state.",
-            object(json!({"sessionId":id}), &["sessionId"]),
-            true,
-        ),
-        (
-            "nesvo_get_current_session",
-            "Inspect the process session injected into this MCP launch. Never guesses from the UI focus; a context hint cannot bypass host authority.",
-            object(json!({}), &[]),
-            true,
-        ),
-        (
-            "nesvo_read_session",
-            "Read a bounded terminal replay page. Cursors are UTF-8 byte offsets, not domain-event sequences; gap means retained history expired.",
-            object(
-                json!({"sessionId":id,"after":cursor,"maxBytes":{"type":"integer","minimum":1,"maximum":8192,"default":4096}}),
-                &["sessionId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_explain_session",
-            "Explain this session's status evidence/readiness and integration health without exposing owner credentials or prompts.",
-            object(json!({"sessionId":id}), &["sessionId"]),
-            true,
-        ),
-        (
-            "nesvo_read_diff",
-            "Read repository changes on the host for this session's automatic edit context. Read-only; no staging or commit.",
-            object(
-                json!({"sessionId":id,"scope":{"enum":["staged","unstaged","untracked"],"default":"unstaged"}}),
-                &["sessionId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_open_review",
-            "Owner-only: open a host review of a session's or absolute folder's local changes, or fetch a GitHub pull request with gh into a host review checkout (120 s cap, reused when present). Exactly one source: sessionId and/or directory, or pullUrl. Replies reviewOpened with a stable reviewId, base, head and diff revision. Never edits, commits, merges or pushes.",
-            object(
-                json!({"sessionId":id,"directory":{"type":"string","minLength":1,"maxLength":4096,"description":"Absolute host folder, or relative to the session folder"},"pullUrl":{"type":"string","minLength":1,"maxLength":512,"description":"https://github.com/OWNER/REPO/pull/NUMBER"},"base":{"type":"string","minLength":1,"maxLength":256,"description":"Base ref for the branch scope; defaults to the repository default branch or the pull request base"}}),
-                &[],
-            ),
-            false,
-        ),
-        (
-            "nesvo_deliver_review",
-            "Owner-only: deliver review feedback for an open reviewId to a ready idle agent session with one receipt. Without a human lease this is a durable send for a stable key (8192 bytes); a client holding control receives a bracketed paste instead. Never takes control; reuse the same key after uncertainty.",
-            object(
-                json!({"reviewId":id,"sessionId":id,"text":{"type":"string","minLength":1,"maxLength":20480,"description":"Literal review text; MCP arguments are capped at 24 KiB. No terminal controls."},"key":{"type":"string","minLength":1,"maxLength":128,"description":"Idempotency key; derived from review, session and text when omitted"}}),
-                &["reviewId", "sessionId", "text"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_describe_worktree_setup",
-            "Owner-only: read the committed nesvo.toml [worktree] table of a repository (HEAD), its normalized setup/run/env_files/timeout_s, digest and approval state. Runs nothing; requires host worktrees:true. Approving or revoking a digest is a human act through the owner CLI (nesvo worktree approve-setup/revoke-setup) and has no agent tool.",
-            object(json!({"directory":worktree_directory}), &["directory"]),
-            true,
-        ),
-        (
-            "nesvo_run_worktree",
-            "Owner-only: start the approved run steps of a session's host-created worktree after a passed setup. Replies worktreeRunStarted with the log path; the result is a worktreeRan event and the registry run state, not task success.",
-            object(json!({"sessionId":id}), &["sessionId"]),
-            false,
-        ),
-        (
-            "nesvo_cancel_worktree",
-            "Owner-only: cancel the active setup or run steps of a session's worktree. Terminates the step process tree; a cancelled setup never starts the agent.",
-            object(json!({"sessionId":id}), &["sessionId"]),
-            false,
-        ),
-        (
-            "nesvo_archive_worktree",
-            "Owner-only: remove a closed session's host-created worktree and its nesvo/ branch. Refuses dirty, unpushed or conflicted work unless discard is true; discarding deletes that work permanently.",
-            object(
-                json!({"sessionId":id,"discard":{"type":"boolean","default":false,"description":"Explicitly delete unsaved work; never set without the owner's decision"}}),
-                &["sessionId"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_list_worktrees",
-            "Owner-only: list host-created worktrees (newest 128) with session, branch, presence, setup and run states, logs and archive facts.",
-            object(json!({}), &[]),
-            true,
-        ),
-        (
-            "nesvo_list_workflow_templates",
-            "Owner-only: read the committed nesvo.toml [[workflow]] templates of a repository (HEAD) with tasks, tool profiles, workspace modes, budgets, digest and approval state. Starts nothing; requires host workflowTemplates:true. Approving or revoking a digest is a human act through the owner CLI (nesvo workflow approve-templates/revoke-templates) and has no agent tool.",
-            object(json!({"directory":worktree_directory}), &["directory"]),
-            true,
-        ),
-        (
-            "nesvo_start_workflow_template",
-            "Owner-only: create a run and its tasks from an approved template through the existing run create/plan/budget/activate/executor commands. Unapproved or changed digests are refused. Reuse the same key after uncertainty; a different template under that key is an idempotency conflict. A started run is not task success.",
-            object(
-                json!({"directory":worktree_directory,"name":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"key":{"type":"string","minLength":1,"maxLength":96}}),
-                &["directory", "name", "key"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_read_events",
-            "Read durable metadata events after a domain cursor. Preserve nextCursor; gap is incomplete history, never success. No terminal transcript.",
-            object(
-                json!({"sessionId":id,"after":cursor,"limit":{"type":"integer","minimum":1,"maximum":32,"default":32}}),
-                &["after"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_create_session",
-            "Create one background process for a stable idempotency key. Reuse the same key/spec after timeout, never invent another key to retry. Created is not agent readiness or task success. Host authorization still applies.",
-            object(
-                json!({"key":{"type":"string","minLength":1,"maxLength":128},"spec":launch_schema()}),
-                &["key", "spec"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_send_prompt",
-            "Submit one literal prompt to a ready idle session for a durable key. Never takes control; human drafts, pending input and decision dialogs are refused. Reuse the same key/prompt after uncertainty; delivery is not agent pickup or task success.",
-            object(
-                json!({"sessionId":id,"key":{"type":"string","minLength":1,"maxLength":128},"prompt":{"type":"string","minLength":1,"maxLength":8192,"description":"Literal prompt, at most 8192 UTF-8 bytes. Multiline/tab requires observed bracketed paste. No terminal controls."}}),
-                &["sessionId", "key", "prompt"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_wait_prompt",
-            "Passively wait for one send receipt by id or your original key. Exactly one selector. Binds the matching response, never old idle. Settled means response ended, not validated task success. A timeout returns the receipt and never retries input.",
-            object(
-                json!({"id":id,"key":{"type":"string","minLength":1,"maxLength":128},"sessionId":id,"until":{"enum":["delivered","received","started","settled"],"default":"settled"},"timeoutMs":{"type":"integer","minimum":1,"maximum":60000,"default":30000}}),
-                &[],
-            ),
-            true,
-        ),
-        (
-            "nesvo_interrupt_session",
-            "Submit one Ctrl+C with a durable key; never takes human control. Delivery proves only a native write, not that the agent stopped. May discard the agent's current work. Inspect the same receipt after uncertainty.",
-            object(
-                json!({"sessionId":id,"key":{"type":"string","minLength":1,"maxLength":128}}),
-                &["sessionId", "key"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_stop_session",
-            "Request native stop of this managed process once for a durable key. Destructive: can lose in-memory work. Refuses human control, retains terminal output/session record. stopRequested is not observed process exit or task success.",
-            object(
-                json!({"sessionId":id,"key":{"type":"string","minLength":1,"maxLength":128}}),
-                &["sessionId", "key"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_activate_run",
-            "Freeze a nonempty draft DAG at an expected revision. Does not start any process or send prompts.",
-            object(
-                json!({"key":key,"runId":id,"expectedRevision":revision}),
-                &["key", "runId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_assign_task",
-            "Bind one existing worker process to a dependency-ready task. Only host-granted children for coordinators. Refuses human control/drafts/pending input. No prompt is sent. Retain the returned attempt identity; one process per attempt.",
-            object(
-                json!({"key":key,"runId":id,"taskId":id,"sessionId":id,"expectedRevision":revision}),
-                &["key", "runId", "taskId", "sessionId", "expectedRevision"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_task_attempts",
-            "Read a task and four retained attempts per page. Owner/coordinator only. Follow nextOffset; reported success remains unvalidated until separately accepted.",
-            object(
-                json!({"runId":id,"taskId":id,"offset":{"type":"integer","minimum":0,"maximum":16}}),
-                &["runId", "taskId"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_current_task",
-            "Read this authenticated worker's current task and attempt. Never uses UI focus or environment identity hints. A superseded attempt is refused.",
-            object(json!({}), &[]),
-            true,
-        ),
-        (
-            "nesvo_recover_run_context",
-            "Read current recovery metadata for the authenticated worker or uniquely bound coordinator run. Multiple runs require explicit selection; owner needs runId. Follow returned current-page nextOffset/expectedDigest. Never adopts processes, replays input, ACKs constraints/messages or validates results.",
-            object(
-                json!({"runId":id,"offset":{"type":"integer","minimum":0,"maximum":16384},"expectedDigest":{"type":"string","maxLength":128}}),
-                &[],
-            ),
-            true,
-        ),
-        (
-            "nesvo_report_task_result",
-            "Report this worker's exact current attempt result. Include files/artifacts/checks/limitations, using empty arrays when none. Claims are not verification or validation. Reuse the original key after uncertainty; stale senders/replacement reports are refused. Result bound 4 KiB UTF-8.",
-            object(
-                json!({"key":key,"attemptId":id,"result":{"type":"object","additionalProperties":false,"required":["outcome","summary","files","artifacts","checks","limitations"],"properties":{"outcome":{"enum":["succeeded","failed","blocked","canceled"]},"summary":{"type":"string","minLength":1,"maxLength":2048},"files":strings(32),"artifacts":strings(16),"checks":checks,"limitations":strings(16),"nextSteps":strings(8)}}}),
-                &["key", "attemptId", "result"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_validate_task_result",
-            "Record owner/coordinator attestation of the current reported result. Success needs a succeeded report and passed validation checks. Without hostChecks the host records evidence without executing checks; hostChecks:true first runs the task's approved nesvo.toml checks in its worktree, records a hostChecks attestation and refuses success when one fails. Accepted results release dependencies; idle never does. Validation bound 2 KiB UTF-8.",
-            object(
-                json!({"key":key,"runId":id,"attemptId":id,"expectedRevision":revision,"validation":{"type":"object","additionalProperties":false,"required":["passed","summary","checks"],"properties":{"passed":{"type":"boolean"},"summary":{"type":"string","minLength":1,"maxLength":1024},"checks":checks}},"hostChecks":{"type":"boolean"}}),
-                &[
-                    "key",
-                    "runId",
-                    "attemptId",
-                    "expectedRevision",
-                    "validation",
-                ],
-            ),
-            false,
-        ),
-        (
-            "nesvo_create_run",
-            "Create a durable draft run once for a stable key. No agent or task is started; scoped coordinators are bound by the host.",
-            object(
-                json!({"key":{"type":"string","minLength":1,"maxLength":128},"spec":{"type":"object","additionalProperties":false,"required":["title","goal"],"properties":{"title":{"type":"string","minLength":1,"maxLength":80},"goal":{"type":"string","minLength":1,"maxLength":8192},"coordinatorSessionId":{"type":["string","null"]}}}}),
-                &["key", "spec"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_list_runs",
-            "List a bounded page of visible workflow summaries. Follow nextOffset; does not expose goal/instruction text.",
-            object(
-                json!({"offset":{"type":"integer","minimum":0,"maximum":1024,"default":0}}),
-                &[],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_run",
-            "Read a visible run and its draft DAG by stable run ID. Planned/dependency-ready never means executed or successful.",
-            object(json!({"runId":id}), &["runId"]),
-            true,
-        ),
-        (
-            "nesvo_get_run_digest",
-            "Read a visible run's bounded 8 KiB digest: the final record stored when the run settled (succeeded, canceled, stopped or drained), otherwise a live working-state snapshot. Summarizes tasks, attempts, outcomes, decisions, budget and evidence pointers (journal cursor, worktree branches, checkpoints). Worker claims stay claims; reading never validates, acknowledges or dispatches.",
-            object(json!({"runId":id}), &["runId"]),
-            true,
-        ),
-        (
-            "nesvo_set_run_plan",
-            "Atomically replace a draft DAG at an expected revision. Task keys retain IDs. Dependencies are task keys, not names. Cycles/missing edges are refused. Reuse the original key after uncertainty.",
-            object(
-                json!({"key":{"type":"string","minLength":1,"maxLength":128},"runId":id,"expectedRevision":{"type":"integer","minimum":1},"tasks":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["key","title","instruction"],"properties":{"key":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"title":{"type":"string","minLength":1,"maxLength":80},"instruction":{"type":"string","minLength":1,"maxLength":8192},"dependencies":{"type":"array","maxItems":64,"items":{"type":"string"}}}}}}),
-                &["key", "runId", "expectedRevision", "tasks"],
-            ),
-            false,
-        ),
-        (
-            "nesvo_get_run_mutation",
-            "Recover the historical result of your workflow metadata mutation by its original key. Separate from native process-operation receipts; never starts an agent.",
-            object(
-                json!({"key":{"type":"string","minLength":1,"maxLength":128}}),
-                &["key"],
-            ),
-            true,
-        ),
-        (
-            "nesvo_get_operation",
-            "Recover a durable operation by its ID or your original idempotency key. Exactly one selector. Never resend with a fresh key after an unknown result.",
-            object(
-                json!({"id":id,"key":{"type":"string","minLength":1,"maxLength":128}}),
-                &[],
-            ),
-            true,
-        ),
-    ];
-    definitions.into_iter().map(|(name,description,schema,read_only)| {
-        Tool::new(name,description,schema).with_annotations(ToolAnnotations::new().read_only(read_only).destructive(matches!(name,"nesvo_interrupt_session"|"nesvo_stop_session"|"nesvo_archive_worktree"|"nesvo_stop_run"|"nesvo_cancel_run"|"nesvo_cancel_job_occurrence")).idempotent(true).open_world(!read_only || name == "nesvo_get_provider_quota"))
-            .with_raw_output_schema(Arc::new(serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}})).expect("constant result schema")))
-    }).chain(crate::job_trigger_tools::catalog()).chain(crate::session_recovery::catalog()).chain(cli::attention::catalog()).chain(crate::project_commands::catalog()).collect()
 }
 
 #[cfg(test)]
@@ -1306,778 +389,399 @@ mod quota_wake_tests {
                 1
             );
         }
-        assert_eq!(catalog().len(), 114);
-        assert_eq!(published_tools().len(), 114);
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Session {
-    session_id: String,
+fn unknown_tool() -> anyhow::Error {
+    cli::failure("invalid_argument", "Unknown Nesvo tool")
 }
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SetQuotaWake {
-    session_id: String,
-    enabled: bool,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProviderQuota {
-    program: Option<String>,
-    directory: Option<String>,
-    #[serde(default)]
-    refresh: bool,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Read {
-    session_id: String,
-    after: Option<u64>,
-    max_bytes: Option<u16>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Diff {
-    session_id: String,
-    scope: Option<String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct OpenReview {
-    session_id: Option<String>,
-    directory: Option<String>,
-    pull_url: Option<String>,
-    base: Option<String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DeliverReview {
-    review_id: String,
-    session_id: String,
-    text: String,
-    key: Option<String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct WorktreeSetup {
-    directory: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct WorktreeSession {
-    session_id: String,
-    discard: Option<bool>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct WorkflowTemplateStart {
-    directory: String,
-    name: String,
-    key: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Empty {}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Events {
-    session_id: Option<String>,
-    after: u64,
-    limit: Option<u16>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Create {
-    key: String,
-    spec: Value,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Operation {
-    id: Option<String>,
-    key: Option<String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Send {
-    session_id: String,
-    key: String,
-    prompt: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Control {
-    session_id: String,
-    key: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Wait {
-    id: Option<String>,
-    key: Option<String>,
-    session_id: Option<String>,
-    until: Option<String>,
-    timeout_ms: Option<u64>,
-}
-fn parse<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T> {
-    serde_json::from_value(arguments)
-        .map_err(|_| cli::failure("invalid_argument", "Arguments must match the tool schema"))
-}
-fn command(name: &str, arguments: Value) -> Result<(Value, &'static str)> {
+
+fn command(name: &str, arguments: Value) -> Result<Request> {
     if serde_json::to_vec(&arguments)?.len() > 24 * 1024 {
         return Err(cli::failure(
             "invalid_argument",
             "Tool arguments exceed 24 KiB",
         ));
     }
-    if let Some(request) = crate::job_trigger_tools::command(name, &arguments) {
-        return request.map(|request| (request, "workflow"));
-    }
-    if let Some(request) = cli::attention::command(name, &arguments) {
-        return request;
-    }
-    if let Some(request) = crate::session_recovery::command(name, &arguments) {
-        return request;
-    }
-    if let Some(request) = crate::project_commands::command(name, &arguments) {
-        return request;
-    }
-    Ok(match name {
-        "nesvo_set_quota_wake" => {
-            let request: SetQuotaWake = parse(arguments)?;
-            cli::quota_wake_query(&request.session_id, Some(request.enabled))?
-        }
-        "nesvo_get_quota_wake" => {
-            let request: Session = parse(arguments)?;
-            cli::quota_wake_query(&request.session_id, None)?
-        }
-        "nesvo_get_provider_quota" => {
-            if arguments
-                .get("directory")
-                .is_some_and(|value| !value.is_string())
-            {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Quota directory must be a host folder",
-                ));
-            }
-            if arguments
-                .get("program")
-                .is_some_and(|value| !value.is_string())
-            {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Quota program must be a provider name",
-                ));
-            }
-            let query: ProviderQuota = parse(arguments)?;
-            (
-                cli::provider_quota_context_query(
-                    query.program.as_deref(),
-                    query.refresh,
-                    query.directory.as_deref(),
-                )?,
-                "providerQuota",
-            )
-        }
-        "nesvo_rebind_run_coordinator" => (
-            crate::workflow::tool("coordinator", json!({"request":arguments}))?,
+    let tool = mcp_tools::find(name).ok_or_else(unknown_tool)?;
+    match &tool.handler {
+        Handler::Typed(translate) => translate(tool.name, arguments),
+        Handler::Raw(translate) => translate(tool.name, arguments),
+        Handler::Workflow(action) => Ok((crate::workflow::tool(action, arguments)?, "workflow")),
+        Handler::WorkflowRequest(group) => Ok((
+            crate::workflow::tool(group, json!({"request":arguments}))?,
             "workflow",
-        ),
-        "nesvo_add_run_constraint"
-        | "nesvo_list_run_constraints"
-        | "nesvo_acknowledge_run_constraints"
-        | "nesvo_save_run_checkpoint"
-        | "nesvo_list_run_checkpoints"
-        | "nesvo_get_run_checkpoint"
-        | "nesvo_read_run_context" => {
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Context arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Context action is selected by the tool name",
-                ));
-            }
-            let (group, action) = match name {
-                "nesvo_add_run_constraint" => ("constraints", "add"),
-                "nesvo_list_run_constraints" => ("constraints", "list"),
-                "nesvo_acknowledge_run_constraints" => ("constraints", "acknowledge"),
-                "nesvo_save_run_checkpoint" => ("checkpoints", "save"),
-                "nesvo_list_run_checkpoints" => ("checkpoints", "list"),
-                "nesvo_get_run_checkpoint" => ("checkpoints", "get"),
-                _ => ("checkpoints", "context"),
-            };
-            fields.insert("action".into(), action.into());
-            (
-                crate::workflow::tool(group, json!({"request":fields}))?,
-                "workflow",
-            )
+        )),
+        Handler::Scoped(scope, action) => scoped(*scope, action, arguments),
+        Handler::RunControl(kind) => run_control(*kind, arguments),
+        Handler::Adapter(adapter) => {
+            adapter(tool.name, &arguments).unwrap_or_else(|| Err(unknown_tool()))
         }
-        "nesvo_enable_run_wakes"
-        | "nesvo_get_run_wakes"
-        | "nesvo_disable_run_wakes"
-        | "nesvo_get_run_wake_batch" => {
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Wake arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Wake action is selected by the tool name",
-                ));
-            }
-            let action = match name {
-                "nesvo_enable_run_wakes" => "enable",
-                "nesvo_get_run_wakes" => "get",
-                "nesvo_disable_run_wakes" => "disable",
-                _ => "batch",
-            };
-            fields.insert("action".into(), action.into());
-            (
-                crate::workflow::tool("wakes", json!({"request":fields}))?,
-                "workflow",
-            )
-        }
-        "nesvo_start_run_executor"
-        | "nesvo_get_run_executor"
-        | "nesvo_disable_run_executor"
-        | "nesvo_enable_run_executor" => {
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Executor arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Executor action is selected by the tool name",
-                ));
-            }
-            let action = match name {
-                "nesvo_start_run_executor" => "start",
-                "nesvo_get_run_executor" => "get",
-                "nesvo_disable_run_executor" => "disable",
-                _ => "enable",
-            };
-            fields.insert("action".into(), action.into());
-            (
-                crate::workflow::tool("executor", json!({"request":fields}))?,
-                "workflow",
-            )
-        }
-        "nesvo_deliver_task" | "nesvo_cancel_task_delivery" => {
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Delivery arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Delivery action is selected by the tool name",
-                ));
-            }
-            fields.insert(
-                "action".into(),
-                if name == "nesvo_deliver_task" {
-                    "queue"
-                } else {
-                    "cancel"
-                }
-                .into(),
-            );
-            (
-                crate::workflow::tool("delivery", json!({"request":fields}))?,
-                "workflow",
-            )
-        }
-        "nesvo_launch_task" => (
-            crate::workflow::tool("launch", json!({"request":arguments}))?,
-            "workflow",
-        ),
-        "nesvo_stop_run" | "nesvo_cancel_run" | "nesvo_get_run_control" => {
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure(
-                        "invalid_argument",
-                        "Run control arguments must be an object",
-                    )
-                })?
-                .clone();
-            if fields.contains_key("action") || fields.contains_key("kind") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Control action is selected by the tool name",
-                ));
-            }
-            if name == "nesvo_get_run_control" {
-                fields.insert("action".into(), "get".into());
+    }
+}
+
+fn scoped(scope: Scope, action: &'static str, arguments: Value) -> Result<Request> {
+    let (group, not_object, preselected) = match scope {
+        Scope::Constraints | Scope::Checkpoints => (
+            if matches!(scope, Scope::Constraints) {
+                "constraints"
             } else {
-                fields.insert("action".into(), "start".into());
-                fields.insert(
-                    "kind".into(),
-                    if name == "nesvo_stop_run" {
-                        "stop"
-                    } else {
-                        "cancel"
-                    }
-                    .into(),
-                );
-            }
-            (
-                crate::workflow::tool("control", json!({"request":fields}))?,
-                "workflow",
-            )
-        }
-        "nesvo_get_host_budget"
-        | "nesvo_set_host_budget"
-        | "nesvo_get_run_budget"
-        | "nesvo_set_run_budget" => {
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Budget arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Budget action is selected by the tool name",
-                ));
-            }
-            fields.insert(
-                "action".into(),
-                if matches!(name, "nesvo_get_host_budget" | "nesvo_get_run_budget") {
-                    "get"
-                } else {
-                    "set"
-                }
-                .into(),
-            );
-            (
-                crate::workflow::tool(
-                    if name.contains("host_budget") {
-                        "hostBudget"
-                    } else {
-                        "runBudget"
-                    },
-                    json!({"request":fields}),
-                )?,
-                "workflow",
-            )
-        }
-        "nesvo_drain_run" | "nesvo_resume_run" => (
-            crate::workflow::tool(
-                if name == "nesvo_drain_run" {
-                    "drain"
-                } else {
-                    "resume"
-                },
-                arguments,
-            )?,
-            "workflow",
+                "checkpoints"
+            },
+            "Context arguments must be an object",
+            "Context action is selected by the tool name",
         ),
-        "nesvo_ask_decision"
-        | "nesvo_list_decisions"
-        | "nesvo_get_decision"
-        | "nesvo_answer_decision"
-        | "nesvo_cancel_decision" => {
-            let action = match name {
-                "nesvo_ask_decision" => "ask",
-                "nesvo_list_decisions" => "list",
-                "nesvo_get_decision" => "get",
-                "nesvo_answer_decision" => "answer",
-                _ => "cancel",
-            };
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Decision arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Decision action is selected by the tool name",
-                ));
-            }
-            fields.insert("action".into(), action.into());
-            (
-                crate::workflow::tool("decision", json!({"request":fields}))?,
-                "workflow",
-            )
-        }
-        "nesvo_describe_precheck"
-        | "nesvo_approve_precheck"
-        | "nesvo_get_precheck"
-        | "nesvo_list_prechecks"
-        | "nesvo_revoke_precheck"
-        | "nesvo_get_precheck_mutation" => {
-            let action = match name {
-                "nesvo_describe_precheck" => "describe",
-                "nesvo_approve_precheck" => "approve",
-                "nesvo_get_precheck" => "get",
-                "nesvo_list_prechecks" => "list",
-                "nesvo_revoke_precheck" => "revoke",
-                _ => "mutation",
-            };
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Precheck arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Precheck action is selected by tool name",
-                ));
-            }
-            fields.insert("action".into(), action.into());
-            (
-                crate::workflow::tool(
-                    "jobs",
-                    json!({"request":{"action":"prechecks","request":fields}}),
-                )?,
-                "workflow",
-            )
-        }
-        "nesvo_create_job"
-        | "nesvo_get_job"
-        | "nesvo_list_jobs"
-        | "nesvo_update_job"
-        | "nesvo_set_job_enabled"
-        | "nesvo_run_job_now"
-        | "nesvo_cancel_job_occurrence"
-        | "nesvo_get_job_history"
-        | "nesvo_get_job_occurrence"
-        | "nesvo_get_job_attempts"
-        | "nesvo_get_job_attempt"
-        | "nesvo_get_job_mutation"
-        | "nesvo_abandon_job_precheck"
-        | "nesvo_abandon_job_launch"
-        | "nesvo_authorize_job_quota" => {
-            let action = match name {
-                "nesvo_create_job" => "create",
-                "nesvo_get_job" => "get",
-                "nesvo_list_jobs" => "list",
-                "nesvo_update_job" => "update",
-                "nesvo_set_job_enabled" => "setEnabled",
-                "nesvo_run_job_now" => "runNow",
-                "nesvo_cancel_job_occurrence" => "cancelOccurrence",
-                "nesvo_get_job_history" => "history",
-                "nesvo_get_job_occurrence" => "occurrence",
-                "nesvo_get_job_attempts" => "attempts",
-                "nesvo_get_job_attempt" => "attempt",
-                "nesvo_abandon_job_precheck" => "abandonPrecheck",
-                "nesvo_abandon_job_launch" => "abandonLaunchNoEffect",
-                "nesvo_authorize_job_quota" => "authorizeQuota",
-                _ => "mutation",
-            };
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| cli::failure("invalid_argument", "Job arguments must be an object"))?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Job action is selected by the tool name",
-                ));
-            }
-            fields.insert("action".into(), action.into());
-            (
-                crate::workflow::tool("jobs", json!({"request":fields}))?,
-                "workflow",
-            )
-        }
-        "nesvo_read_inbox" | "nesvo_send_message" | "nesvo_ack_messages" => {
-            let action = match name {
-                "nesvo_read_inbox" => "read",
-                "nesvo_send_message" => "send",
-                _ => "ack",
-            };
-            let mut fields = arguments
-                .as_object()
-                .ok_or_else(|| {
-                    cli::failure("invalid_argument", "Inbox arguments must be an object")
-                })?
-                .clone();
-            if fields.contains_key("action") {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Inbox action is selected by the tool name",
-                ));
-            }
-            fields.insert("action".into(), action.into());
-            (
-                crate::workflow::tool("inbox", json!({"request":fields}))?,
-                "workflow",
-            )
-        }
-        "nesvo_create_run"
-        | "nesvo_list_runs"
-        | "nesvo_get_run"
-        | "nesvo_get_run_digest"
-        | "nesvo_set_run_plan"
-        | "nesvo_get_run_mutation"
-        | "nesvo_activate_run"
-        | "nesvo_assign_task"
-        | "nesvo_get_task_attempts"
-        | "nesvo_get_current_task"
-        | "nesvo_recover_run_context"
-        | "nesvo_report_task_result"
-        | "nesvo_validate_task_result" => {
-            let action = match name {
-                "nesvo_create_run" => "create",
-                "nesvo_list_runs" => "list",
-                "nesvo_get_run" => "get",
-                "nesvo_get_run_digest" => "digest",
-                "nesvo_set_run_plan" => "setPlan",
-                "nesvo_activate_run" => "activate",
-                "nesvo_assign_task" => "assign",
-                "nesvo_get_task_attempts" => "task",
-                "nesvo_get_current_task" => "context",
-                "nesvo_recover_run_context" => "recover",
-                "nesvo_report_task_result" => "report",
-                "nesvo_validate_task_result" => "validate",
-                _ => "mutation",
-            };
-            (crate::workflow::tool(action, arguments)?, "workflow")
-        }
-        "nesvo_list_sessions" | "nesvo_get_current_session" => {
-            let args: serde_json::Map<String, Value> = parse(arguments)?;
-            if !args.is_empty() {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "This tool takes no arguments",
-                ));
-            }
-            if name == "nesvo_get_current_session" {
-                (json!({"type":"getSession"}), "session")
+        Scope::Wakes => (
+            "wakes",
+            "Wake arguments must be an object",
+            "Wake action is selected by the tool name",
+        ),
+        Scope::Executor => (
+            "executor",
+            "Executor arguments must be an object",
+            "Executor action is selected by the tool name",
+        ),
+        Scope::Delivery => (
+            "delivery",
+            "Delivery arguments must be an object",
+            "Delivery action is selected by the tool name",
+        ),
+        Scope::RunBudget | Scope::HostBudget => (
+            if matches!(scope, Scope::RunBudget) {
+                "runBudget"
             } else {
-                (json!({"type":"list"}), "sessions")
-            }
-        }
-        "nesvo_get_session" | "nesvo_explain_session" => {
-            let s: Session = parse(arguments)?;
-            cli::valid_id(&s.session_id)?;
-            if name == "nesvo_get_session" {
-                (
-                    json!({"type":"getSession","sessionId":s.session_id}),
-                    "session",
-                )
-            } else {
-                (
-                    json!({"type":"getDiagnostics","sessionId":s.session_id}),
-                    "diagnostics",
-                )
-            }
-        }
-        "nesvo_read_session" => {
-            let a: Read = parse(arguments)?;
-            cli::valid_id(&a.session_id)?;
-            if !(1..=8192).contains(&a.max_bytes.unwrap_or(4096)) {
-                return Err(cli::failure("invalid_argument", "maxBytes must be 1–8192"));
-            }
-            (
-                json!({"type":"readSession","sessionId":a.session_id,"after":a.after,"maxBytes":a.max_bytes}),
-                "sessionRead",
+                "hostBudget"
+            },
+            "Budget arguments must be an object",
+            "Budget action is selected by the tool name",
+        ),
+        Scope::Decision => (
+            "decision",
+            "Decision arguments must be an object",
+            "Decision action is selected by the tool name",
+        ),
+        Scope::Prechecks => (
+            "jobs",
+            "Precheck arguments must be an object",
+            "Precheck action is selected by tool name",
+        ),
+        Scope::Jobs => (
+            "jobs",
+            "Job arguments must be an object",
+            "Job action is selected by the tool name",
+        ),
+        Scope::Inbox => (
+            "inbox",
+            "Inbox arguments must be an object",
+            "Inbox action is selected by the tool name",
+        ),
+    };
+    let mut fields = arguments
+        .as_object()
+        .ok_or_else(|| cli::failure("invalid_argument", not_object))?
+        .clone();
+    if fields.contains_key("action") {
+        return Err(cli::failure("invalid_argument", preselected));
+    }
+    fields.insert("action".into(), action.into());
+    let request = match scope {
+        Scope::Prechecks => json!({"request":{"action":"prechecks","request":fields}}),
+        _ => json!({"request":fields}),
+    };
+    Ok((crate::workflow::tool(group, request)?, "workflow"))
+}
+
+fn run_control(kind: Option<&'static str>, arguments: Value) -> Result<Request> {
+    let mut fields = arguments
+        .as_object()
+        .ok_or_else(|| {
+            cli::failure(
+                "invalid_argument",
+                "Run control arguments must be an object",
             )
+        })?
+        .clone();
+    if fields.contains_key("action") || fields.contains_key("kind") {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Control action is selected by the tool name",
+        ));
+    }
+    match kind {
+        None => {
+            fields.insert("action".into(), "get".into());
         }
-        "nesvo_read_diff" => {
-            let a: Diff = parse(arguments)?;
-            cli::valid_id(&a.session_id)?;
-            let scope = a.scope.as_deref().unwrap_or("unstaged");
-            if !matches!(scope, "staged" | "unstaged" | "untracked") {
-                return Err(cli::failure("invalid_argument", "Invalid diff scope"));
-            }
-            (
-                json!({"type":"getDiff","sessionId":a.session_id,"scope":scope}),
-                "diff",
-            )
+        Some(kind) => {
+            fields.insert("action".into(), "start".into());
+            fields.insert("kind".into(), kind.into());
         }
-        "nesvo_open_review" => {
-            let a: OpenReview = parse(arguments)?;
-            (
-                cli::open_review_query(
-                    a.session_id.as_deref(),
-                    a.directory.as_deref(),
-                    a.pull_url.as_deref(),
-                    a.base.as_deref(),
-                )?,
-                "reviewOpened",
-            )
-        }
-        "nesvo_deliver_review" => {
-            let a: DeliverReview = parse(arguments)?;
-            (
-                cli::deliver_review_query(&a.review_id, &a.session_id, &a.text, a.key.as_deref())?,
-                "reviewDelivered",
-            )
-        }
-        "nesvo_describe_worktree_setup" => {
-            let a: WorktreeSetup = parse(arguments)?;
-            cli::worktree_setup_query("describe", &a.directory, None)?
-        }
-        "nesvo_run_worktree" | "nesvo_cancel_worktree" | "nesvo_archive_worktree" => {
-            let a: WorktreeSession = parse(arguments)?;
-            let action = match name {
-                "nesvo_run_worktree" => "run",
-                "nesvo_cancel_worktree" => "cancel",
-                _ => "archive",
-            };
-            if action != "archive" && a.discard.is_some() {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Only archive accepts discard",
-                ));
-            }
-            cli::worktree_session_query(action, &a.session_id, a.discard.unwrap_or(false))?
-        }
-        "nesvo_list_worktrees" => {
-            let _: Empty = parse(arguments)?;
-            (json!({"type":"listWorktrees"}), "worktreeRegistry")
-        }
-        "nesvo_list_workflow_templates" => {
-            let a: WorktreeSetup = parse(arguments)?;
-            crate::runs::template_command("list", &a.directory, None, None)?
-        }
-        "nesvo_start_workflow_template" => {
-            let a: WorkflowTemplateStart = parse(arguments)?;
-            crate::runs::template_command("start", &a.directory, None, Some((&a.name, &a.key)))?
-        }
-        "nesvo_read_events" => {
-            let a: Events = parse(arguments)?;
-            if let Some(id) = &a.session_id {
-                cli::valid_id(id)?;
-            }
-            if !(1..=32).contains(&a.limit.unwrap_or(32)) {
-                return Err(cli::failure("invalid_argument", "Event limit must be 1–32"));
-            }
-            (
-                json!({"type":"readEvents","sessionId":a.session_id,"after":a.after,"limit":a.limit}),
-                "events",
-            )
-        }
-        "nesvo_create_session" => {
-            let a: Create = parse(arguments)?;
-            let valid = a.spec.as_object().is_some_and(|spec| {
-                spec.get("name").is_some_and(Value::is_string)
-                    && spec.iter().all(|(key, value)| match key.as_str() {
-                        "name" | "cwd" | "prompt" | "model" | "effort" => value.is_string(),
-                        "program" => value
-                            .as_str()
-                            .is_some_and(|v| matches!(v, "shell" | "claude" | "codex" | "gemini")),
-                        "groupId" | "parentSessionId" => value.is_null() || value.is_string(),
-                        "role" => value
-                            .as_str()
-                            .is_some_and(|role| matches!(role, "worker" | "coordinator")),
-                        "harness" | "worktree" | "autoTitle" | "muted" | "resumePicker" => {
-                            value.is_boolean()
-                        }
-                        "allowedNesvoTools" | "childAllowedNesvoTools" => {
-                            valid_permission_additions(value)
-                        }
-                        "claudeQuotaCapture" => {
-                            crate::workflow_launches::valid_capture(value, &a.spec["program"])
-                        }
-                        _ => false,
-                    })
-            });
-            if !valid {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Launch spec fields must match the declared schema",
-                ));
-            }
-            (
-                json!({"type":"createOperation","key":a.key,"spec":a.spec}),
-                "operation",
-            )
-        }
-        "nesvo_interrupt_session" | "nesvo_stop_session" => {
-            let a: Control = parse(arguments)?;
-            cli::valid_id(&a.session_id)?;
-            cli::valid_id(&a.key)?;
-            (
-                json!({"type":if name=="nesvo_interrupt_session"{"interruptOperation"}else{"stopOperation"},"sessionId":a.session_id,"key":a.key}),
-                "operation",
-            )
-        }
-        "nesvo_send_prompt" => {
-            let a: Send = parse(arguments)?;
-            cli::valid_id(&a.session_id)?;
-            cli::valid_id(&a.key)?;
-            if a.prompt.trim().is_empty()
-                || a.prompt.len() > 8192
-                || a.prompt
-                    .chars()
-                    .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
-            {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Prompt must be nonempty UTF-8 within 8192 bytes, without terminal controls",
-                ));
-            }
-            (
-                json!({"type":"sendOperation","sessionId":a.session_id,"key":a.key,"prompt":a.prompt}),
-                "operation",
-            )
-        }
-        "nesvo_wait_prompt" => {
-            let a: Wait = parse(arguments)?;
-            if a.id.is_some() == a.key.is_some() {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Supply one operation ID or key",
-                ));
-            }
-            for id in [&a.id, &a.key, &a.session_id].into_iter().flatten() {
-                cli::valid_id(id)?;
-            }
-            let until = a.until.as_deref().unwrap_or("settled");
-            let timeout = a.timeout_ms.unwrap_or(30_000);
-            if !matches!(until, "delivered" | "received" | "started" | "settled")
-                || !(1..=60_000).contains(&timeout)
-            {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Invalid wait milestone or timeout (1–60000 ms)",
-                ));
-            }
-            (
-                json!({"type":"waitOperation","id":a.id,"key":a.key,"sessionId":a.session_id,"until":until,"timeoutMs":timeout}),
-                "operation",
-            )
-        }
-        "nesvo_get_operation" => {
-            let a: Operation = parse(arguments)?;
-            if a.id.is_some() == a.key.is_some() {
-                return Err(cli::failure(
-                    "invalid_argument",
-                    "Supply one operation ID or key",
-                ));
-            }
-            (
-                json!({"type":"getOperation","id":a.id,"key":a.key}),
-                "operation",
-            )
-        }
-        _ => return Err(cli::failure("invalid_argument", "Unknown Nesvo tool")),
+    }
+    Ok((
+        crate::workflow::tool("control", json!({"request":fields}))?,
+        "workflow",
+    ))
+}
+
+pub(crate) fn job_trigger(name: &str, arguments: &Value) -> Option<Result<Request>> {
+    crate::job_trigger_tools::command(name, arguments)
+        .map(|request| request.map(|request| (request, "workflow")))
+}
+
+pub(crate) fn set_quota_wake(_: &str, request: SetQuotaWake) -> Result<Request> {
+    cli::quota_wake_query(&request.session_id, Some(request.enabled))
+}
+
+pub(crate) fn get_quota_wake(_: &str, request: SessionArgs) -> Result<Request> {
+    cli::quota_wake_query(&request.session_id, None)
+}
+
+pub(crate) fn provider_quota(_: &str, arguments: Value) -> Result<Request> {
+    if arguments
+        .get("directory")
+        .is_some_and(|value| !value.is_string())
+    {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Quota directory must be a host folder",
+        ));
+    }
+    if arguments
+        .get("program")
+        .is_some_and(|value| !value.is_string())
+    {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Quota program must be a provider name",
+        ));
+    }
+    let query: ProviderQuota = parse(arguments)?;
+    Ok((
+        cli::provider_quota_context_query(
+            query.program.as_deref(),
+            query.refresh,
+            query.directory.as_deref(),
+        )?,
+        "providerQuota",
+    ))
+}
+
+pub(crate) fn sessions(name: &str, arguments: Value) -> Result<Request> {
+    let args: serde_json::Map<String, Value> = parse(arguments)?;
+    if !args.is_empty() {
+        return Err(cli::failure(
+            "invalid_argument",
+            "This tool takes no arguments",
+        ));
+    }
+    Ok(if name == "nesvo_get_current_session" {
+        (json!({"type":"getSession"}), "session")
+    } else {
+        (json!({"type":"list"}), "sessions")
     })
+}
+
+pub(crate) fn session(name: &str, s: SessionArgs) -> Result<Request> {
+    cli::valid_id(&s.session_id)?;
+    Ok(if name == "nesvo_get_session" {
+        (
+            json!({"type":"getSession","sessionId":s.session_id}),
+            "session",
+        )
+    } else {
+        (
+            json!({"type":"getDiagnostics","sessionId":s.session_id}),
+            "diagnostics",
+        )
+    })
+}
+
+pub(crate) fn read_session(_: &str, a: ReadSession) -> Result<Request> {
+    cli::valid_id(&a.session_id)?;
+    if !(1..=8192).contains(&a.max_bytes.unwrap_or(4096)) {
+        return Err(cli::failure("invalid_argument", "maxBytes must be 1–8192"));
+    }
+    Ok((
+        json!({"type":"readSession","sessionId":a.session_id,"after":a.after,"maxBytes":a.max_bytes}),
+        "sessionRead",
+    ))
+}
+
+pub(crate) fn read_diff(_: &str, a: ReadDiff) -> Result<Request> {
+    cli::valid_id(&a.session_id)?;
+    let scope = a.scope.as_deref().unwrap_or("unstaged");
+    if !matches!(scope, "staged" | "unstaged" | "untracked") {
+        return Err(cli::failure("invalid_argument", "Invalid diff scope"));
+    }
+    Ok((
+        json!({"type":"getDiff","sessionId":a.session_id,"scope":scope}),
+        "diff",
+    ))
+}
+
+pub(crate) fn open_review(_: &str, a: OpenReview) -> Result<Request> {
+    Ok((
+        cli::open_review_query(
+            a.session_id.as_deref(),
+            a.directory.as_deref(),
+            a.pull_url.as_deref(),
+            a.base.as_deref(),
+        )?,
+        "reviewOpened",
+    ))
+}
+
+pub(crate) fn deliver_review(_: &str, a: DeliverReview) -> Result<Request> {
+    Ok((
+        cli::deliver_review_query(&a.review_id, &a.session_id, &a.text, a.key.as_deref())?,
+        "reviewDelivered",
+    ))
+}
+
+pub(crate) fn describe_worktree_setup(_: &str, a: WorktreeSetup) -> Result<Request> {
+    cli::worktree_setup_query("describe", &a.directory, None)
+}
+
+pub(crate) fn worktree_session(name: &str, arguments: Value) -> Result<Request> {
+    let a: WorktreeSession = parse(arguments)?;
+    let action = match name {
+        "nesvo_run_worktree" => "run",
+        "nesvo_cancel_worktree" => "cancel",
+        _ => "archive",
+    };
+    if action != "archive" && a.discard.is_some() {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Only archive accepts discard",
+        ));
+    }
+    cli::worktree_session_query(action, &a.session_id, a.discard.unwrap_or(false))
+}
+
+pub(crate) fn list_worktrees(_: &str, _: NoArgs) -> Result<Request> {
+    Ok((json!({"type":"listWorktrees"}), "worktreeRegistry"))
+}
+
+pub(crate) fn list_workflow_templates(_: &str, a: WorktreeSetup) -> Result<Request> {
+    crate::runs::template_command("list", &a.directory, None, None)
+}
+
+pub(crate) fn start_workflow_template(_: &str, a: StartWorkflowTemplate) -> Result<Request> {
+    crate::runs::template_command("start", &a.directory, None, Some((&a.name, &a.key)))
+}
+
+pub(crate) fn read_events(_: &str, a: ReadEvents) -> Result<Request> {
+    if let Some(id) = &a.session_id {
+        cli::valid_id(id)?;
+    }
+    if !(1..=32).contains(&a.limit.unwrap_or(32)) {
+        return Err(cli::failure("invalid_argument", "Event limit must be 1–32"));
+    }
+    Ok((
+        json!({"type":"readEvents","sessionId":a.session_id,"after":a.after,"limit":a.limit}),
+        "events",
+    ))
+}
+
+pub(crate) fn create_session(_: &str, a: CreateSession) -> Result<Request> {
+    let valid = a.spec.as_object().is_some_and(|spec| {
+        spec.get("name").is_some_and(Value::is_string)
+            && spec.iter().all(|(key, value)| match key.as_str() {
+                "name" | "cwd" | "prompt" | "model" | "effort" => value.is_string(),
+                "program" => value
+                    .as_str()
+                    .is_some_and(|v| matches!(v, "shell" | "claude" | "codex" | "gemini")),
+                "groupId" | "parentSessionId" => value.is_null() || value.is_string(),
+                "role" => value
+                    .as_str()
+                    .is_some_and(|role| matches!(role, "worker" | "coordinator")),
+                "harness" | "worktree" | "autoTitle" | "muted" | "resumePicker" => {
+                    value.is_boolean()
+                }
+                "allowedNesvoTools" | "childAllowedNesvoTools" => valid_permission_additions(value),
+                "claudeQuotaCapture" => {
+                    crate::workflow_launches::valid_capture(value, &a.spec["program"])
+                }
+                _ => false,
+            })
+    });
+    if !valid {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Launch spec fields must match the declared schema",
+        ));
+    }
+    Ok((
+        json!({"type":"createOperation","key":a.key,"spec":a.spec}),
+        "operation",
+    ))
+}
+
+pub(crate) fn control_session(name: &str, a: SessionControl) -> Result<Request> {
+    cli::valid_id(&a.session_id)?;
+    cli::valid_id(&a.key)?;
+    Ok((
+        json!({"type":if name=="nesvo_interrupt_session"{"interruptOperation"}else{"stopOperation"},"sessionId":a.session_id,"key":a.key}),
+        "operation",
+    ))
+}
+
+pub(crate) fn send_prompt(_: &str, a: SendPrompt) -> Result<Request> {
+    cli::valid_id(&a.session_id)?;
+    cli::valid_id(&a.key)?;
+    if a.prompt.trim().is_empty()
+        || a.prompt.len() > 8192
+        || a.prompt
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
+    {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Prompt must be nonempty UTF-8 within 8192 bytes, without terminal controls",
+        ));
+    }
+    Ok((
+        json!({"type":"sendOperation","sessionId":a.session_id,"key":a.key,"prompt":a.prompt}),
+        "operation",
+    ))
+}
+
+pub(crate) fn wait_prompt(_: &str, a: WaitPrompt) -> Result<Request> {
+    if a.id.is_some() == a.key.is_some() {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Supply one operation ID or key",
+        ));
+    }
+    for id in [&a.id, &a.key, &a.session_id].into_iter().flatten() {
+        cli::valid_id(id)?;
+    }
+    let until = a.until.as_deref().unwrap_or("settled");
+    let timeout = a.timeout_ms.unwrap_or(30_000);
+    if !matches!(until, "delivered" | "received" | "started" | "settled")
+        || !(1..=60_000).contains(&timeout)
+    {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Invalid wait milestone or timeout (1–60000 ms)",
+        ));
+    }
+    Ok((
+        json!({"type":"waitOperation","id":a.id,"key":a.key,"sessionId":a.session_id,"until":until,"timeoutMs":timeout}),
+        "operation",
+    ))
+}
+
+pub(crate) fn get_operation(_: &str, a: GetOperation) -> Result<Request> {
+    if a.id.is_some() == a.key.is_some() {
+        return Err(cli::failure(
+            "invalid_argument",
+            "Supply one operation ID or key",
+        ));
+    }
+    Ok((
+        json!({"type":"getOperation","id":a.id,"key":a.key}),
+        "operation",
+    ))
 }
 
 struct HostTools {
@@ -2442,15 +1146,22 @@ mod tests {
         assert_eq!(request["spec"]["claudeQuotaCapture"], capture);
         assert!(command("nesvo_create_session",json!({"key":"capture","spec":{"name":"Capture","program":"codex","claudeQuotaCapture":capture}})).is_err());
         assert!(command("nesvo_create_session",json!({"key":"capture","spec":{"name":"Capture","program":"claude","claudeQuotaCapture":{"displayProfile":"/owner/display.json","shell":"extra"}}})).is_err());
+        let spec = |name: &str| {
+            serde_json::to_value(
+                catalog()
+                    .into_iter()
+                    .find(|tool| tool.name == name)
+                    .unwrap(),
+            )
+            .unwrap()["inputSchema"]["properties"]["spec"]
+                .clone()
+        };
+        let declared = &spec("nesvo_create_session")["properties"]["claudeQuotaCapture"];
         assert_eq!(
-            launch_schema()["properties"]["claudeQuotaCapture"],
-            capture_schema()
+            &spec("nesvo_create_job")["properties"]["profile"]["properties"]["claudeQuotaCapture"],
+            declared
         );
-        assert_eq!(
-            task_profile_schema(false)["properties"]["claudeQuotaCapture"],
-            capture_schema()
-        );
-        assert_eq!(capture_schema()["additionalProperties"], false);
+        assert_eq!(declared["additionalProperties"], false);
     }
     #[test]
     fn job_execution_timeout_create_and_edit_share_cli_mcp_shape_and_optional_schema() {
@@ -2899,7 +1610,6 @@ mod tests {
         );
         assert_eq!(schema["annotations"]["readOnlyHint"], false);
         assert_eq!(schema["annotations"]["idempotentHint"], true);
-        assert_eq!(catalog().len(), 114);
     }
     #[test]
     fn launch_abandon_cli_and_mcp_require_the_same_explicit_generation_and_acknowledgement() {

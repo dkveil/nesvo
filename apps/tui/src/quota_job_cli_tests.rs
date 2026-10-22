@@ -239,7 +239,13 @@ fn quota_policy_is_strict_and_omission_preserves_the_legacy_spec_bytes() {
         assert!(command("nesvo_create_job", json!({"key":"bad","spec":selected})).is_err());
     }
     assert_eq!(
-        job_spec_schema()["properties"]["quotaPolicy"]["additionalProperties"],
+        serde_json::to_value(
+            catalog()
+                .into_iter()
+                .find(|tool| tool.name == "nesvo_create_job")
+                .unwrap()
+        )
+        .unwrap()["inputSchema"]["properties"]["spec"]["properties"]["quotaPolicy"]["additionalProperties"],
         false
     );
 }

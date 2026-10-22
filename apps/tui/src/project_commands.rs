@@ -4,10 +4,8 @@ use crate::{
 };
 use anyhow::Result;
 use clap::Subcommand;
-use rmcp::model::{Tool, ToolAnnotations};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::sync::Arc;
 
 const ROOT_BYTES: usize = 4096;
 const LAYOUT_CHARS: usize = 40;
@@ -160,42 +158,6 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
 
 pub const TOOLS: [&str; 2] = ["nesvo_list_projects", "nesvo_project_defaults"];
 
-pub fn catalog() -> Vec<Tool> {
-    let root = json!({"type":"string","minLength":1,"maxLength":ROOT_BYTES,"description":"Absolute host path of the repository root, as listed"});
-    [
-        (
-            TOOLS[0],
-            "Owner-only: list the host's project registry (at most 256 repository roots), pinned first then by last activity, with default branch, open session count and their session IDs. Requires host projects:true. Reading never launches, pins or changes anything.",
-            json!({}),
-            Vec::<&str>::new(),
-        ),
-        (
-            TOOLS[1],
-            "Owner-only: read one project's defaults: the usual launch folder (most launches), recent folders, the host-wide default layout name and the worktree setup state (nesvo.toml configured and approved digest, open worktrees). Approving setup stays a human act through the owner CLI.",
-            json!({"root":root}),
-            vec!["root"],
-        ),
-    ]
-    .into_iter()
-    .map(|(name, description, properties, required)| {
-        let schema: serde_json::Map<String, Value> = serde_json::from_value(json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}))
-            .expect("constant project input schema");
-        Tool::new(name, description, schema)
-            .with_annotations(
-                ToolAnnotations::new()
-                    .read_only(true)
-                    .destructive(false)
-                    .idempotent(true)
-                    .open_world(false),
-            )
-            .with_raw_output_schema(Arc::new(
-                serde_json::from_value(json!({"type":"object","required":["schemaVersion","ok"],"properties":{"schemaVersion":{"const":1},"ok":{"type":"boolean"},"data":{"type":"object"},"error":{"type":"object"}}}))
-                    .expect("constant project result schema"),
-            ))
-    })
-    .collect()
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
@@ -308,7 +270,7 @@ mod tests {
 
     #[test]
     fn projects_mcp_tools_are_strict_owner_only_reads_matching_the_cli_wire() {
-        let tools = catalog();
+        let tools = crate::mcp_tools::catalog_named(&TOOLS);
         assert_eq!(tools.len(), 2);
         let published: Vec<String> =
             serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json")).unwrap();
