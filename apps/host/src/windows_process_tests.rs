@@ -448,13 +448,19 @@ fn native_console_fixture() {
             &crate::caller::Authority::Owner,
         )
         .unwrap();
-    stage("stopped", "drop");
+    println!("console-fixture stopped");
+    if commands.next().unwrap().unwrap() == "shutdown" {
+        for worker in state.shutdown() {
+            worker.join().unwrap();
+        }
+        let unsettled = crate::process::SESSION_JOBS.settle(Instant::now() + CLEANUP_BOUND);
+        println!("console-fixture settled {}", unsettled.len());
+    }
     drop(state);
     println!("console-fixture dropped");
 }
 
-#[test]
-fn console_hosts_end_with_their_stopped_session_and_with_the_dropped_host_state() {
+fn console_hosts_end_after(finish: &str, reported: Option<&str>, ended: &str) {
     use std::{
         io::{BufRead, Write},
         os::windows::process::CommandExt,
@@ -490,11 +496,29 @@ fn console_hosts_end_with_their_stopped_session_and_with_the_dropped_host_state(
         !remaining.ended_within(Duration::ZERO),
         "Stopping one session must keep the other session's console host"
     );
-    writeln!(commands, "drop").unwrap();
+    writeln!(commands, "{finish}").unwrap();
+    if let Some(reported) = reported {
+        assert_eq!(stages.next().as_deref(), Some(reported));
+    }
     assert_eq!(stages.next().as_deref(), Some("dropped"));
-    assert!(
-        remaining.ended_within(CLEANUP_BOUND),
-        "Dropping the host state must end the remaining console host"
-    );
+    assert!(remaining.ended_within(CLEANUP_BOUND), "{ended}");
     assert!(fixture.wait().unwrap().success());
+}
+
+#[test]
+fn console_hosts_end_with_their_stopped_session_and_with_the_dropped_host_state() {
+    console_hosts_end_after(
+        "drop",
+        None,
+        "Dropping the host state must end the remaining console host",
+    );
+}
+
+#[test]
+fn graceful_state_shutdown_settles_every_session_job_and_ends_console_hosts() {
+    console_hosts_end_after(
+        "shutdown",
+        Some("settled 0"),
+        "Graceful shutdown must end the remaining console host",
+    );
 }
