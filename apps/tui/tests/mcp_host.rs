@@ -117,6 +117,8 @@ mod startup_trace;
 mod task_tool_profiles;
 #[path = "support/waits.rs"]
 mod waits;
+#[path = "support/wake_holds.rs"]
+mod wake_holds;
 impl Fixture {
     async fn start() -> Result<Self> {
         Self::start_variant(false).await
