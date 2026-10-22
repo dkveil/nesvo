@@ -119,6 +119,9 @@ just queue admission. The durable send phases add:
 | settled     | Provider Stop for that response; task result remains null               |
 | interrupted | A newer prompt superseded the matched response                          |
 
+The lifecycle tick persists these phases before it projects the same events onto the
+session, so a session never reads idle while its settled turn's receipt is still open.
+
 Send-producer failures may add `result.submissionStage`:
 `prepare`, `pasteFence`, `pasteFlush`, `pasteDelay`, `submitFence` or `submitFlush`.
 Native writer confirmation distinguishes `native_write_timeout`,

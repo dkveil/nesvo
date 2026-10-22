@@ -509,6 +509,40 @@ pub struct Service {
     failures: Arc<AtomicU64>,
     wait_slots: Arc<tokio::sync::Semaphore>,
 }
+#[cfg(test)]
+pub(crate) struct HeldWrites(mpsc::Receiver<Work>);
+#[cfg(test)]
+pub(crate) type FinishReply = oneshot::Sender<Result<crate::receipts::Receipt>>;
+#[cfg(test)]
+impl HeldWrites {
+    pub(crate) async fn next_finish(&mut self) -> Option<(String, String, FinishReply)> {
+        loop {
+            if let Work::Finish {
+                id, phase, reply, ..
+            } = self.0.recv().await?
+            {
+                return Some((id, phase, reply));
+            }
+        }
+    }
+}
+#[cfg(test)]
+impl Service {
+    pub(crate) fn held() -> (Self, HeldWrites) {
+        let (sender, receiver) = mpsc::channel(128);
+        let (health_changed, changed) = watch::channel(0);
+        let service = Self {
+            budget: crate::budgets::defaults(),
+            sender,
+            changed,
+            health_changed,
+            drops: Arc::new(AtomicU64::new(0)),
+            failures: Arc::new(AtomicU64::new(0)),
+            wait_slots: Arc::new(tokio::sync::Semaphore::new(32)),
+        };
+        (service, HeldWrites(receiver))
+    }
+}
 impl Service {
     pub async fn external_trigger(
         &self,

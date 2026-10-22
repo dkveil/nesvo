@@ -4000,6 +4000,126 @@ fn spawn_session(
     })
 }
 
+type Persisted = Vec<(
+    crate::submission::Transition,
+    Result<crate::receipts::Receipt>,
+)>;
+
+fn correlate_lifecycle(
+    session: &mut Session,
+    batch: &crate::agent_events::Batch,
+) -> Vec<crate::submission::Transition> {
+    let mut transitions = Vec::new();
+    if batch.gap
+        && let Some(pending) = &session.pending_input
+    {
+        pending.canceled.send_replace(true);
+    }
+    for event in batch
+        .events
+        .iter()
+        .filter(|event| event.generation == batch.identity.generation)
+    {
+        if let Some(pending) = &mut session.pending_input
+            && !*pending.canceled.borrow()
+            && let Some(correlation) = &mut pending.correlation
+            && let Some((phase, result)) = correlation.observe(&batch.identity, event)
+        {
+            if phase == "received"
+                && let Some(arm) = &pending.quota_resume
+                && let Some(mut original) = session.quota_predecessor.take()
+                && let Some(correlation) = &mut original.correlation
+                && let Some(("interrupted", mut result)) =
+                    correlation.observe(&batch.identity, event)
+            {
+                result["code"] = json!("quota_resumed");
+                result["quotaWakeId"] = json!(arm.id);
+                result["supersededBy"] = json!(pending.claim.id);
+                transitions.push(crate::submission::Transition {
+                    claim: original.claim,
+                    phase: "interrupted",
+                    result,
+                });
+            }
+            transitions.push(crate::submission::Transition {
+                claim: pending.claim.clone(),
+                phase,
+                result,
+            });
+        }
+    }
+    transitions
+}
+
+async fn settle_lifecycle(
+    state: &Arc<Mutex<State>>,
+    id: &str,
+    batch: &crate::agent_events::Batch,
+) -> Persisted {
+    let (log, transitions) = {
+        let mut state = state.lock().unwrap();
+        let transitions = state
+            .sessions
+            .get_mut(id)
+            .map(|session| correlate_lifecycle(session, batch))
+            .unwrap_or_default();
+        (state.event_log.clone(), transitions)
+    };
+    match log {
+        Some(log) if !transitions.is_empty() => persist_submission_updates(&log, transitions).await,
+        _ => Vec::new(),
+    }
+}
+
+async fn persist_submission_updates(
+    log: &crate::event_log::Service,
+    updates: Vec<crate::submission::Transition>,
+) -> Persisted {
+    let mut persisted = Vec::with_capacity(updates.len());
+    for update in updates {
+        let receipt = log
+            .finish(
+                update.claim.issuer.clone(),
+                update.claim.id.clone(),
+                update.claim.token.clone(),
+                update.phase.into(),
+                update.result.clone(),
+            )
+            .await;
+        persisted.push((update, receipt));
+    }
+    persisted
+}
+
+fn apply_persisted_submissions(state: &mut State, persisted: Persisted) {
+    for (update, receipt) in persisted {
+        match receipt {
+            Ok(receipt) => state.end_submission(&receipt.session_id, &receipt.id, &receipt.phase),
+            Err(error) => {
+                let code = error
+                    .downcast_ref::<crate::api_error::Error>()
+                    .map(|error| error.code);
+                if !matches!(code, Some("stale_operation" | "operation_not_found")) {
+                    state.submission_updates.push(update);
+                    continue;
+                }
+                for session in state.sessions.values_mut() {
+                    if session
+                        .pending_input
+                        .as_ref()
+                        .is_some_and(|pending| pending.claim.id == update.claim.id)
+                    {
+                        session.pending_input = None;
+                        if code == Some("operation_not_found") {
+                            session.human_input_dirty = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn flush_submission_updates(state: &Arc<Mutex<State>>) {
     let (log, updates) = {
         let mut state = state.lock().unwrap();
@@ -4045,60 +4165,181 @@ async fn flush_submission_updates(state: &Arc<Mutex<State>>) {
     let Some(log) = log else {
         return;
     };
-    for update in updates {
-        let claim = update.claim;
-        match log
-            .finish(
-                claim.issuer.clone(),
-                claim.id.clone(),
-                claim.token.clone(),
-                update.phase.into(),
-                update.result.clone(),
-            )
-            .await
+    let persisted = persist_submission_updates(&log, updates).await;
+    apply_persisted_submissions(&mut state.lock().unwrap(), persisted);
+}
+
+struct LifecycleRead {
+    observed: Option<crate::agent_events::Observed>,
+    counts: crate::agent_events::ReadCounts,
+    capture_view: Option<crate::claude_quota_diagnostics::View>,
+    observation: crate::agent_context::Observation,
+    working_directory: Option<crate::agent_context::WorkingDirectory>,
+    recovery: Option<Value>,
+    resume_start: Option<crate::resume::Start>,
+}
+
+async fn apply_lifecycle_read(state: &Arc<Mutex<State>>, id: &str, read: LifecycleRead) {
+    let LifecycleRead {
+        observed: batch,
+        counts,
+        capture_view,
+        observation,
+        working_directory,
+        recovery,
+        resume_start,
+    } = read;
+    let settled = match &batch {
+        Some(observed) => settle_lifecycle(state, id, &observed.lifecycle).await,
+        None => Vec::new(),
+    };
+    let mut state = state.lock().unwrap();
+    state.lifecycle_observer.accumulate(counts);
+    apply_persisted_submissions(&mut state, settled);
+    let event_log = state.event_log.clone();
+    let mut conversation_changed = false;
+    let mut resume_changed = false;
+    if let Some(session) = state.sessions.get_mut(id) {
+        let previous_conversation = session
+            .conversation_identity
+            .as_ref()
+            .and_then(|identity| identity.provider_session_id.clone());
+        session.claude_capture_diagnostic = capture_view;
+        if let Some(recovery) = recovery
+            && let Some(context) = session.caller_context.as_mut()
+            && context.recovery_status != recovery
         {
-            Ok(receipt) => state.lock().unwrap().end_submission(
-                &receipt.session_id,
-                &receipt.id,
-                &receipt.phase,
-            ),
-            Err(error)
-                if error
-                    .downcast_ref::<crate::api_error::Error>()
-                    .is_some_and(|error| {
-                        matches!(error.code, "stale_operation" | "operation_not_found")
-                    }) =>
-            {
-                let mut state = state.lock().unwrap();
-                for session in state.sessions.values_mut() {
-                    if session
-                        .pending_input
-                        .as_ref()
-                        .is_some_and(|pending| pending.claim.id == claim.id)
-                    {
-                        session.pending_input = None;
-                        if error
-                            .downcast_ref::<crate::api_error::Error>()
-                            .is_some_and(|error| error.code == "operation_not_found")
+            context.recovery_status = recovery;
+            session.status_projection_dirty = true;
+        }
+        let elapsed = session
+            .elapsed_at_exit
+            .unwrap_or_else(|| session.started.elapsed());
+        session.integration_delivery = observation.delivery;
+        session.integration_shadow_sequence = observation.report.map(|r| r.sequence);
+        match batch {
+            Some(crate::agent_events::Observed {
+                lifecycle: batch,
+                quota,
+            }) => {
+                session.claude_quota = quota.filter(|quota| {
+                    quota.scope.launch_id == batch.identity.launch_id
+                        && quota.scope.generation == batch.identity.generation
+                        && Some(&quota.scope.provider_session_id)
+                            == batch.identity.provider_session_id.as_ref()
+                });
+                session.lifecycle_gap |= batch.gap;
+                session.freshness.journal_read(now_millis());
+                if batch.gap {
+                    session.turn.gap(elapsed);
+                }
+                if !batch.observed {
+                    session.integration_delivery.outcome = "missing";
+                } else {
+                    session.integration_delivery.outcome =
+                        if batch.gap { "gap" } else { "received" };
+                }
+                for event in batch.events {
+                    session.lifecycle_cursor = event.sequence;
+                    if event.generation == batch.identity.generation {
+                        session.status_projection_dirty |= session.turn.event(
+                            crate::turns::Signal {
+                                launch: &batch.identity.launch_id,
+                                generation: event.generation,
+                                sequence: event.sequence,
+                                event: &event.name,
+                                state: event.state,
+                            },
+                            elapsed,
+                            now_millis(),
+                        );
+                        if event.name == "Stop"
+                            && let Some(turn) = session.turn.snapshot(elapsed)
+                            && turn.phase == crate::turns::Phase::Settled
                         {
-                            session.human_input_dirty = true;
+                            let new_response = session.attention.response_settled(
+                                event.sequence,
+                                turn.id,
+                                turn.observed_at,
+                            );
+                            session.attention_dirty |= new_response;
+                            if new_response && let Some(log) = &event_log {
+                                log.observe(crate::event_log::Observation {
+                                    session_id: Some(id.to_owned()),
+                                    at: now_millis(),
+                                    event: crate::event_log::DomainEvent::ResponseSettled(
+                                        crate::event_log::model::ResponseSettled {
+                                            turn_id: turn.id.into(),
+                                            task_result: (),
+                                        },
+                                    ),
+                                });
+                            }
+                        }
+                        if session.status.lifecycle_ordered(
+                            crate::agent_context::LifecycleReport {
+                                state: event.state,
+                                sequence: event.sequence,
+                            },
+                            now_millis(),
+                        ) {
+                            session.status_latency.received(std::time::Instant::now());
+                            session.freshness.hook(now_millis());
+                            session.status.record_hook_reason(&event.name, event.state);
+                            session.status_projection_dirty = true;
+                            if let Some(log) = &event_log {
+                                log.observe(crate::event_log::Observation {
+                                    session_id: Some(id.to_owned()),
+                                    at: now_millis(),
+                                    event: crate::event_log::DomainEvent::AgentLifecycle(
+                                        crate::event_log::model::AgentLifecycle {
+                                            event: event.name.clone(),
+                                            state: crate::event_log::agent_state(event.state),
+                                            generation: event.generation,
+                                            source_sequence: event.sequence,
+                                            submission_evidence: event.prompt_digest.is_some()
+                                                || event.paste_digest.is_some(),
+                                        },
+                                    ),
+                                });
+                            }
                         }
                     }
                 }
+                session.conversation_identity = Some(batch.identity);
+                if !session.info.running {
+                    session.turn.process_exit(elapsed);
+                }
             }
-            Err(_) => {
-                state
-                    .lock()
-                    .unwrap()
-                    .submission_updates
-                    .push(crate::submission::Transition {
-                        claim,
-                        phase: update.phase,
-                        result: update.result,
-                    })
+            None => {
+                session.claude_quota = None;
+                session.integration_delivery.outcome = "queueUnreadable";
             }
         }
+        let bound = session
+            .conversation_identity
+            .as_ref()
+            .and_then(|identity| identity.provider_session_id.clone());
+        conversation_changed = bound != previous_conversation;
+        if let Some(gate) = session.resume.as_mut() {
+            resume_changed = gate.observe(crate::resume::Evidence {
+                start: resume_start.as_ref(),
+                bound: bound.as_deref(),
+                running: session.info.running,
+                elapsed,
+            });
+        }
     }
+    if (conversation_changed || resume_changed)
+        && let Some(session) = state.sessions.get(id)
+        && let Err(error) = state.persist_session(session)
+    {
+        eprintln!("Could not persist the conversation identity: {error}");
+    }
+    if resume_changed {
+        state.broadcast_list();
+    }
+    state.repository_working_directory(id, working_directory);
 }
 
 fn lifecycle_eligible(session: &Session) -> bool {
@@ -4181,215 +4422,36 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                     (observer, result, counts)
                 })
                 .await;
-                let mut state = state.lock().unwrap();
-                let (batch, capture_view) = match batch {
+                let (observed, counts, capture_view) = match batch {
                     Ok((observer, result, counts)) => {
                         let capture_view = observer.capture_diagnostic().cloned();
                         observers.insert(id.clone(), observer);
-                        state.lifecycle_observer.accumulate(counts);
-                        (result.ok(), capture_view)
+                        (result.ok(), counts, capture_view)
                     }
-                    Err(_) => {
-                        state
-                            .lifecycle_observer
-                            .accumulate(crate::agent_events::ReadCounts {
-                                scope_polls: 1,
-                                blocking_task_failures: 1,
-                                ..Default::default()
-                            });
-                        (
-                            None,
-                            capture_configured
-                                .then(crate::claude_quota_diagnostics::View::failed_read),
-                        )
-                    }
+                    Err(_) => (
+                        None,
+                        crate::agent_events::ReadCounts {
+                            scope_polls: 1,
+                            blocking_task_failures: 1,
+                            ..Default::default()
+                        },
+                        capture_configured.then(crate::claude_quota_diagnostics::View::failed_read),
+                    ),
                 };
-                let event_log = state.event_log.clone();
-                let mut submission_updates = Vec::new();
-                let mut conversation_changed = false;
-                let mut resume_changed = false;
-                if let Some(session) = state.sessions.get_mut(&id) {
-                    let previous_conversation = session
-                        .conversation_identity
-                        .as_ref()
-                        .and_then(|identity| identity.provider_session_id.clone());
-                    session.claude_capture_diagnostic = capture_view;
-                    if let Some(recovery) = recovery
-                        && let Some(context) = session.caller_context.as_mut()
-                        && context.recovery_status != recovery
-                    {
-                        context.recovery_status = recovery;
-                        session.status_projection_dirty = true;
-                    }
-                    let elapsed = session
-                        .elapsed_at_exit
-                        .unwrap_or_else(|| session.started.elapsed());
-                    session.integration_delivery = observation.delivery;
-                    session.integration_shadow_sequence = observation.report.map(|r| r.sequence);
-                    match batch {
-                        Some(crate::agent_events::Observed {
-                            lifecycle: batch,
-                            quota,
-                        }) => {
-                            session.claude_quota = quota.filter(|quota| {
-                                quota.scope.launch_id == batch.identity.launch_id
-                                    && quota.scope.generation == batch.identity.generation
-                                    && Some(&quota.scope.provider_session_id)
-                                        == batch.identity.provider_session_id.as_ref()
-                            });
-                            session.lifecycle_gap |= batch.gap;
-                            session.freshness.journal_read(now_millis());
-                            if batch.gap {
-                                session.turn.gap(elapsed);
-                                if let Some(pending) = &session.pending_input {
-                                    pending.canceled.send_replace(true);
-                                }
-                            }
-                            if !batch.observed {
-                                session.integration_delivery.outcome = "missing";
-                            } else {
-                                session.integration_delivery.outcome =
-                                    if batch.gap { "gap" } else { "received" };
-                            }
-                            for event in batch.events {
-                                session.lifecycle_cursor = event.sequence;
-                                if event.generation == batch.identity.generation {
-                                    if let Some(pending) = &mut session.pending_input
-                                        && !*pending.canceled.borrow()
-                                        && let Some(correlation) = &mut pending.correlation
-                                        && let Some((phase, result)) =
-                                            correlation.observe(&batch.identity, &event)
-                                    {
-                                        if phase == "received"
-                                            && let Some(arm) = &pending.quota_resume
-                                            && let Some(mut original) =
-                                                session.quota_predecessor.take()
-                                            && let Some(correlation) = &mut original.correlation
-                                            && let Some(("interrupted", mut result)) =
-                                                correlation.observe(&batch.identity, &event)
-                                        {
-                                            result["code"] = json!("quota_resumed");
-                                            result["quotaWakeId"] = json!(arm.id);
-                                            result["supersededBy"] = json!(pending.claim.id);
-                                            submission_updates.push(
-                                                crate::submission::Transition {
-                                                    claim: original.claim,
-                                                    phase: "interrupted",
-                                                    result,
-                                                },
-                                            );
-                                        }
-                                        submission_updates.push(crate::submission::Transition {
-                                            claim: pending.claim.clone(),
-                                            phase,
-                                            result,
-                                        });
-                                    }
-                                    session.status_projection_dirty |= session.turn.event(
-                                        crate::turns::Signal {
-                                            launch: &batch.identity.launch_id,
-                                            generation: event.generation,
-                                            sequence: event.sequence,
-                                            event: &event.name,
-                                            state: event.state,
-                                        },
-                                        elapsed,
-                                        now_millis(),
-                                    );
-                                    if event.name == "Stop"
-                                        && let Some(turn) = session.turn.snapshot(elapsed)
-                                        && turn.phase == crate::turns::Phase::Settled
-                                    {
-                                        let new_response = session.attention.response_settled(
-                                            event.sequence,
-                                            turn.id,
-                                            turn.observed_at,
-                                        );
-                                        session.attention_dirty |= new_response;
-                                        if new_response && let Some(log) = &event_log {
-                                            log.observe(crate::event_log::Observation {
-                                                session_id: Some(id.clone()),
-                                                at: now_millis(),
-                                                event:
-                                                    crate::event_log::DomainEvent::ResponseSettled(
-                                                        crate::event_log::model::ResponseSettled {
-                                                            turn_id: turn.id.into(),
-                                                            task_result: (),
-                                                        },
-                                                    ),
-                                            });
-                                        }
-                                    }
-                                    if session.status.lifecycle_ordered(
-                                        crate::agent_context::LifecycleReport {
-                                            state: event.state,
-                                            sequence: event.sequence,
-                                        },
-                                        now_millis(),
-                                    ) {
-                                        session.status_latency.received(std::time::Instant::now());
-                                        session.freshness.hook(now_millis());
-                                        session.status.record_hook_reason(&event.name, event.state);
-                                        session.status_projection_dirty = true;
-                                        if let Some(log) = &event_log {
-                                            log.observe(crate::event_log::Observation {
-                                                session_id: Some(id.clone()),
-                                                at: now_millis(),
-                                                event:
-                                                    crate::event_log::DomainEvent::AgentLifecycle(
-                                                        crate::event_log::model::AgentLifecycle {
-                                                            event: event.name.clone(),
-                                                            state: crate::event_log::agent_state(
-                                                                event.state,
-                                                            ),
-                                                            generation: event.generation,
-                                                            source_sequence: event.sequence,
-                                                            submission_evidence: event
-                                                                .prompt_digest
-                                                                .is_some()
-                                                                || event.paste_digest.is_some(),
-                                                        },
-                                                    ),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                            session.conversation_identity = Some(batch.identity);
-                            if !session.info.running {
-                                session.turn.process_exit(elapsed);
-                            }
-                        }
-                        None => {
-                            session.claude_quota = None;
-                            session.integration_delivery.outcome = "queueUnreadable";
-                        }
-                    }
-                    let bound = session
-                        .conversation_identity
-                        .as_ref()
-                        .and_then(|identity| identity.provider_session_id.clone());
-                    conversation_changed = bound != previous_conversation;
-                    if let Some(gate) = session.resume.as_mut() {
-                        resume_changed = gate.observe(crate::resume::Evidence {
-                            start: resume_start.as_ref(),
-                            bound: bound.as_deref(),
-                            running: session.info.running,
-                            elapsed,
-                        });
-                    }
-                }
-                if (conversation_changed || resume_changed)
-                    && let Some(session) = state.sessions.get(&id)
-                    && let Err(error) = state.persist_session(session)
-                {
-                    eprintln!("Could not persist the conversation identity: {error}");
-                }
-                if resume_changed {
-                    state.broadcast_list();
-                }
-                state.repository_working_directory(&id, working_directory);
-                state.submission_updates.extend(submission_updates);
+                apply_lifecycle_read(
+                    &state,
+                    &id,
+                    LifecycleRead {
+                        observed,
+                        counts,
+                        capture_view,
+                        observation,
+                        working_directory,
+                        recovery,
+                        resume_start,
+                    },
+                )
+                .await;
             }
             flush_submission_updates(&state).await;
         }
@@ -4513,6 +4575,160 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
         }
     }
     lifecycle_task.abort();
+}
+
+#[cfg(test)]
+mod lifecycle_settlement_tests {
+    use super::*;
+    use crate::status::StatusState;
+
+    const RECEIPT: &str = "settlement-order-receipt";
+
+    fn observed_idle(state: &Arc<Mutex<State>>, id: &str) -> bool {
+        let mut state = state.lock().unwrap();
+        let session = state.sessions.get_mut(id).unwrap();
+        session.status.refresh(now_millis());
+        session.status.status().state == StatusState::Idle
+    }
+
+    fn receipt(id: &str, phase: &str) -> crate::receipts::Receipt {
+        crate::receipts::Receipt {
+            id: RECEIPT.into(),
+            operation: "send".into(),
+            phase: phase.into(),
+            session_id: id.into(),
+            result: json!({}),
+        }
+    }
+
+    fn event(
+        name: &str,
+        sequence: u64,
+        state: StatusState,
+        digest: Option<&str>,
+    ) -> crate::agent_events::Event {
+        crate::agent_events::Event {
+            name: name.into(),
+            sequence,
+            generation: 1,
+            state,
+            prompt_digest: digest.map(str::to_owned),
+            paste_digest: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_settled_turn_is_never_observed_idle_but_unsettled() {
+        let (log, mut writes) = crate::event_log::Service::held();
+        let mut state = State::new(
+            std::env::temp_dir().canonicalize().unwrap(),
+            MetadataStore::open(Path::new(":memory:")).unwrap(),
+            Launchers::discover_with_fixture_shell(),
+        );
+        state.set_event_log(log);
+        let (events, _output) = mpsc::channel(128);
+        let spec = crate::jobs::LaunchSpec {
+            name: "Settlement order fixture".into(),
+            ..Default::default()
+        };
+        let id = state.launch(&spec, &events).unwrap();
+        let digest = crate::submission::digest("fixture prompt").unwrap();
+        let identity = crate::agent_events::Identity {
+            host_session_id: id.clone(),
+            launch_id: "a".repeat(32),
+            provider_session_id: Some("conversation-a".into()),
+            generation: 1,
+            rejected: 0,
+            prompt_correlation: true,
+        };
+        let now = now_millis();
+        let session = state.sessions.get_mut(&id).unwrap();
+        session.info.program = Program::Claude;
+        session.status = StatusTracker::new(Program::Claude, 24, 80, now);
+        session.status.lifecycle(
+            crate::agent_context::LifecycleReport {
+                state: StatusState::Working,
+                sequence: 1,
+            },
+            now,
+        );
+        let (canceled, _) = watch::channel(false);
+        session.pending_input = Some(crate::submission::Pending {
+            quota_resume: None,
+            quota_sequence: None,
+            quota_semantic_revision: None,
+            authority: crate::caller::Authority::Owner,
+            claim: crate::submission::Claim {
+                id: RECEIPT.into(),
+                issuer: "owner".into(),
+                token: "settlement-order-claim".into(),
+            },
+            canceled,
+            correlation: Some(crate::submission::Correlation::new(
+                &identity,
+                1,
+                digest.clone(),
+            )),
+            digest: digest.clone(),
+            source: None,
+            queued: false,
+            reconciliation_queued: false,
+        });
+        let read = LifecycleRead {
+            observed: Some(crate::agent_events::Observed {
+                lifecycle: crate::agent_events::Batch {
+                    identity,
+                    events: vec![
+                        event("UserPromptSubmit", 2, StatusState::Working, Some(&digest)),
+                        event("Stop", 3, StatusState::Idle, None),
+                    ],
+                    gap: false,
+                    observed: true,
+                    head_sequence: 3,
+                },
+                quota: None,
+            }),
+            counts: Default::default(),
+            capture_view: None,
+            observation: crate::agent_context::Observation {
+                report: None,
+                delivery: Default::default(),
+            },
+            working_directory: None,
+            recovery: None,
+            resume_start: None,
+        };
+        let state = Arc::new(Mutex::new(state));
+        let applying = {
+            let state = state.clone();
+            let id = id.clone();
+            tokio::spawn(async move { apply_lifecycle_read(&state, &id, read).await })
+        };
+        let bound = Duration::from_secs(10);
+        for phase in ["received", "settled"] {
+            let (operation, persisted, reply) = tokio::time::timeout(bound, writes.next_finish())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!((operation.as_str(), persisted.as_str()), (RECEIPT, phase));
+            assert!(
+                !observed_idle(&state, &id),
+                "the session is idle before its {phase} receipt is persisted"
+            );
+            assert!(state.lock().unwrap().sessions[&id].pending_input.is_some());
+            assert!(reply.send(Ok(receipt(&id, phase))).is_ok());
+        }
+        tokio::time::timeout(bound, applying)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(observed_idle(&state, &id));
+        assert!(state.lock().unwrap().sessions[&id].pending_input.is_none());
+        let workers = state.lock().unwrap().shutdown();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
 }
 
 #[cfg(test)]
