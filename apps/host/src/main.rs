@@ -132,6 +132,7 @@ use tokio::{
     sync::{Semaphore, mpsc, oneshot},
 };
 
+const TERMINAL_CLEANUP_BOUND: Duration = Duration::from_secs(8);
 const STABLE_REPOSITORY_PAIRING_DIRECTORY: &str = "host/.local";
 const LEGACY_WINDOWS_DATA_DIRECTORY: &str = "PocketSessions";
 const LEGACY_UNIX_DATA_DIRECTORY: &str = "pocket-sessions";
@@ -607,7 +608,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         let mut state = state.lock().unwrap();
         state.shutdown()
     };
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + TERMINAL_CLEANUP_BOUND;
     let mut panicked = 0;
     loop {
         let mut pending = Vec::new();
@@ -625,6 +626,10 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    match tokio::task::spawn_blocking(move || process::SESSION_JOBS.settle(deadline)).await {
+        Ok(unsettled) => unsettled.iter().for_each(|job| eprintln!("{job}")),
+        Err(_) => eprintln!("Session job settlement was interrupted"),
     }
     ensure!(
         cleanup_workers.is_empty(),

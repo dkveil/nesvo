@@ -151,7 +151,7 @@ impl Pty {
         let mut child = pair.slave.spawn_command(command)?;
         let process_id = child.process_id();
         drop(pair.slave);
-        let killer = crate::process::killer(child.as_ref())?;
+        let killer = crate::process::killer(id, child.as_ref())?;
         let mut reader = pair.master.try_clone_reader()?;
         let mut writer = pair.master.take_writer()?;
         let (input_tx, input_rx) = sync_mpsc::sync_channel::<Input>(16);
@@ -168,7 +168,11 @@ impl Pty {
         });
         let reader_id = id.to_owned();
         let reader_events = events.clone();
+        #[cfg(windows)]
+        let console_lease = killer.clone_killer();
         thread::spawn(move || {
+            #[cfg(windows)]
+            let _console_lease = console_lease;
             let mut buffer = [0u8; 8192];
             let mut pending = Vec::new();
             let mut delivering = true;
