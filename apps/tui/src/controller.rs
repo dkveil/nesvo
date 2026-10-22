@@ -44,12 +44,12 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         app.pending_input = None;
     }
     if app.notes.capture.is_some() {
-        return crate::notes_controller::capture_event(app, event);
+        return crate::notes_controller::capture_event(app, event, area);
     }
     if let Event::Key(key) = &event
         && crate::notes_controller::capture_key(app, key)
     {
-        crate::notes_controller::begin_capture(app);
+        crate::notes_controller::begin_capture(app, area);
         return Outcome::default();
     }
     if app.worktrees.dialog.is_some() {

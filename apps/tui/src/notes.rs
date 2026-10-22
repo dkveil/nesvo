@@ -103,19 +103,21 @@ impl Summary {
     }
 }
 
-pub fn matches(query: &str, summary: &Summary, content: Option<&str>) -> bool {
-    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+pub fn query_words(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+pub fn matches(words: &[String], summary: &Summary, folded: Option<&str>) -> bool {
     if words.is_empty() {
         return true;
     }
-    let haystack = format!(
-        "{}\n{}\n{}",
-        summary.name,
-        summary.first_line,
-        content.unwrap_or_default()
-    )
-    .to_lowercase();
-    words.iter().all(|word| haystack.contains(word.as_str()))
+    let name = summary.name.to_lowercase();
+    let first_line = summary.first_line.to_lowercase();
+    words.iter().all(|word| {
+        name.contains(word.as_str())
+            || first_line.contains(word.as_str())
+            || folded.is_some_and(|text| text.contains(word.as_str()))
+    })
 }
 
 pub fn separator(directory: &str) -> char {
@@ -457,10 +459,13 @@ mod tests {
             first_line: "# Release".into(),
             ..Default::default()
         };
-        assert!(matches("", &summary, None));
-        assert!(matches("PLAN rel", &summary, None));
-        assert!(!matches("deploy", &summary, None));
-        assert!(matches("deploy", &summary, Some("then deploy")));
+        let search =
+            |query: &str, folded: Option<&str>| matches(&query_words(query), &summary, folded);
+        assert!(search("", None));
+        assert!(search("PLAN rel", None));
+        assert!(!search("deploy", None));
+        assert!(search("DEPLOY", Some("then deploy")));
+        assert!(!search("plan deploy", Some("nothing")));
         assert_eq!(summary.title(), "plan");
         assert_eq!(summary.heading(), "Release");
     }

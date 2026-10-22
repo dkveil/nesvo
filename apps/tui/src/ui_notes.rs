@@ -286,7 +286,7 @@ fn list(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
         }
         return;
     }
-    let selected = notes.selected_index();
+    let selected = notes.index_in(&visible);
     let first = notes::visible_start(0, selected.unwrap_or(0), height);
     for (offset, summary) in visible.iter().skip(first).take(height).enumerate() {
         let chosen = Some(first + offset) == selected;
@@ -510,15 +510,19 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
     spans(frame, area, parts);
 }
 
+pub fn capture_fits(screen: Rect) -> bool {
+    screen.width.saturating_sub(4).min(64) >= 10 && screen.height >= 6
+}
+
 pub fn render_capture(frame: &mut Frame, app: &App) {
     let Some(input) = &app.notes.capture else {
         return;
     };
     let screen = frame.area();
-    let width = screen.width.saturating_sub(4).min(64);
-    if width < 10 || screen.height < 6 {
+    if !capture_fits(screen) {
         return;
     }
+    let width = screen.width.saturating_sub(4).min(64);
     let footer = crate::ui::geometry(screen, app).footer;
     let bottom = footer.y.max(screen.y + 4);
     let area = Rect::new(

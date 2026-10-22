@@ -1,15 +1,20 @@
 use crate::{
     controller::Outcome,
     layouts::Role,
-    model::{App, Mode},
+    model::{App, Mode, Surface},
     notes::{self, Editor, LastNote, Saved, Summary},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use serde_json::{Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{Duration, Instant},
+};
 
 pub const MAX_IN_FLIGHT: usize = 2;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const TIMEOUT_MESSAGE: &str = "The host did not answer the notes request; r retries.";
 const PREFETCH_LIMIT: usize = 64;
 const CACHE_BYTES: usize = 4 * 1024 * 1024;
 const CAPTURE_ATTEMPTS: u8 = 3;
@@ -37,6 +42,7 @@ enum Want {
     List(String),
     Read(String, Purpose),
     Save {
+        draft: u64,
         path: String,
         text: String,
         expected: Option<String>,
@@ -58,6 +64,7 @@ impl Want {
                 path,
                 text,
                 expected,
+                ..
             }
             | Self::Capture {
                 path,
@@ -96,6 +103,19 @@ pub struct Loaded {
     pub revision: String,
     size: u64,
     modified_ms: Option<u64>,
+    folded: String,
+}
+
+impl Loaded {
+    fn new(text: String, revision: String, size: u64, modified_ms: Option<u64>) -> Self {
+        Self {
+            folded: text.to_lowercase(),
+            text,
+            revision,
+            size,
+            modified_ms,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -108,6 +128,7 @@ pub struct Draft {
     pub saving: bool,
     pub conflict: Option<Option<String>>,
     avoid: Vec<String>,
+    generation: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -143,8 +164,9 @@ pub struct NotesState {
     root: Option<String>,
     last: Vec<LastNote>,
     queue: VecDeque<Want>,
-    pending: HashMap<String, Want>,
+    pending: HashMap<String, (Want, Instant)>,
     job: Option<CaptureJob>,
+    drafts: u64,
 }
 
 impl NotesState {
@@ -169,30 +191,52 @@ impl NotesState {
         }
     }
 
-    pub fn loading(&self) -> bool {
+    fn wants(&self) -> impl Iterator<Item = &Want> {
         self.pending
             .values()
+            .map(|(want, _)| want)
             .chain(self.queue.iter())
-            .any(|want| matches!(want, Want::List(_)))
+    }
+
+    pub fn loading(&self) -> bool {
+        self.wants().any(|want| matches!(want, Want::List(_)))
     }
 
     pub fn visible(&self) -> Vec<&Summary> {
         let Some(listing) = &self.listing else {
             return Vec::new();
         };
+        let words = notes::query_words(&self.query);
         listing
             .notes
             .iter()
             .filter(|summary| {
                 notes::matches(
-                    &self.query,
+                    &words,
                     summary,
                     self.contents
                         .get(&summary.path)
-                        .map(|loaded| loaded.text.as_str()),
+                        .map(|loaded| loaded.folded.as_str()),
                 )
             })
             .collect()
+    }
+
+    pub fn index_in(&self, visible: &[&Summary]) -> Option<usize> {
+        let selected = self.selected.as_deref()?;
+        visible.iter().position(|summary| summary.path == selected)
+    }
+
+    fn start_draft(&mut self, mut draft: Draft) {
+        self.drafts += 1;
+        draft.generation = self.drafts;
+        self.draft = Some(draft);
+    }
+
+    fn current_draft(&mut self, generation: u64) -> Option<&mut Draft> {
+        self.draft
+            .as_mut()
+            .filter(|draft| draft.generation == generation)
     }
 
     pub fn selected_summary(&self) -> Option<&Summary> {
@@ -205,10 +249,7 @@ impl NotesState {
     }
 
     pub fn selected_index(&self) -> Option<usize> {
-        let selected = self.selected.as_deref()?;
-        self.visible()
-            .iter()
-            .position(|summary| summary.path == selected)
+        self.index_in(&self.visible())
     }
 
     fn remembered(&self, directory: &str) -> Option<&str> {
@@ -219,7 +260,7 @@ impl NotesState {
     }
 
     fn enqueue(&mut self, want: Want, urgent: bool) {
-        if self.queue.contains(&want) || self.pending.values().any(|known| *known == want) {
+        if self.wants().any(|known| *known == want) {
             return;
         }
         if urgent {
@@ -230,9 +271,7 @@ impl NotesState {
     }
 
     fn requested(&self, path: &str) -> bool {
-        self.pending
-            .values()
-            .chain(self.queue.iter())
+        self.wants()
             .any(|want| matches!(want, Want::Read(known, _) if known == path))
     }
 
@@ -358,26 +397,57 @@ pub fn sync(app: &mut App) -> Vec<Value> {
             app.notes.enqueue(Want::Read(path, Purpose::Preview), false);
         }
     }
-    while app.notes.pending.len() < MAX_IN_FLIGHT {
+    commands.extend(dispatch(app, MAX_IN_FLIGHT));
+    commands
+}
+
+fn dispatch(app: &mut App, limit: usize) -> Vec<Value> {
+    let mut commands = Vec::new();
+    while app.notes.pending.len() < MAX_IN_FLIGHT && commands.len() < limit {
         let Some(want) = app.notes.queue.pop_front() else {
             break;
         };
         let command = app.request(want.command());
         if let Some(id) = command["requestId"].as_str() {
-            app.notes.pending.insert(id.to_owned(), want);
+            app.notes
+                .pending
+                .insert(id.to_owned(), (want, Instant::now()));
         }
         commands.push(command);
     }
     commands
 }
 
-fn loaded(event: &Value) -> Loaded {
-    Loaded {
-        text: event["text"].as_str().unwrap_or_default().to_owned(),
-        revision: event["revision"].as_str().unwrap_or_default().to_owned(),
-        size: event["size"].as_u64().unwrap_or(0),
-        modified_ms: event["modifiedMs"].as_u64(),
+pub fn tick(app: &mut App) -> Option<Value> {
+    if !app.connected || !supported(app) {
+        return None;
     }
+    dispatch(app, 1).pop()
+}
+
+pub fn expire(app: &mut App) -> bool {
+    let expired: Vec<String> = app
+        .notes
+        .pending
+        .iter()
+        .filter(|(_, (_, sent))| sent.elapsed() > REQUEST_TIMEOUT)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &expired {
+        if let Some((want, _)) = app.notes.pending.remove(id) {
+            fail(app, want, "timeout", TIMEOUT_MESSAGE.into(), None);
+        }
+    }
+    !expired.is_empty()
+}
+
+fn loaded(event: &Value) -> Loaded {
+    Loaded::new(
+        event["text"].as_str().unwrap_or_default().to_owned(),
+        event["revision"].as_str().unwrap_or_default().to_owned(),
+        event["size"].as_u64().unwrap_or(0),
+        event["modifiedMs"].as_u64(),
+    )
 }
 
 fn name_of(path: &str) -> String {
@@ -399,7 +469,7 @@ fn begin_edit(app: &mut App, path: &str) {
         return;
     };
     let draft = draft_for(path, loaded);
-    app.notes.draft = Some(draft);
+    app.notes.start_draft(draft);
     app.notes.view = View::Edit;
     remember_path(app, path);
 }
@@ -415,7 +485,7 @@ pub fn host_event(app: &mut App, event: &Value) -> bool {
     let Some(id) = event["requestId"].as_str() else {
         return false;
     };
-    let Some(want) = app.notes.pending.remove(id) else {
+    let Some((want, _)) = app.notes.pending.remove(id) else {
         return false;
     };
     app.notes.error = None;
@@ -430,7 +500,9 @@ pub fn host_event(app: &mut App, event: &Value) -> bool {
                 truncated: event["truncated"] == true,
             };
             let directory = listing.directory.clone();
-            app.notes.reconcile(listing);
+            if app.notes.root.as_deref() == Some(root.as_str()) {
+                app.notes.reconcile(listing);
+            }
             if let Some(job) = app.notes.job.as_mut()
                 && job.path.is_none()
                 && job.root == root
@@ -453,17 +525,17 @@ pub fn host_event(app: &mut App, event: &Value) -> bool {
                 Purpose::Preview | Purpose::Prefetch => app.notes.cache(path, loaded),
             }
         }
-        (Want::Save { text, .. }, "noteSaved") => saved(app, event, &text),
+        (Want::Save { draft, text, .. }, "noteSaved") => saved(app, event, &text, draft),
         (Want::Capture { path, text, .. }, "noteSaved") => {
             let revision = event["revision"].as_str().unwrap_or_default().to_owned();
             app.notes.cache(
                 path.clone(),
-                Loaded {
-                    size: event["size"].as_u64().unwrap_or(0),
-                    modified_ms: event["modifiedMs"].as_u64(),
-                    text: text.clone(),
-                    revision: revision.clone(),
-                },
+                Loaded::new(
+                    text.clone(),
+                    revision.clone(),
+                    event["size"].as_u64().unwrap_or(0),
+                    event["modifiedMs"].as_u64(),
+                ),
             );
             if let Some(draft) = app.notes.draft.as_mut()
                 && draft.path.as_deref() == Some(path.as_str())
@@ -513,10 +585,11 @@ pub fn host_event(app: &mut App, event: &Value) -> bool {
     true
 }
 
-fn saved(app: &mut App, event: &Value, text: &str) {
+fn saved(app: &mut App, event: &Value, text: &str, generation: u64) {
     let path = event["path"].as_str().unwrap_or_default().to_owned();
     let revision = event["revision"].as_str().unwrap_or_default().to_owned();
-    if let Some(draft) = app.notes.draft.as_mut() {
+    let current = app.notes.current_draft(generation).is_some();
+    if let Some(draft) = app.notes.current_draft(generation) {
         draft.saving = false;
         draft.conflict = None;
         draft.avoid.clear();
@@ -527,15 +600,17 @@ fn saved(app: &mut App, event: &Value, text: &str) {
     }
     app.notes.cache(
         path.clone(),
-        Loaded {
-            text: text.to_owned(),
+        Loaded::new(
+            text.to_owned(),
             revision,
-            size: event["size"].as_u64().unwrap_or(0),
-            modified_ms: event["modifiedMs"].as_u64(),
-        },
+            event["size"].as_u64().unwrap_or(0),
+            event["modifiedMs"].as_u64(),
+        ),
     );
-    app.notes.selected = Some(path.clone());
-    remember_path(app, &path);
+    if current {
+        app.notes.selected = Some(path.clone());
+        remember_path(app, &path);
+    }
     app.notice = format!("Saved {}", name_of(&path));
     app.notes.refresh();
 }
@@ -577,7 +652,7 @@ pub fn host_error(app: &mut App, event: &Value) {
     let Some(id) = event["requestId"].as_str() else {
         return;
     };
-    let Some(want) = app.notes.pending.remove(id) else {
+    let Some((want, _)) = app.notes.pending.remove(id) else {
         return;
     };
     let code = event["code"].as_str().unwrap_or_default();
@@ -587,8 +662,23 @@ pub fn host_error(app: &mut App, event: &Value) {
             .as_str()
             .unwrap_or("The host refused the notes request."),
     );
+    let revision = event["revision"].as_str().map(str::to_owned);
+    fail(app, want, code, message, revision);
+}
+
+fn fail(app: &mut App, want: Want, code: &str, message: String, revision: Option<String>) {
     match want {
-        Want::List(_) => app.notes.error = Some(message.clone()),
+        Want::List(root) => {
+            if app
+                .notes
+                .job
+                .as_ref()
+                .is_some_and(|job| job.path.is_none() && job.root == root)
+            {
+                app.notes.job = None;
+            }
+            app.notes.error = Some(message.clone());
+        }
         Want::Read(path, Purpose::Capture) if code == "not_found" => {
             return continue_capture(app, &path, None);
         }
@@ -614,9 +704,13 @@ pub fn host_error(app: &mut App, event: &Value) {
         Want::Read(path, Purpose::Preview | Purpose::Prefetch | Purpose::Edit) => {
             app.notes.failed.insert(path, message.clone());
         }
-        Want::Save { path, .. } => {
-            let revision = event["revision"].as_str().map(str::to_owned);
-            let Some(draft) = app.notes.draft.as_mut() else {
+        Want::Save {
+            path,
+            draft: generation,
+            ..
+        } => {
+            let Some(draft) = app.notes.current_draft(generation) else {
+                app.notice = format!("{} was not saved: {message}", name_of(&path));
                 return;
             };
             draft.saving = false;
@@ -664,8 +758,10 @@ fn save(app: &mut App) {
     };
     draft.saving = true;
     draft.conflict = None;
+    let generation = draft.generation;
     app.notes.enqueue(
         Want::Save {
+            draft: generation,
             path,
             text,
             expected,
@@ -736,15 +832,24 @@ fn keep_selection_visible(app: &mut App) {
     }
 }
 
-fn edit_selected(app: &mut App) {
-    if app
-        .notes
-        .draft
-        .as_ref()
-        .is_some_and(|draft| draft.dirty && !draft.saving)
-    {
+fn draft_busy(app: &mut App) -> bool {
+    let Some(draft) = app.notes.draft.as_ref() else {
+        return false;
+    };
+    if draft.saving {
+        app.notice = "The previous note is still being saved; try again in a moment.".into();
+        return true;
+    }
+    if draft.dirty {
         app.notes.view = View::Edit;
         app.notice = "Resumed the unsaved note.".into();
+        return true;
+    }
+    false
+}
+
+fn edit_selected(app: &mut App) {
+    if draft_busy(app) {
         return;
     }
     let Some(path) = app.notes.selected.clone() else {
@@ -766,17 +871,10 @@ fn new_note(app: &mut App) {
         app.notice = "The notes folder is still loading.".into();
         return;
     }
-    if app
-        .notes
-        .draft
-        .as_ref()
-        .is_some_and(|draft| draft.dirty && !draft.saving)
-    {
-        app.notes.view = View::Edit;
-        app.notice = "Resumed the unsaved note.".into();
+    if draft_busy(app) {
         return;
     }
-    app.notes.draft = Some(Draft::default());
+    app.notes.start_draft(Draft::default());
     app.notes.view = View::Edit;
 }
 
@@ -888,7 +986,15 @@ fn key_event(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
         KeyCode::Esc | KeyCode::Char('q') => escape(app),
         KeyCode::Down | KeyCode::Char('j') => move_selection(app, 1),
         KeyCode::Up | KeyCode::Char('k') => move_selection(app, -1),
-        KeyCode::PageDown => app.notes.preview_scroll += preview,
+        KeyCode::PageDown => {
+            let last = app
+                .notes
+                .selected
+                .as_ref()
+                .and_then(|path| app.notes.contents.get(path))
+                .map_or(0, |loaded| loaded.text.lines().count().saturating_sub(1));
+            app.notes.preview_scroll = (app.notes.preview_scroll + preview).min(last);
+        }
         KeyCode::PageUp => {
             app.notes.preview_scroll = app.notes.preview_scroll.saturating_sub(preview);
         }
@@ -1000,13 +1106,10 @@ pub fn capture_key(app: &App, key: &KeyEvent) -> bool {
             || (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char('t' | 'T'))))
         && app.mode == Mode::Navigate
-        && app.dialog.is_none()
-        && app.session_kind.is_none()
-        && app.layout_picker.is_none()
-        && app.overlay.is_none()
+        && app.top_surface() == Surface::Workspace
 }
 
-pub fn begin_capture(app: &mut App) {
+pub fn begin_capture(app: &mut App, screen: Rect) {
     if !app.connected {
         app.notice = "Reconnect to the host before capturing a note.".into();
         return;
@@ -1021,6 +1124,10 @@ pub fn begin_capture(app: &mut App) {
     }
     if app.notes.job.is_some() {
         app.notice = "The previous quick note is still being saved.".into();
+        return;
+    }
+    if !crate::ui_notes::capture_fits(screen) {
+        app.notice = "Enlarge the terminal to capture a quick note.".into();
         return;
     }
     app.notes.capture = Some(CaptureInput {
@@ -1057,8 +1164,17 @@ pub fn submit_capture(app: &mut App, time: &str) -> Vec<Value> {
     sync(app)
 }
 
-pub fn capture_event(app: &mut App, event: Event) -> Outcome {
+pub fn capture_event(app: &mut App, event: Event, screen: Rect) -> Outcome {
     let mut outcome = Outcome::default();
+    let screen = match event {
+        Event::Resize(width, height) => Rect::new(0, 0, width, height),
+        _ => screen,
+    };
+    if app.notes.capture.is_some() && !crate::ui_notes::capture_fits(screen) {
+        app.notes.capture = None;
+        app.notice = "The quick note closed: the terminal is too small to show it.".into();
+        return outcome;
+    }
     let Some(input) = app.notes.capture.as_mut() else {
         return outcome;
     };
@@ -1436,5 +1552,190 @@ pub mod tests {
         app.connected = true;
         let commands = sync(&mut app);
         assert_eq!(only(&commands, "listNotes")["root"], "/w");
+    }
+
+    fn age_requests(app: &mut App) {
+        let stale = REQUEST_TIMEOUT + Duration::from_secs(1);
+        for (_, sent) in app.notes.pending.values_mut() {
+            *sent = sent.checked_sub(stale).unwrap_or(*sent);
+        }
+    }
+
+    fn saved_reply(path: &str, revision: &str) -> Value {
+        json!({"type":"noteSaved","path":path,"name":name_of(path),"revision":revision,
+            "size":9,"modifiedMs":5,"created":false})
+    }
+
+    #[test]
+    fn notes_save_reply_reaches_only_the_draft_that_sent_it() {
+        let mut app = loaded();
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::End);
+        typed(&mut app, "!");
+        let write = only(&press(&mut app, KeyCode::Esc), "writeNote").clone();
+        assert_eq!(write["path"], PLAN);
+        assert!(press(&mut app, KeyCode::Char('n')).is_empty());
+        assert!(app.notice.contains("still being saved"));
+        assert_eq!(app.notes.view, View::Browse);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.notes.view, View::Browse);
+        app.notes.draft = None;
+        press(&mut app, KeyCode::Char('n'));
+        typed(&mut app, "# Other");
+        reply(&mut app, &write, saved_reply(PLAN, "r2"));
+        let draft = app.notes.draft.as_ref().unwrap();
+        assert_eq!(
+            (draft.path.as_deref(), draft.revision.as_deref()),
+            (None, None)
+        );
+        assert!(draft.dirty && !draft.saving);
+        assert_eq!(app.notes.contents[PLAN].revision, "r2");
+        let commands = key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL).commands;
+        let write = only(&commands, "writeNote");
+        assert_eq!(write["path"], "/w/.nesvo/notes/other.md");
+        assert_eq!(write["expectedRevision"], Value::Null);
+    }
+
+    #[test]
+    fn notes_name_collision_retry_resaves_only_the_draft_that_collided() {
+        let mut app = loaded();
+        press(&mut app, KeyCode::Char('n'));
+        typed(&mut app, "# Release");
+        let write = only(&press(&mut app, KeyCode::Esc), "writeNote").clone();
+        let follow = reply(
+            &mut app,
+            &write,
+            json!({"type":"error","code":"stale_revision","message":"exists","revision":"x"}),
+        );
+        let retry = only(&follow, "writeNote").clone();
+        assert_eq!(retry["path"], "/w/.nesvo/notes/release-2.md");
+        assert_eq!(retry["text"], "# Release");
+        app.notes.draft = None;
+        press(&mut app, KeyCode::Char('n'));
+        typed(&mut app, "# Second");
+        let follow = reply(
+            &mut app,
+            &retry,
+            json!({"type":"error","code":"stale_revision","message":"exists","revision":"x"}),
+        );
+        assert!(follow.iter().all(|command| command["type"] != "writeNote"));
+        assert!(app.notice.contains("release-2.md was not saved"));
+        let draft = app.notes.draft.as_ref().unwrap();
+        assert!(draft.avoid.is_empty() && !draft.saving);
+        assert_eq!(draft.editor.text(), "# Second");
+    }
+
+    #[test]
+    fn notes_requests_expire_and_free_the_in_flight_slots() {
+        let mut app = loaded();
+        press(&mut app, KeyCode::Char('r'));
+        app.notes.contents.clear();
+        app.notes
+            .enqueue(Want::Read(IDEAS.into(), Purpose::Prefetch), false);
+        app.notes
+            .enqueue(Want::Read(PLAN.into(), Purpose::Prefetch), false);
+        sync(&mut app);
+        assert_eq!(app.notes.pending.len(), MAX_IN_FLIGHT);
+        assert!(!expire(&mut app));
+        age_requests(&mut app);
+        assert!(expire(&mut app));
+        assert_eq!(app.notes.error.as_deref(), Some(TIMEOUT_MESSAGE));
+        let next = tick(&mut app).unwrap();
+        assert_eq!(next["type"], "readNote");
+        assert_eq!(app.notes.pending.len(), 1);
+        let mut app = loaded();
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::End);
+        typed(&mut app, "!");
+        press(&mut app, KeyCode::Esc);
+        age_requests(&mut app);
+        assert!(expire(&mut app));
+        let draft = app.notes.draft.as_ref().unwrap();
+        assert!(!draft.saving && draft.dirty);
+        assert_eq!(app.notice, TIMEOUT_MESSAGE);
+    }
+
+    #[test]
+    fn notes_listing_for_a_previous_root_is_ignored() {
+        let mut app = loaded();
+        let list = only(&press(&mut app, KeyCode::Char('r')), "listNotes").clone();
+        app.notes.root = Some("/other".into());
+        let mut stale = listing();
+        stale["directory"] = "/stale/.nesvo/notes".into();
+        reply(&mut app, &list, stale);
+        assert_eq!(
+            app.notes.listing.as_ref().unwrap().directory,
+            "/w/.nesvo/notes"
+        );
+    }
+
+    #[test]
+    fn notes_failed_capture_listing_releases_the_quick_note() {
+        let mut app = app();
+        key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
+        typed(&mut app, "idea");
+        let list = only(&press(&mut app, KeyCode::Enter), "listNotes").clone();
+        reply(
+            &mut app,
+            &list,
+            json!({"type":"error","code":"busy","message":"busy"}),
+        );
+        assert!(app.notes.job.is_none());
+        key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
+        assert!(app.notes.capture.is_some(), "{}", app.notice);
+    }
+
+    #[test]
+    fn notes_capture_key_yields_to_any_surface_above_the_workspace() {
+        let mut app = app();
+        let control_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
+        assert!(capture_key(&app, &control_t));
+        app.projects.open = true;
+        assert_eq!(app.top_surface(), Surface::Projects);
+        assert!(!capture_key(&app, &control_t));
+        key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
+        assert!(app.notes.capture.is_none());
+        app.projects.open = false;
+        app.session_kind = Some(crate::session_kind::Picker::default());
+        assert!(!capture_key(&app, &control_t));
+    }
+
+    #[test]
+    fn notes_capture_needs_room_for_its_popup() {
+        let mut app = app();
+        controller::event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+            Rect::new(0, 0, 12, 5),
+        );
+        assert!(app.notes.capture.is_none());
+        assert!(app.notice.contains("Enlarge"));
+        key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
+        typed(&mut app, "ab");
+        controller::event(&mut app, Event::Resize(8, 4), Rect::new(0, 0, 100, 32));
+        assert!(app.notes.capture.is_none());
+        assert!(app.notice.contains("too small"));
+    }
+
+    #[test]
+    fn notes_search_uses_text_folded_once_at_cache_time() {
+        let mut app = loaded();
+        assert_eq!(app.notes.contents[PLAN].folded, "# plan\nship it");
+        app.notes.contents.get_mut(PLAN).unwrap().folded = "cached fold".into();
+        app.notes.query = "FOLD".into();
+        let visible: Vec<_> = app.notes.visible().iter().map(|s| s.path.clone()).collect();
+        assert_eq!(visible, [PLAN]);
+        assert_eq!(app.notes.selected_index(), Some(0));
+    }
+
+    #[test]
+    fn notes_page_down_stops_at_the_last_preview_line() {
+        let mut app = loaded();
+        for _ in 0..5 {
+            press(&mut app, KeyCode::PageDown);
+        }
+        assert_eq!(app.notes.preview_scroll, 1);
+        press(&mut app, KeyCode::PageUp);
+        assert_eq!(app.notes.preview_scroll, 0);
     }
 }

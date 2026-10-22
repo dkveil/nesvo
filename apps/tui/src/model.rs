@@ -434,6 +434,20 @@ pub struct TreeRow {
     pub label: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    Capture,
+    Worktrees,
+    SessionKind,
+    LayoutPicker,
+    Overlay,
+    Dialog,
+    Jobs,
+    Runs,
+    Projects,
+    Workspace,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
     Navigate,
@@ -663,6 +677,31 @@ impl App {
             | crate::jobs_controller::tick(self)
             | crate::overview::tick(self, now)
             | crate::worktree_actions::expire(self)
+            | crate::notes_controller::expire(self)
+    }
+
+    pub fn top_surface(&self) -> Surface {
+        if self.notes.capture.is_some() {
+            Surface::Capture
+        } else if self.worktrees.dialog.is_some() {
+            Surface::Worktrees
+        } else if self.session_kind.is_some() {
+            Surface::SessionKind
+        } else if self.layout_picker.is_some() {
+            Surface::LayoutPicker
+        } else if self.overlay.is_some() {
+            Surface::Overlay
+        } else if self.dialog.is_some() {
+            Surface::Dialog
+        } else if self.jobs.is_some() {
+            Surface::Jobs
+        } else if crate::runs_controller::engaged(self) {
+            Surface::Runs
+        } else if self.projects.open {
+            Surface::Projects
+        } else {
+            Surface::Workspace
+        }
     }
 
     pub fn session(&self, id: &str) -> Option<&Session> {
@@ -1676,6 +1715,7 @@ impl App {
                 .or_else(|| crate::git_pane::tick(self))
                 .or_else(|| crate::usage_panel::tick(self))
                 .or_else(|| crate::worktree_actions::tick(self))
+                .or_else(|| crate::notes_controller::tick(self))
         }
     }
 
