@@ -1440,6 +1440,7 @@ dependencies = [
  "base64 0.22.1",
  "crypto_secretbox",
  "rand 0.8.8",
+ "schemars",
  "serde",
  "serde_json",
 ]

@@ -11,5 +11,6 @@ anyhow.workspace = true
 base64 = "0.22"
 crypto_secretbox = "0.1.1"
 rand = "0.8"
+schemars = "1.2.3"
 serde.workspace = true
 serde_json.workspace = true

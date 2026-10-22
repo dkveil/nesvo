@@ -11,6 +11,8 @@ use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod events;
+
 pub const MAX_FRAME: usize = 128 * 1024;
 pub const MAX_PLAINTEXT: usize = 64 * 1024;
 
