@@ -282,6 +282,9 @@ impl StatusTracker {
         self.exited = true;
         self.exit_code = code;
     }
+    pub fn last_activity(&self) -> Option<u64> {
+        self.last_activity
+    }
     pub fn observed_exit(&self) -> Option<Option<u32>> {
         self.exited.then_some(self.exit_code)
     }

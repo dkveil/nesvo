@@ -309,13 +309,20 @@ async fn elapsed_budget_stops_enter_after_wake_paste_and_relaxation_never_replay
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
-        std::fs::write(fixture.directory.join(".fixture-editor-redraw"), "")?;
+        std::fs::write(fixture.directory.join(".fixture-editor-redraw"), "held")?;
         let owner = client(&fixture.pairing()).await?;
         let (id, run) = simple_run(&fixture, &owner).await?;
         mutation(&owner, &run, "nesvo_enable_run_wakes", json!({"key":"budget-wake-enable"})).await?;
         tokio::time::sleep(Duration::from_millis(1100)).await;
         message(&owner, &run, "budget-delta", "question").await?;
-        observed_output(&owner, &id, "PASTE_PENDING_REDRAW").await?;
+        waits::until(async || {
+            let view = data(call(&owner, "nesvo_get_session", json!({"sessionId":id})).await?)?;
+            let source = &view["data"]["session"]["status"]["source"];
+            ensure!(source != "process", "Coordinator exited before the wake paste: {view}");
+            Ok((source == "activity").then_some(()))
+        })
+        .await
+        .context("The wake paste was not written to the coordinator")?;
         mutation(&owner, &run, "nesvo_set_run_budget", json!({
             "key":"expire-after-paste","limits":{"maxParallel":1,"maxAttemptsPerTask":2,"maxElapsedMs":1000}
         })).await?;
@@ -331,6 +338,7 @@ async fn elapsed_budget_stops_enter_after_wake_paste_and_relaxation_never_replay
         assert_eq!(receipt["data"]["receipt"]["result"]["code"], "time_budget_exhausted");
         let path = fixture.directory.join("callers").join(format!("{id}.wake-inputs.jsonl"));
         assert!(!path.exists(), "Pasted metadata was not submitted with Enter");
+        std::fs::write(fixture.directory.join("callers").join(format!("{id}.redraw-release")), "")?;
         mutation(&owner, &run, "nesvo_set_run_budget", json!({
             "key":"relax-elapsed-only","limits":{"maxParallel":1,"maxAttemptsPerTask":2,"maxElapsedMs":null}
         })).await?;

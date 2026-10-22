@@ -2375,6 +2375,10 @@ impl State {
         )
     }
 
+    pub fn terminal_activity_age(&self, id: &str) -> Option<Duration> {
+        let at = self.sessions.get(id)?.status.last_activity()?;
+        Some(Duration::from_millis(now_millis().saturating_sub(at)))
+    }
     pub fn run_control_process_running(&self, id: &str) -> Option<bool> {
         self.sessions.get(id).map(|session| session.info.running)
     }

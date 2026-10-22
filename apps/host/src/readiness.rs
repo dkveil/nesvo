@@ -5,7 +5,7 @@ use crate::{
 use serde::Serialize;
 use std::time::Duration;
 
-const START_TIMEOUT: Duration = Duration::from_secs(45);
+pub(crate) const START_TIMEOUT: Duration = Duration::from_secs(45);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {

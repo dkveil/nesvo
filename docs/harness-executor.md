@@ -152,8 +152,10 @@ constraints; native and validation guards remain independent.
 
 Native input admission refreshes already received PTY evidence before each write,
 instead of relying on the last coalesced UI status tick. After an owned paste,
-screen-only I/O activity may wait up to two seconds for fresh idle editor evidence.
-It never qualifies as idle itself. The paste is not repeated; all run, lifecycle,
+screen-only I/O activity waits for fresh idle editor evidence until the editor
+settles, a guard refuses or the session stays without terminal activity for the
+45-second provider readiness bound. It
+never qualifies as idle itself. The paste is not repeated; all run, lifecycle,
 conversation, human and authority guards are checked again before Enter. Semantic
 working/permission evidence refuses Enter immediately, retaining an unknown
 partial-input receipt. A controlled screen-only provider verifies delayed redraw,

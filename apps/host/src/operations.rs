@@ -454,7 +454,9 @@ fn submission_failure(
     (if queued { "unknown" } else { "failed" }, result)
 }
 
-const FENCE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+const SETTLEMENT_BOUND: std::time::Duration = crate::readiness::START_TIMEOUT;
+const PENDING_RECHECK: std::time::Duration = std::time::Duration::from_millis(50);
+const BUSY_BACKOFF_CEILING: std::time::Duration = std::time::Duration::from_millis(250);
 
 fn transient_lifecycle_read(error: &anyhow::Error) -> bool {
     error
@@ -469,7 +471,7 @@ fn transient_lifecycle_read(error: &anyhow::Error) -> bool {
 }
 
 fn busy_backoff(retries: u32) -> std::time::Duration {
-    (FENCE_DEADLINE / 64).saturating_mul(1 << retries.min(3))
+    (BUSY_BACKOFF_CEILING / 8).saturating_mul(1 << retries.min(3))
 }
 
 async fn enqueue_fenced(
@@ -483,7 +485,7 @@ async fn enqueue_fenced(
 ) -> Result<(tokio::sync::oneshot::Receiver<bool>, bool)> {
     use crate::api_error::Error;
     let mut changed = log.subscribe();
-    let deadline = tokio::time::Instant::now() + FENCE_DEADLINE;
+    let mut bound = tokio::time::Instant::now() + SETTLEMENT_BOUND;
     let mut busy_retries = 0;
     loop {
         if *cancellation.borrow() {
@@ -493,6 +495,11 @@ async fn enqueue_fenced(
             )
             .into());
         }
+        let activity = state.lock().unwrap().terminal_activity_age(session_id);
+        if let Some(age) = activity {
+            bound = bound.max(tokio::time::Instant::now() + SETTLEMENT_BOUND.saturating_sub(age));
+        }
+        let final_attempt = tokio::time::Instant::now() >= bound;
         changed.borrow_and_update();
         let admission = fenced_admission(
             log.guard_run_dispatch(session_id, operation),
@@ -505,14 +512,14 @@ async fn enqueue_fenced(
             },
         )
         .await;
-        let (pause, busy_read) = match admission {
+        let pause = match admission {
             Err(error) if transient_lifecycle_read(&error) => {
-                if tokio::time::Instant::now() >= deadline {
+                if final_attempt {
                     return Err(error);
                 }
                 let pause = busy_backoff(busy_retries);
                 busy_retries += 1;
-                (pause, Some(error))
+                pause
             }
             admission => {
                 let (result, correlated) = admission?;
@@ -521,21 +528,17 @@ async fn enqueue_fenced(
                         return Ok((answer, correlated));
                     }
                     Err(error)
-                        if error.downcast_ref::<Error>().is_some_and(|e| {
-                            matches!(e.code, "lifecycle_pending" | "editor_pending")
-                        }) =>
-                    {
-                        if tokio::time::Instant::now() >= deadline {
-                            return Err(error);
-                        }
-                    }
+                        if !final_attempt
+                            && error.downcast_ref::<Error>().is_some_and(|e| {
+                                matches!(e.code, "lifecycle_pending" | "editor_pending")
+                            }) => {}
                     Err(error) => return Err(error),
                 }
-                (std::time::Duration::from_millis(50), None)
+                PENDING_RECHECK
             }
         };
         tokio::select! {
-            _=tokio::time::sleep_until(deadline)=>return Err(busy_read.unwrap_or_else(|| Error::new("lifecycle_pending","Lifecycle fence/editor did not settle within two seconds; no further input was queued").into())),
+            _=tokio::time::sleep_until(bound)=>{},
             _=tokio::time::sleep(pause)=>{},
             _=cancellation.changed()=>return Err(Error::new("submission_preempted","Submission was preempted while waiting for lifecycle evidence").into()),
             result=changed.changed()=>{if result.is_err(){return Err(fence_error(anyhow!("Host journal closed while waiting for lifecycle evidence"), FenceSubstage::RunGuard));}},
@@ -1299,7 +1302,7 @@ mod tests {
             &mut cancellation,
         );
         tokio::pin!(delivery);
-        if let Ok(outcome) = tokio::time::timeout(FENCE_DEADLINE / 4, &mut delivery).await {
+        if let Ok(outcome) = tokio::time::timeout(BUSY_BACKOFF_CEILING * 2, &mut delivery).await {
             let error = outcome.expect_err("A locked lifecycle journal cannot admit input");
             let (_, result) = submission_failure(error, false, SubmissionStage::PasteFence);
             panic!("A busy lifecycle read ended delivery before the fence deadline: {result}");
@@ -1316,6 +1319,53 @@ mod tests {
                 .code,
             "submission_preempted"
         );
+        log.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unsettled_fence_outlives_a_wall_clock_guess_until_the_submission_is_preempted() {
+        let directory = FenceDirectory::new();
+        let report = directory.0.join("context.json");
+        crate::agent_events::initialize(&report, "host-session").unwrap();
+        let log = Service::open(directory.0.join("metadata.sqlite3"))
+            .await
+            .unwrap();
+        let state = Arc::new(Mutex::new(State::new(
+            directory.0.clone(),
+            crate::storage::MetadataStore::open(std::path::Path::new(":memory:")).unwrap(),
+            crate::launchers::Launchers::discover_with_fixture_shell(),
+        )));
+        let blocker = rusqlite::Connection::open(report.with_file_name("events.sqlite3")).unwrap();
+        blocker.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        let (cancel, mut cancellation) = tokio::sync::watch::channel(false);
+        let delivery = enqueue_fenced(
+            &state,
+            &log,
+            Some(report),
+            "host-session",
+            "operation",
+            Some("PRIVATE_PROMPT"),
+            &mut cancellation,
+        );
+        tokio::pin!(delivery);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(3), &mut delivery)
+                .await
+                .is_err(),
+            "Unsettled lifecycle evidence keeps the fence waiting past the former two seconds"
+        );
+        cancel.send_replace(true);
+        let error = delivery
+            .await
+            .expect_err("Preemption ends an unsettled fence");
+        assert_eq!(
+            error
+                .downcast_ref::<crate::api_error::Error>()
+                .unwrap()
+                .code,
+            "submission_preempted"
+        );
+        blocker.execute_batch("ROLLBACK").unwrap();
         log.shutdown().await;
     }
 

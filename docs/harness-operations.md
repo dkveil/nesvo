@@ -144,12 +144,15 @@ Untyped adapter failures at either submission fence may additionally retain
 `joinFailed`, `queueFull`, `queueClosed` or `unknown`. They identify the failing
 adapter boundary without serializing SQL, paths, prompts or raw error strings.
 Domain refusals keep their existing code/message and omit this diagnostic. The
-public `submission_unconfirmed` code, conservative effect/phase classification
-and two-second fence deadline remain unchanged. Within that deadline the fence
-retries queue-domain `lifecycle_pending`/`editor_pending` refusals and a
-`lifecycleRead` that is `sqlBusy` or `sqlLocked` (for example while a hook
-commits); busy retries back off from 1/64 to 1/8 of the deadline. No bytes are
-queued before the fence passes; a read still busy at the deadline keeps its reason.
+public `submission_unconfirmed` code and conservative effect/phase classification
+remain unchanged. The fence has no wall-clock guess of its own: it rechecks
+queue-domain `lifecycle_pending`/`editor_pending` refusals and a `lifecycleRead`
+that is `sqlBusy` or `sqlLocked` (for example while a hook commits) until the
+evidence settles or a guard refuses (run budget, preemption, human control, exit,
+host stop). Only as a hang guard does it end once the session has shown no
+terminal activity for the host's 45-second provider readiness bound, after one
+final check that reports that check's own refusal or busy reason. Busy retries
+back off from 31 to 250 ms. No bytes are queued before the fence passes.
 Lookup/replay returns the same retained diagnostic and never retries input.
 An absent field on older receipts does not identify which boundary failed;
 event-journal health alone does not cover the separate lifecycle journal read.
@@ -236,8 +239,10 @@ across reopen. Tests use isolated hosts and no model calls.
 
 Queue admission refreshes received PTY status/readiness before each write rather
 than relying on the last coalesced publication tick. Publication remains coalesced.
-After an owned paste invalidates screen-only idle evidence, Enter can wait up to
-two seconds for fresh idle editor evidence. I/O activity never qualifies as idle.
+After an owned paste invalidates screen-only idle evidence, Enter waits for fresh
+idle editor evidence, bounded only by the guards above and the readiness hang
+guard counted from the session's latest terminal activity; a slow redraw is not a
+refusal. I/O activity never qualifies as idle.
 Every check retains run, authority, conversation and human-control fences; paste
 is never repeated. Semantic work/permission evidence refuses Enter immediately,
 retaining unknown partial input for deliberate reconciliation.
@@ -245,6 +250,9 @@ retaining unknown partial input for deliberate reconciliation.
 The controlled native SDK regression delays editor redraw by 600 ms and verifies
 one literal paste/Enter across same-key replay. A second process shows a working
 footer after paste: Enter remains refused even when its editor later returns idle.
+The elapsed-budget wake scenario holds the redraw and expires the budget as soon
+as the host reports the pasted input, so the run guard, not editor or provider
+timing, refuses Enter.
 This checks the real PTY/event loop without calling a model or taking user control.
 
 ## Backup and restore
