@@ -17,11 +17,17 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: stable
@@ -48,6 +54,21 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Require green CI for the tagged commit
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          suites=$(gh api --paginate "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" --jq '.workflow_runs[].check_suite_id' | jq -sc '.')
+          checks=$(gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --jq '.check_runs[]' | jq -sc --argjson suites "$suites" '[.[] | select(.check_suite.id | IN($suites[]))]')
+          jq -r '.[] | "\(.name): \(.status) \(.conclusion // "pending")"' <<< "$checks"
+          if ! jq -e 'group_by(.check_suite.id) | any(.[]; all(.[]; .status == "completed" and .conclusion == "success")) and all(.[][]; .status != "completed" or .conclusion == "success")' <<< "$checks" > /dev/null; then
+            echo "::error::CI is not green for $SHA"
+            exit 1
+          fi
   build:
     needs: prepare
     strategy:
@@ -67,6 +88,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: stable
@@ -100,8 +123,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      actions: read
-      checks: read
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -155,21 +176,6 @@ jobs:
             CHANGELOG.md
             packages/SHA256SUMS.txt
           retention-days: 7
-      - name: Require green CI for the tagged commit
-        if: github.event_name == 'push'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-        run: |
-          suites=$(gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" --jq '[.workflow_runs[].check_suite_id]')
-          checks=$(gh api "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" | jq -c --argjson suites "$suites" '[.check_runs[] | select(.check_suite.id | IN($suites[]))]')
-          jq -r '.[] | "\(.name): \(.status) \(.conclusion // "pending")"' <<< "$checks"
-          if ! jq -e 'group_by(.check_suite.id) | any(.[]; all(.[]; .status == "completed" and .conclusion == "success")) and all(.[][]; .status != "completed" or .conclusion == "success")' <<< "$checks" > /dev/null; then
-            echo "::error::CI is not green for $SHA"
-            exit 1
-          fi
       - name: Publish the GitHub release
         if: github.event_name == 'push'
         env:

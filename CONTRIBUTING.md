@@ -57,6 +57,7 @@ Commits and pull request descriptions must not include AI attribution, `Co-Autho
 
 Set the version in the root `Cargo.toml` `[workspace.package]`, merge it, then push the tag `v<version>` (for example `v0.1.0`) on that commit.
 The `Release` workflow checks that the tag matches the workspace version, builds `nesvo-host` and `nesvo` for Windows, Linux and macOS, packages each with `README.md`, `LICENSE` and `THIRD_PARTY_NOTICES.md`, and publishes a GitHub release with `SHA256SUMS.txt` and a changelog grouped from conventional commit subjects since the previous tag.
+On a tag push the workflow first requires a green `Checks` run for that commit and stops before building otherwise, so push the tag after the checks finish or re-run the workflow once they pass.
 Running the workflow manually with a version is a dry run: it uploads the same packages, checksums and notes as workflow artifacts without publishing.
 
 ## Issue reports
