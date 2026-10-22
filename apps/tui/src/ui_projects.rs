@@ -1,6 +1,6 @@
 use crate::{
     model::App,
-    projects::{Load, Project, Projects, age},
+    projects::{Load, Project, Projects, SetupView, age},
     theme::{BACKGROUND, BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, WARNING},
 };
 use ratatui::{
@@ -318,7 +318,7 @@ fn describe(frame: &mut Frame, app: &App, area: Rect, project: &Project) {
         &defaults.launch_folder,
         TEXT,
     );
-    let approved = defaults.worktree_setup["approved"] == true;
+    let approved = defaults.setup_approved();
     pair(
         frame,
         row(area, 9),

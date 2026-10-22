@@ -1,5 +1,5 @@
 use crate::model::Session;
-use serde::Deserialize;
+use nesvo_wire::views::{self, projects::ProjectList};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
@@ -11,65 +11,39 @@ const PENDING_LIMIT: usize = 8;
 const DEFAULTS_LIMIT: usize = 64;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Project {
-    pub root: String,
-    pub name: String,
-    #[serde(default)]
-    pub default_branch: Option<String>,
-    #[serde(default)]
-    pub last_activity_at: u64,
-    #[serde(default)]
-    pub pinned: bool,
-    #[serde(default)]
-    pub open_sessions: usize,
-    #[serde(default)]
-    pub sessions: Vec<String>,
+pub use nesvo_wire::views::projects::{Defaults, Project};
+
+pub trait SetupView {
+    fn setup_state(&self) -> &'static str;
+    fn setup_approved(&self) -> bool;
+    fn open_worktrees(&self) -> u64;
+    fn digest(&self) -> Option<&str>;
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Folder {
-    pub folder: String,
-    #[serde(default)]
-    pub launches: u64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Defaults {
-    pub root: String,
-    pub name: String,
-    #[serde(default)]
-    pub default_layout: Option<String>,
-    pub launch_folder: String,
-    #[serde(default)]
-    pub folders: Vec<Folder>,
-    #[serde(default)]
-    pub worktree_setup: Value,
-}
-
-impl Defaults {
-    pub fn setup_state(&self) -> &'static str {
+impl SetupView for Defaults {
+    fn setup_state(&self) -> &'static str {
         let setup = &self.worktree_setup;
-        if setup["available"] != true {
+        if !setup.available {
             return "registry unavailable";
         }
-        match (&setup["configured"], &setup["approved"]) {
-            (Value::Bool(true), Value::Bool(true)) => "approved",
-            (Value::Bool(true), _) => "needs approval",
-            _ if setup.get("error").is_some() => "nesvo.toml unreadable",
+        match (setup.configured, setup.approved) {
+            (Some(true), Some(true)) => "approved",
+            (Some(true), _) => "needs approval",
+            _ if setup.error.is_some() => "nesvo.toml unreadable",
             _ => "no nesvo.toml setup",
         }
     }
 
-    pub fn open_worktrees(&self) -> u64 {
-        self.worktree_setup["openWorktrees"].as_u64().unwrap_or(0)
+    fn setup_approved(&self) -> bool {
+        self.worktree_setup.approved == Some(true)
     }
 
-    pub fn digest(&self) -> Option<&str> {
-        self.worktree_setup["digest"].as_str()
+    fn open_worktrees(&self) -> u64 {
+        self.worktree_setup.open_worktrees
+    }
+
+    fn digest(&self) -> Option<&str> {
+        self.worktree_setup.digest.as_deref()
     }
 }
 
@@ -176,11 +150,15 @@ impl Projects {
     }
 
     pub fn accept_list(&mut self, value: &Value, now_ms: u64) -> bool {
-        let Ok(mut items) = serde_json::from_value::<Vec<Project>>(value["projects"].clone())
-        else {
+        let Some(list) = views::decode::<ProjectList>(value) else {
             self.load = Load::Failed("The host sent an unreadable project list.".into());
             return false;
         };
+        let mut items: Vec<Project> = list
+            .projects
+            .into_iter()
+            .filter_map(|project| project.0)
+            .collect();
         let selected = self.selected_project().map(|project| project.root.clone());
         items.sort_by(|left, right| {
             right
@@ -210,7 +188,7 @@ impl Projects {
     }
 
     pub fn accept_defaults(&mut self, value: &Value) -> Option<Defaults> {
-        let defaults = serde_json::from_value::<Defaults>(value.clone()).ok()?;
+        let defaults = views::decode::<Defaults>(value)?;
         if self.defaults.len() >= DEFAULTS_LIMIT && !self.defaults.contains_key(&defaults.root) {
             self.defaults.clear();
         }
@@ -349,9 +327,9 @@ pub(crate) mod tests {
         assert_eq!(defaults.setup_state(), "needs approval");
         assert_eq!(defaults.open_worktrees(), 2);
         let mut approved = defaults.clone();
-        approved.worktree_setup["approved"] = json!(true);
+        approved.worktree_setup.approved = Some(true);
         assert_eq!(approved.setup_state(), "approved");
-        approved.worktree_setup = json!({"available":false});
+        approved.worktree_setup = serde_json::from_value(json!({"available":false})).unwrap();
         assert_eq!(approved.setup_state(), "registry unavailable");
         assert_eq!(defaults.digest().map(str::len), Some(64));
         assert!(projects.accept_defaults(&json!({"root":1})).is_none());

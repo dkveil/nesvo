@@ -6,8 +6,12 @@ use crate::{
     projects::{Defaults, Intent, Load, Project, Projects, Request},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use nesvo_wire::views::{
+    self, HostError, ReplyHeader,
+    projects::{ListProjects, ProjectDefaults, ProjectPin, ProjectPinned},
+};
 use ratatui::layout::Rect;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectKey {
@@ -95,9 +99,9 @@ pub fn supported(app: &App) -> bool {
 }
 
 fn request_list(app: &mut App) -> Value {
-    let command = app.request(json!({"type":"listProjects"}));
-    if let Some(id) = command["requestId"].as_str() {
-        app.projects.track(id, Request::List);
+    let command = app.typed_request(&ListProjects {});
+    if let Some(id) = ReplyHeader::of(&command).request_id {
+        app.projects.track(&id, Request::List);
     }
     if app.projects.items.is_empty() || matches!(app.projects.load, Load::Failed(_)) {
         app.projects.load = Load::Loading;
@@ -106,9 +110,9 @@ fn request_list(app: &mut App) -> Value {
 }
 
 fn request_defaults(app: &mut App, root: String, intent: Intent) -> Value {
-    let command = app.request(json!({"type":"projectDefaults","root":root}));
-    if let Some(id) = command["requestId"].as_str() {
-        app.projects.track(id, Request::Defaults { root, intent });
+    let command = app.typed_request(&ProjectDefaults { root: &root });
+    if let Some(id) = ReplyHeader::of(&command).request_id {
+        app.projects.track(&id, Request::Defaults { root, intent });
     }
     command
 }
@@ -202,14 +206,15 @@ fn toggle_filter(app: &mut App) {
 
 fn toggle_pin(app: &mut App) -> Option<Value> {
     let project = app.projects.selected_project()?.clone();
-    let kind = if project.pinned {
-        "unpinProject"
+    let root = project.root.as_str();
+    let pin = if project.pinned {
+        ProjectPin::UnpinProject { root }
     } else {
-        "pinProject"
+        ProjectPin::PinProject { root }
     };
-    let command = app.request(json!({"type":kind,"root":project.root}));
-    if let Some(id) = command["requestId"].as_str() {
-        app.projects.track(id, Request::Pin { root: project.root });
+    let command = app.typed_request(&pin);
+    if let Some(id) = ReplyHeader::of(&command).request_id {
+        app.projects.track(&id, Request::Pin { root: project.root });
     }
     Some(command)
 }
@@ -286,9 +291,8 @@ fn key_event(app: &mut App, key: KeyEvent, width: u16, outcome: &mut Outcome) {
 }
 
 fn message(event: &Value) -> String {
-    event["message"]
-        .as_str()
-        .unwrap_or("The host refused the project request.")
+    HostError::of(event)
+        .message_or("The host refused the project request.")
         .to_owned()
 }
 
@@ -331,9 +335,9 @@ pub fn expire(app: &mut App) -> bool {
 }
 
 pub fn host_event(app: &mut App, event: &Value) -> Option<Vec<Value>> {
-    let request = event["requestId"].as_str()?;
-    let sent = app.projects.take(request)?;
-    let failed = event["type"] == "error";
+    let header = ReplyHeader::of(event);
+    let sent = app.projects.take(header.request_id.as_deref()?)?;
+    let failed = header.kind.as_deref() == Some("error");
     let mut commands = Vec::new();
     match sent {
         Request::List if failed => app.projects.load = Load::Failed(message(event)),
@@ -342,7 +346,8 @@ pub fn host_event(app: &mut App, event: &Value) -> Option<Vec<Value>> {
         }
         Request::Pin { .. } if failed => app.notice = message(event),
         Request::Pin { root } => {
-            app.projects.set_pinned(&root, event["pinned"] == true);
+            let pinned = views::decode::<ProjectPinned>(event).unwrap_or_default();
+            app.projects.set_pinned(&root, pinned.pinned);
             commands.push(request_list(app));
         }
         Request::Defaults { .. } if failed => app.notice = message(event),
@@ -398,6 +403,7 @@ pub fn palette_rows(app: &App, query: &str) -> Option<Vec<ResultRow>> {
 pub(crate) mod tests {
     use super::*;
     use crate::projects::tests::{defaults, listing};
+    use serde_json::json;
 
     fn app() -> App {
         let mut app = App::new(9);
