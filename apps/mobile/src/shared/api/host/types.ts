@@ -99,7 +99,11 @@ export type ProviderLimit = {
 };
 export type SessionLaunchOptions = { cwd?: string; program?: SessionProgram };
 
-export type InboxFeatures = { attentionInbox: boolean; decisions: boolean; jobPages: boolean };
+export type InboxFeatures = {
+  attentionInbox: boolean;
+  decisions: boolean;
+  jobPages: boolean;
+};
 export type InboxItemKind = 'session' | 'decision' | 'run' | 'result';
 export type InboxItem = {
   id: string;
@@ -116,6 +120,10 @@ export type InboxItem = {
   expiresAt?: number;
   program?: SessionProgram;
 };
+export type JobRead =
+  | { action: 'list'; page: number }
+  | { action: 'get'; jobId: string }
+  | { action: 'history'; jobId: string; page: number };
 export type InboxMark = { id: string; revision: number };
 export type InboxReceipt = InboxMark & { acknowledgedAt: number };
 export type DecisionState = 'pending' | 'answered' | 'canceled' | 'expired';
@@ -135,6 +143,76 @@ export type PendingDecision = {
   run: { id: string; title: string; state: string };
 };
 export type PushKind = 'decisionPending' | 'resultReady';
+
+export type JobSchedule =
+  | { kind: 'once'; at: string }
+  | { kind: 'cron'; expression: string; timeZone: string }
+  | { kind: 'rrule'; rule: string; start: string; timeZone: string }
+  | { kind: 'external' };
+export type JobCalendarState = 'ready' | 'blocked' | 'exhausted';
+export type JobSummary = {
+  id: string;
+  title: string;
+  revision: number;
+  enabled: boolean;
+  nextDueAt: number | null;
+  createdAt: number;
+  schedule: JobSchedule | null;
+  calendarState: JobCalendarState | null;
+  calendarError: { code: string; message: string } | null;
+};
+export type JobRetryPolicy = {
+  on: string;
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+};
+export type Job = JobSummary & {
+  spec: {
+    instruction: string;
+    profile: { program?: SessionProgram; workspace: string };
+    retry?: JobRetryPolicy;
+    misfire?: string;
+    overlap?: string;
+    executionTimeoutMs?: number;
+  };
+};
+export type JobOccurrenceState =
+  | 'queued'
+  | 'dispatching'
+  | 'prechecking'
+  | 'running'
+  | 'needsValidation'
+  | 'canceling'
+  | 'retryWaiting'
+  | 'reconcile'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+  | 'canceled';
+export type JobRetryClass = 'noEffect' | 'uncertainEffect' | 'definiteEffect';
+export type JobRetryDecision = {
+  class?: JobRetryClass;
+  decidedAt: number;
+  notBefore: number;
+  nextOrdinal: number | null;
+};
+export type JobOccurrence = {
+  id: string;
+  jobId: string;
+  jobRevision: number;
+  trigger: string;
+  dueAt: number;
+  createdAt: number;
+  state: JobOccurrenceState;
+  reason: string | null;
+  runId: string | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  jobAttemptId: string | null;
+  jobAttemptOrdinal: number | null;
+  retry: JobRetryDecision | null;
+};
 
 export type SessionGroup = {
   id: string;
@@ -213,6 +291,22 @@ export type HostEvent =
       requestId?: string;
     }
   | { type: 'attentionInboxChanged'; reason: string; itemId?: string }
+  | {
+      type: 'jobPage';
+      jobs: JobSummary[];
+      page: number;
+      nextPage: number | null;
+      requestId?: string;
+    }
+  | { type: 'jobDetail'; job: Job; requestId?: string }
+  | {
+      type: 'jobHistory';
+      occurrences: JobOccurrence[];
+      page: number;
+      nextPage: number | null;
+      skipped?: number;
+      requestId?: string;
+    }
   | { type: 'connected'; clientId: number; protocolVersion: 2 }
   | { type: 'disconnected'; reason: string }
   | ({ type: 'capabilities'; requestId?: string } & HostCapabilities)
@@ -239,6 +333,7 @@ export type ClientCommand =
   | { type: 'acknowledgeInbox'; items: InboxMark[]; requestId: string }
   | { type: 'decisions'; page: number; requestId: string }
   | { type: 'decide'; decisionId: string; choice: string; note?: string; requestId: string }
+  | { type: 'workflow'; request: { action: 'jobs'; request: JobRead }; requestId: string }
   | { type: 'acknowledgeAttention'; sessionId: string; sequence: number }
   | { type: 'muteSession'; sessionId: string; muted: boolean }
   | { type: 'auth'; clientNonce: string }

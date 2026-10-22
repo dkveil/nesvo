@@ -9,6 +9,7 @@ const sectionPaths = {
   groups: '/groups',
   inbox: '/inbox',
   decisions: '/decisions',
+  jobs: '/jobs',
 } as const satisfies Record<WorkspaceSection, string>;
 
 /** The only adapter from workspace intentions to concrete Expo routes. */
@@ -16,6 +17,7 @@ export const workspaceNavigation: WorkspaceNavigation = {
   openSession: id => router.push({ pathname: '/session/[id]', params: { id } }),
   openDecision: decisionId =>
     router.push({ pathname: '/decisions', params: { focus: decisionId } }),
+  openJob: jobId => router.push({ pathname: '/job/[id]', params: { id: jobId } }),
   returnToSessions: () => router.dismissTo(sectionPaths.sessions),
   navigateTo: section => router.navigate(sectionPaths[section]),
 };

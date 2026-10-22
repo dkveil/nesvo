@@ -451,6 +451,212 @@ const decided = (value: RecordValue) =>
   itemId(value.inboxId) &&
   value.inboxId.startsWith('decision:');
 
+const JOB_SCHEDULE_KINDS = ['once', 'cron', 'rrule', 'external'];
+const JOB_CALENDAR_STATES = ['ready', 'blocked', 'exhausted'];
+const JOB_OCCURRENCE_STATES = [
+  'queued',
+  'dispatching',
+  'prechecking',
+  'running',
+  'needsValidation',
+  'canceling',
+  'retryWaiting',
+  'reconcile',
+  'succeeded',
+  'failed',
+  'skipped',
+  'canceled',
+];
+const JOB_RETRY_CLASSES = ['noEffect', 'uncertainEffect', 'definiteEffect'];
+const MAX_JOBS_PER_PAGE = 16;
+const MAX_OCCURRENCES_PER_PAGE = 8;
+const MAX_JOB_LIST_PAGE = 256;
+const MAX_JOB_HISTORY_PAGE = 512;
+const MAX_JOB_TITLE_LENGTH = 80;
+const MAX_JOB_INSTRUCTION_LENGTH = 8192;
+const MAX_SCHEDULE_TEXT_LENGTH = 1024;
+const MAX_JOB_LABEL_LENGTH = 64;
+
+const nullableInteger = (value: unknown) => value === null || integer(value);
+const unknownLabel = (value: unknown, known: readonly string[]) =>
+  typeof value === 'string' && !known.includes(value);
+const withoutField = (value: RecordValue, field: string): RecordValue =>
+  Object.fromEntries(Object.entries(value).filter(([key]) => key !== field));
+
+const jobSchedule = (value: unknown) => {
+  if (!record(value)) return false;
+  switch (value.kind) {
+    case 'once':
+      return text(value.at, MAX_JOB_LABEL_LENGTH);
+    case 'cron':
+      return (
+        text(value.expression, MAX_SCHEDULE_TEXT_LENGTH) &&
+        text(value.timeZone, MAX_JOB_LABEL_LENGTH)
+      );
+    case 'rrule':
+      return (
+        text(value.rule, MAX_SCHEDULE_TEXT_LENGTH) &&
+        text(value.start, MAX_JOB_LABEL_LENGTH) &&
+        text(value.timeZone, MAX_JOB_LABEL_LENGTH)
+      );
+    case 'external':
+      return true;
+    default:
+      return false;
+  }
+};
+
+const calendarError = (value: unknown) =>
+  value === null ||
+  (record(value) &&
+    text(value.code, MAX_JOB_LABEL_LENGTH) &&
+    boundedString(value.message, MAX_INBOX_TEXT_LENGTH));
+
+const knownJob = (value: unknown): RecordValue | null => {
+  if (!record(value)) return null;
+  const schedule = unknownValue('kind', JOB_SCHEDULE_KINDS)(value.schedule) ? null : value.schedule;
+  const calendarState = unknownLabel(value.calendarState, JOB_CALENDAR_STATES)
+    ? null
+    : value.calendarState;
+  const valid =
+    text(value.id) &&
+    boundedString(value.title, MAX_JOB_TITLE_LENGTH) &&
+    integer(value.revision, 1) &&
+    typeof value.enabled === 'boolean' &&
+    nullableInteger(value.nextDueAt) &&
+    integer(value.createdAt) &&
+    (schedule === null || jobSchedule(schedule)) &&
+    (calendarState === null ||
+      (typeof calendarState === 'string' && JOB_CALENDAR_STATES.includes(calendarState))) &&
+    calendarError(value.calendarError);
+  return valid ? { ...value, schedule, calendarState } : null;
+};
+
+const retryPolicy = (value: unknown) =>
+  record(value) &&
+  text(value.on, MAX_JOB_LABEL_LENGTH) &&
+  integer(value.maxAttempts, 1, 8) &&
+  integer(value.initialDelayMs) &&
+  integer(value.maxDelayMs);
+
+const knownJobDetail = (value: unknown): RecordValue | null => {
+  const job = knownJob(value);
+  const spec = job?.spec;
+  if (
+    !job ||
+    !record(spec) ||
+    !boundedString(spec.instruction, MAX_JOB_INSTRUCTION_LENGTH) ||
+    !record(spec.profile) ||
+    !text(spec.profile.workspace, MAX_JOB_LABEL_LENGTH) ||
+    !optional(spec.profile.program, item => typeof item === 'string') ||
+    !optional(spec.retry, retryPolicy) ||
+    !optional(spec.misfire, item => text(item, MAX_JOB_LABEL_LENGTH)) ||
+    !optional(spec.overlap, item => text(item, MAX_JOB_LABEL_LENGTH)) ||
+    !optional(spec.executionTimeoutMs, item => integer(item))
+  )
+    return null;
+  return { ...job, spec: { ...spec, profile: withoutUnknownProgram(spec.profile) } };
+};
+
+const retryDecision = (value: unknown): RecordValue | null | false => {
+  if (value === null) return null;
+  if (
+    !record(value) ||
+    !integer(value.decidedAt) ||
+    !integer(value.notBefore) ||
+    !nullableInteger(value.nextOrdinal) ||
+    !optional(value.class, item => typeof item === 'string')
+  )
+    return false;
+  return unknownLabel(value.class, JOB_RETRY_CLASSES) ? withoutField(value, 'class') : value;
+};
+
+const knownOccurrence = (value: unknown): RecordValue | null => {
+  if (!record(value)) return null;
+  const retry = retryDecision(value.retry ?? null);
+  const jobAttemptId = value.jobAttemptId ?? null;
+  const jobAttemptOrdinal = value.jobAttemptOrdinal ?? null;
+  const valid =
+    retry !== false &&
+    text(value.id) &&
+    text(value.jobId) &&
+    integer(value.jobRevision, 1) &&
+    text(value.trigger, MAX_JOB_LABEL_LENGTH) &&
+    integer(value.dueAt) &&
+    integer(value.createdAt) &&
+    typeof value.state === 'string' &&
+    JOB_OCCURRENCE_STATES.includes(value.state) &&
+    (value.reason === null || text(value.reason, MAX_JOB_LABEL_LENGTH)) &&
+    nullableId(value.runId) &&
+    nullableInteger(value.startedAt) &&
+    nullableInteger(value.finishedAt) &&
+    nullableId(jobAttemptId) &&
+    (jobAttemptOrdinal === null || integer(jobAttemptOrdinal, 1));
+  return valid ? { ...value, jobAttemptId, jobAttemptOrdinal, retry } : null;
+};
+
+const withRequestId = (value: RecordValue, reply: RecordValue) =>
+  value.requestId === undefined ? reply : { ...reply, requestId: value.requestId };
+
+const jobPage = (value: RecordValue) => {
+  if (
+    !Array.isArray(value.jobs) ||
+    value.jobs.length > MAX_JOBS_PER_PAGE ||
+    !integer(value.page, 0, MAX_JOB_LIST_PAGE) ||
+    !nextPage(value.nextPage, MAX_JOB_LIST_PAGE + 1)
+  )
+    return null;
+  const jobs: RecordValue[] = [];
+  for (const item of value.jobs) {
+    const job = knownJob(item);
+    if (!job) return null;
+    jobs.push(job);
+  }
+  if (new Set(jobs.map(job => job.id)).size !== jobs.length) return null;
+  return withRequestId(value, {
+    type: 'jobPage',
+    jobs,
+    page: value.page,
+    nextPage: value.nextPage,
+  });
+};
+
+const jobHistory = (value: RecordValue) => {
+  if (
+    !Array.isArray(value.occurrences) ||
+    value.occurrences.length > MAX_OCCURRENCES_PER_PAGE ||
+    !integer(value.page, 0, MAX_JOB_HISTORY_PAGE) ||
+    !nextPage(value.nextPage, MAX_JOB_HISTORY_PAGE + 1)
+  )
+    return null;
+  const known = knownEntries(
+    value.occurrences,
+    item => record(item) && unknownLabel(item.state, JOB_OCCURRENCE_STATES),
+    knownOccurrence,
+  );
+  if (!known || new Set(known.entries.map(item => item.id)).size !== known.entries.length)
+    return null;
+  return withRequestId(
+    value,
+    withSkipped(
+      {
+        type: 'jobHistory',
+        occurrences: known.entries,
+        page: value.page,
+        nextPage: value.nextPage,
+      },
+      known.skipped,
+    ),
+  );
+};
+
+const jobsReply = (value: RecordValue) => {
+  if (Array.isArray(value.jobs)) return jobPage(value);
+  if (Array.isArray(value.occurrences)) return jobHistory(value);
+  const job = knownJobDetail(value.job);
+  return job && withRequestId(value, { type: 'jobDetail', job });
+};
+
 /** Authentication proves the peer, not that its payload has a valid shape. */
 export function decodeServerMessage(value: unknown): ServerMessage {
   if (
@@ -493,6 +699,12 @@ export function decodeServerMessage(value: unknown): ServerMessage {
     case 'decided':
       valid = decided(value);
       break;
+    case 'workflow': {
+      const reply = jobsReply(value);
+      valid = !!reply;
+      message = reply ?? value;
+      break;
+    }
     case 'attentionInboxChanged':
       valid = text(value.reason, 64) && optional(value.itemId, itemId);
       break;

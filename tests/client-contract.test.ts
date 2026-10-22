@@ -30,6 +30,19 @@ import {
   withoutItems,
 } from '../apps/mobile/src/entities/inbox/model/inbox-items';
 import {
+  attemptsLabel,
+  formatInstant,
+  jobStateLabel,
+  retryClassLabel,
+  scheduleLabel,
+} from '../apps/mobile/src/entities/job/model/job-labels';
+import {
+  applyPage,
+  MAX_LOADED_JOBS,
+  mergePage,
+  nextLoadablePage,
+} from '../apps/mobile/src/entities/job/model/job-pages';
+import {
   sessionLastKnownLabel,
   sessionReadinessLabel,
   sessionStateFreshness,
@@ -1511,4 +1524,371 @@ test('host-captured domain event records match the generated event schema', () =
   assert.equal(validate({ ...first, kind: 'host.unknown' }), false);
   assert.equal(validate({ ...first, payload: { ...first.payload, extra: true } }), false);
   assert.equal(validate({ ...first, sequence: -1 }), false);
+});
+
+const cronSchedule = { kind: 'cron', expression: '0 2 * * *', timeZone: 'Europe/Warsaw' } as const;
+const jobDefinition = {
+  id: 'job-nightly',
+  title: 'Nightly review',
+  revision: 3,
+  enabled: true,
+  nextDueAt: 1_792_800_000_000,
+  createdAt: 1_792_700_000_000,
+  schedule: cronSchedule,
+  calendarState: 'ready',
+  calendarError: null,
+} as const;
+const externalJob = {
+  id: 'job-webhook',
+  title: 'Release notes',
+  revision: 1,
+  enabled: false,
+  nextDueAt: null,
+  createdAt: 1_792_700_100_000,
+  schedule: { kind: 'external' },
+  calendarState: 'exhausted',
+  calendarError: null,
+} as const;
+const jobSpec = {
+  title: 'Nightly review',
+  instruction: 'Summarize the current Git changes without editing files.',
+  profile: {
+    program: 'claude',
+    workspace: 'shared',
+    harness: true,
+    allowedNesvoTools: ['nesvo_get_current_task', 'nesvo_report_task_result'],
+  },
+  schedule: cronSchedule,
+  retry: { on: 'launchNoEffect', maxAttempts: 3, initialDelayMs: 1000, maxDelayMs: 10000 },
+  misfire: 'catchUp',
+  graceMs: 60000,
+  overlap: 'skip',
+  maxElapsedMs: 300000,
+};
+const retryingOccurrence = {
+  id: 'occurrence-2',
+  jobId: 'job-nightly',
+  jobRevision: 3,
+  trigger: 'schedule',
+  dueAt: 1_792_713_600_000,
+  createdAt: 1_792_713_600_100,
+  state: 'retryWaiting',
+  reason: 'retry_backoff',
+  runId: 'run-9',
+  startedAt: 1_792_713_601_000,
+  finishedAt: null,
+  coalescedFromAt: null,
+  precheck: null,
+  cancellation: null,
+  executionTimeout: null,
+  launchReconciliation: null,
+  launchResolution: null,
+  jobAttemptId: 'job-attempt-1',
+  jobAttemptOrdinal: 1,
+  retry: {
+    jobAttemptId: 'job-attempt-1',
+    attemptId: null,
+    launchReceiptId: 'receipt-1',
+    decidedAt: 1_792_713_602_000,
+    notBefore: 1_792_713_603_000,
+    nextOrdinal: 2,
+    class: 'noEffect',
+  },
+  attemptId: 'attempt-1',
+  sessionId: 'session-1',
+  launchReceiptId: 'receipt-1',
+} as const;
+const finishedOccurrence = {
+  ...retryingOccurrence,
+  id: 'occurrence-1',
+  trigger: 'manual',
+  dueAt: 1_792_627_200_000,
+  createdAt: 1_792_627_200_100,
+  state: 'succeeded',
+  reason: null,
+  runId: 'run-8',
+  finishedAt: 1_792_627_500_000,
+  jobAttemptId: 'job-attempt-0',
+  retry: null,
+} as const;
+const jobListWire = {
+  type: 'workflow',
+  jobs: [jobDefinition, externalJob],
+  nextOffset: 16,
+  page: 0,
+  nextPage: 1,
+  requestId: 'jobs-1',
+};
+const jobDetailWire = {
+  type: 'workflow',
+  job: { ...jobDefinition, spec: jobSpec },
+  requestId: 'job-1',
+};
+const jobHistoryWire = {
+  type: 'workflow',
+  occurrences: [retryingOccurrence, finishedOccurrence],
+  nextOffset: null,
+  page: 0,
+  nextPage: null,
+  requestId: 'history-1',
+};
+
+test('job list, detail and history fixtures match the published host schema', () => {
+  const validate = new Ajv().compile(
+    JSON.parse(readFileSync(new URL('../docs/harness-cli.schema.json', import.meta.url), 'utf8')),
+  );
+  for (const wire of [jobListWire, jobDetailWire, jobHistoryWire]) {
+    const { requestId: _requestId, ...data } = wire;
+    assert.equal(
+      validate({ schemaVersion: 1, ok: true, data }),
+      true,
+      JSON.stringify(validate.errors),
+    );
+  }
+});
+
+test('workflow job replies decode into list, detail and history events', () => {
+  assert.deepEqual(decodeServerMessage(jobListWire), {
+    type: 'jobPage',
+    jobs: [jobDefinition, externalJob],
+    page: 0,
+    nextPage: 1,
+    requestId: 'jobs-1',
+  });
+  assert.deepEqual(decodeServerMessage(jobDetailWire), {
+    type: 'jobDetail',
+    job: { ...jobDefinition, spec: jobSpec },
+    requestId: 'job-1',
+  });
+  assert.deepEqual(decodeServerMessage(jobHistoryWire), {
+    type: 'jobHistory',
+    occurrences: [retryingOccurrence, finishedOccurrence],
+    page: 0,
+    nextPage: null,
+    requestId: 'history-1',
+  });
+  const {
+    jobAttemptId: _id,
+    jobAttemptOrdinal: _ordinal,
+    retry: _retry,
+    ...legacy
+  } = finishedOccurrence;
+  assert.deepEqual(
+    decodeServerMessage({ type: 'workflow', occurrences: [legacy], page: 1, nextPage: null }),
+    {
+      type: 'jobHistory',
+      occurrences: [{ ...legacy, jobAttemptId: null, jobAttemptOrdinal: null, retry: null }],
+      page: 1,
+      nextPage: null,
+    },
+  );
+});
+
+test('unknown job schedules, states and retry classes stay tolerant item by item', () => {
+  const futureJob = {
+    ...jobDefinition,
+    id: 'job-interval',
+    schedule: { kind: 'interval', everyMs: 60000 },
+    calendarState: 'paused',
+  };
+  assert.deepEqual(decodeServerMessage({ ...jobListWire, jobs: [futureJob, externalJob] }), {
+    type: 'jobPage',
+    jobs: [{ ...futureJob, schedule: null, calendarState: null }, externalJob],
+    page: 0,
+    nextPage: 1,
+    requestId: 'jobs-1',
+  });
+  const futureOccurrence = { ...finishedOccurrence, id: 'occurrence-0', state: 'archived' };
+  const futureClass = {
+    ...retryingOccurrence,
+    retry: { ...retryingOccurrence.retry, class: 'partialEffect' },
+  };
+  const { class: _class, ...classless } = retryingOccurrence.retry;
+  assert.deepEqual(
+    decodeServerMessage({ ...jobHistoryWire, occurrences: [futureClass, futureOccurrence] }),
+    {
+      type: 'jobHistory',
+      occurrences: [{ ...retryingOccurrence, retry: classless }],
+      page: 0,
+      nextPage: null,
+      skipped: 1,
+      requestId: 'history-1',
+    },
+  );
+  const { program: _program, ...profile } = jobSpec.profile;
+  const futureProgram = { ...jobSpec, profile: { ...jobSpec.profile, program: 'aider' } };
+  assert.deepEqual(
+    decodeServerMessage({ ...jobDetailWire, job: { ...jobDefinition, spec: futureProgram } }),
+    {
+      type: 'jobDetail',
+      job: { ...jobDefinition, spec: { ...jobSpec, profile } },
+      requestId: 'job-1',
+    },
+  );
+  const peer = connectInboxPeer();
+  try {
+    peer.receive(inboxCapabilities);
+    peer.receive({ ...jobHistoryWire, occurrences: [futureOccurrence] });
+    assert.equal(peer.client.isConnected, true);
+    assert.deepEqual(peer.events.at(-1), {
+      type: 'jobHistory',
+      occurrences: [],
+      page: 0,
+      nextPage: null,
+      skipped: 1,
+      requestId: 'history-1',
+    });
+  } finally {
+    peer.cleanup();
+  }
+});
+
+test('malformed job replies are refused before reaching state', () => {
+  for (const job of [
+    { ...jobDefinition, revision: 0 },
+    { ...jobDefinition, title: 'x'.repeat(81) },
+    { ...jobDefinition, enabled: 'yes' },
+    { ...jobDefinition, nextDueAt: -1 },
+    { ...jobDefinition, schedule: { kind: 'cron', expression: '* * * * *' } },
+    { ...jobDefinition, schedule: 'daily' },
+    { ...jobDefinition, calendarState: 7 },
+    { ...jobDefinition, calendarError: { code: 'schedule_too_dense' } },
+  ])
+    assert.throws(
+      () => decodeServerMessage({ ...jobListWire, jobs: [job] }),
+      /Invalid host message/,
+    );
+  const manyJobs = Array.from({ length: 17 }, (_, index) => ({
+    ...jobDefinition,
+    id: `job-${index}`,
+  }));
+  const withSpec = (spec: Record<string, unknown>) => ({
+    ...jobDetailWire,
+    job: { ...jobDefinition, spec: { ...jobSpec, ...spec } },
+  });
+  const withOccurrence = (occurrence: Record<string, unknown>) => ({
+    ...jobHistoryWire,
+    occurrences: [{ ...finishedOccurrence, ...occurrence }],
+  });
+  for (const reply of [
+    { ...jobListWire, jobs: manyJobs },
+    { ...jobListWire, jobs: [jobDefinition, jobDefinition] },
+    { ...jobListWire, page: 257 },
+    { ...jobListWire, nextPage: 0 },
+    { ...jobListWire, page: undefined },
+    { ...jobHistoryWire, page: 513 },
+    { ...jobHistoryWire, occurrences: [finishedOccurrence, finishedOccurrence] },
+    { ...jobHistoryWire, occurrences: Array(9).fill(finishedOccurrence) },
+    withOccurrence({ reason: 7 }),
+    withOccurrence({ jobAttemptOrdinal: 0 }),
+    withOccurrence({ retry: { class: 'noEffect' } }),
+    withOccurrence({ state: 7 }),
+    { ...jobDetailWire, job: jobDefinition },
+    withSpec({ instruction: 7 }),
+    withSpec({ retry: { on: 'launchNoEffect' } }),
+    { type: 'workflow', run: { id: 'run-1' } },
+  ])
+    assert.throws(() => decodeServerMessage(reply), /Invalid host message/);
+});
+
+test('job reads stay unsent until the host advertises job pages and carry the page', () => {
+  const peer = connectInboxPeer();
+  try {
+    const { jobPages: _jobPages, ...legacy } = inboxCapabilities;
+    peer.receive(legacy);
+    const before = peer.commands().length;
+    assert.equal(peer.client.requestJobs(0), null);
+    assert.equal(peer.client.requestJob('job-nightly'), null);
+    assert.equal(peer.client.requestJobHistory('job-nightly', 0), null);
+    assert.equal(peer.commands().length, before);
+    peer.receive(inboxCapabilities);
+    assert.equal(peer.client.requestJobs(1, 'jobs-a'), 'jobs-a');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'workflow',
+      request: { action: 'jobs', request: { action: 'list', page: 1 } },
+      requestId: 'jobs-a',
+    });
+    assert.equal(peer.client.requestJob('job-nightly', 'job-a'), 'job-a');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'workflow',
+      request: { action: 'jobs', request: { action: 'get', jobId: 'job-nightly' } },
+      requestId: 'job-a',
+    });
+    assert.equal(peer.client.requestJobHistory('job-nightly', 2, 'history-a'), 'history-a');
+    assert.deepEqual(peer.commands().at(-1), {
+      type: 'workflow',
+      request: { action: 'jobs', request: { action: 'history', jobId: 'job-nightly', page: 2 } },
+      requestId: 'history-a',
+    });
+    const sent = peer.commands().length;
+    for (const refused of [
+      peer.client.requestJobs(-1),
+      peer.client.requestJobs(257),
+      peer.client.requestJobs(1.5),
+      peer.client.requestJob(''),
+      peer.client.requestJobHistory('job-nightly', 513),
+      peer.client.requestJobHistory('', 0),
+    ])
+      assert.equal(refused, null);
+    assert.equal(peer.commands().length, sent);
+    peer.receive(jobListWire);
+    assert.equal(peer.events.at(-1)?.type, 'jobPage');
+    peer.socket.close();
+    assert.equal(peer.client.requestJobs(0), null);
+  } finally {
+    peer.cleanup();
+  }
+});
+
+test('job pages merge by id within the loaded bound and stop paging at it', () => {
+  const page = (from: number, count: number) =>
+    Array.from({ length: count }, (_, index) => ({ id: `job-${from + index}` }));
+  assert.deepEqual(mergePage(page(0, 2), page(5, 1), true, MAX_LOADED_JOBS), page(5, 1));
+  assert.deepEqual(mergePage(page(0, 2), page(1, 2), false, MAX_LOADED_JOBS), page(0, 3));
+  const full = mergePage(page(0, 60), page(60, 16), false, MAX_LOADED_JOBS);
+  assert.equal(full.length, MAX_LOADED_JOBS);
+  assert.equal(nextLoadablePage(5, full.length, MAX_LOADED_JOBS), null);
+  assert.equal(nextLoadablePage(2, 32, MAX_LOADED_JOBS), 2);
+  assert.equal(nextLoadablePage(null, 8, MAX_LOADED_JOBS), null);
+  const twoPages = applyPage(
+    applyPage(
+      { items: [], nextPage: null, lastPage: 0 },
+      { items: page(0, 2), page: 0, nextPage: 1 },
+      true,
+      MAX_LOADED_JOBS,
+    ),
+    { items: page(2, 1), page: 1, nextPage: null },
+    false,
+    MAX_LOADED_JOBS,
+  );
+  assert.deepEqual(twoPages, { items: page(0, 3), nextPage: null, lastPage: 1 });
+  const revisited = applyPage(
+    twoPages,
+    { items: [{ id: 'job-0' }, { id: 'job-1' }], page: 0, nextPage: 1 },
+    false,
+    MAX_LOADED_JOBS,
+  );
+  assert.deepEqual(revisited.items.map(item => item.id).sort(), ['job-0', 'job-1', 'job-2']);
+  assert.equal(revisited.nextPage, null, 'Revisiting the first page keeps later pages loaded');
+  assert.equal(revisited.lastPage, 1);
+});
+
+test('job detail labels name the schedule, attempts and retry class', () => {
+  assert.equal(scheduleLabel(cronSchedule), 'Cron 0 2 * * * (Europe/Warsaw)');
+  assert.equal(scheduleLabel({ kind: 'external' }), 'External trigger only');
+  assert.equal(scheduleLabel(null), 'This schedule needs a newer nesvo app');
+  assert.equal(formatInstant(1_792_713_600_000), '2026-10-23 00:00 UTC');
+  const decoded = decodeServerMessage(jobHistoryWire) as Extract<HostEvent, { type: 'jobHistory' }>;
+  const [retrying, finished] = decoded.occurrences;
+  assert.ok(retrying && finished);
+  assert.equal(attemptsLabel(retrying, jobSpec.retry), 'Attempt 1 of 3');
+  assert.equal(
+    attemptsLabel({ ...finished, jobAttemptOrdinal: null }, undefined),
+    'No dispatch yet · up to 1',
+  );
+  assert.match(retryClassLabel(retrying, jobSpec.retry), /^No effect/);
+  assert.equal(retryClassLabel(finished, jobSpec.retry), 'No retry decision');
+  assert.equal(retryClassLabel(finished, undefined), 'No retry policy');
+  assert.equal(jobStateLabel(jobDefinition), 'Next start 2026-10-24 00:00 UTC');
+  assert.equal(jobStateLabel(externalJob), 'Paused');
 });

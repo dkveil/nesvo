@@ -6,6 +6,7 @@ import type {
   HostEvent,
   InboxFeatures,
   InboxMark,
+  JobRead,
   Pairing,
   SessionControl,
   SessionGroup,
@@ -34,6 +35,8 @@ const NO_INBOX_FEATURES: InboxFeatures = {
   jobPages: false,
 };
 const MAX_INBOX_MARKS = 32;
+const MAX_JOB_LIST_PAGE = 256;
+const MAX_JOB_HISTORY_PAGE = 512;
 
 /** Sessions live on the host. Reconnect is explicit: input is never queued or replayed. */
 export class HostClient {
@@ -310,6 +313,24 @@ export class HostClient {
   decide(decisionId: string, choice: string, note?: string, requestId = this.requestId()) {
     if (!this.ready || !this.features.decisions) return null;
     this.send({ type: 'decide', decisionId, choice, note: note || undefined, requestId });
+    return requestId;
+  }
+  requestJobs(page: number, requestId = this.requestId()) {
+    if (!Number.isSafeInteger(page) || page < 0 || page > MAX_JOB_LIST_PAGE) return null;
+    return this.readJobs({ action: 'list', page }, requestId);
+  }
+  requestJob(jobId: string, requestId = this.requestId()) {
+    if (!jobId) return null;
+    return this.readJobs({ action: 'get', jobId }, requestId);
+  }
+  requestJobHistory(jobId: string, page: number, requestId = this.requestId()) {
+    if (!jobId || !Number.isSafeInteger(page) || page < 0 || page > MAX_JOB_HISTORY_PAGE)
+      return null;
+    return this.readJobs({ action: 'history', jobId, page }, requestId);
+  }
+  private readJobs(request: JobRead, requestId: string) {
+    if (!this.ready || !this.features.jobPages) return null;
+    this.send({ type: 'workflow', request: { action: 'jobs', request }, requestId });
     return requestId;
   }
   acknowledgeAttention(sessionId: string, sequence: number) {

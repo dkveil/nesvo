@@ -22,6 +22,8 @@ export default function RootLayout() {
           name="decisions"
           options={{ animation: motionAllowed ? 'default' : 'fade' }}
         />
+        <Stack.Screen name="jobs" options={{ animation: motionAllowed ? 'default' : 'fade' }} />
+        <Stack.Screen name="job/[id]" options={{ animation: motionAllowed ? 'default' : 'fade' }} />
         <Stack.Screen
           name="session/[id]"
           options={{ animation: motionAllowed ? 'default' : 'fade' }}

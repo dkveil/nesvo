@@ -15,6 +15,7 @@ const SCREEN_HANDLED_ERRORS = new Set([
   'decision_resolved',
   'decision_expired',
   'decision_not_found',
+  'job_not_found',
 ]);
 
 /** Owns host lifecycle and projections. Session/group mutations live in command modules. */

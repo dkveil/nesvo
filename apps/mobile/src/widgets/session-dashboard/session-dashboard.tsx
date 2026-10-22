@@ -130,6 +130,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
     statusNeedsAttention(session.status, session.currentAttention),
   ).length;
   const providerLimits = hostCapabilities?.providerLimits ?? [];
+  const jobsSupported = mode === 'live' && hostCapabilities?.jobPages === true;
 
   return (
     <KeyboardAvoidingView
@@ -626,6 +627,20 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                   >
                     <Icon name="help-circle-outline" color={c.text} size={21} />
                     <Text style={s.menuLabel}>Decisions</Text>
+                  </Pressable>
+                ) : null}
+                {jobsSupported ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Jobs"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      navigateTo('jobs');
+                    }}
+                    style={({ pressed }) => [s.menuItem, pressed && s.pressed]}
+                  >
+                    <Icon name="calendar-outline" color={c.text} size={21} />
+                    <Text style={s.menuLabel}>Jobs</Text>
                   </Pressable>
                 ) : null}
                 <Pressable
