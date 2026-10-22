@@ -23,6 +23,8 @@ import {
 } from '@shared/notifications';
 import { Button, common } from '@shared/ui';
 
+import { PushDeviceList } from './push-device-list';
+
 const PUSH_KIND_LABELS: Record<PushKind, string> = {
   decisionPending: 'pending decisions',
   resultReady: 'finished job results',
@@ -32,8 +34,9 @@ const Context = createContext<{
   enabled: boolean;
   busy: boolean;
   status: string;
+  token: string | null;
   toggle: () => void;
-}>({ enabled: false, busy: false, status: '', toggle: () => {} });
+}>({ enabled: false, busy: false, status: '', token: null, toggle: () => {} });
 export function NotificationProvider({ children }: PropsWithChildren) {
   const {
     client,
@@ -221,13 +224,21 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     }
   };
   return (
-    <Context.Provider value={{ enabled, busy, status, toggle: () => void toggle() }}>
+    <Context.Provider
+      value={{
+        enabled,
+        busy,
+        status,
+        token: enabled && registration ? registration.token : null,
+        toggle: () => void toggle(),
+      }}
+    >
       {children}
     </Context.Provider>
   );
 }
 export function NotificationSettings() {
-  const { enabled, busy, status, toggle } = useContext(Context);
+  const { enabled, busy, status, token, toggle } = useContext(Context);
   const { connected, hostCapabilities } = useWorkspace();
   const inboxKinds = pushKindsFor(hostCapabilities ?? {});
   return (
@@ -256,6 +267,7 @@ export function NotificationSettings() {
         />
       )}
       {!!status && <Text style={common.body}>{status}</Text>}
+      <PushDeviceList token={token} />
     </View>
   );
 }

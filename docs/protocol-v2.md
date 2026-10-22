@@ -281,6 +281,22 @@ receiving session attention pushes only. Mobile
 requests each kind only when its own capability is advertised: `decisionPending`
 needs `decisions:true` and `resultReady` needs `attentionInbox:true`, because a
 result push opens an inbox item while a decision push needs the decision commands.
+`pushDevices:true` adds the read-only owner command `pushDevices {requestId?}` (reply
+`pushDevices {devices:[{device,kinds}]}`, at most 8 entries in registration order).
+`device` is only the last six characters of the push token, so the list never
+reveals a token; a phone recognizes itself by comparing the suffix of its own
+token. `kinds` holds the chosen metadata push kinds (empty for session attention
+only). Mobile drops unknown kinds one by one and keeps the device. Scoped callers
+are refused like every other owner command. The mobile app shows the list in its
+notification settings and re-reads it after each `pushRegistered`.
+
+Mobile reads jobs only through the owner `workflow` request
+`{action:"jobs",request:{action:"list"|"get"|"history",...}}` and only when
+`jobPages:true`, always with `page`. Its decoder tolerates additions item by item:
+an unknown occurrence `state` drops that occurrence and counts it as skipped, an
+unknown `schedule.kind` or `calendarState` keeps the job with a null value, an
+unknown retry `class` or `profile.program` is omitted, and a malformed known field
+still rejects the frame.
 
 Hosts advertising `sessionQueries:true` accept `getSession {sessionId}` and
 `readSession {sessionId,after?,maxBytes?}`. Both echo request IDs. The former
@@ -513,6 +529,7 @@ flags than clients gate on; these are the ones current clients check:
 | `attentionInbox`     | `attentionInbox`, `acknowledgeInbox` and the `resultReady` push kind                                    |
 | `decisions`          | `decisions`, `decide` and the `decisionPending` push kind                                               |
 | `jobPages`           | `page` on the owner job `list` and `history` reads                                                      |
+| `pushDevices`        | the read-only owner `pushDevices` listing of registered phones                                          |
 | `notes`              | `listNotes`, `readNote`, `writeNote` and `deleteNote` ([notes](#notes))                                 |
 | `projects`           | the project registry commands ([projects](#projects))                                                   |
 | `mcpPool`            | `mcpPoolStatus` ([MCP server pool](#mcp-server-pool))                                                   |

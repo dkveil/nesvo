@@ -50,6 +50,7 @@ export function useHostConnection(mode: WorkspaceMode) {
           attentionInbox: event.attentionInbox,
           decisions: event.decisions,
           jobPages: event.jobPages,
+          pushDevices: event.pushDevices,
           workspace: event.workspace,
           programs: event.programs,
           providerLimits: event.providerLimits ?? [],

@@ -129,6 +129,7 @@ pub enum Command {
         #[serde(default)]
         kinds: Option<Vec<String>>,
     },
+    PushDevices,
     ListTemplates,
     SaveTemplate {
         name: String,

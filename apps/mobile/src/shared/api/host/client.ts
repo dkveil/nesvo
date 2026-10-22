@@ -33,6 +33,7 @@ const NO_INBOX_FEATURES: InboxFeatures = {
   attentionInbox: false,
   decisions: false,
   jobPages: false,
+  pushDevices: false,
 };
 const MAX_INBOX_MARKS = 32;
 const MAX_JOB_LIST_PAGE = 256;
@@ -175,6 +176,7 @@ export class HostClient {
               attentionInbox: message.attentionInbox === true,
               decisions: message.decisions === true,
               jobPages: message.jobPages === true,
+              pushDevices: message.pushDevices === true,
             };
           }
           if (message.type === 'sessions') {
@@ -331,6 +333,11 @@ export class HostClient {
   private readJobs(request: JobRead, requestId: string) {
     if (!this.ready || !this.features.jobPages) return null;
     this.send({ type: 'workflow', request: { action: 'jobs', request }, requestId });
+    return requestId;
+  }
+  requestPushDevices(requestId = this.requestId()) {
+    if (!this.ready || !this.features.pushDevices) return null;
+    this.send({ type: 'pushDevices', requestId });
     return requestId;
   }
   acknowledgeAttention(sessionId: string, sequence: number) {

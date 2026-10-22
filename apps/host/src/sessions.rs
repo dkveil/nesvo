@@ -1485,6 +1485,7 @@ impl State {
         event["attentionInbox"] = self.event_log.is_some().into();
         event["decisions"] = self.event_log.is_some().into();
         event["jobPages"] = self.event_log.is_some().into();
+        event["pushDevices"] = true.into();
         event["coordinatorScopes"] = true.into();
         event["workflowAttempts"] = self.event_log.is_some().into();
         event["workflowInbox"] = self.event_log.is_some().into();
@@ -3400,6 +3401,11 @@ impl State {
                 }
                 self.respond(client_id, event, request_id);
             }
+            Command::PushDevices => self.respond(
+                client_id,
+                json!({"type":"pushDevices","devices":self.metadata.push_devices()?}),
+                request_id,
+            ),
             Command::ListTemplates => self.respond(
                 client_id,
                 json!({"type":"templates","templates":self.metadata.templates()?}),
@@ -5073,6 +5079,51 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(state.metadata.push_tokens().unwrap(), [token]);
+    }
+
+    #[test]
+    fn push_devices_reply_lists_registered_phones_by_suffix_and_kinds() {
+        let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
+        let mut state = State::new(PathBuf::new(), metadata, Launchers::discover());
+        assert_eq!(state.capabilities_event()["pushDevices"], true);
+        let (events, mut receiver) = mpsc::channel(8);
+        let (cancelled, _) = watch::channel(false);
+        state.clients.insert(
+            1,
+            Client {
+                events,
+                cancelled,
+                authority: Default::default(),
+            },
+        );
+        let (pty_events, _) = mpsc::channel(1);
+        state
+            .command(1, Command::PushDevices, Some("devices-1"), &pty_events)
+            .unwrap();
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            json!({"type":"pushDevices","devices":[],"requestId":"devices-1"})
+        );
+        state
+            .command(
+                1,
+                Command::RegisterPush {
+                    token: "ExpoPushToken[listedphone42]".into(),
+                    enabled: true,
+                    kinds: Some(vec![crate::attention_inbox::PUSH_DECISION.into()]),
+                },
+                None,
+                &pty_events,
+            )
+            .unwrap();
+        receiver.try_recv().unwrap();
+        state
+            .command(1, Command::PushDevices, None, &pty_events)
+            .unwrap();
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            json!({"type":"pushDevices","devices":[{"device":"hone42","kinds":[crate::attention_inbox::PUSH_DECISION]}]})
+        );
     }
 
     #[test]

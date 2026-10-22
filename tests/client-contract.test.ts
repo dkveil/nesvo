@@ -1182,6 +1182,7 @@ test('a reconnect forgets advertised inbox flags until the new host repeats them
       attentionInbox: false,
       decisions: false,
       jobPages: false,
+      pushDevices: false,
     });
     assert.equal(peer.client.decide('question-1', 'main'), null);
     assert.equal(peer.client.requestAttentionInbox(0), null);
@@ -1933,4 +1934,62 @@ test('child sessions follow their parent and keep the parent group section', () 
       ['b', 1],
     ],
   );
+});
+
+const pushDevicesWire = {
+  type: 'pushDevices',
+  devices: [
+    { device: 'ab12cd', kinds: [] },
+    { device: '_9xY7z', kinds: ['decisionPending', 'resultReady'] },
+  ],
+  requestId: 'devices-1',
+};
+
+test('push device replies decode with known kinds and drop unknown kinds one by one', () => {
+  assert.deepEqual(decodeServerMessage(pushDevicesWire), pushDevicesWire);
+  assert.deepEqual(
+    decodeServerMessage({
+      ...pushDevicesWire,
+      devices: [{ device: 'ab12cd', kinds: ['weeklyDigest', 'resultReady'] }],
+    }),
+    { ...pushDevicesWire, devices: [{ device: 'ab12cd', kinds: ['resultReady'] }] },
+  );
+  for (const devices of [
+    'all',
+    [{ device: '', kinds: [] }],
+    [{ device: 'x'.repeat(17), kinds: [] }],
+    [{ device: 'ab12cd' }],
+    [{ device: 'ab12cd', kinds: 'resultReady' }],
+    [{ device: 'ab12cd', kinds: Array(9).fill('resultReady') }],
+    Array(9).fill({ device: 'ab12cd', kinds: [] }),
+  ])
+    assert.throws(
+      () => decodeServerMessage({ ...pushDevicesWire, devices }),
+      /Invalid host message/,
+    );
+  assert.throws(
+    () => decodeServerMessage({ ...inboxCapabilities, pushDevices: 'yes' }),
+    /Invalid host message/,
+  );
+});
+
+test('push device listing stays unsent until the host advertises it', () => {
+  const peer = connectInboxPeer();
+  try {
+    peer.receive(inboxCapabilities);
+    const before = peer.commands().length;
+    assert.equal(peer.client.requestPushDevices(), null);
+    assert.equal(peer.commands().length, before);
+    peer.receive({ ...inboxCapabilities, pushDevices: true });
+    assert.equal(peer.client.inboxFeatures.pushDevices, true);
+    assert.equal(peer.client.requestPushDevices('devices-a'), 'devices-a');
+    assert.deepEqual(peer.commands().at(-1), { type: 'pushDevices', requestId: 'devices-a' });
+    peer.receive(pushDevicesWire);
+    assert.deepEqual(peer.events.at(-1), pushDevicesWire);
+    assert.equal(peer.client.isConnected, true);
+    peer.socket.close();
+    assert.equal(peer.client.requestPushDevices(), null);
+  } finally {
+    peer.cleanup();
+  }
 });

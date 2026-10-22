@@ -25,6 +25,7 @@ export type {
   JobSummary,
   Pairing,
   PendingDecision,
+  PushDevice,
   PushKind,
   ServerMessage,
   SessionControl,

@@ -87,6 +87,7 @@ export type HostCapabilities = {
   attentionInbox?: boolean;
   decisions?: boolean;
   jobPages?: boolean;
+  pushDevices?: boolean;
   sessionFreshness?: boolean;
   workspace: string;
   programs: { id: SessionProgram; label: string; available: boolean }[];
@@ -103,6 +104,7 @@ export type InboxFeatures = {
   attentionInbox: boolean;
   decisions: boolean;
   jobPages: boolean;
+  pushDevices: boolean;
 };
 export type InboxItemKind = 'session' | 'decision' | 'run' | 'result';
 export type InboxItem = {
@@ -143,6 +145,7 @@ export type PendingDecision = {
   run: { id: string; title: string; state: string };
 };
 export type PushKind = 'decisionPending' | 'resultReady';
+export type PushDevice = { device: string; kinds: PushKind[] };
 
 export type JobSchedule =
   | { kind: 'once'; at: string }
@@ -307,6 +310,7 @@ export type HostEvent =
       skipped?: number;
       requestId?: string;
     }
+  | { type: 'pushDevices'; devices: PushDevice[]; requestId?: string }
   | { type: 'connected'; clientId: number; protocolVersion: 2 }
   | { type: 'disconnected'; reason: string }
   | ({ type: 'capabilities'; requestId?: string } & HostCapabilities)
@@ -334,6 +338,7 @@ export type ClientCommand =
   | { type: 'decisions'; page: number; requestId: string }
   | { type: 'decide'; decisionId: string; choice: string; note?: string; requestId: string }
   | { type: 'workflow'; request: { action: 'jobs'; request: JobRead }; requestId: string }
+  | { type: 'pushDevices'; requestId: string }
   | { type: 'acknowledgeAttention'; sessionId: string; sequence: number }
   | { type: 'muteSession'; sessionId: string; muted: boolean }
   | { type: 'auth'; clientNonce: string }

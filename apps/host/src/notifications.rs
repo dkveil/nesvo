@@ -18,6 +18,11 @@ pub fn valid_token(token: &str) -> bool {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     })
 }
+const DEVICE_LABEL_CHARS: usize = 6;
+fn device_label(token: &str) -> String {
+    let body = token.trim_end_matches(']');
+    body[body.len().saturating_sub(DEVICE_LABEL_CHARS)..].to_owned()
+}
 impl MetadataStore {
     pub fn push_tokens(&self) -> Result<Vec<String>> {
         Ok(self
@@ -80,6 +85,23 @@ impl MetadataStore {
             rusqlite::params![token, serde_json::to_string(&chosen)?],
         )?;
         Ok(chosen)
+    }
+    pub fn push_devices(&self) -> Result<Vec<Value>> {
+        self.push_kind_table()?;
+        let rows = self
+            .connection
+            .prepare("SELECT d.token,k.kinds FROM push_devices d LEFT JOIN push_device_kinds k ON k.token=d.token ORDER BY d.rowid LIMIT 8")?
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(token, kinds)| {
+                let kinds = kinds
+                    .map(|kinds| serde_json::from_str::<Vec<String>>(&kinds))
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(json!({"device":device_label(&token),"kinds":kinds}))
+            })
+            .collect()
     }
     pub fn push_tokens_for(&self, kind: &str) -> Result<Vec<String>> {
         self.push_kind_table()?;
@@ -214,6 +236,33 @@ pub async fn run(state: Arc<Mutex<State>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn device_listing_names_only_a_token_suffix_with_the_chosen_kinds() {
+        let store = MetadataStore::open(std::path::Path::new(":memory:")).unwrap();
+        assert!(store.push_devices().unwrap().is_empty());
+        let first = "ExponentPushToken[firstphone-ab12cd]";
+        let second = "ExpoPushToken[secondphone_9xY7z]";
+        store.register_push(first, true).unwrap();
+        store.register_push(second, true).unwrap();
+        store
+            .set_push_kinds(second, &[crate::attention_inbox::PUSH_RESULT.into()])
+            .unwrap();
+        let devices = store.push_devices().unwrap();
+        assert_eq!(
+            devices,
+            [
+                json!({"device":"ab12cd","kinds":[]}),
+                json!({"device":"_9xY7z","kinds":[crate::attention_inbox::PUSH_RESULT]}),
+            ]
+        );
+        assert!(
+            devices
+                .iter()
+                .all(|device| !device.to_string().contains("PushToken"))
+        );
+        store.register_push(first, false).unwrap();
+        assert_eq!(store.push_devices().unwrap().len(), 1);
+    }
     #[test]
     fn registration_is_bounded_and_idempotent_and_payload_contains_no_terminal_data() {
         let store = MetadataStore::open(std::path::Path::new(":memory:")).unwrap();

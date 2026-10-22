@@ -317,7 +317,7 @@ function snapshot(value: RecordValue): boolean {
   return true;
 }
 
-const INBOX_FLAGS = ['attentionInbox', 'decisions', 'jobPages'] as const;
+const INBOX_FLAGS = ['attentionInbox', 'decisions', 'jobPages', 'pushDevices'] as const;
 const INBOX_KINDS = ['session', 'decision', 'run', 'result'];
 const DECISION_STATES = ['pending', 'answered', 'canceled', 'expired'];
 const MAX_ITEM_ID_LENGTH = 200;
@@ -450,6 +450,32 @@ const decided = (value: RecordValue) =>
   text(value.decision.state, 64) &&
   itemId(value.inboxId) &&
   value.inboxId.startsWith('decision:');
+
+const PUSH_KINDS = ['decisionPending', 'resultReady'];
+const MAX_PUSH_DEVICES = 8;
+const MAX_PUSH_DEVICE_KINDS = 8;
+const MAX_DEVICE_LABEL_LENGTH = 16;
+
+const pushDevice = (value: unknown): value is RecordValue =>
+  record(value) &&
+  text(value.device, MAX_DEVICE_LABEL_LENGTH) &&
+  Array.isArray(value.kinds) &&
+  value.kinds.length <= MAX_PUSH_DEVICE_KINDS &&
+  value.kinds.every(kind => text(kind, 64));
+
+const pushDevices = (value: RecordValue) => {
+  if (
+    !Array.isArray(value.devices) ||
+    value.devices.length > MAX_PUSH_DEVICES ||
+    !value.devices.every(pushDevice)
+  )
+    return null;
+  const devices = value.devices.map((device: RecordValue) => ({
+    ...device,
+    kinds: (device.kinds as string[]).filter(kind => PUSH_KINDS.includes(kind)),
+  }));
+  return { ...value, devices };
+};
 
 const JOB_SCHEDULE_KINDS = ['once', 'cron', 'rrule', 'external'];
 const JOB_CALENDAR_STATES = ['ready', 'blocked', 'exhausted'];
@@ -701,6 +727,12 @@ export function decodeServerMessage(value: unknown): ServerMessage {
       break;
     case 'workflow': {
       const reply = jobsReply(value);
+      valid = !!reply;
+      message = reply ?? value;
+      break;
+    }
+    case 'pushDevices': {
+      const reply = pushDevices(value);
       valid = !!reply;
       message = reply ?? value;
       break;

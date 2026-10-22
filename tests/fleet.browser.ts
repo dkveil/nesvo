@@ -106,6 +106,7 @@ const startHost = (key: Buffer) => {
   const server = new WebSocketServer({ port: 0 });
   const reads: JobsRequest[] = [];
   const subscriptions: string[] = [];
+  const deviceReads: string[] = [];
   server.on('connection', socket => {
     const challenge = randomBytes(32).toString('hex');
     let received = 0;
@@ -139,6 +140,7 @@ const startHost = (key: Buffer) => {
             workspace: '/workspace',
             pushNotifications: true,
             jobPages: true,
+            pushDevices: true,
             programs: [
               { id: 'shell', label: 'Terminal', available: true },
               { id: 'claude', label: 'Claude Code', available: true },
@@ -149,6 +151,17 @@ const startHost = (key: Buffer) => {
           break;
         case 'list':
           send({ type: 'sessions', sessions, groups: [], revision: 0 });
+          break;
+        case 'pushDevices':
+          deviceReads.push(command.requestId);
+          send({
+            type: 'pushDevices',
+            devices: [
+              { device: 'ab12cd', kinds: [] },
+              { device: '_9xY7z', kinds: ['decisionPending', 'resultReady', 'weeklyDigest'] },
+            ],
+            requestId: command.requestId,
+          });
           break;
         case 'subscribe':
           subscriptions.push(command.sessionId);
@@ -196,7 +209,7 @@ const startHost = (key: Buffer) => {
       }
     });
   });
-  return { server, reads, subscriptions };
+  return { server, reads, subscriptions, deviceReads };
 };
 
 const connect = async (page: Page, port: number, key: Buffer) => {
@@ -220,7 +233,7 @@ const expectNoHorizontalOverflow = async (page: Page) => {
 
 async function main() {
   const key = randomBytes(32);
-  const { server, reads, subscriptions } = startHost(key);
+  const { server, reads, subscriptions, deviceReads } = startHost(key);
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
@@ -332,9 +345,26 @@ async function main() {
     await page.getByRole('button', { name: 'Back to jobs', exact: true }).click();
     await page.getByRole('button', { name: 'Open job Weekly cleanup', exact: true }).waitFor();
 
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const devices = page.getByLabel('Registered phones', { exact: true });
+    await devices.getByLabel('Phone ending ab12cd: Session attention', { exact: true }).waitFor();
+    await devices
+      .getByLabel(
+        'Phone ending _9xY7z: Session attention · Pending decisions · Finished job results',
+        { exact: true },
+      )
+      .waitFor();
+    assert.equal(await devices.getByRole('button').count(), 0, 'The device list is read-only');
+    assert.equal(await devices.getByText('This phone', { exact: true }).count(), 0);
+    assert.ok(deviceReads.length >= 1);
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: 'artifacts/push-devices.png' });
+
     assert.deepEqual(errors, []);
     console.log(
-      'PASS: child sessions under their parent, jobs menu gating, paged job list and read-only job detail.',
+      'PASS: child sessions under their parent, jobs menu gating, paged job list, read-only job detail and registered phones.',
     );
   } finally {
     await browser?.close();
