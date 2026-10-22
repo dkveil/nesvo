@@ -404,7 +404,10 @@ A one-time confirmation code or interactive confirmation is the planned human ga
 
 Every worktree launch (TUI, `session create --worktree`, MCP, workflow tasks and
 scheduled launches) checks the approval before creating anything: an unapproved
-declared setup fails with `worktree_setup_unapproved` and no effect. After the
+declared setup fails with `worktree_setup_unapproved` and no effect, and a folder
+outside any Git repository fails with `not_repository` and no effect (choose a
+folder inside a repository). When Git cannot inspect the folder at all, the launch
+fails with `worktree_unconfirmed` and no effect. After the
 worktree exists the host copies `env_files`, runs `setup` in order and writes
 `<worktree>/.nesvo/setup.log` (64 KiB, a truncation marker when cut; `.nesvo` is
 ignored by its own `.gitignore`). The agent process is not started while setup

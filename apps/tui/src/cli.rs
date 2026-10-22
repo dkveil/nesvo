@@ -3031,6 +3031,7 @@ mod agent_convention_tests {
             ("calendar_limit", 1),
             ("project_limit", 1),
             ("worktree_registry_full", 1),
+            ("not_repository", 1),
             ("pairing_unavailable", 2),
             ("host_unavailable", 2),
             ("disconnected", 2),

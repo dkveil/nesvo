@@ -817,13 +817,23 @@ pub(crate) async fn head_text(root: &Path) -> Result<Option<String>> {
 }
 
 async fn plan_with(store: Option<&Store>, directory: &Path) -> Result<Plan> {
-    let root = git::toplevel(directory).await.map_err(|_| {
-        Failure::raise(
-            Stage::Plan,
-            "worktree_unconfirmed",
-            "Inspect the repository before creating another worktree",
-        )
-    })?;
+    let root = match git::discover(directory).await {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            return Err(Failure::raise(
+                Stage::Plan,
+                "not_repository",
+                "The folder is not inside a Git repository; choose a folder in a repository to create a worktree",
+            ));
+        }
+        Err(_) => {
+            return Err(Failure::raise(
+                Stage::Plan,
+                "worktree_unconfirmed",
+                "Inspect the repository before creating another worktree",
+            ));
+        }
+    };
     let repository = repository_key(&root);
     if store.is_some_and(|store| !store.has_room()) {
         return Err(registry_full(Stage::Plan));

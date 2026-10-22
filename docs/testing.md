@@ -279,8 +279,8 @@ The default-off job retry and run executor scenarios obtain their uncertain
 worktree effect the same way, from a private repository whose required smudge
 filter fails checkout. A folder outside Git cannot stand in for it: worktree
 planning resolves the repository toplevel before any Git write, so that launch
-is a proven no-effect `failed` receipt (`effectStarted:false`) that a
-`launchNoEffect` policy retries.
+is a proven no-effect `failed/not_repository` receipt (`effectStarted:false`)
+that a `launchNoEffect` policy retries.
 
 A separate native scenario obtains actual `effectStarted:false` from failed
 preflight validation. It checks owner digest/acknowledgment, CLI/MCP replay,

@@ -259,6 +259,15 @@ async fn approval_gate_refuses_before_creating_a_worktree_and_follows_revocation
     );
     assert_eq!(
         code(&plan_with(None, &scratch.0).await.err().unwrap()),
+        "not_repository"
+    );
+    assert_eq!(
+        code(
+            &plan_with(None, &scratch.0.join("absent"))
+                .await
+                .err()
+                .unwrap()
+        ),
         "worktree_unconfirmed"
     );
 }
@@ -1098,10 +1107,23 @@ async fn a_derived_worktree_is_unknown_only_once_checkout_has_started() {
         Failure::of(&refused).unwrap().receipt("s", None),
         (
             "failed",
+            json!({"code":"not_repository","message":"The folder is not inside a Git repository; choose a folder in a repository to create a worktree","effectStarted":false})
+        )
+    );
+    assert_eq!(error_event(&refused)["code"], "not_repository");
+    let absent = derive(&outside.join("absent"), "s", None, &mut spec)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        Failure::of(&absent).unwrap().receipt("s", None),
+        (
+            "failed",
             json!({"code":"worktree_unconfirmed","message":"Inspect the repository before creating another worktree","effectStarted":false})
         )
     );
+    assert!(spec.cwd.is_none() && spec.worktree);
     assert_eq!(std::fs::read_dir(&scratch.0).unwrap().count(), 1);
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
     let repository = repository(&scratch, None).await;
     std::fs::write(
         repository.join(".gitattributes"),

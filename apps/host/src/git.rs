@@ -125,12 +125,7 @@ pub(crate) struct Output {
     pub code: Option<i32>,
 }
 
-pub(crate) async fn run(
-    cwd: &Path,
-    args: &[&str],
-    limit: usize,
-    deadline: Duration,
-) -> Result<Output> {
+fn command(cwd: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
     command
         .args(["--no-pager", "-c", "core.quotepath=false"])
@@ -145,7 +140,16 @@ pub(crate) async fn run(
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let mut child = command.spawn()?;
+    command
+}
+
+pub(crate) async fn run(
+    cwd: &Path,
+    args: &[&str],
+    limit: usize,
+    deadline: Duration,
+) -> Result<Output> {
+    let mut child = command(cwd, args).spawn()?;
     let output = child
         .stdout
         .take()
@@ -188,6 +192,28 @@ pub fn is_oid(value: &str) -> bool {
 pub async fn toplevel(cwd: &Path) -> Result<PathBuf> {
     let (root, _) = git(cwd, &["rev-parse", "--show-toplevel"], 4096).await?;
     Ok(PathBuf::from(String::from_utf8(root)?.trim()))
+}
+
+pub(crate) async fn discover(cwd: &Path) -> Result<Option<PathBuf>> {
+    let mut command = command(cwd, &["rev-parse", "--show-toplevel"]);
+    command
+        .env("LC_ALL", "C")
+        .env("LANGUAGE", "C")
+        .stderr(Stdio::piped());
+    let output = timeout(GIT_TIMEOUT, command.output())
+        .await
+        .map_err(|_| anyhow!("Git inspection timed out"))??;
+    if output.status.success() {
+        return Ok(Some(PathBuf::from(
+            String::from_utf8(output.stdout)?.trim(),
+        )));
+    }
+    ensure!(
+        output.status.code() == Some(128)
+            && output.stderr.starts_with(b"fatal: not a git repository"),
+        "Git could not read this repository or path."
+    );
+    Ok(None)
 }
 
 async fn object(root: &Path, spec: &str) -> Result<Option<String>> {
