@@ -1,4 +1,5 @@
 pub mod jobs;
+pub mod review;
 
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -22,6 +23,12 @@ where
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tolerant<T>(pub Option<T>);
+
+impl<T> Default for Tolerant<T> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
 
 impl<'de, T: DeserializeOwned> Deserialize<'de> for Tolerant<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
