@@ -113,6 +113,18 @@ Every `uses:` in `.github/workflows` names a full 40-character commit SHA, first
 
 To change a pin, resolve the new tag with `gh api repos/OWNER/REPO/git/ref/tags/TAG` (follow `git/tags/SHA` when the object type is `tag`), then update every workflow that uses the action and this table in one commit.
 
+## Contributor gates
+
+These rules apply to every change. Reviewers enforce all of them; only the ones marked automated fail CI on their own.
+
+- **No code comments.** Source carries no comments that restate what the code does, no section banners and no commented-out code. One line is allowed only where code cannot express why: a library gotcha, a workaround or a counter-intuitive decision. Workflow YAML carries none (see [workflow actions](#workflow-actions)). Review only; no automated check exists.
+- **No attribution.** Commit messages and pull request descriptions name no AI tool: no co-author trailers, generated-with footers or session links ([commits and pull requests](../CONTRIBUTING.md#commits-and-pull-requests)). Review only.
+- **Migrations run the full suite.** A change that adds a file under `apps/host/migrations/` or touches `migrations.rs` runs `cargo nextest run --workspace --locked --profile ci` before merge, never a filtered subset: every journal-backed module opens the migrated schema, so a filtered run can pass while another module fails.
+- **CLI reply shapes have schema scenarios.** A new or changed `--json` reply kind adds its `data.oneOf` branch to `docs/harness-cli.schema.json`; `every_cli_reply_kind_has_a_published_schema_branch` fails otherwise (automated). Where a native scenario can print the reply, the scenario pipes it through `tests/fixtures/validate-harness-json.cjs` ([native CLI reply envelopes](testing.md#native-cli-reply-envelopes)).
+- **Contention tests are deterministic.** A test of a lock, busy retry or writer race holds the competing side with a barrier or channel and releases it only after the code under test is observed waiting; it never relies on timing to create the overlap ([SQLite writer admission](harness-transactions.md)).
+- **Waits end on events, not clocks.** Tests and native scenarios wait for a host event, receipt or state change under a deadline. No fixed sleep or fixed observation window decides success; the deadline only bounds a failure, and nextest ends any single test after five minutes (`.config/nextest.toml`).
+- **Generated contracts stay generated.** Change the Rust model, regenerate with `NESVO_UPDATE_CONTRACTS=1` and commit the outputs ([generated contracts](#generated-contracts)); CI fails on drift (automated).
+
 ## Language documentation
 
 - [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/): idiomatic APIs and type safety.
