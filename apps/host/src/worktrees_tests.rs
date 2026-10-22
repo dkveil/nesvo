@@ -455,15 +455,16 @@ async fn a_step_beyond_its_deadline_times_out_and_is_terminated() {
     let mut log = Log::create(&scratch.0.join("run.log")).await.unwrap();
     let (_cancel, receiver) = watch::channel(false);
     let steps = vec![fixture(&format!("tree {address} root")), fixture("echo 0")];
-    let running = execute(
-        &steps,
-        &scratch.0,
-        &mut log,
-        Duration::from_millis(1500),
-        receiver,
-    );
-    let (outcome, stream) = tokio::join!(running, held_process(&listener));
-    assert_eq!(outcome, Outcome::TimedOut);
+    let limit = Duration::from_secs(DEFAULT_TIMEOUT_S);
+    let mut running = Box::pin(execute(&steps, &scratch.0, &mut log, limit, receiver));
+    let stream = tokio::select! {
+        stream = held_process(&listener) => stream,
+        outcome = running.as_mut() => panic!("the step ended with {outcome:?} before it was held"),
+    };
+    tokio::time::pause();
+    tokio::time::advance(limit).await;
+    assert_eq!(running.await, Outcome::TimedOut);
+    tokio::time::resume();
     closed(stream).await;
     log.finish().await;
     let text = std::fs::read_to_string(scratch.0.join("run.log")).unwrap();
