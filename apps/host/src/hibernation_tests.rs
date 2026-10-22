@@ -10,6 +10,7 @@ use crate::{
     jobs::LaunchSpec,
     launchers::Program,
     protocol::Command,
+    restore::{self, Entry, Outcome as Restore},
     resume::{Evidence, Gate, Start, Target},
     status::{StatusState, now_millis},
 };
@@ -802,4 +803,335 @@ fn idle_policy_is_off_by_default_and_selects_only_due_unwatched_eligible_agents(
     for worker in state.shutdown() {
         worker.join().unwrap();
     }
+}
+
+fn work(state: &mut State, id: &str) {
+    let session = state.sessions.get_mut(id).unwrap();
+    assert!(session.status.lifecycle_ordered(
+        LifecycleReport {
+            state: StatusState::Working,
+            sequence: 2,
+        },
+        now_millis(),
+    ));
+    session.status.refresh(now_millis());
+}
+
+fn ledger(database: &Path) -> Vec<(String, String, Option<String>)> {
+    let connection = rusqlite::Connection::open(database).unwrap();
+    let mut statement = connection
+        .prepare("SELECT session_id,outcome,code FROM session_restore_outcomes ORDER BY session_id")
+        .unwrap();
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+async fn payloads(log: &Service, id: &str) -> Vec<(String, Value)> {
+    log.read(0, 32, Some(id.to_owned()))
+        .await
+        .unwrap()
+        .events
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event.kind.as_str(),
+                "session.hibernated" | "session.resumed"
+            )
+        })
+        .map(|event| (event.kind, event.payload))
+        .collect()
+}
+
+fn outcome_of<'a>(entries: &'a [Entry], id: &str) -> &'a Entry {
+    entries
+        .iter()
+        .find(|entry| entry.session_id == id)
+        .unwrap_or_else(|| panic!("no restore entry for {id}: {entries:?}"))
+}
+
+#[tokio::test]
+async fn shutdown_hibernates_eligible_sessions_children_first_and_records_why_others_are_reaped() {
+    let fixture = Fixture::new();
+    let database = fixture.database();
+    let (state, log) = open(&database).await;
+    let events = drained();
+    let (eligible, leased, parent, child, shell, working, owned) = {
+        let mut guard = state.lock().unwrap();
+        let eligible = ready(&mut guard, &events);
+        let leased = ready(&mut guard, &events);
+        guard.sessions.get_mut(&leased).unwrap().controller = Some(ControlLease {
+            client_id: 7,
+            id: "lease".into(),
+            legacy: false,
+        });
+        let parent = ready(&mut guard, &events);
+        let child = launch(&mut guard, &events, Some(&parent));
+        agent(&mut guard, &child, Program::Claude, now_millis());
+        let shell = launch(&mut guard, &events, None);
+        let working = ready(&mut guard, &events);
+        work(&mut guard, &working);
+        let owned = ready(&mut guard, &events);
+        (eligible, leased, parent, child, shell, working, owned)
+    };
+    hibernation::hibernate(&state, &log, owned.clone(), "owner".into(), OWNER)
+        .await
+        .unwrap();
+    state.lock().unwrap().begin_shutdown();
+    let entries = restore::shutdown(&state, &log).await;
+    {
+        let guard = state.lock().unwrap();
+        for id in [&eligible, &leased, &parent, &child] {
+            assert!(guard.hibernated.contains(id), "{id} hibernated at shutdown");
+            assert!(!guard.sessions.contains_key(id));
+            assert_eq!(
+                view(&guard, id).unwrap()["hibernation"]["trigger"],
+                "shutdown"
+            );
+        }
+        assert!(guard.sessions.contains_key(&shell));
+        assert!(guard.sessions.contains_key(&working));
+    }
+    assert_eq!(outcome_of(&entries, &shell).outcome, Restore::Reaped);
+    assert_eq!(
+        outcome_of(&entries, &shell).code.as_deref(),
+        Some("hibernate_unsupported")
+    );
+    assert_eq!(
+        outcome_of(&entries, &working).code.as_deref(),
+        Some("agent_not_ready")
+    );
+    assert_eq!(outcome_of(&entries, &owned).outcome, Restore::Hibernated);
+    assert_eq!(
+        outcome_of(&entries, &owned).code.as_deref(),
+        Some("owner_hibernated")
+    );
+    assert_eq!(entries.len(), 3);
+    let reason = |code: &str| Some(code.to_owned());
+    let mut expected = vec![
+        (eligible.clone(), "pending".to_owned(), None),
+        (leased.clone(), "pending".to_owned(), None),
+        (parent.clone(), "pending".to_owned(), None),
+        (child.clone(), "pending".to_owned(), None),
+        (
+            shell.clone(),
+            "reaped".to_owned(),
+            reason("hibernate_unsupported"),
+        ),
+        (
+            working.clone(),
+            "reaped".to_owned(),
+            reason("agent_not_ready"),
+        ),
+        (
+            owned.clone(),
+            "hibernated".to_owned(),
+            reason("owner_hibernated"),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(ledger(&database), expected);
+    assert_eq!(
+        payloads(&log, &eligible).await,
+        [(
+            "session.hibernated".to_owned(),
+            json!({"conversationId":CONVERSATION,"program":"claude","trigger":"shutdown"})
+        )]
+    );
+    finish(&state);
+    log.shutdown().await;
+}
+
+struct Restarted {
+    state: Arc<Mutex<State>>,
+    log: Service,
+    events: mpsc::Sender<PtyEvent>,
+    restored: String,
+    owned: String,
+    shell: String,
+}
+
+async fn restarted(fixture: &Fixture) -> Restarted {
+    let database = fixture.database();
+    let (state, log) = open(&database).await;
+    let events = drained();
+    let (restored, owned, shell) = {
+        let mut guard = state.lock().unwrap();
+        (
+            ready(&mut guard, &events),
+            ready(&mut guard, &events),
+            launch(&mut guard, &events, None),
+        )
+    };
+    hibernation::hibernate(&state, &log, owned.clone(), "owner".into(), OWNER)
+        .await
+        .unwrap();
+    state.lock().unwrap().begin_shutdown();
+    restore::shutdown(&state, &log).await;
+    finish(&state);
+    log.shutdown().await;
+    drop((state, log));
+    let (state, log) = open(&database).await;
+    hibernation::restore(&state, &log).await.unwrap();
+    state.lock().unwrap().launchers = fixture.claude_launchers();
+    Restarted {
+        state,
+        log,
+        events,
+        restored,
+        owned,
+        shell,
+    }
+}
+
+fn report(state: &Arc<Mutex<State>>) -> Vec<Value> {
+    state.lock().unwrap().restore_report()["sessions"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+fn reported<'a>(rows: &'a [Value], id: &str) -> &'a Value {
+    rows.iter()
+        .find(|row| row["sessionId"] == id)
+        .unwrap_or_else(|| panic!("no reported row for {id}: {rows:?}"))
+}
+
+#[tokio::test]
+async fn startup_resumes_exactly_the_shutdown_set_under_the_same_session_id() {
+    let fixture = Fixture::new();
+    let Restarted {
+        state,
+        log,
+        events,
+        restored,
+        owned,
+        shell,
+    } = restarted(&fixture).await;
+    let run = tokio::spawn(restore::run(state.clone(), log.clone(), events.clone()));
+    answer(&state, &restored, CONVERSATION).await;
+    run.await.unwrap().unwrap();
+    {
+        let guard = state.lock().unwrap();
+        assert!(guard.sessions.contains_key(&restored));
+        assert!(!guard.hibernated.contains(&restored));
+        assert!(
+            view(&guard, &restored)
+                .unwrap()
+                .get("hibernation")
+                .is_none()
+        );
+        assert!(
+            guard.hibernated.contains(&owned),
+            "owner intent stays owner intent"
+        );
+        assert!(!guard.sessions.contains_key(&owned));
+    }
+    let rows = report(&state);
+    assert_eq!(reported(&rows, &restored)["outcome"], "restored");
+    assert_eq!(reported(&rows, &owned)["outcome"], "hibernated");
+    assert_eq!(reported(&rows, &owned)["code"], "owner_hibernated");
+    assert_eq!(reported(&rows, &shell)["outcome"], "reaped");
+    assert_eq!(reported(&rows, &shell)["code"], "hibernate_unsupported");
+    assert_eq!(
+        payloads(&log, &restored).await,
+        [
+            (
+                "session.hibernated".to_owned(),
+                json!({"conversationId":CONVERSATION,"program":"claude","trigger":"shutdown"})
+            ),
+            (
+                "session.resumed".to_owned(),
+                json!({"conversationId":CONVERSATION,"program":"claude","reason":"restored"})
+            ),
+        ]
+    );
+    let stored = ledger(&fixture.database());
+    let row = stored.iter().find(|(id, _, _)| *id == restored).unwrap();
+    assert_eq!(row.1, "restored");
+    finish(&state);
+    log.shutdown().await;
+}
+
+#[tokio::test]
+async fn startup_with_the_policy_off_leaves_the_shutdown_set_hibernated_with_its_reason() {
+    let fixture = Fixture::new();
+    let Restarted {
+        state,
+        log,
+        events,
+        restored,
+        ..
+    } = restarted(&fixture).await;
+    state
+        .lock()
+        .unwrap()
+        .set_restore_policy(restore::Policy::new(false));
+    restore::run(state.clone(), log.clone(), events.clone())
+        .await
+        .unwrap();
+    {
+        let guard = state.lock().unwrap();
+        assert!(guard.hibernated.contains(&restored));
+        assert!(!guard.sessions.contains_key(&restored));
+    }
+    let rows = report(&state);
+    assert_eq!(reported(&rows, &restored)["outcome"], "hibernated");
+    assert_eq!(reported(&rows, &restored)["code"], "restore_disabled");
+    assert_eq!(
+        state.lock().unwrap().restore_report()["policy"],
+        json!({"enabled":false,"concurrency":restore::CONCURRENCY})
+    );
+    assert!(
+        !payloads(&log, &restored)
+            .await
+            .iter()
+            .any(|(kind, _)| kind == "session.resumed")
+    );
+    finish(&state);
+    log.shutdown().await;
+}
+
+#[tokio::test]
+async fn startup_restore_that_fails_stays_hibernated_with_its_refusal_and_is_not_retried() {
+    let fixture = Fixture::new();
+    let Restarted {
+        state,
+        log,
+        events,
+        restored,
+        ..
+    } = restarted(&fixture).await;
+    let run = tokio::spawn(restore::run(state.clone(), log.clone(), events.clone()));
+    answer(&state, &restored, OTHER).await;
+    run.await.unwrap().unwrap();
+    {
+        let guard = state.lock().unwrap();
+        assert!(guard.hibernated.contains(&restored));
+        assert!(!guard.sessions.contains_key(&restored));
+        let listed = view(&guard, &restored).unwrap();
+        assert!(
+            listed["hibernation"]["lastResumeFailure"]
+                .as_str()
+                .unwrap()
+                .contains(OTHER)
+        );
+    }
+    let rows = report(&state);
+    assert_eq!(reported(&rows, &restored)["outcome"], "hibernated");
+    assert_eq!(reported(&rows, &restored)["code"], "resume_unverifiable");
+    restore::run(state.clone(), log.clone(), events.clone())
+        .await
+        .unwrap();
+    assert!(state.lock().unwrap().hibernated.contains(&restored));
+    assert!(
+        !payloads(&log, &restored)
+            .await
+            .iter()
+            .any(|(kind, _)| kind == "session.resumed")
+    );
+    finish(&state);
+    log.shutdown().await;
 }
