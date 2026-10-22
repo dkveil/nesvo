@@ -111,7 +111,7 @@ fn job_spec_schema() -> Value {
     ]});
     let retry = object(
         json!({
-            "on":{"enum":["launchNoEffect"],"description":"Only an exact failed native create receipt with effectStarted:false; no unknown-effect, process or result retry"},
+            "on":{"enum":["launchNoEffect"],"description":"Retries an exact failed native create receipt with effectStarted:false, and an uncertain launch only after journal probes find no attempt or session and fence its Run; found work is adopted, never relaunched; no process or result retry"},
             "maxAttempts":{"type":"integer","minimum":1,"maximum":8,"description":"Total dispatch generations, including the first"},
             "initialDelayMs":{"type":"integer","minimum":1000,"maximum":3600000},
             "maxDelayMs":{"type":"integer","minimum":1000,"maximum":86400000,"description":"At least initialDelayMs; capped exponential delay is persisted once per outgoing retry decision"}
