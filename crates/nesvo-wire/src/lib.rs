@@ -10,6 +10,7 @@ use serde_json::Value;
 
 pub mod contract;
 pub mod events;
+pub mod views;
 
 pub const MAX_FRAME: usize = 128 * 1024;
 pub const MAX_PLAINTEXT: usize = 64 * 1024;
