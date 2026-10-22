@@ -515,6 +515,13 @@ impl Runs {
         self.details.get(self.selected.as_deref()?)
     }
 
+    fn listed_detail(&mut self, id: &str) -> Option<&mut Detail> {
+        self.runs
+            .iter()
+            .any(|run| run.id == id)
+            .then(|| self.details.entry(id.to_owned()).or_default())
+    }
+
     pub fn selected_row(&self) -> usize {
         self.selected
             .as_deref()
@@ -1029,7 +1036,9 @@ impl Runs {
                 self.reload_selected(features)
             }
             Read::Run(id) => {
-                let detail = self.details.entry(id.clone()).or_default();
+                let Some(detail) = self.listed_detail(&id) else {
+                    return Effect::default();
+                };
                 detail.goal = event["run"]["goal"].as_str().unwrap_or_default().to_owned();
                 detail.tasks = serde_json::from_value(event["tasks"].clone()).unwrap_or_default();
                 detail.tasks_load = Load::Ready;
@@ -1043,7 +1052,9 @@ impl Runs {
             Read::Decisions { run, offset, page } => {
                 let decisions: Vec<Decision> =
                     serde_json::from_value(event["decisions"].clone()).unwrap_or_default();
-                let detail = self.details.entry(run.clone()).or_default();
+                let Some(detail) = self.listed_detail(&run) else {
+                    return Effect::default();
+                };
                 if offset == 0 {
                     detail.decisions.clear();
                 }
@@ -1076,7 +1087,9 @@ impl Runs {
                 }
             }
             Read::Inbox(id) => {
-                let detail = self.details.entry(id).or_default();
+                let Some(detail) = self.listed_detail(&id) else {
+                    return Effect::default();
+                };
                 detail.pending_messages = event["pendingCount"].as_u64().unwrap_or_default();
                 detail.messages =
                     serde_json::from_value(event["messages"].clone()).unwrap_or_default();
@@ -1084,13 +1097,18 @@ impl Runs {
                 Effect::default()
             }
             Read::Digest(id) => {
-                let detail = self.details.entry(id).or_default();
+                let Some(detail) = self.listed_detail(&id) else {
+                    return Effect::default();
+                };
                 detail.digest = Some(Digest::parse(&event["digest"]));
                 detail.digest_error = None;
                 Effect::default()
             }
             Read::Wakes(id) => {
-                let wakes = &mut self.details.entry(id).or_default().wakes;
+                let Some(detail) = self.listed_detail(&id) else {
+                    return Effect::default();
+                };
+                let wakes = &mut detail.wakes;
                 wakes.loaded = true;
                 wakes.error = None;
                 wakes.policy = serde_json::from_value(event["wakePolicy"].clone()).ok();
@@ -1158,18 +1176,31 @@ impl Runs {
                     templates.load = Load::Failed(message);
                 }
             }
-            Read::Run(id) => self.details.entry(id).or_default().tasks_load = Load::Failed(message),
+            Read::Run(id) => {
+                if let Some(detail) = self.listed_detail(&id) {
+                    detail.tasks_load = Load::Failed(message);
+                }
+            }
             Read::Decisions { run, .. } => {
-                self.details.entry(run).or_default().decisions_load = Load::Failed(message);
+                if let Some(detail) = self.listed_detail(&run) {
+                    detail.decisions_load = Load::Failed(message);
+                }
             }
             Read::Inbox(id) => {
-                self.details.entry(id).or_default().inbox_load = Load::Failed(message)
+                if let Some(detail) = self.listed_detail(&id) {
+                    detail.inbox_load = Load::Failed(message);
+                }
             }
-            Read::Digest(id) => self.details.entry(id).or_default().digest_error = Some(message),
+            Read::Digest(id) => {
+                if let Some(detail) = self.listed_detail(&id) {
+                    detail.digest_error = Some(message);
+                }
+            }
             Read::Wakes(id) => {
-                let wakes = &mut self.details.entry(id).or_default().wakes;
-                wakes.loaded = false;
-                wakes.error = Some(message);
+                if let Some(detail) = self.listed_detail(&id) {
+                    detail.wakes.loaded = false;
+                    detail.wakes.error = Some(message);
+                }
             }
         }
     }
@@ -1551,6 +1582,33 @@ pub(crate) mod tests {
         reply(&mut runs, &list, json!({"runs":listed(),"nextOffset":null}));
         assert!(!runs.details.contains_key("run-gone"));
         assert!(runs.details.contains_key("run-a"));
+    }
+
+    #[test]
+    fn runs_late_detail_replies_for_an_unlisted_run_do_not_recreate_its_details() {
+        let (mut runs, list) = Runs::open(7, &features()).unwrap();
+        let reads = reply(&mut runs, &list, json!({"runs":listed(),"nextOffset":null}));
+        let refresh = runs.refresh(&features()).commands.remove(0);
+        reply(
+            &mut runs,
+            &refresh,
+            json!({"runs":[listed()[1].clone()],"nextOffset":null}),
+        );
+        assert_eq!(runs.selected.as_deref(), Some("run-b"));
+        for command in &reads.commands {
+            let body = match command["request"]["action"].as_str().unwrap() {
+                "get" => view(),
+                "decision" => json!({"decisions":decisions(),"nextOffset":3}),
+                "digest" => {
+                    fail(&mut runs, command, "late failure");
+                    continue;
+                }
+                _ => inbox(),
+            };
+            let effect = reply(&mut runs, command, body);
+            assert!(effect.commands.is_empty(), "{command}");
+        }
+        assert!(!runs.details.contains_key("run-a"));
     }
 
     #[test]
