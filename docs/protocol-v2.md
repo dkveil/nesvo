@@ -264,7 +264,8 @@ changes or more children block, and are process-local: a host restart clears
 session receipts while journal item receipts survive. Hosts may add item kinds,
 programs and decision states: mobile drops
 an inbox item of unknown `kind` or a decision of unknown `state` one by one, counts
-them as `skipped` for the inbox badge, omits an unknown item `program`, and keeps
+them as `skipped` for the inbox badge, omits an item `program` outside the published
+`claude`, `codex` and `gemini` (a `shell` value included), and keeps
 the connection; malformed known items still reject the frame. `decisions:true` adds `decisions {page?}` (reply `decisions
 {decisions,page,nextPage,total}`) and `decide {decisionId,choice,note?}` (reply
 `decided`), which need no run ID, replay the original `decided` reply for the

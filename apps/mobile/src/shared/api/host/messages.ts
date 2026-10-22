@@ -1,6 +1,42 @@
 import { Buffer } from 'buffer';
 
-import type { ServerMessage } from './types';
+import type {
+  DecisionState,
+  InboxItemKind,
+  InboxItemProgram,
+  JobCalendarState,
+  JobOccurrenceState,
+  JobRetryClass,
+  JobSchedule,
+  PendingDecision,
+  ServerMessage,
+  SessionHibernation,
+  SessionProgram,
+  SessionStatusState,
+} from './types';
+
+const wireMembers = <TMember extends string>(members: Record<TMember, true>): readonly string[] =>
+  Object.keys(members);
+
+const PROGRAMS = wireMembers<SessionProgram>({
+  shell: true,
+  claude: true,
+  gemini: true,
+  codex: true,
+});
+const STATUS_STATES = wireMembers<SessionStatusState>({
+  working: true,
+  idle: true,
+  done: true,
+  blocked: true,
+  question: true,
+  failed: true,
+  unknown: true,
+});
+const HIBERNATION_TRIGGERS = wireMembers<SessionHibernation['trigger']>({
+  owner: true,
+  idlePolicy: true,
+});
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): value is RecordValue {
@@ -19,9 +55,8 @@ function dimensions(value: RecordValue): boolean {
   return integer(value.cols, 10, 300) && integer(value.rows, 2, 150);
 }
 function program(value: unknown): boolean {
-  return value === 'shell' || value === 'claude' || value === 'gemini' || value === 'codex';
+  return typeof value === 'string' && PROGRAMS.includes(value);
 }
-const STATUS_STATES = ['working', 'idle', 'done', 'blocked', 'question', 'failed', 'unknown'];
 function freshness(value: unknown, state: unknown): boolean {
   if (
     !record(value) ||
@@ -63,7 +98,7 @@ function sessionStatus(value: unknown): boolean {
   return (
     (value.source === 'screen' || value.source === 'hook' || value.source === 'program') &&
     typeof value.state === 'string' &&
-    ['working', 'idle', 'done', 'blocked', 'question', 'failed', 'unknown'].includes(value.state)
+    STATUS_STATES.includes(value.state)
   );
 }
 function lifecycle(value: unknown, running: boolean): boolean {
@@ -225,7 +260,8 @@ function hibernation(value: unknown): boolean {
     value.state === 'hibernated' &&
     integer(value.hibernatedAt) &&
     text(value.conversationId) &&
-    (value.trigger === 'owner' || value.trigger === 'idlePolicy') &&
+    typeof value.trigger === 'string' &&
+    HIBERNATION_TRIGGERS.includes(value.trigger) &&
     (value.lastResumeFailure === null || text(value.lastResumeFailure, 1024))
   );
 }
@@ -318,8 +354,23 @@ function snapshot(value: RecordValue): boolean {
 }
 
 const INBOX_FLAGS = ['attentionInbox', 'decisions', 'jobPages', 'pushDevices'] as const;
-const INBOX_KINDS = ['session', 'decision', 'run', 'result'];
-const DECISION_STATES = ['pending', 'answered', 'canceled', 'expired'];
+const INBOX_KINDS = wireMembers<InboxItemKind>({
+  session: true,
+  decision: true,
+  run: true,
+  result: true,
+});
+const INBOX_PROGRAMS = wireMembers<InboxItemProgram>({ claude: true, codex: true, gemini: true });
+const DECISION_STATES = wireMembers<DecisionState>({
+  pending: true,
+  answered: true,
+  canceled: true,
+  expired: true,
+});
+const DECISION_AUDIENCES = wireMembers<PendingDecision['audience']>({
+  owner: true,
+  coordinator: true,
+});
 const MAX_ITEM_ID_LENGTH = 200;
 const MAX_INBOX_TEXT_LENGTH = 4096;
 const MAX_QUESTION_LENGTH = 32768;
@@ -355,8 +406,8 @@ const knownEntries = (
 };
 const withSkipped = (value: RecordValue, skipped: number) =>
   skipped > 0 ? { ...value, skipped } : value;
-const withoutUnknownProgram = (value: RecordValue): RecordValue =>
-  typeof value.program !== 'string' || program(value.program)
+const withoutUnknownProgram = (value: RecordValue, known: readonly string[]): RecordValue =>
+  typeof value.program !== 'string' || known.includes(value.program)
     ? value
     : Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'program'));
 
@@ -376,12 +427,16 @@ const inboxItem = (value: unknown): value is RecordValue =>
   optional(value.sessionId, item => text(item)) &&
   optional(value.decisionId, item => text(item)) &&
   optional(value.runId, nullableId) &&
+  optional(value.taskId, item => text(item)) &&
+  optional(value.attemptId, item => text(item)) &&
+  optional(value.jobId, item => text(item)) &&
+  optional(value.occurrenceId, item => text(item)) &&
   optional(value.expiresAt, item => integer(item)) &&
-  optional(value.program, program);
+  optional(value.program, item => typeof item === 'string' && INBOX_PROGRAMS.includes(item));
 
 const knownInboxItem = (value: unknown) => {
   if (!record(value)) return null;
-  const item = withoutUnknownProgram(value);
+  const item = withoutUnknownProgram(value, INBOX_PROGRAMS);
   return inboxItem(item) ? item : null;
 };
 
@@ -420,7 +475,8 @@ const pendingDecision = (value: unknown): value is RecordValue =>
   integer(value.revision, 1) &&
   typeof value.state === 'string' &&
   DECISION_STATES.includes(value.state) &&
-  (value.audience === 'owner' || value.audience === 'coordinator') &&
+  typeof value.audience === 'string' &&
+  DECISION_AUDIENCES.includes(value.audience) &&
   integer(value.createdAt) &&
   integer(value.expiresAt) &&
   (value.answer === null || boundedString(value.answer, MAX_QUESTION_LENGTH)) &&
@@ -477,23 +533,32 @@ const pushDevices = (value: RecordValue) => {
   return { ...value, devices };
 };
 
-const JOB_SCHEDULE_KINDS = ['once', 'cron', 'rrule', 'external'];
-const JOB_CALENDAR_STATES = ['ready', 'blocked', 'exhausted'];
-const JOB_OCCURRENCE_STATES = [
-  'queued',
-  'dispatching',
-  'prechecking',
-  'running',
-  'needsValidation',
-  'canceling',
-  'retryWaiting',
-  'reconcile',
-  'succeeded',
-  'failed',
-  'skipped',
-  'canceled',
-];
-const JOB_RETRY_CLASSES = ['noEffect', 'uncertainEffect', 'definiteEffect'];
+const JOB_SCHEDULE_KINDS = wireMembers<JobSchedule['kind']>({
+  once: true,
+  cron: true,
+  rrule: true,
+  external: true,
+});
+const JOB_CALENDAR_STATES = wireMembers<JobCalendarState>({
+  ready: true,
+  blocked: true,
+  exhausted: true,
+});
+const JOB_OCCURRENCE_STATES = wireMembers<JobOccurrenceState>({
+  queued: true,
+  dispatching: true,
+  prechecking: true,
+  running: true,
+  needsValidation: true,
+  canceling: true,
+  retryWaiting: true,
+  reconcile: true,
+  succeeded: true,
+  failed: true,
+  skipped: true,
+  canceled: true,
+});
+const JOB_RETRY_CLASSES = wireMembers<JobRetryClass>({ noEffect: true, uncertainEffect: true });
 const MAX_JOBS_PER_PAGE = 16;
 const MAX_OCCURRENCES_PER_PAGE = 8;
 const MAX_JOB_LIST_PAGE = 256;
@@ -581,7 +646,7 @@ const knownJobDetail = (value: unknown): RecordValue | null => {
     !optional(spec.executionTimeoutMs, item => integer(item))
   )
     return null;
-  return { ...job, spec: { ...spec, profile: withoutUnknownProgram(spec.profile) } };
+  return { ...job, spec: { ...spec, profile: withoutUnknownProgram(spec.profile, PROGRAMS) } };
 };
 
 const retryDecision = (value: unknown): RecordValue | null | false => {

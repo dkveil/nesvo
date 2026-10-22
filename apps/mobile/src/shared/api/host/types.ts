@@ -1,8 +1,27 @@
+import type {
+  AttentionItem,
+  AttentionReceipt,
+  HarnessCliEnvelope,
+  JobDefinition,
+  RepositoryContext,
+  SessionHibernation,
+  JobOccurrence as WireJobOccurrence,
+  JobRetryDecision as WireJobRetryDecision,
+  JobRetryPolicy as WireJobRetryPolicy,
+  Session as WireSession,
+} from '../contracts/harness-cli';
+import type { AgentState, Program } from '../contracts/harness-events';
+
+type CliReply = Extract<HarnessCliEnvelope, { ok: true }>['data'];
+type CliReplyOf<TType extends string> = Extract<CliReply, { type: TType }>;
+type WireDecision = CliReplyOf<'decisions'>['decisions'][number];
+
+export type { RepositoryContext, SessionHibernation };
+
 export type Pairing = { version: 1; url: string; key: string };
 
-export type SessionProgram = 'shell' | 'claude' | 'gemini' | 'codex';
-export type SessionStatusState =
-  'working' | 'idle' | 'done' | 'blocked' | 'question' | 'failed' | 'unknown';
+export type SessionProgram = Program;
+export type SessionStatusState = AgentState;
 export type SessionStatusSource = 'activity' | 'screen' | 'hook' | 'program' | 'process';
 export type SessionFreshnessSource = 'hook' | 'process' | 'journal' | 'unknown';
 export type SessionFreshness = {
@@ -12,13 +31,6 @@ export type SessionFreshness = {
   stale: boolean;
   boundMs: number | null;
   lastKnown: { state: SessionStatusState; observedAt: number } | null;
-};
-export type SessionHibernation = {
-  state: 'hibernated';
-  hibernatedAt: number;
-  conversationId: string;
-  trigger: 'owner' | 'idlePolicy';
-  lastResumeFailure: string | null;
 };
 export type SessionStatus = {
   state: SessionStatusState;
@@ -106,70 +118,65 @@ export type InboxFeatures = {
   jobPages: boolean;
   pushDevices: boolean;
 };
-export type InboxItemKind = 'session' | 'decision' | 'run' | 'result';
-export type InboxItem = {
-  id: string;
-  kind: InboxItemKind;
-  revision: number;
-  priority: 1 | 2 | 3;
-  reason: string;
-  at: number;
-  title: string;
-  summary?: string;
-  sessionId?: string;
-  decisionId?: string;
-  runId?: string | null;
-  expiresAt?: number;
-  program?: SessionProgram;
-};
+export type InboxItemKind = AttentionItem['kind'];
+export type InboxItemProgram = NonNullable<AttentionItem['program']>;
+export type InboxItem = Pick<
+  AttentionItem,
+  | 'id'
+  | 'kind'
+  | 'revision'
+  | 'reason'
+  | 'at'
+  | 'title'
+  | 'summary'
+  | 'sessionId'
+  | 'decisionId'
+  | 'runId'
+  | 'taskId'
+  | 'attemptId'
+  | 'jobId'
+  | 'occurrenceId'
+  | 'expiresAt'
+  | 'program'
+> & { priority: 1 | 2 | 3 };
 export type JobRead =
   | { action: 'list'; page: number }
   | { action: 'get'; jobId: string }
   | { action: 'history'; jobId: string; page: number };
-export type InboxMark = { id: string; revision: number };
-export type InboxReceipt = InboxMark & { acknowledgedAt: number };
-export type DecisionState = 'pending' | 'answered' | 'canceled' | 'expired';
-export type PendingDecision = {
-  id: string;
-  runId: string;
-  taskId: string;
-  attemptId: string;
-  question: string;
-  revision: number;
-  state: DecisionState;
-  audience: 'owner' | 'coordinator';
-  createdAt: number;
-  expiresAt: number;
-  answer: string | null;
-  inboxId: string;
-  run: { id: string; title: string; state: string };
-};
+export type InboxReceipt = AttentionReceipt;
+export type InboxMark = Pick<InboxReceipt, 'id' | 'revision'>;
+export type DecisionState = WireDecision['state'];
+export type PendingDecision = Pick<
+  WireDecision,
+  | 'id'
+  | 'runId'
+  | 'taskId'
+  | 'attemptId'
+  | 'question'
+  | 'revision'
+  | 'state'
+  | 'audience'
+  | 'createdAt'
+  | 'expiresAt'
+  | 'answer'
+  | 'inboxId'
+  | 'run'
+>;
 export type PushKind = 'decisionPending' | 'resultReady';
 export type PushDevice = { device: string; kinds: PushKind[] };
 
-export type JobSchedule =
-  | { kind: 'once'; at: string }
-  | { kind: 'cron'; expression: string; timeZone: string }
-  | { kind: 'rrule'; rule: string; start: string; timeZone: string }
-  | { kind: 'external' };
-export type JobCalendarState = 'ready' | 'blocked' | 'exhausted';
-export type JobSummary = {
-  id: string;
-  title: string;
-  revision: number;
-  enabled: boolean;
-  nextDueAt: number | null;
-  createdAt: number;
+export type JobSchedule = JobDefinition['schedule'];
+export type JobCalendarState = NonNullable<JobDefinition['calendarState']>;
+export type JobCalendarError = NonNullable<JobDefinition['calendarError']>;
+export type JobSummary = Pick<
+  JobDefinition,
+  'id' | 'title' | 'revision' | 'enabled' | 'nextDueAt' | 'createdAt'
+> & {
   schedule: JobSchedule | null;
   calendarState: JobCalendarState | null;
-  calendarError: { code: string; message: string } | null;
+  calendarError: JobCalendarError | null;
 };
-export type JobRetryPolicy = {
-  on: string;
-  maxAttempts: number;
-  initialDelayMs: number;
-  maxDelayMs: number;
-};
+export type JobRetryPolicy = Omit<WireJobRetryPolicy, 'on'> & { on: string };
 export type Job = JobSummary & {
   spec: {
     instruction: string;
@@ -180,40 +187,28 @@ export type Job = JobSummary & {
     executionTimeoutMs?: number;
   };
 };
-export type JobOccurrenceState =
-  | 'queued'
-  | 'dispatching'
-  | 'prechecking'
-  | 'running'
-  | 'needsValidation'
-  | 'canceling'
-  | 'retryWaiting'
-  | 'reconcile'
-  | 'succeeded'
-  | 'failed'
-  | 'skipped'
-  | 'canceled';
-export type JobRetryClass = 'noEffect' | 'uncertainEffect' | 'definiteEffect';
-export type JobRetryDecision = {
-  class?: JobRetryClass;
-  decidedAt: number;
-  notBefore: number;
-  nextOrdinal: number | null;
-};
-export type JobOccurrence = {
-  id: string;
-  jobId: string;
-  jobRevision: number;
+export type JobOccurrenceState = WireJobOccurrence['state'];
+export type JobRetryClass = NonNullable<WireJobRetryDecision['class']>;
+export type JobRetryDecision = Pick<
+  WireJobRetryDecision,
+  'class' | 'decidedAt' | 'notBefore' | 'nextOrdinal'
+>;
+export type JobOccurrence = Pick<
+  WireJobOccurrence,
+  | 'id'
+  | 'jobId'
+  | 'jobRevision'
+  | 'dueAt'
+  | 'createdAt'
+  | 'state'
+  | 'reason'
+  | 'runId'
+  | 'startedAt'
+  | 'finishedAt'
+> & {
   trigger: string;
-  dueAt: number;
-  createdAt: number;
-  state: JobOccurrenceState;
-  reason: string | null;
-  runId: string | null;
-  startedAt: number | null;
-  finishedAt: number | null;
-  jobAttemptId: string | null;
-  jobAttemptOrdinal: number | null;
+  jobAttemptId: Exclude<WireJobOccurrence['jobAttemptId'], undefined>;
+  jobAttemptOrdinal: Exclude<WireJobOccurrence['jobAttemptOrdinal'], undefined>;
   retry: JobRetryDecision | null;
 };
 
@@ -232,36 +227,29 @@ export type SessionControl = {
   rows: number;
 };
 
-export type RepositoryContext = {
-  source: 'launchDirectory';
-  state: 'checking' | 'ready' | 'detached' | 'notRepository' | 'unavailable' | 'stale';
-  name: string | null;
-  branch: string | null;
-  observedAt: number | null;
-  revision: number;
-};
-
-export type TerminalSession = {
-  repositoryContext?: RepositoryContext;
+export type TerminalSession = Pick<
+  WireSession,
+  | 'id'
+  | 'name'
+  | 'cwd'
+  | 'createdAt'
+  | 'uptimeSeconds'
+  | 'cols'
+  | 'rows'
+  | 'running'
+  | 'groupId'
+  | 'controllerId'
+  | 'program'
+  | 'repositoryContext'
+  | 'hibernation'
+> & {
   role?: 'worker' | 'coordinator';
   parentSessionId?: string | null;
   currentAttention?: CurrentAttention;
   lifecycle?: SessionLifecycle;
   readiness?: SessionReadiness;
-  hibernation?: SessionHibernation;
   attention?: AttentionEvent | null;
   muted?: boolean;
-  id: string;
-  name: string;
-  cwd: string;
-  createdAt: string;
-  uptimeSeconds?: number;
-  cols: number;
-  rows: number;
-  running: boolean;
-  groupId: string | null;
-  controllerId: number | null;
-  program?: SessionProgram;
   status?: SessionStatus;
 };
 
@@ -289,7 +277,7 @@ export type HostEvent =
     }
   | {
       type: 'decided';
-      decision: { id: string; revision: number; state: string };
+      decision: Pick<WireDecision, 'id' | 'revision'> & { state: string };
       inboxId: string;
       requestId?: string;
     }

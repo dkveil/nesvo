@@ -26,7 +26,6 @@ export const JOB_OCCURRENCE_STATE_LABELS = {
 export const JOB_RETRY_CLASS_LABELS = {
   noEffect: 'No effect: the launch was refused before it started',
   uncertainEffect: 'Uncertain effect: probes looked for the launch',
-  definiteEffect: 'Definite effect: the launch was found and adopted',
 } as const satisfies Record<JobRetryClass, string>;
 
 const CALENDAR_STATE_LABELS = {

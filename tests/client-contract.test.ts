@@ -972,7 +972,7 @@ test('unknown inbox kinds, programs and decision states are skipped item by item
   const shellItem = { ...sessionItem, program: 'shell' };
   assert.deepEqual(decodeServerMessage({ ...inboxPage, items: [shellItem] }), {
     ...inboxPage,
-    items: [shellItem],
+    items: [withoutProgram],
   });
   assert.deepEqual(decodeServerMessage({ ...inboxPage, items: [futureItem, futureItem] }), {
     ...inboxPage,
