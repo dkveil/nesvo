@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fmt,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
@@ -19,6 +19,8 @@ const SESSION_LIMIT: usize = 64;
 const QUEUE: usize = 256;
 const BATCH: usize = 64;
 const SEEN_LIMIT: usize = 4096;
+const BUSY_WAIT: Duration = Duration::from_millis(100);
+const BUSY_ATTEMPTS: usize = 3;
 const LAYOUT_CHARS: usize = 40;
 const NAME_BYTES: usize = 128;
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
@@ -175,15 +177,55 @@ fn unsigned(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0).min(MAX_SAFE)
 }
 
+#[derive(Default)]
+struct Recent {
+    ticks: HashMap<(String, String), u64>,
+    order: BTreeMap<u64, (String, String)>,
+    clock: u64,
+}
+
+impl Recent {
+    fn insert(&mut self, key: (String, String)) -> bool {
+        self.clock += 1;
+        let fresh = match self.ticks.insert(key.clone(), self.clock) {
+            Some(previous) => {
+                self.order.remove(&previous);
+                false
+            }
+            None => true,
+        };
+        self.order.insert(self.clock, key);
+        while self.ticks.len() > SEEN_LIMIT {
+            let Some((_, oldest)) = self.order.pop_first() else {
+                break;
+            };
+            self.ticks.remove(&oldest);
+        }
+        fresh
+    }
+}
+
+fn busy(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<rusqlite::Error>()
+        .is_some_and(|error| {
+            matches!(
+                error.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+            )
+        })
+}
+
 pub(crate) struct Store {
     connection: Connection,
-    seen: HashSet<(String, String)>,
+    seen: Recent,
 }
 
 impl Store {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open(path).context("Could not open the project registry")?;
-        connection.busy_timeout(Duration::from_secs(2))?;
+        connection.busy_timeout(BUSY_WAIT)?;
+        connection.execute_batch("PRAGMA synchronous=NORMAL;")?;
         Self::with(connection)
     }
 
@@ -199,7 +241,7 @@ impl Store {
         );
         Ok(Self {
             connection,
-            seen: HashSet::new(),
+            seen: Recent::default(),
         })
     }
 
@@ -208,9 +250,6 @@ impl Store {
         for observation in observations {
             let launch = match (&observation.session_id, &observation.folder) {
                 (Some(session), Some(folder)) => {
-                    if self.seen.len() >= SEEN_LIMIT {
-                        self.seen.clear();
-                    }
                     self.seen.insert((session.clone(), folder.clone()))
                 }
                 (None, Some(_)) => true,
@@ -218,8 +257,20 @@ impl Store {
             };
             launches.push(launch);
         }
-        let transaction = self.connection.transaction()?;
-        for (observation, launch) in observations.iter().zip(launches) {
+        let mut attempt = 1;
+        loop {
+            match self.write(observations, &launches) {
+                Err(error) if busy(&error) && attempt < BUSY_ATTEMPTS => attempt += 1,
+                result => return result,
+            }
+        }
+    }
+
+    fn write(&mut self, observations: &[Observation], launches: &[bool]) -> Result<()> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        for (observation, launch) in observations.iter().zip(launches.iter().copied()) {
             let at = millis(observation.at);
             transaction.execute(
                 "INSERT INTO projects(root,name,default_branch,first_seen_ms,last_activity_ms) VALUES(?1,?2,?3,?4,?4)

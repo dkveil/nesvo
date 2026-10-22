@@ -186,6 +186,64 @@ fn projects_usual_folder_counts_distinct_launches_and_main_checkout_sets_the_bra
 }
 
 #[test]
+fn projects_launch_dedupe_evicts_the_least_recent_entry_instead_of_clearing() {
+    let mut recent = Recent::default();
+    let key = |index: usize| (format!("s{index}"), "folder".to_owned());
+    for index in 0..SEEN_LIMIT {
+        assert!(recent.insert(key(index)));
+    }
+    assert!(!recent.insert(key(0)));
+    assert!(recent.insert(key(SEEN_LIMIT)));
+    assert_eq!(recent.ticks.len(), SEEN_LIMIT);
+    assert!(!recent.insert(key(0)));
+    assert!(!recent.insert(key(2)));
+    assert!(recent.insert(key(1)));
+}
+
+#[test]
+fn projects_writes_take_the_write_lock_up_front_and_never_starve_the_journal() {
+    let directory = std::env::temp_dir().join(format!(
+        "nesvo-projects-contention-{}",
+        hex::encode(crate::wire::random::<8>())
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("metadata.sqlite3");
+    drop(crate::migrations::migrated_database_at(&path));
+    let journal = Connection::open(&path).unwrap();
+    journal
+        .busy_timeout(std::time::Duration::from_millis(50))
+        .unwrap();
+    journal
+        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE contention(id INTEGER PRIMARY KEY, at INTEGER NOT NULL);")
+        .unwrap();
+    let mut store = Store::open(&path).unwrap();
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    let refused = store.record_all(&[seen("blocked", 1)]).unwrap_err();
+    assert!(busy(&refused));
+    assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+    blocker.execute_batch("ROLLBACK").unwrap();
+    let writer = std::thread::spawn(move || {
+        for index in 0..200u64 {
+            store
+                .record_all(&[launched("busy", &root("busy"), &format!("s{index}"), index)])
+                .unwrap();
+        }
+        store
+    });
+    for index in 0..200i64 {
+        journal
+            .execute("INSERT INTO contention(at) VALUES(?1)", [index])
+            .unwrap();
+    }
+    let store = writer.join().unwrap();
+    assert_eq!(store.rows().unwrap().len(), 1);
+    drop((store, journal, blocker));
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
 fn projects_commands_parse_are_owner_only_and_validate_arguments() {
     let pinned: Command =
         serde_json::from_value(json!({"type":"pinProject","root":root("nesvo")})).unwrap();
