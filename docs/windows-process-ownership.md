@@ -94,3 +94,7 @@ loaded `conpty.dll`; stopping one session ends exactly one of them within five
 seconds and dropping the state ends the other. The host-death fixture adds a
 pseudo console whose startup query is never answered, and both of its console
 hosts must end within five seconds of the hard kill.
+
+The Windows CI jobs add a coarser, process-list based check around their test
+steps: `scripts/console-orphans.ps1` fails the job when a console host created
+during the tests outlives its owning process ([contributor gates](engineering.md#contributor-gates)).
