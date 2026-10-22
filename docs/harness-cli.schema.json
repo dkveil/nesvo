@@ -3096,11 +3096,76 @@
           "type": "string"
         },
         "trigger": {
-          "enum": ["owner", "idlePolicy"],
+          "enum": ["owner", "idlePolicy", "shutdown"],
           "type": "string"
         }
       },
       "required": ["state", "hibernatedAt", "conversationId", "trigger", "lastResumeFailure"],
+      "type": "object"
+    },
+    "sessionRestoreReport": {
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "additionalProperties": false,
+          "properties": {
+            "concurrency": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": ["enabled", "concurrency"],
+          "type": "object"
+        },
+        "sessions": {
+          "items": {
+            "additionalProperties": false,
+            "if": {
+              "properties": {
+                "outcome": {
+                  "enum": ["hibernated", "reaped"]
+                }
+              }
+            },
+            "properties": {
+              "code": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": ["string", "null"]
+              },
+              "message": {
+                "maxLength": 1024,
+                "type": ["string", "null"]
+              },
+              "outcome": {
+                "enum": ["pending", "restored", "hibernated", "reaped"],
+                "type": "string"
+              },
+              "sessionId": {
+                "$ref": "#/definitions/id"
+              },
+              "shutdownAt": {
+                "$ref": "#/definitions/cursor"
+              }
+            },
+            "required": ["sessionId", "outcome", "code", "message", "shutdownAt"],
+            "then": {
+              "properties": {
+                "code": {
+                  "type": "string"
+                }
+              }
+            },
+            "type": "object"
+          },
+          "maxItems": 256,
+          "type": "array"
+        }
+      },
+      "required": ["policy", "sessions"],
       "type": "object"
     },
     "timestamp": {
@@ -7242,6 +7307,10 @@
                 "hibernation": {
                   "$ref": "#/definitions/sessionHibernation"
                 },
+                "reason": {
+                  "enum": ["owner", "restored"],
+                  "type": "string"
+                },
                 "replayed": {
                   "type": "boolean"
                 },
@@ -8394,6 +8463,9 @@
         "schemaVersion": {
           "const": 1,
           "type": "integer"
+        },
+        "sessionRestore": {
+          "$ref": "#/definitions/sessionRestoreReport"
         },
         "sessions": {
           "type": "array"

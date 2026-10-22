@@ -248,7 +248,11 @@ mod tests {
         );
         assert_eq!(
             schema["definitions"]["sessionHibernation"]["properties"]["trigger"]["enum"],
-            json!(["owner", "idlePolicy"])
+            json!(["owner", "idlePolicy", "shutdown"])
+        );
+        assert_eq!(
+            variant["properties"]["reason"]["enum"],
+            json!(["owner", "restored"])
         );
     }
 }

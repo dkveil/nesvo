@@ -430,6 +430,8 @@ pub struct SessionHibernationReply {
     pub hibernation: Option<SessionHibernation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<ResumeVerification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SessionResumeReason>,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
 }
@@ -446,8 +448,47 @@ pub struct DiagnosticsReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_profile_support: Option<Vec<LaunchProfileSupport>>,
     pub sessions: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_restore: Option<SessionRestoreReport>,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "sessionRestoreReport")]
+pub struct SessionRestoreReport {
+    pub policy: SessionRestorePolicy,
+    #[schemars(length(max = 256))]
+    pub sessions: Vec<SessionRestoreEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(inline)]
+pub struct SessionRestorePolicy {
+    pub enabled: bool,
+    #[schemars(range(min = 1))]
+    pub concurrency: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(inline)]
+#[schemars(extend(
+    "if" = {"properties": {"outcome": {"enum": ["hibernated", "reaped"]}}},
+    "then" = {"properties": {"code": {"type": "string"}}}
+))]
+pub struct SessionRestoreEntry {
+    pub session_id: Id,
+    pub outcome: SessionRestoreOutcome,
+    #[serde(deserialize_with = "present_or_null")]
+    #[schemars(length(min = 1, max = 64))]
+    pub code: Option<String>,
+    #[serde(deserialize_with = "present_or_null")]
+    #[schemars(length(max = 1024))]
+    pub message: Option<String>,
+    pub shutdown_at: Cursor,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -649,6 +690,25 @@ pub enum Program {
 pub enum SessionHibernationTrigger {
     Owner,
     IdlePolicy,
+    Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[schemars(inline)]
+pub enum SessionResumeReason {
+    Owner,
+    Restored,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[schemars(inline)]
+pub enum SessionRestoreOutcome {
+    Pending,
+    Restored,
+    Hibernated,
+    Reaped,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
