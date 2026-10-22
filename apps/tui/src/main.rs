@@ -38,6 +38,7 @@ mod runner;
 mod runs;
 mod runs_controller;
 mod selection;
+mod session_hibernation;
 mod session_kind;
 mod session_recovery;
 mod session_row;

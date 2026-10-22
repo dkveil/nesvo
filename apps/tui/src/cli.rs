@@ -380,6 +380,26 @@ pub enum SessionCommand {
         #[command(subcommand)]
         command: crate::session_recovery::Command,
     },
+    #[command(
+        about = "Stop an idle agent's provider process once per key; keeps the session, conversation, worktree and attention state"
+    )]
+    Hibernate {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(
+        about = "Relaunch a hibernated session through its exact recorded conversation once per key; refused when the provider cannot prove it"
+    )]
+    Resume {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -647,7 +667,9 @@ impl Command {
                 | SessionCommand::Read { json, .. }
                 | SessionCommand::Diff { json, .. }
                 | SessionCommand::Explain { json, .. }
-                | SessionCommand::Providers { json } => *json,
+                | SessionCommand::Providers { json }
+                | SessionCommand::Hibernate { json, .. }
+                | SessionCommand::Resume { json, .. } => *json,
                 SessionCommand::Recover { command } => command.machine(),
             },
         }
@@ -728,6 +750,8 @@ pub(crate) async fn request(
             Duration::from_secs(WORKTREE_LAUNCH_WAIT_S)
         }
         Some("archiveWorktree") => Duration::from_secs(90),
+        Some("resumeSession") => Duration::from_secs(80),
+        Some("hibernateSession") => Duration::from_secs(20),
         Some(
             "listWorktrees"
             | "describeWorktreeSetup"
@@ -1178,6 +1202,8 @@ async fn session_query(command: SessionCommand, connection: &mut Connection) -> 
         SessionCommand::Explain { .. }
         | SessionCommand::Providers { .. }
         | SessionCommand::Recover { .. }
+        | SessionCommand::Hibernate { .. }
+        | SessionCommand::Resume { .. }
         | SessionCommand::Wake { .. }
         | SessionCommand::Interrupt(_)
         | SessionCommand::Stop(_)
@@ -1973,6 +1999,30 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
         Command::Session {
             command: SessionCommand::Recover { command },
         } => return crate::session_recovery::run(command, connection).await,
+        Command::Session {
+            command: SessionCommand::Hibernate { id, key, json },
+        } => {
+            return crate::session_hibernation::run(
+                crate::session_hibernation::Action::Hibernate,
+                &id,
+                &key,
+                json,
+                connection,
+            )
+            .await;
+        }
+        Command::Session {
+            command: SessionCommand::Resume { id, key, json },
+        } => {
+            return crate::session_hibernation::run(
+                crate::session_hibernation::Action::Resume,
+                &id,
+                &key,
+                json,
+                connection,
+            )
+            .await;
+        }
         Command::Session {
             command: SessionCommand::Providers { json },
         } => {

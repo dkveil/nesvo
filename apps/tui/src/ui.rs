@@ -1575,6 +1575,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("n  N  g", "New session / kind / group"),
             ("r  m  d", "Rename / move / delete"),
             ("f  u", "Filter status / mute attention"),
+            ("b", "Hibernate / resume an agent session"),
             ("F8  F9", "Templates / restore sessions"),
             ("S  J  W  O", "Schedules / jobs / runs / overview"),
             ("P", "Projects: launch, layout, worktree setup"),
@@ -1701,6 +1702,34 @@ mod tests {
             .collect();
         assert!(text.contains("Toggle full screen"));
         assert!(text.contains("Tab close button"));
+    }
+
+    #[test]
+    fn hibernated_sessions_render_their_state_and_help_names_the_action() {
+        let mut app = App::new(1);
+        app.event(json!({"type":"sessions","revision":1,"groups":[],"sessions":[
+            {"id":"0123456789abcdef0123456789abcdef","name":"Sleeping agent","cwd":"/work","program":"claude",
+             "cols":80,"rows":24,"running":false,"groupId":null,"controllerId":null,
+             "hibernation":{"state":"hibernated","hibernatedAt":1,"conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e",
+                "trigger":"owner","lastResumeFailure":null}}
+        ]}))
+        .unwrap();
+        app.dialog = None;
+        let screen = |app: &App, width: u16, height: u16| {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| render(frame, app, 0)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+        assert!(screen(&app, 120, 30).contains("hibernated"));
+        app.dialog = Some(Dialog::Help);
+        app.help_page = 1;
+        assert!(screen(&app, 80, 24).contains("Hibernate / resume an agent session"));
     }
 
     #[test]

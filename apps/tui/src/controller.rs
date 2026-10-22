@@ -1415,6 +1415,7 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Char('r') => rename_selected(app),
         KeyCode::Char('m') => move_selected(app),
         KeyCode::Char('d') => close_selected(app),
+        KeyCode::Char('b') => hibernate_selected(app),
         KeyCode::PageUp | KeyCode::PageDown => {
             if let Some(id) = app.active_id().map(str::to_owned)
                 && let Some(terminal) = app.terminals.get_mut(&id)
@@ -1452,6 +1453,10 @@ fn acquire(app: &mut App, take_over: bool, area: Rect, outcome: &mut Outcome) {
     let Some(session) = app.active_session() else {
         return;
     };
+    if session.hibernated() {
+        app.notice = "This session is hibernated. Press b to resume it.".into();
+        return;
+    }
     if !session.running {
         app.notice = "This process has exited. Create a new session.".into();
         return;
@@ -1538,6 +1543,52 @@ fn close_selected(app: &mut App) {
         title,
         detail,
         command,
+    });
+}
+
+fn hibernate_selected(app: &mut App) {
+    let Some(RowKind::Session(id)) = app.selected_row().map(|row| row.kind) else {
+        return;
+    };
+    let Some(session) = app.sessions.iter().find(|session| session.id == id) else {
+        return;
+    };
+    if !app
+        .capabilities
+        .as_ref()
+        .is_some_and(|caps| caps.hibernation)
+    {
+        app.notice = "Update the host to hibernate sessions.".into();
+        return;
+    }
+    if session.program == crate::launch::Program::Shell {
+        app.notice = "Only agent sessions with an exact conversation can be hibernated.".into();
+        return;
+    }
+    let key = format!("tui-{}", hex::encode(nesvo_wire::random::<8>()));
+    let (title, detail, kind) = if session.hibernated() {
+        (
+            "Resume hibernated session?",
+            format!(
+                "{} relaunches through its exact recorded conversation. If the provider cannot prove it, the session stays hibernated.",
+                session.name
+            ),
+            "resumeSession",
+        )
+    } else {
+        (
+            "Hibernate session?",
+            format!(
+                "The provider process of {} stops. Its session, conversation, folder and attention stay; b resumes it.",
+                session.name
+            ),
+            "hibernateSession",
+        )
+    };
+    app.dialog = Some(Dialog::Confirm {
+        title: title.into(),
+        detail,
+        command: json!({"type":kind,"sessionId":id,"key":key}),
     });
 }
 
@@ -2646,6 +2697,54 @@ mod tests {
         let confirmed = click(&mut app, area, Action::Submit);
         assert_eq!(confirmed.commands[0]["type"], "close");
         assert_eq!(confirmed.commands[0]["sessionId"], "s");
+    }
+
+    #[test]
+    fn hibernate_key_confirms_a_keyed_request_and_offers_resume_for_hibernated_sessions() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let agent = json!({"id":id,"name":"Agent","cwd":".","program":"claude","cols":80,"rows":24,"running":true,"groupId":null,"controllerId":null});
+        let mut app = App::new(1);
+        app.event(json!({"type":"capabilities","workspace":"/work","programs":[{"id":"claude","available":true}]})).unwrap();
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[agent.clone()]}))
+            .unwrap();
+        app.dialog = None;
+        app.selected = 1;
+        let area = Rect::new(0, 0, 100, 32);
+        let hibernate = Event::Key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        assert!(event(&mut app, hibernate.clone(), area).commands.is_empty());
+        assert!(app.dialog.is_none());
+        assert!(app.notice.contains("Update the host"));
+        app.event(json!({"type":"capabilities","workspace":"/work","hibernation":true,"programs":[{"id":"claude","available":true}]})).unwrap();
+        app.dialog = None;
+        assert!(event(&mut app, hibernate.clone(), area).commands.is_empty());
+        assert!(
+            matches!(&app.dialog, Some(Dialog::Confirm { title, .. }) if title == "Hibernate session?")
+        );
+        let confirmed = click(&mut app, area, Action::Submit);
+        assert_eq!(confirmed.commands[0]["type"], "hibernateSession");
+        assert_eq!(confirmed.commands[0]["sessionId"], id);
+        let key = confirmed.commands[0]["key"].as_str().unwrap().to_owned();
+        assert!(key.starts_with("tui-") && key.len() > 4);
+        app.event(
+            json!({"type":"sessionHibernation","sessionId":id,"state":"hibernated","replayed":false,
+            "requestId":confirmed.commands[0]["requestId"]}),
+        )
+        .unwrap();
+        assert!(app.notice.contains("hibernated"));
+        let mut hibernated = agent;
+        hibernated["running"] = false.into();
+        hibernated["hibernation"] = json!({"state":"hibernated","hibernatedAt":1,
+            "conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e","trigger":"owner","lastResumeFailure":null});
+        app.event(json!({"type":"sessions","revision":0,"groups":[],"sessions":[hibernated]}))
+            .unwrap();
+        assert!(app.session(id).unwrap().hibernated());
+        event(&mut app, hibernate, area);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::Confirm { title, .. }) if title == "Resume hibernated session?")
+        );
+        let resumed = click(&mut app, area, Action::Submit);
+        assert_eq!(resumed.commands[0]["type"], "resumeSession");
+        assert_ne!(resumed.commands[0]["key"], key.as_str());
     }
 
     #[test]

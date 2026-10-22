@@ -854,6 +854,8 @@ impl HostTools {
             cli::attention::capability(&mut connection, &command).await?;
         } else if crate::session_recovery::TOOLS.contains(&name) {
             crate::session_recovery::capability(&mut connection, &command).await?;
+        } else if crate::session_hibernation::TOOLS.contains(&name) {
+            crate::session_hibernation::capability(&mut connection).await?;
         } else if crate::project_commands::TOOLS.contains(&name) {
             crate::project_commands::capability(&mut connection).await?;
         } else if matches!(name, "nesvo_interrupt_session" | "nesvo_stop_session") {

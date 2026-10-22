@@ -180,6 +180,8 @@ pub struct Capabilities {
     pub recovery: bool,
     #[serde(default, rename = "quotaWake")]
     pub quota_wake: bool,
+    #[serde(default)]
+    pub hibernation: bool,
     #[serde(default, rename = "providerLimits")]
     pub provider_limits: Vec<ProviderLimit>,
     #[serde(default, rename = "sessionModelProfiles")]

@@ -161,7 +161,7 @@ pub fn catalog() -> Vec<Tool> {
 }
 
 #[cfg(test)]
-pub const TOOL_COUNT: usize = 114;
+pub const TOOL_COUNT: usize = 116;
 
 #[cfg(test)]
 pub fn catalog_named(names: &[&str]) -> Vec<Tool> {
@@ -910,6 +910,18 @@ pub static TOOLS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
             "Owner-only: forget one saved description. Running processes, conversations and project files are untouched.",
             DESTRUCTIVE,
             Handler::Adapter(crate::session_recovery::command),
+        ),
+        tool::<contract::HibernationArgs>(
+            "nesvo_hibernate_session",
+            "Owner-only: stop one idle agent's provider process once per key; the host keeps its session ID, recorded conversation, folder, attention and last-known freshness, and the session shows hibernation.state hibernated. Refused with a precise code for human control, drafts, pending input, unsettled attempts, pending decisions, active runs, armed wakes, children, non-idle agents and providers without verified exact resume (Gemini: hibernate_unsupported). Same key replays the original reply. Requires hibernation:true.",
+            WRITE,
+            Handler::Adapter(crate::session_hibernation::command),
+        ),
+        tool::<contract::HibernationArgs>(
+            "nesvo_resume_session",
+            "Owner-only: relaunch one hibernated session under the same ID through the exact recorded provider conversation, once per key, and reply only after the provider proves that conversation. When identity cannot be proven the relaunch is stopped and refused with resume_unverifiable; the session stays hibernated and can still be relaunched fresh with nesvo_restore_session. Sends no prompt. Same key replays the original outcome. Requires hibernation:true.",
+            WRITE,
+            Handler::Adapter(crate::session_hibernation::command),
         ),
         tool::<contract::ListAttentionInbox>(
             "nesvo_list_attention_inbox",
@@ -2296,6 +2308,13 @@ mod contract {
     pub struct JobTriggerDelivery {
         id: HexId,
         delivery_id: Key,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct HibernationArgs {
+        session_id: HexId,
+        key: Key,
     }
 
     #[derive(Deserialize, JsonSchema)]

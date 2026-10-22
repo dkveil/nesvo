@@ -29,6 +29,9 @@ pub struct StatusLabel {
 
 pub fn status_label(session: &Session, program: Program) -> StatusLabel {
     let label = |text, color| StatusLabel { text, color };
+    if session.hibernated() {
+        return label("hibernated", MUTED);
+    }
     if let Some(readiness) = &session.readiness {
         match readiness.phase {
             crate::status::ReadinessPhase::Starting => return label("starting", MUTED),

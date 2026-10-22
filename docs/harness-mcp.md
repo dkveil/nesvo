@@ -446,6 +446,13 @@ accepts no automated input until the provider confirms the exact conversation;
 otherwise `resume.state` becomes `resumeFailed` with a reason. See
 [exact conversation resume](harness-recovery-context.md#exact-conversation-resume).
 
+`hibernation` gates `nesvo_hibernate_session` and `nesvo_resume_session`, the MCP
+parity of `nesvo session hibernate|resume`. Both are owner-only, take `sessionId`
+and `key`, and return the same `sessionHibernation` data; a repeated key replays the
+original outcome. Resume answers only after the provider proves the recorded
+conversation, otherwise `resume_unverifiable` leaves the session hibernated. See
+[hibernation](harness-recovery-context.md#safe-resumable-hibernation).
+
 Tools declare input/output schemas and effect hints. Results include text and
 `structuredContent` with `schemaVersion:1`, `ok`, and `data` or `error`. Host/tool
 failures use `isError:true` with stable codes; failed/unknown effects include the

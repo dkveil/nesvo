@@ -264,9 +264,29 @@ pub struct Session {
     pub current_attention: Option<crate::status::CurrentAttention>,
     #[serde(default)]
     pub lifecycle: Option<crate::status::Lifecycle>,
+    #[serde(default)]
+    pub hibernation: Option<Hibernation>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Hibernation {
+    pub state: String,
+    #[serde(default)]
+    pub hibernated_at: Option<u64>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub last_resume_failure: Option<String>,
 }
 
 impl Session {
+    pub fn hibernated(&self) -> bool {
+        self.hibernation
+            .as_ref()
+            .is_some_and(|hibernation| hibernation.state == "hibernated")
+    }
+
     pub(crate) fn search_root_label(&self) -> Option<(&'static str, &str)> {
         let root = self.search_root.as_ref()?;
         if let Some(cwd) = root.current_cwd() {
@@ -1469,6 +1489,16 @@ impl App {
                     "Saved processes require explicit restart; old prompts are not replayed."
                 } else {
                     "Launch templates loaded."
+                }
+                .into();
+            }
+            "sessionHibernation" => {
+                self.notice = match (event["state"].as_str(), event["replayed"] == true) {
+                    (Some("hibernated"), false) => {
+                        "Session hibernated. Its conversation is kept; b resumes it."
+                    }
+                    (Some("resumed"), false) => "Session resumed in its exact conversation.",
+                    _ => "Hibernation request was already applied.",
                 }
                 .into();
             }
