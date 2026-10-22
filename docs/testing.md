@@ -313,9 +313,12 @@ repository with a committed `nesvo.toml`, then validates the `projects`,
 `projectPinned`, `projectLayout`, `projectDefaults`, `workflowTemplates`,
 `workflowTemplatesApproved`, `workflowTemplateStarted` and
 `workflowTemplatesRevoked` replies. It starts the template as a draft run, so no
-provider is launched. Reply kinds that no scenario prints are covered only by the
-unit test `cli::reply_kind_tests::every_cli_reply_kind_has_a_published_schema_branch`,
-which asserts that each kind a CLI command can print has a `data.oneOf` branch.
+provider is launched. `inbox::` validates its decision CLI and MCP envelopes through the
+same script. The unit test
+`cli::reply_kind_tests::every_cli_reply_kind_has_a_published_schema_branch` asserts that
+each CLI command prints a typed reply from `apps/tui/src/cli_replies`, and
+`cli_replies::contract::captured_envelopes_round_trip_through_the_reply_types` replays
+the envelope corpus in `tests/fixtures/harness-cli-envelopes.json` through those types.
 
 Initial native fixture startup retains a 60-second readiness deadline. On failure
 only, `NATIVE_HOST_STARTUP_DIAGNOSTIC` records child status, stdout counters,

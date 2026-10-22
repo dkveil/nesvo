@@ -2,9 +2,13 @@ mod attention;
 mod context;
 mod digest;
 mod jobs;
+mod pool;
+mod projects;
+mod quota;
 mod review;
 mod runs;
 mod session;
+mod templates;
 mod triggers;
 mod wakes;
 mod worktrees;
@@ -13,9 +17,13 @@ pub use attention::*;
 pub use context::*;
 pub use digest::*;
 pub use jobs::*;
+pub use pool::*;
+pub use projects::*;
+pub use quota::*;
 pub use review::*;
 pub use runs::*;
 pub use session::*;
+pub use templates::*;
 pub use triggers::*;
 pub use wakes::*;
 pub use worktrees::*;
@@ -94,8 +102,11 @@ impl Envelope {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[schemars(inline)]
-pub enum TypedReply {
+pub enum Reply {
     Workflow(Workflow),
+    ProviderQuota(ProviderQuotaReply),
+    QuotaWake(QuotaWakeReply),
+    WakeConfigured(WakeConfiguredReply),
     Operation(OperationReply),
     Events(EventsReply),
     Session(SessionReply),
@@ -119,43 +130,23 @@ pub enum TypedReply {
     InboxAcknowledged(InboxAcknowledgedReply),
     Decisions(DecisionsReply),
     Decided(DecidedReply),
+    Projects(ProjectsReply),
+    ProjectPinned(ProjectPinnedReply),
+    ProjectLayout(ProjectLayoutReply),
+    ProjectDefaults(ProjectDefaultsReply),
+    WorkflowTemplates(WorkflowTemplatesReply),
+    WorkflowTemplatesApproved(WorkflowTemplatesApprovedReply),
+    WorkflowTemplatesRevoked(WorkflowTemplatesRevokedReply),
+    WorkflowTemplateStarted(WorkflowTemplateStartedReply),
+    McpPool(McpPoolReply),
 }
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-#[schemars(inline)]
-pub enum Reply {
-    Typed(Box<TypedReply>),
-    Pending(Map<String, Value>),
-}
-
-const PENDING_KINDS: &[&str] = &[
-    "providerQuota",
-    "quotaWake",
-    "wakeConfigured",
-    "projects",
-    "projectPinned",
-    "projectLayout",
-    "projectDefaults",
-    "workflowTemplates",
-    "workflowTemplatesApproved",
-    "workflowTemplatesRevoked",
-    "workflowTemplateStarted",
-    "mcpPool",
-];
 
 impl Reply {
     pub fn from_host(mut value: Value) -> serde_json::Result<Self> {
         if let Some(object) = value.as_object_mut() {
             object.remove("requestId");
         }
-        if let Some(kind) = value["type"].as_str()
-            && PENDING_KINDS.contains(&kind)
-            && let Value::Object(object) = value
-        {
-            return Ok(Self::Pending(object));
-        }
-        serde_json::from_value(value).map(|reply| Self::Typed(Box::new(reply)))
+        serde_json::from_value(value)
     }
 }
 
@@ -228,37 +219,7 @@ pub(crate) mod contract {
             .into_root_schema_for::<Envelope>();
         schema.insert("$id".into(), ID.into());
         schema.insert("title".into(), TITLE.into());
-        let mut schema = schema.to_value();
-        with_pending(&mut schema);
-        schema
-    }
-
-    fn with_pending(schema: &mut Value) {
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/harness-cli-handwritten.schema.json"
-        ))
-        .unwrap();
-        let data = &mut schema["oneOf"][1]["properties"]["data"];
-        let mut branches = data["anyOf"][0]["oneOf"].as_array().unwrap().clone();
-        branches.extend(
-            fixture["oneOf"][1]["properties"]["data"]["oneOf"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|branch| {
-                    branch["properties"]["type"]["const"]
-                        .as_str()
-                        .is_some_and(|kind| PENDING_KINDS.contains(&kind))
-                })
-                .cloned(),
-        );
-        *data = serde_json::json!({ "oneOf": branches });
-        let definitions = schema["definitions"].as_object_mut().unwrap();
-        for (name, definition) in fixture["definitions"].as_object().unwrap() {
-            definitions
-                .entry(name.clone())
-                .or_insert_with(|| definition.clone());
-        }
+        schema.to_value()
     }
 
     fn contract_shape(schema: &mut Schema) {

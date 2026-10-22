@@ -210,13 +210,21 @@ credentials are confined to the private process context.
 
 ## Version 1 query output
 
-The machine-readable schema is `docs/harness-cli.schema.json` (JSON Schema draft 7).
-Native integration scenarios validate real CLI success and failure envelopes against it
-for sessions, runs, wakes, decisions, projects and workflow templates; the
-[testing guide](testing.md#native-cli-reply-envelopes) lists them. Every other reply
-kind is checked only statically: a unit test walks the whole command tree and asserts
-that each kind a command can print has a `data.oneOf` branch. `doctor` and
-`session explain` print the bare diagnostics report, which has its own top-level branch.
+The machine-readable schema is `docs/harness-cli.schema.json` (JSON Schema draft 7). It
+is generated from the typed reply model in `apps/tui/src/cli_replies.rs`: the success
+envelope with one `Reply` variant per `data.type`, the failure receipt and the bare
+diagnostics report. The CLI prints every reply through those types, so a host reply
+that does not fit them is refused with `unexpected_reply` (exit 4) instead of being
+passed on. After changing a reply type, regenerate the schema with
+`NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo --bin nesvo cli_replies` and commit it;
+the same test fails on drift without the variable
+([generated contracts](engineering.md#generated-contracts)). Native integration
+scenarios validate real CLI success and failure envelopes against it for sessions,
+runs, wakes, decisions, projects and workflow templates; the
+[testing guide](testing.md#native-cli-reply-envelopes) lists them. A unit test walks
+the whole command tree and asserts that each command prints a typed reply. `doctor`
+and `session explain` print the bare diagnostics report, which has its own top-level
+branch.
 
 New session queries return one JSON object on stdout and no progress text:
 
@@ -252,8 +260,8 @@ Exit statuses follow the [agent table](#for-agents): 0 success, 1 bad request,
 
 Error codes distinguish `invalid_argument`, `no_current_session`, `forbidden`, `scope_revoked`,
 `pairing_unavailable`, `host_unavailable`, `disconnected`, `session_not_found`,
-`invalid_cursor`, `git_unavailable`, `request_rejected`, `timeout`, `unsupported`
-and `operation_failed`. Exactly the exit-2 codes are marked `retryable`: the host was
+`invalid_cursor`, `git_unavailable`, `request_rejected`, `timeout`, `unsupported`,
+`unexpected_reply` and `operation_failed`. Exactly the exit-2 codes are marked `retryable`: the host was
 unreachable, so look up the same key or receipt again later. No command retries input. Pairing keys are never printed.
 
 ## Bounded terminal reads

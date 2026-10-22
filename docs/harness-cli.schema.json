@@ -2361,10 +2361,12 @@
           "$ref": "#/definitions/id"
         },
         "kind": {
-          "enum": ["launch", "operation"]
+          "enum": ["launch", "operation"],
+          "type": "string"
         },
         "program": {
-          "enum": ["codex", "claude", "gemini"]
+          "enum": ["claude", "codex", "gemini"],
+          "type": "string"
         },
         "reason": {
           "maxLength": 128,
@@ -2391,7 +2393,8 @@
           "type": ["integer", "null"]
         },
         "program": {
-          "enum": ["codex", "claude", "gemini"]
+          "enum": ["claude", "codex", "gemini"],
+          "type": "string"
         },
         "reason": {
           "maxLength": 128,
@@ -2403,14 +2406,16 @@
           "type": ["integer", "null"]
         },
         "source": {
-          "enum": ["codexAppServer", "claudeStatusline", "unsupported"]
+          "enum": ["codexAppServer", "claudeStatusline", "unsupported"],
+          "type": "string"
         },
         "sourceRevision": {
           "minimum": 0,
           "type": ["integer", "null"]
         },
         "verdict": {
-          "enum": ["allow", "hold", "unknown"]
+          "enum": ["allow", "hold", "unknown"],
+          "type": "string"
         }
       },
       "required": [
@@ -2458,7 +2463,8 @@
           "type": ["integer", "null"]
         },
         "freshness": {
-          "enum": ["fresh", "stale", "unavailable"]
+          "enum": ["fresh", "stale", "unavailable"],
+          "type": "string"
         },
         "observedAt": {
           "minimum": 0,
@@ -2471,7 +2477,8 @@
           "type": "boolean"
         },
         "program": {
-          "enum": ["codex", "claude", "gemini"]
+          "enum": ["claude", "codex", "gemini"],
+          "type": "string"
         },
         "readerId": {
           "pattern": "^[a-f0-9]{32}$",
@@ -2486,17 +2493,20 @@
           "$ref": "#/definitions/cursor"
         },
         "scope": {
-          "const": "readerSnapshotOnly"
+          "const": "readerSnapshotOnly",
+          "type": "string"
         },
         "source": {
-          "enum": ["codexAppServer", "claudeStatusCache", "unsupported"]
+          "enum": ["codexAppServer", "claudeStatusCache", "unsupported"],
+          "type": "string"
         },
         "sourceAt": {
           "minimum": 0,
           "type": ["integer", "null"]
         },
         "status": {
-          "enum": ["checking", "ready", "partial", "unavailable", "stale"]
+          "enum": ["checking", "ready", "partial", "unavailable", "stale"],
+          "type": "string"
         },
         "windows": {
           "items": {
@@ -2572,7 +2582,8 @@
           "type": ["string", "null"]
         },
         "phase": {
-          "enum": ["armed", "dispatching", "paused"]
+          "enum": ["armed", "dispatching", "paused"],
+          "type": "string"
         },
         "predecessorId": {
           "maxLength": 128,
@@ -4833,33 +4844,26 @@
       "additionalProperties": false,
       "properties": {
         "budget": {
-          "anyOf": [
-            {
-              "type": "null"
+          "additionalProperties": false,
+          "properties": {
+            "maxAttemptsPerTask": {
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
             },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "maxAttemptsPerTask": {
-                  "maximum": 16,
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "maxElapsedMs": {
-                  "maximum": 604800000,
-                  "minimum": 1000,
-                  "type": ["integer", "null"]
-                },
-                "maxParallel": {
-                  "maximum": 16,
-                  "minimum": 1,
-                  "type": "integer"
-                }
-              },
-              "required": ["maxParallel", "maxAttemptsPerTask", "maxElapsedMs"],
-              "type": "object"
+            "maxElapsedMs": {
+              "maximum": 604800000,
+              "minimum": 1000,
+              "type": ["integer", "null"]
+            },
+            "maxParallel": {
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
             }
-          ]
+          },
+          "required": ["maxParallel", "maxAttemptsPerTask", "maxElapsedMs"],
+          "type": ["object", "null"]
         },
         "goal": {
           "maxLength": 8192,
@@ -4871,27 +4875,21 @@
           "type": "string"
         },
         "start": {
-          "enum": ["draft", "active", "executor"]
+          "enum": ["draft", "active", "executor"],
+          "type": "string"
         },
         "tasks": {
           "items": {
             "additionalProperties": false,
             "properties": {
               "allowedNesvoTools": {
-                "anyOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "items": {
-                      "maxLength": 128,
-                      "pattern": "^nesvo_[a-z_]+$",
-                      "type": "string"
-                    },
-                    "maxItems": 32,
-                    "type": "array"
-                  }
-                ]
+                "items": {
+                  "maxLength": 128,
+                  "pattern": "^nesvo_[a-z_]+$",
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": ["array", "null"]
               },
               "checks": {
                 "items": {
@@ -4924,7 +4922,8 @@
                 "type": "string"
               },
               "program": {
-                "enum": ["claude", "codex", "gemini"]
+                "enum": ["claude", "codex", "gemini"],
+                "type": "string"
               },
               "title": {
                 "maxLength": 80,
@@ -4932,7 +4931,8 @@
                 "type": "string"
               },
               "workspace": {
-                "enum": ["shared", "worktree"]
+                "enum": ["shared", "worktree"],
+                "type": "string"
               }
             },
             "required": [
@@ -6642,6 +6642,104 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
+              "properties": {
+                "gate": {
+                  "$ref": "#/definitions/providerQuotaGate"
+                },
+                "providers": {
+                  "items": {
+                    "$ref": "#/definitions/providerQuotaObservation"
+                  },
+                  "maxItems": 3,
+                  "type": "array"
+                },
+                "refresh": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "program": {
+                      "enum": ["claude", "codex", "gemini"],
+                      "type": "string"
+                    },
+                    "readerId": {
+                      "pattern": "^[a-f0-9]{32}$",
+                      "type": "string"
+                    },
+                    "retryAfterMs": {
+                      "$ref": "#/definitions/cursor"
+                    },
+                    "revision": {
+                      "$ref": "#/definitions/cursor"
+                    },
+                    "state": {
+                      "enum": ["queued", "pending", "cooldown"],
+                      "type": "string"
+                    }
+                  },
+                  "required": ["program", "state", "revision", "retryAfterMs"],
+                  "type": ["object", "null"]
+                },
+                "type": {
+                  "const": "providerQuota",
+                  "type": "string"
+                }
+              },
+              "required": ["type", "providers", "refresh"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "quotaWake": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/definitions/quotaWake"
+                    }
+                  ]
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "type": {
+                  "const": "quotaWake",
+                  "type": "string"
+                }
+              },
+              "required": ["type", "sessionId", "quotaWake"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "quotaWake": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/definitions/quotaWake"
+                    }
+                  ]
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "type": {
+                  "const": "wakeConfigured",
+                  "type": "string"
+                },
+                "wakeAt": {
+                  "minimum": 1,
+                  "type": ["integer", "null"]
+                }
+              },
+              "required": ["type", "sessionId", "wakeAt", "quotaWake"],
+              "type": "object"
+            },
+            {
               "properties": {
                 "cursor": {
                   "$ref": "#/definitions/cursor"
@@ -7734,106 +7832,6 @@
             {
               "additionalProperties": false,
               "properties": {
-                "gate": {
-                  "$ref": "#/definitions/providerQuotaGate"
-                },
-                "providers": {
-                  "items": {
-                    "$ref": "#/definitions/providerQuotaObservation"
-                  },
-                  "maxItems": 3,
-                  "type": "array"
-                },
-                "refresh": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "program": {
-                          "enum": ["codex", "claude", "gemini"]
-                        },
-                        "readerId": {
-                          "pattern": "^[a-f0-9]{32}$",
-                          "type": "string"
-                        },
-                        "retryAfterMs": {
-                          "$ref": "#/definitions/cursor"
-                        },
-                        "revision": {
-                          "$ref": "#/definitions/cursor"
-                        },
-                        "state": {
-                          "enum": ["queued", "pending", "cooldown"]
-                        }
-                      },
-                      "required": ["program", "state", "revision", "retryAfterMs"],
-                      "type": "object"
-                    }
-                  ]
-                },
-                "type": {
-                  "const": "providerQuota"
-                }
-              },
-              "required": ["type", "providers", "refresh"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "quotaWake": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "$ref": "#/definitions/quotaWake"
-                    }
-                  ]
-                },
-                "sessionId": {
-                  "$ref": "#/definitions/id"
-                },
-                "type": {
-                  "const": "quotaWake"
-                }
-              },
-              "required": ["type", "sessionId", "quotaWake"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "quotaWake": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "$ref": "#/definitions/quotaWake"
-                    }
-                  ]
-                },
-                "sessionId": {
-                  "$ref": "#/definitions/id"
-                },
-                "type": {
-                  "const": "wakeConfigured"
-                },
-                "wakeAt": {
-                  "minimum": 1,
-                  "type": ["integer", "null"]
-                }
-              },
-              "required": ["type", "sessionId", "wakeAt", "quotaWake"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
                 "limit": {
                   "minimum": 1,
                   "type": "integer"
@@ -7846,7 +7844,8 @@
                   "type": "array"
                 },
                 "type": {
-                  "const": "projects"
+                  "const": "projects",
+                  "type": "string"
                 }
               },
               "required": ["type", "projects", "limit"],
@@ -7864,7 +7863,8 @@
                   "type": "string"
                 },
                 "type": {
-                  "const": "projectPinned"
+                  "const": "projectPinned",
+                  "type": "string"
                 }
               },
               "required": ["type", "root", "pinned"],
@@ -7884,7 +7884,8 @@
                   "type": "string"
                 },
                 "type": {
-                  "const": "projectLayout"
+                  "const": "projectLayout",
+                  "type": "string"
                 }
               },
               "required": ["type", "root", "defaultLayout"],
@@ -7934,7 +7935,8 @@
                   "type": "string"
                 },
                 "type": {
-                  "const": "projectDefaults"
+                  "const": "projectDefaults",
+                  "type": "string"
                 },
                 "worktreeSetup": {
                   "additionalProperties": false,
@@ -7949,15 +7951,8 @@
                       "type": "boolean"
                     },
                     "digest": {
-                      "anyOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "pattern": "^[a-f0-9]{64}$",
-                          "type": "string"
-                        }
-                      ]
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": ["string", "null"]
                     },
                     "error": {
                       "additionalProperties": false,
@@ -8003,21 +7998,15 @@
                   "type": "boolean"
                 },
                 "digest": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "pattern": "^[a-f0-9]{64}$",
-                      "type": "string"
-                    }
-                  ]
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": ["string", "null"]
                 },
                 "repository": {
                   "type": "string"
                 },
                 "source": {
-                  "const": "HEAD:nesvo.toml"
+                  "const": "HEAD:nesvo.toml",
+                  "type": "string"
                 },
                 "templates": {
                   "items": {
@@ -8027,7 +8016,8 @@
                   "type": "array"
                 },
                 "type": {
-                  "const": "workflowTemplates"
+                  "const": "workflowTemplates",
+                  "type": "string"
                 }
               },
               "required": [
@@ -8055,7 +8045,8 @@
                   "type": "string"
                 },
                 "type": {
-                  "const": "workflowTemplatesApproved"
+                  "const": "workflowTemplatesApproved",
+                  "type": "string"
                 }
               },
               "required": ["type", "repository", "digest", "approvedAt"],
@@ -8075,7 +8066,8 @@
                   "type": "boolean"
                 },
                 "type": {
-                  "const": "workflowTemplatesRevoked"
+                  "const": "workflowTemplatesRevoked",
+                  "type": "string"
                 }
               },
               "required": ["type", "repository", "digest", "revoked"],
@@ -8108,6 +8100,10 @@
                     "additionalProperties": false,
                     "properties": {
                       "profile": {
+                        "properties": {
+                          "program": true,
+                          "workspace": true
+                        },
                         "required": ["program", "workspace"],
                         "type": "object"
                       },
@@ -8122,14 +8118,26 @@
                   "type": "array"
                 },
                 "run": {
+                  "properties": {
+                    "id": true,
+                    "revision": true,
+                    "state": true,
+                    "title": true
+                  },
                   "required": ["id", "title", "revision", "state"],
                   "type": "object"
                 },
                 "start": {
-                  "enum": ["draft", "active", "executor"]
+                  "enum": ["draft", "active", "executor"],
+                  "type": "string"
                 },
                 "tasks": {
                   "items": {
+                    "properties": {
+                      "id": true,
+                      "key": true,
+                      "state": true
+                    },
                     "required": ["id", "key", "state"],
                     "type": "object"
                   },
@@ -8141,7 +8149,8 @@
                   "type": "string"
                 },
                 "type": {
-                  "const": "workflowTemplateStarted"
+                  "const": "workflowTemplateStarted",
+                  "type": "string"
                 }
               },
               "required": [
@@ -8207,7 +8216,8 @@
                         "type": "string"
                       },
                       "program": {
-                        "enum": ["shell", "claude", "gemini", "codex"]
+                        "enum": ["shell", "claude", "codex", "gemini"],
+                        "type": "string"
                       },
                       "root": {
                         "type": "string"
@@ -8219,7 +8229,8 @@
                         "type": ["string", "null"]
                       },
                       "state": {
-                        "enum": ["warm", "leased"]
+                        "enum": ["warm", "leased"],
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -8260,10 +8271,12 @@
                         "type": ["string", "null"]
                       },
                       "mode": {
-                        "enum": ["pooled", "cold", "dedicated"]
+                        "enum": ["pooled", "cold", "dedicated"],
+                        "type": "string"
                       },
                       "program": {
-                        "enum": ["shell", "claude", "gemini", "codex"]
+                        "enum": ["shell", "claude", "codex", "gemini"],
+                        "type": "string"
                       },
                       "reason": {
                         "type": ["string", "null"]
@@ -8282,7 +8295,8 @@
                   "type": "array"
                 },
                 "type": {
-                  "const": "mcpPool"
+                  "const": "mcpPool",
+                  "type": "string"
                 }
               },
               "required": ["type", "available", "bounds", "processes", "entries", "sessions"],

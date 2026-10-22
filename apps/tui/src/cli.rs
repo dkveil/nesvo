@@ -3398,10 +3398,13 @@ mod reply_kind_tests {
     const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const RECORD: &str = "0123456789abcdef0123456789abcdef";
     const WORKFLOW_GROUPS: [&str; 3] = ["run", "job", "budget"];
-    const WITHOUT_ENVELOPE: [&str; 4] = ["mcp", "doctor", "session explain", "run recover-hook"];
+    const WITHOUT_REPLY: [&str; 2] = ["mcp", "run recover-hook"];
+    const DIAGNOSTICS: &str = "diagnostics";
 
     const SAMPLES: &[&[&str]] = &[
         &["operation", "op-1"],
+        &["doctor"],
+        &["session", "explain", "s"],
         &["mcp", "pool", "status"],
         &["events"],
         &["quota"],
@@ -3523,7 +3526,8 @@ mod reply_kind_tests {
         let built = |result: Result<(Value, &'static str)>| vec![result.expect("Sample builds").1];
         match command {
             Command::Job { .. } | Command::Budget { .. } | Command::Run { .. } => vec!["workflow"],
-            Command::Mcp { command: None } | Command::Doctor { .. } => Vec::new(),
+            Command::Mcp { command: None } => Vec::new(),
+            Command::Doctor { .. } => vec![DIAGNOSTICS],
             Command::Mcp { command: Some(_) } => vec!["mcpPool"],
             Command::Operation { .. } => vec!["operation"],
             Command::Events { .. } => vec!["events"],
@@ -3554,7 +3558,7 @@ mod reply_kind_tests {
                 SessionCommand::Read { .. } => vec!["sessionRead"],
                 SessionCommand::Diff { .. } => vec!["diff"],
                 SessionCommand::Providers { .. } => vec!["providers"],
-                SessionCommand::Explain { .. } => Vec::new(),
+                SessionCommand::Explain { .. } => vec![DIAGNOSTICS],
                 SessionCommand::Recover { command } => {
                     built(crate::session_recovery::query(command))
                 }
@@ -3574,16 +3578,25 @@ mod reply_kind_tests {
         }
     }
 
-    fn published() -> Vec<String> {
-        let schema: Value =
-            serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
-        schema["oneOf"][1]["properties"]["data"]["oneOf"]
+    fn typed() -> Vec<String> {
+        let schema = crate::cli_replies::contract::schema();
+        let envelopes = schema["oneOf"].as_array().unwrap();
+        let mut kinds: Vec<String> = envelopes[1]["properties"]["data"]["oneOf"]
             .as_array()
             .unwrap()
             .iter()
             .filter_map(|branch| branch["properties"]["type"]["const"].as_str())
             .map(str::to_owned)
-            .collect()
+            .collect();
+        if envelopes.iter().any(|envelope| {
+            envelope["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("host"))
+        }) {
+            kinds.push(DIAGNOSTICS.to_owned());
+        }
+        kinds
     }
 
     #[test]
@@ -3598,7 +3611,7 @@ mod reply_kind_tests {
             .iter()
             .filter(|path| {
                 !sampled.contains(path)
-                    && !WITHOUT_ENVELOPE.contains(&path.as_str())
+                    && !WITHOUT_REPLY.contains(&path.as_str())
                     && !WORKFLOW_GROUPS
                         .iter()
                         .any(|group| path.split(' ').next() == Some(*group))
@@ -3611,7 +3624,7 @@ mod reply_kind_tests {
         for group in WORKFLOW_GROUPS {
             assert!(tree.iter().any(|path| path.starts_with(group)), "{group}");
         }
-        let published = published();
+        let typed = typed();
         let mut kinds = vec!["workflow"];
         for sample in SAMPLES {
             let argv: Vec<&str> = ["nesvo"].iter().chain(sample.iter()).copied().collect();
@@ -3622,11 +3635,11 @@ mod reply_kind_tests {
         }
         let missing: Vec<&&str> = kinds
             .iter()
-            .filter(|kind| !published.iter().any(|branch| branch == **kind))
+            .filter(|kind| !typed.iter().any(|branch| branch == **kind))
             .collect();
         assert!(
             missing.is_empty(),
-            "docs/harness-cli.schema.json has no data.oneOf branch for {missing:?}"
+            "No typed reply in cli_replies for {missing:?}; add a Reply variant and regenerate the schema"
         );
         for kind in [
             "projects",
