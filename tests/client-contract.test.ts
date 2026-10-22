@@ -1380,6 +1380,31 @@ function assertInboxFixtures(validate: ReturnType<Ajv['compile']>) {
   assert.equal(validate(envelope(decided)), true, JSON.stringify(validate.errors));
 }
 
+test('real host inbox and decision replies decode and match the published host schema', () => {
+  const validate = new Ajv().compile(
+    JSON.parse(readFileSync(new URL('../docs/harness-cli.schema.json', import.meta.url), 'utf8')),
+  );
+  const replies = JSON.parse(
+    readFileSync(new URL('./fixtures/host-inbox-replies.json', import.meta.url), 'utf8'),
+  ) as Record<string, Record<string, unknown>>;
+  assert.deepEqual(Object.keys(replies).sort(), [
+    'attentionInbox',
+    'decided',
+    'decisions',
+    'inboxAcknowledged',
+  ]);
+  for (const [type, reply] of Object.entries(replies)) {
+    assert.equal(reply.type, type);
+    assert.equal(
+      validate({ schemaVersion: 1, ok: true, data: reply }),
+      true,
+      `${type}: ${JSON.stringify(validate.errors)}`,
+    );
+    const message = { ...reply, requestId: `golden-${type}` };
+    assert.deepEqual(decodeServerMessage(message), message);
+  }
+});
+
 const hookFreshness = {
   source: 'hook',
   observedAt: 1_792_783_000_000,
