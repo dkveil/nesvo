@@ -12,7 +12,6 @@ fn node(fixture: &Fixture) -> PathBuf {
 
 const COMMAND_TIMEOUT_MS: u64 = 10_000;
 const PRECHECK_BOUND_MS: u64 = COMMAND_TIMEOUT_MS + 3_000;
-const HOST_READINESS_MS: u64 = 60_000;
 const MARGIN_MS: u64 = 10_000;
 const FIRST_GENERATION_BOUND: Duration = Duration::from_millis(PRECHECK_BOUND_MS + MARGIN_MS);
 const CANCEL_CLEANUP_BOUND: Duration = Duration::from_millis(2_000 + MARGIN_MS);
@@ -33,10 +32,6 @@ fn next_generation_bound(delay_ms: u64) -> Duration {
 
 fn next_precheck_bound(delay_ms: u64) -> Duration {
     Duration::from_millis(delay_ms + PRECHECK_BOUND_MS + MARGIN_MS)
-}
-
-fn reported_bound(delay_ms: u64) -> Duration {
-    Duration::from_millis(delay_ms + PRECHECK_BOUND_MS + 2 * HOST_READINESS_MS + MARGIN_MS)
 }
 
 fn diverged(occurrence: &Value, wanted: &str, ordinal: u64) -> Option<String> {
@@ -164,9 +159,31 @@ async fn wait_for(
     ordinal: u64,
     bound: Duration,
 ) -> Result<Value> {
+    wait_within(fixture, owner, job, id, wanted, ordinal, Some(bound)).await
+}
+
+async fn wait_for_report(
+    fixture: &mut Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    id: &str,
+    ordinal: u64,
+) -> Result<Value> {
+    wait_within(fixture, owner, job, id, "needsValidation", ordinal, None).await
+}
+
+async fn wait_within(
+    fixture: &mut Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    id: &str,
+    wanted: &str,
+    ordinal: u64,
+    bound: Option<Duration>,
+) -> Result<Value> {
     let mut last = Value::Null;
     let mut report_file_cause = String::new();
-    let observed = timeout(bound, async {
+    let polling = async {
         loop {
             last = occurrence(owner, job, id).await?;
             if let Some(divergence) = diverged(&last["data"]["occurrence"], wanted, ordinal) {
@@ -219,15 +236,17 @@ async fn wait_for(
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
-    })
-    .await;
+    };
+    let observed = match bound {
+        Some(bound) => timeout(bound, polling).await,
+        None => Ok(polling.await),
+    };
     match observed {
         Ok(Ok(view)) => Ok(view),
         result => {
             let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
             anyhow::bail!(
-                "Fresh precheck did not reach {wanted}/{ordinal} in {}s; result: {result:?}; last: {last}; report file cause: {report_file_cause}; actual diagnostics: {}",
-                bound.as_secs(),
+                "Fresh precheck did not reach {wanted}/{ordinal} within {bound:?}; result: {result:?}; last: {last}; report file cause: {report_file_cause}; actual diagnostics: {}",
                 diagnostics
                     .to_string()
                     .chars()
@@ -391,16 +410,7 @@ async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_wo
             "Repair owned worker cwd before its original retry deadline"
         );
         std::fs::create_dir(&cwd)?;
-        let reported = wait_for(
-            &mut fixture,
-            &owner,
-            job,
-            id,
-            "needsValidation",
-            2,
-            reported_bound(4000),
-        )
-        .await?;
+        let reported = wait_for_report(&mut fixture, &owner, job, id, 2).await?;
         let second = &reported["data"]["occurrence"];
         checked_record(&second["precheck"], &approval, 2, "passed")?;
         assert_eq!(count(&directory)?, 2);
@@ -723,12 +733,28 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
     }
 }
 
-async fn tree_ready(fixture: &mut Fixture, job: &str, tree: &mut OwnedTree) -> Result<()> {
-    let result = timeout(Duration::from_millis(PRECHECK_BOUND_MS), tree.announced()).await;
-    if !matches!(result, Ok(Ok(()))) {
+async fn tree_ready(
+    fixture: &mut Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    id: &str,
+    tree: &mut OwnedTree,
+) -> Result<()> {
+    let settled_first = waits::until(async || {
+        let current = occurrence(owner, job, id).await?;
+        if let Some(divergence) = diverged(&current["data"]["occurrence"], "prechecking", 2) {
+            anyhow::bail!("{divergence} before the second-generation tree announced itself");
+        }
+        Ok(None::<()>)
+    });
+    let result = tokio::select! {
+        announced = tree.announced() => announced,
+        settled = settled_first => settled,
+    };
+    if let Err(error) = result {
         let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
         anyhow::bail!(
-            "Second-generation owned tree did not start: {result:?}; diagnostics: {diagnostics}"
+            "Second-generation owned tree did not start: {error:#}; diagnostics: {diagnostics}"
         );
     }
     Ok(())
@@ -771,7 +797,7 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         checked_record(&second["precheck"], &approval, 2, "running")?;
         assert_ne!(second["jobAttemptId"], first["jobAttemptId"]);
         assert!(second["runId"].is_null());
-        tree_ready(&mut fixture, job, &mut tree).await?;
+        tree_ready(&mut fixture, &owner, job, id, &mut tree).await?;
         assert_eq!(count(&directory)?, 2);
         envelopes.push(no_workers(&fixture, &owner).await?);
         let cancellation_args = json!({"key":"cancel-fresh-command","jobId":job,"occurrenceId":id});
@@ -807,7 +833,7 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         std::fs::create_dir(&crash_cwd)?;
         let running = wait_for(&mut fixture, &owner, crash_job_id, crash_id, "prechecking", 2, next_generation_bound(3000)).await?;
         let target = running["data"]["occurrence"]["jobAttemptId"].as_str().context("Exact unknown second generation")?;
-        tree_ready(&mut fixture, crash_job_id, &mut crash_tree).await?;
+        tree_ready(&mut fixture, &owner, crash_job_id, crash_id, &mut crash_tree).await?;
         assert_eq!(count(&crash_directory)?, 2);
         owner.cancel().await?;
         fixture.restart(true).await?;

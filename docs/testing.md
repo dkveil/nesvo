@@ -212,6 +212,25 @@ Before physical creation, only the current structured MCP
 foreign identities and transport errors remain failures. An ordinary regression
 covers that boundary separately from the three native timeout scenarios.
 
+The precheck command tree's readiness waits race the occurrence settling, so the
+approved command's own `timeoutMs` bounds them instead of a fixed 15 seconds (or
+the command timeout plus three seconds in the retry scenarios), and the retried
+report wait no longer adds two host-readiness windows: its native launch chain is
+bounded by the host and divergence fails it at once. The fixed clocks that remain
+in `apps/tui/tests` and why each stays:
+
+| Clock                                     | Where                                                                                                     | Why it stays                                                                                                                                                                        |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host readiness, 60 s                      | fixture startup in `mcp_host.rs`                                                                          | Ends at once on the listening line, a closed stdout or an exited host; it bounds only a host that neither listens nor exits, and nothing can publish a bound before the host is up. |
+| Startup metadata read, 1 s                | `startup_file_metadata_from_detached_thread`                                                              | Failure-only diagnostic after readiness already failed; an OS metadata read has no host bound, and a missed read is reported as unavailable, not asserted.                          |
+| Reap after an explicit kill, 2 s          | unready host in `mcp_host.rs`, three wrapper reaps in `claude_quota_capture.rs`                           | Confirms cleanup after the test itself killed the process; the OS reap publishes no bound, and an unconfirmed reap is reported instead of waited on.                                |
+| Precheck tree exit, 5 s                   | `TREE_EXIT_DEADLINE` in `prechecks.rs`                                                                    | The tree's sockets close when its processes die after the host's cleanup or an explicit host kill; OS teardown publishes no bound, and the scenario asserts the teardown.           |
+| Statusline self-exit, 10 s plus cost      | `claude_quota_capture.rs`                                                                                 | The product statusline's documented ten-second self-exit plus the observed cost of an ordinary forwarded run; the hung-display check asserts it.                                    |
+| Timers from `deadlineAt` and due times    | `job_timeouts.rs`, `quota_session_wakes.rs`, `job_retries.rs`, `jobs.rs`                                  | Derived from the host-published deadline, due time or retry delay plus a clock-resolution margin; the scenario asserts that the host acts on that deadline.                         |
+| Retry generation bounds                   | `job_retry_prechecks.rs`                                                                                  | The published retry delay plus the approved command's `timeoutMs` and a margin; the scenario asserts that each generation starts within its published delay.                        |
+| Repository context cache TTL, 30 and 31 s | `repository_context.rs`                                                                                   | Mirrors the host's 30-second repository context cache, which the host does not publish; the scenario asserts the cached answer before the boundary and a refresh after it.          |
+| Absence windows (`holds_throughout`)      | input redraw, cancellation, launch reconciliation, timeouts, triggers, quota wakes, checkpoints, executor | An absence has no event to wait for, so the window is the claim itself; each covers the host loop or redraw that would produce the forbidden state.                                 |
+
 ### Native no-effect launch reconciliation
 
 Retry scenarios retain their primary wait's exact occurrence/run/attempt/session

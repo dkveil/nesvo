@@ -6,7 +6,6 @@ fn node(f: &Fixture) -> PathBuf {
         .join("bin")
         .join(if cfg!(windows) { "node.exe" } else { "node" })
 }
-pub(crate) const TREE_READY_DEADLINE: Duration = Duration::from_secs(15);
 pub(crate) const TREE_EXIT_DEADLINE: Duration = Duration::from_secs(5);
 const TREE_ROLES: [&str; 3] = ["child", "grandchild", "root"];
 
@@ -241,10 +240,29 @@ async fn no_model(owner: &RunningService<RoleClient, ()>) -> Result<()> {
     );
     Ok(())
 }
-async fn tree_ready(tree: &mut OwnedTree) -> Result<()> {
-    timeout(TREE_READY_DEADLINE, tree.announced())
-        .await
-        .context("Owned three-level command tree readiness")?
+async fn tree_ready(
+    owner: &RunningService<RoleClient, ()>,
+    job: &Value,
+    tree: &mut OwnedTree,
+) -> Result<()> {
+    let settled = waits::until(async || {
+        let history =
+            data(call(owner, "nesvo_get_job_history", json!({"jobId":job["id"]})).await?)?;
+        let rows = history["data"]["occurrences"]
+            .as_array()
+            .context("Precheck job history")?;
+        ensure!(
+            !rows
+                .iter()
+                .any(|r| waits::is_settled_occurrence(&r["state"])),
+            "Precheck occurrence settled before its command tree announced itself; history: {history}"
+        );
+        Ok(None::<()>)
+    });
+    tokio::select! {
+        announced = tree.announced() => announced.context("Owned three-level command tree readiness"),
+        settled = settled => settled,
+    }
 }
 async fn tree_gone(tree: &mut OwnedTree) -> Result<()> {
     timeout(TREE_EXIT_DEADLINE, tree.exited())
@@ -465,7 +483,7 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
         )
         .await?;
         let admitted = now(&owner, &job, "tree-timeout").await?;
-        tree_ready(&mut tree).await?;
+        tree_ready(&owner, &job, &mut tree).await?;
         let failed = state(&owner, &job, "failed").await?;
         assert_eq!(failed["data"]["occurrence"]["reason"], "precheck_timeout");
         tree_gone(&mut tree).await?;
@@ -490,7 +508,7 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
         )
         .await?;
         let admitted = now(&owner, &job, "tree-crash").await?;
-        tree_ready(&mut crash_tree).await?;
+        tree_ready(&owner, &job, &mut crash_tree).await?;
         owner.cancel().await?;
         f.restart(true).await?;
         tree_gone(&mut crash_tree).await?;
@@ -550,7 +568,7 @@ async fn precheck_scope_ends_descendants_on_timeout_root_exit_and_parent_death_w
         )
         .await?;
         now(&owner, &job, "tree-pass").await?;
-        tree_ready(&mut pass_tree).await?;
+        tree_ready(&owner, &job, &mut pass_tree).await?;
         pass_tree.release_root().await?;
         let passed = state(&owner, &job, "needsValidation").await?;
         tree_gone(&mut pass_tree).await?;
@@ -706,7 +724,7 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
         let active_id = active["data"]["occurrence"]["id"]
             .as_str()
             .context("active occurrence ID")?;
-        tree_ready(&mut tree).await?;
+        tree_ready(&owner, job, &mut tree).await?;
 
         let queued_behind_live_first_occurrence = now(&owner, job, "queued-tree").await?;
         assert_eq!(queued_behind_live_first_occurrence["data"]["occurrence"]["state"], "queued");
@@ -910,7 +928,7 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
         let occurrence = admitted["data"]["occurrence"]["id"]
             .as_str()
             .context("Shutdown occurrence identity")?;
-        tree_ready(&mut tree).await?;
+        tree_ready(&owner, &job, &mut tree).await?;
         let running = data(
             call(
                 &owner,
