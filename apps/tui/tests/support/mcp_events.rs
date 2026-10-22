@@ -16,10 +16,17 @@ const NOTIFICATION_DEADLINE: Duration = Duration::from_secs(10);
 
 fn adapter() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
+    hide_console_window(&mut command);
     command
 }
+
+#[cfg(windows)]
+fn hide_console_window(command: &mut Command) {
+    command.creation_flags(0x08000000);
+}
+
+#[cfg(not(windows))]
+fn hide_console_window(_command: &mut Command) {}
 
 fn paired(pairing: &Path) -> Command {
     let mut command = adapter();
