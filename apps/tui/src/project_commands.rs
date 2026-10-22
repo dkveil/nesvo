@@ -293,7 +293,14 @@ mod tests {
                 root
             );
         }
-        for root in ["", "repo", "relative/repo", "C:relative", "1:\\dev", "~/repo"] {
+        for root in [
+            "",
+            "repo",
+            "relative/repo",
+            "C:relative",
+            "1:\\dev",
+            "~/repo",
+        ] {
             assert!(valid_root(root).is_err(), "{root}");
         }
     }

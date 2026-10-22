@@ -430,7 +430,11 @@ mod tests {
             cli::error_value(&error)["error"]["code"],
             "invalid_argument"
         );
-        assert!(error.to_string().contains("Only one file flag can read stdin"));
+        assert!(
+            error
+                .to_string()
+                .contains("Only one file flag can read stdin")
+        );
     }
     #[test]
     fn trigger_dtos_refuse_secret_and_scope_ambiguity_without_normalizing_intent() {
