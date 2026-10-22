@@ -210,7 +210,9 @@
                     "notices",
                     "pendingCount",
                     "nextCursor",
-                    "more"
+                    "more",
+                    "deliveredThrough",
+                    "batches"
                   ],
                   "properties": {
                     "run": {
@@ -242,6 +244,16 @@
                     },
                     "more": {
                       "type": "boolean"
+                    },
+                    "deliveredThrough": {
+                      "$ref": "#/definitions/cursor"
+                    },
+                    "batches": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "items": {
+                        "$ref": "#/definitions/workflowWakeBatchSummary"
+                      }
                     }
                   }
                 },
@@ -2312,6 +2324,9 @@
         }
       }
     },
+    "workflowWakeDelivery": {
+      "enum": ["delta", "full"]
+    },
     "workflowWakePolicy": {
       "type": "object",
       "required": [
@@ -2323,7 +2338,9 @@
         "generation",
         "phase",
         "reason",
-        "createdAt"
+        "createdAt",
+        "delivery",
+        "held"
       ],
       "additionalProperties": false,
       "properties": {
@@ -2347,13 +2364,19 @@
           "minimum": 1
         },
         "phase": {
-          "enum": ["enabled", "waiting", "paused", "disabled", "completed"]
+          "enum": ["enabled", "waiting", "paused", "held", "disabled", "completed"]
         },
         "reason": {
           "type": ["string", "null"]
         },
         "createdAt": {
           "$ref": "#/definitions/cursor"
+        },
+        "delivery": {
+          "$ref": "#/definitions/workflowWakeDelivery"
+        },
+        "held": {
+          "type": "boolean"
         }
       }
     },
@@ -2445,6 +2468,140 @@
         }
       }
     },
+    "workflowWakeNative": {
+      "type": "object",
+      "required": ["phase"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "type": "string"
+        }
+      }
+    },
+    "workflowWakeBaseline": {
+      "type": "object",
+      "required": ["checkpointId", "checkpointDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "checkpointId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "checkpointDigest": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          ]
+        },
+        "contextDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "partCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "pendingInbox": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["key", "state"],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "state": {
+                "enum": [
+                  "planned",
+                  "launching",
+                  "launchUnknown",
+                  "launchFailed",
+                  "assigned",
+                  "reported",
+                  "stopped",
+                  "succeeded",
+                  "failed",
+                  "canceled"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": ["contextDigest"]
+              },
+              {
+                "required": ["partCount"]
+              },
+              {
+                "required": ["pendingInbox"]
+              },
+              {
+                "required": ["tasks"]
+              }
+            ]
+          }
+        },
+        {
+          "required": ["contextDigest", "partCount", "pendingInbox", "tasks"]
+        }
+      ]
+    },
+    "workflowWakeBatchSummary": {
+      "type": "object",
+      "required": ["id", "phase", "reason", "createdAt", "delivery", "noticeCount", "native"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "phase": {
+          "enum": ["dispatching", "settled", "failed", "unknown", "interrupted"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "delivery": {
+          "$ref": "#/definitions/workflowWakeDelivery"
+        },
+        "noticeCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "native": {
+          "$ref": "#/definitions/workflowWakeNative"
+        }
+      }
+    },
     "workflowWakeBatch": {
       "type": "object",
       "required": [
@@ -2458,7 +2615,10 @@
         "notices",
         "receiptId",
         "operationKey",
-        "native"
+        "native",
+        "delivery",
+        "afterSequence",
+        "baseline"
       ],
       "additionalProperties": false,
       "properties": {
@@ -2500,13 +2660,26 @@
           "pattern": "^run-wake:[a-f0-9]{32}$"
         },
         "native": {
-          "type": "object",
-          "required": ["phase"],
-          "properties": {
-            "phase": {
-              "type": "string"
+          "$ref": "#/definitions/workflowWakeNative"
+        },
+        "delivery": {
+          "$ref": "#/definitions/workflowWakeDelivery"
+        },
+        "afterSequence": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Highest notice sequence any earlier batch claimed, which is this batch's delivery checkpoint; null for batches created before delivery checkpoints."
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/workflowWakeBaseline"
             }
-          }
+          ],
+          "description": "Latest saved checkpoint pointers when the batch was claimed. A full-delivery batch adds the current context digest, part count, unacknowledged inbox count and up to eight task key/state pairs; null for batches created before delivery checkpoints."
         }
       }
     },
