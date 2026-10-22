@@ -2,6 +2,7 @@ pub mod files;
 pub mod jobs;
 pub mod layouts;
 pub mod review;
+pub mod runs;
 
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::Value;
