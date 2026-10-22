@@ -1,4 +1,7 @@
-use crate::launchers::{Launchers, Program, Version};
+use crate::{
+    launchers::{Launchers, Program, Version},
+    refreshing_cache::{RefreshingCache, refresh_in_background},
+};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::{
@@ -31,7 +34,7 @@ const HOME_UNKNOWN: &str = "the provider home directory is unknown to the host";
 const ENVIRONMENT_CREDENTIAL: &str =
     "a credential variable is set in the host environment; the host does not validate it";
 
-static EVIDENCE: Mutex<Cache> = Mutex::new(Cache::empty());
+static EVIDENCE: Mutex<RefreshingCache<Evidence>> = Mutex::new(RefreshingCache::new(REFRESH));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,39 +84,6 @@ impl Evidence {
             Program::Gemini => Some(self.gemini),
             Program::Shell => None,
         }
-    }
-}
-
-struct Cache {
-    observed: Option<(Evidence, Instant)>,
-    refreshing: bool,
-}
-
-impl Cache {
-    const fn empty() -> Self {
-        Self {
-            observed: None,
-            refreshing: false,
-        }
-    }
-
-    fn claim(&mut self, now: Instant) -> (Option<Evidence>, bool) {
-        let evidence = self.observed.map(|(evidence, _)| evidence);
-        let stale = self
-            .observed
-            .is_none_or(|(_, at)| now.saturating_duration_since(at) >= REFRESH);
-        let refresh = stale && !self.refreshing;
-        self.refreshing |= refresh;
-        (evidence, refresh)
-    }
-
-    fn store(&mut self, evidence: Evidence, at: Instant) {
-        self.observed = Some((evidence, at));
-        self.refreshing = false;
-    }
-
-    fn release(&mut self) {
-        self.refreshing = false;
     }
 }
 
@@ -348,29 +318,15 @@ fn report(launchers: &Launchers, versions: &[Version], evidence: Option<Evidence
     Value::Object(providers)
 }
 
-fn refresh() {
-    let evidence = Evidence::observe(&Context::current());
-    EVIDENCE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .store(evidence, Instant::now());
-}
-
 fn cached() -> Option<Evidence> {
     let (evidence, due) = EVIDENCE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .claim(Instant::now());
-    if due
-        && std::thread::Builder::new()
-            .name("provider-availability".into())
-            .spawn(refresh)
-            .is_err()
-    {
-        EVIDENCE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .release();
+        .claim(Instant::now(), |_| true);
+    if due {
+        refresh_in_background(&EVIDENCE, "provider-availability", || {
+            Evidence::observe(&Context::current())
+        });
     }
     evidence
 }
@@ -633,26 +589,5 @@ mod tests {
         for provider in ["claude", "codex", "gemini"] {
             assert_eq!(state(&value, provider), "noCli", "{provider}");
         }
-    }
-
-    #[test]
-    fn provider_availability_cache_refreshes_at_most_every_two_seconds() {
-        let mut cache = Cache::empty();
-        let start = Instant::now();
-        assert_eq!(cache.claim(start), (None, true));
-        assert_eq!(cache.claim(start), (None, false));
-        let evidence = Evidence {
-            claude: Login::Stored,
-            codex: Login::Missing("missing"),
-            gemini: Login::Unknown("unknown"),
-        };
-        cache.store(evidence, start);
-        let within = start + REFRESH - Duration::from_millis(1);
-        assert_eq!(cache.claim(within), (Some(evidence), false));
-        let due = start + REFRESH;
-        assert_eq!(cache.claim(due), (Some(evidence), true));
-        assert_eq!(cache.claim(due), (Some(evidence), false));
-        cache.release();
-        assert_eq!(cache.claim(due), (Some(evidence), true));
     }
 }

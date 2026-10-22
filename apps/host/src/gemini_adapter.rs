@@ -1,4 +1,8 @@
-use crate::{launchers::Version, status::StatusState};
+use crate::{
+    launchers::Version,
+    refreshing_cache::{RefreshingCache, observe_into, refresh_in_background},
+    status::StatusState,
+};
 use anyhow::{Result, ensure};
 use portable_pty::CommandBuilder;
 use serde::Serialize;
@@ -44,50 +48,28 @@ fn selects_session(arg: &OsStr) -> bool {
 const EXTENSION_REFRESH: Duration = Duration::from_secs(2);
 
 static PREPARED: OnceLock<Prepared> = OnceLock::new();
-static EXTENSION: Mutex<ExtensionCache> = Mutex::new(ExtensionCache::empty());
+static EXTENSION: Mutex<RefreshingCache<(PathBuf, &'static str)>> =
+    Mutex::new(RefreshingCache::new(EXTENSION_REFRESH));
 
-struct ExtensionCache {
-    observed: Option<(PathBuf, &'static str, Instant)>,
-    refreshing: bool,
-}
-
-impl ExtensionCache {
-    const fn empty() -> Self {
-        Self {
-            observed: None,
-            refreshing: false,
-        }
-    }
-    fn claim(&mut self, home: &Path, now: Instant) -> (Option<&'static str>, bool) {
-        let current = self.observed.as_ref().filter(|(cached, ..)| cached == home);
-        let state = current.map(|(_, state, _)| *state);
-        let stale = current
-            .is_none_or(|(_, _, at)| now.saturating_duration_since(*at) >= EXTENSION_REFRESH);
-        let refresh = stale && !self.refreshing;
-        self.refreshing |= refresh;
-        (state, refresh)
-    }
-    fn store(&mut self, home: PathBuf, state: &'static str, at: Instant) {
-        self.observed = Some((home, state, at));
-        self.refreshing = false;
-    }
-}
-
-fn refresh_extension(prepared: &Prepared, home: PathBuf) {
-    let state = extension_state(prepared, &home);
-    EXTENSION
+fn claim_extension(home: &Path) -> (Option<&'static str>, bool) {
+    let (observed, refresh) = EXTENSION
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .store(home, state, Instant::now());
+        .claim(Instant::now(), |(cached, _)| cached == home);
+    (observed.map(|(_, state)| state), refresh)
+}
+
+fn observe_extension(prepared: &Prepared, home: PathBuf) -> (PathBuf, &'static str) {
+    let state = extension_state(prepared, &home);
+    (home, state)
 }
 
 fn cached_extension(prepared: &'static Prepared, home: PathBuf) -> &'static str {
-    let (state, refresh) = EXTENSION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .claim(&home, Instant::now());
+    let (state, refresh) = claim_extension(&home);
     if refresh {
-        std::thread::spawn(move || refresh_extension(prepared, home));
+        refresh_in_background(&EXTENSION, "gemini-extension", move || {
+            observe_extension(prepared, home)
+        });
     }
     state.unwrap_or("checking")
 }
@@ -115,11 +97,8 @@ pub fn prepare(directory: &Path) -> Result<PathBuf> {
     let root = prepared.root.clone();
     let _ = PREPARED.set(prepared);
     if let (Some(prepared), Some(home)) = (PREPARED.get(), gemini_home()) {
-        EXTENSION
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .claim(&home, Instant::now());
-        refresh_extension(prepared, home);
+        claim_extension(&home);
+        observe_into(&EXTENSION, || observe_extension(prepared, home));
     }
     Ok(root)
 }
@@ -655,20 +634,25 @@ mod tests {
 
     #[test]
     fn gemini_extension_cache_refreshes_at_most_every_two_seconds_per_home() {
-        let mut cache = ExtensionCache::empty();
+        let mut cache = RefreshingCache::new(EXTENSION_REFRESH);
         let home = Path::new("C:/home/owner");
+        let current = |(cached, _): &(PathBuf, &str)| cached == home;
         let start = Instant::now();
-        assert_eq!(cache.claim(home, start), (None, true));
-        assert_eq!(cache.claim(home, start), (None, false));
-        cache.store(home.to_path_buf(), "linked", start);
+        assert_eq!(cache.claim(start, current), (None, true));
+        assert_eq!(cache.claim(start, current), (None, false));
+        cache.store((home.to_path_buf(), "linked"), start);
         let within = start + EXTENSION_REFRESH - Duration::from_millis(1);
-        assert_eq!(cache.claim(home, within), (Some("linked"), false));
+        assert!(!cache.claim(within, current).1);
         let due = start + EXTENSION_REFRESH;
-        assert_eq!(cache.claim(home, due), (Some("linked"), true));
-        assert_eq!(cache.claim(home, due), (Some("linked"), false));
-        cache.store(home.to_path_buf(), "notLinked", due);
-        assert_eq!(cache.claim(home, due), (Some("notLinked"), false));
-        assert_eq!(cache.claim(Path::new("C:/home/other"), due), (None, true));
+        assert!(cache.claim(due, current).1);
+        assert!(!cache.claim(due, current).1);
+        cache.store((home.to_path_buf(), "notLinked"), due);
+        assert_eq!(
+            cache.claim(due, current),
+            (Some((home.to_path_buf(), "notLinked")), false)
+        );
+        let other = |(cached, _): &(PathBuf, &str)| cached == Path::new("C:/home/other");
+        assert_eq!(cache.claim(due, other), (None, true));
         assert!(!assemble(None, None, "checking").ready);
         assert!(
             assemble(

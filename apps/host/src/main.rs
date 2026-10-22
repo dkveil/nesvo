@@ -61,6 +61,7 @@ mod quota_wakes;
 mod readiness;
 mod receipts;
 mod recipes;
+mod refreshing_cache;
 mod replay;
 mod resume;
 mod review;
