@@ -1050,11 +1050,57 @@ fn copy_env_files(root: &Path, worktree: &Path, files: &[String]) -> Result<Vec<
     Ok(copied)
 }
 
-pub(crate) async fn state_dir(worktree: &Path) -> std::io::Result<PathBuf> {
+fn linked_state() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "the worktree state folder must be a plain folder inside the worktree",
+    )
+}
+
+fn state_folder(worktree: &Path) -> std::io::Result<PathBuf> {
     let directory = worktree.join(STATE_DIR);
-    tokio::fs::create_dir_all(&directory).await?;
-    tokio::fs::write(directory.join(".gitignore"), "*\n").await?;
-    Ok(directory)
+    match std::fs::create_dir(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let metadata = std::fs::symlink_metadata(&directory)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(linked_state());
+    }
+    let resolved = std::fs::canonicalize(&directory)?;
+    let base = std::fs::canonicalize(worktree)?;
+    if resolved.parent() != Some(base.as_path()) {
+        return Err(linked_state());
+    }
+    Ok(resolved)
+}
+
+pub(crate) fn open_plain(path: &Path) -> std::io::Result<std::fs::File> {
+    let directory = path.parent().ok_or_else(linked_state)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true);
+    without_links(&mut options);
+    let file = options.open(path)?;
+    if !crate::handle_paths::opened_inside(&file, directory)
+        || !crate::handle_paths::plain_file(&file)?
+    {
+        return Err(linked_state());
+    }
+    file.set_len(0)?;
+    Ok(file)
+}
+
+pub(crate) async fn state_dir(worktree: &Path) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    let worktree = worktree.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let directory = state_folder(&worktree)?;
+        open_plain(&directory.join(".gitignore"))?.write_all(b"*\n")?;
+        Ok(directory)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 async fn read_worktree_config(worktree: &Path) -> Result<Option<Config>> {
@@ -1276,8 +1322,12 @@ impl Log {
         Self::tailed(path, 0).await
     }
     pub(crate) async fn tailed(path: &Path, tail_limit: usize) -> std::io::Result<Self> {
+        let path = path.to_owned();
+        let file = tokio::task::spawn_blocking(move || open_plain(&path))
+            .await
+            .map_err(std::io::Error::other)??;
         Ok(Self {
-            file: tokio::fs::File::create(path).await?,
+            file: tokio::fs::File::from_std(file),
             written: 0,
             truncated: false,
             tail: Vec::new(),

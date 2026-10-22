@@ -19,6 +19,7 @@ mod gemini_adapter;
 mod git;
 mod git_repository;
 mod groups;
+mod handle_paths;
 mod host_lock;
 mod job_attempts;
 mod job_calendar;

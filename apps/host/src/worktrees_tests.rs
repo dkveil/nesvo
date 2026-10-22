@@ -17,7 +17,7 @@ fn scratch() -> Scratch {
         hex::encode(crate::wire::random::<8>())
     ));
     std::fs::create_dir_all(&path).unwrap();
-    Scratch(path)
+    Scratch(PathBuf::from(display_path(&path.canonicalize().unwrap())))
 }
 
 fn fixture(arguments: &str) -> String {
@@ -1119,4 +1119,102 @@ async fn a_derived_worktree_is_unknown_only_once_checkout_has_started() {
         )
     );
     assert!(spec.cwd.is_none() && spec.worktree);
+}
+
+fn link_directory(target: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
+            || std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(display_path(link))
+                .arg(display_path(target))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+    }
+}
+
+#[tokio::test]
+async fn a_linked_state_folder_is_refused_without_touching_its_target() {
+    let worktree = scratch();
+    let outside = scratch();
+    std::fs::write(outside.0.join(".gitignore"), "keep").unwrap();
+    std::fs::write(outside.0.join("setup.log"), "keep").unwrap();
+    assert!(link_directory(&outside.0, &worktree.0.join(STATE_DIR)));
+    assert!(state_dir(&worktree.0).await.is_err());
+    assert!(
+        Log::create(&worktree.0.join(STATE_DIR).join("setup.log"))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.0.join(".gitignore")).unwrap(),
+        "keep"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.0.join("setup.log")).unwrap(),
+        "keep"
+    );
+}
+
+#[tokio::test]
+async fn a_linked_log_file_is_refused_without_truncating_its_target() {
+    let worktree = scratch();
+    let outside = scratch();
+    let victim = outside.0.join("victim.txt");
+    std::fs::write(&victim, "keep").unwrap();
+    let directory = state_dir(&worktree.0).await.unwrap();
+    std::fs::hard_link(&victim, directory.join("run.log")).unwrap();
+    assert!(Log::create(&directory.join("run.log")).await.is_err());
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+    std::fs::remove_file(directory.join(".gitignore")).unwrap();
+    std::fs::hard_link(&victim, directory.join(".gitignore")).unwrap();
+    assert!(state_dir(&worktree.0).await.is_err());
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&victim, directory.join("setup.log")).is_ok();
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file(&victim, directory.join("setup.log")).is_ok();
+    if linked {
+        assert!(Log::create(&directory.join("setup.log")).await.is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+    }
+}
+
+#[tokio::test]
+async fn a_plain_state_folder_truncates_and_rewrites_its_logs() {
+    let worktree = scratch();
+    let directory = state_dir(&worktree.0).await.unwrap();
+    assert!(handle_paths_inside(&directory, &worktree.0));
+    assert_eq!(
+        std::fs::read_to_string(directory.join(".gitignore")).unwrap(),
+        "*
+"
+    );
+    std::fs::write(
+        directory.join("run.log"),
+        "an older and much longer run log",
+    )
+    .unwrap();
+    let mut log = Log::create(&directory.join("run.log")).await.unwrap();
+    log.line("fresh").await;
+    log.finish().await;
+    assert_eq!(
+        std::fs::read_to_string(directory.join("run.log")).unwrap(),
+        "fresh
+"
+    );
+    assert_eq!(state_dir(&worktree.0).await.unwrap(), directory);
+}
+
+fn handle_paths_inside(directory: &Path, worktree: &Path) -> bool {
+    directory
+        .parent()
+        .is_some_and(|parent| crate::handle_paths::same_path(parent, worktree))
 }
