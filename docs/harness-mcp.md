@@ -184,8 +184,7 @@ launch, queued delivery, executor, wake and context recovery, uncertain-slot ret
 and known no-effect startup failure. Its launch-private bundle includes the
 linked run policy/control and context/constraints references without requiring
 another provider file-read permission. Older live snapshots remain unchanged. See
-[task launch](harness-task-launch.md).
-The tool count is the length of the [catalog](harness-mcp-tools.json). Task instruction intents use
+[task launch](harness-task-launch.md). Task instruction intents use
 `nesvo_deliver_task` and `nesvo_cancel_task_delivery`; optional `sessionId` reuses
 the task's own settled worker with the same refusals as `run deliver --session`; see
 [guarded task delivery](harness-task-delivery.md).
@@ -285,7 +284,8 @@ clients, the [name catalog](harness-mcp-tools.json), the
 schema, annotations) and the table below (effect and the first sentence of each
 description) are derived from it. After a tool change run
 `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo --bin nesvo mcp_tools` and commit the
-regenerated files; CI runs the same test without the variable and fails on drift.
+regenerated files; CI runs the same test without the variable and fails on drift. The tool
+count is the length of the [name catalog](harness-mcp-tools.json).
 
 Tools whose struct lives in `mcp_tools::args` parse their arguments into it at runtime.
 Tools whose struct lives in `mcp_tools::contract` forward the arguments to the workflow,
@@ -592,8 +592,8 @@ interrupt, rollback or permission to replay. Inspect the original receipt or
 workflow mutation after an uncertain response. A cancellation already observed
 before invocation takes precedence over validation and slot acquisition.
 Dropping a client-side future alone is not the protocol cancellation notification.
-The SDK controls whether a canceled request receives a wire response. Broader
-protocol conformance remains an explicit audit item before the complete F10 gate.
+The SDK controls whether a canceled request receives a wire response. Conformance
+beyond the scenarios below is not claimed.
 
 References verified for this implementation:
 [stdio](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio),
@@ -605,11 +605,11 @@ References verified for this implementation:
 
 ```powershell
 cargo build --workspace --locked
-cargo test --package nesvo --test mcp_host --locked -- --ignored --test-threads=1
+cargo nextest run --package nesvo --test mcp_host --locked --profile ci --run-ignored ignored-only --test-threads 1
 ```
 
-The test needs built native binaries, so CI explicitly runs it after build on
-Windows/macOS/Linux. Scenarios run serially on shared runners because each owns
+The test needs built native binaries, so the daily `Native nightly` workflow runs it
+after a build on Windows, macOS and Linux; the per-push checks do not. Scenarios run serially on shared runners because each owns
 a native host, probes and multiple PTYs; concurrent-client checks within each
 scenario remain concurrent. An official SDK client connects to a separate native MCP
 subprocess and isolated host. It checks catalog, create/replay, the same receipt
@@ -643,5 +643,5 @@ notification on both paths, delta reads from `readUri` and `nextCursor`, and
 stream release after `resources/unsubscribe`. Notifications are awaited with
 deadlines, never fixed sleeps. Live-provider event streams remain unverified.
 
-Actual provider prompt-correlation coverage, full durable run recovery and actual provider-to-child orchestration remain F10/F17
-gates. A model-driven evaluation corpus for those workflows is also pending.
+Real-provider prompt correlation (F17) and child orchestration by a real model (F11)
+stay with the owner; a model-driven evaluation corpus for those workflows does not exist.

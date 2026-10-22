@@ -1,6 +1,6 @@
 # Mobile product priorities
 
-This is a proposed sequence for nesvo, not a promise to implement every capability. Reassess each stage after testing the preceding one on a physical phone. The baseline below was checked against the code at `f96e197`.
+This is a proposed sequence for nesvo, not a promise to implement every capability. Reassess each stage after testing the preceding one on a physical phone. The baseline below was checked against the code on 2026-10-22.
 
 ## Product boundaries
 
@@ -15,7 +15,7 @@ This is a proposed sequence for nesvo, not a promise to implement every capabili
 
 The app has a real xterm terminal, a small command field, Escape/Ctrl+C/Tab/arrows, keyboard dismissal, QR pairing, nested groups, session search and status filters. The switcher shows program, status, group and working directory. Native storage currently remembers one host; there is one active host connection.
 
-Status combines terminal activity, conservative interpretation of recognized screen text and process exit. It is not a structured stream of agent tasks or permission requests. Status timestamps exist in the host data but are not shown as elapsed times in the mobile list. The mobile font size and palette are fixed. Mobile fullscreen, a key modifier palette, files/Git, attachments, notifications, SSH and structured conversation/approval interfaces are not implemented.
+Status combines terminal activity, conservative interpretation of recognized screen text and process exit. It is not a structured stream of agent tasks or permission requests. Status timestamps exist in the host data but are not shown as elapsed times in the mobile list. The mobile font size and palette are fixed. Mobile fullscreen, a key modifier palette, files/Git, attachments, SSH, native permission approvals and structured conversation interfaces are not implemented. The attention inbox, decisions and opt-in pushes are described in the table below.
 
 The native TUI already has fullscreen and a saved default. That does not imply that the mobile client has the same presentation feature. Host restart does not preserve running shells.
 

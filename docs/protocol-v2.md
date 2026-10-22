@@ -495,11 +495,30 @@ Screen rules are deliberately narrow and version-sensitive. Codex's [question ov
 
 Capabilities are sent in response to `getCapabilities` and, on hosts supporting `providerLimits`, after a change in the cached Codex limits. Existing `create` requests without `program` continue to create a shell. These are additive commands within application protocol v2: an older v2 host can still reject `getCapabilities` and close the connection. Upgrade host and clients together for the launcher picker; `protocolVersion:2` alone does not establish support for this extension.
 
-Feature flags in `capabilities` such as `files`, `git`, `reviews`, `worktrees`, `recovery` and
-`conversationResume` are strict booleans: a client sends the matching commands only when the flag
-is `true` and treats absence as unsupported. `git` gates `listCommits`, `recovery` gates
-`listRecovery`, `restoreSession` and `forgetRecovery`, and `conversationResume` gates
-`exact:true`, a field older hosts do not know.
+Feature flags in `capabilities` are strict booleans unless noted: a client sends the matching
+commands only when the flag is `true` and treats absence as unsupported. The host advertises more
+flags than clients gate on; these are the ones current clients check:
+
+| Flag                 | Gates                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `files`              | `listEntries`, `readFile` and `findFiles` ([files sidebar](#files-sidebar))                             |
+| `git`                | `listCommits` ([commit history](#commit-history))                                                       |
+| `reviews`            | review sessions and their commands ([reviews](#reviews))                                                |
+| `worktrees`          | owner worktree setup, run, cancel, archive and registry commands ([worktrees](#worktrees))              |
+| `recovery`           | `listRecovery`, `restoreSession` and `forgetRecovery`                                                   |
+| `conversationResume` | `exact:true` on `restoreSession`, a field older hosts do not know                                       |
+| `attentionInbox`     | `attentionInbox`, `acknowledgeInbox` and the `resultReady` push kind                                    |
+| `decisions`          | `decisions`, `decide` and the `decisionPending` push kind                                               |
+| `jobPages`           | `page` on the owner job `list` and `history` reads                                                      |
+| `notes`              | `listNotes`, `readNote`, `writeNote` and `deleteNote` ([notes](#notes))                                 |
+| `projects`           | the project registry commands ([projects](#projects))                                                   |
+| `mcpPool`            | `mcpPoolStatus` ([MCP server pool](#mcp-server-pool))                                                   |
+| `workflowTemplates`  | `nesvo.toml` run templates ([templates](harness-workflows.md#templates-from-nesvotoml))                 |
+| `workflowHostChecks` | `hostChecks:true` on result validation ([host-run checks](harness-workflows.md#host-run-checks))        |
+| `runDigests`         | the run `digest` read ([run digest](harness-workflows.md#run-digest-and-working-state))                 |
+| `runWakeDelivery`    | owner wake `pause`, `resume` and `setDelivery` ([wakes](harness-wakes.md#owner-hold-and-delivery-mode)) |
+| `sessionFreshness`   | the opt-in freshness record below                                                                       |
+| `providers`          | an object, not a flag: per-provider availability ([sessions and groups](#sessions-and-groups))          |
 
 `attach {sessionId,cols,rows}` remains supported for the original client: it releases that connection's other control leases/subscriptions, acquires the requested session if free, and emits `attached`, `control`, then replay. Its lease accepts legacy input/resize without `leaseId`; supplying an incorrect lease is always rejected. A lease obtained through v2 `acquireControl` never accepts missing `leaseId`.
 
@@ -517,16 +536,10 @@ Session status may include additive `evidence: "hook"` alongside `source: "scree
 A client that sends `getCapabilities {sessionFreshness:true}` (older hosts ignore
 the field) receives one fresh snapshot and, from then on, in `sessions` and
 `session` replies, each session's
-`status.freshness:{source,observedAt,ageMs,stale,boundMs,lastKnown}`. `source`
-is `hook`, `process`, `journal` or `unknown`; `observedAt` is host epoch
-milliseconds; `ageMs` is measured by the host at projection, so clients add only
-their own elapsed time; `boundMs` is the source's stale bound or null. When
-`lastKnown:{state,observedAt}` is present the source is `journal`, `stale` is
-true, `status.state` is `unknown` and `lifecycle.agent.current` is null with
-`freshness:"unknown"`: the host stopped confirming hook evidence and does not keep
-a guessed live state. `sessionFreshnessBounds` lists `{source,staleAfterMs,
-measuredFrom}`. Connections without the opt-in receive the previous fields and
-values. See [agent session status](agent-session-status.md#freshness).
+`status.freshness:{source,observedAt,ageMs,stale,boundMs,lastKnown}`;
+`sessionFreshnessBounds` lists `{source,staleAfterMs,measuredFrom}`. Sources,
+bounds, the disconnect policy and what clients show are defined once in
+[agent session status](agent-session-status.md#freshness).
 
 Program Status Protocol reports use `source:"screen"` with additive
 `confirmedSource:"osc7501"` (not a new legacy source/evidence enum). A session may

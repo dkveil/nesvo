@@ -34,13 +34,13 @@ Use functions and concrete types by default. Add a trait/interface where multipl
 
 The mobile application uses feature slices under `apps/mobile/src`:
 
-| Layer      | Current responsibilities                                         | Allowed dependencies                             |
-| ---------- | ---------------------------------------------------------------- | ------------------------------------------------ |
-| `app`      | Expo Router routes and application composition                   | Widgets, features, entities, shared              |
-| `widgets`  | App shell and session dashboard                                  | Features, entities, shared                       |
-| `features` | Pair host, create session, manage groups, terminal session       | Entities, shared                                 |
-| `entities` | Session and group models; workspace state and commands           | Other entities through public interfaces, shared |
-| `shared`   | Generic UI/theme, terminal rendering and host transport adapters | Shared only                                      |
+| Layer      | Current responsibilities                                                                                    | Allowed dependencies                             |
+| ---------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `app`      | Expo Router routes and application composition                                                              | Widgets, features, entities, shared              |
+| `widgets`  | App shell and session dashboard                                                                             | Features, entities, shared                       |
+| `features` | Pair host, create session, manage groups, terminal session, attention inbox, answer decision, notifications | Entities, shared                                 |
+| `entities` | Session, group and inbox models; workspace state and commands                                               | Other entities through public interfaces, shared |
+| `shared`   | Generic UI/theme, terminal rendering and host transport adapters                                            | Shared only                                      |
 
 `entities/workspace` coordinates connection state and session/group commands. It consumes the public interfaces of the session and group slices. `shared` must not accumulate product rules, demo sessions, group hierarchy logic or application navigation. Its host transport represents validated protocol data; mapping that data into product state belongs to entities.
 
@@ -88,7 +88,7 @@ The host journal schema lives in numbered SQL files under `apps/host/migrations/
 
 Test invariants at their boundary: group cycles and missing parents without PTYs; transactions and reload against a temporary SQLite database; real multi-client synchronization, control takeover and shell continuity against the host; keyboard intent/rendering against a deterministic TUI backend. Integration tests should assert observable behavior rather than mirror private functions.
 
-CI checks the mobile code and native Rust builds on Windows, macOS and Linux. Report native device testing separately. A browser viewport test is not proof of iOS safe-area or keyboard correctness, and cross-compilation is not proof of runtime behavior.
+CI checks the mobile code and native Rust builds on Windows, macOS and Linux on every push; the ignored native scenarios run in the daily `Native nightly` workflow. Report native device testing separately. A browser viewport test is not proof of iOS safe-area or keyboard correctness, and cross-compilation is not proof of runtime behavior.
 
 Keep demo fixtures explicit. Persisted metadata does not imply that processes survive a host restart. Bounded terminal transcript replay does not imply an exact full-screen snapshot.
 

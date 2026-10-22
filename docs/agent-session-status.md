@@ -59,7 +59,10 @@ by this projection.
 
 Negotiation: a client sends `getCapabilities {sessionFreshness:true}`. The host
 advertises `sessionFreshness:true`, sends that client one fresh snapshot after
-its first opt-in, and adds the record only to that connection's snapshots.
+its first opt-in, and adds the record only to that connection's `sessions`
+snapshots and `session` replies. `ageMs` is measured by the host at projection, so
+clients add only their own elapsed time; `boundMs` is the source's stale bound or
+null.
 Clients that do not opt in receive the previous shape and state unchanged; older
 hosts ignore the field.
 

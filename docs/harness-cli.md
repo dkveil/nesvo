@@ -475,7 +475,7 @@ or changed digests fail with `workflow_templates_unapproved`, an unknown name wi
 `workflow_template_not_found`. All commands need
 `workflowTemplates:true`. See [workflow templates](harness-workflows.md#templates-from-nesvotoml).
 
-## Remaining delivery gates
+## Events, launch receipts and lineage
 
 `events --after CURSOR --session SESSION_ID --json` reads a durable domain page;
 add `--watch` for NDJSON deltas without heartbeat output. See `harness-events.md`
@@ -519,9 +519,7 @@ keep the adapter's generic message. These diagnostics do not prove admission
 saturation or permit automatic replay. Existing connection/read/write timeouts
 and host proof, nonce and protocol validation remain unchanged.
 
-Job receipts, agent instruction installation and durable run grants remain
-subsequent gates. This is not a completed orchestration interface. Existing
-legacy `nesvo --list` remains compatible.
+Existing legacy `nesvo --list` remains compatible.
 
 ## Workflow plans and attempts
 

@@ -129,5 +129,7 @@ These are workflow decisions, with no native permission bridge. The host does
 not suspend a running process, enforce an OS sandbox or interpret answer text as
 instructions. [Native task delivery](harness-task-delivery.md) applies decision
 gates before input; [wake batching](harness-wakes.md) never answers a decision.
-Visible decision queues in TUI/mobile remain separate work requiring mockup approval.
+The TUI Runs view (`W`) answers the selected run's first pending decision, and the
+mobile Decisions screen answers owner decisions across runs one revision at a time;
+neither has an interactive or device acceptance run yet.
 Real-provider model-driven escalation remains an explicit stage-3 acceptance gap.

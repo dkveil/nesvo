@@ -36,10 +36,11 @@ nesvo is a Rust host that owns terminal sessions for your shells and AI coding a
 - **Start the right kind of session** — `N` offers an agent session (Claude Code, Gemini or Codex with a requested model and effort), a clean terminal or a review of the selected session's local changes or of a GitHub pull request URL. The host detects installed CLIs; AI tools keep their own subscription login and nesvo requires no model API keys.
 - **See what needs attention** — clients show activity, detected questions and approvals, and process completion or failure, with needs-you rollups per group. Screen-based hints are distinguished from observed activity and exit results.
 - **Arrange the workspace** — the Rust TUI has a session sidebar, tabs and a split tree of up to four panes. `L` applies, saves and renames named layouts with role panes; a project can mark one as its default. Windows uses native ConPTY; no tmux or WSL is required.
-- **Schedule durable jobs** — the host runs once, cron, RRULE and externally triggered jobs without an open client, with retained history, a missed-run policy and optional prechecks. `J` opens the Jobs view to create and edit once jobs, pause them, run now and cancel occurrences; recurring schedules use `nesvo job`.
-- **Run workflows** — host-owned runs with tasks, attempts, inbox messages, decision questions and budgets let a coordinator agent create and control only the worker sessions it launched. Automatic execution and wakeups stay off until enabled.
+- **Schedule durable jobs** — the host runs once, cron, RRULE and externally triggered jobs without an open client, with retained history, a missed-run policy and optional prechecks. `J` opens the Jobs view to create and edit once, cron, RRULE and external jobs, pause them, run now and cancel occurrences; triggers use `nesvo job trigger`.
+- **Run workflows** — host-owned runs with tasks, attempts, inbox messages, decision questions and budgets let a coordinator agent create and control only the worker sessions it launched. Automatic execution and wakeups stay off until enabled. `W` opens the Runs view to pause, resume or drain a run, answer its pending decision, hold or switch coordinator wakes and start approved `nesvo.toml` templates.
 - **Review changes** — on hosts advertising `reviews`, `F4` opens a review tab for the session when the content area has at least 88 columns; narrower terminals and older hosts keep the dock with unstaged, staged and untracked Git changes. The host opens review sessions for a local branch or a GitHub pull request fetched through `gh`, reports readiness and per-file edit provenance, and delivers review text to an agent session.
-- **Drive it from scripts and agents** — `nesvo session`, `nesvo review`, `nesvo job` and `nesvo run` return stable JSON with idempotency keys and receipts. `nesvo mcp` exposes the same host operations to an orchestrating agent over stdio.
+- **Keep notes and projects** — `T` opens markdown notes per project and Ctrl+T appends a line to today's note; `P` lists the host's project registry with pins, the usual launch folder and the default layout.
+- **Drive it from scripts and agents** — `nesvo session`, `review`, `job`, `run`, `worktree`, `project`, `inbox`, `decision` and `workflow` return stable JSON with idempotency keys, receipts and typed exit codes. `nesvo mcp` exposes the same host operations to an orchestrating agent over stdio.
 - **Pair a phone** — scan the host's QR in the Expo app to watch and control the same sessions over an encrypted connection on your LAN or private VPN.
 
 ## quick start
@@ -115,9 +116,9 @@ Groups, live sessions, control, jobs, runs and reviews synchronize through the h
 
 Agent status detection is conservative and depends on the CLI's visible screen and, where available, provider hooks. Unrecognized states remain unknown; silence never means a task is complete. Status hints do not approve commands or answer questions automatically. End-to-end provider coverage is Claude today: its hooks drive lifecycle status and edit provenance, while Codex's lifecycle adapter is not yet proven live and Gemini relies on screen inference. The [delivery status](docs/harness-delivery.md) lists each harness feature with its evidence and main gap.
 
-The Jobs view edits once jobs only; recurring and external schedules and webhook triggers are managed through the CLI or MCP. A GitHub pull request review opens from the TUI `N` menu, the CLI or MCP; the TUI review tab and the files sidebar ship on main. Capabilities constrain the host API; they are not an OS sandbox.
+The Jobs view edits every schedule kind; webhook and GitHub triggers are managed through the CLI or MCP. A GitHub pull request review opens from the TUI `N` menu, the CLI or MCP; the TUI review tab and the files sidebar ship on main. Capabilities constrain the host API; they are not an OS sandbox.
 
-SSH connection management, automatic relay/VPN setup, native agent conversation views and mobile job or decision screens are future work. Existing external terminals cannot be adopted. The native scenario cohort runs in the daily `Native nightly` workflow rather than on every push. Physical-device and interactive platform checks are tracked in the [testing guide](docs/testing.md); CI does not replace them.
+SSH connection management, automatic relay/VPN setup, native agent conversation views and mobile job screens are future work. The mobile Inbox and Decisions screens are covered by client tests, not yet by a device run. Existing external terminals cannot be adopted. The native scenario cohort runs in the daily `Native nightly` workflow rather than on every push. Physical-device and interactive platform checks are tracked in the [testing guide](docs/testing.md); CI does not replace them.
 
 ## docs
 
@@ -131,7 +132,7 @@ SSH connection management, automatic relay/VPN setup, native agent conversation 
 | [Mobile priorities](docs/mobile-roadmap.md)                   | [Durable jobs](docs/harness-jobs.md)                |
 | [Security](SECURITY.md)                                       | [Workflow plans](docs/harness-workflows.md)         |
 | [Contributing](CONTRIBUTING.md)                               | [Engineering conventions](docs/engineering.md)      |
-|                                                               | [Design direction](docs/design.md)                  |
+| [All documents](docs/README.md)                               | [Design direction](docs/design.md)                  |
 
 ## development
 

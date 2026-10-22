@@ -107,10 +107,9 @@ In navigation mode, `J` (or the palette command **Jobs**) opens the owner Jobs v
 beside the sidebar when the host advertises `durableJobs`, `workflowPlans` and
 `workflowAttempts`. Rows mark enabled (●) or paused (○) definitions with their next
 start; the selected profile and instruction appear to the right, or below on narrow
-terminals. List: ↑↓ select, Enter details, `n` new, `r` reload, Esc back. Details:
-`e` edit, Space pause/resume future starts, `R` run now, `h` history. History: ↑↓
-select, Enter re-reads the occurrence, `c` requests cancellation. Form: Tab/↑↓ move,
-←→ or Space choose an installed agent or a schedule kind, Enter saves, Esc discards.
+terminals. Space pauses or resumes future starts, `R` runs now and `c` requests
+cancellation of an occurrence; every key of the list, details, history and form
+pages is in the [TUI keyboard reference](../apps/tui/README.md#keyboard).
 
 The form creates jobs in a shared workspace with `harness:true` and the defaults
 above. **Schedule** offers once plus the kinds in `jobScheduleKinds`: a once start

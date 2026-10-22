@@ -145,9 +145,9 @@ Delivery uses a fixed HTTPS endpoint, ten-second timeouts, no redirects and boun
 
 Push delivery requires a native build with valid APNs/FCM provisioning for the existing EAS project. SDK-matched package checks, iOS/Android/web bundle export and browser checks passed; delivery to a locked physical phone was not verified. Reference: [Expo notifications for SDK 57](https://docs.expo.dev/versions/v57.0.0/sdk/notifications/) and [Expo push delivery](https://docs.expo.dev/push-notifications/sending-notifications/).
 
-## Latest verification
+## Earlier verification
 
-Windows verification includes 96 TUI tests, 38 host tests, 3 wire tests, 16 mobile transport/domain tests, 17 real host/TUI/synchronization integration tests, architecture checks, formatting, Clippy, TypeScript and ESLint. A real ConPTY run verifies input ownership, Git review, palette, filters, templates/recovery dialogs, launch options, resize at 150×44, 100×32 and 80×24, and terminal restoration on exit. Host restart integration verifies persistent template identity, explicit restoration, muted-state recovery, and rejection of duplicate restoration. Browser testing covers the mobile web preview; it does not substitute for device push testing.
+When these workflows first shipped, Windows verification included 96 TUI tests, 38 host tests, 3 wire tests, 16 mobile transport/domain tests, 17 real host/TUI/synchronization integration tests, architecture checks, formatting, Clippy, TypeScript and ESLint. A real ConPTY run verifies input ownership, Git review, palette, filters, templates/recovery dialogs, launch options, resize at 150×44, 100×32 and 80×24, and terminal restoration on exit. Host restart integration verifies persistent template identity, explicit restoration, muted-state recovery, and rejection of duplicate restoration. Browser testing covers the mobile web preview; it does not substitute for device push testing. Current test counts and platform results are in the CI and `Native nightly` logs, summarized in the [delivery table](harness-delivery.md).
 
 ## Claude subscription usage
 
