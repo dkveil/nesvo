@@ -98,6 +98,21 @@ Two public contracts are generated from Rust types. Domain events are typed once
 
 Regenerate after changing either model and commit the outputs. `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts` rewrites `docs/harness-events.schema.json` and the kind table in [harness-events.md](harness-events.md#event-kinds); a new or changed kind also adds its golden record. `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo --bin nesvo mcp_tools` rewrites `docs/harness-mcp-tools.json` and the tool table. CI runs both tests without the variable and fails on drift.
 
+## Workflow actions
+
+Every `uses:` in `.github/workflows` names a full 40-character commit SHA, first-party `actions/*` included; a moving tag such as `@v4` can change what a running pipeline executes without a commit here. Workflow YAML carries no comments, so this table records the release each commit stands for.
+
+| Action                      | Release         | Commit                                     |
+| --------------------------- | --------------- | ------------------------------------------ |
+| `actions/checkout`          | v4.4.0          | `11d5960a326750d5838078e36cf38b85af677262` |
+| `actions/setup-node`        | v4.4.0          | `49933ea5288caeca8642d1e84afbd3f7d6820020` |
+| `actions/upload-artifact`   | v4.6.2          | `ea165f8d65b6e75b540449e92b4886f43607fa02` |
+| `actions/download-artifact` | v4.3.0          | `d3f86a106a0bac45b974a628896c90dbdf5c8093` |
+| `dtolnay/rust-toolchain`    | `stable` branch | `b725eda525362e7cf34af9a7243cac1e3f01a7ec` |
+| `taiki-e/install-action`    | v2.87.29        | `8cca0918f8471c33515202b73f56ab27f2bed283` |
+
+To change a pin, resolve the new tag with `gh api repos/OWNER/REPO/git/ref/tags/TAG` (follow `git/tags/SHA` when the object type is `tag`), then update every workflow that uses the action and this table in one commit.
+
 ## Language documentation
 
 - [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/): idiomatic APIs and type safety.
