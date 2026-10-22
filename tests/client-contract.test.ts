@@ -163,6 +163,19 @@ function retainedSnapshot(count: number) {
   };
 }
 
+test('session snapshot fixtures used by the client match the published host schema', () => {
+  const validate = cliValidator();
+  for (const snapshot of [
+    retainedSnapshot(16),
+    { type: 'sessions', groups, sessions: [session], revision: 4, requestId: 'list-1' },
+  ])
+    assert.equal(
+      validate({ schemaVersion: 1, ok: true, data: snapshot }),
+      true,
+      JSON.stringify(validate.errors),
+    );
+});
+
 test('session snapshots accept the host retained-record ceiling without dropping exited records', () => {
   for (const count of [0, 8, 9, 16]) {
     const snapshot = retainedSnapshot(count);
@@ -1515,6 +1528,12 @@ test('a hibernated session decodes as a stopped record with last-known freshness
     hibernation,
   };
   const snapshot = { type: 'sessions', groups, sessions: [hibernated], revision: 4 };
+  const validate = cliValidator();
+  assert.equal(
+    validate({ schemaVersion: 1, ok: true, data: snapshot }),
+    true,
+    JSON.stringify(validate.errors),
+  );
   assert.deepEqual(decodeServerMessage(snapshot), snapshot);
   assert.equal(sessionReadinessLabel(hibernated.readiness, true), 'Hibernated');
   assert.equal(sessionReadinessLabel(hibernated.readiness, false), undefined);
