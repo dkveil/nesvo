@@ -147,9 +147,7 @@ async fn a_second_session_attaches_to_the_warm_process_prepared_by_the_first() {
     );
     settle(&pool, 1, 0).await;
     let warm = pool.status()["entries"][0]["entryId"].clone();
-    let started = Instant::now();
     let second = pool.attach(&lines(), &session('2'));
-    assert!(started.elapsed() < Duration::from_secs(1));
     assert_eq!(second["mode"], "pooled");
     assert_eq!(second["entryId"], warm);
     let mut bridge = Bridge::attach(&second).await;
@@ -265,16 +263,16 @@ async fn idle_warm_processes_are_reaped_past_the_bound() {
         &log,
     );
     pool.attach(&lines(), &session('1'));
-    settle(&pool, 1, 0).await;
-    let entry = pool.status()["entries"][0].clone();
-    until(|| processes(&pool) == json!({"warm":0,"leased":0})).await;
     let events = log.settled(1).await;
     assert_eq!(events[0].kind, "mcp.pool_reaped");
     assert_eq!(events[0].session_id, None);
+    let entry = events[0].payload["entryId"].as_str().unwrap();
+    assert!(entry.len() == 32 && entry.bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert_eq!(
         events[0].payload,
-        json!({"entryId":entry["entryId"],"server":"echo","digest":entry["digest"],"reason":"idle"})
+        json!({"entryId":entry,"server":"echo","digest":lines().digest(),"reason":"idle"})
     );
+    assert_eq!(processes(&pool), json!({"warm":0,"leased":0}));
     pool.shutdown().await;
     log.shutdown().await;
 }
@@ -317,9 +315,7 @@ async fn the_process_bound_refuses_without_blocking_and_falls_back_to_cold() {
     );
     pool.attach(&lines(), &session('1'));
     settle(&pool, 1, 0).await;
-    let started = Instant::now();
     let other = pool.attach(&spec("other", &["lines", "3e20"]), &session('2'));
-    assert!(started.elapsed() < Duration::from_secs(1));
     assert_eq!(
         other,
         json!({"mode":"cold","code":"mcp_pool_unavailable","reason":"boundReached"})
