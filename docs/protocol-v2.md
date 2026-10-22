@@ -424,7 +424,7 @@ Additive `worktrees:true` advertises owner-only worktree commands; scoped sessio
 | `archiveWorktree { sessionId, discard? }`    | `worktreeArchived { sessionId, worktree, branch, discarded, blockers, branchDeleted }` |
 | `listWorktrees`                              | `worktreeRegistry { worktrees:[...] }`                                                 |
 
-`config` is `{ setup, run, envFiles, timeoutS }` from the committed `nesvo.toml`. A `launch` with `worktree:true` holds the agent spawn until the approved setup passes; a refused or failed setup replies `{type:"error", code, message, sessionId}` with the reserved session ID and starts no process. Journal events `worktreePrepared`, `worktreeRan` and `worktreeArchived` carry `sessionId`, `result` or archive facts and the log path. The [harness CLI](harness-cli.md#worktree-setup-run-and-archive) describes the file format, trust policy and refusals.
+`config` is `{ setup, run, envFiles, timeoutS }` from the committed `nesvo.toml`. A `launch` with `worktree:true` holds the agent spawn until the approved setup passes; a refused or failed setup replies `{type:"error", code, message, sessionId}` with the reserved session ID and starts no process. Journal events `worktree.prepared`, `worktree.ran` and `worktree.archived` carry `sessionId`, `result` or archive facts and the log path; an approval and an effective revocation journal `worktree.setup_approved` and `worktree.setup_revoked` with `repository` and `digest`. The [harness CLI](harness-cli.md#worktree-setup-run-and-archive) describes the file format, trust policy and refusals.
 
 ## Projects
 

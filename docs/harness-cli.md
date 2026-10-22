@@ -373,7 +373,9 @@ nesvo worktree revoke-setup --directory C:\project --digest INSPECTED_DIGEST --j
 approved, policy }` and runs nothing. `approve-setup` refuses with
 `digest_mismatch` when `HEAD` changed since inspection and returns
 `worktreeSetupApproved { repository, digest, approvedAt }`; `revoke-setup` returns
-`worktreeSetupRevoked { repository, digest, revoked }`. Approvals persist in
+`worktreeSetupRevoked { repository, digest, revoked }`. An approval and an effective
+revocation also reach the journal as `worktree.setup_approved` and
+`worktree.setup_revoked { repository, digest }`. Approvals persist in
 `worktrees.json` next to the host pairing data; every registry write replaces that
 file atomically (an owner-only temporary file, synced, then renamed).
 
@@ -395,7 +397,7 @@ runs. A failed, timed-out or cancelled setup never starts it: the receipt is
 `failed` with `worktree_setup_failed`, `worktree_setup_timed_out` or
 `worktree_setup_cancelled`, the log path and `reservedSessionId`. A passed setup
 records `worktreeSetup { digest, result, log }` in the prepared launch. The journal
-receives `worktreePrepared { sessionId, result: passed|failed|timedOut|cancelled,
+receives `worktree.prepared { sessionId, result: passed|failed|timedOut|cancelled,
 log, worktree, digest }`. `session create --worktree` waits up to 3630 seconds for
 the receipt.
 
@@ -410,7 +412,7 @@ nesvo worktree list --json
 setup and returns `worktreeRunStarted { sessionId, worktree, log }` at once; it
 refuses `worktree_run_unavailable` when that digest declares no `run` steps and
 `worktree_setup_unapproved` after the digest was revoked. The outcome is the
-journal event `worktreeRan { sessionId, result, log }` and the registry run state,
+journal event `worktree.ran { sessionId, result, log }` and the registry run state,
 with output in `.nesvo/run.log`. `cancel` terminates the active setup or run
 (`worktreeCancelled { sessionId, cancelled }`). At most four setups or runs execute
 at once.
@@ -431,8 +433,8 @@ setup digest is revoked.
 `worktree_unsaved` when the worktree has uncommitted or untracked files,
 conflicts, or commits that no other branch, tag or remote reference contains.
 Copied environment files that are unchanged and `.nesvo` do not count. With
-`--discard` it removes the worktree and its `nesvo/` branch anyway. The reply and
-the journal event `worktreeArchived` carry `sessionId`, `worktree`, `branch`,
+`--discard` it removes the worktree and its `nesvo/` branch anyway. The
+`worktreeArchived` reply and the journal event `worktree.archived` carry `sessionId`, `worktree`, `branch`,
 `discarded`, `blockers` and `branchDeleted`. `list` returns `worktreeRegistry
 { worktrees:[{ sessionId, worktree, branch, repository, createdAt, digest, setup,
 run, envFiles, archivedAt, discarded, present, sessionLive, active }] }`, newest

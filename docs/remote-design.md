@@ -134,7 +134,7 @@ command shapes, unchanged on the wire):
   `operation.changed` (`operationId`, `operation`, `phase`), plus `host.started`
   to detect an executing-host restart. The executing host's own `run.*` events
   never apply: its mirrored attempt envelope is not a run.
-- Worktree journal events `worktreePrepared`, `worktreeRan` and `worktreeArchived`.
+- Worktree journal events `worktree.prepared`, `worktree.ran` and `worktree.archived`.
 - A bounded **worker outbox** (proposed `workerOutbox`): the worker's calls to
   `nesvo_report_task_result`, `nesvo_send_message` and `nesvo_ask_decision` are
   recorded on the executing host as durable, attempt-scoped outbox entries. The

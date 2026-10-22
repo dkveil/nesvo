@@ -129,7 +129,9 @@ when HEAD changed), `revokeWorkflowTemplates {directory, digest}` →
 `workflowTemplatesRevoked {repository, digest, revoked}` and
 `startWorkflowTemplate {directory, name, key}` →
 `workflowTemplateStarted {template, digest, key, start, run, tasks, profiles, executor}`.
-All four are owner-only; session-scoped and wake callers receive `forbidden`.
+All four are owner-only; session-scoped and wake callers receive `forbidden`. An
+approval and an effective revocation also reach the event journal as
+`workflow.templates_approved` and `workflow.templates_revoked {repository, digest}`.
 
 Start re-reads HEAD and refuses `workflow_templates_unapproved` when the current
 digest is not approved, or `workflow_template_not_found`. It then creates a
