@@ -411,6 +411,7 @@ fn hold_queue_is_bounded_and_unverified_marks_are_retained_per_session() {
     let mut gate = gate();
     for index in 0..QUEUE_CAPACITY {
         gate.enqueue(Held {
+            client: None,
             id: format!("launch-{index}"),
             kind: "launch",
             program: Program::Claude,
@@ -422,6 +423,7 @@ fn hold_queue_is_bounded_and_unverified_marks_are_retained_per_session() {
         .unwrap();
     }
     let full = gate.enqueue(Held {
+        client: None,
         id: "overflow".into(),
         kind: "operation",
         program: Program::Claude,
@@ -439,6 +441,57 @@ fn hold_queue_is_bounded_and_unverified_marks_are_retained_per_session() {
     gate.mark_unverified("session", "source_stale");
     assert_eq!(gate.unverified("session")["reason"], "source_stale");
     assert!(gate.unverified("other").is_null());
+}
+
+fn client_hold(client: Option<u64>, id: &str) -> Held {
+    Held {
+        id: id.into(),
+        client,
+        kind: "launch",
+        program: Program::Claude,
+        reason: "quota_exhausted",
+        resets_at_ms: Some(FIVE_HOUR_RESET_MS),
+        since_ms: SOURCE_AT_MS,
+        checks: 1,
+    }
+}
+
+#[test]
+fn hold_queue_caps_each_client_below_the_host_bound() {
+    const { assert!(CLIENT_QUEUE_CAPACITY < QUEUE_CAPACITY) };
+    let mut gate = gate();
+    for index in 0..CLIENT_QUEUE_CAPACITY {
+        gate.enqueue(client_hold(Some(1), &format!("first-{index}")))
+            .unwrap();
+    }
+    let refused = gate.enqueue(client_hold(Some(1), "first-overflow"));
+    assert_eq!(
+        refused.unwrap_err().downcast_ref::<Error>().unwrap().code,
+        "quota_hold_client_limit"
+    );
+    gate.enqueue(client_hold(Some(1), "first-0")).unwrap();
+    assert_eq!(
+        gate.queue[0].checks, 2,
+        "a held launch is re-evaluated, not refused"
+    );
+    gate.enqueue(client_hold(Some(2), "second-0")).unwrap();
+    gate.enqueue(client_hold(None, "operation-0")).unwrap();
+    assert_eq!(gate.queue.len(), CLIENT_QUEUE_CAPACITY + 2);
+    gate.dequeue("first-1");
+    gate.enqueue(client_hold(Some(1), "first-overflow"))
+        .unwrap();
+    let mut client = 3;
+    while gate.queue.len() < QUEUE_CAPACITY {
+        let id = format!("client-{client}-{}", gate.queue.len());
+        if gate.enqueue(client_hold(Some(client), &id)).is_err() {
+            client += 1;
+        }
+    }
+    let full = gate.enqueue(client_hold(Some(client + 1), "host-overflow"));
+    assert_eq!(
+        full.unwrap_err().downcast_ref::<Error>().unwrap().code,
+        "busy"
+    );
 }
 
 fn host() -> Arc<Mutex<State>> {
@@ -484,6 +537,37 @@ fn release_now(state: &Arc<Mutex<State>>, program: Program) {
             reason: "observed",
         },
         elapsed,
+    );
+}
+
+#[tokio::test]
+async fn launch_hold_refuses_a_client_at_its_cap_without_queuing() {
+    let state = host();
+    hold_now(&state, Program::Claude);
+    for index in 0..CLIENT_QUEUE_CAPACITY {
+        state
+            .lock()
+            .unwrap()
+            .quota_gate
+            .enqueue(client_hold(Some(9), &format!("held-{index}")))
+            .unwrap();
+    }
+    let (_keep, cancel) = watch::channel(false);
+    let error = admit_launch(&state, 9, "reserved-cap", Program::Claude, None, cancel)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<Error>().unwrap().code,
+        "quota_hold_client_limit"
+    );
+    let state = state.lock().unwrap();
+    assert_eq!(state.quota_gate.queue.len(), CLIENT_QUEUE_CAPACITY);
+    assert!(
+        state
+            .quota_gate
+            .queue
+            .iter()
+            .all(|held| held.id != "reserved-cap")
     );
 }
 

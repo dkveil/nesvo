@@ -30,7 +30,10 @@ Jobs without `quotaPolicy` stay `queued` while held, with occurrence
 Run launches and the executor get `quota_wait` before an attempt or receipt exists;
 the executor waits on the journal. `createOperation` keeps its claimed receipt in
 the host hold queue. An interactive launch receives `{"type":"quotaHold"}` with the
-reason and reset time; disconnecting abandons it before any effect. A host stop
+reason and reset time; disconnecting abandons it before any effect. The queue holds at
+most 64 entries host-wide and 16 interactive launches per client; a launch beyond its
+client's share is refused with `quota_hold_client_limit` and a full queue with `busy`,
+both before any effect. A host stop
 finishes held operations as failed with no effect. Plain `create`, restores and
 legacy one-shot schedules refuse with `quota_hold`.
 

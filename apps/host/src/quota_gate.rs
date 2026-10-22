@@ -22,6 +22,7 @@ const CLAUDE_READ_BOUND_MS: u64 =
 const CLAUDE_FUTURE_TOLERANCE_MS: u64 = 2_000;
 const AWAITING_BOUND_MS: u64 = 30_000;
 const QUEUE_CAPACITY: usize = 64;
+const CLIENT_QUEUE_CAPACITY: usize = 16;
 const UNVERIFIED_CAPACITY: usize = 256;
 const ACCOUNT_FILE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const ACCOUNT_READ_TIMEOUT: Duration = Duration::from_secs(2);
@@ -101,6 +102,7 @@ struct Source {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Held {
     pub id: String,
+    pub client: Option<u64>,
     pub kind: &'static str,
     pub program: Program,
     pub reason: &'static str,
@@ -386,6 +388,20 @@ impl Gate {
                 self.changed.send_modify(|revision| *revision += 1);
             }
             return Ok(());
+        }
+        if let Some(client) = held.client
+            && self
+                .queue
+                .iter()
+                .filter(|item| item.client == Some(client))
+                .count()
+                >= CLIENT_QUEUE_CAPACITY
+        {
+            return Err(Error::new(
+                "quota_hold_client_limit",
+                "This client already holds the most launches allowed; no launch was queued",
+            )
+            .into());
         }
         if self.queue.len() >= QUEUE_CAPACITY {
             return Err(
@@ -706,6 +722,21 @@ pub(crate) async fn admit<F>(
     id: &str,
     kind: &'static str,
     program: Program,
+    cancel: Option<watch::Receiver<bool>>,
+    on_hold: F,
+) -> Result<()>
+where
+    F: FnMut(&Verdict),
+{
+    admit_for(state, None, id, kind, program, cancel, on_hold).await
+}
+
+async fn admit_for<F>(
+    state: &Arc<Mutex<State>>,
+    client: Option<u64>,
+    id: &str,
+    kind: &'static str,
+    program: Program,
     mut cancel: Option<watch::Receiver<bool>>,
     mut on_hold: F,
 ) -> Result<()>
@@ -741,6 +772,7 @@ where
             {
                 current.quota_gate.enqueue(Held {
                     id: queued.id.clone(),
+                    client,
                     kind,
                     program,
                     reason,
@@ -786,8 +818,9 @@ pub(crate) async fn admit_launch(
     request_id: Option<&str>,
     cancel: watch::Receiver<bool>,
 ) -> Result<()> {
-    let result = admit(
+    let result = admit_for(
         state,
+        Some(client),
         reserved,
         "launch",
         program,
