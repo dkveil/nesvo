@@ -1,0 +1,109 @@
+{
+  "attentionInbox": {
+    "items": [
+      {
+        "at": 1792783600000,
+        "attemptId": "00000000000000000000000000000001",
+        "audience": "owner",
+        "decisionId": "00000000000000000000000000000002",
+        "expiresAt": 1792783900000,
+        "id": "decision:00000000000000000000000000000003:00000000000000000000000000000002",
+        "kind": "decision",
+        "priority": 3,
+        "reason": "decision",
+        "revision": 1,
+        "runId": "00000000000000000000000000000003",
+        "summary": "Which branch should the worker use?",
+        "title": "Release decision"
+      }
+    ],
+    "limit": 16,
+    "nextPage": null,
+    "page": 0,
+    "total": 1,
+    "type": "attentionInbox"
+  },
+  "decided": {
+    "attempt": {
+      "id": "00000000000000000000000000000001"
+    },
+    "cursor": 41,
+    "decision": {
+      "answer": "Use the release branch\n\nKeep the public API unchanged",
+      "askedBy": {
+        "role": "worker",
+        "sessionId": "00000000000000000000000000000004"
+      },
+      "attemptId": "00000000000000000000000000000001",
+      "audience": "owner",
+      "createdAt": 1792783600000,
+      "expiresAt": 1792783900000,
+      "id": "00000000000000000000000000000002",
+      "question": "Which branch should the worker use?",
+      "reason": null,
+      "resolvedAt": 1792783720000,
+      "resolvedBy": {
+        "role": "owner"
+      },
+      "revision": 2,
+      "runId": "00000000000000000000000000000003",
+      "state": "answered",
+      "taskId": "00000000000000000000000000000005"
+    },
+    "inboxId": "decision:00000000000000000000000000000003:00000000000000000000000000000002",
+    "run": {
+      "id": "00000000000000000000000000000003",
+      "revision": 4,
+      "state": "active",
+      "title": "Release decision"
+    },
+    "task": {
+      "id": "00000000000000000000000000000005"
+    },
+    "type": "decided"
+  },
+  "decisions": {
+    "decisions": [
+      {
+        "answer": null,
+        "askedBy": {
+          "role": "worker",
+          "sessionId": "00000000000000000000000000000004"
+        },
+        "attemptId": "00000000000000000000000000000001",
+        "audience": "owner",
+        "createdAt": 1792783600000,
+        "expiresAt": 1792783900000,
+        "id": "00000000000000000000000000000002",
+        "inboxId": "decision:00000000000000000000000000000003:00000000000000000000000000000002",
+        "question": "Which branch should the worker use?",
+        "reason": null,
+        "resolvedAt": null,
+        "resolvedBy": null,
+        "revision": 1,
+        "run": {
+          "id": "00000000000000000000000000000003",
+          "state": "active",
+          "title": "Release decision"
+        },
+        "runId": "00000000000000000000000000000003",
+        "state": "pending",
+        "taskId": "00000000000000000000000000000005"
+      }
+    ],
+    "nextPage": null,
+    "page": 0,
+    "total": 1,
+    "type": "decisions"
+  },
+  "inboxAcknowledged": {
+    "acknowledged": [
+      {
+        "acknowledgedAt": 1792783660000,
+        "id": "decision:00000000000000000000000000000003:00000000000000000000000000000002",
+        "revision": 1
+      }
+    ],
+    "type": "inboxAcknowledged"
+  }
+}
