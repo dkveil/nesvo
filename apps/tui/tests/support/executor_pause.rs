@@ -43,14 +43,23 @@ async fn occurrence(owner: &Owner, job: &str, id: &str) -> Result<Value> {
 }
 
 async fn reached(
+    fixture: &mut Fixture,
     owner: &Owner,
     job: &str,
     id: &str,
     description: &str,
     wanted: impl Fn(&Value) -> bool,
 ) -> Result<Value> {
-    waits::until(async || {
-        let view = occurrence(owner, job, id).await?;
+    let mut observation = job_diagnostics::RetryWaitObservation::new(job, id);
+    let started = tokio::time::Instant::now();
+    let result = waits::until(async || {
+        observation.started(started.elapsed());
+        let response = occurrence(owner, job, id).await;
+        match &response {
+            Ok(view) => observation.completed(view, started.elapsed()),
+            Err(_) => observation.failed(),
+        }
+        let view = response?;
         let current = &view["data"]["occurrence"];
         if wanted(current) {
             return Ok(Some(view));
@@ -61,8 +70,27 @@ async fn reached(
         );
         Ok(None)
     })
-    .await
-    .with_context(|| format!("Lost-reply occurrence did not reach {description}"))
+    .await;
+    match result {
+        Ok(view) => Ok(view),
+        Err(error) => {
+            let diagnostics = job_diagnostics::retry_timeout_diagnostics(
+                fixture,
+                owner,
+                &observation,
+                started.elapsed(),
+            )
+            .await;
+            Err(error.context(format!(
+                "Lost-reply occurrence did not reach {description}; bounded diagnostics: {}",
+                diagnostics
+                    .to_string()
+                    .chars()
+                    .take(16384)
+                    .collect::<String>()
+            )))
+        }
+    }
 }
 
 async fn generation(owner: &Owner, job: &str, id: &str, generation: &Value) -> Result<Value> {
@@ -223,6 +251,7 @@ async fn lost_executor_reply_pauses_the_old_run_and_admits_one_fresh_generation(
         let key = format!("job:{job}:{id}:executor");
         let mut envelopes = vec![created.clone(), admitted.clone()];
         let parked = reached(
+            &mut fixture,
             &owner,
             &job,
             &id,
@@ -247,6 +276,7 @@ async fn lost_executor_reply_pauses_the_old_run_and_admits_one_fresh_generation(
             envelopes.push(pending);
         }
         let waiting = reached(
+            &mut fixture,
             &owner,
             &job,
             &id,
@@ -312,9 +342,14 @@ async fn lost_executor_reply_pauses_the_old_run_and_admits_one_fresh_generation(
             Ok(())
         })
         .await?;
-        let reported = reached(&owner, &job, &id, "needsValidation/2", |current| {
-            current["state"] == "needsValidation" && current["jobAttemptOrdinal"] == 2
-        })
+        let reported = reached(
+            &mut fixture,
+            &owner,
+            &job,
+            &id,
+            "needsValidation/2",
+            |current| current["state"] == "needsValidation" && current["jobAttemptOrdinal"] == 2,
+        )
         .await?;
         let second = &reported["data"]["occurrence"];
         assert!(second["retry"].is_null());
