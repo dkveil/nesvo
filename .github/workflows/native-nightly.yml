@@ -26,6 +26,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: stable
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283
+        with:
+          tool: cargo-nextest@0.9
       - name: Build native host and client
         id: native-build
         run: cargo build --workspace --locked
@@ -40,4 +43,4 @@ jobs:
       - name: Verify native SDK host scenarios
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
         timeout-minutes: 30
-        run: cargo test --package nesvo --test mcp_host --locked -- --ignored --test-threads=1
+        run: cargo nextest run --package nesvo --test mcp_host --locked --profile ci --run-ignored ignored-only --test-threads 1

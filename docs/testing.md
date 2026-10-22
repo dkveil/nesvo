@@ -26,7 +26,7 @@ This document separates automated checks from physical-device testing. Unchecked
 
 CI builds and tests the Rust programs natively on Windows, macOS and Linux. Check the relevant commit's workflow result before claiming a particular platform passed. A native CI build does not verify every interactive terminal emulator or a physical phone.
 
-The per-push `Checks` workflow runs workspace tests with `cargo nextest run --workspace --locked --profile ci`. `.config/nextest.toml` terminates any single test after five minutes, and every job has a timeout. The ignored native cohort below runs only in the daily `Native nightly` workflow, which can also be started manually.
+The per-push `Checks` workflow runs workspace tests with `cargo nextest run --workspace --locked --profile ci`. `.config/nextest.toml` terminates any single test after five minutes, and every job has a timeout. The ignored native cohort below runs only in the daily `Native nightly` workflow, which can also be started manually. It runs through nextest with the same profile, so a hung scenario ends after five minutes and the remaining scenarios still run.
 
 ### Declared statusline process conformance
 
@@ -123,7 +123,8 @@ uses the official MCP SDK, actual private hosts and controlled Node PTY workers.
 It does not call a model or change user provider configuration. Run scenarios
 serially; their private fixture teardown owns all created processes. The
 `Native nightly` workflow runs the ignored scenarios daily and on manual
-dispatch; the commands below run them locally.
+dispatch through nextest, one scenario at a time under the `ci` profile; the
+commands below run them locally.
 
 ```powershell
 cargo build --workspace --locked
