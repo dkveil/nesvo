@@ -1,8 +1,10 @@
-use nesvo_wire::events::{journaled_kind, schema};
+use nesvo_wire::{
+    contract::render_json,
+    events::{journaled_kind, schema},
+};
 use serde_json::Value;
 use std::{fs, path::PathBuf};
 
-const PRINT_WIDTH: usize = 100;
 const REGENERATE: &str = "NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts";
 const KINDS_START: &str = "<!-- generated:event-kinds:start -->";
 const KINDS_END: &str = "<!-- generated:event-kinds:end -->";
@@ -31,55 +33,11 @@ fn check_contract(path: &str, expected: &str) {
     );
 }
 
-fn render(value: &Value, indent: usize, used: usize, trailing: usize) -> String {
-    let inner = " ".repeat(indent + 2);
-    match value {
-        Value::Object(map) if !map.is_empty() => {
-            let entries: Vec<_> = map
-                .iter()
-                .enumerate()
-                .map(|(index, (key, value))| {
-                    let key = format!("{}: ", Value::String(key.clone()));
-                    let trailing = usize::from(index + 1 < map.len());
-                    let used = inner.len() + key.len();
-                    format!("{inner}{key}{}", render(value, indent + 2, used, trailing))
-                })
-                .collect();
-            format!("{{\n{}\n{}}}", entries.join(",\n"), " ".repeat(indent))
-        }
-        Value::Array(items) if !items.is_empty() => {
-            if items
-                .iter()
-                .all(|item| !item.is_object() && !item.is_array())
-            {
-                let flat: Vec<_> = items.iter().map(Value::to_string).collect();
-                let flat = format!("[{}]", flat.join(", "));
-                if used + flat.len() + trailing <= PRINT_WIDTH {
-                    return flat;
-                }
-            }
-            let entries: Vec<_> = items
-                .iter()
-                .enumerate()
-                .map(|(index, item)| {
-                    let trailing = usize::from(index + 1 < items.len());
-                    format!("{inner}{}", render(item, indent + 2, inner.len(), trailing))
-                })
-                .collect();
-            format!("[\n{}\n{}]", entries.join(",\n"), " ".repeat(indent))
-        }
-        scalar => scalar.to_string(),
-    }
-}
-
 #[test]
 fn event_schema_matches_the_checked_in_contract() {
     let schema = schema();
     assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
-    check_contract(
-        "docs/harness-events.schema.json",
-        &(render(&schema, 0, 0, 0) + "\n"),
-    );
+    check_contract("docs/harness-events.schema.json", &render_json(&schema));
 }
 
 fn definition<'a>(definitions: &'a Value, reference: &Value) -> &'a Value {

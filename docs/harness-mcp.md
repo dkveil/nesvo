@@ -197,10 +197,14 @@ These native flags are documented in the official
 **Generated contract.** Every tool is defined once in `apps/tui/src/mcp_tools.rs`: name,
 description, a typed argument struct deriving `serde::Deserialize` and
 `schemars::JsonSchema`, effect hints and the handler binding. The input schemas sent to
-clients, the [name catalog](harness-mcp-tools.json) and the table below (effect and the
-first sentence of each description) are derived from it. After a tool change run
-`NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo --bin nesvo mcp_tools` and commit both
-files; CI runs the same test without the variable and fails on drift.
+clients, the [name catalog](harness-mcp-tools.json), the
+[full catalog snapshot](harness-mcp-catalog.json) (name, description, input and output
+schema, annotations) and the table below (effect and the first sentence of each
+description) are derived from it. After a tool change run
+`NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo --bin nesvo mcp_tools` and commit the
+regenerated files; CI runs the same test without the variable and fails on drift.
+
+<!-- generated:mcp-tools:start -->
 
 | Tool                              | Effect      | Summary                                                                                                                                                                                                                       |
 | --------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -318,6 +322,8 @@ files; CI runs the same test without the variable and fails on drift.
 | nesvo_decide                      | write       | Owner-only: answer one pending decision by its ID at its current revision.                                                                                                                                                    |
 | nesvo_list_projects               | read-only   | Owner-only: list the host's project registry (at most 256 repository roots), pinned first then by last activity, with default branch, open session count and their session IDs.                                               |
 | nesvo_project_defaults            | read-only   | Owner-only: read one project's defaults: the usual launch folder (most launches), recent folders, the host-wide default layout name and the worktree setup state (nesvo.toml configured and approved digest, open worktrees). |
+
+<!-- generated:mcp-tools:end -->
 
 Worktree setup approval and revocation have no MCP tool; they exist only in the owner
 CLI (`nesvo worktree approve-setup` and `revoke-setup`) and need owner authority. The

@@ -668,7 +668,7 @@ pub static TOOLS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ),
         tool::<args::SessionArgs>(
             "nesvo_run_worktree",
-            "Owner-only: start the approved run steps of a session's host-created worktree after a passed setup. Replies worktreeRunStarted with the log path; the result is a worktreeRan event and the registry run state, not task success.",
+            "Owner-only: start the approved run steps of a session's host-created worktree after a passed setup. Replies worktreeRunStarted with the log path; the result is a journaled worktree.ran event and the registry run state, not task success.",
             WRITE,
             Handler::Raw(mcp::worktree_session),
         ),
@@ -2357,10 +2357,22 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/../../docs/harness-mcp-tools.json"
     );
+    const SNAPSHOT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/harness-mcp-catalog.json"
+    );
     const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/harness-mcp.md");
+    const TABLE_START: &str = "<!-- generated:mcp-tools:start -->";
+    const TABLE_END: &str = "<!-- generated:mcp-tools:end -->";
 
     fn catalogue() -> String {
         serde_json::to_string_pretty(&published_names()).expect("Tool names serialize") + "\n"
+    }
+
+    fn snapshot() -> String {
+        nesvo_wire::contract::render_json(
+            &serde_json::to_value(catalog()).expect("Tool catalog serializes"),
+        )
     }
 
     fn effect(hints: Hints) -> &'static str {
@@ -2418,20 +2430,21 @@ mod tests {
     }
 
     fn with_docs_table(document: &str) -> String {
-        let lines: Vec<&str> = document.lines().collect();
-        let start = lines
-            .iter()
-            .position(|line| line.starts_with("| Tool "))
-            .expect("docs/harness-mcp.md keeps one tool table");
-        let end = lines[start..]
-            .iter()
-            .position(|line| !line.starts_with('|'))
-            .map_or(lines.len(), |offset| start + offset);
+        between_markers(document, &docs_table())
+    }
+
+    fn between_markers(document: &str, content: &str) -> String {
+        let start = document
+            .find(TABLE_START)
+            .unwrap_or_else(|| panic!("docs/harness-mcp.md lost the {TABLE_START} marker"));
+        let end = document[start..]
+            .find(TABLE_END)
+            .map(|offset| start + offset)
+            .unwrap_or_else(|| panic!("docs/harness-mcp.md lost the {TABLE_END} marker"));
         format!(
-            "{}\n{}{}\n",
-            lines[..start].join("\n"),
-            docs_table(),
-            lines[end..].join("\n")
+            "{}{TABLE_START}\n\n{content}\n{}",
+            &document[..start],
+            &document[end..]
         )
     }
 
@@ -2453,17 +2466,33 @@ mod tests {
     }
 
     #[test]
+    fn docs_table_regeneration_keeps_prose_after_the_table() {
+        let document =
+            format!("Intro\n\n{TABLE_START}\n\n| old |\n\n{TABLE_END}\n\nLater prose.\n");
+        assert_eq!(
+            between_markers(&document, "| new |\n"),
+            format!("Intro\n\n{TABLE_START}\n\n| new |\n\n{TABLE_END}\n\nLater prose.\n")
+        );
+    }
+
+    #[test]
     fn committed_catalogue_and_docs_table_match_the_tool_table() {
         let catalogue = catalogue();
+        let snapshot = snapshot();
         let docs = with_docs_table(&committed(DOCS));
         if env::var("NESVO_UPDATE_CONTRACTS").as_deref() == Ok("1") {
             fs::write(CATALOGUE, &catalogue).expect("Write the tool catalogue");
+            fs::write(SNAPSHOT, &snapshot).expect("Write the tool catalog snapshot");
             fs::write(DOCS, &docs).expect("Write the docs tool table");
         }
         assert_eq!(
             committed(CATALOGUE),
             catalogue,
             "docs/harness-mcp-tools.json drifted from the tool table; rerun with NESVO_UPDATE_CONTRACTS=1"
+        );
+        assert!(
+            committed(SNAPSHOT) == snapshot,
+            "docs/harness-mcp-catalog.json (descriptions, input/output schemas, annotations) drifted from the tool table; rerun with NESVO_UPDATE_CONTRACTS=1"
         );
         assert_eq!(
             committed(DOCS),
