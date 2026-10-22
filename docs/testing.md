@@ -385,6 +385,49 @@ cargo test --package nesvo --test mcp_host --locked decision_replay::real_inbox_
 - `tests/client-schema.test.ts` validates the schema-typed fixtures in `tests/fixtures/mobile-wire-fixtures.ts`, which `npm run typecheck` compiles, against `docs/harness-cli.schema.json` with ajv. It decodes every published enum member as known and, for inbox items, receipts, decisions, job pages, job history, job detail and session snapshots, proves that an unknown field is ignored, an unknown enum member lies outside the schema and is handled as [protocol v2](protocol-v2.md) documents, and a malformed known field is refused by both the schema and the decoder.
 - `tests/client-contract.test.ts` validates its inbox, job and session snapshot fixtures and the captured envelopes in `tests/fixtures/harness-cli-envelopes.json` against the same schema.
 
+### Native lost executor reply
+
+The job executor reply is an in-process channel, so no fixture process sits on
+that path and a host restart between the executor commit and `Work::Started` is
+racy. One test-only fault hook makes the loss deterministic.
+`NESVO_EXECUTOR_REPLY_DROP_TEST_JOB=JOB_ID` is read once when the host opens its
+journal. For the first executor start of that job's first generation, keyed
+`job:JOB_ID:OCCURRENCE_ID:executor`, the journal worker commits the start and
+drops the reply. Every other executor request gets its reply, including later
+generations (`:attempt:N:executor`), other jobs, other keys and a replay of the
+dropped key. Unset or empty, the worker holds no fault and checks nothing more;
+no production launch path sets it. The variable names the job, not the whole key,
+because occurrence IDs are random and dispatch starts as soon as `run-now` is
+accepted. The helper hooks `NESVO_WORKTREE_STEP_TEST_HELPER` and
+`NESVO_REPOSITORY_TEST_HELPER` gate helper processes inside host unit tests only;
+this one ships in the host binary because the native scenario runs the real host.
+
+```powershell
+cargo test --package nesvo-host --locked executor_reply_fault
+cargo test --package nesvo --test mcp_host --locked executor_pause:: -- --ignored --test-threads=1
+```
+
+The host unit test sends seven starts through a journal opened with the fault and
+shows that only `job:faulted:occurrence:executor` loses its reply, that every
+start is committed and that the replay of that key is answered. The native
+scenario creates a job with a `launchNoEffect` retry of three attempts and a
+4000 ms delay, restarts its host with the variable and runs the job once:
+
+- the occurrence enters `retryWaiting/1` (`retry_probe_pending` when the poll is
+  observed before the probe, with `dispatch_unconfirmed` and the executor launch
+  key), then `retry_backoff` with an `absent` probe that saw the executor start
+  accepted and a `failed/launch_no_effect` generation;
+- the start is committed under its key, and the old run's executor is `paused`
+  with `job_retry_waiting`, disabled and without a task; re-enabling it is refused
+  with `job_generation_retired` and leaves it unchanged;
+- no session or controlled process exists until `notBefore`, the absence window
+  derived from the host-published deadline;
+- at `notBefore` a fresh generation 2 with its own run, keys, claim probe and
+  worker reaches `needsValidation`, and the old executor stays paused;
+- the journal holds two `run.executor_changed` events for the old run: its
+  accepted start and exactly one pause. CLI and MCP envelopes are validated
+  against `docs/harness-cli.schema.json`.
+
 ### Ultraviolet checks
 
 `npm run test:brand` checks the shared palette, exact SVG-to-terminal glyph geometry and six-second motion timeline. `npm run test:brand:web` checks the rendered logo, full violet visor during blinking, session creation from the launchpad, narrow layout, reduced motion and animation suspension when hidden or offscreen. These checks run in CI alongside the existing application and terminal tests.
