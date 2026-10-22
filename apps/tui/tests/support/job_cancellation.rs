@@ -6,27 +6,30 @@ pub(super) async fn occurrence(
     id: &str,
     wanted: &str,
 ) -> Result<Value> {
-    let mut last = Value::Null;
-    timeout(Duration::from_secs(7), async {
-        loop {
-            let view = data(
-                call(
-                    owner,
-                    "nesvo_get_job_occurrence",
-                    json!({"jobId":job,"occurrenceId":id}),
-                )
-                .await?,
-            )?;
-            if view["data"]["occurrence"]["state"] == wanted {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            last = view;
-            tokio::time::sleep(Duration::from_millis(40)).await;
+    loop {
+        let view = data(
+            call(
+                owner,
+                "nesvo_get_job_occurrence",
+                json!({"jobId":job,"occurrenceId":id}),
+            )
+            .await?,
+        )?;
+        let state = &view["data"]["occurrence"]["state"];
+        if state == wanted {
+            return Ok(view);
         }
-    })
-    .await
-    .with_context(|| format!("Bound occurrence did not reach {wanted}; last: {last}"))?
+        ensure!(
+            !state
+                .as_str()
+                .is_some_and(|state| SETTLED_OCCURRENCE.contains(&state)),
+            "Bound occurrence settled before reaching {wanted}: {view}"
+        );
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
 }
+
+const SETTLED_OCCURRENCE: [&str; 4] = ["succeeded", "failed", "skipped", "canceled"];
 
 fn diagnostic_fields(value: &Value, fields: &[&str]) -> Value {
     Value::Object(

@@ -141,6 +141,13 @@ Failures retain bounded phase/host/job diagnostics before cleanup. They compleme
 the injected-clock and restart storage regressions; they are not original-provider
 or native-phone acceptance. See the [timeout contract](harness-job-timeouts.md).
 
+A wait for a bound occurrence state has no clock of its own. It ends on a host
+event: the wanted state, or a terminal state that fails the wait at once with the
+settled view. A native launch chain spans process creation, readiness hooks,
+delivery and the worker's scoped CLI calls, whose duration depends on the
+platform, so the host's own bounds (execution timeout, delivery deadline, worker
+exit) and the scenario's outer limit bound it instead of a fixed per-wait window.
+
 The readiness helper polls the exact reserved ID within its original seven-second
 bound. Before physical creation, only the current structured MCP
 `session_not_found` refusal is pending; other refusals, malformed messages,
