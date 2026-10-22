@@ -296,6 +296,8 @@ Mobile reads jobs only through the owner `workflow` request
 `jobPages:true`, always with `page`. Its decoder tolerates additions item by item:
 an unknown occurrence `state` drops that occurrence and counts it as skipped, an
 unknown `schedule.kind` or `calendarState` keeps the job with a null value, an
+absent `calendarState` or `calendarError` (both optional in the published schema)
+decodes as null, an
 unknown retry `class` or `profile.program` is omitted, and a malformed known field
 still rejects the frame.
 

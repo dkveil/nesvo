@@ -360,3 +360,18 @@ test('session snapshots ignore unknown fields and refuse unknown programs, trigg
     assertRejected({ ...sessionsSnapshot, sessions: [session] }, `malformed session ${label}`);
   }
 });
+
+test('job definitions without the optional calendar fields decode with null calendar values', () => {
+  const calendarless = withoutKey(withoutKey(cronJob, 'calendarState'), 'calendarError');
+  assertPublished({ ...jobListReply, jobs: [calendarless] }, 'job without calendar fields');
+  assert.deepEqual(decodeJobs([calendarless]).jobs, [
+    { ...calendarless, calendarState: null, calendarError: null },
+  ]);
+  const detail = { ...jobDetailReply, job: { ...calendarless, spec: jobSpec } };
+  assert.deepEqual((decodeServerMessage(detail) as JobDetailEvent).job, {
+    ...calendarless,
+    calendarState: null,
+    calendarError: null,
+    spec: jobSpec,
+  });
+});

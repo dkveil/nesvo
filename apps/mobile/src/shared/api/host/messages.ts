@@ -606,9 +606,11 @@ const calendarError = (value: unknown) =>
 const knownJob = (value: unknown): RecordValue | null => {
   if (!record(value)) return null;
   const schedule = unknownValue('kind', JOB_SCHEDULE_KINDS)(value.schedule) ? null : value.schedule;
-  const calendarState = unknownLabel(value.calendarState, JOB_CALENDAR_STATES)
+  const wireCalendarState = value.calendarState ?? null;
+  const calendarState = unknownLabel(wireCalendarState, JOB_CALENDAR_STATES)
     ? null
-    : value.calendarState;
+    : wireCalendarState;
+  const wireCalendarError = value.calendarError ?? null;
   const valid =
     text(value.id) &&
     boundedString(value.title, MAX_JOB_TITLE_LENGTH) &&
@@ -619,8 +621,8 @@ const knownJob = (value: unknown): RecordValue | null => {
     (schedule === null || jobSchedule(schedule)) &&
     (calendarState === null ||
       (typeof calendarState === 'string' && JOB_CALENDAR_STATES.includes(calendarState))) &&
-    calendarError(value.calendarError);
-  return valid ? { ...value, schedule, calendarState } : null;
+    calendarError(wireCalendarError);
+  return valid ? { ...value, schedule, calendarState, calendarError: wireCalendarError } : null;
 };
 
 const retryPolicy = (value: unknown) =>
