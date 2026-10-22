@@ -449,22 +449,34 @@ async fn host_check_validation_times_out_a_check_beyond_its_deadline_and_skips_t
     let address = listener.local_addr().unwrap();
     let (_cancel, receiver) = watch::channel(false);
     let commands = vec![fixture(&format!("tree {address} root")), fixture("echo 0")];
-    let running = run_checks(
+    let limit = Duration::from_secs(worktrees::DEFAULT_TIMEOUT_S);
+    let mut running = Box::pin(run_checks(
         &commands,
         &scratch.0,
         Bounds {
-            limit: Duration::from_millis(1500),
+            limit,
             tail: TAIL_BYTES,
         },
         receiver,
-    );
-    let (result, mut stream) = tokio::join!(running, held(&listener));
-    let (runs, log) = result.unwrap();
+    ));
+    let mut stream = tokio::select! {
+        stream = held(&listener) => stream,
+        _ = running.as_mut() => panic!("the checks ended before the first check was held"),
+    };
+    tokio::time::pause();
+    tokio::time::advance(limit).await;
+    let (runs, log) = running.await.unwrap();
+    tokio::time::resume();
     assert_eq!(runs[0].outcome, "timedOut");
     assert_eq!(runs[0].exit_code, None);
-    assert!(runs[0].duration_ms >= 1000);
     assert_eq!(runs[1].outcome, "skipped");
     assert!(log.ends_with("checks.log"));
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        text.contains("the step timed out and was terminated"),
+        "{text}"
+    );
+    assert_eq!(text.matches("$ ").count(), 1, "{text}");
     let mut byte = [0];
     let read = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut byte))
         .await
