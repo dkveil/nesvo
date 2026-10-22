@@ -1,5 +1,6 @@
 import { ESLint } from 'eslint';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -76,4 +77,22 @@ test('host transport cannot import React and entities cannot own routing', async
 test('new source modules must belong to an explicit application layer', async () => {
   const result = await messages('misc/architecture-probe.ts', 'export const value = 1;');
   assert.ok(result.some(message => message.ruleId === 'boundaries/no-unknown-files'));
+});
+
+const POLISH_DIACRITICS = /[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/u;
+const filesUnder = directory =>
+  readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
+    entry.isDirectory()
+      ? filesUnder(path.join(directory, entry.name))
+      : [path.join(directory, entry.name)],
+  );
+
+test('mobile source, app config and scripts ship English-only strings', () => {
+  const files = [...filesUnder(source), 'apps/mobile/app.json', ...filesUnder('scripts')];
+  const offenders = files.flatMap(file =>
+    readFileSync(file, 'utf8')
+      .split('\n')
+      .flatMap((line, index) => (POLISH_DIACRITICS.test(line) ? [`${file}:${index + 1}`] : [])),
+  );
+  assert.deepEqual(offenders, []);
 });

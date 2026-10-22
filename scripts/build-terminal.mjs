@@ -22,7 +22,7 @@ const script = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 const scriptHash = createHash('sha256').update(script).digest('base64');
 const css = await readFile(require.resolve('@xterm/xterm/css/xterm.css'), 'utf8');
 const html = `<!doctype html>
-<html lang="pl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -38,7 +38,7 @@ body { box-sizing:border-box; padding:10px 8px 6px; }
 ::-webkit-scrollbar-thumb { background:${colors.border}; border-radius:3px; }
 </style>
 </head>
-<body><div id="terminal" role="region" aria-label="Terminal sesji"></div><script>${script}</script></body>
+<body><div id="terminal" role="region" aria-label="Session terminal"></div><script>${script}</script></body>
 </html>`;
 await writeFile(
   resolve(root, 'apps/mobile/src/shared/terminal/generated.ts'),

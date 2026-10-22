@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "dev.dkveil.pocketsessions",
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "Połącz się z komputerem w sieci lokalnej, aby korzystać z jego terminali.",
+        "NSLocalNetworkUsageDescription": "Connect to your computer on the local network to use its terminals.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -36,7 +36,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Pozwól na skanowanie kodu QR, aby połączyć telefon z komputerem.",
+          "cameraPermission": "Allow camera access to scan the pairing QR code.",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }
