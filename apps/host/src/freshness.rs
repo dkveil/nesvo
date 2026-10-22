@@ -147,6 +147,12 @@ pub fn attach(info: &mut Value, projection: Projection) {
 }
 
 pub fn publish(event: &mut Value, negotiated: bool) {
+    if event["type"] == "session" {
+        if let Some(session) = event.get_mut("session") {
+            rewrite(session, negotiated);
+        }
+        return;
+    }
     if event["type"] != "sessions" {
         return;
     }
@@ -154,26 +160,30 @@ pub fn publish(event: &mut Value, negotiated: bool) {
         return;
     };
     for session in sessions {
-        let Some(status) = session.get_mut("status").and_then(Value::as_object_mut) else {
-            continue;
-        };
-        let Some(freshness) = status.remove("freshness") else {
-            continue;
-        };
-        if !negotiated {
-            continue;
-        }
-        let disconnected = !freshness["lastKnown"].is_null();
-        status.insert("freshness".into(), freshness);
-        if disconnected {
-            status.insert("state".into(), json!(StatusState::Unknown));
-            if let Some(agent) = session
-                .get_mut("lifecycle")
-                .and_then(|lifecycle| lifecycle.get_mut("agent"))
-            {
-                agent["current"] = Value::Null;
-                agent["freshness"] = json!("unknown");
-            }
+        rewrite(session, negotiated);
+    }
+}
+
+fn rewrite(session: &mut Value, negotiated: bool) {
+    let Some(status) = session.get_mut("status").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(freshness) = status.remove("freshness") else {
+        return;
+    };
+    if !negotiated {
+        return;
+    }
+    let disconnected = !freshness["lastKnown"].is_null();
+    status.insert("freshness".into(), freshness);
+    if disconnected {
+        status.insert("state".into(), json!(StatusState::Unknown));
+        if let Some(agent) = session
+            .get_mut("lifecycle")
+            .and_then(|lifecycle| lifecycle.get_mut("agent"))
+        {
+            agent["current"] = Value::Null;
+            agent["freshness"] = json!("unknown");
         }
     }
 }
@@ -405,6 +415,22 @@ mod tests {
             session["lifecycle"]["agent"]["lastKnown"]["state"],
             "blocked"
         );
+
+        let single = || {
+            let snapshot = snapshot();
+            json!({"type":"session","session":snapshot["sessions"][0].clone()})
+        };
+        let mut legacy = single();
+        publish(&mut legacy, false);
+        assert!(legacy["session"]["status"].get("freshness").is_none());
+        assert_eq!(legacy["session"]["status"]["state"], "blocked");
+        assert_eq!(
+            legacy["session"]["lifecycle"]["agent"]["freshness"],
+            "observed"
+        );
+        let mut current = single();
+        publish(&mut current, true);
+        assert_eq!(current["session"], session.clone());
 
         let mut other = json!({"type":"capabilities","status":{"freshness":1}});
         publish(&mut other, false);

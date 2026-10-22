@@ -505,7 +505,8 @@ Session status may include additive `evidence: "hook"` alongside `source: "scree
 
 `sessionFreshness:true` in capabilities advertises an opt-in freshness record.
 A client that sends `getCapabilities {sessionFreshness:true}` (older hosts ignore
-the field) receives one fresh snapshot and, from then on, each session's
+the field) receives one fresh snapshot and, from then on, in `sessions` and
+`session` replies, each session's
 `status.freshness:{source,observedAt,ageMs,stale,boundMs,lastKnown}`. `source`
 is `hook`, `process`, `journal` or `unknown`; `observedAt` is host epoch
 milliseconds; `ageMs` is measured by the host at projection, so clients add only

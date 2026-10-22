@@ -6018,6 +6018,21 @@ mod tests {
         assert_eq!(new["sessions"][0]["status"]["state"], "unknown");
         assert!(new["sessions"][0]["lifecycle"]["agent"]["current"].is_null());
 
+        let get = json!({"type":"getSession","sessionId":id});
+        freshness_command(&mut state, 1, get.clone());
+        let old = legacy.try_recv().unwrap();
+        assert_eq!(old["type"], "session");
+        assert_eq!(old["session"]["status"]["state"], "working");
+        assert!(old["session"]["status"].get("freshness").is_none());
+        assert!(!old["session"]["lifecycle"]["agent"]["current"].is_null());
+        freshness_command(&mut state, 2, get);
+        let new = current.try_recv().unwrap();
+        assert_eq!(new["type"], "session");
+        assert_eq!(new["session"]["status"]["state"], "unknown");
+        assert_eq!(new["session"]["status"]["freshness"]["source"], "journal");
+        assert!(new["session"]["lifecycle"]["agent"]["current"].is_null());
+        assert_eq!(new["session"]["lifecycle"]["agent"]["freshness"], "unknown");
+
         state.refresh_status();
         while current.try_recv().is_ok() {}
         while legacy.try_recv().is_ok() {}
