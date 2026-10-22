@@ -1354,3 +1354,27 @@ test('the client opts into session freshness and accepts the advertised flag', (
     peer.cleanup();
   }
 });
+
+test('host-captured domain event records match the generated event schema', () => {
+  const validate = new Ajv().compile(
+    JSON.parse(
+      readFileSync(new URL('../docs/harness-events.schema.json', import.meta.url), 'utf8'),
+    ),
+  );
+  const records = readFileSync(
+    new URL('../crates/nesvo-wire/tests/fixtures/events.jsonl', import.meta.url),
+    'utf8',
+  )
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line) as { kind: string; payload: Record<string, unknown> });
+  assert.ok(records.length > 0);
+  for (const record of records) {
+    assert.equal(validate(record), true, `${record.kind}: ${JSON.stringify(validate.errors)}`);
+  }
+  const [first] = records;
+  assert.ok(first);
+  assert.equal(validate({ ...first, kind: 'host.unknown' }), false);
+  assert.equal(validate({ ...first, payload: { ...first.payload, extra: true } }), false);
+  assert.equal(validate({ ...first, sequence: -1 }), false);
+});

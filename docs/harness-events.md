@@ -90,3 +90,75 @@ dedicated `subscribeEvents` stream per subscribed URI as
 `readUri` in `_meta["nesvo/events"]`. Subject authority, bounds, gaps and
 at-least-once delivery are unchanged. See the
 [MCP event resources](harness-mcp.md#event-resources-and-subscriptions).
+
+## Event kinds
+
+This table is generated from `nesvo_wire::events::Event`, which the host uses for every
+append, together with [harness-events.schema.json](harness-events.schema.json). Regenerate
+both with `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts`;
+CI fails when either drifts. Each record carries `sequence`, `sessionId`, `kind`, `at` and
+`payload`. A kind marked `no` fails the journal kind rule (lowercase letters, `.` and `_`) and
+is never persisted.
+
+| Kind                           | Payload fields                                                                                                                           | Journaled |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `host.started`                 | `buildId` string                                                                                                                         | yes       |
+| `host.budget_changed`          | `revision` integer                                                                                                                       | yes       |
+| `provider.quota_changed`       | `revision` integer                                                                                                                       | yes       |
+| `session.created`              | `program` Program; `parentSessionId` string or null, optional                                                                            | yes       |
+| `session.closed`               | none                                                                                                                                     | yes       |
+| `process.exited`               | `exitCode` integer or null                                                                                                               | yes       |
+| `response.settled`             | `turnId` string; `taskResult` null                                                                                                       | yes       |
+| `agent.lifecycle`              | `event` string; `state` AgentState; `generation` integer; `sourceSequence` integer; `submissionEvidence` boolean                         | yes       |
+| `agent.attention`              | `priority` integer; `reason` string or null; `blockedChildren` integer; `processExited` boolean; `exitCode` integer or null              | yes       |
+| `operation.changed`            | `operationId` string; `operation` string; `phase` string                                                                                 | yes       |
+| `job.changed`                  | `jobId` string; `occurrenceId` string or null; `phase` string                                                                            | yes       |
+| `precheck.approval.changed`    | `approvalId` string; `phase` string                                                                                                      | yes       |
+| `job.trigger_changed`          | `triggerId` string; `phase` string                                                                                                       | yes       |
+| `job.trigger_delivery`         | `triggerId` string; `deliveryId` string; `disposition` string                                                                            | yes       |
+| `run.created`                  | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.plan_changed`             | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.activated`                | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.attempt_assigned`         | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.result_reported`          | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.result_validated`         | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.draining`                 | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.resumed`                  | `runId` string; `revision` integer                                                                                                       | yes       |
+| `run.checkpoint_saved`         | `runId` string; `checkpointId` string; `sourceRunRevision` integer                                                                       | yes       |
+| `run.constraints_added`        | `runId` string; `constraintRevision` integer                                                                                             | yes       |
+| `run.constraints_acknowledged` | `runId` string; `constraintRevision` integer                                                                                             | yes       |
+| `run.control_requested`        | `runId` string; `controlId` string                                                                                                       | yes       |
+| `run.control_progress`         | `runId` string; `controlId` string                                                                                                       | yes       |
+| `run.control_completed`        | `runId` string; `controlId` string                                                                                                       | yes       |
+| `run.control_unconfirmed`      | `runId` string; `controlId` string                                                                                                       | yes       |
+| `run.coordinator_rebound`      | `runId` string; `previousSessionId` string or null; `sessionId` string; `generation` integer                                             | yes       |
+| `run.decision_asked`           | `runId` string; `decisionId` string; `state` string                                                                                      | yes       |
+| `run.decision_answered`        | `runId` string; `decisionId` string; `state` string                                                                                      | yes       |
+| `run.decision_canceled`        | `runId` string; `decisionId` string; `state` string                                                                                      | yes       |
+| `run.decisions_expired`        | `runId` string; `count` integer                                                                                                          | yes       |
+| `run.delivery_changed`         | `runId` string; `deliveryId` string                                                                                                      | yes       |
+| `run.digest_recorded`          | `runId` string; `revision` integer; `state` string; `fingerprint` string; `bytes` integer                                                | yes       |
+| `run.executor_changed`         | `runId` string; `executorId` string                                                                                                      | yes       |
+| `run.message_sent`             | `runId` string; `messageId` string                                                                                                       | yes       |
+| `run.messages_acknowledged`    | `runId` string; `count` integer                                                                                                          | yes       |
+| `run.launch_reserved`          | `runId` string; `attemptId` string                                                                                                       | yes       |
+| `run.launch_recovered`         | `runId` string; `attemptId` string                                                                                                       | yes       |
+| `run.launch_observed`          | `runId` string; `attemptId` string                                                                                                       | yes       |
+| `run.workspace_prepared`       | `runId` string; `attemptId` string                                                                                                       | yes       |
+| `run.quota_hold_changed`       | `runId` string; `attemptId` string                                                                                                       | yes       |
+| `run.session_reused`           | `runId` string; `taskId` string; `attemptId` string; `previousAttemptId` string; `sessionId` string                                      | yes       |
+| `run.time_budget_exhausted`    | `runId` string                                                                                                                           | yes       |
+| `run.budget_changed`           | `runId` string                                                                                                                           | yes       |
+| `run.wake_changed`             | `runId` string; `policyId` string                                                                                                        | yes       |
+| `workflowTemplatesApproved`    | `repository` string; `digest` string                                                                                                     | no        |
+| `workflowTemplatesRevoked`     | `repository` string; `digest` string                                                                                                     | no        |
+| `worktreeSetupApproved`        | `repository` string; `digest` string                                                                                                     | no        |
+| `worktreeSetupRevoked`         | `repository` string; `digest` string                                                                                                     | no        |
+| `worktreePrepared`             | `sessionId` string; `result` string; `log` string; `worktree` string; `digest` string                                                    | no        |
+| `worktreeRan`                  | `sessionId` string; `result` string; `log` string                                                                                        | no        |
+| `worktreeArchived`             | `sessionId` string; `worktree` string; `branch` string or null; `discarded` boolean; `blockers` array of string; `branchDeleted` boolean | no        |
+
+Enumerated payload types:
+
+- `AgentState`: `working`, `idle`, `done`, `blocked`, `question`, `failed`, `unknown`.
+- `Program`: `shell`, `claude`, `gemini`, `codex`.
