@@ -4501,6 +4501,21 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                             }
                             crate::terminal_protocol::Event::Prompt => {
                                 session.program_status.end_program();
+                                session
+                                    .status
+                                    .shell_mark(crate::status::ShellMark::Prompt, None);
+                                session.status_projection_dirty = true;
+                            }
+                            crate::terminal_protocol::Event::CommandStarted => {
+                                session
+                                    .status
+                                    .shell_mark(crate::status::ShellMark::CommandRunning, None);
+                                session.status_projection_dirty = true;
+                            }
+                            crate::terminal_protocol::Event::CommandFinished(code) => {
+                                session
+                                    .status
+                                    .shell_mark(crate::status::ShellMark::CommandFinished, code);
                                 session.status_projection_dirty = true;
                             }
                         }

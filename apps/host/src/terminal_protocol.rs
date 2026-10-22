@@ -5,6 +5,8 @@ pub enum Event {
     Report(Report),
     Reset,
     Prompt,
+    CommandStarted,
+    CommandFinished(Option<i32>),
 }
 pub struct Feed {
     pub visible: String,
@@ -198,11 +200,23 @@ impl Decoder {
                 self.rejected = self.rejected.saturating_add(1);
             }
         } else {
-            if body == "\x1b]133;A" || body.starts_with("\x1b]133;A;") {
-                feed.events.push(Event::Prompt);
+            if let Some(mark) = shell_mark(body) {
+                feed.events.push(mark);
             }
             feed.visible.push_str(&self.pending);
         }
+    }
+}
+
+fn shell_mark(body: &str) -> Option<Event> {
+    let mut fields = body.strip_prefix("\x1b]133;")?.split(';');
+    match fields.next()? {
+        "A" => Some(Event::Prompt),
+        "C" => Some(Event::CommandStarted),
+        "D" => Some(Event::CommandFinished(
+            fields.next().and_then(|code| code.parse().ok()),
+        )),
+        _ => None,
     }
 }
 
@@ -270,6 +284,38 @@ mod tests {
             feed.events.as_slice(),
             [Event::Report(_), Event::Reset, Event::Prompt]
         ));
+    }
+    #[test]
+    fn shell_prompt_marks_are_reported_across_chunks_and_stay_visible() {
+        let input = "\x1b]133;A\x07$ \x1b]133;B\x07\x1b]133;C\x1b\\out\x1b]133;D;2;aid=7\x07\x1b]133;D\x07\x1b]133;D;x\x07";
+        for split in (0..=input.len()).filter(|index| input.is_char_boundary(*index)) {
+            let mut decoder = Decoder::new(false);
+            let mut feed = decoder.feed(&input[..split]);
+            let rest = decoder.feed(&input[split..]);
+            feed.visible.push_str(&rest.visible);
+            feed.events.extend(rest.events);
+            assert_eq!(feed.visible, input);
+            let marks: Vec<_> = feed
+                .events
+                .iter()
+                .map(|event| match event {
+                    Event::Prompt => "prompt".to_string(),
+                    Event::CommandStarted => "started".to_string(),
+                    Event::CommandFinished(code) => format!("finished {code:?}"),
+                    _ => "other".to_string(),
+                })
+                .collect();
+            assert_eq!(
+                marks,
+                [
+                    "prompt",
+                    "started",
+                    "finished Some(2)",
+                    "finished None",
+                    "finished None"
+                ]
+            );
+        }
     }
     #[test]
     fn initial_conpty_query_is_answered_once_without_clients() {

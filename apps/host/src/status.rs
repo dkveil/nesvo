@@ -35,8 +35,18 @@ pub struct SessionStatus {
     pub updated_at: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellMark {
+    Prompt,
+    CommandRunning,
+    CommandFinished,
+}
+
 pub struct StatusTracker {
     program: Program,
+    shell_mark: Option<ShellMark>,
+    shell_exit_code: Option<i32>,
     parser: Option<vt100::Parser>,
     screen_hint: Option<StatusState>,
     screen_rule: Option<crate::status_rules::Match>,
@@ -68,6 +78,8 @@ impl StatusTracker {
     pub fn new(program: Program, rows: u16, cols: u16, now: u64) -> Self {
         Self {
             program,
+            shell_mark: None,
+            shell_exit_code: None,
             parser: (program != Program::Shell)
                 .then(|| vt100::Parser::new(rows, cols, NO_SCROLLBACK)),
             screen_hint: None,
@@ -228,6 +240,9 @@ impl StatusTracker {
             StatusSource::Process => "observed process exit",
             StatusSource::Hook => "provider lifecycle event",
             StatusSource::Program => "program status root report",
+            StatusSource::Screen if self.shell_mark.is_some() => {
+                "shell prompt marks (OSC 133); no task outcome inferred"
+            }
             StatusSource::Screen => "current visible terminal rule",
             StatusSource::Activity if self.status.state == StatusState::Unknown => {
                 "no supported semantic signal; inspect startup consent or disabled integration"
@@ -239,6 +254,7 @@ impl StatusTracker {
                 "receivedAt":if self.lifecycle.is_some(){Some(self.lifecycle_received)}else{None},
                 "ageMs":self.lifecycle.map(|_|now.saturating_sub(self.lifecycle_received)), "ordering":self.lifecycle_ordering},
             "lastOutputAgeMs":self.last_activity.map(|at|now.saturating_sub(at)),
+            "shellMarks":(self.program == Program::Shell).then(|| serde_json::json!({"mark":self.shell_mark,"lastExitCode":self.shell_exit_code})),
             "processExited":self.exited,"exitCode":self.exit_code})
     }
 
@@ -253,8 +269,23 @@ impl StatusTracker {
         }
     }
 
+    pub fn shell_mark(&mut self, mark: ShellMark, exit_code: Option<i32>) {
+        if self.exited || self.program != Program::Shell {
+            return;
+        }
+        self.shell_mark = Some(mark);
+        match mark {
+            ShellMark::CommandFinished => self.shell_exit_code = exit_code,
+            ShellMark::CommandRunning => self.shell_exit_code = None,
+            ShellMark::Prompt => {}
+        }
+    }
+
     pub fn input(&mut self, now: u64) {
         if !self.exited {
+            if self.shell_mark != Some(ShellMark::CommandRunning) {
+                self.shell_mark = None;
+            }
             self.last_activity = Some(now);
             self.screen_hint = None;
             self.screen_rule = None;
@@ -354,6 +385,15 @@ impl StatusTracker {
                 (hint, StatusSource::Screen)
             } else if let Some(hint) = self.lifecycle {
                 (hint, StatusSource::Hook)
+            } else if let Some(mark) = self.shell_mark {
+                (
+                    if mark == ShellMark::CommandRunning {
+                        StatusState::Working
+                    } else {
+                        StatusState::Idle
+                    },
+                    StatusSource::Screen,
+                )
             } else if self
                 .last_activity
                 .is_some_and(|last| now.saturating_sub(last) < QUIET_MS)
@@ -710,6 +750,61 @@ mod tests {
         tracker.input(2_100);
         assert!(tracker.refresh(2_250));
         assert_eq!(tracker.status.source, StatusSource::Activity);
+    }
+
+    #[test]
+    fn shell_prompt_marks_keep_quiet_commands_working_and_report_the_last_exit_code() {
+        let mut shell = StatusTracker::new(Program::Shell, 24, 100, 0);
+        shell.shell_mark(ShellMark::Prompt, None);
+        shell.output("$ ", 10);
+        shell.refresh(20);
+        assert_eq!(
+            (shell.status.state, shell.status.source),
+            (StatusState::Idle, StatusSource::Screen),
+            "a rendered prompt is idle at once, not after the quiet interval"
+        );
+        shell.input(30);
+        shell.output("cargo build\r\n", 40);
+        shell.refresh(50);
+        assert_eq!(shell.status.source, StatusSource::Activity);
+        shell.shell_mark(ShellMark::CommandRunning, None);
+        shell.refresh(60);
+        shell.refresh(600_000);
+        assert_eq!(
+            (shell.status.state, shell.status.source),
+            (StatusState::Working, StatusSource::Screen),
+            "a quiet foreground command stays working"
+        );
+        shell.input(600_001);
+        shell.refresh(600_002);
+        assert_eq!(shell.status.state, StatusState::Working);
+        shell.shell_mark(ShellMark::CommandFinished, Some(2));
+        shell.shell_mark(ShellMark::Prompt, None);
+        shell.refresh(600_003);
+        assert_eq!(shell.status.state, StatusState::Idle);
+        let explained = shell.explain(600_004);
+        assert_eq!(
+            explained["reason"],
+            "shell prompt marks (OSC 133); no task outcome inferred"
+        );
+        assert_eq!(
+            explained["shellMarks"],
+            serde_json::json!({"mark":"prompt","lastExitCode":2})
+        );
+        shell.shell_mark(ShellMark::CommandRunning, None);
+        assert_eq!(
+            shell.explain(600_005)["shellMarks"]["lastExitCode"],
+            serde_json::Value::Null
+        );
+        shell.exited(Some(0));
+        shell.shell_mark(ShellMark::Prompt, None);
+        shell.refresh(600_006);
+        assert_eq!(shell.status.source, StatusSource::Process);
+        let mut agent = StatusTracker::new(Program::Codex, 24, 100, 0);
+        agent.shell_mark(ShellMark::CommandRunning, None);
+        agent.refresh(1);
+        assert_eq!(agent.status.source, StatusSource::Activity);
+        assert_eq!(agent.explain(2)["shellMarks"], serde_json::Value::Null);
     }
 
     #[test]
