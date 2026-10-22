@@ -204,6 +204,14 @@ description) are derived from it. After a tool change run
 `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo --bin nesvo mcp_tools` and commit the
 regenerated files; CI runs the same test without the variable and fails on drift.
 
+Tools whose struct lives in `mcp_tools::args` parse their arguments into it at runtime.
+Tools whose struct lives in `mcp_tools::contract` forward the arguments to the workflow,
+scoped or adapter parser that also serves the CLI, so their struct only shapes the
+published schema. To keep the two from drifting, a test builds a
+valid example of every tool from its input schema, deserializes it through the struct
+and through the handler that builds the host request, and checks that both refuse an
+unpublished field when the schema is closed.
+
 <!-- generated:mcp-tools:start -->
 
 | Tool                              | Effect      | Summary                                                                                                                                                                                                                       |

@@ -396,7 +396,7 @@ fn unknown_tool() -> anyhow::Error {
     cli::failure("invalid_argument", "Unknown Nesvo tool")
 }
 
-fn command(name: &str, arguments: Value) -> Result<Request> {
+pub(crate) fn command(name: &str, arguments: Value) -> Result<Request> {
     if serde_json::to_vec(&arguments)?.len() > 24 * 1024 {
         return Err(cli::failure(
             "invalid_argument",

@@ -74,6 +74,8 @@ pub struct ToolSpec {
     description: &'static str,
     hints: Hints,
     input: fn() -> Map<String, Value>,
+    #[cfg(test)]
+    contract: fn(Value) -> std::result::Result<(), String>,
     pub handler: Handler,
 }
 
@@ -97,7 +99,7 @@ impl ToolSpec {
     }
 }
 
-fn tool<T: JsonSchema>(
+fn tool<T: JsonSchema + DeserializeOwned>(
     name: &'static str,
     description: &'static str,
     hints: Hints,
@@ -108,8 +110,17 @@ fn tool<T: JsonSchema>(
         description,
         hints,
         input: input_schema::<T>,
+        #[cfg(test)]
+        contract: accepts::<T>,
         handler,
     }
+}
+
+#[cfg(test)]
+fn accepts<T: DeserializeOwned>(arguments: Value) -> std::result::Result<(), String> {
+    serde_json::from_value::<T>(arguments)
+        .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 fn typed<T: JsonSchema + DeserializeOwned + 'static>(
@@ -1145,7 +1156,7 @@ pub mod args {
 
 #[expect(
     dead_code,
-    reason = "contract types describe forwarded arguments; the workflow and adapter parsers own validation"
+    reason = "contract types are deserialized only by tests; the workflow and adapter parsers own runtime validation"
 )]
 mod contract {
     use super::{describe_tag, keep_null, null_or, nullable, published_names};
@@ -2446,6 +2457,137 @@ mod tests {
             &document[..start],
             &document[end..]
         )
+    }
+
+    fn pattern_length(schema: &Value) -> usize {
+        schema["pattern"]
+            .as_str()
+            .and_then(|pattern| {
+                let start = pattern.find('{')? + 1;
+                let end = start + pattern[start..].find(['}', ','])?;
+                pattern[start..end].parse().ok()
+            })
+            .unwrap_or(1)
+    }
+
+    fn example(schema: &Value) -> Value {
+        if let Some(value) = schema.get("const") {
+            return value.clone();
+        }
+        if let Some(Value::Array(values)) = schema.get("enum") {
+            return values
+                .iter()
+                .find(|value| !value.is_null())
+                .cloned()
+                .unwrap_or(Value::Null);
+        }
+        for key in ["anyOf", "oneOf"] {
+            if let Some(Value::Array(branches)) = schema.get(key) {
+                return branches
+                    .iter()
+                    .find(|branch| branch["type"] != "null")
+                    .map_or(Value::Null, example);
+            }
+        }
+        let kind = match &schema["type"] {
+            Value::String(kind) => kind.as_str(),
+            Value::Array(kinds) => kinds
+                .iter()
+                .filter_map(Value::as_str)
+                .find(|kind| *kind != "null")
+                .unwrap_or("null"),
+            _ if schema.get("properties").is_some() => "object",
+            _ => "null",
+        };
+        let bound = |value: u64| {
+            value
+                .max(schema["minimum"].as_u64().unwrap_or(0))
+                .min(schema["maximum"].as_u64().unwrap_or(u64::MAX))
+        };
+        match kind {
+            "object" => Value::Object(
+                schema["required"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(|name| (name.to_owned(), example(&schema["properties"][name])))
+                    .collect(),
+            ),
+            "array" => Value::Array(
+                (0..schema["minItems"].as_u64().unwrap_or(0))
+                    .map(|_| example(&schema["items"]))
+                    .collect(),
+            ),
+            "string" => {
+                let length = (schema["minLength"].as_u64().unwrap_or(1) as usize)
+                    .max(pattern_length(schema));
+                json!("a".repeat(length))
+            }
+            "integer" | "number" => json!(bound(1)),
+            "boolean" => json!(false),
+            _ => Value::Null,
+        }
+    }
+
+    fn merge(target: &mut Value, patch: Value) {
+        match (target, patch) {
+            (Value::Object(target), Value::Object(patch)) => {
+                for (key, value) in patch {
+                    merge(target.entry(key).or_insert(Value::Null), value);
+                }
+            }
+            (target, patch) => *target = patch,
+        }
+    }
+
+    const EXAMPLES: &[(&str, &str)] = &[
+        ("nesvo_open_review", r#"{"sessionId":"s"}"#),
+        ("nesvo_wait_prompt", r#"{"id":"op"}"#),
+        ("nesvo_get_operation", r#"{"id":"op"}"#),
+        ("nesvo_project_defaults", r#"{"root":"/home/owner/repo"}"#),
+    ];
+
+    fn valid_example(tool: &ToolSpec) -> Value {
+        let mut arguments = example(&Value::Object((tool.input)()));
+        if let Some((_, patch)) = EXAMPLES.iter().find(|(name, _)| *name == tool.name) {
+            merge(
+                &mut arguments,
+                serde_json::from_str(patch).expect("Example patch"),
+            );
+        }
+        arguments
+    }
+
+    #[test]
+    fn every_tool_example_passes_its_contract_struct_and_its_handler() {
+        let mut failures = Vec::new();
+        for tool in TOOLS.iter() {
+            let arguments = valid_example(tool);
+            if let Err(error) = (tool.contract)(arguments.clone()) {
+                failures.push(format!(
+                    "{} contract struct: {error}: {arguments}",
+                    tool.name
+                ));
+            }
+            if let Err(error) = mcp::command(tool.name, arguments.clone()) {
+                failures.push(format!("{} handler: {error}: {arguments}", tool.name));
+            }
+            if (tool.input)().get("additionalProperties") == Some(&json!(false)) {
+                let mut extra = arguments.clone();
+                extra["unpublishedField"] = json!(true);
+                if (tool.contract)(extra.clone()).is_ok() {
+                    failures.push(format!(
+                        "{} contract struct accepts an unknown field",
+                        tool.name
+                    ));
+                }
+                if mcp::command(tool.name, extra).is_ok() {
+                    failures.push(format!("{} handler accepts an unknown field", tool.name));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     fn committed(path: &str) -> String {
