@@ -113,6 +113,8 @@ Every `uses:` in `.github/workflows` names a full 40-character commit SHA, first
 
 To change a pin, resolve the new tag with `gh api repos/OWNER/REPO/git/ref/tags/TAG` (follow `git/tags/SHA` when the object type is `tag`), then update every workflow that uses the action and this table in one commit.
 
+Every `actions/checkout` step sets `persist-credentials: false`, so no later step can read the repository token from `.git/config`. The one step that needs a token, publishing the GitHub release, receives it through its own `GH_TOKEN` environment.
+
 ## Contributor gates
 
 These rules apply to every change. Reviewers enforce all of them; only the ones marked automated fail CI on their own.
