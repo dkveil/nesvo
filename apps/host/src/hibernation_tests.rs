@@ -719,6 +719,57 @@ async fn resume_journals_no_second_session_created_and_restores_attention_from_t
     log.shutdown().await;
 }
 
+#[tokio::test]
+async fn startup_reconciliation_removes_hibernation_rows_of_sessions_that_no_longer_exist() {
+    let fixture = Fixture::new();
+    let database = fixture.database();
+    let (state, log) = open(&database).await;
+    let (events, _output) = mpsc::channel(256);
+    let (kept, closed) = {
+        let mut guard = state.lock().unwrap();
+        (ready(&mut guard, &events), ready(&mut guard, &events))
+    };
+    for (id, key) in [(&kept, "a"), (&closed, "b")] {
+        hibernation::hibernate(&state, &log, id.clone(), key.into(), OWNER)
+            .await
+            .unwrap();
+    }
+    state
+        .lock()
+        .unwrap()
+        .metadata
+        .finish_recovery(&closed, true)
+        .unwrap();
+    finish(&state);
+    log.shutdown().await;
+    drop((state, log));
+    let rows = || -> Vec<String> {
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        let mut statement = connection
+            .prepare("SELECT session_id FROM session_hibernations ORDER BY session_id")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    assert_eq!(rows().len(), 2);
+    let (state, log) = open(&database).await;
+    hibernation::restore(&state, &log).await.unwrap();
+    assert_eq!(rows(), [kept.clone()]);
+    {
+        let guard = state.lock().unwrap();
+        assert!(view(&guard, &closed).is_none());
+        assert_eq!(
+            view(&guard, &kept).unwrap()["hibernation"]["state"],
+            "hibernated"
+        );
+    }
+    finish(&state);
+    log.shutdown().await;
+}
+
 #[test]
 fn idle_policy_is_off_by_default_and_selects_only_due_unwatched_eligible_agents() {
     let fixture = Fixture::new();

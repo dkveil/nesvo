@@ -656,6 +656,12 @@ pub(crate) fn handle(connection: &mut Connection, work: Work, now: u64) -> Resul
                 "DELETE FROM session_hibernations WHERE state='stopping'",
                 [],
             )?;
+            if table(&transaction, "recovery")? {
+                transaction.execute(
+                    "DELETE FROM session_hibernations WHERE session_id NOT IN (SELECT id FROM recovery)",
+                    [],
+                )?;
+            }
             transaction.execute(
                 "UPDATE session_hibernations SET state='hibernated',updated_at=?1 WHERE state='resuming'",
                 [now as i64],
@@ -1287,6 +1293,58 @@ mod tests {
             panic!("records expected");
         };
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn hibernation_recovery_removes_rows_whose_saved_session_no_longer_exists() {
+        let mut connection = connection();
+        connection
+            .execute_batch(
+                "CREATE TABLE recovery (id TEXT PRIMARY KEY, spec TEXT NOT NULL, state TEXT NOT NULL);",
+            )
+            .unwrap();
+        let (forgotten, resuming) = ("f".repeat(32), "e".repeat(32));
+        for (key, session) in [("a", SESSION), ("b", &forgotten), ("c", &resuming)] {
+            prepare(&mut connection, key, session).unwrap();
+            handle(
+                &mut connection,
+                Work::Commit {
+                    key: key.into(),
+                    record: Box::new(record(session)),
+                },
+                1,
+            )
+            .unwrap();
+        }
+        handle(
+            &mut connection,
+            Work::BeginResume {
+                session_id: resuming.clone(),
+                key: "r".into(),
+            },
+            2,
+        )
+        .unwrap();
+        prepare(&mut connection, "d", &"d".repeat(32)).unwrap();
+        connection
+            .execute("INSERT INTO recovery VALUES(?1,'{}','saved')", [SESSION])
+            .unwrap();
+        let Reply::Records(recovered) = handle(&mut connection, Work::Recover, 3).unwrap() else {
+            panic!("records expected");
+        };
+        assert_eq!(
+            recovered
+                .iter()
+                .map(|record| record.session_id.as_str())
+                .collect::<Vec<_>>(),
+            [SESSION]
+        );
+        let rows: i64 = connection
+            .query_row("SELECT count(*) FROM session_hibernations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 1);
     }
 
     #[test]

@@ -179,7 +179,9 @@ session's attention (last event and unread flag, needs-you projection and inbox 
 from the hibernation record, raised to any durable inbox receipt, so an acknowledged item
 stays read and later items rank as new. The owner may then relaunch it fresh with
 `restoreSession` (`nesvo session recover restore ID`), which ends the hibernation;
-`close` and `forgetRecovery` end it without relaunching.
+`close` and `forgetRecovery` end it without relaunching. Their row deletion is best effort;
+host startup removes, inside the recovery transaction, every hibernation row whose saved
+launch description no longer exists.
 
 Both operations are idempotent by key: the same key and session return the original
 reply with `replayed:true` (or the original refusal after an effect), another
