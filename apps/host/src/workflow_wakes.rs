@@ -284,62 +284,11 @@ fn view(connection: &Connection, actor: &Actor, run: &str, after: u64) -> Result
 }
 
 fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64) -> Result<Reply> {
-    match &request {
-        Request::Get { run_id, after } => {
-            return Ok(Reply::Managed {
-                view: view(connection, &actor, run_id, after.unwrap_or(0))?,
-                pump: None,
-            });
-        }
-        Request::Batch { run_id, batch_id } => {
-            let run = orchestration::run(connection, &actor, run_id)?;
-            return Ok(Reply::Managed {
-                view: json!({"run":run,"wakeBatch":crate::workflow_wake_batches::read(connection,run_id,batch_id)?}),
-                pump: None,
-            });
-        }
-        _ => {}
+    if let Some(reply) = inspect(connection, &actor, &request)? {
+        return Ok(reply);
     }
-    let (key, run, revision) = match &request {
-        Request::Enable {
-            key,
-            run_id,
-            expected_revision,
-        }
-        | Request::Disable {
-            key,
-            run_id,
-            expected_revision,
-        }
-        | Request::Pause {
-            key,
-            run_id,
-            expected_revision,
-        }
-        | Request::Resume {
-            key,
-            run_id,
-            expected_revision,
-        }
-        | Request::SetDelivery {
-            key,
-            run_id,
-            expected_revision,
-            ..
-        } => (key, run_id, *expected_revision),
-        _ => return Err(anyhow!("Unexpected wake command")),
-    };
-    if matches!(
-        request,
-        Request::Pause { .. } | Request::Resume { .. } | Request::SetDelivery { .. }
-    ) && !matches!(actor.scope, orchestration::Scope::Owner)
-    {
-        return Err(Error::new(
-            "forbidden",
-            "Only the owner may hold, resume or change wake delivery",
-        )
-        .into());
-    }
+    let (key, run, revision) = target(&request)?;
+    owner_controls(&actor, &request)?;
     orchestration::validate_key(key)?;
     orchestration::run(connection, &actor, run)?;
     crate::workflow_budget::refresh(connection, run, now)?;
@@ -365,89 +314,187 @@ fn manage(connection: &mut Connection, actor: Actor, request: Request, now: u64)
         .into());
     }
     let previous = read(&transaction, run)?;
-    let enable = matches!(request, Request::Enable { .. });
-    let id = if let Some(id) =
-        hold_or_deliver(&transaction, &actor, &request, &current, &previous, now)?
-    {
-        id
-    } else if enable {
-        run_guard(&transaction, run, now)?;
-        let coordinator = current["coordinatorSessionId"].as_str().ok_or_else(|| {
-            Error::new(
-                "coordinator_required",
-                "Bind a live native coordinator before enabling model wakes",
-            )
-        })?;
-        enabled_capacity(&transaction)?;
-        if let Some(previous) = &previous {
-            if previous.held && !matches!(actor.scope, orchestration::Scope::Owner) {
-                return Err(Error::new(
-                    "wake_policy_held",
-                    "The owner held this wake policy; only the owner can release it",
-                )
-                .into());
-            }
-            if previous.enabled {
-                return Err(Error::new(
-                    "wake_state_conflict",
-                    "Wake policy is already enabled; inspect it",
-                )
-                .into());
-            }
-            if previous.coordinator != coordinator {
-                return Err(Error::new(
-                    "scope_revoked",
-                    "Coordinator adoption needs explicit recovery",
-                )
-                .into());
-            }
-            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
-            previous.id.clone()
-        } else {
-            let count: i64 = transaction.query_row(
-                "SELECT count(*) FROM workflow_wake_policies",
-                [],
-                |row| row.get(0),
-            )?;
-            if count >= 1024 {
-                return Err(Error::new(
-                    "busy",
-                    "Wake policy retention is full; no history was discarded",
-                )
-                .into());
-            }
-            let id = hex::encode(crate::wire::random::<16>());
-            transaction.execute("INSERT INTO workflow_wake_policies(id,run_id,coordinator_id,issuer,enabled,generation,phase,created_at) VALUES(?1,?2,?3,?4,1,1,'enabled',?5)",params![id,run,coordinator,actor.issuer,now as i64])?;
-            id
-        }
-    } else {
-        let previous =
-            previous.ok_or_else(|| Error::new("wake_not_found", "Run has no wake policy"))?;
-        if previous.held && !matches!(actor.scope, orchestration::Scope::Owner) {
-            return Err(Error::new(
-                "wake_policy_held",
-                "The owner held this wake policy; only the owner can disable or release it",
-            )
-            .into());
-        }
-        transaction.execute("UPDATE workflow_wake_policies SET enabled=0,held=0,generation=generation+1,phase='disabled',reason='user_disabled' WHERE id=?1",[&previous.id])?;
-        previous.id
-    };
-    if enable || matches!(request, Request::Resume { .. }) {
+    let id = apply(&transaction, &actor, &request, run, &current, previous, now)?;
+    let delivering = delivers(&request);
+    if delivering {
         crate::workflow_wake_events::seed(&transaction, run, now)?;
     }
 
     let cursor = changed(&transaction, &id, now)?;
     let mut result = view(&transaction, &actor, run, 0)?;
     result["cursor"] = cursor.into();
-    let policy = read(&transaction, run)?.ok_or_else(|| anyhow!("Missing wake policy"))?;
-    let pump = (enable || matches!(request, Request::Resume { .. })).then_some(Guard {
-        id: policy.id,
-        generation: policy.generation,
-    });
+    let pump = pump_guard(&transaction, run, delivering)?;
     orchestration::remember(&transaction, &actor, key, &digest, &result)?;
     transaction.commit()?;
     Ok(Reply::Managed { view: result, pump })
+}
+fn inspect(connection: &Connection, actor: &Actor, request: &Request) -> Result<Option<Reply>> {
+    match request {
+        Request::Get { run_id, after } => Ok(Some(Reply::Managed {
+            view: view(connection, actor, run_id, after.unwrap_or(0))?,
+            pump: None,
+        })),
+        Request::Batch { run_id, batch_id } => {
+            let run = orchestration::run(connection, actor, run_id)?;
+            Ok(Some(Reply::Managed {
+                view: json!({"run":run,"wakeBatch":crate::workflow_wake_batches::read(connection,run_id,batch_id)?}),
+                pump: None,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+fn target(request: &Request) -> Result<(&String, &String, u64)> {
+    match request {
+        Request::Enable {
+            key,
+            run_id,
+            expected_revision,
+        }
+        | Request::Disable {
+            key,
+            run_id,
+            expected_revision,
+        }
+        | Request::Pause {
+            key,
+            run_id,
+            expected_revision,
+        }
+        | Request::Resume {
+            key,
+            run_id,
+            expected_revision,
+        }
+        | Request::SetDelivery {
+            key,
+            run_id,
+            expected_revision,
+            ..
+        } => Ok((key, run_id, *expected_revision)),
+        _ => Err(anyhow!("Unexpected wake command")),
+    }
+}
+fn owner_controls(actor: &Actor, request: &Request) -> Result<()> {
+    if matches!(
+        request,
+        Request::Pause { .. } | Request::Resume { .. } | Request::SetDelivery { .. }
+    ) && !matches!(actor.scope, orchestration::Scope::Owner)
+    {
+        return Err(Error::new(
+            "forbidden",
+            "Only the owner may hold, resume or change wake delivery",
+        )
+        .into());
+    }
+    Ok(())
+}
+fn delivers(request: &Request) -> bool {
+    matches!(request, Request::Enable { .. } | Request::Resume { .. })
+}
+fn apply(
+    transaction: &Transaction<'_>,
+    actor: &Actor,
+    request: &Request,
+    run: &str,
+    current: &Value,
+    previous: Option<Policy>,
+    now: u64,
+) -> Result<String> {
+    match request {
+        Request::Enable { .. } => enable(transaction, actor, run, current, previous, now),
+        Request::Disable { .. } => disable(transaction, actor, previous),
+        Request::Pause { .. } => hold(transaction, &existing(previous)?),
+        Request::Resume { .. } => resume(transaction, actor, current, &existing(previous)?, now),
+        Request::SetDelivery { delivery, .. } => {
+            set_delivery(transaction, &existing(previous)?, *delivery)
+        }
+        _ => Err(anyhow!("Unexpected wake command")),
+    }
+}
+fn existing(previous: Option<Policy>) -> Result<Policy> {
+    Ok(previous.ok_or_else(|| Error::new("wake_not_found", "Run has no wake policy"))?)
+}
+fn enable(
+    transaction: &Transaction<'_>,
+    actor: &Actor,
+    run: &str,
+    current: &Value,
+    previous: Option<Policy>,
+    now: u64,
+) -> Result<String> {
+    run_guard(transaction, run, now)?;
+    let coordinator = current["coordinatorSessionId"].as_str().ok_or_else(|| {
+        Error::new(
+            "coordinator_required",
+            "Bind a live native coordinator before enabling model wakes",
+        )
+    })?;
+    enabled_capacity(transaction)?;
+    let Some(previous) = previous else {
+        return create(transaction, actor, run, coordinator, now);
+    };
+    if previous.held && !matches!(actor.scope, orchestration::Scope::Owner) {
+        return Err(Error::new(
+            "wake_policy_held",
+            "The owner held this wake policy; only the owner can release it",
+        )
+        .into());
+    }
+    if previous.enabled {
+        return Err(Error::new(
+            "wake_state_conflict",
+            "Wake policy is already enabled; inspect it",
+        )
+        .into());
+    }
+    if previous.coordinator != coordinator {
+        return Err(Error::new(
+            "scope_revoked",
+            "Coordinator adoption needs explicit recovery",
+        )
+        .into());
+    }
+    transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
+    Ok(previous.id)
+}
+fn create(
+    transaction: &Transaction<'_>,
+    actor: &Actor,
+    run: &str,
+    coordinator: &str,
+    now: u64,
+) -> Result<String> {
+    let count: i64 =
+        transaction.query_row("SELECT count(*) FROM workflow_wake_policies", [], |row| {
+            row.get(0)
+        })?;
+    if count >= 1024 {
+        return Err(Error::new(
+            "busy",
+            "Wake policy retention is full; no history was discarded",
+        )
+        .into());
+    }
+    let id = hex::encode(crate::wire::random::<16>());
+    transaction.execute("INSERT INTO workflow_wake_policies(id,run_id,coordinator_id,issuer,enabled,generation,phase,created_at) VALUES(?1,?2,?3,?4,1,1,'enabled',?5)",params![id,run,coordinator,actor.issuer,now as i64])?;
+    Ok(id)
+}
+fn disable(
+    transaction: &Transaction<'_>,
+    actor: &Actor,
+    previous: Option<Policy>,
+) -> Result<String> {
+    let previous = existing(previous)?;
+    if previous.held && !matches!(actor.scope, orchestration::Scope::Owner) {
+        return Err(Error::new(
+            "wake_policy_held",
+            "The owner held this wake policy; only the owner can disable or release it",
+        )
+        .into());
+    }
+    transaction.execute("UPDATE workflow_wake_policies SET enabled=0,held=0,generation=generation+1,phase='disabled',reason='user_disabled' WHERE id=?1",[&previous.id])?;
+    Ok(previous.id)
 }
 fn enabled_capacity(connection: &Connection) -> Result<()> {
     let active: i64 = connection.query_row(
@@ -460,71 +507,69 @@ fn enabled_capacity(connection: &Connection) -> Result<()> {
     }
     Ok(())
 }
-fn hold_or_deliver(
+fn hold(transaction: &Transaction<'_>, previous: &Policy) -> Result<String> {
+    if !previous.enabled || previous.held {
+        return Err(Error::new(
+            "wake_state_conflict",
+            "Only enabled, delivering wakes can be held; inspect the policy",
+        )
+        .into());
+    }
+    transaction.execute("UPDATE workflow_wake_policies SET held=1,generation=generation+1,phase='held',reason='owner_held' WHERE id=?1",[&previous.id])?;
+    Ok(previous.id.clone())
+}
+fn resume(
     transaction: &Transaction<'_>,
     actor: &Actor,
-    request: &Request,
     current: &Value,
-    previous: &Option<Policy>,
+    previous: &Policy,
     now: u64,
-) -> Result<Option<String>> {
-    if !matches!(
-        request,
-        Request::Pause { .. } | Request::Resume { .. } | Request::SetDelivery { .. }
-    ) {
-        return Ok(None);
+) -> Result<String> {
+    if !previous.held {
+        return Err(Error::new(
+            "wake_state_conflict",
+            "Only held wakes can resume; enable a paused or disabled policy instead",
+        )
+        .into());
     }
-    let previous = previous
-        .as_ref()
-        .ok_or_else(|| Error::new("wake_not_found", "Run has no wake policy"))?;
-    match request {
-        Request::Pause { .. } => {
-            if !previous.enabled || previous.held {
-                return Err(Error::new(
-                    "wake_state_conflict",
-                    "Only enabled, delivering wakes can be held; inspect the policy",
-                )
-                .into());
-            }
-            transaction.execute("UPDATE workflow_wake_policies SET held=1,generation=generation+1,phase='held',reason='owner_held' WHERE id=?1",[&previous.id])?;
-        }
-        Request::Resume { .. } => {
-            if !previous.held {
-                return Err(Error::new(
-                    "wake_state_conflict",
-                    "Only held wakes can resume; enable a paused or disabled policy instead",
-                )
-                .into());
-            }
-            run_guard(transaction, &previous.run_id, now)?;
-            if current["coordinatorSessionId"].as_str() != Some(previous.coordinator.as_str()) {
-                return Err(Error::new(
-                    "scope_revoked",
-                    "Coordinator adoption needs explicit recovery",
-                )
-                .into());
-            }
-            if !previous.enabled {
-                enabled_capacity(transaction)?;
-            }
-            transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
-        }
-        Request::SetDelivery { delivery, .. } => {
-            if previous.delivery == delivery.as_str() {
-                return Err(Error::new(
-                    "wake_state_conflict",
-                    "Wake delivery already uses this mode",
-                )
-                .into());
-            }
-            transaction.execute(
-                "UPDATE workflow_wake_policies SET delivery=?2 WHERE id=?1",
-                params![previous.id, delivery.as_str()],
-            )?;
-        }
-        _ => unreachable!(),
+    run_guard(transaction, &previous.run_id, now)?;
+    if current["coordinatorSessionId"].as_str() != Some(previous.coordinator.as_str()) {
+        return Err(Error::new(
+            "scope_revoked",
+            "Coordinator adoption needs explicit recovery",
+        )
+        .into());
     }
-    Ok(Some(previous.id.clone()))
+    if !previous.enabled {
+        enabled_capacity(transaction)?;
+    }
+    transaction.execute("UPDATE workflow_wake_policies SET issuer=?2,enabled=1,held=0,generation=generation+1,phase='enabled',reason=NULL WHERE id=?1",params![previous.id,actor.issuer])?;
+    Ok(previous.id.clone())
+}
+fn set_delivery(
+    transaction: &Transaction<'_>,
+    previous: &Policy,
+    delivery: Delivery,
+) -> Result<String> {
+    if previous.delivery == delivery.as_str() {
+        return Err(Error::new(
+            "wake_state_conflict",
+            "Wake delivery already uses this mode",
+        )
+        .into());
+    }
+    transaction.execute(
+        "UPDATE workflow_wake_policies SET delivery=?2 WHERE id=?1",
+        params![previous.id, delivery.as_str()],
+    )?;
+    Ok(previous.id.clone())
+}
+fn pump_guard(transaction: &Transaction<'_>, run: &str, delivering: bool) -> Result<Option<Guard>> {
+    let policy = read(transaction, run)?.ok_or_else(|| anyhow!("Missing wake policy"))?;
+    Ok(delivering.then_some(Guard {
+        id: policy.id,
+        generation: policy.generation,
+    }))
 }
 pub fn recover(connection: &mut Connection) -> Result<()> {
     let transaction =
