@@ -1538,6 +1538,7 @@ impl State {
         event["providers"] =
             crate::provider_availability::capabilities(&self.launchers, &self.provider_versions);
         event["mcpPool"] = true.into();
+        event["mcpServers"] = crate::worktrees::available().into();
         event["workflowPlans"] = true.into();
         event["reviews"] = true.into();
         event["files"] = true.into();
@@ -3348,7 +3349,8 @@ impl State {
             | Command::RunWorktree { .. }
             | Command::CancelWorktree { .. }
             | Command::ArchiveWorktree { .. }
-            | Command::ListWorktrees => {
+            | Command::ListWorktrees
+            | Command::ListMcpServers { .. } => {
                 return Err(anyhow!("Worktrees require asynchronous dispatch."));
             }
             Command::McpPoolStatus => {

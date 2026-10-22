@@ -233,6 +233,9 @@ pub enum Command {
     },
     ListWorktrees,
     McpPoolStatus,
+    ListMcpServers {
+        directory: String,
+    },
     AttentionInbox {
         #[serde(default)]
         page: Option<u16>,
