@@ -1,8 +1,9 @@
 use crate::{
-    jobs::{Definition, FormField, Jobs, Load, Page},
+    jobs::{DefinitionView, FormField, Jobs, Load, OccurrenceView, Page},
     model::App,
     theme::{BACKGROUND, BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, WARNING},
 };
+use nesvo_wire::views::jobs::JobDefinition;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -288,7 +289,7 @@ fn definitions(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
     selected_preview(frame, preview, selected, jobs.now_ms);
 }
 
-fn selected_preview(frame: &mut Frame, area: Rect, job: &Definition, now_ms: i64) {
+fn selected_preview(frame: &mut Frame, area: Rect, job: &JobDefinition, now_ms: i64) {
     section(frame, row(area, 0), "SELECTED DEFINITION");
     text(frame, row(area, 2), &job.title, TEXT);
     text(
@@ -410,7 +411,7 @@ fn detail(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
 
 fn history(frame: &mut Frame, app: &App, area: Rect, jobs: &Jobs) {
     tabs(frame, app, row(area, 0), true);
-    let offset = jobs.selected_definition().and_then(Definition::offset);
+    let offset = jobs.selected_definition().and_then(DefinitionView::offset);
     let wide = area.width >= 70;
     let started_width = if wide { 23 } else { 15 }.min(area.width);
     let state_width = area.width.saturating_sub(started_width).min(24);

@@ -5,6 +5,7 @@ use crate::{
     model::App,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use nesvo_wire::views::ReplyHeader;
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -42,7 +43,7 @@ pub fn host_event(app: &mut App, event: &serde_json::Value) -> Vec<serde_json::V
     let Some(jobs) = app.jobs.as_mut() else {
         return Vec::new();
     };
-    let effect = if event["type"] == "error" {
+    let effect = if ReplyHeader::of(event).kind.as_deref() == Some("error") {
         jobs.failure(&app.host_features, event)
     } else {
         jobs.response(&app.host_features, event, now_ms())

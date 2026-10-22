@@ -1,7 +1,14 @@
 use crate::{job_time, launch::Program};
 use anyhow::Result;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use nesvo_wire::views::{
+    self, HostError, ReplyHeader,
+    jobs::{
+        CalendarState, JobDefinition, JobOccurrence, JobPage, JobProfile, JobReply, JobRequest,
+        JobSchedule, JobScheduleKind, JobSpec, JobWorkspace, JobsCall, Keyed, Misfire,
+        OccurrencePage, Overlap, QuotaState,
+    },
+};
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,99 +26,99 @@ pub enum Load {
     Failed(String),
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Definition {
-    pub id: String,
-    pub title: String,
-    pub revision: u64,
-    pub enabled: bool,
-    pub next_due_at: Option<i64>,
-    pub schedule: Value,
-    #[serde(default)]
-    pub calendar_state: String,
-    #[serde(default)]
-    pub spec: Option<Value>,
+pub trait DefinitionView {
+    fn offset(&self) -> Option<i32>;
+    fn schedule_kind_label(&self) -> &'static str;
+    fn schedule_label(&self) -> String;
+    fn summary(&self, now_ms: i64) -> String;
+    fn next_label(&self, now_ms: i64) -> String;
+    fn next_detail(&self, now_ms: i64) -> String;
+    fn state_label(&self) -> &'static str;
+    fn program(&self) -> Option<&str>;
+    fn program_label(&self) -> String;
+    fn workspace_label(&self) -> &'static str;
+    fn folder_label(&self) -> String;
+    fn instruction(&self) -> Option<&str>;
+    fn policy(&self) -> Vec<(&'static str, String, bool)>;
 }
 
-impl Definition {
-    pub fn kind(&self) -> &str {
-        self.schedule["kind"].as_str().unwrap_or("unknown")
+fn text(field: Option<&String>) -> &str {
+    field.map_or("?", String::as_str)
+}
+
+impl DefinitionView for JobDefinition {
+    fn offset(&self) -> Option<i32> {
+        self.schedule.at.as_deref().and_then(job_time::offset_of)
     }
 
-    pub fn offset(&self) -> Option<i32> {
-        self.schedule["at"].as_str().and_then(job_time::offset_of)
-    }
-
-    pub fn schedule_kind_label(&self) -> &'static str {
-        match self.kind() {
-            "once" => "one-time schedule",
-            "cron" => "cron schedule",
-            "rrule" => "calendar schedule",
-            "external" => "external trigger",
-            _ => "unknown schedule",
+    fn schedule_kind_label(&self) -> &'static str {
+        match self.schedule.kind {
+            JobScheduleKind::Once => "one-time schedule",
+            JobScheduleKind::Cron => "cron schedule",
+            JobScheduleKind::Rrule => "calendar schedule",
+            JobScheduleKind::External => "external trigger",
+            JobScheduleKind::Other(_) => "unknown schedule",
         }
     }
 
-    pub fn schedule_label(&self) -> String {
-        let zone = self.schedule["timeZone"].as_str().unwrap_or("UTC");
-        match self.kind() {
-            "once" => self.schedule["at"]
-                .as_str()
+    fn schedule_label(&self) -> String {
+        let schedule = &self.schedule;
+        let zone = schedule.time_zone.as_deref().unwrap_or("UTC");
+        match &schedule.kind {
+            JobScheduleKind::Once => schedule
+                .at
+                .as_deref()
                 .and_then(job_time::once_label)
                 .map_or_else(|| "Once".to_owned(), |at| format!("Once · {at}")),
-            "cron" => format!(
-                "Cron · {} · {zone}",
-                self.schedule["expression"].as_str().unwrap_or("?")
-            ),
-            "rrule" => format!(
-                "Calendar · {} · {zone}",
-                self.schedule["rule"].as_str().unwrap_or("?")
-            ),
-            "external" => "External delivery".to_owned(),
-            other => other.to_owned(),
+            JobScheduleKind::Cron => {
+                format!("Cron · {} · {zone}", text(schedule.expression.as_ref()))
+            }
+            JobScheduleKind::Rrule => {
+                format!("Calendar · {} · {zone}", text(schedule.rule.as_ref()))
+            }
+            JobScheduleKind::External => "External delivery".to_owned(),
+            JobScheduleKind::Other(other) => other.clone(),
         }
     }
 
-    pub fn summary(&self, now_ms: i64) -> String {
-        match (self.kind(), self.next_due_at) {
-            ("once", Some(due)) => format!(
+    fn summary(&self, now_ms: i64) -> String {
+        let schedule = &self.schedule;
+        match (&schedule.kind, self.next_due_at) {
+            (JobScheduleKind::Once, Some(due)) => format!(
                 "Once · {}",
                 lowercase_day(&job_time::moment(due, now_ms, self.offset()))
             ),
-            ("cron", _) => format!(
-                "Cron · {}",
-                self.schedule["expression"].as_str().unwrap_or("?")
-            ),
-            ("rrule", _) => format!(
-                "Calendar · {}",
-                self.schedule["rule"].as_str().unwrap_or("?")
-            ),
-            ("external", _) => "External delivery".to_owned(),
+            (JobScheduleKind::Cron, _) => {
+                format!("Cron · {}", text(schedule.expression.as_ref()))
+            }
+            (JobScheduleKind::Rrule, _) => {
+                format!("Calendar · {}", text(schedule.rule.as_ref()))
+            }
+            (JobScheduleKind::External, _) => "External delivery".to_owned(),
             _ => self.schedule_label(),
         }
     }
 
-    pub fn next_label(&self, now_ms: i64) -> String {
+    fn next_label(&self, now_ms: i64) -> String {
         if !self.enabled {
             return "Paused".into();
         }
-        if self.calendar_state == "blocked" {
+        if self.calendar_state == Some(CalendarState::Blocked) {
             return "Calendar blocked".into();
         }
         match self.next_due_at {
             Some(due) => job_time::moment(due, now_ms, self.offset()),
-            None if self.kind() == "external" => "External".into(),
+            None if self.schedule.kind == JobScheduleKind::External => "External".into(),
             None => "Not scheduled".into(),
         }
     }
 
-    pub fn next_detail(&self, now_ms: i64) -> String {
+    fn next_detail(&self, now_ms: i64) -> String {
         let next = self.next_label(now_ms);
         match (
             self.next_due_at,
             self.offset(),
-            self.schedule["timeZone"].as_str(),
+            self.schedule.time_zone.as_deref(),
         ) {
             (Some(_), Some(offset), _) if self.enabled => {
                 format!("{next} · {}", job_time::offset_label(offset))
@@ -121,15 +128,15 @@ impl Definition {
         }
     }
 
-    pub fn state_label(&self) -> &'static str {
+    fn state_label(&self) -> &'static str {
         if self.enabled { "Enabled" } else { "Paused" }
     }
 
-    pub fn program(&self) -> Option<&str> {
-        self.spec.as_ref()?["profile"]["program"].as_str()
+    fn program(&self) -> Option<&str> {
+        self.spec.as_ref()?.profile.program.as_deref()
     }
 
-    pub fn program_label(&self) -> String {
+    fn program_label(&self) -> String {
         match self.program() {
             Some("claude") => "Claude".into(),
             Some("codex") => "Codex".into(),
@@ -139,46 +146,44 @@ impl Definition {
         }
     }
 
-    pub fn workspace_label(&self) -> &'static str {
+    fn workspace_label(&self) -> &'static str {
         match self
             .spec
             .as_ref()
-            .and_then(|spec| spec["profile"]["workspace"].as_str())
+            .and_then(|spec| spec.profile.workspace.as_ref())
         {
-            Some("worktree") => "Worktree",
-            Some("shared") => "Shared",
+            Some(JobWorkspace::Worktree) => "Worktree",
+            Some(JobWorkspace::Shared) => "Shared",
             _ => "Unknown",
         }
     }
 
-    pub fn folder_label(&self) -> String {
+    fn folder_label(&self) -> String {
         self.spec
             .as_ref()
-            .and_then(|spec| spec["profile"]["cwd"].as_str())
+            .and_then(|spec| spec.profile.cwd.as_deref())
             .unwrap_or("Host workspace")
             .to_owned()
     }
 
-    pub fn instruction(&self) -> Option<&str> {
-        self.spec.as_ref()?["instruction"].as_str()
+    fn instruction(&self) -> Option<&str> {
+        self.spec.as_ref()?.instruction.as_deref()
     }
 
-    pub fn policy(&self) -> Vec<(&'static str, String, bool)> {
+    fn policy(&self) -> Vec<(&'static str, String, bool)> {
         let Some(spec) = &self.spec else {
             return Vec::new();
         };
-        let overlap = match spec["overlap"].as_str() {
-            Some("queue") => "Queue a separate occurrence",
+        let overlap = match spec.overlap {
+            Some(Overlap::Queue) => "Queue a separate occurrence",
             _ => "Skip while one is active",
         };
-        let budget = spec["maxElapsedMs"]
-            .as_u64()
+        let budget = spec
+            .max_elapsed_ms
             .map_or_else(|| "Host default".to_owned(), job_time::duration_label);
-        let timeout = spec["executionTimeoutMs"].as_u64();
-        let retry = spec["retry"]["maxAttempts"].as_u64();
-        let quota = spec
-            .get("quotaPolicy")
-            .is_some_and(|policy| !policy.is_null());
+        let timeout = spec.execution_timeout_ms;
+        let retry = spec.retry.as_ref().and_then(|retry| retry.max_attempts);
+        let quota = spec.quota_policy.is_some();
         vec![
             ("Overlap", overlap.to_owned(), true),
             ("Run budget", budget, true),
@@ -222,46 +227,43 @@ fn lowercase_day(moment: &str) -> String {
     moment.to_owned()
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Occurrence {
-    pub id: String,
-    pub state: String,
-    pub reason: Option<String>,
-    pub run_id: Option<String>,
-    pub due_at: i64,
-    pub started_at: Option<i64>,
-    #[serde(default)]
-    pub quota: Value,
+pub trait OccurrenceView {
+    fn started(&self, now_ms: i64, offset: Option<i32>) -> String;
+    fn reason_label(&self) -> &str;
+    fn run_label(&self) -> String;
+    fn quota_label(&self, now_ms: i64, offset: Option<i32>) -> String;
+    fn quota_column(&self, now_ms: i64, offset: Option<i32>) -> String;
+    fn waiting(&self) -> bool;
 }
 
-impl Occurrence {
-    pub fn started(&self, now_ms: i64, offset: Option<i32>) -> String {
+fn quota_reset(occurrence: &JobOccurrence, now_ms: i64, offset: Option<i32>) -> Option<String> {
+    occurrence
+        .quota
+        .resets_at
+        .map(|reset| job_time::moment(reset, now_ms, offset))
+}
+
+impl OccurrenceView for JobOccurrence {
+    fn started(&self, now_ms: i64, offset: Option<i32>) -> String {
         job_time::moment(self.started_at.unwrap_or(self.due_at), now_ms, offset)
     }
 
-    pub fn reason_label(&self) -> &str {
+    fn reason_label(&self) -> &str {
         self.reason.as_deref().unwrap_or("—")
     }
 
-    pub fn run_label(&self) -> String {
+    fn run_label(&self) -> String {
         self.run_id
             .as_deref()
             .map_or_else(|| "Not allocated".to_owned(), |run| format!("Run · {run}"))
     }
 
-    fn quota_reset(&self, now_ms: i64, offset: Option<i32>) -> Option<String> {
-        self.quota["resetsAt"]
-            .as_i64()
-            .map(|reset| job_time::moment(reset, now_ms, offset))
-    }
-
-    pub fn quota_label(&self, now_ms: i64, offset: Option<i32>) -> String {
-        let reason = self.quota["reason"].as_str().unwrap_or("unknown");
-        match self.quota["state"].as_str() {
-            Some("eligible") => "Eligible".into(),
-            Some("waiting") => format!("Waiting · {reason}"),
-            Some("held") => match self.quota_reset(now_ms, offset) {
+    fn quota_label(&self, now_ms: i64, offset: Option<i32>) -> String {
+        let reason = self.quota.reason.as_deref().unwrap_or("unknown");
+        match self.quota.state {
+            Some(QuotaState::Eligible) => "Eligible".into(),
+            Some(QuotaState::Waiting) => format!("Waiting · {reason}"),
+            Some(QuotaState::Held) => match quota_reset(self, now_ms, offset) {
                 Some(reset) => format!("Held until {reset} · {reason}"),
                 None => format!("Held · {reason} · until a newer read"),
             },
@@ -269,19 +271,21 @@ impl Occurrence {
         }
     }
 
-    pub fn quota_column(&self, now_ms: i64, offset: Option<i32>) -> String {
-        match self.quota["state"].as_str() {
-            Some("eligible") => "eligible".into(),
-            Some("waiting") => "waiting".into(),
-            Some("held") => self
-                .quota_reset(now_ms, offset)
+    fn quota_column(&self, now_ms: i64, offset: Option<i32>) -> String {
+        match self.quota.state {
+            Some(QuotaState::Eligible) => "eligible".into(),
+            Some(QuotaState::Waiting) => "waiting".into(),
+            Some(QuotaState::Held) => quota_reset(self, now_ms, offset)
                 .map_or_else(|| "held".into(), |reset| format!("held → {reset}")),
             _ => "—".into(),
         }
     }
 
-    pub fn waiting(&self) -> bool {
-        matches!(self.quota["state"].as_str(), Some("waiting" | "held"))
+    fn waiting(&self) -> bool {
+        matches!(
+            self.quota.state,
+            Some(QuotaState::Waiting | QuotaState::Held)
+        )
     }
 }
 
@@ -328,10 +332,19 @@ impl ScheduleKind {
         }
     }
 
-    fn parse(kind: &str) -> Option<Self> {
+    fn parse(kind: &JobScheduleKind) -> Option<Self> {
         Self::ALL
             .into_iter()
-            .find(|candidate| candidate.wire() == kind)
+            .find(|candidate| candidate.wire() == kind.as_str())
+    }
+
+    fn schedule(self) -> JobSchedule {
+        JobSchedule::new(match self {
+            Self::Once => JobScheduleKind::Once,
+            Self::Cron => JobScheduleKind::Cron,
+            Self::Rrule => JobScheduleKind::Rrule,
+            Self::External => JobScheduleKind::External,
+        })
     }
 
     pub fn advertised(features: &Value) -> Vec<Self> {
@@ -397,7 +410,39 @@ impl FormField {
 pub struct EditTarget {
     pub job_id: String,
     pub revision: u64,
-    pub spec: Value,
+    pub spec: JobSpec,
+}
+
+fn program_name(program: Program) -> Option<String> {
+    serde_json::to_value(program)
+        .ok()?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn parse_program(name: Option<&str>) -> Option<Program> {
+    Program::ALL
+        .into_iter()
+        .find(|program| program_name(*program).as_deref() == name)
+}
+
+fn trimmed(text: &str) -> Option<String> {
+    Some(text.trim().to_owned())
+}
+
+fn new_spec() -> JobSpec {
+    JobSpec {
+        profile: JobProfile {
+            workspace: Some(JobWorkspace::Shared),
+            harness: Some(true),
+            ..JobProfile::default()
+        },
+        misfire: Some(Misfire::CatchUp),
+        grace_ms: Some(60_000),
+        overlap: Some(Overlap::Skip),
+        max_elapsed_ms: Some(300_000),
+        ..JobSpec::default()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -475,37 +520,41 @@ impl Form {
         }
     }
 
-    fn schedule(&self) -> std::result::Result<Value, &'static str> {
-        let mut schedule = match self.kind {
+    fn schedule(&self) -> std::result::Result<JobSchedule, &'static str> {
+        let mut schedule = self.kind.schedule();
+        match self.kind {
             ScheduleKind::Once => {
                 if let Some(schedule) = self.unchanged_schedule() {
                     return Ok(schedule);
                 }
-                let at = job_time::rfc3339(&self.start)
-                    .ok_or("Start needs a date, time and offset: 2026-10-22 16:02 +02:00.")?;
-                return Ok(json!({"kind": "once", "at": at}));
+                schedule.at = Some(
+                    job_time::rfc3339(&self.start)
+                        .ok_or("Start needs a date, time and offset: 2026-10-22 16:02 +02:00.")?,
+                );
+                return Ok(schedule);
             }
-            ScheduleKind::External => return Ok(json!({"kind": "external"})),
+            ScheduleKind::External => return Ok(schedule),
             ScheduleKind::Cron => {
                 if self.expression.trim().is_empty() {
                     return Err("Give the five cron fields: minute hour day month weekday.");
                 }
-                json!({"kind": "cron", "expression": self.expression.trim()})
+                schedule.expression = trimmed(&self.expression);
             }
             ScheduleKind::Rrule => {
                 if self.rule.trim().is_empty() || self.local_start.trim().is_empty() {
                     return Err("Give the RRULE and its local start: 2026-11-02T09:00:00.");
                 }
-                json!({"kind": "rrule", "rule": self.rule.trim(), "start": self.local_start.trim()})
+                schedule.rule = trimmed(&self.rule);
+                schedule.start = trimmed(&self.local_start);
             }
-        };
+        }
         if !self.time_zone.trim().is_empty() {
-            schedule["timeZone"] = self.time_zone.trim().into();
+            schedule.time_zone = trimmed(&self.time_zone);
         }
         Ok(schedule)
     }
 
-    fn spec(&self) -> std::result::Result<Value, &'static str> {
+    fn spec(&self) -> std::result::Result<JobSpec, &'static str> {
         if self.title.trim().is_empty() {
             return Err("Give the job a title.");
         }
@@ -517,36 +566,24 @@ impl Form {
         }
         let schedule = self.schedule()?;
         let folder = self.folder.trim();
-        let mut spec = self.target.as_ref().map_or_else(
-            || {
-                json!({
-                    "profile": {"name": null, "workspace": "shared", "harness": true},
-                    "misfire": "catchUp",
-                    "graceMs": 60_000,
-                    "overlap": "skip",
-                    "maxElapsedMs": 300_000
-                })
-            },
-            |target| target.spec.clone(),
-        );
-        spec["title"] = self.title.trim().into();
-        spec["instruction"] = self.instruction.trim().into();
-        spec["profile"]["program"] = serde_json::to_value(self.program).unwrap_or(Value::Null);
-        spec["profile"]["cwd"] = if folder.is_empty() {
-            Value::Null
-        } else {
-            folder.into()
-        };
-        spec["schedule"] = schedule;
+        let mut spec = self
+            .target
+            .as_ref()
+            .map_or_else(new_spec, |target| target.spec.clone());
+        spec.title = trimmed(&self.title);
+        spec.instruction = trimmed(&self.instruction);
+        spec.profile.program = program_name(self.program);
+        spec.profile.cwd = (!folder.is_empty()).then(|| folder.to_owned());
+        spec.schedule = Some(schedule);
         Ok(spec)
     }
 
-    fn unchanged_schedule(&self) -> Option<Value> {
-        let schedule = &self.target.as_ref()?.spec["schedule"];
-        if schedule["kind"] != "once" {
+    fn unchanged_schedule(&self) -> Option<JobSchedule> {
+        let schedule = self.target.as_ref()?.spec.schedule.as_ref()?;
+        if schedule.kind != JobScheduleKind::Once {
             return None;
         }
-        let at = schedule["at"].as_str()?;
+        let at = schedule.at.as_deref()?;
         (job_time::form_start(at) == self.start.trim()).then(|| schedule.clone())
     }
 }
@@ -573,14 +610,14 @@ struct Mutation {
     request_id: String,
     key: String,
     change: Change,
-    request: Value,
+    request: JobRequest,
 }
 
 #[derive(Clone, Debug)]
 struct Unconfirmed {
     key: String,
     change: Change,
-    request: Value,
+    request: JobRequest,
 }
 
 pub fn unconfirmed_notice(context: &str, key: &str) -> String {
@@ -605,10 +642,10 @@ impl Effect {
 pub struct Jobs {
     pub page: Page,
     pub load: Load,
-    pub definitions: Vec<Definition>,
+    pub definitions: Vec<JobDefinition>,
     pub selected: Option<String>,
-    pub details: HashMap<String, Definition>,
-    pub occurrences: Vec<Occurrence>,
+    pub details: HashMap<String, JobDefinition>,
+    pub occurrences: Vec<JobOccurrence>,
     pub history_loading: bool,
     pub occurrence: Option<String>,
     pub form: Option<Form>,
@@ -619,10 +656,14 @@ pub struct Jobs {
     reads: HashMap<String, Read>,
     mutation: Option<Mutation>,
     unconfirmed: Option<Unconfirmed>,
-    staged: Vec<Definition>,
+    staged: Vec<JobDefinition>,
 }
 
 const BUSY: &str = "Waiting for the host to confirm the previous job change.";
+
+fn history(job_id: String) -> JobRequest {
+    JobRequest::History { job_id, offset: 0 }
+}
 
 impl Jobs {
     pub fn open(client_id: u64, features: &Value, now_ms: i64) -> Result<(Self, Value)> {
@@ -649,7 +690,7 @@ impl Jobs {
         Ok((jobs, command))
     }
 
-    pub fn selected_definition(&self) -> Option<&Definition> {
+    pub fn selected_definition(&self) -> Option<&JobDefinition> {
         let id = self.selected.as_deref()?;
         self.details
             .get(id)
@@ -661,7 +702,7 @@ impl Jobs {
         self.definitions.iter().position(|job| job.id == id)
     }
 
-    pub fn selected_occurrence(&self) -> Option<&Occurrence> {
+    pub fn selected_occurrence(&self) -> Option<&JobOccurrence> {
         let id = self.occurrence.as_deref()?;
         self.occurrences.iter().find(|item| item.id == id)
     }
@@ -679,15 +720,15 @@ impl Jobs {
         minute_changed
     }
 
-    fn key_for(&self, change: &Change, request: &Value) -> String {
+    fn key_for(&self, change: &Change, request: &JobRequest) -> String {
         match &self.unconfirmed {
             Some(item) if item.change == *change && item.request == *request => item.key.clone(),
             _ => format!("tui-job-{}", hex::encode(nesvo_wire::random::<8>())),
         }
     }
 
-    fn command(&mut self, features: &Value, request: Value) -> Result<(String, Value)> {
-        let mut command = crate::workflow::tool("jobs", json!({ "request": request }))?;
+    fn command(&mut self, features: &Value, arguments: Value) -> Result<(String, Value)> {
+        let mut command = crate::workflow::tool("jobs", arguments)?;
         crate::workflow::supported(features, &command)?;
         self.counter += 1;
         let id = format!("{}-{}", self.prefix, self.counter);
@@ -695,8 +736,8 @@ impl Jobs {
         Ok((id, command))
     }
 
-    fn read(&mut self, features: &Value, read: Read, request: Value) -> Result<Value> {
-        let (id, command) = self.command(features, request)?;
+    fn read(&mut self, features: &Value, read: Read, request: JobRequest) -> Result<Value> {
+        let (id, command) = self.command(features, views::encode(&JobsCall { request }))?;
         self.reads.retain(|_, pending| *pending != read);
         self.reads.insert(id, read);
         Ok(command)
@@ -705,18 +746,16 @@ impl Jobs {
     fn list(&mut self, features: &Value, offset: u64) -> Result<Value> {
         self.reads
             .retain(|_, pending| !matches!(pending, Read::List { .. }));
-        self.read(
-            features,
-            Read::List { offset },
-            json!({"action": "list", "offset": offset}),
-        )
+        self.read(features, Read::List { offset }, JobRequest::List { offset })
     }
 
     fn detail(&mut self, features: &Value, job_id: &str) -> Result<Value> {
         self.read(
             features,
             Read::Detail(job_id.to_owned()),
-            json!({"action": "get", "jobId": job_id}),
+            JobRequest::Get {
+                job_id: job_id.to_owned(),
+            },
         )
     }
 
@@ -730,13 +769,17 @@ impl Jobs {
         }
     }
 
-    fn change(&mut self, features: &Value, change: Change, request: Value) -> Effect {
+    fn change(&mut self, features: &Value, change: Change, request: JobRequest) -> Effect {
         if self.mutation.is_some() {
             return Effect::notice(BUSY);
         }
         let key = self.key_for(&change, &request);
-        let mut keyed = request.clone();
-        keyed["key"] = key.clone().into();
+        let keyed = views::encode(&JobsCall {
+            request: Keyed {
+                key: &key,
+                request: &request,
+            },
+        });
         match self.command(features, keyed) {
             Ok((request_id, command)) => {
                 self.unconfirmed = None;
@@ -794,11 +837,7 @@ impl Jobs {
         };
         self.page = Page::History;
         self.history_loading = true;
-        Self::effect(self.read(
-            features,
-            Read::History(id.clone()),
-            json!({"action": "history", "jobId": id, "offset": 0}),
-        ))
+        Self::effect(self.read(features, Read::History(id.clone()), history(id)))
     }
 
     pub fn move_occurrence(&mut self, delta: isize) {
@@ -817,24 +856,32 @@ impl Jobs {
     }
 
     pub fn inspect_occurrence(&mut self, features: &Value) -> Effect {
-        let (Some(job), Some(occurrence)) = (self.selected.clone(), self.occurrence.clone()) else {
+        let (Some(job_id), Some(occurrence_id)) = (self.selected.clone(), self.occurrence.clone())
+        else {
             return Effect::default();
         };
         Self::effect(self.read(
             features,
-            Read::Occurrence(occurrence.clone()),
-            json!({"action": "occurrence", "jobId": job, "occurrenceId": occurrence}),
+            Read::Occurrence(occurrence_id.clone()),
+            JobRequest::Occurrence {
+                job_id,
+                occurrence_id,
+            },
         ))
     }
 
     pub fn cancel_occurrence(&mut self, features: &Value) -> Effect {
-        let (Some(job), Some(occurrence)) = (self.selected.clone(), self.occurrence.clone()) else {
+        let (Some(job_id), Some(occurrence_id)) = (self.selected.clone(), self.occurrence.clone())
+        else {
             return Effect::default();
         };
         self.change(
             features,
-            Change::Cancel(occurrence.clone()),
-            json!({"action": "cancelOccurrence", "jobId": job, "occurrenceId": occurrence}),
+            Change::Cancel(occurrence_id.clone()),
+            JobRequest::CancelOccurrence {
+                job_id,
+                occurrence_id,
+            },
         )
     }
 
@@ -846,7 +893,11 @@ impl Jobs {
         self.change(
             features,
             Change::SetEnabled(job.id.clone(), enabled),
-            json!({"action": "setEnabled", "jobId": job.id, "expectedRevision": job.revision, "enabled": enabled}),
+            JobRequest::SetEnabled {
+                job_id: job.id,
+                expected_revision: job.revision,
+                enabled,
+            },
         )
     }
 
@@ -857,7 +908,10 @@ impl Jobs {
         self.change(
             features,
             Change::RunNow(job.id.clone()),
-            json!({"action": "runNow", "jobId": job.id, "expectedRevision": job.revision}),
+            JobRequest::RunNow {
+                job_id: job.id,
+                expected_revision: job.revision,
+            },
         )
     }
 
@@ -890,17 +944,21 @@ impl Jobs {
         let Some(spec) = job.spec.clone() else {
             return Effect::notice("Job details are still loading.");
         };
-        let Some(kind) = ScheduleKind::parse(job.kind()) else {
+        let Some(kind) = ScheduleKind::parse(&job.schedule.kind) else {
             return Effect::notice("This schedule kind is edited with nesvo job edit.");
         };
         let mut kinds = self.schedule_kinds.clone();
         if !kinds.contains(&kind) {
             kinds.push(kind);
         }
-        let schedule = &spec["schedule"];
-        let text = |name: &str| schedule[name].as_str().unwrap_or_default().to_owned();
-        let program =
-            serde_json::from_value(spec["profile"]["program"].clone()).unwrap_or(Program::Claude);
+        let schedule = spec.schedule.clone();
+        let text = |field: fn(&JobSchedule) -> &Option<String>| {
+            schedule
+                .as_ref()
+                .and_then(|schedule| field(schedule).clone())
+                .unwrap_or_default()
+        };
+        let program = parse_program(spec.profile.program.as_deref()).unwrap_or(Program::Claude);
         self.form = Some(Form {
             target: Some(EditTarget {
                 job_id: job.id.clone(),
@@ -910,18 +968,15 @@ impl Jobs {
             title: job.title.clone(),
             program,
             programs,
-            folder: spec["profile"]["cwd"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
-            instruction: spec["instruction"].as_str().unwrap_or_default().to_owned(),
+            folder: spec.profile.cwd.clone().unwrap_or_default(),
+            instruction: spec.instruction.clone().unwrap_or_default(),
             kind,
             kinds,
-            start: job_time::form_start(spec["schedule"]["at"].as_str().unwrap_or_default()),
-            expression: text("expression"),
-            rule: text("rule"),
-            local_start: text("start"),
-            time_zone: text("timeZone"),
+            start: job_time::form_start(&text(|schedule| &schedule.at)),
+            expression: text(|schedule| &schedule.expression),
+            rule: text(|schedule| &schedule.rule),
+            local_start: text(|schedule| &schedule.start),
+            time_zone: text(|schedule| &schedule.time_zone),
             field: FormField::Title,
             return_page: self.page,
         });
@@ -946,16 +1001,20 @@ impl Jobs {
         let (change, request) = match &form.target {
             Some(target) => (
                 Change::Update(target.job_id.clone()),
-                json!({"action": "update", "jobId": target.job_id, "expectedRevision": target.revision, "spec": spec}),
+                JobRequest::Update {
+                    job_id: target.job_id.clone(),
+                    expected_revision: target.revision,
+                    spec,
+                },
             ),
-            None => (Change::Create, json!({"action": "create", "spec": spec})),
+            None => (Change::Create, JobRequest::Create { spec }),
         };
         self.change(features, change, request)
     }
 
     pub fn response(&mut self, features: &Value, event: &Value, now_ms: i64) -> Option<Effect> {
-        let request_id = event["requestId"].as_str()?;
-        if let Some(read) = self.reads.remove(request_id) {
+        let request_id = ReplyHeader::of(event).request_id?;
+        if let Some(read) = self.reads.remove(&request_id) {
             self.now_ms = now_ms;
             return Some(self.read_response(features, read, event));
         }
@@ -966,7 +1025,8 @@ impl Jobs {
         {
             self.now_ms = now_ms;
             let mutation = self.mutation.take()?;
-            return Some(self.change_response(features, mutation.change, event));
+            let reply = views::decode(event).unwrap_or_default();
+            return Some(self.change_response(features, mutation.change, reply));
         }
         None
     }
@@ -974,13 +1034,12 @@ impl Jobs {
     fn read_response(&mut self, features: &Value, read: Read, event: &Value) -> Effect {
         match read {
             Read::List { offset } => {
-                let page: Vec<Definition> =
-                    serde_json::from_value(event["jobs"].clone()).unwrap_or_default();
+                let page: JobPage = views::decode(event).unwrap_or_default();
                 if offset == 0 {
                     self.staged.clear();
                 }
-                self.staged.extend(page);
-                if let Some(next) = event["nextOffset"].as_u64() {
+                self.staged.extend(page.jobs);
+                if let Some(next) = page.next_offset {
                     return Self::effect(self.list(features, next));
                 }
                 self.definitions = std::mem::take(&mut self.staged);
@@ -998,9 +1057,10 @@ impl Jobs {
                 }
             }
             Read::Detail(id) => {
-                if let Ok(job) = serde_json::from_value::<Definition>(event["job"].clone()) {
+                let reply: JobReply = views::decode(event).unwrap_or_default();
+                if let Some(job) = reply.job {
                     if let Some(row) = self.definitions.iter_mut().find(|row| row.id == id) {
-                        *row = Definition {
+                        *row = JobDefinition {
                             spec: None,
                             ..job.clone()
                         };
@@ -1012,8 +1072,8 @@ impl Jobs {
             Read::History(id) => {
                 if self.selected.as_deref() == Some(id.as_str()) {
                     self.history_loading = false;
-                    self.occurrences =
-                        serde_json::from_value(event["occurrences"].clone()).unwrap_or_default();
+                    let page: OccurrencePage = views::decode(event).unwrap_or_default();
+                    self.occurrences = page.occurrences;
                     let kept = self
                         .occurrence
                         .as_deref()
@@ -1025,14 +1085,15 @@ impl Jobs {
                 Effect::default()
             }
             Read::Occurrence(_) => {
-                self.replace_occurrence(&event["occurrence"]);
+                let reply: JobReply = views::decode(event).unwrap_or_default();
+                self.replace_occurrence(reply.occurrence);
                 Effect::default()
             }
         }
     }
 
-    fn replace_occurrence(&mut self, value: &Value) {
-        if let Ok(occurrence) = serde_json::from_value::<Occurrence>(value.clone())
+    fn replace_occurrence(&mut self, occurrence: Option<JobOccurrence>) {
+        if let Some(occurrence) = occurrence
             && let Some(row) = self
                 .occurrences
                 .iter_mut()
@@ -1042,9 +1103,9 @@ impl Jobs {
         }
     }
 
-    fn change_response(&mut self, features: &Value, change: Change, event: &Value) -> Effect {
+    fn change_response(&mut self, features: &Value, change: Change, reply: JobReply) -> Effect {
         let mut effect = Effect::default();
-        if let Ok(job) = serde_json::from_value::<Definition>(event["job"].clone()) {
+        if let Some(job) = reply.job {
             self.selected = Some(job.id.clone());
             self.details.insert(job.id.clone(), job);
         }
@@ -1060,7 +1121,7 @@ impl Jobs {
             }
             Change::RunNow(_) => "Occurrence admitted on the host.".into(),
             Change::Cancel(_) => {
-                self.replace_occurrence(&event["occurrence"]);
+                self.replace_occurrence(reply.occurrence);
                 "Cancellation requested; this is not proof of process exit.".into()
             }
         });
@@ -1070,11 +1131,7 @@ impl Jobs {
         }
         if self.page == Page::History
             && let Some(id) = self.selected.clone()
-            && let Ok(command) = self.read(
-                features,
-                Read::History(id.clone()),
-                json!({"action": "history", "jobId": id, "offset": 0}),
-            )
+            && let Ok(command) = self.read(features, Read::History(id.clone()), history(id))
         {
             effect.commands.push(command);
         }
@@ -1082,11 +1139,9 @@ impl Jobs {
     }
 
     pub fn failure(&mut self, features: &Value, event: &Value) -> Option<Effect> {
-        let request_id = event["requestId"].as_str()?;
-        let message = event["message"]
-            .as_str()
-            .unwrap_or("Host rejected the request")
-            .to_owned();
+        let error = HostError::of(event);
+        let request_id = error.request_id.as_deref()?;
+        let message = error.message_or("Host rejected the request").to_owned();
         if let Some(read) = self.reads.remove(request_id) {
             return Some(match read {
                 Read::List { .. } => {
@@ -1109,7 +1164,7 @@ impl Jobs {
             return None;
         }
         let mutation = self.mutation.take()?;
-        if event["code"] != "revision_conflict" {
+        if error.code() != "revision_conflict" {
             let notice = unconfirmed_notice(&message, &mutation.key);
             self.unconfirmed = Some(Unconfirmed {
                 key: mutation.key,
@@ -1140,6 +1195,7 @@ impl Jobs {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use serde_json::json;
 
     pub(crate) const NOW: i64 = 1_792_540_800_000;
 
@@ -1408,7 +1464,8 @@ pub(crate) mod tests {
             .unwrap()
             .spec
             .as_mut()
-            .unwrap()["schedule"] = precise.clone();
+            .unwrap()
+            .schedule = Some(serde_json::from_value(precise.clone()).unwrap());
         jobs.page = Page::Detail;
         jobs.edit_form(vec![Program::Claude]);
         assert_eq!(jobs.form.as_ref().unwrap().start, "2026-10-21 16:02 +02:00");
@@ -1515,8 +1572,8 @@ pub(crate) mod tests {
         jobs.selected = Some("nightly".into());
         jobs.details.insert(
             "nightly".into(),
-            Definition {
-                spec: Some(json!({})),
+            JobDefinition {
+                spec: Some(JobSpec::default()),
                 ..jobs.definitions[1].clone()
             },
         );
