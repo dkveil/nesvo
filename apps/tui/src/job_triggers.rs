@@ -101,11 +101,14 @@ impl Command {
                 file,
                 secret_file,
                 ..
-            } => Request::Create {
-                key,
-                spec: read_spec(&file)?,
-                secret: read_secret(&secret_file)?,
-            },
+            } => {
+                cli::one_stdin_reader(&[Some(file.as_path()), Some(secret_file.as_path())])?;
+                Request::Create {
+                    key,
+                    spec: read_spec(&file)?,
+                    secret: read_secret(&secret_file)?,
+                }
+            }
             Self::Show { id, .. } => Request::Get { id },
             Self::List { offset, .. } => Request::List { offset },
             Self::Edit { mutation: m, file } => Request::Update {
@@ -412,6 +415,23 @@ impl Request {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn create_refuses_both_files_on_stdin_before_reading_either() {
+        let create = Command::Create {
+            key: "one".into(),
+            file: PathBuf::from("-"),
+            secret_file: PathBuf::from("-"),
+            json: true,
+        };
+        let Err(error) = create.request() else {
+            panic!("Two stdin file flags must be refused");
+        };
+        assert_eq!(
+            cli::error_value(&error)["error"]["code"],
+            "invalid_argument"
+        );
+        assert!(error.to_string().contains("Only one file flag can read stdin"));
+    }
     #[test]
     fn trigger_dtos_refuse_secret_and_scope_ambiguity_without_normalizing_intent() {
         let base = json!({"action":"create","key":"one","secret":"a".repeat(64),"spec":{"title":"Push checks","jobId":"b".repeat(32),"jobRevision":1,"adapter":{"kind":"github","repositoryId":7,"repository":"owner/repo","event":"push","actions":[],"branch":"main"}}});

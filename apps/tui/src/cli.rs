@@ -1435,6 +1435,32 @@ pub(crate) fn deliver_review_query(
 
 pub(crate) const STDIN_SOURCE: &str = "-";
 
+pub(crate) fn one_stdin_reader(paths: &[Option<&Path>]) -> Result<()> {
+    let readers = paths
+        .iter()
+        .flatten()
+        .filter(|path| **path == Path::new(STDIN_SOURCE))
+        .count();
+    if readers > 1 {
+        return Err(failure(
+            "invalid_argument",
+            "Only one file flag can read stdin; pass the other input as a file path",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn without_line_ending(text: String) -> String {
+    let trimmed = text
+        .strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+        .or_else(|| text.strip_suffix('\r'));
+    match trimmed {
+        Some(trimmed) => trimmed.to_owned(),
+        None => text,
+    }
+}
+
 pub(crate) fn read_text_input(path: &Path, limit: usize) -> Result<String> {
     if path == Path::new(STDIN_SOURCE) {
         read_bounded_text(std::io::stdin().lock(), limit)
@@ -2067,6 +2093,14 @@ pub(crate) mod attention {
 
     impl DecisionCommand {
         pub fn resolved(self) -> Result<Self> {
+            if let Self::Decide {
+                choice_file,
+                note_file,
+                ..
+            } = &self
+            {
+                super::one_stdin_reader(&[choice_file.as_deref(), note_file.as_deref()])?;
+            }
             Ok(match self {
                 Self::Decide {
                     id,
@@ -2078,7 +2112,10 @@ pub(crate) mod attention {
                 } => Self::Decide {
                     id,
                     choice: match choice_file {
-                        Some(path) => Some(super::read_text_input(&path, CHOICE_LIMIT)?),
+                        Some(path) => Some(super::without_line_ending(super::read_text_input(
+                            &path,
+                            CHOICE_LIMIT,
+                        )?)),
                         None => choice,
                     },
                     choice_file: None,
@@ -3017,6 +3054,38 @@ mod agent_convention_tests {
         );
         let long = read_prompt(Some("x".repeat(PROMPT_LIMIT + 1)), None, false).unwrap_err();
         assert_eq!(code_of(&long), "input_too_large");
+    }
+
+    #[test]
+    fn only_one_file_flag_reads_stdin_and_the_second_is_refused_before_reading() {
+        let stdin = Path::new(STDIN_SOURCE);
+        assert!(one_stdin_reader(&[Some(stdin), Some(Path::new("note.txt")), None]).is_ok());
+        let both = one_stdin_reader(&[Some(stdin), Some(stdin)]).unwrap_err();
+        assert_eq!(code_of(&both), "invalid_argument");
+        let decide = attention::DecisionCommand::Decide {
+            id: "d".into(),
+            choice: None,
+            choice_file: Some(stdin.into()),
+            note: None,
+            note_file: Some(stdin.into()),
+            json: true,
+        };
+        let refused = decide.resolved().err().expect("Two stdin readers are refused");
+        assert_eq!(code_of(&refused), "invalid_argument");
+    }
+
+    #[test]
+    fn choice_files_drop_exactly_one_trailing_line_ending() {
+        for (raw, choice) in [
+            ("yes\n", "yes"),
+            ("yes\r\n", "yes"),
+            ("yes\r", "yes"),
+            ("yes", "yes"),
+            ("yes\n\n", "yes\n"),
+            ("two\nlines\n", "two\nlines"),
+        ] {
+            assert_eq!(without_line_ending(raw.into()), choice, "{raw:?}");
+        }
     }
 
     #[test]

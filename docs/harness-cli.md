@@ -22,10 +22,13 @@ the request may or may not have taken effect, so look up the same key before ret
 
 Every file argument reads stdin when its path is `-`: `--prompt-file`,
 `--goal-file`, `--question-file`, `--answer-file`, `--choice-file`, `--note-file`,
-`--summary-file`, `--message-file` and each `--file` (review text, constraints, plans, reports,
-validations, budgets, jobs, `run blocked` and `run ask`). Input above the host cap
-for that field is refused with `input_too_large` and exit 1 before anything is
-sent. Inline forms such as `--prompt TEXT` remain.
+`--summary-file`, `--message-file`, `--secret-file` and each `--file` (review text,
+constraints, plans, reports, validations, budgets, jobs, job triggers, `run blocked` and
+`run ask`). Only one file flag of a command can read stdin; a second `-` is refused with
+`invalid_argument` before either input is read. `--choice-file` and `--secret-file` drop a
+trailing line ending, so piped `echo` output works. Input above the host cap for that field
+is refused with `input_too_large` and exit 1 before anything is sent. Inline forms such as
+`--prompt TEXT` remain.
 
 Stop instead of guessing. Inside a run, a worker that cannot continue records a
 blocker, and a worker facing a choice that changes the outcome asks:
