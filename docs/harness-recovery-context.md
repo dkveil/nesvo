@@ -127,6 +127,80 @@ keeps the original conversation ID for another attempt. See the
 [CLI](harness-cli.md#saved-session-recovery) and [MCP](harness-mcp.md#current-tools)
 surfaces.
 
+## Safe resumable hibernation
+
+Owner `hibernateSession {sessionId,key}` (CLI `nesvo session hibernate`, MCP
+`nesvo_hibernate_session`) stops the provider process of one eligible session
+while the host keeps the session ID, its saved launch description, the exact
+conversation ID observed by the lifecycle hooks, the folder or worktree binding,
+attention and the last-known freshness. The session stays in owner snapshots with
+`running:false` and `hibernation:{state:"hibernated",hibernatedAt,conversationId,
+trigger,lastResumeFailure}`; its `status.freshness` is `source:"journal"`,
+`stale:true` with `lastKnown` set to the state seen before the stop. It counts
+toward the retained-session budget and is left out of `listRecovery`. The record
+lives in the `session_hibernations` table, so a host restart keeps it hibernated;
+restart never relaunches it.
+
+Eligibility is checked twice: before the durable record is written and again
+under the state lock just before the process is stopped. Refusals and their codes:
+
+| Code                      | Refused when                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `hibernate_unsupported`   | the program has no verified exact resume (Gemini, shell)                     |
+| `resume_unverifiable`     | lifecycle hooks are unavailable or the current conversation was never proven |
+| `resume_unavailable`      | no provider conversation ID has been observed                                |
+| `resume_pending`          | the session's own exact resume is not verified yet                           |
+| `control_busy`            | a human holds the control lease (terminal or phone)                          |
+| `unsafe_draft`            | the editor holds human input                                                 |
+| `submission_pending`      | an automated submission still needs correlation                              |
+| `agent_not_ready`         | the agent is not observably idle or done and ready                           |
+| `process_exited`          | the provider process has already exited                                      |
+| `children_active`         | a child session is running or a program reports blocked children             |
+| `wake_armed`              | a quota or legacy wake is armed                                              |
+| `attempt_unsettled`       | a workflow attempt, instruction delivery or native receipt is unsettled      |
+| `decision_pending`        | a decision asked by or for this session is pending                           |
+| `run_active`              | the session coordinates an active, draining, canceling or stopping run       |
+| `permission_unrestorable` | its native tool grant was delegated by a coordinator and would be lost       |
+| `session_hibernating`     | another hibernation of this session is in progress (also refuses prompts)    |
+| `session_hibernated`      | the session is already hibernated                                            |
+
+Owner `resumeSession {sessionId,key}` (CLI `nesvo session resume`, MCP
+`nesvo_resume_session`) relaunches the session under the same ID through the
+[exact conversation resume](#exact-conversation-resume) gate and replies only after
+the first root session-start hook reports source `resume` and the recorded ID. A
+provider that cannot be verified is refused before any launch with
+`resume_unverifiable`. A different ID, another source, an exit or no confirmation
+within 65 seconds stops the relaunched process and refuses with
+`resume_unverifiable`; the session stays hibernated with `lastResumeFailure` and
+never poses as a continuation. The relaunch keeps the recorded role, harness,
+model profile, owner-granted native tool permissions and child-tool policy and
+grants nothing the session did not hold; it sends no prompt. The owner may then relaunch it fresh with
+`restoreSession` (`nesvo session recover restore ID`), which ends the hibernation;
+`close` and `forgetRecovery` end it without relaunching.
+
+Both operations are idempotent by key: the same key and session return the original
+reply with `replayed:true` (or the original refusal after an effect), another
+session or operation with that key returns `idempotency_conflict`, and a key still
+in progress returns `busy`. At most 1024 settled keys are retained, oldest first.
+A successful hibernation journals `session.hibernated {program,conversationId,
+trigger}` and a verified resume journals `session.resumed {program,conversationId}`
+in the same transaction as their records. A restart drops an unfinished stop
+(the session reappears as an ordinary saved description), returns an unfinished
+resume to hibernated, and settles pending keys with `host_restart`.
+
+The optional idle policy is declared default-off: `capabilities.hibernationIdlePolicy`
+is `{enabled:false,idleAfterMs:null}` unless the host starts with
+`--hibernate-idle-minutes N` (15-1440). When enabled, at most four unwatched,
+eligible sessions idle for that long are hibernated per 30-second tick through the
+same path and checks, with trigger `idlePolicy` and key `idle:SESSION:IDLE_SINCE`.
+
+Host units with the process fixture cover every refusal, the stop, the same-ID
+relaunch with a verified and a mismatched conversation, a provider refused before
+launch, a restart in between, close and forget, idempotent replay and conflict, and
+the idle policy bounds. The relaunched provider is a controlled fixture whose
+session-start evidence is supplied by the test; a live hibernate and resume with
+original Claude and Codex conversations stays with the owner.
+
 ## Verification and remaining integration
 
 Storage cases cover unbound/unique/ambiguous lookup, bounded choices, exact scope,

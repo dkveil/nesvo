@@ -185,7 +185,8 @@ POSIX agents invoke `"$NESVO_CLI"`. No global skill/MCP configuration is install
 for that host lifetime. Closing the temporary TUI or compiling another build
 does not remove/overwrite the agent's executable. An already-running host is
 preserved and retains its original runtime pair; restart it deliberately after
-saving work to adopt new host features. Runtime disk cleanup/pooling is F39/F42.
+saving work to adopt new host features. Runtime disk cleanup and pooling are F39;
+stopping idle provider processes is [hibernation](#hibernation) (F42).
 
 On a host advertising `sessionHarness:true`, `session create NAME --program
 claude --harness --key KEY` appends the versioned instruction and adds the Nesvo
@@ -622,6 +623,28 @@ removes only the description. See [exact conversation resume](harness-recovery-c
 nesvo session recover list --json
 nesvo session recover restore SAVED_ID --resume --json
 nesvo session recover forget SAVED_ID --json
+```
+
+## Hibernation
+
+On a host advertising `hibernation:true`, owner `session hibernate ID --key KEY`
+stops one idle agent's provider process and keeps the session under the same ID
+with its recorded conversation, folder, attention and last-known freshness. The
+reply is `type:"sessionHibernation"`, `state:"hibernated"` with the same
+`hibernation` object that `session get ID` then shows. `session resume ID --key
+KEY` relaunches it under the same ID through the exact recorded conversation and
+returns `state:"resumed"` with `resume.state:"verified"` only after the provider
+proves that conversation (up to about 65 seconds). When it cannot, the reply is
+`resume_unverifiable`, the relaunch is stopped and the session stays hibernated
+with `hibernation.lastResumeFailure`; relaunch it fresh with `session recover
+restore ID`. Both commands are idempotent by key: the same key returns the
+original outcome with `replayed:true`, a key reused for another session or
+operation returns `idempotency_conflict`. Refusal codes are listed in
+[hibernation](harness-recovery-context.md#safe-resumable-hibernation).
+
+```powershell
+nesvo session hibernate SESSION_ID --key nightly-1 --json
+nesvo session resume SESSION_ID --key morning-1 --json
 ```
 
 ## Owner attention inbox and decisions
