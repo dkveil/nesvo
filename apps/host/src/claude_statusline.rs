@@ -498,7 +498,7 @@ fn inherited_command(executable: &str, args: &[&str]) -> String {
         .join(" ");
     // A stderr redirect makes Process.Start set STARTF_USESTDHANDLES, inheriting stdin/stdout.
     let script = format!(
-        "$s=New-Object System.Diagnostics.ProcessStartInfo; $s.FileName='{}'; $s.Arguments='{}'; $s.UseShellExecute=$false; $s.CreateNoWindow=$true; $s.RedirectStandardError=$true; $p=[System.Diagnostics.Process]::Start($s); $d=$p.StandardError.BaseStream.CopyToAsync([System.IO.Stream]::Null); $p.WaitForExit(); [void]$d.GetAwaiter().GetResult(); $r=$p.ExitCode; $p.Dispose(); exit $r",
+        "$ProgressPreference='SilentlyContinue'; $s=[System.Diagnostics.ProcessStartInfo]::new(); $s.FileName='{}'; $s.Arguments='{}'; $s.UseShellExecute=$false; $s.CreateNoWindow=$true; $s.RedirectStandardError=$true; $p=[System.Diagnostics.Process]::Start($s); $e=[System.Console]::OpenStandardError(); $d=$p.StandardError.BaseStream.CopyToAsync($e); $p.WaitForExit(); [void]$d.GetAwaiter().GetResult(); $e.Flush(); $r=$p.ExitCode; $p.Dispose(); exit $r",
         executable.replace('\'', "''"),
         arguments.replace('\'', "''")
     );
@@ -685,54 +685,95 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
     .await;
     ensure!(
         terminated && reaped && matches!(empty, Ok(Ok(()))),
-        "Display cleanup unconfirmed"
+        ForwardingStage::DisplayCleanup
     );
-    result.map_err(|_| anyhow::anyhow!("Declared display timed out"))?
+    result.map_err(|_| anyhow::Error::msg(ForwardingStage::DisplayTimeout))?
 }
 pub fn run(manifest: &Path) -> i32 {
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(10));
         std::process::exit(1);
     });
-    let result = (|| -> Result<Output> {
-        let manifest: Manifest = serde_json::from_slice(&file_bytes(manifest, 32 * 1024)?)?;
-        manifest.profile.validate()?;
-        ensure!(
-            manifest.report.is_absolute(),
-            "Invalid private quota report"
-        );
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            let _ = sender.send(collect_capture(
-                &manifest.report,
-                manifest.capture_anchor.as_ref(),
-                std::io::stdin(),
-            ));
-        });
-        let input = receiver
-            .recv_timeout(Duration::from_secs(2))
-            .map_err(|_| anyhow::anyhow!("Declared display input timed out"))??;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        runtime.block_on(dispatch(manifest.profile.display, input))
-    })();
-    match result {
-        Ok(result) => match STANDARD.decode(result.output) {
-            Ok(bytes)
-                if bytes.len() <= OUTPUT_LIMIT && std::io::stdout().write_all(&bytes).is_ok() =>
-            {
-                result.code
-            }
-            _ => 1,
-        },
-        Err(_) => {
-            eprintln!(
-                "nesvo declared status-line forwarding is unavailable; inspect the launch profile"
-            );
+    match forward(manifest) {
+        Ok(code) => code,
+        Err(stage) => {
+            eprintln!("{}", forwarding_failure(stage));
             1
         }
     }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ForwardingStage {
+    Profile,
+    Input,
+    InputTimeout,
+    Display,
+    DisplayTimeout,
+    DisplayCleanup,
+    Output,
+}
+impl std::fmt::Display for ForwardingStage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Profile => "profile",
+            Self::Input => "input",
+            Self::InputTimeout => "inputTimeout",
+            Self::Display => "display",
+            Self::DisplayTimeout => "displayTimeout",
+            Self::DisplayCleanup => "displayCleanup",
+            Self::Output => "output",
+        })
+    }
+}
+fn forwarding_failure(stage: ForwardingStage) -> String {
+    format!(
+        "nesvo declared status-line forwarding is unavailable; inspect the launch profile ({stage})"
+    )
+}
+fn read_manifest(path: &Path) -> Result<Manifest> {
+    let manifest: Manifest = serde_json::from_slice(&file_bytes(path, 32 * 1024)?)?;
+    manifest.profile.validate()?;
+    ensure!(
+        manifest.report.is_absolute(),
+        "Invalid private quota report"
+    );
+    Ok(manifest)
+}
+fn forward(path: &Path) -> std::result::Result<i32, ForwardingStage> {
+    let manifest = read_manifest(path).map_err(|_| ForwardingStage::Profile)?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = sender.send(collect_capture(
+            &manifest.report,
+            manifest.capture_anchor.as_ref(),
+            std::io::stdin(),
+        ));
+    });
+    let input = receiver
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|_| ForwardingStage::InputTimeout)?
+        .map_err(|_| ForwardingStage::Input)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| ForwardingStage::Display)?;
+    let result = runtime
+        .block_on(dispatch(manifest.profile.display, input))
+        .map_err(|error| {
+            error
+                .downcast_ref::<ForwardingStage>()
+                .copied()
+                .unwrap_or(ForwardingStage::Display)
+        })?;
+    let bytes = STANDARD
+        .decode(result.output)
+        .ok()
+        .filter(|bytes| bytes.len() <= OUTPUT_LIMIT)
+        .ok_or(ForwardingStage::Output)?;
+    std::io::stdout()
+        .write_all(&bytes)
+        .map_err(|_| ForwardingStage::Output)?;
+    Ok(result.code)
 }
 pub fn child() -> i32 {
     #[cfg(unix)]
@@ -1108,16 +1149,74 @@ mod tests {
         assert_eq!(output.code, 7);
         assert_eq!(STANDARD.decode(output.output).unwrap(), original);
     }
+    #[test]
+    fn forwarding_failure_reports_only_a_fixed_stage() {
+        let missing = std::env::temp_dir().join(format!(
+            "nesvo-missing-statusline-{}.json",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        assert_eq!(forward(&missing), Err(ForwardingStage::Profile));
+        assert_eq!(
+            forwarding_failure(ForwardingStage::InputTimeout),
+            "nesvo declared status-line forwarding is unavailable; inspect the launch profile (inputTimeout)"
+        );
+        let cleanup = anyhow::anyhow!(ForwardingStage::DisplayCleanup).context("outer");
+        assert_eq!(
+            cleanup.downcast_ref::<ForwardingStage>(),
+            Some(&ForwardingStage::DisplayCleanup)
+        );
+    }
     #[cfg(windows)]
-    #[tokio::test]
-    #[ignore = "real PowerShell statusline wrapper; nightly native cohort only"]
-    async fn generated_windows_command_inherits_raw_standard_handles() {
+    fn generated_script(command: &str) -> String {
+        let encoded = command
+            .strip_prefix("powershell.exe -NoProfile -NonInteractive -EncodedCommand ")
+            .unwrap();
+        let bytes = STANDARD.decode(encoded).unwrap();
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&units).unwrap()
+    }
+    #[cfg(windows)]
+    fn without_literals(script: &str) -> String {
+        script.split('\'').step_by(2).collect::<Vec<_>>().join("''")
+    }
+    #[cfg(windows)]
+    #[test]
+    fn generated_windows_script_needs_no_command_discovery_or_progress_stream() {
+        let script = generated_script(&inherited_command(
+            "C:\\Program Files\\nesvo-host's\\nesvo-host.exe",
+            &[
+                "--claude-statusline",
+                "C:\\private dir\\claude-statusline.json",
+            ],
+        ));
+        assert!(script.starts_with("$ProgressPreference='SilentlyContinue'; "));
+        let code = without_literals(&script);
+        assert!(
+            !code.contains('-') && !code.contains('#') && !code.contains('|'),
+            "Wrapper code must not invoke a cmdlet, parameter, pipeline or comment: {code}"
+        );
+        assert!(code.contains("[System.Diagnostics.ProcessStartInfo]::new()"));
+        assert!(code.contains(
+            "$e=[System.Console]::OpenStandardError(); $d=$p.StandardError.BaseStream.CopyToAsync($e);"
+        ));
+        assert!(code.ends_with("exit $r"));
+    }
+    #[cfg(windows)]
+    struct WrapperRun {
+        code: Option<i32>,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    }
+    #[cfg(windows)]
+    async fn run_generated(
+        command_text: &str,
+        input: &[u8],
+        environment: &[(&str, &Path)],
+    ) -> WrapperRun {
         let fixture = process_fixture::executable();
-        let prefix = "\u{1b}[35mZażółć 日本語\u{1b}[0m\r\n".as_bytes();
-        let original = b"{\"literal\":\"stdin\nbytes\"}\n";
-        let encoded_prefix = hex::encode(prefix);
-        let command_text =
-            inherited_command(fixture.to_str().unwrap(), &["echo", "7", &encoded_prefix]);
         let shell = PathBuf::from(crate::command_scope::system_root().unwrap())
             .join("System32")
             .join("cmd.exe");
@@ -1131,6 +1230,7 @@ mod tests {
             .arg(&release)
             .arg(&shell)
             .arg(format!("/d /s /c {command_text}"))
+            .envs(environment.iter().copied())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1139,15 +1239,15 @@ mod tests {
         let mut child = command.spawn().unwrap();
         let scope = crate::command_scope::Scope::enroll(&child).unwrap();
         std::fs::write(&release, b"owned job enrolled").unwrap();
-        let mut input = child.stdin.take().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
         let mut stdout = child.stdout.take().unwrap();
         let mut stderr = child.stderr.take().unwrap();
         let mut output = Vec::new();
         let mut diagnostic = Vec::new();
         let result = tokio::time::timeout(UNBOUNDED_EXCHANGE, async {
-            input.write_all(original).await?;
-            input.flush().await?;
-            drop(input);
+            stdin.write_all(input).await?;
+            stdin.flush().await?;
+            drop(stdin);
             let (status, _, _) = tokio::try_join!(
                 child.wait(),
                 stdout.read_to_end(&mut output),
@@ -1171,14 +1271,84 @@ mod tests {
                 )
             })
             .unwrap();
+        WrapperRun {
+            code: status.code(),
+            stdout: output,
+            stderr: diagnostic,
+        }
+    }
+    #[cfg(windows)]
+    fn hostile_module_environment() -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "nesvo-wrapper-modules-{}",
+            hex::encode(crate::wire::random::<8>())
+        ));
+        let shadow = root.join("modules").join("Microsoft.PowerShell.Utility");
+        std::fs::create_dir_all(&shadow).unwrap();
+        std::fs::write(
+            shadow.join("Microsoft.PowerShell.Utility.psd1"),
+            "@{ ModuleVersion = '9.9.9'; RootModule = 'shadow.psm1'; FunctionsToExport = @('New-Object'); CmdletsToExport = @() }",
+        )
+        .unwrap();
+        std::fs::write(
+            shadow.join("shadow.psm1"),
+            "throw 'shadowed utility module'",
+        )
+        .unwrap();
+        let system = PathBuf::from(crate::command_scope::system_root().unwrap())
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("Modules");
+        let module_path =
+            PathBuf::from(std::env::join_paths([root.join("modules"), system]).unwrap());
+        let cold_cache = root.join("cold-module-analysis-cache");
+        (root, module_path, cold_cache)
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore = "real PowerShell statusline wrapper; nightly native cohort only"]
+    async fn generated_windows_command_inherits_raw_standard_handles() {
+        let fixture = process_fixture::executable().to_str().unwrap();
+        let prefix = "\u{1b}[35mZażółć 日本語\u{1b}[0m\r\n".as_bytes();
+        let original = b"{\"literal\":\"stdin\nbytes\"}\n";
+        let encoded_prefix = hex::encode(prefix);
+        let (root, module_path, cold_cache) = hostile_module_environment();
+        let environment = [
+            ("PSModulePath", module_path.as_path()),
+            ("PSModuleAnalysisCachePath", cold_cache.as_path()),
+        ];
+        let forwarded = run_generated(
+            &inherited_command(fixture, &["echo", "7", &encoded_prefix]),
+            original,
+            &environment,
+        )
+        .await;
+        let failed = run_generated(
+            &inherited_command(fixture, &["echo", "invalid"]),
+            b"",
+            &environment,
+        )
+        .await;
+        let _ = std::fs::remove_dir_all(root);
         assert_eq!(
-            status.code(),
+            forwarded.code,
             Some(7),
             "Owned fixture stderr: {}",
-            String::from_utf8_lossy(&diagnostic)
+            String::from_utf8_lossy(&forwarded.stderr)
         );
         let mut expected = prefix.to_vec();
         expected.extend_from_slice(original);
-        assert_eq!(output, expected);
+        assert_eq!(forwarded.stdout, expected);
+        assert_eq!(
+            forwarded.stderr, b"",
+            "A cold module analysis cache and a shadowed module path leave stderr empty"
+        );
+        assert_eq!(failed.code, Some(101));
+        assert!(failed.stdout.is_empty());
+        assert_eq!(
+            failed.stderr, b"nesvo-process-fixture: invalid exit code invalid\n",
+            "Helper stderr reaches the wrapper's stderr as raw bytes"
+        );
     }
 }

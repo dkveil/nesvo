@@ -133,8 +133,14 @@ Forwarded input is at most 256 KiB and stdout 64 KiB. Stdin collection has a
 two-second bound. The enclosed helper's lifetime is bounded, including framing
 and display execution; cleanup terminates its owned process group/job and checks
 reaping. Windows uses PowerShell to start the helper with raw inherited standard
-handles rather than native-output text conversion. This adds opt-in startup
-overhead; idle observation benchmarks do not measure active statusline cost.
+handles rather than native-output text conversion. The encoded script calls only
+.NET members, never a cmdlet, so it needs no module discovery, auto-loading or
+analysis cache and emits no progress record; it copies the helper's stderr bytes
+to its own stderr, as Unix inheritance does. When forwarding fails the helper
+exits 1 and writes one fixed line naming the stage (`profile`, `input`,
+`inputTimeout`, `display`, `displayTimeout`, `displayCleanup` or `output`). This
+adds opt-in startup overhead; idle observation benchmarks do not measure active
+statusline cost.
 
 To remove the capture, omit the option from the next launch/profile. Running
 sessions are not silently restarted. No global settings backup or uninstall is
