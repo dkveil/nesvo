@@ -444,10 +444,13 @@ $env:APP_URL = 'http://localhost:8082'
 $env:PLAYWRIGHT_CHROMIUM_EXECUTABLE = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 npm.cmd run test:web
 npm.cmd run test:create-session
+npm.cmd run test:fleet
 npm.cmd run test:brand:web
 npm.cmd run test:live
 npm.cmd run test:terminal
 ```
+
+`tests/fleet.browser.ts` pairs the web preview with a deterministic fake host that advertises `jobPages` and `pushDevices`. It checks that child sessions sit indented under their parent with their own status badge and open the child's terminal, that the Jobs menu entry stays hidden in demo mode, that the job list pages through `page`/`nextPage`, that the job detail shows schedule, attempt count, retry class and a skipped future occurrence, and that the notification settings list registered phones read-only with unknown kinds dropped. The fixtures are hand-written from the host reply builders and validated against `docs/harness-cli.schema.json` in the client contract tests; no host golden writer exists for job or device replies yet.
 
 Browser test screenshots and temporary pairing files belong in ignored `artifacts/`, never in Git. Do not share a pairing QR, key or private terminal content in reports.
 
