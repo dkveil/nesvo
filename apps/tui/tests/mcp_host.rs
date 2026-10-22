@@ -41,6 +41,8 @@ mod budgets;
 mod calendars;
 #[path = "support/claude_quota_capture.rs"]
 mod claude_quota_capture;
+#[path = "support/hibernation.rs"]
+mod hibernation;
 #[path = "support/host_ownership.rs"]
 mod host_ownership;
 #[path = "support/inbox.rs"]
