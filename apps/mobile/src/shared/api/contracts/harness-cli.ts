@@ -6,9 +6,11 @@ export type HarnessCliEnvelope =
         message: string;
         receipt?: Receipt;
         retryable: boolean;
+        [k: string]: unknown | undefined;
       };
       ok: false;
       schemaVersion: 1;
+      [k: string]: unknown | undefined;
     }
   | {
       data:
@@ -22,14 +24,18 @@ export type HarnessCliEnvelope =
                     records: WorkflowConstraint[];
                     run: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     checkpoints: WorkflowCheckpoint[];
                     nextOffset: number | null;
                     run: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     checkpoint: null | WorkflowCheckpoint;
@@ -39,7 +45,9 @@ export type HarnessCliEnvelope =
                     parts: WorkflowContextPart[];
                     run: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     batches: WorkflowWakeBatchSummary[];
@@ -50,32 +58,41 @@ export type HarnessCliEnvelope =
                     pendingCount: number;
                     run: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
                     wakePolicy: null | WorkflowWakePolicy;
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     run: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
                     wakeBatch: WorkflowWakeBatch;
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     executor: null | WorkflowExecutor;
                     run: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     nextOffset: number | null;
                     run?: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
                     runs: {
                       id: unknown;
                       revision: unknown;
                       state: unknown;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     }[];
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     digest: WorkflowDigest;
@@ -86,8 +103,10 @@ export type HarnessCliEnvelope =
                       revision: unknown;
                       state: unknown;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     };
                     stored: boolean;
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     delivery?: WorkflowDelivery;
@@ -109,6 +128,7 @@ export type HarnessCliEnvelope =
                         | 'succeeded';
                       taskResult: 'succeeded' | null;
                       title: string;
+                      [k: string]: unknown | undefined;
                     };
                     tasks: {
                       attempts: number;
@@ -129,11 +149,14 @@ export type HarnessCliEnvelope =
                         | 'stopped';
                       taskResult: 'succeeded' | 'failed' | null;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     }[];
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     attempt: {
                       id: unknown;
+                      [k: string]: unknown | undefined;
                     };
                     constraints?: {
                       policy: WorkflowConstraintPolicy;
@@ -146,10 +169,13 @@ export type HarnessCliEnvelope =
                       revision: unknown;
                       state: unknown;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     };
                     task: {
                       id: unknown;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     attempt: WorkflowAttempt;
@@ -163,13 +189,16 @@ export type HarnessCliEnvelope =
                       revision: unknown;
                       state: unknown;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     };
                     task: {
                       id: unknown;
                       instruction: unknown;
                       key: unknown;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     attempts: WorkflowAttempt[];
@@ -179,11 +208,14 @@ export type HarnessCliEnvelope =
                       id: unknown;
                       revision: unknown;
                       state: unknown;
+                      [k: string]: unknown | undefined;
                     };
                     task: {
                       id: unknown;
                       spec: unknown;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     decisions: WorkflowDecision[];
@@ -194,7 +226,9 @@ export type HarnessCliEnvelope =
                       revision: unknown;
                       state: unknown;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     control: {
@@ -206,6 +240,7 @@ export type HarnessCliEnvelope =
                       kind: 'stop' | 'cancel';
                       state:
                         'dispatching' | 'awaitingExit' | 'blocked' | 'unconfirmed' | 'completed';
+                      [k: string]: unknown | undefined;
                     };
                     nextOffset: number | null;
                     run: {
@@ -213,6 +248,7 @@ export type HarnessCliEnvelope =
                       id: unknown;
                       revision: unknown;
                       state: unknown;
+                      [k: string]: unknown | undefined;
                     };
                     targets: {
                       attemptId: Id;
@@ -228,7 +264,9 @@ export type HarnessCliEnvelope =
                         | 'exited';
                       receiptId: string | null;
                       sessionId: Id;
+                      [k: string]: unknown | undefined;
                     }[];
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     policy: RunBudget;
@@ -237,7 +275,9 @@ export type HarnessCliEnvelope =
                       id: unknown;
                       revision: unknown;
                       state: unknown;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     budget: {
@@ -249,13 +289,18 @@ export type HarnessCliEnvelope =
                           codex: number;
                           gemini: number;
                           shell: number;
+                          [k: string]: unknown | undefined;
                         };
+                        [k: string]: unknown | undefined;
                       };
                       revision: number;
+                      [k: string]: unknown | undefined;
                     };
                     run?: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | ((
                     | {
@@ -264,23 +309,29 @@ export type HarnessCliEnvelope =
                         more: boolean;
                         nextCursor: Cursor;
                         pendingCount: number;
+                        [k: string]: unknown | undefined;
                       }
                     | {
                         message: WorkflowMessage;
+                        [k: string]: unknown | undefined;
                       }
                     | {
                         acknowledged: {
                           ackedAt: Timestamp;
                           ackedBy: {
                             role: unknown;
+                            [k: string]: unknown | undefined;
                           };
                           id: string;
+                          [k: string]: unknown | undefined;
                         }[];
+                        [k: string]: unknown | undefined;
                       }
                   ) & {
                     mailbox: {
                       recipientAttemptId: string | null;
                       runId: string;
+                      [k: string]: unknown | undefined;
                     };
                     run: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
@@ -288,30 +339,39 @@ export type HarnessCliEnvelope =
                       revision: unknown;
                       state: unknown;
                       title: unknown;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   })
                 | {
                     delivery: JobTriggerDelivery;
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     run?: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
                     trigger: JobTrigger;
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     nextOffset: number | null;
                     run?: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
                     triggers: JobTrigger[];
+                    [k: string]: unknown | undefined;
                   }
                 | {
                     deliveries: JobTriggerDelivery[];
                     nextOffset: number | null;
                     run?: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   }
                 | ({
                     [k: string]: unknown | undefined;
@@ -328,10 +388,13 @@ export type HarnessCliEnvelope =
                         [k: string]: unknown | undefined;
                       };
                       trust: 'notApproved';
+                      [k: string]: unknown | undefined;
                     };
                     run?: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   })
                 | ({
                     [k: string]: unknown | undefined;
@@ -345,7 +408,9 @@ export type HarnessCliEnvelope =
                     occurrences?: JobOccurrence[];
                     run?: {
                       coordinatorBinding?: null | WorkflowCoordinatorBinding;
+                      [k: string]: unknown | undefined;
                     };
+                    [k: string]: unknown | undefined;
                   })
               ) & {
                 cursor?: Cursor;
@@ -355,9 +420,11 @@ export type HarnessCliEnvelope =
                   options: string[];
                 };
                 workerAuthorityRestored?: false;
+                [k: string]: unknown | undefined;
               })
           ) & {
             type: 'workflow';
+            [k: string]: unknown | undefined;
           })
         | {
             gate?: ProviderQuotaGate;
@@ -390,7 +457,9 @@ export type HarnessCliEnvelope =
               outcome: 'reached' | 'timeout' | 'failed' | 'unknown' | 'interrupted' | 'settled';
               reached: boolean;
               until: 'delivered' | 'received' | 'started' | 'settled';
+              [k: string]: unknown | undefined;
             };
+            [k: string]: unknown | undefined;
           }
         | {
             events: {
@@ -401,6 +470,7 @@ export type HarnessCliEnvelope =
               };
               sequence: number;
               sessionId: string | null;
+              [k: string]: unknown | undefined;
             }[];
             floorCursor: Cursor;
             gap: boolean;
@@ -408,26 +478,31 @@ export type HarnessCliEnvelope =
             health: {
               observationDrops: Cursor;
               writeFailures: Cursor;
+              [k: string]: unknown | undefined;
             };
             more: boolean;
             nextCursor: Cursor;
             type: 'events';
+            [k: string]: unknown | undefined;
           }
         | {
             session: Session;
             type: 'session';
+            [k: string]: unknown | undefined;
           }
         | {
             groups: unknown[];
             revision: Cursor;
             sessions: Session[];
             type: 'sessions';
+            [k: string]: unknown | undefined;
           }
         | {
             providers: {
               claude?: ProviderAvailability;
               codex?: ProviderAvailability;
               gemini?: ProviderAvailability;
+              [k: string]: unknown | undefined;
             };
             type: 'providers';
           }
@@ -437,6 +512,7 @@ export type HarnessCliEnvelope =
             rows: number;
             sessionId: Id;
             type: 'sessionRead';
+            [k: string]: unknown | undefined;
           }
         | ({
             [k: string]: unknown | undefined;
@@ -446,6 +522,7 @@ export type HarnessCliEnvelope =
                 mergeBase: string;
                 oid: string;
                 ref: string;
+                [k: string]: unknown | undefined;
               };
               directory: string;
               files: unknown[];
@@ -453,20 +530,24 @@ export type HarnessCliEnvelope =
               range?: {
                 from: string;
                 to: string;
+                [k: string]: unknown | undefined;
               };
               revision?: string;
               scope: 'staged' | 'unstaged' | 'untracked' | 'branch' | 'commits';
               truncated: boolean;
+              [k: string]: unknown | undefined;
             };
             reviewId?: Id;
             sessionId?: null | Id;
             type: 'diff';
+            [k: string]: unknown | undefined;
           })
         | {
             base: {
               mergeBase: string;
               oid: string;
               ref: string;
+              [k: string]: unknown | undefined;
             } | null;
             checks?: {
               failed: number;
@@ -474,11 +555,13 @@ export type HarnessCliEnvelope =
               passed: number;
               pending: number;
               total: number;
+              [k: string]: unknown | undefined;
             } | null;
             directory: string;
             head: {
               oid: string | null;
               ref: string | null;
+              [k: string]: unknown | undefined;
             };
             reviewId: Id;
             revision: string;
@@ -496,8 +579,10 @@ export type HarnessCliEnvelope =
               state?: string;
               title?: string;
               url?: string;
+              [k: string]: unknown | undefined;
             };
             type: 'reviewOpened';
+            [k: string]: unknown | undefined;
           }
         | {
             bytes: number;
@@ -507,16 +592,19 @@ export type HarnessCliEnvelope =
             reviewId: Id;
             sessionId: Id;
             type: 'reviewDelivered';
+            [k: string]: unknown | undefined;
           }
         | {
             nextOffset: null | Cursor;
             records: RecoveryRecord[];
             type: 'recovery';
+            [k: string]: unknown | undefined;
           }
         | {
             resume?: ResumeVerification;
             sessionId: Id;
             type: 'created';
+            [k: string]: unknown | undefined;
           }
         | {
             hibernation?: SessionHibernation;
@@ -525,6 +613,7 @@ export type HarnessCliEnvelope =
             sessionId: Id;
             state: 'hibernated' | 'resumed';
             type: 'sessionHibernation';
+            [k: string]: unknown | undefined;
           }
         | {
             approved: boolean;
@@ -541,32 +630,38 @@ export type HarnessCliEnvelope =
               shell: 'platform-shell-v1';
               source: 'HEAD:nesvo.toml';
               version: 1;
+              [k: string]: unknown | undefined;
             };
             repository: string;
             type: 'worktreeSetup';
+            [k: string]: unknown | undefined;
           }
         | {
             approvedAt: number;
             digest: string;
             repository: string;
             type: 'worktreeSetupApproved';
+            [k: string]: unknown | undefined;
           }
         | {
             digest: string;
             repository: string;
             revoked: boolean;
             type: 'worktreeSetupRevoked';
+            [k: string]: unknown | undefined;
           }
         | {
             log: string;
             sessionId: Id;
             type: 'worktreeRunStarted';
             worktree: string;
+            [k: string]: unknown | undefined;
           }
         | {
             cancelled: boolean;
             sessionId: Id;
             type: 'worktreeCancelled';
+            [k: string]: unknown | undefined;
           }
         | {
             blockers: ('conflicts' | 'dirty' | 'unpushed' | 'unborn')[];
@@ -576,6 +671,7 @@ export type HarnessCliEnvelope =
             sessionId: Id;
             type: 'worktreeArchived';
             worktree: string;
+            [k: string]: unknown | undefined;
           }
         | {
             type: 'worktreeRegistry';
@@ -589,6 +685,7 @@ export type HarnessCliEnvelope =
               envFiles: {
                 path: string;
                 sha256: string;
+                [k: string]: unknown | undefined;
               }[];
               present: boolean;
               repository: string;
@@ -604,6 +701,7 @@ export type HarnessCliEnvelope =
                   | 'timedOut'
                   | 'cancelled'
                   | 'interrupted';
+                [k: string]: unknown | undefined;
               } | null;
               sessionId: Id;
               sessionLive: boolean;
@@ -619,9 +717,12 @@ export type HarnessCliEnvelope =
                   | 'timedOut'
                   | 'cancelled'
                   | 'interrupted';
+                [k: string]: unknown | undefined;
               };
               worktree: string;
+              [k: string]: unknown | undefined;
             }[];
+            [k: string]: unknown | undefined;
           }
         | {
             items: AttentionItem[];
@@ -630,10 +731,12 @@ export type HarnessCliEnvelope =
             page: number;
             total: Cursor;
             type: 'attentionInbox';
+            [k: string]: unknown | undefined;
           }
         | {
             acknowledged: AttentionReceipt[];
             type: 'inboxAcknowledged';
+            [k: string]: unknown | undefined;
           }
         | {
             decisions: {
@@ -658,15 +761,18 @@ export type HarnessCliEnvelope =
                 id: Id;
                 state: string;
                 title: string;
+                [k: string]: unknown | undefined;
               };
               runId: string;
               state: 'pending' | 'answered' | 'canceled' | 'expired';
               taskId: string;
+              [k: string]: unknown | undefined;
             }[];
             nextPage: number | null;
             page: number;
             total: Cursor;
             type: 'decisions';
+            [k: string]: unknown | undefined;
           }
         | {
             attempt?: {
@@ -675,6 +781,7 @@ export type HarnessCliEnvelope =
             cursor: Cursor;
             decision: WorkflowDecision & {
               state?: 'answered';
+              [k: string]: unknown | undefined;
             };
             inboxId: string;
             run: {
@@ -684,6 +791,7 @@ export type HarnessCliEnvelope =
               [k: string]: unknown | undefined;
             };
             type: 'decided';
+            [k: string]: unknown | undefined;
           }
         | {
             limit: number;
@@ -752,6 +860,7 @@ export type HarnessCliEnvelope =
               profile: {
                 program: unknown;
                 workspace: unknown;
+                [k: string]: unknown | undefined;
               };
               taskId: Id;
             }[];
@@ -760,12 +869,14 @@ export type HarnessCliEnvelope =
               revision: unknown;
               state: unknown;
               title: unknown;
+              [k: string]: unknown | undefined;
             };
             start: 'draft' | 'active' | 'executor';
             tasks: {
               id: unknown;
               key: unknown;
               state: unknown;
+              [k: string]: unknown | undefined;
             }[];
             template: string;
             type: 'workflowTemplateStarted';
@@ -805,6 +916,7 @@ export type HarnessCliEnvelope =
           };
       ok: true;
       schemaVersion: 1;
+      [k: string]: unknown | undefined;
     }
   | {
       host: {
@@ -812,12 +924,14 @@ export type HarnessCliEnvelope =
         id: Id;
         protocolVersion: 2;
         version: string;
+        [k: string]: unknown | undefined;
       };
       launchProfileSupport?: LaunchProfileSupport[];
       programs: unknown[];
       providerVersions: unknown[];
       schemaVersion: 1;
       sessions: unknown[];
+      [k: string]: unknown | undefined;
     };
 export type WorkflowRecoveryContext = {
   bound: boolean;
@@ -855,6 +969,7 @@ export type WorkflowContextPart =
           | 'canceled'
           | 'succeeded';
         title: string;
+        [k: string]: unknown | undefined;
       };
       kind: 'run';
     }
@@ -1004,11 +1119,13 @@ export type WorkflowRecoveryContext1 =
       bound?: true;
       scope?: 'worker';
       selectionRequired?: false;
+      [k: string]: unknown | undefined;
     }
   | {
       bound?: true;
       scope?: 'owner' | 'coordinator';
       selectionRequired?: false;
+      [k: string]: unknown | undefined;
     }
   | {
       bound?: false;
@@ -1016,12 +1133,14 @@ export type WorkflowRecoveryContext1 =
       runs?: unknown;
       scope?: 'worker' | 'coordinator';
       selectionRequired?: false;
+      [k: string]: unknown | undefined;
     }
   | {
       bound?: false;
       runs: unknown;
       scope?: 'coordinator';
       selectionRequired?: true;
+      [k: string]: unknown | undefined;
     };
 export type WorkflowWakeDelivery = 'delta' | 'full';
 export type Id = string;
@@ -1062,6 +1181,7 @@ export type RepositoryContext = {
   revision: number;
   source: 'launchDirectory';
   state: 'checking' | 'ready' | 'detached' | 'notRepository' | 'unavailable' | 'stale';
+  [k: string]: unknown | undefined;
 } & RepositoryContext1;
 export type RepositoryContext1 =
   | {
@@ -1069,30 +1189,35 @@ export type RepositoryContext1 =
       name?: string;
       observedAt?: number;
       state?: 'ready';
+      [k: string]: unknown | undefined;
     }
   | {
       branch?: null;
       name?: string;
       observedAt?: number;
       state?: 'detached';
+      [k: string]: unknown | undefined;
     }
   | {
       branch?: null;
       name?: null;
       observedAt?: number;
       state?: 'notRepository' | 'stale';
+      [k: string]: unknown | undefined;
     }
   | {
       branch?: null;
       name?: null;
       observedAt?: null;
       state?: 'checking' | 'unavailable';
+      [k: string]: unknown | undefined;
     };
 export type SearchRoot = {
   observedAt: number | null;
   path: string | null;
   reason: 'insideRoot' | 'outsideRoot' | 'noCurrentCwd';
   source: 'currentCwd' | 'launchDirectory';
+  [k: string]: unknown | undefined;
 } & SearchRoot1;
 export type SearchRoot1 =
   | {
@@ -1100,18 +1225,21 @@ export type SearchRoot1 =
       path?: string;
       reason?: 'insideRoot';
       source?: 'currentCwd';
+      [k: string]: unknown | undefined;
     }
   | {
       observedAt?: number;
       path?: null;
       reason?: 'outsideRoot';
       source?: 'launchDirectory';
+      [k: string]: unknown | undefined;
     }
   | {
       observedAt?: null;
       path?: null;
       reason?: 'noCurrentCwd';
       source?: 'launchDirectory';
+      [k: string]: unknown | undefined;
     };
 
 export type Receipt = {
@@ -1135,6 +1263,7 @@ export type Receipt = {
     [k: string]: unknown | undefined;
   };
   sessionId: string;
+  [k: string]: unknown | undefined;
 };
 export type WorkflowRecoveryPage = {
   checkpoint: null | WorkflowCheckpoint;
@@ -1189,12 +1318,14 @@ export type WorkflowRecoveryTask = {
     revision: unknown;
     state: unknown;
     title: unknown;
+    [k: string]: unknown | undefined;
   };
   task: {
     id: unknown;
     instruction: unknown;
     key: unknown;
     title: unknown;
+    [k: string]: unknown | undefined;
   };
   workingState?: {
     [k: string]: unknown | undefined;
@@ -1222,6 +1353,7 @@ export type WorkflowAttempt = {
   validation: {
     [k: string]: unknown | undefined;
   } | null;
+  [k: string]: unknown | undefined;
 };
 export type WorkflowDelivery = {
   attemptId: string;
@@ -1234,6 +1366,7 @@ export type WorkflowDelivery = {
     result?: {
       [k: string]: unknown | undefined;
     };
+    [k: string]: unknown | undefined;
   } | null;
   operationKey: string | null;
   phase:
@@ -1243,7 +1376,9 @@ export type WorkflowDelivery = {
     createdAt: Timestamp;
     previousAttemptId: string;
     sessionId: string;
+    [k: string]: unknown | undefined;
   } | null;
+  [k: string]: unknown | undefined;
 };
 export type WorkflowLaunch = {
   attemptId: string;
@@ -1261,11 +1396,13 @@ export type WorkflowLaunch = {
   profile?: {
     allowedNesvoTools?: string[];
     claudeQuotaCapture?: ClaudeQuotaCapture;
+    [k: string]: unknown | undefined;
   } | null;
   quotaHoldReason?: 'quota_wait' | 'native_run_busy' | null;
   receiptId: string;
   sessionId: string;
   workspace: 'shared' | 'worktree';
+  [k: string]: unknown | undefined;
 };
 export type ClaudeQuotaCapture = {
   displayProfile: string;
@@ -1318,6 +1455,7 @@ export type WorkflowWakeNotice = {
     taskId?: string | null;
   };
   sequence: Cursor;
+  [k: string]: unknown | undefined;
 };
 export type WorkflowWakePolicy = {
   coordinator: Id;
@@ -1371,11 +1509,15 @@ export type WorkflowExecutor = {
         name?: string | null;
         program: 'claude' | 'codex' | 'gemini';
         workspace: 'shared' | 'worktree';
+        [k: string]: unknown | undefined;
       };
       taskId: string;
+      [k: string]: unknown | undefined;
     }[];
+    [k: string]: unknown | undefined;
   };
   taskId: string | null;
+  [k: string]: unknown | undefined;
 };
 export type WorkflowDigest = {
   budget: {
@@ -1386,15 +1528,18 @@ export type WorkflowDigest = {
     closed: unknown;
     pending: unknown;
     total: unknown;
+    [k: string]: unknown | undefined;
   };
   evidence: {
     checkpointCount: number;
     checkpoints: unknown[];
     journalCursor: number;
+    [k: string]: unknown | undefined;
   };
   inbox: {
     messageHead: unknown;
     pendingCoordinatorMessages: unknown;
+    [k: string]: unknown | undefined;
   };
   kind: 'final' | 'workingState';
   omittedTasks: number;
@@ -1412,6 +1557,7 @@ export type WorkflowDigest = {
       failed: unknown;
       passed: unknown;
       skipped: unknown;
+      [k: string]: unknown | undefined;
     };
     decisionsAnswered: number;
     files: string[];
@@ -1431,16 +1577,20 @@ export type WorkflowDigest = {
       branch: string | null;
       directory: string | null;
       kind: 'shared' | 'worktree';
+      [k: string]: unknown | undefined;
     } | null;
+    [k: string]: unknown | undefined;
   }[];
   tasks: {
     byState: {
       [k: string]: number | undefined;
     };
     total: number;
+    [k: string]: unknown | undefined;
   };
   title: string;
   truncated: boolean;
+  [k: string]: unknown | undefined;
 };
 export type WorkflowDecision = {
   answer: string | null;
@@ -1462,6 +1612,7 @@ export type WorkflowDecision = {
   runId: string;
   state: 'pending' | 'answered' | 'canceled' | 'expired';
   taskId: string;
+  [k: string]: unknown | undefined;
 };
 export type RunBudget = {
   activeAttempts: number;
@@ -1495,8 +1646,10 @@ export type WorkflowMessage = {
     attemptId?: string;
     role: 'owner' | 'coordinator' | 'worker';
     sessionId?: string;
+    [k: string]: unknown | undefined;
   };
   sequence: number;
+  [k: string]: unknown | undefined;
 };
 export type JobTriggerDelivery = {
   acceptedAt: Timestamp;
@@ -1532,6 +1685,7 @@ export type JobTriggerSpec = {
         | {
             actions?: unknown;
             event?: 'push';
+            [k: string]: unknown | undefined;
           }
         | {
             actions?: (
@@ -1558,10 +1712,12 @@ export type JobTriggerSpec = {
               | 'auto_merge_disabled'
             )[];
             event?: 'pull_request';
+            [k: string]: unknown | undefined;
           }
         | {
             actions?: ['completed'];
             event?: 'workflow_run';
+            [k: string]: unknown | undefined;
           }
       ) & {
         actions: string[];
@@ -1594,13 +1750,16 @@ export type PrecheckApproval = {
     timeoutMs: unknown;
     title: unknown;
     version: unknown;
+    [k: string]: unknown | undefined;
   };
   trust: 'ownerExactCommand';
+  [k: string]: unknown | undefined;
 };
 export type JobDefinition = {
   calendarError?: {
     code: string;
     message: string;
+    [k: string]: unknown | undefined;
   } | null;
   calendarState?: 'ready' | 'exhausted' | 'blocked';
   createdAt: Timestamp;
@@ -1612,17 +1771,20 @@ export type JobDefinition = {
     | {
         at: string;
         kind: 'once';
+        [k: string]: unknown | undefined;
       }
     | {
         expression: string;
         kind: 'cron';
         timeZone: string;
+        [k: string]: unknown | undefined;
       }
     | {
         kind: 'rrule';
         rule: string;
         start: string;
         timeZone: string;
+        [k: string]: unknown | undefined;
       }
     | {
         kind: 'external';
@@ -1632,13 +1794,16 @@ export type JobDefinition = {
     instruction: unknown;
     profile: {
       claudeQuotaCapture?: ClaudeQuotaCapture;
+      [k: string]: unknown | undefined;
     };
     quotaPolicy?: JobQuotaPolicy;
     retry?: JobRetryPolicy;
     schedule: unknown;
     title: unknown;
+    [k: string]: unknown | undefined;
   };
   title: string;
+  [k: string]: unknown | undefined;
 };
 export type JobQuotaPolicy = {
   accountFingerprint: string;
@@ -1683,6 +1848,7 @@ export type JobAttemptDetail = {
       | 'refused'
       | 'unknown'
       | 'abandoned';
+    [k: string]: unknown | undefined;
   } | null;
   reason: string | null;
   result: null | JobAttemptResult;
@@ -1704,6 +1870,7 @@ export type JobAttemptDetail = {
     | 'skipped'
     | 'canceled';
   validation: null | JobAttemptValidation;
+  [k: string]: unknown | undefined;
 };
 export type JobExecutionTimeout = {
   armedAt: Timestamp;
@@ -1786,6 +1953,7 @@ export type PrecheckOutcome = {
   stderrTruncated: boolean;
   stdout?: string;
   stdoutTruncated: boolean;
+  [k: string]: unknown | undefined;
 };
 export type JobAttemptResult = {
   artifacts: string[];
@@ -1849,6 +2017,7 @@ export type JobAttemptSummary = {
       | 'refused'
       | 'unknown'
       | 'abandoned';
+    [k: string]: unknown | undefined;
   } | null;
   reason: string | null;
   retry?: null | JobRetryDecision;
@@ -1868,6 +2037,7 @@ export type JobAttemptSummary = {
     | 'failed'
     | 'skipped'
     | 'canceled';
+  [k: string]: unknown | undefined;
 };
 export type JobOccurrence = {
   attemptId?: null | Id;
@@ -1904,6 +2074,7 @@ export type JobOccurrence = {
       | 'refused'
       | 'unknown'
       | 'abandoned';
+    [k: string]: unknown | undefined;
   } | null;
   quota?: JobQuotaDecision;
   reason: string | null;
@@ -1915,11 +2086,13 @@ export type JobOccurrence = {
     instruction: unknown;
     profile: {
       claudeQuotaCapture?: ClaudeQuotaCapture;
+      [k: string]: unknown | undefined;
     };
     quotaPolicy?: JobQuotaPolicy;
     retry?: JobRetryPolicy;
     schedule: unknown;
     title: unknown;
+    [k: string]: unknown | undefined;
   };
   startedAt: null | Cursor;
   state:
@@ -1936,6 +2109,7 @@ export type JobOccurrence = {
     | 'canceling'
     | 'retryWaiting';
   trigger: 'schedule' | 'manual' | 'external';
+  [k: string]: unknown | undefined;
 };
 export type JobCancellation = {
   controlId: null | Id;
@@ -1956,6 +2130,7 @@ export type JobCancellation = {
 export type JobQuotaDecision = {
   reason: string | null;
   state: 'waiting' | 'eligible' | 'notRequired';
+  [k: string]: unknown | undefined;
 };
 export type ProviderQuotaGate = {
   holds: ProviderQuotaGateHold[];
@@ -2043,6 +2218,7 @@ export type Session = {
   running: boolean;
   searchRoot?: SearchRoot;
   uptimeSeconds?: Cursor;
+  [k: string]: unknown | undefined;
 };
 export type HarnessConfiguration = {
   childToolPolicy?: {
@@ -2060,6 +2236,7 @@ export type HarnessConfiguration = {
     scope: 'process';
     source: 'none' | 'ownerLaunch' | 'ownerChildPolicy';
   };
+  [k: string]: unknown | undefined;
 };
 export type SessionHibernation = {
   conversationId: string;
@@ -2087,6 +2264,7 @@ export type ProviderAvailability = {
   reason?: string;
   state: 'ok' | 'noCli' | 'notLoggedIn' | 'unknown';
   version?: string;
+  [k: string]: unknown | undefined;
 };
 export type Page = {
   data: string;
@@ -2097,6 +2275,7 @@ export type Page = {
   headCursor: Cursor;
   more: boolean;
   nextCursor: Cursor;
+  [k: string]: unknown | undefined;
 };
 export type PasteReceipt = {
   id: string;
@@ -2105,8 +2284,10 @@ export type PasteReceipt = {
   result: {
     bytes: number;
     submitted: false;
+    [k: string]: unknown | undefined;
   };
   sessionId: Id;
+  [k: string]: unknown | undefined;
 };
 export type RecoveryRecord = {
   id: Id;
@@ -2116,8 +2297,10 @@ export type RecoveryRecord = {
     program: 'shell' | 'claude' | 'codex' | 'gemini';
     prompt: '';
     resume?: ResumeTarget;
+    [k: string]: unknown | undefined;
   };
   state: 'saved' | 'starting' | 'interrupted';
+  [k: string]: unknown | undefined;
 };
 export type ResumeTarget = {
   conversationId: string;
@@ -2142,6 +2325,7 @@ export type AttentionItem = {
   summary?: string;
   taskId?: string;
   title: string;
+  [k: string]: unknown | undefined;
 };
 export type AttentionReceipt = {
   acknowledgedAt: Timestamp;

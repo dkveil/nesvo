@@ -2,246 +2,307 @@ export type HarnessEventRecord = {
   at: number;
   sequence: number;
   sessionId: string | null;
+  [k: string]: unknown | undefined;
 } & (
   | {
       kind: 'host.started';
       payload: HostStarted;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'host.budget_changed';
       payload: RevisionChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'provider.quota_changed';
       payload: RevisionChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'session.created';
       payload: SessionCreated;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'session.closed';
       payload: SessionClosed;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'session.hibernated';
       payload: SessionHibernated;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'session.resumed';
       payload: SessionResumed;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'process.exited';
       payload: ProcessExited;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'response.settled';
       payload: ResponseSettled;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'agent.lifecycle';
       payload: AgentLifecycle;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'agent.attention';
       payload: AgentAttention;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'operation.changed';
       payload: OperationChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'job.changed';
       payload: JobChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'precheck.approval.changed';
       payload: PrecheckApprovalChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'job.trigger_changed';
       payload: JobTriggerChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'job.trigger_delivery';
       payload: JobTriggerDelivery;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.created';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.plan_changed';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.activated';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.attempt_assigned';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.result_reported';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.result_validated';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.draining';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.resumed';
       payload: RunRevision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.checkpoint_saved';
       payload: RunCheckpointSaved;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.constraints_added';
       payload: RunConstraints;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.constraints_acknowledged';
       payload: RunConstraints;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.control_requested';
       payload: RunControl;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.control_progress';
       payload: RunControl;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.control_completed';
       payload: RunControl;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.control_unconfirmed';
       payload: RunControl;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.coordinator_rebound';
       payload: RunCoordinatorRebound;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.decision_asked';
       payload: RunDecision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.decision_answered';
       payload: RunDecision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.decision_canceled';
       payload: RunDecision;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.decisions_expired';
       payload: RunCount;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.delivery_changed';
       payload: RunDelivery;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.digest_recorded';
       payload: RunDigestRecorded;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.executor_changed';
       payload: RunExecutor;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.message_sent';
       payload: RunMessage;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.messages_acknowledged';
       payload: RunCount;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.launch_reserved';
       payload: RunAttempt;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.launch_recovered';
       payload: RunAttempt;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.launch_observed';
       payload: RunAttempt;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.workspace_prepared';
       payload: RunAttempt;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.quota_hold_changed';
       payload: RunAttempt;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.session_reused';
       payload: RunSessionReused;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.time_budget_exhausted';
       payload: RunChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.budget_changed';
       payload: RunChanged;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'run.wake_changed';
       payload: RunWake;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'workflow.templates_approved';
       payload: RepositoryDigest;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'workflow.templates_revoked';
       payload: RepositoryDigest;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'worktree.setup_approved';
       payload: RepositoryDigest;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'worktree.setup_revoked';
       payload: RepositoryDigest;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'worktree.prepared';
       payload: WorktreePrepared;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'worktree.ran';
       payload: WorktreeRan;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'worktree.archived';
       payload: WorktreeArchived;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'mcp.pool_attached';
       payload: McpPoolAttached;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'mcp.pool_released';
       payload: McpPoolReleased;
+      [k: string]: unknown | undefined;
     }
   | {
       kind: 'mcp.pool_reaped';
       payload: McpPoolReaped;
+      [k: string]: unknown | undefined;
     }
 );
 export type AgentState =

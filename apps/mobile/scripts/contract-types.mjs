@@ -35,24 +35,16 @@ const SHAPING_KEYWORDS = [
   '$ref',
 ];
 
-const isObjectSchema = value => [value.type].flat().includes('object');
-
-const isOpenObjectSchema = value =>
-  isObjectSchema(value) && SHAPING_KEYWORDS.every(key => !(key in value));
-
 const isEmptyClosedObjectSchema = value =>
-  isObjectSchema(value) &&
+  [value.type].flat().includes('object') &&
   value.additionalProperties === false &&
   Object.keys(value.properties ?? {}).length === 0 &&
   SHAPING_KEYWORDS.filter(key => key !== 'properties' && key !== 'additionalProperties').every(
     key => !(key in value),
   );
 
-const withObjectType = value => {
-  if (isOpenObjectSchema(value)) return { ...value, additionalProperties: true };
-  if (isEmptyClosedObjectSchema(value)) return { ...value, tsType: 'Record<string, never>' };
-  return value;
-};
+const withObjectType = value =>
+  isEmptyClosedObjectSchema(value) ? { ...value, tsType: 'Record<string, never>' } : value;
 
 const prepareSchema = value => {
   if (Array.isArray(value)) return value.map(prepareSchema);
@@ -87,7 +79,6 @@ const interfacesAsTypes = source =>
 const generate = async ({ schema, output, rootName }) => {
   const parsed = JSON.parse(await readFile(resolve(ROOT, schema), 'utf8'));
   const source = await compile(prepareSchema({ ...parsed, title: rootName }), rootName, {
-    additionalProperties: false,
     bannerComment: '',
     cwd: resolve(ROOT, 'docs'),
     declareExternallyReferenced: true,
