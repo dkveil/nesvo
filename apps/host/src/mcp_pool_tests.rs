@@ -461,9 +461,12 @@ async fn shutdown_journals_every_pooled_process_and_refuses_new_attaches() {
 }
 
 #[test]
-fn the_bounds_table_keeps_the_pool_small_and_exclusive() {
-    assert_eq!(BOUNDS.warm_per_key, 1);
-    assert!(BOUNDS.processes <= 8);
-    assert!(BOUNDS.idle <= Duration::from_secs(3600));
-    assert!(BOUNDS.connect < BOUNDS.idle);
+fn status_publishes_the_documented_bounds_table() {
+    let status = Pool::new(BOUNDS).status();
+    assert_eq!(
+        status["bounds"],
+        json!({"processes":4,"warmPerKey":1,"idleMs":600_000,"connectMs":30_000,"sessions":256})
+    );
+    assert_eq!(status["available"], true);
+    assert_eq!(status["processes"], json!({"warm":0,"leased":0}));
 }
