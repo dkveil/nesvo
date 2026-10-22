@@ -16,6 +16,32 @@ const SETTLED_ATTEMPT: [&str; 5] = [
     "launchUnknown",
 ];
 
+const TRAIL_STATE_LIMIT: usize = 512;
+
+pub(super) struct Trail {
+    label: String,
+    last: Option<String>,
+}
+
+impl Trail {
+    pub(super) fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            last: None,
+        }
+    }
+
+    pub(super) fn observe(&mut self, state: impl std::fmt::Display) -> bool {
+        let state: String = state.to_string().chars().take(TRAIL_STATE_LIMIT).collect();
+        if self.last.as_ref() == Some(&state) {
+            return false;
+        }
+        eprintln!("NESVO_WAIT {} observed {state}", self.label);
+        self.last = Some(state);
+        true
+    }
+}
+
 pub(super) async fn until<T>(mut probe: impl AsyncFnMut() -> Result<Option<T>>) -> Result<T> {
     loop {
         if let Some(value) = probe().await? {
@@ -26,6 +52,7 @@ pub(super) async fn until<T>(mut probe: impl AsyncFnMut() -> Result<Option<T>>) 
 }
 
 pub(super) async fn occurrence(owner: &Client, job: &str, id: &str, wanted: &str) -> Result<Value> {
+    let mut trail = Trail::new(format!("job {job} occurrence {id} until {wanted}"));
     until(async || {
         let view = data(
             call(
@@ -36,6 +63,7 @@ pub(super) async fn occurrence(owner: &Client, job: &str, id: &str, wanted: &str
             .await?,
         )?;
         let state = &view["data"]["occurrence"]["state"];
+        trail.observe(state);
         if state == wanted {
             return Ok(Some(view));
         }
@@ -72,9 +100,13 @@ pub(super) async fn history_occurrence(
     index: usize,
     wanted: &str,
 ) -> Result<Value> {
+    let mut trail = Trail::new(format!(
+        "job {job} history occurrence {index} until {wanted}"
+    ));
     until(async || {
         let history = data(call(owner, "nesvo_get_job_history", json!({"jobId":job})).await?)?;
         let state = &history["data"]["occurrences"][index]["state"];
+        trail.observe(state);
         if state == wanted {
             return Ok(Some(history));
         }
@@ -121,9 +153,11 @@ impl Session {
 }
 
 pub(super) async fn session(client: &Client, id: &str, wanted: Session) -> Result<Value> {
+    let mut trail = Trail::new(format!("session {id} until {wanted:?}"));
     until(async || {
         let view = data(call(client, "nesvo_get_session", json!({"sessionId":id})).await?)?;
         let session = &view["data"]["session"];
+        trail.observe(session_summary(session));
         if wanted.reached(session) {
             return Ok(Some(view));
         }
@@ -134,6 +168,16 @@ pub(super) async fn session(client: &Client, id: &str, wanted: Session) -> Resul
         Ok(None)
     })
     .await
+}
+
+fn session_summary(session: &Value) -> Value {
+    json!({
+        "running":session["running"],
+        "readiness":session["readiness"]["phase"],
+        "status":session["status"]["state"],
+        "source":session["status"]["source"],
+        "controllerId":session["controllerId"],
+    })
 }
 
 pub(super) async fn exited(client: &Client, id: &str) -> Result<bool> {
@@ -157,11 +201,14 @@ async fn page_with(client: &Client, id: &str, marker: &str) -> Result<Option<Val
 }
 
 pub(super) async fn output(client: &Client, id: &str, marker: &str) -> Result<Value> {
+    let mut trail = Trail::new(format!("session {id} output {marker}"));
     until(async || {
         if let Some(page) = page_with(client, id, marker).await? {
             return Ok(Some(page));
         }
-        if exited(client, id).await? {
+        let exited = exited(client, id).await?;
+        trail.observe(json!({"marker":"absent","running":!exited}));
+        if exited {
             return page_with(client, id, marker)
                 .await?
                 .with_context(|| format!("Session {id} exited without output {marker}"))
@@ -177,11 +224,14 @@ fn json_file(path: &Path) -> Option<Value> {
 }
 
 pub(super) async fn caller_file(client: &Client, writer: &str, path: &Path) -> Result<Value> {
+    let mut trail = Trail::new(format!("session {writer} file {}", path.display()));
     until(async || {
         if let Some(value) = json_file(path) {
             return Ok(Some(value));
         }
-        if exited(client, writer).await? {
+        let exited = exited(client, writer).await?;
+        trail.observe(json!({"file":"absent","running":!exited}));
+        if exited {
             return json_file(path)
                 .with_context(|| {
                     format!("Session {writer} exited before writing {}", path.display())
@@ -199,9 +249,13 @@ pub(super) async fn receipt(
     session: &str,
     milestone: &str,
 ) -> Result<Value> {
+    let mut trail = Trail::new(format!(
+        "receipt {id} of session {session} until {milestone}"
+    ));
     until(async || {
         let view = data(call(client, "nesvo_get_operation", json!({"id":id})).await?)?;
         let receipt = &view["data"]["receipt"];
+        trail.observe(json!({"phase":receipt["phase"],"result":receipt["result"]}));
         ensure!(
             receipt["sessionId"] == session,
             "Receipt {id} belongs to another session: {receipt}"
@@ -243,6 +297,9 @@ pub(super) async fn delivery(
     index: usize,
     wanted: &str,
 ) -> Result<Value> {
+    let mut trail = Trail::new(format!(
+        "run {run} task {task} attempt {index} delivery until {wanted}"
+    ));
     until(async || {
         let view = data(
             call(
@@ -253,6 +310,7 @@ pub(super) async fn delivery(
             .await?,
         )?;
         let phase = &view["data"]["attempts"][index]["delivery"]["phase"];
+        trail.observe(phase);
         if phase == wanted {
             return Ok(Some(view));
         }
@@ -268,6 +326,7 @@ pub(super) async fn delivery(
 }
 
 pub(super) async fn provider(fixture: &Fixture, program: &str) -> Result<Value> {
+    let mut trail = Trail::new(format!("provider {program} version probe until ready"));
     until(async || {
         let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
         let status = doctor["providerVersions"]
@@ -275,6 +334,7 @@ pub(super) async fn provider(fixture: &Fixture, program: &str) -> Result<Value> 
             .and_then(|rows| rows.iter().find(|row| row["program"] == program))
             .map(|row| row["status"].clone())
             .unwrap_or_default();
+        trail.observe(&status);
         ensure!(
             status != "unavailable",
             "Provider {program} version probe settled unavailable: {}",
@@ -299,9 +359,11 @@ pub(super) async fn operation(client: &Client, name: &'static str, args: Value) 
         return data(result);
     }
     let bound = result.structured_content.unwrap_or_default();
+    let mut trail = Trail::new(format!("{name} key {key} past the adapter request bound"));
     until(async || {
         let view = data(call(client, "nesvo_get_operation", json!({"key":key})).await?)?;
         let phase = &view["data"]["receipt"]["phase"];
+        trail.observe(phase);
         if matches!(phase.as_str(), Some("accepted" | "dispatching")) {
             return Ok(None);
         }
@@ -315,6 +377,17 @@ pub(super) async fn operation(client: &Client, name: &'static str, args: Value) 
     .with_context(|| {
         format!("{name} exceeded the adapter request bound ({bound}); inspected its original key")
     })
+}
+
+#[test]
+fn trail_reports_each_observed_state_change_once() {
+    let mut trail = Trail::new("fixture wait");
+    assert!(trail.observe("dispatching"));
+    assert!(!trail.observe("dispatching"));
+    assert!(trail.observe("delivered"));
+    assert!(trail.observe("dispatching"));
+    assert!(trail.observe("x".repeat(TRAIL_STATE_LIMIT * 2)));
+    assert!(!trail.observe("x".repeat(TRAIL_STATE_LIMIT + 1)));
 }
 
 #[test]

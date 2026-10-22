@@ -33,10 +33,13 @@ async fn recurring_calendars_use_real_helper_and_preserve_cli_mcp_restart_intent
         let admission_closes=scheduled["data"]["job"]["nextDueAt"].as_i64().context("Published calendar due")?+spec["graceMs"].as_i64().context("Published grace window")?;
         let callers=fixture.directory.join("callers");
         let launched=|suffix:&str|->Result<bool>{Ok(std::fs::read_dir(&callers)?.filter_map(|e|e.ok()).any(|e|e.file_name().to_string_lossy().ends_with(suffix)))};
+        let mut trail=waits::Trail::new(format!("job {id} recurring report with owner clients closed"));
         let reported=waits::until(async || {
             if launched(".result.json")? {return Ok(Some(()));}
             ensure!(fixture.host.try_wait()?.is_none(),"Owned host exited before the recurring report");
-            ensure!(chrono::Utc::now().timestamp_millis()<=admission_closes||launched(".launch-argv.json")?,"Recurring occurrence launched no worker within its published admission window");
+            let worker=launched(".launch-argv.json")?;
+            trail.observe(json!({"workerLaunched":worker,"result":"absent","admissionOpen":chrono::Utc::now().timestamp_millis()<=admission_closes}));
+            ensure!(chrono::Utc::now().timestamp_millis()<=admission_closes||worker,"Recurring occurrence launched no worker within its published admission window");
             Ok(None)
         }).await;
         if let Err(error)=reported {

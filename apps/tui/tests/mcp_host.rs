@@ -271,7 +271,9 @@ impl Fixture {
         } else {
             drop(self.host.stdin.take());
         }
-        let status = self.host.wait().await?;
+        let status = self
+            .reap_host(if force { "kill" } else { "graceful exit" })
+            .await?;
         ensure!(
             force || status.success(),
             "Owned host did not finish graceful shutdown"
@@ -288,10 +290,17 @@ impl Fixture {
         self.startup_trace = startup_trace;
         Ok(())
     }
+    async fn reap_host(&mut self, ending: &str) -> std::io::Result<std::process::ExitStatus> {
+        let mut trail = waits::Trail::new(format!("owned host {:?} {ending}", self.host.id()));
+        trail.observe("exit pending");
+        let status = self.host.wait().await?;
+        trail.observe(status);
+        Ok(status)
+    }
     async fn stop(&mut self) -> Result<()> {
         let host_pid = self.host.id();
         drop(self.host.stdin.take());
-        let status = self.host.wait().await.with_context(|| {
+        let status = self.reap_host("graceful exit").await.with_context(|| {
             format!(
                 "Reap owned native host {host_pid:?} in {}",
                 self.directory.display()
@@ -862,7 +871,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         assert_malformed_or_oversized_stdio_lines_end_before_host_dispatch(&fixture.pairing()).await?;
         let disconnected = client(&fixture.pairing()).await?;
         drop(fixture.host.stdin.take());
-        ensure!(fixture.host.wait().await?.success(), "host shutdown");
+        ensure!(fixture.reap_host("graceful exit").await?.success(), "host shutdown");
         let unavailable = call(&disconnected, "nesvo_list_sessions", json!({})).await?;
         assert_eq!(unavailable.is_error, Some(true));
         assert_eq!(
