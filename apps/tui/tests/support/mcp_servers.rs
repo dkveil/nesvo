@@ -470,7 +470,12 @@ async fn approved_external_servers_reach_the_provider_through_the_pool() -> Resu
         let attached = attachment(&status, &cold, "docs").context("Cold attachment")?;
         assert_eq!(attached["mode"], "cold");
         assert_eq!(attached["reason"], "notPrepared");
-        assert_eq!(attached["repository"], repository_key.as_str());
+        let listing = listed(&fixture, &repo).await?;
+        let listed_attachment = attachment(&json!({"sessions":listing["attached"]}), &cold, "docs")
+            .context("Listed attachment")?
+            .clone();
+        assert_eq!(listed_attachment["repository"], repository_key.as_str());
+        assert_eq!(listed_attachment["mode"], "cold");
         let first = exercise(&entry).await?;
         assert_isolated(&first, &repo)?;
         let mut dedicated = vec![first.initialize_ms];

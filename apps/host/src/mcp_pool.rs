@@ -571,7 +571,11 @@ impl Pool {
                     .as_ref()
                     .is_some_and(|origin| origin.repository == repository)
             })
-            .map(attachment_view)
+            .map(|attachment| {
+                let mut view = attachment_view(attachment);
+                view["repository"] = json!(repository);
+                view
+            })
             .collect()
     }
 
@@ -709,7 +713,6 @@ fn attachment_view(attachment: &Attachment) -> Value {
         "mode":attachment.mode,
         "reason":attachment.reason,
         "entryId":attachment.entry_id,
-        "repository":attachment.origin.as_ref().map(|origin| origin.repository.clone()),
     })
 }
 

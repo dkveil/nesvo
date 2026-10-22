@@ -159,7 +159,7 @@ async fn a_second_session_attaches_to_the_warm_process_prepared_by_the_first() {
     assert_eq!(leased["sessionId"], session('2'));
     assert_eq!(
         status["sessions"][1],
-        json!({"sessionId":session('2'),"server":"echo","program":"claude","mode":"pooled","reason":null,"entryId":warm,"repository":null})
+        json!({"sessionId":session('2'),"server":"echo","program":"claude","mode":"pooled","reason":null,"entryId":warm})
     );
     let events = log.settled(1).await;
     assert_eq!(events[0].kind, "mcp.pool_attached");
@@ -356,7 +356,7 @@ async fn credential_bearing_servers_stay_dedicated_with_a_visible_reason() {
     assert_eq!(status["processes"], json!({"warm":0,"leased":0}));
     assert_eq!(
         status["sessions"][0],
-        json!({"sessionId":session('1'),"server":"nesvo","program":"claude","mode":"dedicated","reason":"sessionCredential","entryId":null,"repository":null})
+        json!({"sessionId":session('1'),"server":"nesvo","program":"claude","mode":"dedicated","reason":"sessionCredential","entryId":null})
     );
     pool.release_session(&session('1'));
     assert_eq!(pool.status()["sessions"].as_array().unwrap().len(), 2);
@@ -531,11 +531,11 @@ async fn declared_servers_get_one_warm_process_per_program_digest_and_root() {
         .unwrap()
         .clone();
     assert_eq!(leased["root"], display_path(&worktree.0));
-    assert_eq!(
-        pool.status()["sessions"][2]["repository"],
-        json!("C:/work/repo")
-    );
-    assert_eq!(pool.attachments("C:/work/repo").len(), 3);
+    assert!(pool.status()["sessions"][2].get("repository").is_none());
+    let attached = pool.attachments("C:/work/repo");
+    assert_eq!(attached.len(), 3);
+    assert_eq!(attached[2]["repository"], "C:/work/repo");
+    assert_eq!(attached[2]["sessionId"], session('3'));
     assert!(pool.attachments("C:/other").is_empty());
     let mut bridge = Bridge::attach(&lease).await;
     assert_eq!(bridge.exchange("ping").await, "> ping");
