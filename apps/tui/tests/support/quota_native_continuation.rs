@@ -33,9 +33,7 @@ async fn git(directory: &Path, args: &[&str]) -> Result<String> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(5), command.output())
-        .await
-        .context("Owned quota Git command deadline")??;
+    let output = command.output().await.context("Owned quota Git command")?;
     ensure!(
         output.status.success(),
         "Owned quota Git fixture failed: {}",
@@ -189,10 +187,10 @@ async fn admit(owner: &Owner, source: &Path, binding: &Value) -> Result<(Value, 
 
 async fn held(fixture: &Fixture, owner: &Owner, job: &str, id: &str) -> Result<Held> {
     let mut last = Value::Null;
-    timeout(Duration::from_secs(20), async {
-        loop {
+    waits::until(async || {
             let occurrence = occurrence(owner,job,id).await?;
             let current = &occurrence["data"]["occurrence"];
+            ensure!(!waits::is_settled_occurrence(&current["state"]),"Occurrence settled before the post-Git quota hold: {occurrence}");
             if let Some(run_id) = current["runId"].as_str() {
                 let run = data(call(owner,"nesvo_get_run",json!({"runId":run_id})).await?)?;
                 let task_id = string(&run["data"]["tasks"][0],"id")?;
@@ -217,15 +215,14 @@ async fn held(fixture: &Fixture, owner: &Owner, job: &str, id: &str) -> Result<H
                             receipt_id:string(launch,"receiptId")?,session_id:string(launch,"sessionId")?,
                             occurrence,run,attempts:history,directory,
                         };
-                        return Ok::<_,anyhow::Error>(result);
+                        return Ok(Some(result));
                     }
                     ensure!(!matches!(launch["phase"].as_str(),Some("failed"|"unknown")),
                         "Late native preparation refused before the held evidence: {last}");
                 }
             } else {last=occurrence;}
-            tokio::time::sleep(Duration::from_millis(60)).await;
-        }
-    }).await.with_context(||format!("No actual post-Git quota hold; last: {}",last.to_string().chars().take(12000).collect::<String>()))?
+            Ok(None)
+    }).await.with_context(||format!("No actual post-Git quota hold; last: {}",last.to_string().chars().take(12000).collect::<String>()))
 }
 
 async fn no_native_worker(fixture: &Fixture, owner: &Owner) -> Result<Value> {
@@ -360,14 +357,10 @@ fn diagnostic_fields(value: &Value, fields: &[&str]) -> Value {
 
 async fn report_timeout_diagnostic(fixture: &Fixture, held: &Held) -> Value {
     let mut diagnostic = json!({"clientAvailable":false,"receipt":null,"job":null,"nativeAttempt":null,"launch":null});
-    let observed = timeout(Duration::from_secs(3), async {
+    let observed = async {
         let owner = client(&fixture.pairing()).await?;
         diagnostic["clientAvailable"] = json!(true);
-        if let Ok(Ok(reply)) = timeout(
-            Duration::from_millis(600),
-            call(&owner, "nesvo_get_operation", json!({"id":held.receipt_id})),
-        )
-        .await
+        if let Ok(reply) = call(&owner, "nesvo_get_operation", json!({"id":held.receipt_id})).await
             && let Ok(envelope) = data(reply)
         {
             let receipt = &envelope["data"]["receipt"];
@@ -376,13 +369,10 @@ async fn report_timeout_diagnostic(fixture: &Fixture, held: &Held) -> Value {
                 diagnostic_fields(&receipt["result"], &["code", "effectStarted"]);
         }
         let original = &held.occurrence["data"]["occurrence"];
-        if let Ok(Ok(reply)) = timeout(
-            Duration::from_millis(600),
-            call(
-                &owner,
-                "nesvo_get_job_occurrence",
-                json!({"jobId":original["jobId"],"occurrenceId":original["id"]}),
-            ),
+        if let Ok(reply) = call(
+            &owner,
+            "nesvo_get_job_occurrence",
+            json!({"jobId":original["jobId"],"occurrenceId":original["id"]}),
         )
         .await
             && let Ok(envelope) = data(reply)
@@ -390,13 +380,10 @@ async fn report_timeout_diagnostic(fixture: &Fixture, held: &Held) -> Value {
             diagnostic["job"] =
                 diagnostic_fields(&envelope["data"]["occurrence"], &["state", "reason"]);
         }
-        if let Ok(Ok(reply)) = timeout(
-            Duration::from_millis(600),
-            call(
-                &owner,
-                "nesvo_get_task_attempts",
-                json!({"runId":held.run_id,"taskId":held.task_id}),
-            ),
+        if let Ok(reply) = call(
+            &owner,
+            "nesvo_get_task_attempts",
+            json!({"runId":held.run_id,"taskId":held.task_id}),
         )
         .await
             && let Ok(envelope) = data(reply)
@@ -410,11 +397,13 @@ async fn report_timeout_diagnostic(fixture: &Fixture, held: &Held) -> Value {
                 &["phase", "code", "effectStarted", "quotaHoldReason"],
             );
         }
-        let _ = timeout(Duration::from_millis(500), owner.cancel()).await;
+        let _ = owner.cancel().await;
         Ok::<_, anyhow::Error>(())
-    })
+    }
     .await;
-    diagnostic["diagnosticDeadlineElapsed"] = json!(observed.is_err());
+    if let Err(error) = observed {
+        diagnostic["clientError"] = json!(error.to_string());
+    }
     diagnostic
 }
 
@@ -447,22 +436,21 @@ async fn late_worktree_quota_hold_releases_the_original_receipt_and_worker_once(
             .directory
             .join("callers")
             .join(format!("{}.result.json", held.session_id));
-        let reported = timeout(Duration::from_secs(15), async {
-            loop {
-                if let Ok(bytes) = std::fs::read(&report)
-                    && let Ok(value) = serde_json::from_slice::<Value>(&bytes)
-                {
-                    return Ok::<_, anyhow::Error>(value);
-                }
-                tokio::time::sleep(Duration::from_millis(60)).await;
+        let reported = waits::until(async || {
+            if let Ok(bytes) = std::fs::read(&report)
+                && let Ok(value) = serde_json::from_slice::<Value>(&bytes)
+            {
+                return Ok(Some(value));
             }
+            ensure!(fixture.host.try_wait()?.is_none(),"Owned host exited before the original reserved worker reported");
+            Ok(None)
         })
         .await;
         let reported=match reported {
-            Ok(result)=>result?,
+            Ok(result)=>result,
             Err(error)=> {
                 let diagnostic=report_timeout_diagnostic(&fixture,&held).await;
-                return Err(anyhow::Error::new(error).context(format!(
+                return Err(error.context(format!(
                     "Original reserved worker must report with the owner disconnected; sanitized retained diagnostics: {diagnostic}"
                 )));
             }
@@ -474,7 +462,7 @@ async fn late_worktree_quota_hold_releases_the_original_receipt_and_worker_once(
         quota.push(recovered);
         let job = string(&created["data"]["job"], "id")?;
         let id = string(&admitted["data"]["occurrence"], "id")?;
-        let pending = job_cancellation::occurrence(&owner, &job, &id, "needsValidation").await?;
+        let pending = waits::occurrence(&owner, &job, &id, "needsValidation").await?;
         same_identity(&held, &pending);
         let history = attempts(&owner, &held.run_id, &held.task_id).await?;
         let native = &history["data"]["attempts"][0];
@@ -592,21 +580,20 @@ async fn canceled_late_worktree_quota_hold_keeps_git_facts_and_never_starts_a_wo
             )
             .await?,
         )?;
-        let mut last = Value::Null;
-        let stopped = timeout(Duration::from_secs(8), async {
-            loop {
-                let view = data(
-                    call(&owner, "nesvo_get_operation", json!({"id":held.receipt_id})).await?,
-                )?;
-                if view["data"]["receipt"]["phase"] == "unknown" {
-                    return Ok::<_, anyhow::Error>(view);
-                }
-                last = view;
-                tokio::time::sleep(Duration::from_millis(50)).await;
+        let stopped = waits::until(async || {
+            let view =
+                data(call(&owner, "nesvo_get_operation", json!({"id":held.receipt_id})).await?)?;
+            let phase = &view["data"]["receipt"]["phase"];
+            if phase == "unknown" {
+                return Ok(Some(view));
             }
+            ensure!(
+                !matches!(phase.as_str(), Some("created" | "failed")),
+                "Retained launch settled without observing owner cancellation: {view}"
+            );
+            Ok(None)
         })
-        .await
-        .with_context(|| format!("Retained launch did not observe owner cancellation: {last}"))??;
+        .await?;
         assert_eq!(stopped["data"]["receipt"]["result"]["code"], "job_canceled");
         assert_ne!(
             stopped["data"]["receipt"]["result"]["effectStarted"], false,

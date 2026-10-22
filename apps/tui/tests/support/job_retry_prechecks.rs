@@ -1,5 +1,5 @@
 //! Fresh command authorization for every opted-in native job generation.
-use super::prechecks::{OwnedTree, TREE_EXIT_DEADLINE, TREE_READY_DEADLINE};
+use super::prechecks::{OwnedTree, TREE_EXIT_DEADLINE};
 use super::*;
 
 const LITERAL: &str = "literal $(x); & łódź \"quoted\"";
@@ -727,7 +727,7 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
 }
 
 async fn tree_ready(fixture: &mut Fixture, job: &str, tree: &mut OwnedTree) -> Result<()> {
-    let result = timeout(TREE_READY_DEADLINE, tree.announced()).await;
+    let result = timeout(Duration::from_millis(PRECHECK_BOUND_MS), tree.announced()).await;
     if !matches!(result, Ok(Ok(()))) {
         let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
         anyhow::bail!(

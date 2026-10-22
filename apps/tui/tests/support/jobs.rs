@@ -7,13 +7,13 @@ async fn report_wait<T>(
     fixture: &mut Fixture,
     job: &str,
     stage: &str,
-    waited: std::result::Result<Result<T>, tokio::time::error::Elapsed>,
+    waited: Result<T>,
 ) -> Result<T> {
     match waited {
-        Ok(result) => result,
+        Ok(result) => Ok(result),
         Err(error) => {
             let diagnostics = job_diagnostics::report_timeout_diagnostics(fixture, job).await;
-            Err(anyhow::Error::new(error).context(format!(
+            Err(error.context(format!(
                 "{stage}; bounded actual diagnostics: {}",
                 diagnostics
                     .to_string()
@@ -30,17 +30,22 @@ async fn occurrence_state(
     job: &str,
     state: &str,
 ) -> Result<Value> {
-    let waited = timeout(Duration::from_secs(15), async {
-        loop {
-            let history = job_history(owner, job).await?;
-            if history["data"]["occurrences"]
-                .as_array()
-                .is_some_and(|rows| rows.iter().any(|o| o["state"] == state))
-            {
-                return Ok::<_, anyhow::Error>(history);
-            }
-            tokio::time::sleep(Duration::from_millis(80)).await;
+    let waited = waits::until(async || {
+        let history = job_history(owner, job).await?;
+        let rows = history["data"]["occurrences"]
+            .as_array()
+            .context("Job occurrence history")?;
+        if rows.iter().any(|o| o["state"] == state) {
+            return Ok(Some(history));
         }
+        ensure!(
+            rows.is_empty()
+                || !rows
+                    .iter()
+                    .all(|o| waits::is_settled_occurrence(&o["state"])),
+            "Every job occurrence settled before reaching {state}: {history}"
+        );
+        Ok(None)
     })
     .await;
     report_wait(
@@ -64,13 +69,13 @@ async fn startup_catchup_never_mistakes_pending_version_probe_for_an_unsupported
         let id=created["data"]["job"]["id"].as_str().context("startup job")?;
         owner.cancel().await?;
         drop(fixture.host.stdin.take());
-        ensure!(timeout(Duration::from_secs(10),fixture.host.wait()).await??.success(),"Close only owned fixture host before due");
+        ensure!(fixture.host.wait().await?.success(),"Close only owned fixture host before due");
         let wait=(due-chrono::Utc::now()).to_std().unwrap_or_default()+Duration::from_millis(100);
         tokio::time::sleep(wait).await;
         std::fs::write(fixture.directory.join("callers/.fixture-slow-version"),"owned probe delay")?;
         fixture.restart(false).await?;
         let owner=client(&fixture.pairing()).await?;
-        let pending=timeout(Duration::from_secs(15),async {loop {
+        let pending=waits::until(async || {
             let history=job_history(&owner,id).await?;
             if let Some(rows)=history["data"]["occurrences"].as_array() {
                 if let Some(failed)=rows.iter().find(|o|o["state"]=="failed"||o["state"]=="reconcile") {
@@ -79,10 +84,11 @@ async fn startup_catchup_never_mistakes_pending_version_probe_for_an_unsupported
                     let attempts=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":current["tasks"][0]["id"]})).await?)?;
                     anyhow::bail!("Startup catch-up refused during discovery: history={history}; attempts={attempts}");
                 }
-                if rows.iter().any(|o|o["state"]=="needsValidation") {return Ok::<_,anyhow::Error>(history);}
+                ensure!(!rows.iter().any(|o|waits::is_settled_occurrence(&o["state"])),"Startup catch-up settled before its report: {history}");
+                if rows.iter().any(|o|o["state"]=="needsValidation") {return Ok(Some(history));}
             }
-            tokio::time::sleep(Duration::from_millis(80)).await;
-        }}).await;
+            Ok(None)
+        }).await;
         let pending=report_wait(&mut fixture,id,"Startup catch-up report",pending).await?;
         assert_eq!(pending["data"]["occurrences"].as_array().context("one startup occurrence")?.len(),1);
         let run=pending["data"]["occurrences"][0]["runId"].as_str().context("startup run")?;
@@ -112,11 +118,7 @@ async fn once_jobs_dispatch_without_clients_retain_results_and_never_turn_restar
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
-        timeout(Duration::from_secs(5),async {loop {
-            let report=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-            if report["providerVersions"].as_array().is_some_and(|r|r.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")) {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let due=chrono::Utc::now()+chrono::Duration::seconds(8);
         let spec=json!({"title":"Disconnected once job","instruction":"report-task","profile":{"program":"claude","workspace":"shared","harness":true,"allowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]},"schedule":{"kind":"once","at":due.to_rfc3339()},"overlap":"skip","misfire":"catchUp","graceMs":60000});
@@ -132,11 +134,10 @@ async fn once_jobs_dispatch_without_clients_retain_results_and_never_turn_restar
         assert_eq!(conflict["error"]["code"],"idempotency_conflict");
         ensure!(chrono::Utc::now()<due,"Owner must disconnect before due instant");
         owner.cancel().await?;
-        let reported=timeout(Duration::from_secs(18),async {loop {
+        let reported=waits::until(async || {
             let reported=std::fs::read_dir(fixture.directory.join("callers"))?.filter_map(|e|e.ok()).any(|e|e.file_name().to_string_lossy().ends_with(".result.json"));
-            if reported {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(80)).await;
-        }}).await;
+            Ok(reported.then_some(()))
+        }).await;
         report_wait(&mut fixture,&id,"Scheduled worker reported without owner clients",reported).await?;
         let owner=client(&fixture.pairing()).await?;
         let pending=occurrence_state(&mut fixture,&owner,&id,"needsValidation").await?;
@@ -176,11 +177,7 @@ async fn once_jobs_dispatch_without_clients_retain_results_and_never_turn_restar
         assert_eq!(selected["data"]["occurrence"]["spec"]["profile"]["allowedNesvoTools"],spec["profile"]["allowedNesvoTools"]);
         run_checkpoints::mutate(&owner,&run,"nesvo_validate_task_result",json!({"key":"validate-disconnected-job","attemptId":current["tasks"][0]["currentAttempt"]["id"],"validation":{"passed":true,"summary":"Inspected exact controlled metadata result","checks":[{"name":"fixture","outcome":"passed","details":"Real scoped process reported its own attempt"}]}})).await?;
         occurrence_state(&mut fixture,&owner,&id,"succeeded").await?;
-        let second=timeout(Duration::from_secs(15),async {loop {
-            let view=data(call(&owner,"nesvo_get_job_occurrence",json!({"jobId":id,"occurrenceId":second_id})).await?)?;
-            if view["data"]["occurrence"]["state"]=="needsValidation" {return Ok::<_,anyhow::Error>(view);}
-            tokio::time::sleep(Duration::from_millis(80)).await;
-        }}).await;
+        let second=waits::occurrence(&owner,&id,&second_id,"needsValidation").await;
         let second=report_wait(&mut fixture,&id,"Explicit manual queue may run after definition disabled",second).await?;
         let next_run=second["data"]["occurrence"]["runId"].as_str().context("second run")?;
         let second_run=run_checkpoints::view(&owner,next_run).await?;

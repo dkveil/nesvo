@@ -10,28 +10,18 @@ async fn reply(owner: &Owner, name: &'static str, args: Value) -> Result<Value> 
 }
 
 async fn listener(fixture: &Fixture) -> Result<String> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            assert_eq!(doctor["jobTriggerListener"]["enabled"], true);
-            if doctor["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
-            }) {
-                let address = doctor["jobTriggerListener"]["address"]
-                    .as_str()
-                    .context("Nonsecret owned webhook listener address")?;
-                ensure!(
-                    address.starts_with("http://127.0.0.1:"),
-                    "Webhook listener must remain loopback"
-                );
-                return Ok::<_, anyhow::Error>(address.to_owned());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Discover enabled loopback listener and controlled provider")?
+    let doctor = waits::provider(fixture, "claude")
+        .await
+        .context("Discover enabled loopback listener and controlled provider")?;
+    assert_eq!(doctor["jobTriggerListener"]["enabled"], true);
+    let address = doctor["jobTriggerListener"]["address"]
+        .as_str()
+        .context("Nonsecret owned webhook listener address")?;
+    ensure!(
+        address.starts_with("http://127.0.0.1:"),
+        "Webhook listener must remain loopback"
+    );
+    Ok(address.to_owned())
 }
 
 fn job_spec(instruction: &str, overlap: &str) -> Value {
@@ -181,9 +171,10 @@ async fn http(fixture: &Fixture, address: &str, requests: Vec<Value>) -> Result<
         )?)
         .await?;
     drop(stdin);
-    let output = timeout(Duration::from_secs(8), child.wait_with_output())
+    let output = child
+        .wait_with_output()
         .await
-        .context("Owned HTTP sender bounded deadline")??;
+        .context("Owned HTTP sender")?;
     ensure!(
         output.status.success(),
         "Owned signed HTTP sender failed: {}",
@@ -237,14 +228,11 @@ fn file_count(fixture: &Fixture, suffix: &str) -> Result<usize> {
 }
 
 async fn observed_files(fixture: &Fixture, suffix: &str, wanted: usize) -> Result<()> {
-    timeout(Duration::from_secs(15),async {
-        loop {
-            let count = file_count(fixture,suffix)?;
-            ensure!(count<=wanted,"Duplicate controlled native effects: {suffix}");
-            if count==wanted {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(60)).await;
-        }
-    }).await.with_context(||format!("Controlled native {suffix} count did not reach {wanted} while owner clients were closed"))?
+    waits::until(async || {
+        let count = file_count(fixture,suffix)?;
+        ensure!(count<=wanted,"Duplicate controlled native effects: {suffix}");
+        Ok((count==wanted).then_some(()))
+    }).await.with_context(||format!("Controlled native {suffix} count did not reach {wanted} while owner clients were closed"))
 }
 
 async fn occurrence(owner: &Owner, job: &str, id: &str) -> Result<Value> {
@@ -376,7 +364,7 @@ async fn signed_webhook_dispatches_once_without_clients_and_retains_replay_acros
         phase="reconnect to the one actual native report";
         let owner=client(&fixture.pairing()).await?;
         let occurrence_id=delivery["occurrenceId"].as_str().context("Webhook occurrence")?;
-        let reported=job_cancellation::occurrence(&owner,job_id,occurrence_id,"needsValidation").await?;
+        let reported=waits::occurrence(&owner,job_id,occurrence_id,"needsValidation").await?;
         envelopes.extend(native_report(&owner,&reported["data"]["occurrence"]).await?);
         let read=budgets::owner_cli(&fixture,&["job","trigger","delivery",&id,delivery["deliveryId"].as_str().context("Public delivery ID")?,"--json"]).await?;
         let read_mcp=reply(&owner,"nesvo_get_job_trigger_delivery",json!({"id":id,"deliveryId":delivery["deliveryId"]})).await?;
@@ -384,7 +372,7 @@ async fn signed_webhook_dispatches_once_without_clients_and_retains_replay_acros
         assert_eq!(read["data"]["delivery"],delivery);
         let row=&reported["data"]["occurrence"];
         run_checkpoints::mutate(&owner,row["runId"].as_str().context("External run")?,"nesvo_validate_task_result",json!({"key":"validate-before-webhook-restart","attemptId":row["attemptId"],"validation":{"passed":true,"summary":"Inspected controlled external result","checks":[{"name":"fixture","outcome":"passed","details":"One actual scoped native report"}]}})).await?;
-        let succeeded=job_cancellation::occurrence(&owner,job_id,occurrence_id,"succeeded").await?;
+        let succeeded=waits::occurrence(&owner,job_id,occurrence_id,"succeeded").await?;
         owner.cancel().await?;
         phase="graceful restart preserves opt-in listener and delivery identity";
         fixture.restart(false).await?;
@@ -474,7 +462,7 @@ async fn github_signature_filters_and_unsigned_delivery_replays_cannot_duplicate
         observed_files(&fixture,".result.json",1).await?;
         assert_eq!(file_count(&fixture,".launch-argv.json")?,1);
         let owner=client(&fixture.pairing()).await?;
-        let current=job_cancellation::occurrence(&owner,job_id,delivery["occurrenceId"].as_str().context("GitHub occurrence")?,"needsValidation").await?;
+        let current=waits::occurrence(&owner,job_id,delivery["occurrenceId"].as_str().context("GitHub occurrence")?,"needsValidation").await?;
         envelopes.extend(native_report(&owner,&current["data"]["occurrence"]).await?);
         let deliveries=reply(&owner,"nesvo_get_job_trigger_deliveries",json!({"id":id})).await?;
         let rows=deliveries["data"]["deliveries"].as_array().context("GitHub retained receipts")?;
@@ -530,7 +518,7 @@ async fn disabled_receipts_stay_ignored_and_accepted_overlap_queue_waits_for_nat
         observed_files(&fixture,".launch-argv.json",1).await?;
         let owner=client(&fixture.pairing()).await?;
         let first_id=first_delivery["occurrenceId"].as_str().context("Held external occurrence")?;
-        let held=job_cancellation::occurrence(&owner,job_id,first_id,"running").await?;
+        let held=waits::occurrence(&owner,job_id,first_id,"running").await?;
         let first_session=held["data"]["occurrence"]["sessionId"].as_str().context("Held exact native worker")?;
         observed_output(&owner,first_session,"FIXTURE_HOLDING_RESPONSE").await?;
         let mut future=spec.clone();future["instruction"]="report-task".into();
@@ -558,7 +546,7 @@ async fn disabled_receipts_stay_ignored_and_accepted_overlap_queue_waits_for_nat
         let off_replay=enabled(&owner,&id,"disable-only-new-ingress",3,false).await?;
         assert_eq!(off_replay["data"],off["data"]);
         let cancel=budgets::owner_cli(&fixture,&["job","cancel",job_id,first_id,"--key","cancel-held-external-worker","--json"]).await?;
-        let canceled=job_cancellation::occurrence(&owner,job_id,first_id,"canceled").await?;
+        let canceled=waits::occurrence(&owner,job_id,first_id,"canceled").await?;
         let stopped=reply(&owner,"nesvo_get_session",json!({"sessionId":first_session})).await?;
         assert_eq!(stopped["data"]["session"]["running"],false);
         let control=reply(&owner,"nesvo_get_run_control",json!({"runId":held["data"]["occurrence"]["runId"],"controlId":canceled["data"]["occurrence"]["cancellation"]["controlId"]})).await?;
@@ -584,7 +572,7 @@ async fn disabled_receipts_stay_ignored_and_accepted_overlap_queue_waits_for_nat
         observed_files(&fixture,".result.json",1).await?;
         assert_eq!(file_count(&fixture,".launch-argv.json")?,2);
         let owner=client(&fixture.pairing()).await?;
-        let reported=job_cancellation::occurrence(&owner,job_id,second_id,"needsValidation").await?;
+        let reported=waits::occurrence(&owner,job_id,second_id,"needsValidation").await?;
         envelopes.extend(native_report(&owner,&reported["data"]["occurrence"]).await?);
         assert_eq!(reported["data"]["occurrence"]["jobRevision"],4);
         assert_eq!(held["data"]["occurrence"]["spec"]["instruction"],"hold-response");

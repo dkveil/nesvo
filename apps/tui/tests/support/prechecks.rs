@@ -200,40 +200,37 @@ async fn now(owner: &RunningService<RoleClient, ()>, job: &Value, key: &str) -> 
     )
 }
 async fn state(owner: &RunningService<RoleClient, ()>, job: &Value, wanted: &str) -> Result<Value> {
-    state_within(owner, job, wanted, Duration::from_secs(20)).await
-}
-async fn state_within(
-    owner: &RunningService<RoleClient, ()>,
-    job: &Value,
-    wanted: &str,
-    budget: Duration,
-) -> Result<Value> {
-    let mut last = Value::Null;
-    let observed = timeout(budget, async {
-        loop {
-            let history =
-                data(call(owner, "nesvo_get_job_history", json!({"jobId":job["id"]})).await?)?;
-            last = history.clone();
-            if let Some(id) = history["data"]["occurrences"]
-                .as_array()
-                .and_then(|rows| rows.iter().find(|r| r["state"] == wanted))
-                .and_then(|r| r["id"].as_str())
-            {
-                return data(
-                    call(
-                        owner,
-                        "nesvo_get_job_occurrence",
-                        json!({"jobId":job["id"],"occurrenceId":id}),
-                    )
-                    .await?,
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(60)).await;
+    let id = waits::until(async || {
+        let history =
+            data(call(owner, "nesvo_get_job_history", json!({"jobId":job["id"]})).await?)?;
+        let rows = history["data"]["occurrences"]
+            .as_array()
+            .context("Precheck job history")?;
+        if let Some(id) = rows
+            .iter()
+            .find(|r| r["state"] == wanted)
+            .and_then(|r| r["id"].as_str())
+        {
+            return Ok(Some(id.to_owned()));
         }
+        ensure!(
+            rows.is_empty()
+                || !rows
+                    .iter()
+                    .all(|r| waits::is_settled_occurrence(&r["state"])),
+            "Precheck occurrence settled before reaching {wanted}; history: {history}"
+        );
+        Ok(None)
     })
-    .await;
-    observed
-        .with_context(|| format!("Precheck occurrence outcome {wanted}; last history: {last}"))?
+    .await?;
+    data(
+        call(
+            owner,
+            "nesvo_get_job_occurrence",
+            json!({"jobId":job["id"],"occurrenceId":id}),
+        )
+        .await?,
+    )
 }
 async fn no_model(owner: &RunningService<RoleClient, ()>) -> Result<()> {
     let sessions = data(call(owner, "nesvo_list_sessions", json!({})).await?)?;
@@ -266,15 +263,8 @@ async fn owner_prechecks_skip_fail_revoke_and_pass_before_native_dispatch() -> R
         let due = chrono::Utc::now() + chrono::Duration::seconds(5);
         let job = create(&owner, "disconnected-skip", Some(&skip), due).await?;
         owner.cancel().await?;
-        let ready = timeout(Duration::from_secs(12), async {
-            loop {
-                if directory.join("effects.log").exists() {
-                    return Ok::<_, anyhow::Error>(());
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await;
+        let ready =
+            waits::until(async || Ok(directory.join("effects.log").exists().then_some(()))).await;
         let owner = client(&f.pairing()).await?;
         if ready.is_err() {
             let history =
@@ -288,9 +278,9 @@ async fn owner_prechecks_skip_fail_revoke_and_pass_before_native_dispatch() -> R
                 )
                 .await?,
             )?;
-            anyhow::bail!("Precheck did not execute before timeout; retained detail: {detail}");
+            anyhow::bail!("Precheck did not execute; retained detail: {detail}");
         }
-        ready??;
+        ready?;
         let skipped = state(&owner, &job, "skipped").await?;
         let o = &skipped["data"]["occurrence"];
         assert_eq!(o["reason"], "precheck_skip");
@@ -620,9 +610,21 @@ async fn slow_prechecks_do_not_starve_unrelated_due_jobs_or_free_all_dispatch_ca
         }
         let due = chrono::Utc::now() + chrono::Duration::seconds(1);
         let fast = create(&owner, "independent-clock", None, due).await?;
-        let report = state_within(&owner, &fast, "needsValidation", Duration::from_secs(8))
-            .await
-            .context("Slow prechecks must not block an unrelated scheduled job")?;
+        let report = waits::until(async || {
+            let history = data(call(&owner, "nesvo_get_job_history", json!({"jobId":fast["id"]})).await?)?;
+            let reported = history["data"]["occurrences"].as_array().and_then(|rows| rows.iter().find(|r| r["state"] == "needsValidation")).and_then(|r| r["id"].as_str()).map(str::to_owned);
+            for (job, occurrence) in &held {
+                let current = data(call(&owner, "nesvo_get_job_occurrence", json!({"jobId":job,"occurrenceId":occurrence})).await?)?;
+                ensure!(current["data"]["occurrence"]["precheck"]["finishedAt"].is_null(), "A held precheck finished within its published command budget before the unrelated job reported, so fairness is unproven: {current}; unrelated history: {history}");
+            }
+            if let Some(id) = &history["data"]["occurrences"].as_array().and_then(|rows| rows.iter().find(|r| waits::is_settled_occurrence(&r["state"]))) {
+                anyhow::bail!("Unrelated scheduled job settled before reporting: {id}");
+            }
+            Ok(reported)
+        })
+        .await
+        .context("Slow prechecks must not block an unrelated scheduled job")?;
+        let report = data(call(&owner, "nesvo_get_job_occurrence", json!({"jobId":fast["id"],"occurrenceId":report})).await?)?;
         assert!(report["data"]["occurrence"]["precheck"].is_null());
         let release = directory.join("release");
         std::fs::write(&release, "explicit fixture release").with_context(|| {
@@ -631,48 +633,30 @@ async fn slow_prechecks_do_not_starve_unrelated_due_jobs_or_free_all_dispatch_ca
                 release.display()
             )
         })?;
-        // This follows the unchanged eight-second fairness assertion. A release
-        // file is intent, not proof that all three native command scopes exited.
-        // Await exact durable cleanup evidence before deleting their executable
-        // and working directories, especially on Windows.
-        let mut last = Vec::new();
-        timeout(Duration::from_secs(6), async {
-            loop {
-                let mut settled = true;
-                let mut observed = Vec::new();
-                for (job, occurrence) in &held {
-                    let current = data(
-                        call(
-                            &owner,
-                            "nesvo_get_job_occurrence",
-                            json!({"jobId":job,"occurrenceId":occurrence}),
-                        )
-                        .await?,
-                    )?;
-                    let precheck = &current["data"]["occurrence"]["precheck"];
-                    settled &= precheck["finishedAt"].is_number()
-                        && precheck["result"]["cleanupConfirmed"] == true;
-                    observed
-                        .push(json!({"jobId":job,"occurrenceId":occurrence,"precheck":precheck}));
-                }
-                if settled {
-                    return Ok::<_, anyhow::Error>(());
-                }
-                last = observed;
-                tokio::time::sleep(Duration::from_millis(40)).await;
+        waits::until(async || {
+            let mut settled = true;
+            for (job, occurrence) in &held {
+                let current = data(
+                    call(
+                        &owner,
+                        "nesvo_get_job_occurrence",
+                        json!({"jobId":job,"occurrenceId":occurrence}),
+                    )
+                    .await?,
+                )?;
+                let precheck = &current["data"]["occurrence"]["precheck"];
+                let finished = precheck["finishedAt"].is_number();
+                ensure!(
+                    !finished || precheck["result"]["cleanupConfirmed"] == true,
+                    "Released precheck scope finished without confirmed cleanup: {}",
+                    json!({"jobId":job,"occurrenceId":occurrence,"precheck":precheck})
+                );
+                settled &= finished;
             }
+            Ok(settled.then_some(()))
         })
         .await
-        .with_context(|| {
-            format!(
-                "Await cleanup of three exact released precheck scopes; last: {}",
-                serde_json::to_string(&last)
-                    .unwrap_or_default()
-                    .chars()
-                    .take(8192)
-                    .collect::<String>()
-            )
-        })??;
+        .context("Await cleanup of three exact released precheck scopes")?;
         run_checkpoints::schema(vec![report]).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
@@ -760,26 +744,9 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
             active_cancel["data"]["occurrence"]["cancellation"]["state"],
             "awaitingPrecheck"
         );
-        let mut last = Value::Null;
-        let completed = timeout(Duration::from_secs(6), async {
-            loop {
-                let current = data(
-                    call(
-                        &owner,
-                        "nesvo_get_job_occurrence",
-                        json!({"jobId":job_id,"occurrenceId":active_id}),
-                    )
-                    .await?,
-                )?;
-                if current["data"]["occurrence"]["state"] == "canceled" {
-                    return Ok::<_, anyhow::Error>(current);
-                }
-                last = current;
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .with_context(|| format!("Canceled command cleanup was not confirmed; last: {last}"))??;
+        let completed = waits::occurrence(&owner, job_id, active_id, "canceled")
+            .await
+            .context("Canceled command cleanup was not confirmed")?;
         let current = &completed["data"]["occurrence"];
         assert_eq!(current["cancellation"]["state"], "completed");
         assert_eq!(current["reason"], "owner_canceled");
@@ -951,10 +918,11 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
         // The same graceful stdin-close path used by the fixture is the action
         // under test. No release file, cancellation API or process kill is used.
         drop(f.host.stdin.take());
-        let status = timeout(Duration::from_secs(10), f.host.wait())
+        let status = f
+            .host
+            .wait()
             .await
-            .context("Graceful owned host exit while precheck descendants are active")?
-            .context("Reap gracefully stopped native host")?;
+            .context("Graceful owned host exit while precheck descendants are active")?;
         ensure!(
             status.success(),
             "Native host did not confirm its runtime shutdown: {status}"

@@ -5,26 +5,9 @@ async fn reported_occurrence(
     job: &str,
     occurrence: &str,
 ) -> Result<Value> {
-    let mut last = Value::Null;
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let view = data(
-                call(
-                    owner,
-                    "nesvo_get_job_occurrence",
-                    json!({"jobId":job,"occurrenceId":occurrence}),
-                )
-                .await?,
-            )?;
-            if view["data"]["occurrence"]["state"] == "needsValidation" {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            last = view;
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .with_context(|| format!("Job generation did not retain its worker result; last: {last}"))?
+    waits::occurrence(owner, job, occurrence, "needsValidation")
+        .await
+        .context("Job generation did not retain its worker result")
 }
 
 fn diagnostic_fields(value: &Value, fields: &[&str]) -> Value {
@@ -78,7 +61,6 @@ async fn failed_initial_report_diagnostics(
         "jobId":job,"occurrenceId":occurrence,
         "host":diagnostic_fields(&actual["host"],&["exited","exitCode"]),
         "providerProbe":diagnostic_fields(&actual["providerProbe"],&["providerVersions","eventJournal"]),
-        "diagnosticDeadlineElapsed":actual["diagnosticDeadlineElapsed"],
         "occurrence":diagnostic_fields(current,&[
             "id","state","reason","runId","attemptId","sessionId","jobAttemptId","launchReceiptId"
         ]),
@@ -133,40 +115,35 @@ async fn failed_initial_report_diagnostics(
             "reportReplyOk":result.as_ref().and_then(|reply| reply["ok"].as_bool()),
             "reportReplyErrorCode":reply_code
         });
-        diagnostics["explain"] = match timeout(
-            Duration::from_millis(600),
-            call(owner, "nesvo_explain_session", json!({"sessionId":session})),
-        )
-        .await
-        {
-            Ok(Ok(reply)) => match reply.structured_content {
-                Some(reply) if reply["ok"] == true => match reply["data"]["report"]["sessions"]
-                    .as_array()
-                    .and_then(|sessions| {
-                        sessions.iter().find(|entry| entry["sessionId"] == session)
-                    }) {
-                    Some(entry) => diagnostic_fields(
-                        entry,
-                        &[
-                            "sessionId",
-                            "running",
-                            "processIdentity",
-                            "inputOperation",
-                            "integration",
-                            "status",
-                            "readiness",
-                            "turn",
-                            "publicationLatency",
-                        ],
-                    ),
-                    None => json!({"errorCode":"diagnostic_session_unavailable"}),
+        diagnostics["explain"] =
+            match call(owner, "nesvo_explain_session", json!({"sessionId":session})).await {
+                Ok(reply) => match reply.structured_content {
+                    Some(reply) if reply["ok"] == true => match reply["data"]["report"]["sessions"]
+                        .as_array()
+                        .and_then(|sessions| {
+                            sessions.iter().find(|entry| entry["sessionId"] == session)
+                        }) {
+                        Some(entry) => diagnostic_fields(
+                            entry,
+                            &[
+                                "sessionId",
+                                "running",
+                                "processIdentity",
+                                "inputOperation",
+                                "integration",
+                                "status",
+                                "readiness",
+                                "turn",
+                                "publicationLatency",
+                            ],
+                        ),
+                        None => json!({"errorCode":"diagnostic_session_unavailable"}),
+                    },
+                    Some(reply) => json!({"errorCode":reply["error"]["code"]}),
+                    None => json!({"errorCode":"diagnostic_response_unavailable"}),
                 },
-                Some(reply) => json!({"errorCode":reply["error"]["code"]}),
-                None => json!({"errorCode":"diagnostic_response_unavailable"}),
-            },
-            Ok(Err(_)) => json!({"errorCode":"diagnostic_transport_unavailable"}),
-            Err(_) => json!({"errorCode":"diagnostic_deadline_elapsed"}),
-        };
+                Err(_) => json!({"errorCode":"diagnostic_transport_unavailable"}),
+            };
     }
     diagnostics
 }

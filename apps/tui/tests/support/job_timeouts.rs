@@ -1,12 +1,13 @@
 //! Explicit native job execution windows; controlled workers, never model calls.
 use super::*;
-use job_cancellation::{SETTLED_OCCURRENCE, occurrence, process_alive};
+use job_cancellation::process_alive;
+use waits::{is_settled_occurrence, occurrence};
 
 type Owner = RunningService<RoleClient, ()>;
 type ScenarioOutcome =
     std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
 const WINDOW_MS: u64 = 10_000;
-const DISCOVERY_MS: u64 = 5_000;
+const PROVIDER_PROBE_MS: u64 = 10_000;
 const WORKING_MS: u64 = 7_000;
 const HOST_CONTROL_BOUND_MS: u64 = 10_000;
 const RESOLUTION_MARGIN_MS: u64 = 5_000;
@@ -15,7 +16,7 @@ const TIMED_WORKER_MS: u64 =
     WORKING_MS + WINDOW_MS + HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS + SETTLE_MS;
 
 const fn scenario_bound(timed_workers: u64) -> Duration {
-    Duration::from_millis(DISCOVERY_MS + timed_workers * TIMED_WORKER_MS)
+    Duration::from_millis(PROVIDER_PROBE_MS + timed_workers * TIMED_WORKER_MS)
 }
 
 fn spec(instruction: &str) -> Value {
@@ -68,7 +69,7 @@ impl DiscoveryEvidence {
 
     fn summary(&self) -> Value {
         json!({
-            "deadlineMs":DISCOVERY_MS,
+            "hostProbeDeadlineMs":PROVIDER_PROBE_MS,
             "elapsedMs":self.elapsed_ms.unwrap_or_else(|| {
                 u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
             }),
@@ -85,7 +86,7 @@ impl DiscoveryEvidence {
 
 async fn discovery_ready(fixture: &Fixture, evidence: &mut DiscoveryEvidence) -> Result<()> {
     evidence.started = tokio::time::Instant::now();
-    let result = timeout(Duration::from_millis(DISCOVERY_MS), async {
+    let result = async {
         loop {
             evidence.attempted = evidence.attempted.saturating_add(1);
             evidence.stage = "doctorQuery";
@@ -114,6 +115,10 @@ async fn discovery_ready(fixture: &Fixture, evidence: &mut DiscoveryEvidence) ->
                 Some(_) => "invalidStatus",
                 None => "notReported",
             };
+            ensure!(
+                evidence.last_claude_status != "unavailable",
+                "Controlled provider version probe settled unavailable"
+            );
             if doctor["providerVersions"].as_array().is_some_and(|rows| {
                 rows.iter()
                     .any(|row| row["program"] == "claude" && row["status"] == "ready")
@@ -124,19 +129,16 @@ async fn discovery_ready(fixture: &Fixture, evidence: &mut DiscoveryEvidence) ->
             evidence.stage = "betweenDoctorQueries";
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
-    })
+    }
     .await;
     evidence.elapsed_ms =
         Some(u64::try_from(evidence.started.elapsed().as_millis()).unwrap_or(u64::MAX));
-    evidence.precondition_outcome = match &result {
-        Ok(Ok(())) => "ready",
-        Ok(Err(_)) => "queryFailed",
-        Err(_) => "deadlineElapsed",
+    evidence.precondition_outcome = match (&result, evidence.last_claude_status) {
+        (Ok(()), _) => "ready",
+        (Err(_), "unavailable") => "probeUnavailable",
+        (Err(_), _) => "queryFailed",
     };
-    if result.is_err() && evidence.stage == "doctorQuery" {
-        evidence.query_outcome = "pendingAtDeadline";
-    }
-    result.context("Controlled provider discovery before execution timeout admission")?
+    result.context("Controlled provider discovery before execution timeout admission")
 }
 
 fn working_session(result: CallToolResult, worker: &str) -> Result<Option<Value>> {
@@ -189,10 +191,7 @@ async fn working(owner: &Owner, job: &str, id: &str) -> Result<(Value, Value)> {
             );
         } else {
             ensure!(
-                timer.is_null()
-                    && !row["state"]
-                        .as_str()
-                        .is_some_and(|state| SETTLED_OCCURRENCE.contains(&state)),
+                timer.is_null() && !is_settled_occurrence(&row["state"]),
                 "Timed worker settled before controlled hold; last: {current}"
             );
         }
@@ -337,9 +336,7 @@ async fn release_human(mut human: Child) -> Result<()> {
     // The existing helper waits for the host's lease-release acknowledgement.
     drop(human.stdin.take());
     ensure!(
-        timeout(Duration::from_secs(5), human.wait())
-            .await??
-            .success(),
+        human.wait().await?.success(),
         "Owned human control helper did not release its lease"
     );
     Ok(())

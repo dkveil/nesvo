@@ -1,35 +1,5 @@
 use super::*;
-
-pub(super) async fn occurrence(
-    owner: &RunningService<RoleClient, ()>,
-    job: &str,
-    id: &str,
-    wanted: &str,
-) -> Result<Value> {
-    loop {
-        let view = data(
-            call(
-                owner,
-                "nesvo_get_job_occurrence",
-                json!({"jobId":job,"occurrenceId":id}),
-            )
-            .await?,
-        )?;
-        let state = &view["data"]["occurrence"]["state"];
-        if state == wanted {
-            return Ok(view);
-        }
-        ensure!(
-            !state
-                .as_str()
-                .is_some_and(|state| SETTLED_OCCURRENCE.contains(&state)),
-            "Bound occurrence settled before reaching {wanted}: {view}"
-        );
-        tokio::time::sleep(Duration::from_millis(40)).await;
-    }
-}
-
-pub(super) const SETTLED_OCCURRENCE: [&str; 4] = ["succeeded", "failed", "skipped", "canceled"];
+use waits::occurrence;
 
 fn diagnostic_fields(value: &Value, fields: &[&str]) -> Value {
     Value::Object(
@@ -82,7 +52,6 @@ async fn failed_initial_report_diagnostics(
         "jobId":job,"occurrenceId":occurrence,
         "host":diagnostic_fields(&actual["host"],&["exited","exitCode"]),
         "providerProbe":diagnostic_fields(&actual["providerProbe"],&["providerVersions","eventJournal"]),
-        "diagnosticDeadlineElapsed":actual["diagnosticDeadlineElapsed"],
         "occurrence":diagnostic_fields(current,&[
             "id","state","reason","runId","attemptId","sessionId","jobAttemptId","launchReceiptId"
         ]),
@@ -101,13 +70,9 @@ async fn failed_initial_report_diagnostics(
         ])
     });
     if let Some(session) = current["sessionId"].as_str() {
-        let explain = timeout(
-            Duration::from_millis(600),
-            call(owner, "nesvo_explain_session", json!({"sessionId":session})),
-        )
-        .await;
+        let explain = call(owner, "nesvo_explain_session", json!({"sessionId":session})).await;
         diagnostics["explain"] = match explain {
-            Ok(Ok(reply)) => match reply.structured_content {
+            Ok(reply) => match reply.structured_content {
                 Some(reply) if reply["ok"] == true => match reply["data"]["report"]["sessions"]
                     .as_array()
                     .and_then(|sessions| {
@@ -132,8 +97,7 @@ async fn failed_initial_report_diagnostics(
                 Some(reply) => json!({"errorCode":reply["error"]["code"]}),
                 None => json!({"errorCode":"diagnostic_response_unavailable"}),
             },
-            Ok(Err(_)) => json!({"errorCode":"diagnostic_transport_unavailable"}),
-            Err(_) => json!({"errorCode":"diagnostic_deadline_elapsed"}),
+            Err(_) => json!({"errorCode":"diagnostic_transport_unavailable"}),
         };
     }
     diagnostics

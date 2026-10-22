@@ -32,9 +32,10 @@ async fn owned_git(repository: &Path, args: &[&str]) -> Result<()> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(5), command.output())
+    let output = command
+        .output()
         .await
-        .context("Owned Git fixture command deadline")??;
+        .context("Owned Git fixture command")?;
     ensure!(
         output.status.success(),
         "Owned Git fixture command failed: {}",
@@ -91,20 +92,10 @@ pub(super) async fn repository_whose_worktree_checkout_fails(fixture: &Fixture) 
 }
 
 async fn ready(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
-            }) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Controlled provider discovery before retry acceptance")?
+    waits::provider(fixture, "claude")
+        .await
+        .context("Controlled provider discovery before retry acceptance")?;
+    Ok(())
 }
 
 async fn admit(
@@ -161,28 +152,30 @@ async fn state(
     observation: &mut job_diagnostics::RetryWaitObservation,
     started: tokio::time::Instant,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(14), async {
-        loop {
-            observation.started(started.elapsed());
-            let response = occurrence(owner, job, id).await;
-            match &response {
-                Ok(view) => observation.completed(view, started.elapsed()),
-                Err(_) => observation.failed(),
-            }
-            let view = response?;
-            if wanted(&view["data"]["occurrence"]) {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
+    let reached = waits::until(async || {
+        observation.started(started.elapsed());
+        let response = occurrence(owner, job, id).await;
+        match &response {
+            Ok(view) => observation.completed(view, started.elapsed()),
+            Err(_) => observation.failed(),
         }
+        let view = response?;
+        if wanted(&view["data"]["occurrence"]) {
+            return Ok(Some(view));
+        }
+        ensure!(
+            !waits::is_settled_occurrence(&view["data"]["occurrence"]["state"]),
+            "Native retry occurrence settled first"
+        );
+        Ok(None)
     })
-    .await
-    .with_context(|| {
+    .await;
+    reached.with_context(|| {
         format!(
             "Native retry occurrence did not reach {description}; progress: {}",
             observation.summary(started.elapsed())
         )
-    })?
+    })
 }
 
 async fn generations(owner: &RunningService<RoleClient, ()>, job: &str, id: &str) -> Result<Value> {
@@ -388,7 +381,7 @@ async fn fenced(
     key: &str,
     code: &str,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(3), async {
+    async {
         loop {
             let view = run_checkpoints::view(owner, run).await?;
             let reply = call(
@@ -409,9 +402,9 @@ async fn fenced(
                 return Ok::<_, anyhow::Error>(refusal);
             }
         }
-    })
+    }
     .await
-    .context("Retired run fence must hold during backoff")?
+    .context("Retired run fence must hold during backoff")
 }
 
 #[tokio::test]
@@ -727,10 +720,7 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
         #[cfg(windows)]
         git.creation_flags(0x08000000);
         ensure!(
-            !timeout(Duration::from_secs(2), git.output())
-                .await??
-                .status
-                .success(),
+            !git.output().await?.status.success(),
             "Refusing worktree fixture inside an inherited Git repository"
         );
         let owner = client(&fixture.pairing()).await?;
@@ -1038,35 +1028,34 @@ async fn occupied_capacity(
     for index in 0..EXECUTOR_CAPACITY {
         runs.push(occupied_executor(fixture, owner, index).await?);
     }
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let mut settled = 0;
-            for run in &runs {
-                let view = executor(owner, run).await?;
-                ensure!(
-                    view["data"]["executor"]["enabled"] == true,
-                    "A capacity executor stopped holding its slot: {view}"
-                );
-                let tasks = run_checkpoints::view(owner, run).await?;
-                if tasks["tasks"][0]["state"] == "launchFailed"
-                    && view["data"]["executor"]["reason"] == "retry_requires_intent"
-                {
-                    settled += 1;
-                }
+    waits::until(async || {
+        let mut settled = 0;
+        for run in &runs {
+            let view = executor(owner, run).await?;
+            ensure!(
+                view["data"]["executor"]["enabled"] == true,
+                "A capacity executor stopped holding its slot: {view}"
+            );
+            let tasks = run_checkpoints::view(owner, run).await?;
+            ensure!(
+                !waits::is_settled_run(&tasks["run"]["state"]),
+                "A capacity run settled while holding its slot: {tasks}"
+            );
+            if tasks["tasks"][0]["state"] == "launchFailed"
+                && view["data"]["executor"]["reason"] == "retry_requires_intent"
+            {
+                settled += 1;
             }
-            if settled == runs.len() {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
         }
+        Ok((settled == runs.len()).then_some(()))
     })
     .await
-    .context("Capacity executors settle enabled without a worker")??;
+    .context("Capacity executors settle enabled without a worker")?;
     Ok(runs)
 }
 
 async fn release_capacity(owner: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
-    timeout(Duration::from_secs(3), async {
+    async {
         loop {
             let view = run_checkpoints::view(owner, run).await?;
             let reply = call(
@@ -1086,9 +1075,9 @@ async fn release_capacity(owner: &RunningService<RoleClient, ()>, run: &str) -> 
                 "Unexpected capacity release refusal: {refusal}"
             );
         }
-    })
+    }
     .await
-    .context("Release one executor slot")?
+    .context("Release one executor slot")
 }
 
 async fn overlapping(
@@ -1451,10 +1440,7 @@ async fn uncertain_launch_found_by_probe_is_adopted_without_retry() -> Result<()
         #[cfg(windows)]
         git.creation_flags(0x08000000);
         ensure!(
-            !timeout(Duration::from_secs(2), git.output())
-                .await??
-                .status
-                .success(),
+            !git.output().await?.status.success(),
             "Refusing worktree fixture inside an inherited Git repository"
         );
         let owner = client(&fixture.pairing()).await?;

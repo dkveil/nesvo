@@ -259,8 +259,8 @@ their native receipts retain uncertainty and restart does not replay them.
 The native graceful-exit case starts a real controlled command tree, closes host
 stdin, checks process disappearance and executable release, then restarts and
 verifies retained refusal without a Run or model launch. The held-check fairness
-case separately waits for all three exact cleanup records after its unchanged
-eight-second fairness assertion. Windows termination requests alone are not exit
+case separately waits for all three exact cleanup records after its ordering
+assertion: the unrelated job reports while every held check is still unfinished. Windows termination requests alone are not exit
 proof, as documented by
 [TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess).
 

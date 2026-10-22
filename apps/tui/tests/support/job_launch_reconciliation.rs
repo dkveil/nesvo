@@ -3,7 +3,6 @@ use super::*;
 type Owner = RunningService<RoleClient, ()>;
 type ScenarioOutcome =
     std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
-const PREPARATION_AND_FILTER_MARKER_DEADLINE: Duration = Duration::from_secs(10);
 
 async fn reply(owner: &Owner, name: &'static str, args: Value) -> Result<Value> {
     data(call(owner, name, args).await?)
@@ -19,20 +18,18 @@ async fn read(owner: &Owner, job: &str, occurrence: &str) -> Result<Value> {
 }
 
 async fn ready(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
-            }) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Controlled provider discovery before launch reconciliation")?
+    waits::provider(fixture, "claude")
+        .await
+        .context("Controlled provider discovery before launch reconciliation")?;
+    Ok(())
+}
+
+fn ensure_unsettled(view: &Value, wanted: &str) -> Result<()> {
+    ensure!(
+        !waits::is_settled_occurrence(&view["data"]["occurrence"]["state"]),
+        "Occurrence settled before {wanted}: {view}"
+    );
+    Ok(())
 }
 
 async fn git(repository: &Path, args: &[&str]) -> Result<String> {
@@ -44,9 +41,10 @@ async fn git(repository: &Path, args: &[&str]) -> Result<String> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(5), command.output())
+    let output = command
+        .output()
         .await
-        .context("Owned Git fixture command deadline")??;
+        .context("Owned Git fixture command")?;
     ensure!(
         output.status.success(),
         "Owned Git fixture command failed: {}",
@@ -181,9 +179,7 @@ async fn claimed_before_filter_release(
 ) -> Result<Value> {
     let marker = fixture.directory.join("job-launch-filter-started.json");
     let finished = fixture.directory.join("job-launch-filter-finished.json");
-    let mut last = Value::Null;
-    timeout(PREPARATION_AND_FILTER_MARKER_DEADLINE, async {
-        loop {
+    waits::until(async || {
             let view = read(owner, job, id).await?;
             if marker.is_file() && view["data"]["occurrence"]["executionTimeout"]["state"] == "dispatching" {
                 ensure!(!finished.exists(), "Filter ended before observing its claimed timeout; late-failure ordering is unproven");
@@ -192,32 +188,29 @@ async fn claimed_before_filter_release(
                 assert!(row["executionTimeout"]["controlId"].is_null(), "Native launch still owns the run permit");
                 let receipt = reply(owner,"nesvo_get_operation",json!({"id":row["launchReceiptId"]})).await?;
                 assert_eq!(receipt["data"]["receipt"]["phase"], "dispatching", "Git has not returned a completed create receipt yet");
-                return Ok::<_, anyhow::Error>(view);
+                return Ok(Some(view));
             }
-            last = view;
-            tokio::time::sleep(Duration::from_millis(30)).await;
-        }
+            ensure_unsettled(&view, "the claimed execution timer")?;
+            ensure!(!finished.exists(), "Filter ended before its execution timer was claimed: {view}");
+            ensure!(matches!(view["data"]["occurrence"]["executionTimeout"]["state"].as_str(), None | Some("armed" | "dispatching")),
+                "Execution timer resolved before the held Git checkout was observed: {view}");
+            Ok(None)
     })
     .await
-    .with_context(|| format!("No claimed execution timer while real Git checkout is held; last: {last}"))?
+    .context("No claimed execution timer while real Git checkout is held")
 }
 
 async fn available(owner: &Owner, job: &str, id: &str) -> Result<Value> {
-    let mut last = Value::Null;
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let view = read(owner, job, id).await?;
-            if view["data"]["occurrence"]["launchReconciliation"]["available"] == true {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            last = view;
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    waits::until(async || {
+        let view = read(owner, job, id).await?;
+        if view["data"]["occurrence"]["launchReconciliation"]["available"] == true {
+            return Ok(Some(view));
         }
+        ensure_unsettled(&view, "owner reconciliation")?;
+        Ok(None)
     })
     .await
-    .with_context(|| {
-        format!("Real late no-effect launch did not become owner-reconcilable; last: {last}")
-    })?
+    .context("Real late no-effect launch did not become owner-reconcilable")
 }
 
 async fn refusal(owner: &Owner, name: &'static str, args: Value, wanted: &str) -> Result<Value> {
@@ -435,21 +428,18 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
         assert_eq!(launched_workers(&fixture)?,0);
         std::fs::write(fixture.directory.join("job-launch-filter-release"),"release after claimed timeout")?;
         phase = "actual Git unknown receipt and finished cleanup observation";
-        let mut last = Value::Null;
-        let unresolved = timeout(Duration::from_secs(10),async {
-            loop {
-                let view = read(&owner,job,id).await?;
-                let row = &view["data"]["occurrence"];
-                if matches!(row["executionTimeout"]["state"].as_str(),Some("blocked"|"unconfirmed")) {
-                    let receipt = reply(&owner,"nesvo_get_operation",json!({"id":row["launchReceiptId"]})).await?;
-                    if receipt["data"]["receipt"]["phase"] == "unknown" {
-                        return Ok::<_,anyhow::Error>(view);
-                    }
-                }
-                last = view;
-                tokio::time::sleep(Duration::from_millis(50)).await;
+        let unresolved = waits::until(async || {
+            let view = read(&owner,job,id).await?;
+            let row = &view["data"]["occurrence"];
+            if matches!(row["executionTimeout"]["state"].as_str(),Some("blocked"|"unconfirmed")) {
+                let receipt = reply(&owner,"nesvo_get_operation",json!({"id":row["launchReceiptId"]})).await?;
+                if receipt["data"]["receipt"]["phase"] == "unknown" {return Ok(Some(view));}
+                ensure!(matches!(receipt["data"]["receipt"]["phase"].as_str(),Some("accepted"|"dispatching")),"Late Git launch settled without unknown effects: {receipt}");
             }
-        }).await.with_context(||format!("Late Git unknown cleanup did not settle; last: {last}"))??;
+            ensure_unsettled(&view,"the unknown Git cleanup")?;
+            ensure!(!matches!(row["executionTimeout"]["state"].as_str(),Some("completed"|"disarmed")),"Execution timer resolved past the unknown Git cleanup: {view}");
+            Ok(None)
+        }).await.context("Late Git unknown cleanup did not settle")?;
         let row = &unresolved["data"]["occurrence"];
         let descriptor = &row["launchReconciliation"];
         identity(row,descriptor);
@@ -486,7 +476,7 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
         let mut cli = Command::new(env!("CARGO_BIN_EXE_nesvo"));
         cli.arg("--pairing").arg(fixture.pairing()).args(["job","abandon-launch",job,id,"--job-attempt-id",row["jobAttemptId"].as_str().context("Unknown exact generation")?,"--key","refuse-unknown-native-effects-cli","--digest",&"0".repeat(64),"--acknowledge-unknown-effects","--json"]).stdin(Stdio::null()).kill_on_drop(true);
         #[cfg(windows)] cli.creation_flags(0x08000000);
-        let rejected = timeout(Duration::from_secs(5),cli.output()).await??;
+        let rejected = cli.output().await?;
         ensure!(!rejected.status.success(),"CLI acknowledged genuinely unknown native effects");
         let rejected:Value = serde_json::from_slice(&rejected.stdout)?;
         assert_eq!(rejected["error"]["code"],"occurrence_conflict");
@@ -613,7 +603,7 @@ async fn owner_abandons_proven_preflight_failure_and_deliberately_starts_a_new_o
         let separate = reply(&owner,"nesvo_run_job_now",json!({"key":"deliberate-new-occurrence","jobId":job,"expectedRevision":2})).await?;
         let second = separate["data"]["occurrence"]["id"].as_str().context("Separate deliberate occurrence")?;
         assert_ne!(second,id);
-        let reported = job_cancellation::occurrence(&owner,job,second,"needsValidation").await?;
+        let reported = waits::occurrence(&owner,job,second,"needsValidation").await?;
         let next = &reported["data"]["occurrence"];
         assert_eq!(next["jobAttemptOrdinal"],1);
         assert!(next["executionTimeout"].is_null() && next["retry"].is_null() && next["launchResolution"].is_null());

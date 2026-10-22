@@ -69,85 +69,63 @@ pub(super) async fn context_revision(
     directory: &Path,
     expected: u64,
 ) -> Result<Value> {
-    let mut last = Value::Null;
-    timeout(Duration::from_secs(15), async {
-        loop {
-            let current = context_query(owner, directory, false).await?;
-            if row(&current)?["revision"]
-                .as_u64()
-                .is_some_and(|revision| revision >= expected)
-            {
-                return Ok::<_, anyhow::Error>(current);
-            }
-            last = current;
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
+    waits::until(async || {
+        let current = context_query(owner, directory, false).await?;
+        let reached = row(&current)?["revision"]
+            .as_u64()
+            .is_some_and(|revision| revision >= expected);
+        Ok(reached.then_some(current))
     })
     .await
-    .with_context(|| format!("Context quota revision {expected} not observed; last: {last}"))?
+    .with_context(|| format!("Context quota revision {expected} not observed"))
 }
 
 pub(super) async fn context_refresh(
     owner: &RunningService<RoleClient, ()>,
     directory: &Path,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let accepted = context_query(owner, directory, true).await?;
-            match accepted["data"]["refresh"]["state"].as_str() {
-                Some("queued" | "pending") => return Ok::<_, anyhow::Error>(accepted),
-                Some("cooldown") => {
-                    let delay = accepted["data"]["refresh"]["retryAfterMs"]
-                        .as_u64()
-                        .context("Context cooldown")?;
-                    tokio::time::sleep(Duration::from_millis(delay.clamp(1, 5000))).await;
-                }
-                _ => anyhow::bail!("Unknown context refresh: {accepted}"),
+    loop {
+        let accepted = context_query(owner, directory, true).await?;
+        match accepted["data"]["refresh"]["state"].as_str() {
+            Some("queued" | "pending") => return Ok(accepted),
+            Some("cooldown") => {
+                let delay = accepted["data"]["refresh"]["retryAfterMs"]
+                    .as_u64()
+                    .context("Context cooldown")?;
+                tokio::time::sleep(Duration::from_millis(delay.clamp(1, 5000))).await;
             }
+            _ => anyhow::bail!("Unknown context refresh: {accepted}"),
         }
-    })
-    .await
-    .context("Bounded contextual owner refresh")?
+    }
 }
 
 async fn revision(owner: &RunningService<RoleClient, ()>, expected: u64) -> Result<Value> {
-    let mut last = Value::Null;
-    timeout(Duration::from_secs(12), async {
-        loop {
-            let current = query(owner, false).await?;
-            if row(&current)?["revision"]
-                .as_u64()
-                .is_some_and(|value| value >= expected)
-            {
-                return Ok::<_, anyhow::Error>(current);
-            }
-            last = current;
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
+    waits::until(async || {
+        let current = query(owner, false).await?;
+        let reached = row(&current)?["revision"]
+            .as_u64()
+            .is_some_and(|value| value >= expected);
+        Ok(reached.then_some(current))
     })
     .await
-    .with_context(|| format!("Quota revision {expected} not observed; last: {last}"))?
+    .with_context(|| format!("Quota revision {expected} not observed"))
 }
 
 async fn refresh(owner: &RunningService<RoleClient, ()>) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let accepted = query(owner, true).await?;
-            let request = &accepted["data"]["refresh"];
-            match request["state"].as_str() {
-                Some("queued" | "pending") => return Ok::<_, anyhow::Error>(accepted),
-                Some("cooldown") => {
-                    let delay = request["retryAfterMs"]
-                        .as_u64()
-                        .context("Quota cooldown delay")?;
-                    tokio::time::sleep(Duration::from_millis(delay.clamp(1, 5000))).await;
-                }
-                _ => anyhow::bail!("Unknown native quota refresh result: {accepted}"),
+    loop {
+        let accepted = query(owner, true).await?;
+        let request = &accepted["data"]["refresh"];
+        match request["state"].as_str() {
+            Some("queued" | "pending") => return Ok(accepted),
+            Some("cooldown") => {
+                let delay = request["retryAfterMs"]
+                    .as_u64()
+                    .context("Quota cooldown delay")?;
+                tokio::time::sleep(Duration::from_millis(delay.clamp(1, 5000))).await;
             }
+            _ => anyhow::bail!("Unknown native quota refresh result: {accepted}"),
         }
-    })
-    .await
-    .context("Bounded quota owner refresh admission")?
+    }
 }
 
 fn read_count(f: &Fixture) -> Result<usize> {
@@ -549,26 +527,9 @@ async fn quota_occurrence(
     occurrence: &str,
     state: &str,
 ) -> Result<Value> {
-    let mut last = Value::Null;
-    timeout(Duration::from_secs(15), async {
-        loop {
-            let view = data(
-                call(
-                    owner,
-                    "nesvo_get_job_occurrence",
-                    json!({"jobId":job,"occurrenceId":occurrence}),
-                )
-                .await?,
-            )?;
-            if view["data"]["occurrence"]["state"] == state {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            last = view;
-            tokio::time::sleep(Duration::from_millis(60)).await;
-        }
-    })
-    .await
-    .with_context(|| format!("Quota occurrence did not reach {state}; last: {last}"))?
+    waits::occurrence(owner, job, occurrence, state)
+        .await
+        .with_context(|| format!("Quota occurrence did not reach {state}"))
 }
 
 fn unclaimed(occurrence: &Value) {
@@ -718,37 +679,34 @@ async fn quota_held_for_reason(
     occurrence: &str,
     reason: &str,
 ) -> Result<Value> {
-    let mut last = Value::Null;
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let envelope = data(
-                call(
-                    owner,
-                    "nesvo_get_job_occurrence",
-                    json!({"jobId":job,"occurrenceId":occurrence}),
-                )
-                .await?,
-            )?;
-            let current = &envelope["data"]["occurrence"];
-            last = json!({
-                "state":current["state"],"quota":current["quota"],
-                "runId":current["runId"],"jobAttemptId":current["jobAttemptId"],
-                "attemptId":current["attemptId"],"sessionId":current["sessionId"],
-                "launchReceiptId":current["launchReceiptId"]
-            });
-            ensure!(
-                current["state"] == "queued",
-                "Quota refusal allocated work: {last}"
-            );
-            if current["quota"]["reason"] == reason {
-                unclaimed(current);
-                return Ok::<_, anyhow::Error>(envelope);
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
+    waits::until(async || {
+        let envelope = data(
+            call(
+                owner,
+                "nesvo_get_job_occurrence",
+                json!({"jobId":job,"occurrenceId":occurrence}),
+            )
+            .await?,
+        )?;
+        let current = &envelope["data"]["occurrence"];
+        let metadata = json!({
+            "state":current["state"],"quota":current["quota"],
+            "runId":current["runId"],"jobAttemptId":current["jobAttemptId"],
+            "attemptId":current["attemptId"],"sessionId":current["sessionId"],
+            "launchReceiptId":current["launchReceiptId"]
+        });
+        ensure!(
+            current["state"] == "queued",
+            "Quota refusal allocated work: {metadata}"
+        );
+        if current["quota"]["reason"] == reason {
+            unclaimed(current);
+            return Ok(Some(envelope));
         }
+        Ok(None)
     })
     .await
-    .with_context(|| format!("Queued quota refusal {reason} was not published; metadata: {last}"))?
+    .with_context(|| format!("Queued quota refusal {reason} was not published"))
 }
 
 #[tokio::test]

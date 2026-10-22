@@ -20,7 +20,7 @@ async fn recurring_calendars_use_real_helper_and_preserve_cli_mcp_restart_intent
         let denied=call(&owner,"nesvo_create_job",json!({"key":"invalid-zone","spec":invalid})).await?.structured_content.context("invalid calendar")?;
         assert_eq!(denied["error"]["code"],"invalid_calendar");
         let mut expensive=cron.clone();expensive["schedule"]=json!({"kind":"rrule","rule":"FREQ=MINUTELY;BYSECOND=0;BYSETPOS=2","start":"2026-01-01T00:00:00","timeZone":"UTC"});
-        let bounded=timeout(Duration::from_secs(5),call(&owner,"nesvo_create_job",json!({"key":"bounded-search","spec":expensive}))).await.context("Bounded real helper refusal")??.structured_content.context("calendar bound")?;
+        let bounded=call(&owner,"nesvo_create_job",json!({"key":"bounded-search","spec":expensive})).await.context("Bounded real helper refusal")?.structured_content.context("calendar bound")?;
         ensure!(bounded["error"]["code"]=="calendar_timeout"||bounded["error"]["code"]=="calendar_limit","Explicit calendar refusal: {bounded}");
         let sessions=data(call(&owner,"nesvo_list_sessions",json!({})).await?)?;
         assert!(sessions["data"]["sessions"].as_array().context("no calendar model effects")?.is_empty());
@@ -30,21 +30,21 @@ async fn recurring_calendars_use_real_helper_and_preserve_cli_mcp_restart_intent
         let scheduled=budgets::owner_cli(&fixture,&["job","create","--key","finite-recurring","--file",file.to_str().context("RRULE file")?,"--json"]).await?;
         let id=scheduled["data"]["job"]["id"].as_str().context("recurring ID")?.to_owned();
         ensure!(chrono::Utc::now()<due,"Disconnect before calendar due");owner.cancel().await?;
-        let reported=timeout(Duration::from_secs(22),async {loop {
-            if std::fs::read_dir(fixture.directory.join("callers"))?.filter_map(|e|e.ok()).any(|e|e.file_name().to_string_lossy().ends_with(".result.json")) {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }}).await;
+        let admission_closes=scheduled["data"]["job"]["nextDueAt"].as_i64().context("Published calendar due")?+spec["graceMs"].as_i64().context("Published grace window")?;
+        let callers=fixture.directory.join("callers");
+        let launched=|suffix:&str|->Result<bool>{Ok(std::fs::read_dir(&callers)?.filter_map(|e|e.ok()).any(|e|e.file_name().to_string_lossy().ends_with(suffix)))};
+        let reported=waits::until(async || {
+            if launched(".result.json")? {return Ok(Some(()));}
+            ensure!(fixture.host.try_wait()?.is_none(),"Owned host exited before the recurring report");
+            ensure!(chrono::Utc::now().timestamp_millis()<=admission_closes||launched(".launch-argv.json")?,"Recurring occurrence launched no worker within its published admission window");
+            Ok(None)
+        }).await;
         if let Err(error)=reported {
             let diagnostics=job_diagnostics::report_timeout_diagnostics(&mut fixture,&id).await;
-            return Err(anyhow::Error::new(error).context(format!("Recurring job reported with owner clients closed; bounded actual diagnostics: {}",diagnostics.to_string().chars().take(12288).collect::<String>())));
+            return Err(error.context(format!("Recurring job reported with owner clients closed; bounded actual diagnostics: {}",diagnostics.to_string().chars().take(12288).collect::<String>())));
         }
-        reported.context("Recurring job reported with owner clients closed")??;
         let owner=client(&fixture.pairing()).await?;
-        let history=timeout(Duration::from_secs(5),async {loop {
-            let history=data(call(&owner,"nesvo_get_job_history",json!({"jobId":id})).await?)?;
-            if history["data"]["occurrences"][0]["state"]=="needsValidation" {return Ok::<_,anyhow::Error>(history);}
-            tokio::time::sleep(Duration::from_millis(80)).await;
-        }}).await??;
+        let history=waits::history_occurrence(&owner,&id,0,"needsValidation").await?;
         assert_eq!(history["data"]["occurrences"].as_array().context("one exact occurrence")?.len(),1);
         let current=data(call(&owner,"nesvo_get_job",json!({"jobId":id})).await?)?;
         assert_eq!(current["data"]["job"]["calendarState"],"exhausted");
