@@ -6,7 +6,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Owner-only provider quota observations with source, freshness and completeness evidence. Optional refresh requires an installed explicit program and asynchronously queues or coalesces one bounded original-provider read; queued/pending/cooldown does not mean refreshed. Inspect a later revision. Does not request models, login, switch accounts or release queued jobs. Reader account evidence does not bind a native process account.",
+    "description": "Owner-only: provider quota observations with source, freshness and completeness evidence. Optional refresh requires an installed explicit program and asynchronously queues or coalesces one bounded original-provider read; queued/pending/cooldown does not mean refreshed. Inspect a later revision. Does not request models, login, switch accounts or release queued jobs. Reader account evidence does not bind a native process account.",
     "inputSchema": {
       "additionalProperties": false,
       "allOf": [
@@ -83,7 +83,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only explicit enable/disable of one durable native Codex quota wake; requires durableQuotaWake:true. Enable requires a live bound lifecycle, the exact captured configured reader, a fresh complete five-hour window at >=90% with a future reset, and no human lease or draft. One ordinary native send receipt may resume the same process only after a fresh matching-account read started after reset affirmatively permits usage. Unknown effects, human takeover and known identity changes never retry input. Disable does not undo an already accepted send. No Claude/Gemini support, account lock, purchase or limit bypass.",
+    "description": "Owner-only: explicit enable/disable of one durable native Codex quota wake; requires durableQuotaWake:true. Enable requires a live bound lifecycle, the exact captured configured reader, a fresh complete five-hour window at >=90% with a future reset, and no human lease or draft. One ordinary native send receipt may resume the same process only after a fresh matching-account read started after reset affirmatively permits usage. Unknown effects, human takeover and known identity changes never retry input. Disable does not undo an already accepted send. No Claude/Gemini support, account lock, purchase or limit bypass.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -127,7 +127,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only read of the retained quota wake and its linked native send receipt identity for one stable session. Requires durableQuotaWake:true. Returns null when no arm is retained. Does not arm, refresh provider evidence, send input, resume a process or replay effects; a wake phase is not task success.",
+    "description": "Owner-only: read of the retained quota wake and its linked native send receipt identity for one stable session. Requires durableQuotaWake:true. Returns null when no arm is retained. Does not arm, refresh provider evidence, send input, resume a process or replay effects; a wake phase is not task success.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -168,7 +168,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only normalization/digest of a proposed command. Does not approve or execute it. Review literal executable/cwd/argv/environment; file contents and called code remain mutable, not sandboxed.",
+    "description": "Owner-only: normalization/digest of a proposed command. Does not approve or execute it. Review literal executable/cwd/argv/environment; file contents and called code remain mutable, not sandboxed.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -398,7 +398,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only immutable command approval, including revoked intent. No execution.",
+    "description": "Owner-only: immutable command approval, including revoked intent. No execution.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -439,7 +439,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only bounded approval summaries without command arguments or execution.",
+    "description": "Owner-only: bounded approval summaries without command arguments or execution.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -480,7 +480,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only exact-revision refusal of future executions. Already authorized checks may finish; does not undo effects or terminate a process.",
+    "description": "Owner-only: exact-revision refusal of future executions. Already authorized checks may finish; does not undo effects or terminate a process.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -570,7 +570,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only explicit acknowledgement of an uncertain precheck's effects, abandoning its exact current generation before its Run was bound. Requires inspection/digest and acknowledgement. jobAttemptId requires jobPrecheckGenerations:true and is mandatory after generation 1; omission preserves legacy generation-1 requests. Does not kill detached commands, undo effects, repeat a check, resume work or create a model.",
+    "description": "Owner-only: explicit acknowledgement of an uncertain precheck's effects, abandoning its exact current generation before its Run was bound. Requires inspection/digest and acknowledgement. jobAttemptId requires jobPrecheckGenerations:true and is mandatory after generation 1; omission preserves legacy generation-1 requests. Does not kill detached commands, undo effects, repeat a check, resume work or create a model.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -637,7 +637,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only logical abandonment of exact no-effect launch cleanup. Inspect the current generation's launchReconciliation descriptor, require available:true and its digest, and explicitly acknowledge unknown effects. jobAttemptId is always required; needs jobLaunchReconciliation:true. Only the exact native create receipt's JSON boolean effectStarted:false and finished producers qualify. Releases overlap for a separate occurrence without claiming process exit, completing a native stop, retrying, repeating prechecks or granting model/native permissions. Existing precheck effects and original native receipts remain retained. Recover the original job mutation key.",
+    "description": "Owner-only: logical abandonment of exact no-effect launch cleanup. Inspect the current generation's launchReconciliation descriptor, require available:true and its digest, and explicitly acknowledge unknown effects. jobAttemptId is always required; needs jobLaunchReconciliation:true. Only the exact native create receipt's JSON boolean effectStarted:false and finished producers qualify. Releases overlap for a separate occurrence without claiming process exit, completing a native stop, retrying, repeating prechecks or granting model/native permissions. Existing precheck effects and original native receipts remain retained. Recover the original job mutation key.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -712,7 +712,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional executionTimeoutMs requires jobExecutionTimeouts and starts at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Combining with precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution before each fresh generation. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
+    "description": "Owner-only: durable once/cron/RRULE job definition. Host dispatches without open clients using fresh explicit task profiles; no immediate model call. Optional executionTimeoutMs requires jobExecutionTimeouts and starts at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Optional launchNoEffect retry policy needs jobRetries and the advertised retry kind; only confirmed pre-spawn refusals qualify. Combining with precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution before each fresh generation. Separate occurrence/run/result history; not process-start success. Recover the same job mutation key.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1116,7 +1116,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only explicit reader-context/account reauthorization of one queued or retry-waiting quota occurrence. Compare the exact prior binding and select inspected new fingerprints. Requires jobQuotaAdmission:true. Original mutation replay returns its immutable acceptance; this does not retry native effects, change other occurrences, create a model or bypass provider limits.",
+    "description": "Owner-only: explicit reader-context/account reauthorization of one queued or retry-waiting quota occurrence. Compare the exact prior binding and select inspected new fingerprints. Requires jobQuotaAdmission:true. Original mutation replay returns its immutable acceptance; this does not retry native effects, change other occurrences, create a model or bypass provider limits.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1200,7 +1200,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only read of a persisted definition and requested profile, without dispatch.",
+    "description": "Owner-only: read of a persisted definition and requested profile, without dispatch.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1241,7 +1241,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only bounded job definition summaries. No prompts, dispatch or input ownership.",
+    "description": "Owner-only: bounded job definition summaries. No prompts, dispatch or input ownership.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1282,7 +1282,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only exact-revision replacement of future job intent, including optional launchNoEffect retry policy and executionTimeoutMs. Execution timeouts require jobExecutionTimeouts and start at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Existing occurrences keep their immutable spec; does not change running processes. Combining retry and precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution with fresh approval checks before each generation.",
+    "description": "Owner-only: exact-revision replacement of future job intent, including optional launchNoEffect retry policy and executionTimeoutMs. Execution timeouts require jobExecutionTimeouts and start at native launch admission, including preparation/readiness but excluding prechecks; an accepted explicit worker report before its deadline disarms it. Existing occurrences keep their immutable spec; does not change running processes. Combining retry and precheckId requires jobPrecheckGenerations and authorizes bounded repeated exact-command execution with fresh approval checks before each generation.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1696,7 +1696,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only enable/disable of future automatic admissions. Already admitted work may finish; no terminal input or native resume. Exact revision/key required.",
+    "description": "Owner-only: enable/disable of future automatic admissions. Already admitted work may finish; no terminal input or native resume. Exact revision/key required.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1749,7 +1749,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only deliberate new occurrence, including a disabled definition. Distinct key is a distinct intent, subject to overlap skip/one-deep queue; not a retry of an uncertain effect.",
+    "description": "Owner-only: deliberate new occurrence, including a disabled definition. Distinct key is a distinct intent, subject to overlap skip/one-deep queue; not a retry of an uncertain effect.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1799,7 +1799,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only cancellation of one admitted job occurrence by stable job/occurrence IDs. Fences further model admissions and requests bounded precheck/native cleanup. Acceptance is intent, not proof of process exit; inspect the occurrence's current cancellation/receipts. Unknown effects require reconciliation. Original mutation replay never repeats native effects or creates a replacement run.",
+    "description": "Owner-only: cancellation of one admitted job occurrence by stable job/occurrence IDs. Fences further model admissions and requests bounded precheck/native cleanup. Acceptance is intent, not proof of process exit; inspect the occurrence's current cancellation/receipts. Unknown effects require reconciliation. Original mutation replay never repeats native effects or creates a replacement run.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1851,7 +1851,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only bounded occurrence history with state, reason and workflow run pointer. Started/idle is not succeeded; reported results need explicit validation.",
+    "description": "Owner-only: bounded occurrence history with state, reason and workflow run pointer. Started/idle is not succeeded; reported results need explicit validation.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1898,7 +1898,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only immutable occurrence profile and run pointer, including nullable launchReconciliation and retained launchResolution evidence. An available launch descriptor/digest can be inspected before a separate explicit owner acknowledgement. Reads never release overlap, dispatch effects or adopt a process.",
+    "description": "Owner-only: immutable occurrence profile and run pointer, including nullable launchReconciliation and retained launchResolution evidence. An available launch descriptor/digest can be inspected before a separate explicit owner acknowledgement. Reads never release overlap, dispatch effects or adopt a process.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1945,7 +1945,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only read of eight retained dispatch generations for one exact job occurrence, including nullable launchReconciliation and launchResolution evidence. Ordinal 1 is the first dispatch; queued intent has no generation yet. Summaries omit precheck stdout/stderr. Does not create a retry, release overlap, repeat a command, launch/adopt a process or change native permissions.",
+    "description": "Owner-only: read of eight retained dispatch generations for one exact job occurrence, including nullable launchReconciliation and launchResolution evidence. Ordinal 1 is the first dispatch; queued intent has no generation yet. Summaries omit precheck stdout/stderr. Does not create a retry, release overlap, repeat a command, launch/adopt a process or change native permissions.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1998,7 +1998,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only detail of one retained job dispatch generation, including bounded precheck evidence and nullable launchReconciliation/launchResolution. jobAttemptId is distinct from a workflow task attempt/session ID. Reads never retry, release overlap, launch/adopt a process, repeat native effects or infer success from process silence.",
+    "description": "Owner-only: detail of one retained job dispatch generation, including bounded precheck evidence and nullable launchReconciliation/launchResolution. jobAttemptId is distinct from a workflow task attempt/session ID. Reads never retry, release overlap, launch/adopt a process, repeat native effects or infer success from process silence.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -2051,7 +2051,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only recovery of an original job mutation acceptance. Does not reapply its effects or reflect later state.",
+    "description": "Owner-only: recovery of an original job mutation acceptance. Does not reapply its effects or reflect later state.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -2091,7 +2091,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only binding of retained run context to a different live native coordinator after the previous process is unavailable. Exact source ID (null for unbound), revision and mutation key required. Preserves inbox/results/constraints/budgets; pauses executor/wakes and queued input, fences earlier native input. No native worker authority, process/conversation adoption, ACK, validation, prompt or policy enable is restored. Target must match retained workspace/group. Recover the original workflow mutation key.",
+    "description": "Owner-only: binding of retained run context to a different live native coordinator after the previous process is unavailable. Exact source ID (null for unbound), revision and mutation key required. Preserves inbox/results/constraints/budgets; pauses executor/wakes and queued input, fences earlier native input. No native worker authority, process/conversation adoption, ACK, validation, prompt or policy enable is restored. Target must match retained workspace/group. Recover the original workflow mutation key.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -2166,7 +2166,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only append of literal manual constraints at the current run revision. Pauses executor/wakes and queued task input; earlier native input cannot rearm after acknowledgement. No user text is discarded or treated as task success/native permission. Existing model work may finish. Recover immutable acceptance with the original workflow mutation key.",
+    "description": "Owner-only: append of literal manual constraints at the current run revision. Pauses executor/wakes and queued task input; earlier native input cannot rearm after acknowledgement. No user text is discarded or treated as task success/native permission. Existing model work may finish. Recover immutable acceptance with the original workflow mutation key.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -3884,7 +3884,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only replacement of future admission limits at the exact budget revision. maxSessions counts retained session slots (1–16); maxWorkers counts running worker-role processes (0–16); provider caps count running processes including coordinators (0–16). Reducing limits never terminates existing work. Same-key replay is historical and cannot restore an old active policy; recover through nesvo_get_run_mutation.",
+    "description": "Owner-only: replacement of future admission limits at the exact budget revision. maxSessions counts retained session slots (1–16); maxWorkers counts running worker-role processes (0–16); provider caps count running processes including coordinators (0–16). Reducing limits never terminates existing work. Same-key replay is historical and cannot restore an old active policy; recover through nesvo_get_run_mutation.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -4544,7 +4544,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Read a bounded terminal replay page. Cursors are UTF-8 byte offsets, not domain-event sequences; gap means retained history expired.",
+    "description": "Read a bounded terminal replay page with UTF-8 byte cursors. Cursors are byte offsets, not domain-event sequences; gap means retained history expired.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -4683,7 +4683,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only: open a host review of a session's or absolute folder's local changes, or fetch a GitHub pull request with gh into a host review checkout (120 s cap, reused when present). Exactly one source: sessionId and/or directory, or pullUrl. Replies reviewOpened with a stable reviewId, base, head and diff revision. Never edits, commits, merges or pushes.",
+    "description": "Owner-only: open a host review of a session's or absolute folder's local changes, or of a GitHub pull request fetched with gh. The fetch into a host review checkout is capped at 120 s and reuses an existing checkout. Exactly one source: sessionId and/or directory, or pullUrl. Replies reviewOpened with a stable reviewId, base, head and diff revision. Never edits, commits, merges or pushes.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -4924,7 +4924,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only: remove a closed session's host-created worktree and its nesvo/ branch. Refuses dirty, unpushed or conflicted work unless discard is true; discarding deletes that work permanently.",
+    "description": "Owner-only: remove a closed session's host-created worktree and its nesvo/ branch; refuses unsaved work without discard. Unsaved work is dirty, unpushed or conflicted; discard:true deletes it permanently.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -5004,7 +5004,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only: read the committed nesvo.toml [[workflow]] templates of a repository (HEAD) with tasks, tool profiles, workspace modes, budgets, digest and approval state. Starts nothing; requires host workflowTemplates:true. Approving or revoking a digest is a human act through the owner CLI (nesvo workflow approve-templates/revoke-templates) and has no agent tool.",
+    "description": "Owner-only: read a repository's committed nesvo.toml [[workflow]] templates at HEAD with their digest and approval state. Each template lists its tasks, tool profiles, workspace modes and budgets. Starts nothing; requires host workflowTemplates:true. Approving or revoking a digest is a human act through the owner CLI (nesvo workflow approve-templates/revoke-templates) and has no agent tool.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -6338,7 +6338,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Read a visible run's bounded 8 KiB digest: the final record stored when the run settled (succeeded, canceled, stopped or drained), otherwise a live working-state snapshot. Summarizes tasks, attempts, outcomes, decisions, budget and evidence pointers (journal cursor, worktree branches, checkpoints). Worker claims stay claims; reading never validates, acknowledges or dispatches.",
+    "description": "Read a visible run's bounded 8 KiB digest: its final record once the run settled, otherwise a live working-state snapshot. A run settles when it succeeded, was canceled, stopped or drained. Summarizes tasks, attempts, outcomes, decisions, budget and evidence pointers (journal cursor, worktree branches, checkpoints). Worker claims stay claims; reading never validates, acknowledges or dispatches.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -6547,7 +6547,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only registration of a disabled external job trigger with a separate secret and exact current job intent. No listener activation, webhook account registration, model call or provider grant. Enable separately after inspection.",
+    "description": "Owner-only: registration of a disabled external job trigger with a separate secret and exact current job intent. No listener activation, webhook account registration, model call or provider grant. Enable separately after inspection.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -6731,7 +6731,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only exact-revision trigger filter/job-intent reauthorization. Same job and provider only; existing delivery receipts remain immutable and payload never chooses tools or instructions.",
+    "description": "Owner-only: exact-revision trigger filter/job-intent reauthorization. Same job and provider only; existing delivery receipts remain immutable and payload never chooses tools or instructions.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -6918,7 +6918,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only retained trigger metadata/delivery inspection. No secret, raw body, signature, model input or dispatch. Follow nextOffset; mutation reads recover original immutable acceptance.",
+    "description": "Owner-only: read one trigger's retained definition, revision and enablement by its ID. No secret, raw body, signature, model input or dispatch. Mutation reads recover original immutable acceptance.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -6957,7 +6957,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only retained trigger metadata/delivery inspection. No secret, raw body, signature, model input or dispatch. Follow nextOffset; mutation reads recover original immutable acceptance.",
+    "description": "Owner-only: list one bounded page of retained trigger definitions, following nextOffset. No secret, raw body, signature, model input or dispatch. Mutation reads recover original immutable acceptance.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -6998,7 +6998,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only explicit enable/disable for future external delivery. Does not cancel admitted occurrences or bypass job enablement. Revocation is permanent.",
+    "description": "Owner-only: explicit enable/disable for future external delivery. Does not cancel admitted occurrences or bypass job enablement. Revocation is permanent.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -7049,7 +7049,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only exact-revision credential rotation with a never-used random secret. Retired credentials no longer authenticate, including delivery replay. Does not retry events or reauthorize changed job intent.",
+    "description": "Owner-only: exact-revision credential rotation with a never-used random secret. Retired credentials no longer authenticate, including delivery replay. Does not retry events or reauthorize changed job intent.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -7102,7 +7102,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only permanent revocation of this trigger credential. Preserves accepted delivery history; does not stop already admitted workers or cancel occurrences.",
+    "description": "Owner-only: permanent revocation of this trigger credential. Preserves accepted delivery history; does not stop already admitted workers or cancel occurrences.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -7150,7 +7150,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only retained trigger metadata/delivery inspection. No secret, raw body, signature, model input or dispatch. Follow nextOffset; mutation reads recover original immutable acceptance.",
+    "description": "Owner-only: list one bounded page of a trigger's immutable delivery receipts, following nextOffset. No secret, raw body, signature, model input or dispatch.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -7195,7 +7195,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only retained trigger metadata/delivery inspection. No secret, raw body, signature, model input or dispatch. Follow nextOffset; mutation reads recover original immutable acceptance.",
+    "description": "Owner-only: read one immutable delivery receipt by trigger ID and the sender's delivery ID. No secret, raw body, signature, model input or dispatch.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -7239,7 +7239,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only retained trigger metadata/delivery inspection. No secret, raw body, signature, model input or dispatch. Follow nextOffset; mutation reads recover original immutable acceptance.",
+    "description": "Owner-only: recover the original immutable acceptance of a trigger mutation by its idempotency key. No secret, raw body, signature, model input or dispatch.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -7320,7 +7320,7 @@
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Owner-only: start one new process from a saved description in its recorded folder. Old prompts and worktree creation are never replayed. resume:true asks the provider for the exact recorded conversation; the session stays closed to automated input until the provider confirms that conversation, otherwise it is marked resumeFailed. Gemini and records without a conversation are refused. A claimed record is never restarted twice.",
+    "description": "Owner-only: start one new process from a saved description in its recorded folder, with optional exact resume. Old prompts and worktree creation are never replayed. resume:true asks the provider for the exact recorded conversation; the session stays closed to automated input until the provider confirms that conversation, otherwise it is marked resumeFailed. Gemini and records without a conversation are refused. A claimed record is never restarted twice.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -7596,7 +7596,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only: list the host's project registry (at most 256 repository roots), pinned first then by last activity, with default branch, open session count and their session IDs. Requires host projects:true. Reading never launches, pins or changes anything.",
+    "description": "Owner-only: list the host's project registry (at most 256 repository roots), pinned first then by last activity. Each entry has its default branch, open session count and session IDs. Requires host projects:true. Reading never launches, pins or changes anything.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {},
@@ -7630,7 +7630,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Owner-only: read one project's defaults: the usual launch folder (most launches), recent folders, the host-wide default layout name and the worktree setup state (nesvo.toml configured and approved digest, open worktrees). Approving setup stays a human act through the owner CLI.",
+    "description": "Owner-only: read one project's usual launch folder, recent folders, default layout name and worktree setup state. The usual folder has the most launches, the layout name is host-wide and the setup state reports whether nesvo.toml is configured, its approved digest and open worktrees. Approving setup stays a human act through the owner CLI.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
