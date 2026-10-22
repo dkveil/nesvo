@@ -161,7 +161,7 @@ pub fn catalog() -> Vec<Tool> {
 }
 
 #[cfg(test)]
-pub const TOOL_COUNT: usize = 116;
+pub const TOOL_COUNT: usize = 117;
 
 #[cfg(test)]
 pub fn catalog_named(names: &[&str]) -> Vec<Tool> {
@@ -700,6 +700,12 @@ pub static TOOLS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
             "Owner-only: list host-created worktrees (newest 128) with session, branch, presence, setup and run states, logs and archive facts.",
             READ,
             mcp::list_worktrees,
+        ),
+        typed::<args::WorktreeSetup>(
+            "nesvo_list_mcp_servers",
+            "Owner-only: list the [[mcp.server]] declarations of a repository's committed nesvo.toml (HEAD) with approval state, the resolved command, folder problems and the sessions attached to them. Runs nothing; requires host mcpServers:true. Approval stays the owner CLI act nesvo worktree approve-setup.",
+            READ,
+            mcp::list_mcp_servers,
         ),
         typed::<args::WorktreeSetup>(
             "nesvo_list_workflow_templates",

@@ -262,6 +262,30 @@ mod worktree_tests {
     }
 
     #[test]
+    fn mcp_server_listing_matches_the_cli_wire_and_is_a_read() {
+        assert_eq!(
+            command("nesvo_list_mcp_servers", json!({"directory":"/repo"})).unwrap(),
+            cli::mcp_servers_query("/repo").unwrap()
+        );
+        for value in [json!({}), json!({"directory":"/repo","digest":"x"})] {
+            assert!(command("nesvo_list_mcp_servers", value).is_err());
+        }
+        assert!(
+            published_tools()
+                .iter()
+                .any(|tool| tool == "nesvo_list_mcp_servers")
+        );
+        let tool = serde_json::to_value(
+            catalog()
+                .into_iter()
+                .find(|tool| tool.name == "nesvo_list_mcp_servers")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], true);
+    }
+
+    #[test]
     fn worktree_catalog_marks_reads_and_the_destructive_archive() {
         for (name, read_only, destructive) in [
             ("nesvo_describe_worktree_setup", true, false),
@@ -660,6 +684,10 @@ pub(crate) fn list_worktrees(_: &str, _: NoArgs) -> Result<Request> {
     Ok((json!({"type":"listWorktrees"}), "worktreeRegistry"))
 }
 
+pub(crate) fn list_mcp_servers(_: &str, a: WorktreeSetup) -> Result<Request> {
+    cli::mcp_servers_query(&a.directory)
+}
+
 pub(crate) fn list_workflow_templates(_: &str, a: WorktreeSetup) -> Result<Request> {
     crate::runs::template_command("list", &a.directory, None, None)
 }
@@ -866,6 +894,8 @@ impl HostTools {
             cli::review_capability(&mut connection).await?;
         } else if kind.starts_with("worktree") {
             cli::worktree_capability(&mut connection).await?;
+        } else if kind == "mcpServers" {
+            cli::mcp_servers_capability(&mut connection).await?;
         } else if kind.starts_with("workflowTemplate") {
             cli::workflow_templates_capability(&mut connection).await?;
         } else if kind == "operation" {

@@ -70,6 +70,7 @@
   "nesvo_list_decisions",
   "nesvo_list_job_triggers",
   "nesvo_list_jobs",
+  "nesvo_list_mcp_servers",
   "nesvo_list_pending_decisions",
   "nesvo_list_prechecks",
   "nesvo_list_projects",
