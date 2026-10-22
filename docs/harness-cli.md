@@ -657,12 +657,25 @@ with `hibernation.lastResumeFailure`; relaunch it fresh with `session recover
 restore ID`. Both commands are idempotent by key: the same key returns the
 original outcome with `replayed:true`, a key reused for another session or
 operation returns `idempotency_conflict`. Refusal codes are listed in
-[hibernation](harness-recovery-context.md#safe-resumable-hibernation).
+[hibernation](harness-recovery-context.md#safe-resumable-hibernation). A resumed
+reply also carries `reason`: `owner` for this command, `restored` when the host
+resumed the session itself after a restart.
 
 ```powershell
 nesvo session hibernate SESSION_ID --key nightly-1 --json
 nesvo session resume SESSION_ID --key morning-1 --json
 ```
+
+A graceful host stop hibernates every eligible session with
+`hibernation.trigger:"shutdown"`, and the next start resumes exactly those under
+the same IDs ([restore after a host restart](harness-recovery-context.md#restore-after-a-host-restart)).
+Owner `doctor --json` shows the policy and the last report as
+`sessionRestore:{policy:{enabled,concurrency},sessions:[{sessionId,outcome,code,message,shutdownAt}]}`,
+where `outcome` is `pending`, `restored`, `hibernated` (with the refusal `code`)
+or `reaped` (with the reason the session could not be hibernated). The CLI has no
+host settings command: the policy is a host start flag, on by default and turned
+off with `nesvo-host --no-restore-on-start`. A restore's own outcome replays with
+`session resume ID --key restore:ID:SHUTDOWN_AT`.
 
 ## Owner attention inbox and decisions
 

@@ -345,7 +345,7 @@ shutdown; owned-child kill/reap observation is bounded at two seconds. No pairin
 keys, SQLite contents, prompt text or raw startup lines are sampled. Diagnostics
 do not retry startup or establish the root cause of a timeout by themselves.
 
-### Native hibernation, host checks, wake holds and decision replay
+### Native hibernation, restore, host checks, wake holds and decision replay
 
 These ignored `mcp_host` scenarios give native evidence to behavior that host unit
 tests covered alone. They use the controlled Node worker and real Git, never a
@@ -353,6 +353,7 @@ model, and run in the `Native nightly` cohort like the others:
 
 ```powershell
 cargo test --package nesvo --test mcp_host --locked hibernation:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked restore:: -- --ignored --test-threads=1
 cargo test --package nesvo --test mcp_host --locked host_checks:: -- --ignored --test-threads=1
 cargo test --package nesvo --test mcp_host --locked wake_holds:: -- --ignored --test-threads=1
 cargo test --package nesvo --test mcp_host --locked decision_replay:: -- --ignored --test-threads=1
@@ -365,6 +366,14 @@ cargo test --package nesvo --test mcp_host --locked decision_replay:: -- --ignor
   `session.resumed`. `tests/fixtures/resumable-identity.cjs` wraps the controlled
   worker so its hooks report a UUID conversation and, when launched with
   `--resume`, a `resume` session start for that conversation.
+- `restore` starts one worker before the wrapper is installed (its conversation
+  is not a UUID) and one after, stops the host gracefully and starts it again. The
+  wrapped worker comes back under its ID through the verified exact-resume gate and
+  answers a prompt; `doctor --json` reports it `restored` and the other `reaped`
+  with `resume_unavailable`, the restore key replays with `reason:"restored"`, and
+  the journal holds `session.hibernated` with `trigger:"shutdown"` then
+  `session.resumed` with `reason:"restored"`. Both CLI envelopes are validated
+  against `docs/harness-cli.schema.json`.
 - `host_checks` approves a committed `nesvo.toml` template whose tasks declare
   checks, starts it with the executor in host-created worktrees and validates both
   results with `hostChecks:true`. A committed script writes a marker into the

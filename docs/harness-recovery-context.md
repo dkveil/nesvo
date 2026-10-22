@@ -139,7 +139,9 @@ trigger,lastResumeFailure}`; its `status.freshness` is `source:"journal"`,
 `stale:true` with `lastKnown` set to the state seen before the stop. It counts
 toward the retained-session budget and is left out of `listRecovery`. The record
 lives in the `session_hibernations` table, so a host restart keeps it hibernated;
-restart never relaunches it.
+restart never relaunches a session the owner or the idle policy hibernated. Only
+sessions hibernated by a graceful host stop are resumed at the next start (see
+[restore after a host restart](#restore-after-a-host-restart)).
 
 Eligibility is checked twice: before the durable record is written and again
 under the state lock just before the process is stopped. Refusals and their codes:
@@ -188,7 +190,8 @@ reply with `replayed:true` (or the original refusal after an effect), another
 session or operation with that key returns `idempotency_conflict`, and a key still
 in progress returns `busy`. At most 1024 settled keys are retained, oldest first.
 A successful hibernation journals `session.hibernated {program,conversationId,
-trigger}` and a verified resume journals `session.resumed {program,conversationId}`
+trigger}` and a verified resume journals `session.resumed {program,conversationId,
+reason}` (`owner` or `restored`; events written before the reason existed omit it)
 in the same transaction as their records. A restart drops an unfinished stop
 (the session reappears as an ordinary saved description), returns an unfinished
 resume to hibernated, and settles pending keys with `host_restart`.
@@ -199,11 +202,56 @@ is `{enabled:false,idleAfterMs:null}` unless the host starts with
 eligible sessions idle for that long are hibernated per 30-second tick through the
 same path and checks, with trigger `idlePolicy` and key `idle:SESSION:IDLE_SINCE`.
 
+### Restore after a host restart
+
+A graceful host stop (Ctrl+C or a closed stdin under `--exit-on-stdin-close`)
+first fences new admissions and stops the idle policy and any restore still
+running, then hibernates every live session it can through the same path with
+trigger `shutdown` and key `shutdown:SESSION:AT`, children before their parents,
+within a 10-second budget, and only then reaps the rest. Eligibility is the table
+above with two differences: the host-stopping fence, a human control lease and an
+unsent editor draft do not refuse, because the stop ends them anyway. A child that
+cannot be hibernated keeps its parent from hibernating (`children_active`), and a
+session caught while resuming from hibernation stays hibernated. Each hibernation
+journals `session.hibernated` with `trigger:"shutdown"` and, in the same
+transaction, marks the session `pending` in the `session_restore_outcomes` ledger.
+Every other session is reaped as before (its saved launch description stays in
+`listRecovery`) and recorded `reaped` with the refusal code and message, or
+`shutdown_budget` when the budget ran out. Sessions already hibernated are recorded
+`hibernated` with `owner_hibernated`, `idle_hibernated` or `shutdown_hibernated`
+(an earlier restore did not succeed) and are never resumed automatically, so owner
+intent stays owner intent. Each stop replaces the previous report but keeps any
+session still owed a restore. A forced kill or crash skips this step: sessions are
+reaped as before and nothing is owed a restore.
+
+At the next start the host resumes exactly the sessions marked `pending`, under
+their own IDs, through the [exact conversation resume](#exact-conversation-resume)
+gate, at most two at a time, with key `restore:SESSION:SHUTDOWN_AT`. Each verified
+resume journals `session.resumed` with `reason:"restored"` (owner resumes carry
+`reason:"owner"`) and records `restored`. The restore runs once the host listens, so
+a client that connects first may see such a session as hibernated or still
+resuming; it keeps its ID throughout, so saved TUI layouts reattach to it. A resume
+that fails or is refused leaves the session hibernated (a mismatched or unconfirmed
+conversation also sets `lastResumeFailure`) and records `hibernated` with its code;
+it is not retried at a later start, and the owner can still resume, relaunch or
+close it. A stop that interrupts a restore settles its key with `host_restart`,
+which the following start records.
+
+The `restoreOnStart` policy is on by default; `nesvo-host --no-restore-on-start`
+keeps the shutdown set hibernated and records `restore_disabled`. The owner
+`getDiagnostics` report (`nesvo doctor --json`) carries the policy and the last
+report as `sessionRestore:{policy:{enabled,concurrency},sessions:[{sessionId,
+outcome,code,message,shutdownAt}]}` with at most 256 rows; scoped callers do not
+receive it.
+
 Host units with the process fixture cover every refusal, the stop, the same-ID
 relaunch with a verified and a mismatched conversation, a provider refused before
 launch, a restart in between, close and forget, idempotent replay and conflict, and
-the idle policy bounds. The relaunched provider is a controlled fixture whose
-session-start evidence is supplied by the test; a live hibernate and resume with
+the idle policy bounds; the restore units cover shutdown eligibility (children
+first, a held lease, a shell, a busy agent and an owner-hibernated session), the
+recorded set and report, the policy-off path and a failed restore that is not
+retried. The relaunched provider is a controlled fixture whose session-start
+evidence is supplied by the test; a live hibernate, restart and resume with
 original Claude and Codex conversations stays with the owner.
 
 ## Verification and remaining integration
