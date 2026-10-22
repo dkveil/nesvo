@@ -402,6 +402,19 @@ impl Connection {
     pub fn is_closed(&self) -> bool {
         self.commands.is_closed()
     }
+
+    #[cfg(test)]
+    pub(crate) fn scripted() -> (Self, mpsc::Sender<NetworkEvent>) {
+        let (events_tx, events) = mpsc::channel(8);
+        let (commands, _) = mpsc::channel(1);
+        let connection = Self {
+            client_id: 0,
+            events,
+            commands,
+            worker: tokio::spawn(async {}),
+        };
+        (connection, events_tx)
+    }
 }
 
 impl Drop for Connection {

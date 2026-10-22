@@ -6,7 +6,7 @@ const NEXT_BRANCH: &str = "f31-updated";
 const PRODUCTION_CACHE_TTL: Duration = Duration::from_secs(30);
 const NATIVE_BOUNDARY_AFTER_OBSERVED_RECEIPT: Duration = Duration::from_secs(31);
 
-async fn provider_ready(fixture: &Fixture) -> Result<()> {
+pub(super) async fn provider_ready(fixture: &Fixture) -> Result<()> {
     timeout(Duration::from_secs(5), async {
         loop {
             let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;

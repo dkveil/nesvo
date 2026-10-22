@@ -394,7 +394,8 @@ URI, duplicate or unknown query key fails with `-32002` resource not found.
 `resources/read` makes one bounded `readEvents` request through a fresh
 authenticated connection and returns one `application/json` text content:
 `{schemaVersion:1,ok:true,data}` with the host page fields (`events`, `nextCursor`,
-`headCursor`, `floorCursor`, `gap`, `more`, `health`) plus `resource`. Run and
+`headCursor`, `floorCursor`, `gap`, `more`, `health`) plus `resource`; host
+transport fields (`type`, `subscribed`, `requestId`) are removed. Run and
 operation filtering happens after the host's subject authorization, so a page can
 be empty with `more:true`; keep reading from `nextCursor`. Reads share the four
 host-call slots, honor request cancellation and are never cached (`ttlMs:0`,
@@ -405,12 +406,18 @@ Subscribing opens one dedicated host `subscribeEvents` stream per URI. Without
 from that cursor. Scoped callers get exactly the `readEvents` authority: a worker
 defaults to its own subject and a foreign `sessionId` is refused. Protocol
 `2026-07-28` clients use `subscriptions/listen` with `resourceSubscriptions`;
-only valid event URIs, at most four, are acknowledged. The SDK acknowledges before
-the host streams open, so a refusal of any URI arrives as the listen request's
-error response and opens nothing.
+only valid event URIs, at most four, are acknowledged. A stream slot is reserved
+for every acknowledged URI before any host connection opens, so `busy` opens
+nothing. The streams then open in parallel; a host refusal of any URI releases
+the streams already opened for the others and fails the whole listen request.
+The SDK acknowledges before the host streams open, so that refusal arrives as the
+listen request's error response.
 Initialize-era clients (`2025-11-25` and older) use `resources/subscribe` and
-`resources/unsubscribe`; subscribing again to the same URI replaces its stream.
-At most four streams are active per adapter process; a fifth fails with `busy`.
+`resources/unsubscribe`. Subscribing again to the same URI opens the replacement
+first and releases the previous stream only after it is ready; a failed
+replacement keeps the previous stream. At most four streams are active per adapter
+process; a fifth URI fails with `busy` before connecting, while a replacement
+reuses its URI's slot.
 
 Each change is a `notifications/resources/updated` for the subscribed URI whose
 `params._meta["nesvo/events"]` is:
@@ -430,10 +437,16 @@ Each change is a `notifications/resources/updated` for the subscribed URI whose
 }
 ```
 
-The first notification has `ready:true` and no sequences; changes after its
-`after` cursor are always delivered. Later notifications are sent only when a
-page contains matching events. `after` is the cursor before the first
-undelivered match, so reading `readUri` (then `nextCursor` while `more`) returns
+The first notification has `ready:true` and `after` set to the starting cursor
+(the journal head, or the `after` query); changes after it are always delivered.
+The bridge reads the first host page before the stream counts as open and merges
+it into that ready notification. Without `after` the page is normally empty, so
+`sequences` is `[]`; with `?after=N` and a backlog, the ready notification already
+lists the first page's matching `sequences` and its `nextCursor`, and reading its
+`readUri` returns that backlog. A first page that already reports a retention gap
+fails the subscribe or listen request with `cursor_expired`. Later notifications
+are sent only when a page contains matching events. `after` is the cursor before
+the first undelivered match, so reading `readUri` (then `nextCursor` while `more`) returns
 exactly the delta. The bridge keeps one pending delta per stream and never stops
 reading the host: while the client is slow, deltas coalesce, `after` keeps the
 oldest undelivered cursor, at most 32 `sequences` are listed and `dropped` counts
@@ -444,6 +457,10 @@ host retention expired before the cursor; the final notification then carries
 before subscribing again. Host loss (`disconnected`), expired process authority
 (`scope_revoked`) and other stream errors also end that stream with a final
 `closed` notification; resubscribe with `?after=` from the last notified cursor.
+The host checks process authority again before every page it sends, and replaces
+the first page after expiry with the `scope_revoked` error. No event is delivered
+past revocation, but an idle stream reports `scope_revoked` only on the next
+journal change.
 Delivery is at least once; deduplicate by domain sequence.
 
 Cancelling a `subscriptions/listen` request, `resources/unsubscribe` and stdin EOF

@@ -14,11 +14,29 @@ const OPERATIONS: &str = "nesvo://events/operations";
 const META_KEY: &str = "nesvo/events";
 const NOTIFICATION_DEADLINE: Duration = Duration::from_secs(10);
 
-async fn modern(pairing: &Path) -> Result<RunningService<RoleClient, ()>> {
+fn adapter() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
-    command.arg("--pairing").arg(pairing).arg("mcp");
     #[cfg(windows)]
     command.creation_flags(0x08000000);
+    command
+}
+
+fn paired(pairing: &Path) -> Command {
+    let mut command = adapter();
+    command.arg("--pairing").arg(pairing).arg("mcp");
+    command
+}
+
+fn scoped(context: &Path, id: &str) -> Command {
+    let mut command = adapter();
+    command
+        .arg("mcp")
+        .env("NESVO_AGENT_CONTEXT", context)
+        .env("NESVO_SESSION_ID", id);
+    command
+}
+
+async fn discover(command: Command) -> Result<RunningService<RoleClient, ()>> {
     Ok(()
         .serve_with_lifecycle(
             TokioChildProcess::new(command)?,
@@ -27,6 +45,47 @@ async fn modern(pairing: &Path) -> Result<RunningService<RoleClient, ()>> {
             },
         )
         .await?)
+}
+
+async fn modern(pairing: &Path) -> Result<RunningService<RoleClient, ()>> {
+    discover(paired(pairing)).await
+}
+
+async fn legacy_client(
+    command: Command,
+) -> Result<(
+    RunningService<RoleClient, LegacyUpdates>,
+    mpsc::Receiver<(String, Value)>,
+)> {
+    let (updates, received) = mpsc::channel(8);
+    let client = LegacyUpdates {
+        config: ClientConfig::new(
+            ClientCapabilities::default(),
+            Implementation::new("nesvo-legacy-events", "1"),
+        )
+        .with_protocol_version(ProtocolVersion::V_2025_11_25),
+        updates,
+    }
+    .serve(TokioChildProcess::new(command)?)
+    .await?;
+    Ok((client, received))
+}
+
+fn subscribe_request(uri: &str) -> ClientRequest {
+    ClientRequest::SubscribeRequest(Request::new(SubscribeRequestParams::new(uri)))
+}
+
+fn refusal_code(error: &rmcp::ServiceError) -> Option<Value> {
+    match error {
+        rmcp::ServiceError::McpError(error) => error.data.as_ref().map(|data| data["code"].clone()),
+        _ => None,
+    }
+}
+
+fn caller_context(fixture: &Fixture, id: &str) -> Result<PathBuf> {
+    Ok(PathBuf::from(std::fs::read_to_string(
+        fixture.directory.join("callers").join(format!("{id}.txt")),
+    )?))
 }
 
 fn cursor_meta(meta: Option<&NotificationMetaObject>) -> Option<Value> {
@@ -55,7 +114,7 @@ impl ClientHandler for LegacyUpdates {
     }
 }
 
-async fn modern_update(subscription: &mut Subscription) -> Result<Value> {
+async fn modern_update(subscription: &mut Subscription, uri: &str) -> Result<Value> {
     let notification = timeout(NOTIFICATION_DEADLINE, subscription.next())
         .await
         .context("Resource update notification deadline")??
@@ -64,7 +123,7 @@ async fn modern_update(subscription: &mut Subscription) -> Result<Value> {
         anyhow::bail!("Unexpected subscription notification: {notification:?}");
     };
     ensure!(
-        update.params.uri == OPERATIONS,
+        update.params.uri == uri,
         "Notification names the subscribed URI"
     );
     cursor_meta(update.extensions.get::<NotificationMetaObject>())
@@ -73,12 +132,19 @@ async fn modern_update(subscription: &mut Subscription) -> Result<Value> {
 }
 
 async fn legacy_update(updates: &mut mpsc::Receiver<(String, Value)>) -> Result<Value> {
+    legacy_update_for(updates, OPERATIONS).await
+}
+
+async fn legacy_update_for(
+    updates: &mut mpsc::Receiver<(String, Value)>,
+    expected: &str,
+) -> Result<Value> {
     let (uri, meta) = timeout(NOTIFICATION_DEADLINE, updates.recv())
         .await
         .context("Legacy resource update deadline")?
         .context("Legacy client closed")?;
     ensure!(
-        uri == OPERATIONS,
+        uri == expected,
         "Legacy notification names the subscribed URI"
     );
     Ok(meta)
@@ -170,31 +236,13 @@ async fn sdk_clients_receive_event_resource_updates_with_cursors() -> Result<()>
                 == Some(&[OPERATIONS.to_owned()][..]),
             "Only valid event URIs are acknowledged"
         );
-        let ready = modern_update(&mut subscription).await?;
+        let ready = modern_update(&mut subscription, OPERATIONS).await?;
         ensure!(ready["ready"] == true && ready["sequences"] == json!([]), "{ready}");
         let start = ready["after"].as_u64().context("start cursor")?;
         ensure!(ready["readUri"] == format!("{OPERATIONS}?after={start}"));
 
-        let (legacy_tx, mut legacy_rx) = mpsc::channel(8);
-        let mut legacy_command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
-        legacy_command.arg("--pairing").arg(fixture.pairing()).arg("mcp");
-        #[cfg(windows)]
-        legacy_command.creation_flags(0x08000000);
-        let legacy = LegacyUpdates {
-            config: ClientConfig::new(
-                ClientCapabilities::default(),
-                Implementation::new("nesvo-legacy-events", "1"),
-            )
-            .with_protocol_version(ProtocolVersion::V_2025_11_25),
-            updates: legacy_tx,
-        }
-        .serve(TokioChildProcess::new(legacy_command)?)
-        .await?;
-        let subscribe = || {
-            ClientRequest::SubscribeRequest(Request::new(SubscribeRequestParams::new(
-                OPERATIONS,
-            )))
-        };
+        let (legacy, mut legacy_rx) = legacy_client(paired(&fixture.pairing())).await?;
+        let subscribe = || subscribe_request(OPERATIONS);
         legacy.peer().send_request(subscribe()).await?;
         ensure!(legacy_update(&mut legacy_rx).await?["ready"] == true);
 
@@ -208,7 +256,7 @@ async fn sdk_clients_receive_event_resource_updates_with_cursors() -> Result<()>
         )?;
         let receipt = &created["data"]["receipt"];
         let operation = receipt["id"].as_str().context("operation")?;
-        let (modern, page) = delta_for(&modern_client, async || modern_update(&mut subscription).await, operation).await?;
+        let (modern, page) = delta_for(&modern_client, async || modern_update(&mut subscription, OPERATIONS).await, operation).await?;
         ensure!(modern["after"].as_u64() >= Some(start));
         let (legacy_meta, _) = delta_for(&owner, async || legacy_update(&mut legacy_rx).await, operation).await?;
         ensure!(legacy_meta["after"].as_u64() >= Some(start));
@@ -240,6 +288,99 @@ async fn sdk_clients_receive_event_resource_updates_with_cursors() -> Result<()>
         drop(subscription);
         modern_client.cancel().await?;
         legacy.cancel().await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .catch_unwind()
+    .await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            cleanup?;
+        }
+        Err(panic) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires native binaries and Node; worker-scoped MCP event subscriptions over the controlled provider, no models"]
+async fn worker_event_subscriptions_keep_their_subject_and_refuse_foreign_sessions() -> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome = std::panic::AssertUnwindSafe(async {
+        repository_context::provider_ready(&fixture).await?;
+        let owner = client(&fixture.pairing()).await?;
+        let root = data(call(&owner, "nesvo_create_session", json!({"key":"events-coordinator","spec":{"name":"Events coordinator","role":"coordinator","program":"claude","harness":true}})).await?)?;
+        let root_id = root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;
+        session_ready(&owner, root_id).await?;
+        let coordinator = scoped_client(&caller_context(&fixture, root_id)?, root_id).await?;
+        let child = data(call(&coordinator, "nesvo_create_session", json!({"key":"events-worker","spec":{"name":"Events worker","program":"claude"}})).await?)?;
+        let child_id = child["data"]["receipt"]["sessionId"].as_str().context("worker")?;
+        session_ready(&owner, child_id).await?;
+        let foreign = data(call(&owner, "nesvo_create_session", json!({"key":"events-foreign","spec":{"name":"Foreign events","program":"shell","cwd":fixture.directory}})).await?)?;
+        let foreign_id = foreign["data"]["receipt"]["sessionId"].as_str().context("foreign")?;
+        let foreign_uri = format!("nesvo://events/session/{foreign_id}");
+        let own = "nesvo://events";
+        let context = caller_context(&fixture, child_id)?;
+
+        let worker = discover(scoped(&context, child_id)).await?;
+        let mut refused = worker
+            .peer()
+            .listen(
+                SubscriptionFilter::builder()
+                    .resource_subscription(own)
+                    .resource_subscription(foreign_uri.as_str())
+                    .build(),
+            )
+            .await?;
+        let error = timeout(NOTIFICATION_DEADLINE, refused.next())
+            .await
+            .context("Foreign listen refusal deadline")?
+            .expect_err("A foreign session subscription is refused");
+        ensure!(refusal_code(&error) == Some(json!("forbidden")), "{error:?}");
+
+        let mut subscription = worker
+            .peer()
+            .listen(SubscriptionFilter::builder().resource_subscription(own).build())
+            .await?;
+        let ready = modern_update(&mut subscription, own).await?;
+        ensure!(ready["ready"] == true, "A refused listen releases its streams: {ready}");
+        let sent = data(call(&coordinator, "nesvo_send_prompt", json!({"sessionId":child_id,"key":"events-worker-turn","prompt":"literal worker prompt"})).await?)?;
+        data(call(&coordinator, "nesvo_wait_prompt", json!({"id":sent["data"]["receipt"]["id"],"sessionId":child_id,"timeoutMs":5000})).await?)?;
+        let mut delta = ready;
+        for _ in 0..8 {
+            if delta["sequences"].as_array().is_some_and(|s| !s.is_empty()) {
+                break;
+            }
+            delta = modern_update(&mut subscription, own).await?;
+        }
+        let page = read_page(&worker, delta["readUri"].as_str().context("readUri")?).await?;
+        let events = page["events"].as_array().context("worker events")?;
+        ensure!(!events.is_empty(), "The worker turn is delivered: {delta}");
+        ensure!(
+            events.iter().all(|e| e["sessionId"] == child_id),
+            "A worker stream defaults to its own subject: {page}"
+        );
+
+        let (legacy, mut updates) = legacy_client(scoped(&context, child_id)).await?;
+        let error = legacy
+            .peer()
+            .send_request(subscribe_request(&foreign_uri))
+            .await
+            .expect_err("A legacy foreign session subscription is refused");
+        ensure!(refusal_code(&error) == Some(json!("forbidden")), "{error:?}");
+        legacy.peer().send_request(subscribe_request(own)).await?;
+        ensure!(legacy_update_for(&mut updates, own).await?["ready"] == true);
+
+        drop(subscription);
+        drop(refused);
+        legacy.cancel().await?;
+        worker.cancel().await?;
+        coordinator.cancel().await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
     })

@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use futures_util::future;
+use nesvo_wire::events::EventKind;
 use rmcp::{
     ErrorData, Peer, RoleServer,
     model::{
@@ -144,21 +145,21 @@ impl EventResource {
     }
 
     fn matches(&self, event: &Value) -> bool {
+        let kind = event["kind"].as_str().and_then(EventKind::parse);
         match &self.subject {
             Subject::All | Subject::Session(_) => true,
-            Subject::Operations => event["kind"] == "operation.changed",
+            Subject::Operations => kind == Some(EventKind::OperationChanged),
             Subject::Run(id) => {
-                event["kind"]
-                    .as_str()
-                    .is_some_and(|kind| kind.starts_with("run."))
-                    && event["payload"]["runId"] == id.as_str()
+                kind.is_some_and(EventKind::is_run) && event["payload"]["runId"] == id.as_str()
             }
         }
     }
 
     fn page(&self, mut page: Value) -> Value {
         if let Some(object) = page.as_object_mut() {
-            object.remove("requestId");
+            for transport in ["requestId", "type", "subscribed"] {
+                object.remove(transport);
+            }
         }
         if let Some(events) = page["events"].as_array_mut() {
             events.retain(|event| self.matches(event));
@@ -285,7 +286,6 @@ struct Stream {
     request_id: String,
     cursor: u64,
     shared: Arc<Shared>,
-    _permit: OwnedSemaphorePermit,
 }
 
 impl Stream {
@@ -425,19 +425,17 @@ async fn connect(pairing: &Path, url: Option<&str>) -> Result<Connection> {
     Ok(connection)
 }
 
-async fn open(
-    pairing: &Path,
-    url: Option<&str>,
-    uri: &str,
-    permits: &Arc<Semaphore>,
-) -> Result<Stream> {
-    let resource = EventResource::parse(uri)?;
-    let permit = permits.clone().try_acquire_owned().map_err(|_| {
+fn reserve(permits: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit> {
+    permits.clone().try_acquire_owned().map_err(|_| {
         cli::failure(
             "busy",
             "Four event subscriptions are already active; unsubscribe before adding another",
         )
-    })?;
+    })
+}
+
+async fn open(pairing: &Path, url: Option<&str>, uri: &str) -> Result<Stream> {
+    let resource = EventResource::parse(uri)?;
     let mut connection = connect(pairing, url).await?;
     let start = match resource.after {
         Some(after) => after,
@@ -466,7 +464,6 @@ async fn open(
             delta: Mutex::new(Delta::starting(start)),
             wake: Notify::new(),
         }),
-        _permit: permit,
     };
     match tokio::time::timeout(FIRST_PAGE_DEADLINE, stream.step()).await {
         Ok(None) => Ok(stream),
@@ -589,7 +586,10 @@ pub(crate) async fn read(
 struct LegacyStream {
     stop: CancellationToken,
     task: JoinHandle<()>,
+    _slot: OwnedSemaphorePermit,
 }
+
+type Started = (CancellationToken, JoinHandle<()>);
 
 pub(crate) struct EventBridge {
     permits: Arc<Semaphore>,
@@ -626,6 +626,13 @@ impl EventBridge {
             .build()
     }
 
+    fn reserve_all(&self, count: usize) -> Result<Vec<OwnedSemaphorePermit>, ErrorData> {
+        (0..count)
+            .map(|_| reserve(&self.permits))
+            .collect::<Result<_>>()
+            .map_err(|error| error_data(&error))
+    }
+
     pub(crate) async fn listen(
         &self,
         pairing: &Path,
@@ -637,22 +644,33 @@ impl EventBridge {
             .resource_subscriptions
             .clone()
             .unwrap_or_default();
+        let slots = self.reserve_all(uris.len())?;
         let streams = tokio::select! {
             _ = context.cancelled() => return Ok(()),
-            streams = future::try_join_all(uris.iter().map(|uri| open(pairing, url, uri, &self.permits))) => streams,
+            streams = future::try_join_all(uris.iter().map(|uri| open(pairing, url, uri))) => streams,
         }
         .map_err(|error| error_data(&error))?;
         let outlet = Outlet::Listen(context.sink().clone());
         let stop = self.closed.child_token();
+        let forwards = streams.into_iter().zip(slots).map(|(stream, slot)| {
+            let outlet = outlet.clone();
+            let stop = stop.clone();
+            async move {
+                forward(stream, outlet, stop).await;
+                drop(slot);
+            }
+        });
         tokio::select! {
             _ = context.cancelled() => {}
-            _ = future::join_all(streams.into_iter().map(|stream| forward(stream, outlet.clone(), stop.clone()))) => {}
+            _ = future::join_all(forwards) => {}
         }
         Ok(())
     }
 
     fn streams(&self) -> MutexGuard<'_, HashMap<String, LegacyStream>> {
-        self.legacy.lock().unwrap_or_else(PoisonError::into_inner)
+        let mut streams = self.legacy.lock().unwrap_or_else(PoisonError::into_inner);
+        streams.retain(|_, stream| !stream.task.is_finished());
+        streams
     }
 
     async fn release(&self, uri: &str) {
@@ -663,6 +681,50 @@ impl EventBridge {
         }
     }
 
+    async fn replace(
+        &self,
+        uri: &str,
+        start: impl Future<Output = Result<Started>>,
+    ) -> Result<(), ErrorData> {
+        let reserved = if self.streams().contains_key(uri) {
+            None
+        } else {
+            Some(reserve(&self.permits).map_err(|error| error_data(&error))?)
+        };
+        let (stop, task) = start.await.map_err(|error| error_data(&error))?;
+        let previous = {
+            let mut streams = self.streams();
+            if let Some(entry) = streams.get_mut(uri) {
+                Some((
+                    std::mem::replace(&mut entry.stop, stop),
+                    std::mem::replace(&mut entry.task, task),
+                ))
+            } else {
+                let slot = match reserved.map_or_else(|| reserve(&self.permits), Ok) {
+                    Ok(slot) => slot,
+                    Err(error) => {
+                        stop.cancel();
+                        return Err(error_data(&error));
+                    }
+                };
+                streams.insert(
+                    uri.to_owned(),
+                    LegacyStream {
+                        stop,
+                        task,
+                        _slot: slot,
+                    },
+                );
+                None
+            }
+        };
+        if let Some((stop, task)) = previous {
+            stop.cancel();
+            let _ = task.await;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn subscribe(
         &self,
         pairing: &Path,
@@ -671,18 +733,13 @@ impl EventBridge {
         peer: Peer<RoleServer>,
     ) -> Result<(), ErrorData> {
         EventResource::parse(&uri).map_err(|error| not_found(&error))?;
-        self.release(&uri).await;
-        let stream = open(pairing, url, &uri, &self.permits)
-            .await
-            .map_err(|error| error_data(&error))?;
-        let stop = self.closed.child_token();
-        let task = tokio::spawn(forward(stream, Outlet::Legacy(peer), stop.clone()));
-        let mut streams = self.streams();
-        streams.retain(|_, stream| !stream.task.is_finished());
-        if let Some(previous) = streams.insert(uri, LegacyStream { stop, task }) {
-            previous.stop.cancel();
-        }
-        Ok(())
+        let start = async {
+            let stream = open(pairing, url, &uri).await?;
+            let stop = self.closed.child_token();
+            let task = tokio::spawn(forward(stream, Outlet::Legacy(peer), stop.clone()));
+            Ok((stop, task))
+        };
+        self.replace(&uri, start).await
     }
 
     pub(crate) async fn unsubscribe(&self, uri: &str) -> Result<(), ErrorData> {
@@ -694,6 +751,7 @@ impl EventBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     fn page(after: u64, events: Value, gap: bool) -> Value {
         let next = events
@@ -776,13 +834,40 @@ mod tests {
         let runs = EventResource::parse("nesvo://events/run/R1").unwrap();
         assert!(operations.matches(&operation) && !operations.matches(&run));
         assert!(runs.matches(&run) && !runs.matches(&other_run) && !runs.matches(&session));
-        let filtered = runs.page(
-            json!({"requestId":"x","events":[operation,run,other_run,session],"nextCursor":4}),
-        );
+        let filtered = runs.page(json!({
+            "type":"events",
+            "subscribed":false,
+            "requestId":"x",
+            "events":[operation,run,other_run,session],
+            "nextCursor":4
+        }));
         assert_eq!(filtered["events"].as_array().unwrap().len(), 1);
         assert_eq!(filtered["nextCursor"], 4);
         assert_eq!(filtered["resource"], "nesvo://events/run/R1");
-        assert!(filtered.get("requestId").is_none());
+        for transport in ["requestId", "type", "subscribed"] {
+            assert!(filtered.get(transport).is_none(), "{transport}");
+        }
+    }
+
+    #[test]
+    fn mcp_event_filters_follow_the_typed_event_kinds() {
+        let operations = EventResource::parse("nesvo://events/operations").unwrap();
+        let runs = EventResource::parse("nesvo://events/run/R1").unwrap();
+        let mut run_kinds = 0;
+        for kind in nesvo_wire::events::Event::KINDS {
+            let typed = EventKind::parse(kind).unwrap();
+            let journaled = event(1, kind, Some("R1"));
+            assert_eq!(
+                operations.matches(&journaled),
+                typed == EventKind::OperationChanged,
+                "{kind}"
+            );
+            assert_eq!(runs.matches(&journaled), typed.is_run(), "{kind}");
+            run_kinds += usize::from(typed.is_run());
+        }
+        assert!(run_kinds > 0);
+        assert!(operations.matches(&event(1, EventKind::OperationChanged.as_str(), None)));
+        assert!(!runs.matches(&event(1, "run.unknown", Some("R1"))));
     }
 
     #[test]
@@ -864,20 +949,159 @@ mod tests {
         assert_eq!(meta["nextCursor"], 40);
     }
 
-    #[test]
-    fn mcp_event_delta_marks_retention_gaps_and_closure() {
-        let all = EventResource::parse("nesvo://events/session/s1").unwrap();
-        let mut delta = Delta::default();
-        delta.absorb(
-            &all,
-            5,
-            &page(5, json!([event(90, "session.created", None)]), true),
-        );
-        delta.closed = Some(("cursor_expired".into(), "expired".into()));
-        let meta = delta.take().unwrap().meta(&all);
+    fn scripted(uri: &str, cursor: u64) -> (Stream, mpsc::Sender<NetworkEvent>) {
+        let (connection, events) = Connection::scripted();
+        let stream = Stream {
+            connection,
+            resource: EventResource::parse(uri).unwrap(),
+            uri: uri.to_owned(),
+            request_id: "r1".into(),
+            cursor,
+            shared: Arc::new(Shared {
+                delta: Mutex::new(Delta::starting(cursor)),
+                wake: Notify::new(),
+            }),
+        };
+        (stream, events)
+    }
+
+    fn frame(mut value: Value) -> NetworkEvent {
+        value["requestId"] = "r1".into();
+        NetworkEvent::Message(value)
+    }
+
+    async fn feed(events: &mpsc::Sender<NetworkEvent>, frames: Vec<NetworkEvent>) {
+        for frame in frames {
+            events.send(frame).await.unwrap();
+        }
+    }
+
+    fn closed_meta(stream: &Stream) -> Value {
+        stream.shared.lock().take().unwrap().meta(&stream.resource)
+    }
+
+    #[tokio::test]
+    async fn mcp_event_stream_closes_with_cursor_expired_on_a_retention_gap() {
+        let (mut stream, events) = scripted("nesvo://events/session/s1", 5);
+        feed(
+            &events,
+            vec![frame(page(
+                5,
+                json!([event(90, "session.created", None)]),
+                true,
+            ))],
+        )
+        .await;
+        stream.pump().await;
+        let meta = closed_meta(&stream);
         assert_eq!(meta["after"], 5);
         assert_eq!(meta["gap"], true);
+        assert_eq!(meta["sequences"], json!([90]));
         assert_eq!(meta["closed"]["code"], "cursor_expired");
+    }
+
+    #[tokio::test]
+    async fn mcp_event_stream_closes_with_the_host_error_after_delivered_pages() {
+        let (mut stream, events) = scripted("nesvo://events/operations", 4);
+        feed(
+            &events,
+            vec![
+                frame(page(4, json!([event(5, "operation.changed", None)]), false)),
+                NetworkEvent::Message(
+                    json!({"type":"error","code":"forbidden","requestId":"other"}),
+                ),
+                frame(json!({"type":"eventsUnsubscribed"})),
+                frame(json!({
+                    "type":"error",
+                    "code":"scope_revoked",
+                    "message":"Event subscription authority has expired"
+                })),
+            ],
+        )
+        .await;
+        stream.pump().await;
+        assert_eq!(stream.cursor, 5);
+        let meta = closed_meta(&stream);
+        assert_eq!(meta["sequences"], json!([5]));
+        assert_eq!(
+            meta["closed"],
+            json!({"code":"scope_revoked","message":"Event subscription authority has expired"})
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_event_stream_closes_as_disconnected_when_the_host_connection_ends() {
+        let (mut stream, events) = scripted("nesvo://events", 2);
+        feed(&events, vec![NetworkEvent::Disconnected("reset".into())]).await;
+        assert_eq!(stream.step().await.unwrap().0, "disconnected");
+        drop(events);
+        stream.pump().await;
+        assert_eq!(closed_meta(&stream)["closed"]["code"], "disconnected");
+    }
+
+    async fn idle(stop: CancellationToken) -> Result<Started> {
+        let task = tokio::spawn({
+            let stop = stop.clone();
+            async move { stop.cancelled().await }
+        });
+        Ok((stop, task))
+    }
+
+    fn refused(code: &str) -> impl Future<Output = Result<Started>> {
+        let error = cli::failure(code, "Replacement did not open");
+        async move { Err(error) }
+    }
+
+    fn code(error: ErrorData) -> Value {
+        error.data.unwrap()["code"].clone()
+    }
+
+    #[tokio::test]
+    async fn mcp_event_listen_refuses_a_fifth_stream_before_opening_any() {
+        let bridge = EventBridge::default();
+        let held = bridge.reserve_all(MAX_STREAMS).unwrap();
+        assert_eq!(code(bridge.reserve_all(1).unwrap_err()), "busy");
+        assert_eq!(bridge.permits.available_permits(), 0);
+        drop(held);
+        assert!(bridge.reserve_all(MAX_STREAMS + 1).is_err());
+        assert_eq!(bridge.permits.available_permits(), MAX_STREAMS);
+    }
+
+    #[tokio::test]
+    async fn mcp_event_legacy_resubscribe_keeps_the_old_stream_until_the_new_one_opens() {
+        let bridge = EventBridge::default();
+        let uri = "nesvo://events/operations";
+        let first = CancellationToken::new();
+        bridge.replace(uri, idle(first.clone())).await.unwrap();
+        let failed = bridge
+            .replace(uri, refused("host_unavailable"))
+            .await
+            .unwrap_err();
+        assert_eq!(code(failed), "host_unavailable");
+        assert!(!first.is_cancelled());
+        assert!(!bridge.streams()[uri].task.is_finished());
+        assert_eq!(bridge.permits.available_permits(), MAX_STREAMS - 1);
+
+        for index in 1..MAX_STREAMS {
+            let other = format!("nesvo://events/session/s{index}");
+            bridge
+                .replace(&other, idle(CancellationToken::new()))
+                .await
+                .unwrap();
+        }
+        let second = CancellationToken::new();
+        bridge.replace(uri, idle(second.clone())).await.unwrap();
+        assert!(first.is_cancelled() && !second.is_cancelled());
+        assert_eq!(bridge.permits.available_permits(), 0);
+        let fifth = bridge
+            .replace("nesvo://events", refused("must_not_open"))
+            .await
+            .unwrap_err();
+        assert_eq!(code(fifth), "busy");
+
+        bridge.unsubscribe(uri).await.unwrap();
+        assert!(second.is_cancelled());
+        assert_eq!(bridge.permits.available_permits(), 1);
     }
 
     #[test]
