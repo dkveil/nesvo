@@ -11,7 +11,7 @@ These are project rules, not a requirement to introduce a framework for every ab
 | `apps/tui`          | Rust `nesvo` executable; native terminal client                                                       |
 | `crates/nesvo-wire` | Shared authenticated frame codec and typed domain events; no sockets, processes or credential storage |
 | `tests`             | Cross-application contracts, integration and browser checks                                           |
-| `scripts`           | Repository tooling, terminal bundle generation and lint conventions                                   |
+| `scripts`           | Repository tooling, terminal bundle generation, lint conventions and the CI contract gates            |
 
 Install JavaScript dependencies at the repository root using its `package-lock.json`. Root npm scripts forward application commands to `@nesvo/mobile`. Rust packages share the root Cargo workspace, dependency declarations, `Cargo.lock` and `target/` directory. Use locked builds; do not recreate independent application lockfiles.
 
@@ -119,13 +119,31 @@ Every `actions/checkout` step sets `persist-credentials: false`, so no later ste
 
 These rules apply to every change. Reviewers enforce all of them; only the ones marked automated fail CI on their own.
 
-- **No code comments.** Source carries no comments that restate what the code does, no section banners and no commented-out code. One line is allowed only where code cannot express why: a library gotcha, a workaround or a counter-intuitive decision. Workflow YAML carries none (see [workflow actions](#workflow-actions)). Review only; no automated check exists.
-- **No attribution.** Commit messages and pull request descriptions name no AI tool: no co-author trailers, generated-with footers or session links ([commits and pull requests](../CONTRIBUTING.md#commits-and-pull-requests)). Review only.
+- **No code comments.** Source carries no comments that restate what the code does, no section banners and no commented-out code. One line is allowed only where code cannot express why: a library gotcha, a workaround or a counter-intuitive decision. Workflow YAML carries none (see [workflow actions](#workflow-actions)). The `app` job fails a push or pull request that adds a comment outside the allowed forms (automated, see [comment and attribution gates](#comment-and-attribution-gates)).
+- **No attribution.** Commit messages and pull request descriptions name no AI tool: no co-author trailers, generated-with footers or session links ([commits and pull requests](../CONTRIBUTING.md#commits-and-pull-requests)). The `app` job fails a push or pull request whose commit messages carry one (automated, see [comment and attribution gates](#comment-and-attribution-gates)); pull request descriptions are reviewed, and a squash merge turns them into a commit message the gate then reads.
 - **Migrations run the full suite.** A change that adds a file under `apps/host/migrations/` or touches `migrations.rs` runs `cargo nextest run --workspace --locked --profile ci` before merge, never a filtered subset: every journal-backed module opens the migrated schema, so a filtered run can pass while another module fails.
 - **CLI reply shapes have schema scenarios.** A new or changed `--json` reply kind adds its `data.oneOf` branch to `docs/harness-cli.schema.json`; `every_cli_reply_kind_has_a_published_schema_branch` fails otherwise (automated). Where a native scenario can print the reply, the scenario pipes it through `tests/fixtures/validate-harness-json.cjs` ([native CLI reply envelopes](testing.md#native-cli-reply-envelopes)).
 - **Contention tests are deterministic.** A test of a lock, busy retry or writer race holds the competing side with a barrier or channel and releases it only after the code under test is observed waiting; it never relies on timing to create the overlap ([SQLite writer admission](harness-transactions.md)).
 - **Waits end on events, not clocks.** Tests and native scenarios wait for a host event, receipt or state change under a deadline. No fixed sleep or fixed observation window decides success; the deadline only bounds a failure, and nextest ends any single test after five minutes (`.config/nextest.toml`).
 - **Generated contracts stay generated.** Change the Rust model, regenerate with `NESVO_UPDATE_CONTRACTS=1` and commit the outputs ([generated contracts](#generated-contracts)); CI fails on drift (automated).
+
+## Comment and attribution gates
+
+`scripts/contract-gates.mjs` runs as a step of the `app` job in `ci.yml`, before dependencies are installed, and `npm run contract-gates -- --base origin/main` runs it locally. It judges what a push or pull request introduces: the commit messages in `base..head` and the net diff from their merge base to the head. The base is the previous tip (`github.event.before`) on a push and the base commit on a pull request. A new branch, a null base or a base that no longer exists (a force push) falls back to the head commit alone. A base missing from a shallow clone is an error instead of a weaker check, which is why the job checks out the full history. Tag pushes skip the step; the tagged commit was judged on its branch.
+
+Only lines the range adds are judged, so an existing comment fails nothing until a change rewrites or moves it. The gate reads the files at the head and lexes them, so comment markers inside strings, raw strings, templates, regular expressions and URLs are not comments.
+
+Comments in Rust, TypeScript, JavaScript, YAML and TOML files (`.rs`, `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.yml`, `.yaml`, `.toml`) are rejected, except:
+
+- `///` doc comments on the items of a Rust type that derives clap's `Parser`, `Args`, `Subcommand` or `ValueEnum`, or schemars' `JsonSchema`, because they become CLI help and schema descriptions.
+- A one-line `// SAFETY:` comment directly above an `unsafe` block or above the statement that holds it (the keyword within the next three lines). A second comment line, a lower-case marker and a trailing form are rejected.
+- The whole lines in `scripts/contract-gates/allowlist.json`, matched by exact trimmed text in Rust, TypeScript and JavaScript files wherever they appear, so moving or splitting a file keeps them valid. They are the WHY comments that predate the gate, and the list should only shrink.
+
+Never allowed: `//!` and block comments, trailing comments, and `#` comments in YAML (shell comments inside `run` blocks included) and TOML. `generated.ts` and the `node_modules`, `target`, `dist`, `.expo` and `artifacts` directories are skipped.
+
+The attribution gate rejects a commit message line that starts a `Co-Authored-By:` trailer, a `Generated with` or `Generated by` footer, or a `<Tool>-Session:` trailer, and a message that links an assistant session. A message that merely opens a sentence with those words has to be rephrased.
+
+A failure prints one line per finding, `path:line: reason: excerpt` for a comment and `commit <sha> message line <n>: reason: excerpt` for a message, and the job fails. `tests/contract-gates.test.mjs`, part of `npm run test:architecture`, covers the lexers, the rules, the diff parser and the command against temporary repositories.
 
 ## Language documentation
 
