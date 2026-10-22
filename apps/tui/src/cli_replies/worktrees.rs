@@ -99,6 +99,25 @@ pub struct WorktreeSetupReplyConfig {
     pub env_files: Vec<String>,
     #[schemars(range(min = 1, max = 3600))]
     pub timeout_s: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 8))]
+    pub mcp_servers: Vec<WorktreeSetupReplyMcpServer>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(inline)]
+pub struct WorktreeSetupReplyMcpServer {
+    #[schemars(pattern("^[a-z0-9][a-z0-9_-]{0,63}$"))]
+    pub name: String,
+    #[schemars(length(min = 1, max = 1024))]
+    pub command: String,
+    #[schemars(length(max = 64), inner(length(max = 4096)))]
+    pub args: Vec<String>,
+    #[schemars(length(max = 32), inner(pattern("^[A-Za-z_][A-Za-z0-9_]{0,127}$")))]
+    pub env: Vec<String>,
+    #[schemars(length(min = 1, max = 512))]
+    pub cwd: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

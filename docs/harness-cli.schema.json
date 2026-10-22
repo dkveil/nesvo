@@ -7283,6 +7283,47 @@
                       "maxItems": 32,
                       "type": "array"
                     },
+                    "mcpServers": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "args": {
+                            "items": {
+                              "maxLength": 4096,
+                              "type": "string"
+                            },
+                            "maxItems": 64,
+                            "type": "array"
+                          },
+                          "command": {
+                            "maxLength": 1024,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "cwd": {
+                            "maxLength": 512,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "env": {
+                            "items": {
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+                              "type": "string"
+                            },
+                            "maxItems": 32,
+                            "type": "array"
+                          },
+                          "name": {
+                            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["name", "command", "args", "env", "cwd"],
+                        "type": "object"
+                      },
+                      "maxItems": 8,
+                      "type": "array"
+                    },
                     "run": {
                       "items": {
                         "maxLength": 4096,
