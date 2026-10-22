@@ -106,7 +106,8 @@ templates and 64 tasks each; instructions and goals are 8192 bytes. A task decla
 at most 8 `checks`, each a nonempty single-line command of at most 256 bytes for the
 platform shell. Unknown keys or tables, duplicate names or keys, missing, self or
 duplicate dependencies and cycles are refused with `workflow_templates_invalid` and a
-line number. The worktree setup ignores `[[workflow]]` entries and keeps its own digest.
+line number. The worktree setup ignores `[[workflow]]` entries and keeps its own digest;
+templates ignore the [`[[mcp.server]]`](harness-mcp.md#external-mcp-servers) declarations.
 
 The template digest is the SHA-256 of the normalized templates, so formatting and
 comments do not change it; declared `checks` are part of it, a template without

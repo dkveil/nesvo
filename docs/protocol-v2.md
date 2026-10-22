@@ -482,7 +482,17 @@ Additive `mcpPool:true` advertises an owner-only, read-only view of the host's w
 | --------------- | ------------------------------------------------------------- |
 | `mcpPoolStatus` | `mcpPool { available, bounds, processes, entries, sessions }` |
 
-`bounds` is `{ processes, warmPerKey, idleMs, connectMs, sessions }`. `processes` is `{ warm, leased }`. Each entry is `{ entryId, server, program, digest, root, state:"warm"|"leased", sessionId, ageMs }`; a lease token or endpoint is never listed. `sessions` holds up to 256 recent per-session outcomes `{ sessionId, server, program, mode:"pooled"|"cold"|"dedicated", reason, entryId }`, removed when the session closes. Journal events `mcp.pool_attached`, `mcp.pool_released` and `mcp.pool_reaped` record leases and reaping. The [MCP guide](harness-mcp.md#warm-server-pool) describes eligibility, isolation, bounds and the `mcp_pool_unavailable` cold fallback.
+`bounds` is `{ processes, warmPerKey, idleMs, connectMs, sessions }`. `processes` is `{ warm, leased }`. Each entry is `{ entryId, server, program, digest, root, state:"warm"|"leased", sessionId, ageMs }`; a lease token or endpoint is never listed. `sessions` holds up to 256 recent per-session outcomes `{ sessionId, server, program, mode:"pooled"|"cold"|"dedicated", reason, entryId, repository }`, removed when the session closes; `repository` is null for the harness server and names the repository of an external server declaration. Journal events `mcp.pool_attached`, `mcp.pool_released` and `mcp.pool_reaped` record leases and reaping. The [MCP guide](harness-mcp.md#warm-server-pool) describes eligibility, isolation, bounds and the `mcp_pool_unavailable` cold fallback.
+
+## External MCP servers
+
+Additive `mcpServers:true` advertises owner-approved external stdio MCP servers declared as `[[mcp.server]]` in a repository's committed `nesvo.toml` ([MCP guide](harness-mcp.md#external-mcp-servers)), and an owner-only, read-only listing; scoped session and wake callers receive `forbidden`. The command shares the worktree request limit and error shape.
+
+| Command                        | Result                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `listMcpServers { directory }` | `mcpServers { repository, source, configured, digest, approved, servers, attached, providers, bounds }` |
+
+`source` is `"HEAD:nesvo.toml"`; `digest` is the worktree setup digest of that file (null without one) and `approved` whether the owner approved it. Each server is `{ name, command, args, env, cwd, state:"approved"|"unapproved", resolvedCommand, problem }`, where `resolvedCommand` is the absolute program the host would start (null when it is not found on the host `PATH`) and `problem` is null, `commandUnavailable`, `cwdUnavailable` or `cwdOutsideRepository`. `attached` lists the pool's per-session outcomes of this repository's declarations in the `mcpPoolStatus` session shape. `providers` is `{ claude:"launchConfig", codex:"unsupported", gemini:"unsupported" }` and `bounds` is `{ serversPerRepository, processes, warmPerKey }`. A `nesvo.toml` that fails to parse returns `worktree_config_invalid`; a folder outside Git returns `invalid_argument`. Journal events `mcp.server_attached`, `mcp.server_released` and `mcp.server_reaped` record the declaration lifecycle. Reading the listing runs nothing.
 
 ## Observed session status
 
@@ -536,6 +546,7 @@ flags than clients gate on; these are the ones current clients check:
 | `notes`              | `listNotes`, `readNote`, `writeNote` and `deleteNote` ([notes](#notes))                                 |
 | `projects`           | the project registry commands ([projects](#projects))                                                   |
 | `mcpPool`            | `mcpPoolStatus` ([MCP server pool](#mcp-server-pool))                                                   |
+| `mcpServers`         | `listMcpServers` ([external MCP servers](#external-mcp-servers))                                        |
 | `workflowTemplates`  | `nesvo.toml` run templates ([templates](harness-workflows.md#templates-from-nesvotoml))                 |
 | `workflowHostChecks` | `hostChecks:true` on result validation ([host-run checks](harness-workflows.md#host-run-checks))        |
 | `runDigests`         | the run `digest` read ([run digest](harness-workflows.md#run-digest-and-working-state))                 |

@@ -142,10 +142,104 @@ The journal records `mcp.pool_attached` (session-scoped `entryId`, `server`,
 `digest` and `idle`, `exited`, `digestChanged` or `shutdown`). Nothing else is
 reported or sent anywhere.
 
-No launch produces a pool-eligible server yet: the host writes only the `nesvo`
-server, and external per-session servers (F38) and the provider-side bridge
-command that connects a provider's stdio to a lease endpoint are pending. Memory
-and process counts against dedicated mode are not measured.
+The `nesvo` server stays dedicated. The pool serves the owner-approved external
+servers described next, through the host's own bridge command. Memory and process
+counts against dedicated mode are not measured.
+
+## External MCP servers
+
+Capability `mcpServers` advertises external stdio MCP servers that a repository
+declares in its committed `nesvo.toml`, next to the
+[worktree setup](harness-cli.md#worktree-setup-run-and-archive) table:
+
+```toml
+[[mcp.server]]
+name = "docs"
+command = "npx"
+args = ["-y", "@some/mcp-server"]
+env = ["HOME", "PATH"]
+cwd = "tools/docs"
+```
+
+| Key       | Rule                                                                                                                                                                                                                       |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`    | Required, unique, 1-64 lowercase letters, digits, `-` or `_`, starting with a letter or digit; `nesvo` is reserved                                                                                                         |
+| `command` | Required: a program name looked up on the host `PATH` (with `PATHEXT` on Windows) or an absolute path, at most 1024 bytes                                                                                                  |
+| `args`    | Optional, at most 64 single-line arguments of at most 4096 bytes                                                                                                                                                           |
+| `env`     | Optional allowlist of at most 32 unique variable names (`[A-Za-z_][A-Za-z0-9_]*`) whose host values the server inherits; names starting with `NESVO_` or `POCKET_` are refused                                             |
+| `cwd`     | Optional relative folder with `/` separators, default `.`; no `.` or `..` components, nothing under `.git` or `.nesvo`, and after resolving links it must be a folder inside the checkout, otherwise the server is skipped |
+
+At most 8 entries per file and 16 KiB of command, arguments and variable names per
+entry. Any other key, a wrong value type, a duplicate key or name, or a ninth entry
+fails the whole file with `worktree_config_invalid` and a line number, exactly as an
+invalid `[worktree]` table does. Workflow templates ignore `[[mcp.server]]` entries.
+
+**Approval.** Declarations belong to the worktree setup digest: a non-empty
+`[[mcp.server]]` list adds `mcpServers` to the normalized setup values, so a file
+without servers keeps its earlier digest, and `nesvo worktree describe` shows the
+declarations under `config.mcpServers`. The owner approves or revokes them with
+`nesvo worktree approve-setup` and `revoke-setup`; the host never approves on its
+own. A session in the repository's own checkout uses `HEAD:nesvo.toml` of that
+checkout, never uncommitted edits. A session in a host-created worktree uses the
+declarations recorded with the worktree when it was created, or `HEAD:nesvo.toml`
+of the source repository when the recorded setup declared none. When the digest is
+not approved, or the file changed since the approval, no external server is exposed
+and nothing is attached or journaled. As with setup steps, the approval covers the
+command strings, not the program they start.
+
+**Providers.** The host writes MCP configuration only for harness Claude sessions
+(`spec.harness:true`), in the launch-local `--mcp-config` file it already writes for
+the `nesvo` server. Each approved declaration becomes an entry under its `name`
+whose command is the host executable with `--mcp-bridge LEASE_FILE`. The host writes
+no MCP configuration for Codex or Gemini sessions, so external servers do not reach
+them; `listMcpServers` reports this as `providers`.
+
+**Identity and bounds.** Each declaration is one pool [key](#warm-server-pool): the
+provider program, the configuration digest (which covers the resolved command file,
+arguments, the allowlisted values and the resolved folder) and that folder as root.
+The repository checkout and each worktree are therefore separate keys with their own
+warm process. The pool's host-wide `processes` bound (4 warm and leased processes)
+applies; a declaration beyond it is attached `cold` with `boundReached`, and the
+8-entry file bound limits a session to 8 external servers.
+
+**Bridge.** At launch the host attaches each declaration through the pool and writes
+an owner-only lease file per server in a private `nesvo-mcp-lease-*` folder that it
+removes when the session closes. When the pool leased a warm process, the file holds
+the lease endpoint and token; the bridge sends the token and relays its standard input
+and output to that process. Otherwise (`cold` or `dedicated`), or when the endpoint is
+no longer reachable (a provider that restarts the server), the bridge starts the
+server itself in the declared folder, inside its own kill-on-close job on Windows or
+process group on Unix, with the same environment as a pooled process: the fixed
+allowlist, the declared variables with the host's values and a fresh `nesvo-mcp-*`
+temporary root. The provider's own environment, including `NESVO_AGENT_CONTEXT`, never
+reaches the server.
+
+Each lease file also records the approval it was issued under: the host's worktree
+registry folder, the repository and the approved setup digest, and for a declaration
+read from `HEAD` the repository root. Every bridge start re-checks that approval
+before it connects or starts anything: the digest must still be approved in the
+registry and, for a `HEAD` declaration, `HEAD:nesvo.toml` must still produce that
+digest. Otherwise the bridge exits with code 3 and starts nothing; code 2 means an
+unreadable lease or a server that could not be started.
+
+**Revocation.** Revoking a setup digest deletes the lease files of every session
+attached under that repository and digest, reaps the warm processes of its
+declarations with reason `revoked`, and makes any copy of an old lease fail the
+approval check. A server that a bridge already connected to or started keeps running
+until the provider stops it or the session ends.
+
+**Journal.** `mcp.server_attached` (session-scoped `server`, `repository`, `digest`,
+`root`, `mode`, `reason`, `entryId`) records each exposure, `mcp.server_released`
+(session-scoped `server`, `repository`, `reason:"sessionClosed"`) each declaration
+of a closed session, and `mcp.server_reaped` (host-scoped `entryId`, `server`,
+`repository`, `digest`, `reason`) each warm process of a declaration that the pool
+reaps, next to the process-level `mcp.pool_*` events.
+
+**Listing.** `listMcpServers {directory}` (owner only, capability `mcpServers`)
+returns the declared servers of `HEAD:nesvo.toml` with their approval state, the
+command the host would start, any folder or command problem and the pool's
+attachments for that repository ([protocol](protocol-v2.md#external-mcp-servers)).
+The CLI, MCP tool and TUI listing are pending.
 
 ## Current tools
 

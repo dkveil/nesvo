@@ -349,8 +349,10 @@ agent that is not ready and idle are refused with `control_busy`, `unsupported`,
 ## Worktree setup, run and archive
 
 A repository declares worktree preparation in a committed `nesvo.toml` at its
-root. Only the `[worktree]` table and the `[[workflow]]` run templates described in
-[workflow templates](harness-workflows.md#templates-from-nesvotoml) are defined; the
+root. Only the `[worktree]` table, the `[[workflow]]` run templates described in
+[workflow templates](harness-workflows.md#templates-from-nesvotoml) and the
+`[[mcp.server]]` declarations described in
+[external MCP servers](harness-mcp.md#external-mcp-servers) are defined; the
 parser accepts a strict TOML subset (comments, basic and literal single-line strings,
 string arrays that may span lines, decimal integers, booleans) and refuses unknown
 keys or tables:
