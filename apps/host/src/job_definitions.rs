@@ -594,7 +594,12 @@ pub(crate) fn transition(
             reason,
             finished_at.map(u64::try_from).transpose()?,
         )?;
-        observe(transaction, &job, Some(id), state, now)?;
+        let stored: String = transaction.query_row(
+            "SELECT state FROM harness_job_occurrences WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        observe(transaction, &job, Some(id), &stored, now)?;
     }
     Ok(())
 }
@@ -1398,6 +1403,7 @@ pub fn work_at(connection: &mut Connection, work: Work, now: u64, elapsed: u64) 
                 )?;
                 transaction.execute("UPDATE harness_jobs SET next_due=NULL WHERE id=?1", [&id])?;
             }
+            crate::job_retries::probe_pending(&transaction, now, elapsed)?;
             let candidates = {
                 let eligible = crate::job_quota::ELIGIBLE_SQL;
                 let mut q=transaction.prepare(&format!("SELECT o.id,o.job_id,o.spec,o.state FROM harness_job_occurrences o JOIN harness_jobs j ON j.id=o.job_id LEFT JOIN harness_job_retries retry ON retry.source_attempt_id=o.current_job_attempt_id AND retry.occurrence_id=o.id WHERE ((o.state='queued' AND (j.enabled=1 OR o.trigger_kind='manual')) OR (o.state='retryWaiting' AND retry.state='waiting' AND retry.not_before<=?2)) AND {eligible} AND NOT EXISTS(SELECT 1 FROM harness_job_occurrences a WHERE a.job_id=o.job_id AND a.id<>o.id AND a.state IN ({ACTIVE})) ORDER BY CASE WHEN o.state='retryWaiting' THEN retry.not_before ELSE o.created_at END,o.created_at,o.rowid LIMIT ?1"))?;

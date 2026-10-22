@@ -1620,6 +1620,49 @@ fn a_reservation_after_the_probe_blocks_the_due_claim_instead_of_retrying() {
 }
 
 #[test]
+fn journal_probe_runs_with_a_full_scheduler_and_a_quota_hold() {
+    let mut store = store();
+    let fixture = seed(&store, "full", Some(retry(3)), 1);
+    without_native(&store, &fixture);
+    retire_producer(&store, &fixture);
+    fail(&mut store, &fixture, "dispatch_unconfirmed", NOW + 5);
+    store
+        .0
+        .execute(
+            "INSERT INTO harness_job_quota_sources(source_id,revision,expires_elapsed_ms,eligible,reason) VALUES('gate_claude',1,?1,0,'fixture_hold')",
+            [i64::MAX / 2],
+        )
+        .unwrap();
+    assert_eq!(classification(&store, &fixture)["decision"], "probing");
+    match job_definitions::work(&mut store.0, Work::Poll { slots: 0 }, NOW + 6).unwrap() {
+        Reply::Claims(claims) => assert!(claims.is_empty()),
+        _ => panic!("Expected scheduler claims"),
+    }
+    let decision = job_retries::view(&store.0, &fixture.source).unwrap();
+    assert_eq!(decision["probe"]["result"], "absent");
+    assert_eq!(decision["decidedAt"], NOW + 6);
+    assert!(job_attempts::guard_run(&store.0, &fixture.run).is_err());
+    assert_eq!(count(&store.0, "harness_job_attempts"), 1);
+}
+
+#[test]
+fn uncertain_classification_publishes_the_stored_retry_waiting_phase() {
+    let mut store = store();
+    let fixture = seed(&store, "publish", Some(retry(3)), 1);
+    without_native(&store, &fixture);
+    fail(&mut store, &fixture, "dispatch_unconfirmed", NOW + 5);
+    let phases: Vec<String> = store
+        .0
+        .prepare("SELECT json_extract(payload,'$.phase') FROM domain_events WHERE kind='job.changed' ORDER BY sequence")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(phases, ["retryWaiting"]);
+}
+
+#[test]
 fn uncertain_failure_without_a_policy_keeps_the_existing_reconcile() {
     let mut store = store();
     let fixture = seed(&store, "unopted", None, 1);
@@ -1657,14 +1700,15 @@ fn proven_refusal_reached_through_an_uncertain_reply_takes_the_no_effect_class()
 }
 
 #[test]
-fn adopted_attempt_that_later_proves_no_effect_becomes_a_no_effect_retry() {
+fn adopted_attempt_that_later_proves_no_effect_is_never_retried() {
     let mut store = store();
     let fixture = seed(&store, "convert", Some(retry(3)), 1);
     native_state(&store, &fixture, "launching", "dispatching", json!({}));
     retire_producer(&store, &fixture);
     fail(&mut store, &fixture, "dispatch_unconfirmed", NOW + 5);
     assert!(claim(&mut store, &fixture, NOW + 6).is_none());
-    assert_eq!(classification(&store, &fixture)["decision"], "adopted");
+    let adopted = classification(&store, &fixture);
+    assert_eq!(adopted["decision"], "adopted");
     native_state(
         &store,
         &fixture,
@@ -1672,20 +1716,16 @@ fn adopted_attempt_that_later_proves_no_effect_becomes_a_no_effect_retry() {
         "failed",
         json!({"code":"invalid_launch","message":"Recorded pre-native validation refusal","effectStarted":false}),
     );
-    assert!(consider(&mut store, &fixture, NOW + 10));
-    let decision = job_retries::view(&store.0, &fixture.source).unwrap();
-    assert_eq!(decision["class"], "noEffect");
-    assert_eq!(decision["attemptId"], fixture.native);
-    assert_eq!(decision["notBefore"], NOW + 1010);
-    let converted = classification(&store, &fixture);
-    assert_eq!(converted["decision"], "retryWaiting");
-    assert_eq!(converted["probe"]["result"], "attemptFound");
-    assert_eq!(occurrence(&store.0, &fixture)["state"], "retryWaiting");
-    assert!(consider(&mut store, &fixture, NOW + 11));
-    assert_eq!(
-        job_retries::view(&store.0, &fixture.source).unwrap(),
-        decision
+    assert!(!consider(&mut store, &fixture, NOW + 10));
+    assert!(
+        job_retries::view(&store.0, &fixture.source)
+            .unwrap()
+            .is_null()
     );
+    assert_eq!(classification(&store, &fixture), adopted);
+    assert_ne!(occurrence(&store.0, &fixture)["state"], "retryWaiting");
+    assert!(claim(&mut store, &fixture, NOW + 5000).is_none());
+    assert_eq!(count(&store.0, "harness_job_attempts"), 1);
 }
 
 #[test]

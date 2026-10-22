@@ -319,8 +319,9 @@ reserved in the meantime is found and adopted rather than refused. A probe repor
   `launch_unconfirmed`, and work found after `host_restarted` stays in
   `reconcile`. No retry happens and the Run stays admissible.
 - `noEffectProven` hands the generation to the `noEffect` class with the same
-  evidence, approval and authority checks; when any of them fails the occurrence
-  fails with `attempt_failed`, as the generic failure projection would.
+  evidence, approval and authority checks; at the generation limit the occurrence
+  fails with `retry_exhausted`, and when any other check fails it fails with
+  `attempt_failed`, as the generic failure projection would.
 - `absent` pauses the Run's executor (`job_retry_waiting`) and retires the
   generation in the same transaction, so no later launch reservation, delivery,
   wake or executor enable can admit effects for that Run. The generation becomes
@@ -339,7 +340,10 @@ exist.
 Probes add no timer of their own. The first runs in the next scheduler poll (the
 existing one-to-thirty-second job tick), or in the same poll when that poll's
 refresh observed the failure, and the second at the policy's capped backoff
-deadline, so an uncertain retry is never sooner than a no-effect retry.
+deadline, so an uncertain retry is never sooner than a no-effect retry. The first
+probe reads only the journal and starts nothing, so it bypasses quota gating and
+the scheduler's dispatch slots: a quota hold or four busy dispatches never delay it
+while the Run stays unfenced. The due claim at the deadline is gated as usual.
 
 ### Retry class evidence
 

@@ -686,8 +686,6 @@ fn eligible(source: &Source) -> Option<(Policy, u16)> {
     Some((policy, u16::try_from(source.ordinal).ok()?))
 }
 
-/// Called before generic failure projection, in the same writer transaction.
-/// The first accepted decision owns its deadline; subsequent reads are quiet.
 pub fn consider(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<bool> {
     if crate::job_launch_resolutions::resolved_occurrence(tx, occurrence)?
         || crate::job_timeouts::owns_occurrence(tx, occurrence)?
@@ -704,8 +702,10 @@ pub fn consider(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<bool
             |r| r.get(0),
         )
         .optional()?;
-    if existing.as_deref().is_some_and(|state| state != "adopted") {
-        return Ok(true);
+    match existing.as_deref() {
+        Some("adopted") => return Ok(false),
+        Some(_) => return Ok(true),
+        None => {}
     }
     if !matches!(
         source.state.as_str(),
@@ -724,38 +724,21 @@ pub fn consider(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<bool
     }
     let decided_at = i64::try_from(now)?;
     let not_before = deadline(&policy, ordinal, now)?;
-    if existing.is_some() {
-        tx.execute(
-            "UPDATE harness_job_retries
-             SET class='noEffect',native_attempt_id=?2,receipt_id=?3,decided_at=?4,not_before=?5,
-                 next_ordinal=?6,state='waiting'
-             WHERE source_attempt_id=?1 AND state='adopted'",
-            params![
-                source.id,
-                evidence.native,
-                evidence.receipt,
-                decided_at,
-                not_before,
-                ordinal + 1
-            ],
-        )?;
-    } else {
-        tx.execute(
-            "INSERT INTO harness_job_retries(
-                source_attempt_id,occurrence_id,native_attempt_id,receipt_id,
-                decided_at,not_before,next_ordinal,state
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7,'waiting')",
-            params![
-                source.id,
-                occurrence,
-                evidence.native,
-                evidence.receipt,
-                decided_at,
-                not_before,
-                ordinal + 1
-            ],
-        )?;
-    }
+    tx.execute(
+        "INSERT INTO harness_job_retries(
+            source_attempt_id,occurrence_id,native_attempt_id,receipt_id,
+            decided_at,not_before,next_ordinal,state
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,'waiting')",
+        params![
+            source.id,
+            occurrence,
+            evidence.native,
+            evidence.receipt,
+            decided_at,
+            not_before,
+            ordinal + 1
+        ],
+    )?;
     wait_for_retry(tx, &source, source.run.as_deref(), now)?;
     Ok(true)
 }
@@ -852,6 +835,7 @@ fn settle(tx: &Transaction<'_>, source: &Source, failure: &str, now: u64) -> Res
                     )?;
                     wait_for_retry(tx, source, probe.run.as_deref(), now)
                 }
+                (None, _) => conclude(tx, source, &probe, ("failed", "retry_exhausted", true), now),
                 _ => conclude(tx, source, &probe, ("failed", "attempt_failed", true), now),
             }
         }
@@ -930,6 +914,25 @@ pub fn claim(
     now: u64,
 ) -> Result<Option<(job_attempts::Dispatch, u16)>> {
     claim_at(tx, occurrence, now, now)
+}
+pub fn probe_pending(tx: &Transaction<'_>, now: u64, elapsed: u64) -> Result<()> {
+    let pending = {
+        let mut query = tx.prepare(
+            "SELECT o.id FROM harness_job_occurrences o
+             JOIN harness_job_retries retry
+               ON retry.source_attempt_id=o.current_job_attempt_id AND retry.occurrence_id=o.id
+             WHERE o.state='retryWaiting' AND retry.state='waiting'
+               AND retry.class='uncertainEffect' AND retry.probe IS NULL AND retry.not_before<=?1
+             ORDER BY retry.not_before,o.rowid LIMIT 64",
+        )?;
+        query
+            .query_map([i64::try_from(now)?], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for occurrence in pending {
+        claim_at(tx, &occurrence, now, elapsed)?;
+    }
+    Ok(())
 }
 pub fn claim_at(
     tx: &Transaction<'_>,
