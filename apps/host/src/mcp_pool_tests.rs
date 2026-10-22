@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 mod process_fixture {
@@ -26,15 +27,12 @@ async fn journal() -> (Scratch, event_log::Service) {
 
 fn pool(bounds: Bounds, log: &event_log::Service) -> Arc<Pool> {
     let pool = Pool::new(bounds);
-    let _ = pool.journal.set(log.clone());
+    pool.configure(log.clone());
     pool
 }
 
 fn bounds() -> Bounds {
-    Bounds {
-        connect: Duration::from_secs(10),
-        ..BOUNDS
-    }
+    BOUNDS
 }
 
 fn session(mark: char) -> String {
@@ -49,6 +47,7 @@ fn spec(server: &str, args: &[&str]) -> Spec {
         args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         env: BTreeMap::from([("MODE".to_owned(), "fixture".to_owned())]),
         root: std::env::temp_dir(),
+        origin: None,
     }
 }
 
@@ -102,30 +101,24 @@ impl Bridge {
             .await
             .unwrap();
         let mut reply = String::new();
-        tokio::time::timeout(Duration::from_secs(10), self.read.read_line(&mut reply))
-            .await
-            .unwrap()
-            .unwrap();
+        self.read.read_line(&mut reply).await.unwrap();
         reply.trim_end().to_owned()
     }
 
     async fn closed(&mut self) -> bool {
         let mut rest = Vec::new();
-        matches!(
-            tokio::time::timeout(Duration::from_secs(10), self.read.read_to_end(&mut rest)).await,
-            Ok(Ok(0) | Err(_))
-        )
+        matches!(self.read.read_to_end(&mut rest).await, Ok(0) | Err(_))
     }
 }
 
-async fn until(mut check: impl FnMut() -> bool) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while !check() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the pool reaches the expected state");
+async fn until(pool: &Pool, mut check: impl FnMut() -> bool) {
+    let mut changes = pool.changes();
+    while !check() {
+        changes
+            .changed()
+            .await
+            .expect("the pool publishes its changes while it lives");
+    }
 }
 
 fn processes(pool: &Pool) -> Value {
@@ -133,7 +126,10 @@ fn processes(pool: &Pool) -> Value {
 }
 
 async fn settle(pool: &Pool, warm: u64, leased: u64) {
-    until(|| processes(pool) == json!({"warm":warm,"leased":leased})).await;
+    until(pool, || {
+        processes(pool) == json!({"warm":warm,"leased":leased})
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -163,7 +159,7 @@ async fn a_second_session_attaches_to_the_warm_process_prepared_by_the_first() {
     assert_eq!(leased["sessionId"], session('2'));
     assert_eq!(
         status["sessions"][1],
-        json!({"sessionId":session('2'),"server":"echo","program":"claude","mode":"pooled","reason":null,"entryId":warm})
+        json!({"sessionId":session('2'),"server":"echo","program":"claude","mode":"pooled","reason":null,"entryId":warm,"repository":null})
     );
     let events = log.settled(1).await;
     assert_eq!(events[0].kind, "mcp.pool_attached");
@@ -186,8 +182,8 @@ async fn releasing_a_lease_kills_its_process_and_never_reuses_it() {
     let temp = PathBuf::from(bridge.exchange("env TMP").await);
     assert!(temp.is_dir());
     drop(bridge);
-    until(|| processes(&pool) == json!({"warm":1,"leased":0})).await;
-    until(|| !temp.exists()).await;
+    until(&pool, || processes(&pool) == json!({"warm":1,"leased":0})).await;
+    until(&pool, || !temp.exists()).await;
     let next = pool.attach(&lines(), &session('3'));
     assert_eq!(next["mode"], "pooled");
     assert_ne!(next["entryId"], lease["entryId"]);
@@ -360,7 +356,7 @@ async fn credential_bearing_servers_stay_dedicated_with_a_visible_reason() {
     assert_eq!(status["processes"], json!({"warm":0,"leased":0}));
     assert_eq!(
         status["sessions"][0],
-        json!({"sessionId":session('1'),"server":"nesvo","program":"claude","mode":"dedicated","reason":"sessionCredential","entryId":null})
+        json!({"sessionId":session('1'),"server":"nesvo","program":"claude","mode":"dedicated","reason":"sessionCredential","entryId":null,"repository":null})
     );
     pool.release_session(&session('1'));
     assert_eq!(pool.status()["sessions"].as_array().unwrap().len(), 2);
@@ -377,7 +373,7 @@ async fn a_wrong_token_is_refused_and_the_leased_process_is_retired() {
     let lease = pool.attach(&lines(), &session('2'));
     let mut bridge = Bridge::open(&lease, &"0".repeat(64)).await;
     assert!(bridge.closed().await);
-    until(|| processes(&pool) == json!({"warm":1,"leased":0})).await;
+    until(&pool, || processes(&pool) == json!({"warm":1,"leased":0})).await;
     let events = log.settled(2).await;
     assert_eq!(events[1].kind, "mcp.pool_released");
     assert_eq!(events[1].payload["reason"], "refused");
@@ -396,7 +392,7 @@ async fn closing_the_session_cancels_its_lease() {
     assert_eq!(bridge.exchange("ready").await, "> ready");
     pool.release_session(&session('2'));
     assert!(bridge.closed().await);
-    until(|| processes(&pool) == json!({"warm":1,"leased":0})).await;
+    until(&pool, || processes(&pool) == json!({"warm":1,"leased":0})).await;
     let events = log.settled(2).await;
     assert_eq!(events[1].session_id.as_deref(), Some(session('2').as_str()));
     assert_eq!(events[1].payload["reason"], "sessionClosed");
@@ -413,7 +409,7 @@ async fn dropping_the_pool_kills_every_pooled_process_tree() {
     assert_eq!(pool.attach(&tree, &session('1'))["reason"], "notPrepared");
     let mut observers = Vec::new();
     for _ in 0..2 {
-        let (stream, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept())
+        let (stream, _) = tokio::time::timeout(BOUNDS.connect, listener.accept())
             .await
             .unwrap()
             .unwrap();
@@ -428,7 +424,7 @@ async fn dropping_the_pool_kills_every_pooled_process_tree() {
     drop(pool);
     for (role, mut stream) in observers {
         let mut rest = Vec::new();
-        let closed = tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut rest))
+        let closed = tokio::time::timeout(BOUNDS.connect, stream.read_to_end(&mut rest))
             .await
             .unwrap_or_else(|_| panic!("{role} survived its pool"));
         assert!(matches!(closed, Ok(0) | Err(_)), "{role} kept writing");
@@ -479,4 +475,143 @@ fn status_publishes_the_documented_bounds_table() {
     );
     assert_eq!(status["available"], true);
     assert_eq!(status["processes"], json!({"warm":0,"leased":0}));
+}
+
+fn declared(server: &str, root: &Path) -> Spec {
+    Spec {
+        root: root.to_owned(),
+        origin: Some(Origin {
+            repository: "C:/work/repo".into(),
+            digest: "d".repeat(64),
+        }),
+        ..spec(server, &["lines", "3e20"])
+    }
+}
+
+fn scratch(name: &str) -> Scratch {
+    let path = std::env::temp_dir().join(format!(
+        "nesvo-mcp-root-{name}-{}",
+        hex::encode(crate::wire::random::<8>())
+    ));
+    std::fs::create_dir_all(&path).unwrap();
+    Scratch(path)
+}
+
+#[tokio::test]
+async fn declared_servers_get_one_warm_process_per_program_digest_and_root() {
+    let (_scratch, log) = journal().await;
+    let pool = pool(bounds(), &log);
+    let main = scratch("main");
+    let worktree = scratch("worktree");
+    for (root, mark) in [(&main.0, '1'), (&worktree.0, '2')] {
+        assert_eq!(
+            pool.attach(&declared("docs", root), &session(mark))["reason"],
+            "notPrepared"
+        );
+    }
+    settle(&pool, 2, 0).await;
+    let status = pool.status();
+    let roots: HashSet<String> = status["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["root"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        roots,
+        HashSet::from([display_path(&main.0), display_path(&worktree.0)])
+    );
+    let lease = pool.attach(&declared("docs", &worktree.0), &session('3'));
+    assert_eq!(lease["mode"], "pooled");
+    let leased = pool.status()["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["state"] == "leased")
+        .unwrap()
+        .clone();
+    assert_eq!(leased["root"], display_path(&worktree.0));
+    assert_eq!(
+        pool.status()["sessions"][2]["repository"],
+        json!("C:/work/repo")
+    );
+    assert_eq!(pool.attachments("C:/work/repo").len(), 3);
+    assert!(pool.attachments("C:/other").is_empty());
+    let mut bridge = Bridge::attach(&lease).await;
+    assert_eq!(bridge.exchange("ping").await, "> ping");
+    pool.shutdown().await;
+    log.shutdown().await;
+}
+
+#[tokio::test]
+async fn closing_a_session_journals_each_declared_server_it_held() {
+    let (_scratch, log) = journal().await;
+    let pool = pool(bounds(), &log);
+    let root = scratch("release");
+    pool.attach(&declared("docs", &root.0), &session('1'));
+    pool.attach(&lines(), &session('1'));
+    pool.release_session(&session('1'));
+    let events = log.settled(1).await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, "mcp.server_released");
+    assert_eq!(events[0].session_id.as_deref(), Some(session('1').as_str()));
+    assert_eq!(
+        events[0].payload,
+        json!({"server":"docs","repository":"C:/work/repo","reason":"sessionClosed"})
+    );
+    pool.shutdown().await;
+    log.shutdown().await;
+}
+
+#[tokio::test]
+async fn revoking_a_digest_reaps_its_warm_processes_and_journals_both_views() {
+    let (_scratch, log) = journal().await;
+    let pool = pool(bounds(), &log);
+    let root = scratch("revoke");
+    pool.attach(&declared("docs", &root.0), &session('1'));
+    pool.attach(&lines(), &session('1'));
+    settle(&pool, 2, 0).await;
+    assert_eq!(pool.revoke("C:/work/repo", &"e".repeat(64)), 0);
+    assert_eq!(pool.revoke("C:/work/repo", &"d".repeat(64)), 1);
+    settle(&pool, 1, 0).await;
+    assert_eq!(pool.status()["entries"][0]["server"], "echo");
+    let events = log.settled(2).await;
+    let kinds: Vec<&str> = events.iter().map(|event| event.kind.as_str()).collect();
+    assert_eq!(kinds, ["mcp.pool_reaped", "mcp.server_reaped"]);
+    assert_eq!(events[0].payload["reason"], "revoked");
+    assert_eq!(events[1].session_id, None);
+    assert_eq!(
+        events[1].payload,
+        json!({"entryId":events[0].payload["entryId"],"server":"docs","repository":"C:/work/repo","digest":"d".repeat(64),"reason":"revoked"})
+    );
+    pool.shutdown().await;
+    let shutdown = log.settled(3).await;
+    assert_eq!(shutdown[2].kind, "mcp.pool_reaped");
+    assert_eq!(shutdown[2].payload["server"], "echo");
+    assert_eq!(shutdown.len(), 3);
+    log.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_host_wide_bound_leaves_a_further_declared_server_cold() {
+    let (_scratch, log) = journal().await;
+    let pool = pool(
+        Bounds {
+            processes: 1,
+            ..bounds()
+        },
+        &log,
+    );
+    let root = scratch("bound");
+    assert_eq!(
+        pool.attach(&declared("docs", &root.0), &session('1'))["reason"],
+        "notPrepared"
+    );
+    assert_eq!(
+        pool.attach(&declared("search", &root.0), &session('1')),
+        json!({"mode":"cold","code":UNAVAILABLE,"reason":"boundReached"})
+    );
+    settle(&pool, 1, 0).await;
+    pool.shutdown().await;
+    log.shutdown().await;
 }

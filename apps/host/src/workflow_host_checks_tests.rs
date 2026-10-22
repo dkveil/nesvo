@@ -342,6 +342,7 @@ async fn host_check_validation_refuses_unapproved_or_changed_digests_and_missing
         run: vec!["npm run dev".into()],
         env_files: Vec::new(),
         timeout_s: 600,
+        mcp_servers: Vec::new(),
     }
     .digest();
     let worktrees = worktree_store(

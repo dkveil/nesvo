@@ -42,7 +42,9 @@ mod job_webhook_http;
 mod jobs;
 mod launch_profile;
 mod launchers;
+mod mcp_bridge;
 mod mcp_pool;
+mod mcp_servers;
 mod migrations;
 mod notes;
 mod notifications;
@@ -253,6 +255,12 @@ fn main() -> Result<()> {
             == Some(std::ffi::OsStr::new(worktrees::STEP_HELPER_FLAG))
     {
         std::process::exit(worktrees::step_helper());
+    }
+    if std::env::args_os().len() == 3
+        && std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(mcp_bridge::FLAG))
+        && let Some(lease) = std::env::args_os().nth(2)
+    {
+        std::process::exit(mcp_bridge::run(std::path::Path::new(&lease)));
     }
     if std::env::args_os().len() == 2
         && std::env::args_os().nth(1).as_deref()

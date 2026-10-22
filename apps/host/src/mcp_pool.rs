@@ -15,7 +15,7 @@ use std::{
 use tokio::{
     io::AsyncReadExt,
     process::{Child, ChildStdin, ChildStdout},
-    sync::{Notify, oneshot},
+    sync::{Notify, oneshot, watch},
 };
 
 pub(crate) const UNAVAILABLE: &str = "mcp_pool_unavailable";
@@ -68,6 +68,12 @@ const TEMP_PREFIX: &str = "nesvo-mcp-";
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Origin {
+    pub(crate) repository: String,
+    pub(crate) digest: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Spec {
     pub(crate) program: Program,
     pub(crate) server: String,
@@ -75,6 +81,7 @@ pub(crate) struct Spec {
     pub(crate) args: Vec<String>,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) root: PathBuf,
+    pub(crate) origin: Option<Origin>,
 }
 
 impl Spec {
@@ -86,6 +93,7 @@ impl Spec {
             args: vec!["mcp".into()],
             env: BTreeMap::from([("NESVO_AGENT_CONTEXT".to_owned(), display_path(context))]),
             root: root.to_owned(),
+            origin: None,
         })
     }
 
@@ -214,6 +222,7 @@ struct Attachment {
     mode: &'static str,
     reason: Option<&'static str>,
     entry_id: Option<String>,
+    origin: Option<Origin>,
 }
 
 type Key = (Program, String, PathBuf);
@@ -231,23 +240,45 @@ pub(crate) struct Pool {
     bounds: Bounds,
     inner: Mutex<Inner>,
     changed: Arc<Notify>,
+    revision: Revision,
     journal: OnceLock<event_log::Service>,
+}
+
+type Revision = Arc<watch::Sender<u64>>;
+
+fn advance(revision: &Revision) {
+    revision.send_modify(|value| *value = value.wrapping_add(1));
 }
 
 impl Drop for Pool {
     fn drop(&mut self) {
-        self.changed.notify_one();
+        self.signal();
     }
 }
 
 impl Pool {
+    pub(crate) fn configure(&self, journal: event_log::Service) {
+        let _ = self.journal.set(journal);
+    }
+
     pub(crate) fn new(bounds: Bounds) -> Arc<Self> {
         Arc::new(Self {
             bounds,
             inner: Mutex::new(Inner::default()),
             changed: Arc::new(Notify::new()),
+            revision: Arc::new(watch::channel(0).0),
             journal: OnceLock::new(),
         })
+    }
+
+    fn signal(&self) {
+        self.changed.notify_one();
+        advance(&self.revision);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn changes(&self) -> watch::Receiver<u64> {
+        self.revision.subscribe()
     }
 
     pub(crate) fn attach(self: &Arc<Self>, spec: &Spec, session_id: &str) -> Value {
@@ -270,7 +301,10 @@ impl Pool {
             },
             reason: outcome["reason"].as_str().and_then(known_reason),
             entry_id: outcome["entryId"].as_str().map(str::to_owned),
+            origin: spec.origin.clone(),
         });
+        drop(inner);
+        advance(&self.revision);
         outcome
     }
 
@@ -371,7 +405,7 @@ impl Pool {
         let spec = spec.clone();
         let handle = runtime.clone();
         runtime.spawn_blocking(move || {
-            let spawned = spawn(&spec);
+            let spawned = spawn(&spec, pool.revision.clone());
             pool.started(&key, spec, spawned, &handle);
         });
         Ok(())
@@ -389,11 +423,14 @@ impl Pool {
             inner.starting.remove(index);
         }
         let Some((process, stdin, stdout)) = spawned else {
+            drop(inner);
+            advance(&self.revision);
             return;
         };
         if inner.closed {
             drop(inner);
             process.retire();
+            advance(&self.revision);
             return;
         }
         inner.entries.push(Entry {
@@ -408,7 +445,7 @@ impl Pool {
             inner.reaping = true;
             runtime.spawn(reap(Arc::downgrade(self), self.changed.clone()));
         }
-        self.changed.notify_one();
+        self.signal();
     }
 
     fn reap_stale(&self, inner: &mut Inner, spec: &Spec, digest: &str) {
@@ -466,10 +503,17 @@ impl Pool {
                 None => index += 1,
             }
         }
+        drop(inner);
+        advance(&self.revision);
         Some(next)
     }
 
     fn reaped(&self, entry: Entry, reason: &'static str) {
+        self.journal_reaped(&entry, reason);
+        entry.process.retire();
+    }
+
+    fn journal_reaped(&self, entry: &Entry, reason: &'static str) {
         self.journal(
             None,
             DomainEvent::McpPoolReaped(model::McpPoolReaped {
@@ -479,7 +523,56 @@ impl Pool {
                 reason: reason.into(),
             }),
         );
-        entry.process.retire();
+        if let Some(origin) = &entry.spec.origin {
+            self.journal(
+                None,
+                DomainEvent::McpServerReaped(model::McpServerReaped {
+                    entry_id: entry.id.clone(),
+                    server: entry.spec.server.clone(),
+                    repository: origin.repository.clone(),
+                    digest: origin.digest.clone(),
+                    reason: reason.into(),
+                }),
+            );
+        }
+    }
+
+    pub(crate) fn revoke(&self, repository: &str, digest: &str) -> usize {
+        let revoked: Vec<Entry> = {
+            let mut inner = self.inner.lock().unwrap();
+            let (revoked, kept) =
+                std::mem::take(&mut inner.entries)
+                    .into_iter()
+                    .partition(|entry| {
+                        entry.warm()
+                            && entry.spec.origin.as_ref().is_some_and(|origin| {
+                                origin.repository == repository && origin.digest == digest
+                            })
+                    });
+            inner.entries = kept;
+            revoked
+        };
+        let count = revoked.len();
+        for entry in revoked {
+            self.reaped(entry, "revoked");
+        }
+        self.signal();
+        count
+    }
+
+    pub(crate) fn attachments(&self, repository: &str) -> Vec<Value> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .sessions
+            .iter()
+            .filter(|attachment| {
+                attachment
+                    .origin
+                    .as_ref()
+                    .is_some_and(|origin| origin.repository == repository)
+            })
+            .map(attachment_view)
+            .collect()
     }
 
     fn finish(&self, id: &str, reason: &'static str) {
@@ -491,7 +584,7 @@ impl Pool {
         if let Some(entry) = entry {
             self.released(entry, reason).retire();
         }
-        self.changed.notify_one();
+        self.signal();
     }
 
     fn released(&self, entry: Entry, reason: &'static str) -> Process {
@@ -508,6 +601,20 @@ impl Pool {
 
     pub(crate) fn release_session(&self, session_id: &str) {
         let mut inner = self.inner.lock().unwrap();
+        for attachment in &inner.sessions {
+            if let Some(origin) = attachment.origin.as_ref()
+                && attachment.session_id == session_id
+            {
+                self.journal(
+                    Some(session_id.into()),
+                    DomainEvent::McpServerReleased(model::McpServerReleased {
+                        server: attachment.server.clone(),
+                        repository: origin.repository.clone(),
+                        reason: "sessionClosed".into(),
+                    }),
+                );
+            }
+        }
         inner
             .sessions
             .retain(|attachment| attachment.session_id != session_id);
@@ -522,6 +629,8 @@ impl Pool {
                 let _ = cancel.send("sessionClosed");
             }
         }
+        drop(inner);
+        advance(&self.revision);
     }
 
     pub(crate) async fn shutdown(&self) {
@@ -530,19 +639,11 @@ impl Pool {
             inner.closed = true;
             std::mem::take(&mut inner.entries)
         };
-        self.changed.notify_one();
+        self.signal();
         let mut stopping = Vec::new();
         for entry in entries {
             let process = if entry.warm() {
-                self.journal(
-                    None,
-                    DomainEvent::McpPoolReaped(model::McpPoolReaped {
-                        entry_id: entry.id.clone(),
-                        server: entry.spec.server.clone(),
-                        digest: entry.digest.clone(),
-                        reason: "shutdown".into(),
-                    }),
-                );
+                self.journal_reaped(&entry, "shutdown");
                 entry.process
             } else {
                 self.released(entry, "shutdown")
@@ -572,20 +673,7 @@ impl Pool {
             })
             .collect();
         let warm = inner.entries.iter().filter(|entry| entry.warm()).count();
-        let sessions: Vec<Value> = inner
-            .sessions
-            .iter()
-            .map(|attachment| {
-                json!({
-                    "sessionId":attachment.session_id,
-                    "server":attachment.server,
-                    "program":attachment.program,
-                    "mode":attachment.mode,
-                    "reason":attachment.reason,
-                    "entryId":attachment.entry_id,
-                })
-            })
-            .collect();
+        let sessions: Vec<Value> = inner.sessions.iter().map(attachment_view).collect();
         json!({
             "type":"mcpPool",
             "available":!inner.closed,
@@ -602,7 +690,7 @@ impl Pool {
         })
     }
 
-    fn journal(&self, session_id: Option<String>, event: DomainEvent) {
+    pub(crate) fn journal(&self, session_id: Option<String>, event: DomainEvent) {
         if let Some(log) = self.journal.get() {
             log.observe(event_log::Observation {
                 session_id,
@@ -611,6 +699,18 @@ impl Pool {
             });
         }
     }
+}
+
+fn attachment_view(attachment: &Attachment) -> Value {
+    json!({
+        "sessionId":attachment.session_id,
+        "server":attachment.server,
+        "program":attachment.program,
+        "mode":attachment.mode,
+        "reason":attachment.reason,
+        "entryId":attachment.entry_id,
+        "repository":attachment.origin.as_ref().map(|origin| origin.repository.clone()),
+    })
 }
 
 fn cold(reason: &'static str) -> Value {
@@ -712,6 +812,7 @@ struct Process {
     child: Option<Child>,
     scope: command_scope::Scope,
     temp: PathBuf,
+    revision: Revision,
 }
 
 impl Process {
@@ -735,10 +836,11 @@ impl Process {
         }
         for _ in 0..10 {
             if remove_temp(&self.temp) {
-                return;
+                break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        advance(&self.revision);
     }
 }
 
@@ -748,11 +850,12 @@ impl Drop for Process {
             let _ = self.scope.terminate();
             drop(child);
             remove_temp(&self.temp);
+            advance(&self.revision);
         }
     }
 }
 
-fn remove_temp(temp: &Path) -> bool {
+pub(crate) fn remove_temp(temp: &Path) -> bool {
     let owned = temp.parent() == Some(std::env::temp_dir().as_path())
         && temp
             .file_name()
@@ -783,7 +886,7 @@ fn exited(child: &mut Child) -> bool {
     result != 0 || info.si_signo == libc::SIGCHLD
 }
 
-fn spawn(spec: &Spec) -> Option<(Process, ChildStdin, ChildStdout)> {
+pub(crate) fn private_temp() -> Option<PathBuf> {
     let temp = std::env::temp_dir().join(format!(
         "{TEMP_PREFIX}{}",
         hex::encode(crate::wire::random::<16>())
@@ -797,8 +900,15 @@ fn spawn(spec: &Spec) -> Option<(Process, ChildStdin, ChildStdout)> {
             return None;
         }
     }
-    let mut command = tokio::process::Command::new(&spec.command);
-    command.args(&spec.args).current_dir(&spec.root).env_clear();
+    Some(temp)
+}
+
+pub(crate) fn isolate(
+    command: &mut tokio::process::Command,
+    env: &BTreeMap<String, String>,
+    temp: &Path,
+) {
+    command.env_clear();
     for name in INHERITED {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -809,10 +919,18 @@ fn spawn(spec: &Spec) -> Option<(Process, ChildStdin, ChildStdout)> {
         command.env("SystemRoot", root);
     }
     command
-        .envs(&spec.env)
-        .env("TEMP", &temp)
-        .env("TMP", &temp)
-        .env("TMPDIR", &temp)
+        .envs(env)
+        .env("TEMP", temp)
+        .env("TMP", temp)
+        .env("TMPDIR", temp);
+}
+
+fn spawn(spec: &Spec, revision: Revision) -> Option<(Process, ChildStdin, ChildStdout)> {
+    let temp = private_temp()?;
+    let mut command = tokio::process::Command::new(&spec.command);
+    command.args(&spec.args).current_dir(&spec.root);
+    isolate(&mut command, &spec.env, &temp);
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -837,6 +955,7 @@ fn spawn(spec: &Spec) -> Option<(Process, ChildStdin, ChildStdout)> {
             child: Some(child),
             scope,
             temp,
+            revision,
         },
         stdin,
         stdout,
@@ -924,12 +1043,12 @@ mod endpoint {
 
 static POOL: OnceLock<Arc<Pool>> = OnceLock::new();
 
-fn global() -> &'static Arc<Pool> {
+pub(crate) fn global() -> &'static Arc<Pool> {
     POOL.get_or_init(|| Pool::new(BOUNDS))
 }
 
 pub(crate) fn configure(journal: event_log::Service) {
-    let _ = global().journal.set(journal);
+    global().configure(journal);
 }
 
 pub(crate) fn attach_harness(session_id: &str, program: Program, root: &Path, context: &Path) {
@@ -938,8 +1057,17 @@ pub(crate) fn attach_harness(session_id: &str, program: Program, root: &Path, co
     }
 }
 
+pub(crate) fn revoke(repository: &str, digest: &str) -> usize {
+    global().revoke(repository, digest)
+}
+
+pub(crate) fn attachments(repository: &str) -> Vec<Value> {
+    global().attachments(repository)
+}
+
 pub(crate) fn release_session(session_id: &str) {
     global().release_session(session_id);
+    crate::mcp_servers::release(session_id);
 }
 
 pub(crate) fn status() -> Value {
@@ -948,6 +1076,7 @@ pub(crate) fn status() -> Value {
 
 pub(crate) async fn shutdown() {
     global().shutdown().await;
+    crate::mcp_servers::release_all();
 }
 
 #[cfg(test)]

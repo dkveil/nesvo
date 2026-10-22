@@ -126,6 +126,8 @@ pub struct Config {
     pub run: Vec<String>,
     pub env_files: Vec<String>,
     pub timeout_s: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<crate::mcp_servers::Declaration>,
 }
 
 impl Config {
@@ -133,9 +135,11 @@ impl Config {
         self.setup.is_empty() && self.run.is_empty() && self.env_files.is_empty()
     }
     pub fn digest(&self) -> String {
-        canonical_digest(
-            &json!({"version":1,"policy":POLICY,"setup":self.setup,"run":self.run,"envFiles":self.env_files,"timeoutS":self.timeout_s}),
-        )
+        let mut canonical = json!({"version":1,"policy":POLICY,"setup":self.setup,"run":self.run,"envFiles":self.env_files,"timeoutS":self.timeout_s});
+        if !self.mcp_servers.is_empty() {
+            canonical["mcpServers"] = json!(self.mcp_servers);
+        }
+        canonical_digest(&canonical)
     }
 }
 
@@ -438,12 +442,28 @@ pub fn parse(text: &str) -> Result<Config> {
     let mut foreign = false;
     let mut seen_table = false;
     let mut keys = HashSet::new();
+    let mut servers: Vec<crate::mcp_servers::Draft> = Vec::new();
+    let mut in_server = false;
     loop {
         parser.trivia()?;
         match parser.peek() {
             None => break,
             Some('[') => {
                 let (array, name) = parser.header()?;
+                in_server = array && name == crate::mcp_servers::TABLE;
+                if in_server {
+                    if servers.len() == crate::mcp_servers::SERVER_LIMIT {
+                        return Err(parser.error(&format!(
+                            "at most {} [[{}]] entries are supported",
+                            crate::mcp_servers::SERVER_LIMIT,
+                            crate::mcp_servers::TABLE
+                        )));
+                    }
+                    servers.push(crate::mcp_servers::Draft::default());
+                    in_table = false;
+                    foreign = false;
+                    continue;
+                }
                 if array && FOREIGN_TABLES.contains(&name.as_str()) {
                     in_table = false;
                     foreign = true;
@@ -458,6 +478,14 @@ pub fn parse(text: &str) -> Result<Config> {
             }
             Some(_) if foreign => {
                 parser.entry()?;
+            }
+            Some(_) if in_server => {
+                let (key, value) = parser.entry()?;
+                if let Some(draft) = servers.last_mut() {
+                    draft
+                        .assign(key, value)
+                        .map_err(|message| parser.error(&message))?;
+                }
             }
             Some(_) => {
                 if !in_table {
@@ -497,6 +525,7 @@ pub fn parse(text: &str) -> Result<Config> {
             }
         }
     }
+    config.mcp_servers = crate::mcp_servers::finish(servers)?;
     Ok(config)
 }
 
@@ -1650,6 +1679,7 @@ pub(crate) fn handles(command: &Command) -> bool {
             | Command::CancelWorktree { .. }
             | Command::ArchiveWorktree { .. }
             | Command::ListWorktrees
+            | Command::ListMcpServers { .. }
     )
 }
 
@@ -1669,6 +1699,7 @@ fn owner_action(command: &Command) -> &'static str {
         Command::RunWorktree { .. } => "Running worktree steps",
         Command::CancelWorktree { .. } => "Cancelling worktree steps",
         Command::ArchiveWorktree { .. } => "Archiving a worktree",
+        Command::ListMcpServers { .. } => "Listing declared MCP servers",
         _ => "Inspecting worktree setup and the worktree registry",
     }
 }
@@ -1806,6 +1837,9 @@ async fn revoke(
     let repository = repository_key(&root);
     let digest = digest.to_ascii_lowercase();
     let revoked = store.revoke(&repository, &digest).await?;
+    if revoked {
+        crate::mcp_pool::revoke(&repository, &digest);
+    }
     if revoked && let Some(log) = log {
         log.observe(event_log::Observation {
             session_id: None,
@@ -2258,6 +2292,9 @@ pub async fn serve(
         )),
         (Ok(()), Some(store), Some(_permit)) => match command {
             Command::DescribeWorktreeSetup { directory } => describe(store, &directory).await,
+            Command::ListMcpServers { directory } => {
+                crate::mcp_servers::list(store, &directory).await
+            }
             Command::ApproveWorktreeSetup { directory, digest } => {
                 approve(store, log.as_ref(), &directory, &digest).await
             }

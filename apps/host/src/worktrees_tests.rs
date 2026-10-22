@@ -103,6 +103,7 @@ fn config_parsing_accepts_the_declared_subset_and_rejects_everything_else() {
             run: vec!["echo \"dev\" é".into()],
             env_files: vec![".env".into(), "apps/mobile/.env.local".into()],
             timeout_s: 1200,
+            mcp_servers: Vec::new(),
         }
     );
     assert_eq!(
