@@ -139,18 +139,63 @@ while validation is pending, active human leases/drafts and quick takeover/relea
 They check exact control/native receipts, one generation without retry, actual
 owned process liveness, retained history and the published response schema.
 Failures retain bounded phase/host/job diagnostics before cleanup. They read
-through one owner MCP connection, at most four calls at a time, within one
-3.8-second collection bound; a cold CLI process per query exceeded a one-second
-bound on a loaded Windows runner exactly when the evidence mattered. They complement
-the injected-clock and restart storage regressions; they are not original-provider
-or native-phone acceptance. See the [timeout contract](harness-job-timeouts.md).
+through one owner MCP connection, at most four calls at a time, rather than a cold
+CLI process per query, which exceeded a one-second bound on a loaded Windows
+runner exactly when the evidence mattered. Each read is bounded only by the
+adapter's documented request bound and records its own outcome (`observed`,
+`refused`, `adapterRequestBound`, `transportUnavailable`); there is no per-call or
+collection clock that would leave the evidence empty on a slow runner. They
+complement the injected-clock and restart storage regressions; they are not
+original-provider or native-phone acceptance. See the
+[timeout contract](harness-job-timeouts.md).
 
-A wait for a bound occurrence state has no clock of its own. It ends on a host
-event: the wanted state, or a terminal state that fails the wait at once with the
-settled view. A native launch chain spans process creation, readiness hooks,
-delivery and the worker's scoped CLI calls, whose duration depends on the
-platform, so the host's own bounds (execution timeout, delivery deadline, worker
-exit) and the scenario's outer limit bound it instead of a fixed per-wait window.
+### Waits without a clock of their own
+
+A wait in the native cohort has no clock of its own. It ends on a host event: the
+wanted state, or a terminal state that fails the wait at once with the settled
+view. A native launch chain spans process creation, readiness hooks, delivery and
+the worker's scoped CLI calls, whose duration depends on the platform, so the
+host's own bounds (version probe, readiness, execution timeout, delivery
+deadline, worker exit) bound it instead of a fixed per-wait window. The shared
+helpers live in `apps/tui/tests/support/waits.rs`:
+
+- `waits::until` polls one probe; `Ok(None)` is pending, `Ok(Some(_))` is the
+  wanted state and an error is a terminal state that fails at once.
+- `waits::occurrence` and `waits::history_occurrence` wait for a job occurrence
+  state and fail once it settles (`succeeded`, `failed`, `skipped`, `canceled`).
+- `waits::session` waits for `Ready`, `Released` or `Stopped`; readiness fails at
+  once on `timedOut`, `exited` or a stopped process. `waits::output` and
+  `waits::caller_file` wait for transcript or fixture evidence and fail once the
+  writing session exits without it.
+- `waits::receipt` waits for a send milestone (`delivered`, `received`,
+  `started`, `settled`) by reading the receipt through `nesvo_get_operation`, with
+  the host's own milestone rules, and fails at once on `failed`, `unknown`,
+  `interrupted` or an earlier settlement. No long-held `nesvo_wait_prompt` with a
+  guessed `timeoutMs` is used as a means; where its semantics are the subject
+  under test it stays.
+- `waits::delivery` waits for a task delivery phase and fails on another settled
+  phase; `waits::provider` waits for the provider version probe and fails at once
+  when it settles `unavailable` (the host bounds the probe itself).
+- `waits::operation` makes a native create/send/interrupt/stop call. When the
+  adapter's documented request bound expires (`timeout` without a receipt), it does
+  not resend: it inspects the original idempotency key through
+  `nesvo_get_operation` until the receipt leaves `accepted`/`dispatching`, and fails
+  with the original timeout and the receipt if that settles `failed`, `unknown` or
+  `interrupted`. `waits::cli` runs a CLI with no test clock, so the CLI's own
+  connection and request bounds decide and its structured error is reported.
+
+Tool calls never carry an extra test clock: an MCP call is bounded by the
+adapter's documented per-kind request bound and a CLI call by the CLI's connection
+and request bounds. Where one call can legitimately outlast that bound on a slow
+runner, either the state is observed through a cheaper read first (a receipt or
+session read instead of a held wait) or the documented recovery through the
+original key decides; a timeout is never retried and never treated as success
+without the receipt that proves it. Revision-conflict loops reread the revision
+and continue only on `revision_conflict`. The fixed bounds that remain are
+derived from host-published values (`deadlineAt`, due times, retry delays,
+precheck budgets), absence windows (`holds_throughout`), documented product
+bounds that the scenario asserts, cleanup confirmation after an explicit kill,
+host startup readiness, and scenario outer limits.
 
 The controlled-hold helper polls the exact reserved ID until the timed worker is
 working. Its bound is the armed timer's published deadline, after which no hold
@@ -167,12 +212,12 @@ and original create-receipt pointers, successful-poll counters and pending-query
 age even if a later read times out. Failure-only diagnostics use the already
 authenticated MCP adapter, rather than starting additional diagnostic CLI
 processes. Three reads run concurrently, followed by at most one correlated
-attempt read; each has a 600 ms caller deadline within the existing 3.8-second
-collection bound. Only fixed state/identity fields and fixture-file presence
+attempt read; each is bounded by the adapter's documented request bound and
+records its outcome. Only fixed state/identity fields and fixture-file presence
 booleans are emitted. File presence is not completion proof. No prompt, path,
 provider conversation, raw stderr or arbitrary nested adapter error is copied.
-Caller timeout does not protocol-cancel an already dispatched read-only handler;
-the adapter's existing bounds/shutdown still own that work. A local metadata read
+An adapter request bound does not protocol-cancel an already dispatched read-only
+handler; the adapter's existing bounds/shutdown still own that work. A local metadata read
 already running on the blocking pool likewise cannot be force-canceled.
 
 ```text
