@@ -17,8 +17,8 @@ use tokio::sync::watch;
 
 pub(crate) const CLAUDE_FRESHNESS_MS: u64 = 15_000;
 pub(crate) const CLAUDE_READ_INTERVAL_MS: u64 = 15_000;
-const CLAUDE_READ_BOUND_MS: u64 = crate::usage::CLAUDE_CACHE_TIMEOUT.as_millis() as u64
-    + 2 * ACCOUNT_READ_TIMEOUT.as_millis() as u64;
+const CLAUDE_READ_BOUND_MS: u64 =
+    crate::usage::CLAUDE_CACHE_TIMEOUT.as_millis() as u64 + ACCOUNT_READ_TIMEOUT.as_millis() as u64;
 const CLAUDE_FUTURE_TOLERANCE_MS: u64 = 2_000;
 const AWAITING_BOUND_MS: u64 = 30_000;
 const QUEUE_CAPACITY: usize = 64;
@@ -595,34 +595,61 @@ pub(crate) fn claude_account_paths() -> Vec<PathBuf> {
     };
     let home = PathBuf::from(home);
     vec![
-        home.join(".claude").join(".claude.json"),
         home.join(".claude.json"),
+        home.join(".claude").join(".claude.json"),
     ]
 }
 
-async fn read_account_file(path: &Path) -> Option<(String, String)> {
-    let metadata = tokio::fs::symlink_metadata(path).await.ok()?;
-    if !metadata.is_file() || metadata.len() > ACCOUNT_FILE_MAX_BYTES {
+fn plain_modified(path: &Path) -> Option<std::time::SystemTime> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    (metadata.is_file() && !metadata.file_type().is_symlink())
+        .then(|| metadata.modified().ok())
+        .flatten()
+}
+
+fn read_account_bytes(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    crate::handle_paths::without_links(&mut options);
+    let file = options.open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > ACCOUNT_FILE_MAX_BYTES
+    {
         return None;
     }
-    let bytes = tokio::fs::read(path).await.ok()?;
-    if bytes.len() as u64 > ACCOUNT_FILE_MAX_BYTES {
-        return None;
+    let mut bytes = Vec::new();
+    file.take(ACCOUNT_FILE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= ACCOUNT_FILE_MAX_BYTES).then_some(bytes)
+}
+
+fn read_newest_account(paths: Vec<PathBuf>) -> Option<(String, String)> {
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for path in paths {
+        if let Some(modified) = plain_modified(&path)
+            && newest.as_ref().is_none_or(|(best, _)| modified > *best)
+        {
+            newest = Some((modified, path));
+        }
     }
+    let bytes = read_account_bytes(&newest?.1)?;
     claude_account_identity(&serde_json::from_slice(&bytes).ok()?)
 }
 
 pub(crate) async fn read_claude_account(paths: &[PathBuf]) -> Option<(String, String)> {
-    for path in paths {
-        let found = tokio::time::timeout(ACCOUNT_READ_TIMEOUT, read_account_file(path))
-            .await
-            .ok()
-            .flatten();
-        if found.is_some() {
-            return found;
-        }
-    }
-    None
+    let paths = paths.to_vec();
+    tokio::time::timeout(
+        ACCOUNT_READ_TIMEOUT,
+        tokio::task::spawn_blocking(move || read_newest_account(paths)),
+    )
+    .await
+    .ok()?
+    .ok()
+    .flatten()
 }
 
 pub(crate) fn admit_now(gate: &Gate, program: Program) -> Result<Option<&'static str>> {

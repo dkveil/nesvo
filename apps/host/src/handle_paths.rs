@@ -5,6 +5,19 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub(crate) fn without_links(options: &mut std::fs::OpenOptions) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+}
+
 #[cfg(windows)]
 pub(crate) fn final_path(file: &File) -> io::Result<PathBuf> {
     use std::{

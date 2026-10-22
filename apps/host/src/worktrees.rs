@@ -1,6 +1,7 @@
 use crate::{
-    caller::Authority, command_scope, event_log, git, jobs::LaunchSpec, process::display_path,
-    protocol::Command, sessions::State, status::now_millis,
+    caller::Authority, command_scope, event_log, git, handle_paths::without_links,
+    jobs::LaunchSpec, process::display_path, protocol::Command, sessions::State,
+    status::now_millis,
 };
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -925,19 +926,6 @@ async fn journal(
 
 fn sha256(bytes: &[u8]) -> String {
     hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
-}
-
-fn without_links(options: &mut std::fs::OpenOptions) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(0x0020_0000);
-    }
 }
 
 fn contained(base: &Path, path: &Path) -> bool {

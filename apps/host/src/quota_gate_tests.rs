@@ -205,6 +205,60 @@ async fn account_reader_skips_missing_and_non_regular_paths() {
     std::fs::remove_dir_all(&directory).unwrap();
 }
 
+#[tokio::test]
+async fn account_reader_prefers_the_newest_file_and_refuses_links() {
+    let directory = std::env::temp_dir().join(format!(
+        "nesvo-quota-gate-{}",
+        hex::encode(crate::wire::random::<8>())
+    ));
+    std::fs::create_dir_all(directory.join(".claude")).unwrap();
+    let current = directory.join(".claude.json");
+    let stale = directory.join(".claude").join(".claude.json");
+    let switched = SYNTHESIZED_ACCOUNT_FILE.replace(
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000009",
+    );
+    std::fs::write(&stale, SYNTHESIZED_ACCOUNT_FILE).unwrap();
+    std::fs::write(&current, &switched).unwrap();
+    let past = std::time::SystemTime::now() - Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    let id = |found: Option<(String, String)>| found.map(|(id, _)| id);
+    let paths = [stale.clone(), current.clone()];
+    assert_eq!(
+        id(read_claude_account(&paths).await).as_deref(),
+        Some("00000000-0000-4000-8000-000000000009")
+    );
+    std::fs::File::options()
+        .write(true)
+        .open(&current)
+        .unwrap()
+        .set_modified(past - Duration::from_secs(60))
+        .unwrap();
+    assert_eq!(
+        id(read_claude_account(&paths).await).as_deref(),
+        Some("00000000-0000-4000-8000-000000000001")
+    );
+    std::fs::write(&current, r#"{"numStartups":4}"#).unwrap();
+    assert_eq!(read_claude_account(&paths).await, None);
+    let oversized = directory.join("oversized.json");
+    std::fs::write(&oversized, vec![b' '; ACCOUNT_FILE_MAX_BYTES as usize + 1]).unwrap();
+    assert_eq!(read_claude_account(&[oversized]).await, None);
+    let link = directory.join("linked.json");
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&stale, &link).is_ok();
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file(&stale, &link).is_ok();
+    if linked {
+        assert_eq!(read_claude_account(&[link]).await, None);
+    }
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
 #[test]
 fn synthesized_exhausted_window_holds_until_reset_and_a_newer_read_releases_it() {
     let mut gate = gate();

@@ -42,12 +42,17 @@ omit it.
 For the [host launch gate](harness-quota-jobs.md#host-wide-gate), the same Claude
 cache is admission-grade only when its `at` is under 15 seconds old at the read and
 an account fingerprint is present. Such a reading stays valid until the next
-scheduled read can replace it: the 15-second read period plus the six-second read
-bound (two seconds for the cache, two for each account file), so launches between
-reads do not fall back to unknown. The fingerprint hashes `oauthAccount.accountUuid` and
-`organizationUuid` from `.claude.json` (in `CLAUDE_CONFIG_DIR`, else
-`~/.claude/.claude.json`, then `~/.claude.json`) with the host-epoch salt; nothing
-else from that file is kept and `.credentials.json` is never read. Otherwise the
+scheduled read can replace it: the 15-second read period plus the four-second read
+bound (two seconds for the cache, two for the account file), so launches between
+reads do not fall back to unknown. The fingerprint hashes
+`oauthAccount.accountUuid` and `organizationUuid` from `.claude.json` with the
+host-epoch salt. With `CLAUDE_CONFIG_DIR` set only that folder's file is read.
+Otherwise the more recently modified of `~/.claude.json` and
+`~/.claude/.claude.json` decides (`~/.claude.json` on a tie), so a stale copy
+cannot hide an account switch; when the newest file has no identity the gate does
+not fall back to the older one. The file must be a regular file, never a link, and
+is read through a no-follow handle capped at 4 MiB. Nothing else from that file is
+kept and `.credentials.json` is never read. Otherwise the
 gate reports unknown. The status-line cache carries no account identity of its
 own, so the fingerprint is the configured login, not proof of which account wrote
 the cache. Codex admission uses the ambient app-server view above.
