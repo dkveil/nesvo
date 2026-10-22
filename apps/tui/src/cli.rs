@@ -519,6 +519,7 @@ const AUTHORITY_CODES: &[&str] = &[
     "scope_revoked",
     "coordinator_required",
     "control_busy",
+    "run_binding_required",
 ];
 const MOVED_ON_CODES: &[&str] = &[
     "revision_conflict",
@@ -536,13 +537,18 @@ const MOVED_ON_CODES: &[&str] = &[
 
 pub(crate) fn exit_code(code: &str) -> i32 {
     if BAD_REQUEST_CODES.contains(&code)
-        || code.ends_with("_not_found")
-        || code.ends_with("_too_large")
+        || ["_not_found", "_too_large", "_limit", "_full"]
+            .iter()
+            .any(|suffix| code.ends_with(suffix))
     {
         EXIT_BAD_REQUEST
     } else if HOST_UNREACHABLE_CODES.contains(&code) {
         EXIT_HOST_UNREACHABLE
-    } else if AUTHORITY_CODES.contains(&code) || code.ends_with("_unauthorized") {
+    } else if AUTHORITY_CODES.contains(&code)
+        || ["_unauthorized", "_unapproved"]
+            .iter()
+            .any(|suffix| code.ends_with(suffix))
+    {
         EXIT_AUTHORITY
     } else if MOVED_ON_CODES.contains(&code)
         || code.starts_with("stale_")
@@ -661,16 +667,20 @@ pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -
     .await;
     match result {
         Ok(()) => 0,
-        Err(error) => match error.downcast_ref::<Failure>() {
-            Some(error) => {
-                emit_failure_receipt(machine, &error.code, &error.message, error.receipt.as_ref())
-            }
-            None => emit_failure(
-                machine,
-                "operation_failed",
-                "Operation could not be completed",
-            ),
-        },
+        Err(error) => {
+            let (code, message, receipt) = failure_parts(&error);
+            emit_failure_receipt(machine, code, message, receipt)
+        }
+    }
+}
+
+const UNCONFIRMED_CODE: &str = "operation_unconfirmed";
+const UNCONFIRMED_MESSAGE: &str = "Look up the same idempotency key before retrying";
+
+fn failure_parts(error: &anyhow::Error) -> (&str, &str, Option<&Value>) {
+    match error.downcast_ref::<Failure>() {
+        Some(error) => (&error.code, &error.message, error.receipt.as_ref()),
+        None => (UNCONFIRMED_CODE, UNCONFIRMED_MESSAGE, None),
     }
 }
 
@@ -1726,12 +1736,8 @@ pub(crate) fn check_receipt(response: &Value) -> Result<()> {
     Ok(())
 }
 pub(crate) fn error_value(error: &anyhow::Error) -> Value {
-    match error.downcast_ref::<Failure>() {
-        Some(error) => failure_envelope(&error.code, &error.message, error.receipt.as_ref()),
-        None => {
-            json!({"schemaVersion":1,"ok":false,"error":{"code":"operation_unconfirmed","message":"Look up the same idempotency key before retrying","retryable":false}})
-        }
-    }
+    let (code, message, receipt) = failure_parts(error);
+    failure_envelope(code, message, receipt)
 }
 
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
@@ -2871,6 +2877,9 @@ mod agent_convention_tests {
             ("session_not_found", 1),
             ("decision_not_found", 1),
             ("context_too_large", 1),
+            ("calendar_limit", 1),
+            ("project_limit", 1),
+            ("worktree_registry_full", 1),
             ("pairing_unavailable", 2),
             ("host_unavailable", 2),
             ("disconnected", 2),
@@ -2881,9 +2890,13 @@ mod agent_convention_tests {
             ("coordinator_required", 3),
             ("control_busy", 3),
             ("trigger_unauthorized", 3),
+            ("run_binding_required", 3),
+            ("worktree_setup_unapproved", 3),
+            ("workflow_templates_unapproved", 3),
             ("busy", 4),
             ("unsupported", 4),
             ("operation_failed", 4),
+            ("operation_unconfirmed", 4),
             ("git_unavailable", 4),
             ("quota_wait", 4),
             ("request_rejected", 4),
@@ -2923,6 +2936,19 @@ mod agent_convention_tests {
         let mcp = error_value(&failure("forbidden", "No"));
         assert!(mcp["error"].get("exitCode").is_none());
         assert_eq!(mcp["error"]["code"], "forbidden");
+    }
+
+    #[test]
+    fn untyped_errors_are_unconfirmed_in_the_cli_and_mcp_alike() {
+        let error = anyhow::anyhow!("stdout closed");
+        let (code, message, receipt) = failure_parts(&error);
+        assert_eq!((code, receipt), ("operation_unconfirmed", None));
+        assert_eq!(exit_code(code), EXIT_HOST_ERROR);
+        assert_eq!(
+            failure_receipt(code, message, receipt)["error"],
+            json!({"code":"operation_unconfirmed","message":message,"retryable":false,"exitCode":4})
+        );
+        assert_eq!(error_value(&error)["error"]["code"], "operation_unconfirmed");
     }
 
     #[test]

@@ -6,17 +6,19 @@ Pass `--json` and read one envelope from stdout. A failure carries a stable
 `error.code` and `error.exitCode`, and the process exits with that number. One
 mapping in the CLI assigns every code, including codes a newer host adds:
 
-| Exit | Meaning                              | Typical codes                                                                                    | Next step                                                  |
-| ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| 0    | Success                              |                                                                                                  | Continue                                                   |
-| 1    | Bad request: arguments or validation | `invalid_argument`, `input_too_large`, `idempotency_conflict`, `invalid_cursor`, `*_not_found`   | Fix the request; never resend it unchanged                 |
-| 2    | Host unreachable                     | `pairing_unavailable`, `host_unavailable`, `disconnected`, `timeout`, `host_stopping`            | Look up the same key or receipt later; never use a new key |
-| 3    | Identity or authority                | `forbidden`, `scope_revoked`, `coordinator_required`, `control_busy`, `*_unauthorized`           | Stop; ask instead of working around the refusal            |
-| 4    | Host error                           | `busy`, `unsupported`, `operation_failed`, `git_unavailable`, any other code                     | Inspect `error.receipt`; report it                         |
-| 5    | The work moved on                    | `revision_conflict`, `stale_*`, `*_changed`, `*_state_conflict`, `*_expired`, `decision_pending` | Re-read current state before deciding again                |
+| Exit | Meaning                              | Typical codes                                                                                                                  | Next step                                                  |
+| ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 0    | Success                              |                                                                                                                                | Continue                                                   |
+| 1    | Bad request: arguments or validation | `invalid_argument`, `input_too_large`, `idempotency_conflict`, `invalid_cursor`, `*_not_found`, `*_limit`, `*_full`            | Fix the request; never resend it unchanged                 |
+| 2    | Host unreachable                     | `pairing_unavailable`, `host_unavailable`, `disconnected`, `timeout`, `host_stopping`                                          | Look up the same key or receipt later; never use a new key |
+| 3    | Identity or authority                | `forbidden`, `scope_revoked`, `coordinator_required`, `control_busy`, `run_binding_required`, `*_unauthorized`, `*_unapproved` | Stop; ask instead of working around the refusal            |
+| 4    | Host error                           | `busy`, `unsupported`, `operation_failed`, `operation_unconfirmed`, `git_unavailable`, any other code                          | Inspect `error.receipt`; report it                         |
+| 5    | The work moved on                    | `revision_conflict`, `stale_*`, `*_changed`, `*_state_conflict`, `*_expired`, `decision_pending`                               | Re-read current state before deciding again                |
 
 Argument errors exit 1 with or without `--json`. A `timeout` envelope from
-`session wait` keeps its receipt; wait on the same receipt again.
+`session wait` keeps its receipt; wait on the same receipt again. A failure the CLI
+cannot attribute to a host reply is `operation_unconfirmed`, the same code MCP returns:
+the request may or may not have taken effect, so look up the same key before retrying.
 
 Every file argument reads stdin when its path is `-`: `--prompt-file`,
 `--goal-file`, `--question-file`, `--answer-file`, `--choice-file`, `--note-file`,
@@ -40,7 +42,8 @@ single option `acknowledge` and a 24-hour deadline; `ask` records the question
 with up to eight options of at most 64 bytes appended as `Options: a, b`, and a
 five-minute deadline. `--timeout-ms` overrides either deadline. Text with its
 options fits 2048 bytes. The receipt is the decision result plus
-`signal:{kind:"blocked"|"question",options}`. A caller bound to another run gets
+`signal:{kind:"blocked"|"question",options}`. A caller with no run binding gets
+`run_binding_required` (exit 3), a caller bound to another run gets
 `run_binding_changed` (exit 5); one pending decision per attempt is allowed
 (`decision_pending`). The same key replays the same record. After recording,
 stop and wait for the answer with `run decision get RUN_ID DECISION_ID` or the

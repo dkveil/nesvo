@@ -635,11 +635,20 @@ impl Ask {
 
 impl WorkerSignal {
     pub(crate) fn request(&self, context: &Value) -> Result<Value> {
-        if context["run"]["id"].as_str() != Some(self.run_id.as_str()) {
-            return Err(cli::failure(
-                "run_binding_changed",
-                "This worker is bound to another run or none; read run context before asking",
-            ));
+        match context["run"]["id"].as_str() {
+            None => {
+                return Err(cli::failure(
+                    "run_binding_required",
+                    "This caller is not bound to a run; only an assigned worker can stop or ask",
+                ));
+            }
+            Some(run) if run != self.run_id => {
+                return Err(cli::failure(
+                    "run_binding_changed",
+                    "This worker is bound to another run; read run context before asking",
+                ));
+            }
+            Some(_) => {}
         }
         let attempt = context["attempt"]["id"].as_str().ok_or_else(|| {
             cli::failure(
@@ -1852,6 +1861,11 @@ mod tests {
         let error = plain.request(&moved).unwrap_err();
         assert_eq!(code_of(&error), "run_binding_changed");
         assert_eq!(cli::exit_code("run_binding_changed"), cli::EXIT_MOVED_ON);
+        let mut unbound = worker_context();
+        unbound["run"] = Value::Null;
+        let error = plain.request(&unbound).unwrap_err();
+        assert_eq!(code_of(&error), "run_binding_required");
+        assert_eq!(cli::exit_code("run_binding_required"), cli::EXIT_AUTHORITY);
         let mut unassigned = worker_context();
         unassigned["attempt"] = Value::Null;
         assert_eq!(
