@@ -64,6 +64,88 @@ Advertising a tool is not permission. Current session uses the authenticated
 host binding; an owner/legacy context can use the injected ID as a hint. Neither
 path uses UI focus, and changing the hint or private-file role cannot grant access.
 
+## Warm server pool
+
+Capability `mcpPool` advertises a host-owned, bounded pool of warm stdio MCP
+server processes, inspected with `nesvo mcp pool status` (owner only, no MCP
+tool). Agent sessions reach MCP today only through the launch-local `nesvo`
+server, which the provider starts itself from `--mcp-config`. That server carries
+the session's private `NESVO_AGENT_CONTEXT` credential, and a bridge to a pooled
+process would cost the same native start as the server itself, so it always runs
+dedicated: every harness launch is classified through the pool and listed with
+`mode:"dedicated"` and `reason:"sessionCredential"`.
+
+**Eligibility.** Only a configuration without session or credential material is
+pooled. An environment name starting with `NESVO_` (`sessionCredential`) or
+containing `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `API_KEY`, `AUTH` or
+`COOKIE` (`credentialEnvironment`), a relative command (`relativeCommand`) or
+root (`relativeRoot`), an invalid server name (`invalidServer`) or an oversized
+configuration (`oversizedConfig`) keeps the server dedicated with that reason.
+
+**Key and digest.** Warm processes are keyed by provider program, configuration
+digest and launch root. The digest is SHA-256 over the program, server name,
+command path, command file size and modification time, arguments, environment and
+root. It is recomputed before every reuse: a warm process whose server (program,
+name, root) now has another digest, or whose own command file changed, is reaped
+with `digestChanged`.
+
+**Isolation.** A warm process has received no byte from any session. Attaching
+leases it to exactly one session, and when the lease ends the process is killed,
+never returned to the pool, so its reference count is only ever zero or one. A
+stdio MCP server speaks one JSON-RPC session and no configuration is proven safe
+to multiplex, so nothing is shared concurrently. Each process starts with a fresh
+environment built from a fixed allowlist (`PATH`, `PATHEXT`, `SystemRoot`,
+`SystemDrive`, `windir`, `ComSpec`, `USERPROFILE`, `HOME`, `APPDATA`,
+`LOCALAPPDATA`, `LANG`) plus its configuration, never the host's or a session's
+environment, and with its own new `nesvo-mcp-*` temporary root as `TEMP`, `TMP`
+and `TMPDIR`, removed after it exits.
+
+**Attach and refusal.** The first attach for a key returns
+`{mode:"cold", code:"mcp_pool_unavailable", reason:"notPrepared"}` and warms one
+spare for the next session; a later attach leases that spare and warms its
+replacement within the bounds. When the process bound is reached the reason is
+`boundReached`; `commandUnavailable`, `spawnFailed`, `endpointUnavailable` and
+`closed` are the other cold reasons. A cold reply means the provider starts the
+server itself as it does today; attach never waits for a process start or a
+connection.
+
+**Relay.** A lease returns
+`{mode:"pooled", entryId, endpoint, token}`: a one-connection local endpoint (a
+named pipe that rejects remote clients on Windows, a socket in a private `0700`
+directory on Unix) and a 256-bit token. The connecting bridge sends the token as
+64 lowercase hex characters and a line feed within 2 seconds; only then are bytes
+relayed to the process's stdin and from its stdout. The lease ends on disconnect
+(`disconnected`), server exit (`serverClosed`), a wrong token (`refused`), no
+connection within 30 seconds (`connectTimeout`), session close (`sessionClosed`)
+or host shutdown (`shutdown`).
+
+**Ownership.** Each pooled process is enrolled at spawn in its own kill-on-close
+Windows job object or Unix process group, the same containment as other host
+helpers. Release, reap and shutdown terminate the whole job or group; on Windows
+the job also dies when the host process closes its handle. Its stdin is a host
+pipe, so after a Unix host crash a well-behaved server reads end of file.
+
+| Bound        | Value  | Effect                                                         |
+| ------------ | ------ | -------------------------------------------------------------- |
+| `processes`  | 4      | Warm plus leased processes host-wide; beyond it `boundReached` |
+| `warmPerKey` | 1      | Spare processes kept per key                                   |
+| `idleMs`     | 600000 | A warm process unused this long is reaped `idle`               |
+| `connectMs`  | 30000  | Time for the bridge to connect to a lease endpoint             |
+| handshake    | 2 s    | Time to present the lease token                                |
+| `sessions`   | 256    | Remembered per-session pooled, cold or dedicated outcomes      |
+| arguments    | 64     | Configuration arguments; with 16 KiB of text in total          |
+
+The journal records `mcp.pool_attached` (session-scoped `entryId`, `server`,
+`program`, `digest`, `root`), `mcp.pool_released` (session-scoped `entryId`,
+`server`, `reason`) and `mcp.pool_reaped` (host-scoped `entryId`, `server`,
+`digest` and `idle`, `exited`, `digestChanged` or `shutdown`). Nothing else is
+reported or sent anywhere.
+
+No launch produces a pool-eligible server yet: the host writes only the `nesvo`
+server, and external per-session servers (F38) and the provider-side bridge
+command that connects a provider's stdio to a lease endpoint are pending. Memory
+and process counts against dedicated mode are not measured.
+
 ## Current tools
 
 `sessionToolPermissions` adds owner-only `spec.allowedNesvoTools` to session

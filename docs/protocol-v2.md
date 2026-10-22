@@ -452,6 +452,16 @@ Additive `projects:true` advertises an owner-only project registry keyed by repo
 
 The list is sorted pinned first, then by last activity. `defaultBranch` is the branch last seen in the main checkout; `sessions` holds up to 64 running session IDs whose context root, worktree record or launch folder belongs to the project. `launchFolder` is the folder with the most distinct session launches (the root when none is recorded) and `folders` lists up to eight. `worktreeSetup` is `{ available, configured, digest, approved, openWorktrees, error? }` from the committed `nesvo.toml` and the worktree registry; reading it runs nothing. `defaultLayout` is a host-wide layout name of at most 40 characters that clients may use when they hold no local project default.
 
+## MCP server pool
+
+Additive `mcpPool:true` advertises an owner-only, read-only view of the host's warm stdio MCP server pool; scoped session callers receive `forbidden`.
+
+| Command         | Result                                                        |
+| --------------- | ------------------------------------------------------------- |
+| `mcpPoolStatus` | `mcpPool { available, bounds, processes, entries, sessions }` |
+
+`bounds` is `{ processes, warmPerKey, idleMs, connectMs, sessions }`. `processes` is `{ warm, leased }`. Each entry is `{ entryId, server, program, digest, root, state:"warm"|"leased", sessionId, ageMs }`; a lease token or endpoint is never listed. `sessions` holds up to 256 recent per-session outcomes `{ sessionId, server, program, mode:"pooled"|"cold"|"dedicated", reason, entryId }`, removed when the session closes. Journal events `mcp.pool_attached`, `mcp.pool_released` and `mcp.pool_reaped` record leases and reaping. The [MCP guide](harness-mcp.md#warm-server-pool) describes eligibility, isolation, bounds and the `mcp_pool_unavailable` cold fallback.
+
 ## Observed session status
 
 Session snapshots also include `status: { state, source, updatedAt }`. Older hosts may omit it; a client must not manufacture semantic agent state from `running` alone. `updatedAt` is the host's epoch-millisecond timestamp of the last state/source transition, not the last output byte. Status never increments the durable metadata revision.

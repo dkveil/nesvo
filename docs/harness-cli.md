@@ -682,6 +682,22 @@ nesvo project defaults C:\dev\nesvo --json
 nesvo project layout C:\dev\nesvo Quad --json
 ```
 
+## MCP server pool
+
+`nesvo mcp` without a subcommand still serves MCP over stdio. Owner
+`mcp pool status` returns `type:"mcpPool"`: whether the pool is `available`, its
+`bounds`, warm and leased `processes`, each pooled `entries` item with its
+server, program, configuration digest, launch root, state and lease session, and
+recent per-session `sessions` outcomes with `mode` `pooled`, `cold` or
+`dedicated` and the `reason`. A harness session's `nesvo` server is always
+`dedicated` with `sessionCredential`. Scoped agent callers receive `forbidden`
+and hosts without `mcpPool` return `unsupported` before sending. Eligibility,
+isolation and bounds are in the [MCP guide](harness-mcp.md#warm-server-pool).
+
+```powershell
+nesvo mcp pool status --json
+```
+
 ## Interrupt and stop
 
 `session interrupt SESSION_ID --key KEY` writes one Ctrl+C through the confirmed
