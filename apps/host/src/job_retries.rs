@@ -399,8 +399,6 @@ const RUN_FENCE_OPEN: &str = "NOT EXISTS(SELECT 1 FROM harness_job_cancellations
                               (phase='paused' AND (reason IS NULL OR reason NOT IN ('host_restart','job_retry_waiting')))))";
 
 fn authorized(connection: &Connection, source: &Source) -> Result<bool> {
-    // A new Run must not silently undo an owner's edits to the old admission
-    // policy. The frozen job profile permits one native attempt per generation.
     let Some(run) = &source.run else {
         return Ok(false);
     };
