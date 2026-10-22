@@ -322,7 +322,19 @@ cargo test --package nesvo --test mcp_host --locked project_templates::project_a
 cargo test --package nesvo --test mcp_host --locked run_wakes:: -- --ignored --test-threads=1
 cargo test --package nesvo --test mcp_host --locked run_checkpoints:: -- --ignored --test-threads=1
 cargo test --package nesvo --test mcp_host --locked inbox:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked mcp_servers:: -- --ignored --nocapture --test-threads=1
 ```
+
+`mcp_servers::` commits `[[mcp.server]]` declarations for a fixture stdio server
+(`tests/fixtures/mcp-stdio-server.cjs`) in a private repository and launches harness
+Claude fixtures against it. It checks that an unapproved or changed `nesvo.toml`
+exposes nothing, that an approved declaration reaches the launch MCP configuration
+and runs both dedicated and pooled through the bridge with an isolated environment
+and folder, and that release, revocation reaping and the 4-process bound are
+recorded. It also checks that revocation deletes lease files and that a stale lease
+exits with code 3. It validates the `worktreeSetup` and `mcpServers` CLI envelopes,
+compares the `nesvo_list_mcp_servers` tool reply with the CLI and prints
+`MCP_SERVERS_TIMING` with pooled and dedicated start times.
 
 `tests/tui.integration.test.ts` validates session query and operation envelopes
 against the same schema. The project and template scenario launches one shell session in a private Git

@@ -752,6 +752,22 @@ isolation and bounds are in the [MCP guide](harness-mcp.md#warm-server-pool).
 nesvo mcp pool status --json
 ```
 
+Owner `mcp servers --directory DIR` returns `type:"mcpServers"` for the repository
+that contains `DIR`: the `[[mcp.server]]` declarations of its committed
+`nesvo.toml` with `state` `approved` or `unapproved`, the absolute
+`resolvedCommand` (null when the program is not on the host `PATH`), any
+`problem` (`commandUnavailable`, `cwdUnavailable`, `cwdOutsideRepository`), the
+setup `digest` and `approved` flag, the pool's `attached` session outcomes for that
+repository, `providers` and `bounds`. It runs nothing. A folder outside Git exits
+with `invalid_argument`, an invalid `nesvo.toml` with `worktree_config_invalid`,
+scoped callers receive `forbidden`, and hosts without `mcpServers` return
+`unsupported` before sending. Declarations, approval and the bridge are in the
+[MCP guide](harness-mcp.md#external-mcp-servers).
+
+```powershell
+nesvo mcp servers --directory C:\project --json
+```
+
 ## Interrupt and stop
 
 `session interrupt SESSION_ID --key KEY` writes one Ctrl+C through the confirmed
