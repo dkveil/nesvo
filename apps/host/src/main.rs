@@ -450,6 +450,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         event_log::Service::open_with_owner(
             pairing_dir.join("metadata.sqlite3"),
             host_lock.clone(),
+            event_log::ExecutorReplyFault::from_environment(),
         )
         .await,
     )?;

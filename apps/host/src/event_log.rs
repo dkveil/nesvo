@@ -499,6 +499,40 @@ fn record_storage_failure<T>(
         changed.send_modify(|_| {});
     }
 }
+pub const EXECUTOR_REPLY_DROP_TEST_JOB: &str = "NESVO_EXECUTOR_REPLY_DROP_TEST_JOB";
+pub struct ExecutorReplyFault {
+    job: String,
+    spent: bool,
+}
+impl ExecutorReplyFault {
+    pub fn from_environment() -> Option<Self> {
+        std::env::var(EXECUTOR_REPLY_DROP_TEST_JOB)
+            .ok()
+            .and_then(|job| Self::for_job(&job))
+    }
+    pub(crate) fn for_job(job: &str) -> Option<Self> {
+        (!job.is_empty() && !job.contains(':')).then(|| Self {
+            job: job.into(),
+            spent: false,
+        })
+    }
+    fn targets(&self, work: &crate::workflow_executor::Work) -> bool {
+        !self.spent
+            && matches!(work, crate::workflow_executor::Work::Manage {
+                request: crate::workflow_executor::Request::Start { key, .. },
+                ..
+            } if first_generation_job(key) == Some(self.job.as_str()))
+    }
+}
+fn first_generation_job(key: &str) -> Option<&str> {
+    let mut parts = key
+        .strip_prefix("job:")?
+        .strip_suffix(":executor")?
+        .split(':');
+    let job = parts.next().filter(|job| !job.is_empty())?;
+    parts.next().filter(|occurrence| !occurrence.is_empty())?;
+    parts.next().is_none().then_some(job)
+}
 #[derive(Clone)]
 pub struct Service {
     budget: crate::budgets::Shared,
@@ -842,17 +876,26 @@ impl Service {
     }
     #[cfg(test)]
     pub async fn open(path: PathBuf) -> Result<Self> {
-        Self::open_inner(path, None).await
+        Self::open_inner(path, None, None).await
+    }
+    #[cfg(test)]
+    pub(crate) async fn open_with_executor_fault(
+        path: PathBuf,
+        fault: ExecutorReplyFault,
+    ) -> Result<Self> {
+        Self::open_inner(path, None, Some(fault)).await
     }
     pub async fn open_with_owner(
         path: PathBuf,
         owner: Arc<crate::host_lock::HostLock>,
+        executor_fault: Option<ExecutorReplyFault>,
     ) -> Result<Self> {
-        Self::open_inner(path, Some(owner)).await
+        Self::open_inner(path, Some(owner), executor_fault).await
     }
     async fn open_inner(
         path: PathBuf,
         owner: Option<Arc<crate::host_lock::HostLock>>,
+        mut executor_fault: Option<ExecutorReplyFault>,
     ) -> Result<Self> {
         let (sender, mut receiver) = mpsc::channel::<Work>(128);
         let (changed_tx, changed) = watch::channel(0);
@@ -922,6 +965,8 @@ impl Service {
                             let _ = reply.send(result);
                         }
                         Work::Executor { work, reply } => {
+                            let fault =
+                                executor_fault.as_mut().filter(|fault| fault.targets(&work));
                             let result = crate::workflow_executor::execute(
                                 &mut store.0,
                                 work,
@@ -929,7 +974,15 @@ impl Service {
                             );
                             record_storage_failure(&result, &worker_failures, &changed_tx);
                             notify_head(&store, &changed_tx);
-                            let _ = reply.send(result);
+                            match fault {
+                                Some(fault) if result.is_ok() => {
+                                    fault.spent = true;
+                                    drop(reply);
+                                }
+                                _ => {
+                                    let _ = reply.send(result);
+                                }
+                            }
                         }
                         Work::Delivery { work, reply } => {
                             let result = crate::workflow_delivery::execute(

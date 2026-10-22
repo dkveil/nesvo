@@ -481,3 +481,99 @@ fn enabled_executor_capacity_is_bounded_and_disabling_releases_only_the_runtime_
         0
     );
 }
+
+async fn served_run(service: &super::Service, index: usize) -> Value {
+    let workflow = async |request: Value| {
+        service
+            .workflow(actor(false), serde_json::from_value(request).unwrap())
+            .await
+            .unwrap()
+    };
+    let created = workflow(json!({"action":"create","key":format!("fault-run-{index}"),"spec":{"title":"Fault","goal":"Reply drop hook","coordinatorSessionId":"coordinator"}})).await;
+    let planned = workflow(json!({"action":"setPlan","key":format!("fault-plan-{index}"),"runId":created["run"]["id"],"expectedRevision":1,"tasks":[{"key":"work","title":"Work","instruction":"Scope only"}]})).await;
+    workflow(json!({"action":"activate","key":format!("fault-active-{index}"),"runId":created["run"]["id"],"expectedRevision":planned["run"]["revision"]})).await
+}
+
+async fn served_manage(service: &super::Service, request: Value) -> anyhow::Result<Value> {
+    match service
+        .executor(Work::Manage {
+            actor: actor(false),
+            request: serde_json::from_value(request)?,
+        })
+        .await?
+    {
+        Reply::Managed { view, .. } => Ok(view),
+        _ => panic!("Unexpected executor reply"),
+    }
+}
+
+async fn served_start(service: &super::Service, run: &Value, key: &str) -> anyhow::Result<Value> {
+    served_manage(
+        service,
+        json!({"action":"start","key":key,"runId":run["run"]["id"],"expectedRevision":run["run"]["revision"],"spec":spec(run)}),
+    )
+    .await
+}
+
+async fn served_executor(service: &super::Service, run: &Value) -> Value {
+    served_manage(service, json!({"action":"get","runId":run["run"]["id"]}))
+        .await
+        .unwrap()["executor"]
+        .clone()
+}
+
+#[tokio::test]
+async fn executor_reply_fault_commits_and_drops_only_the_first_generation_start_of_its_job() {
+    assert!(super::ExecutorReplyFault::for_job("").is_none());
+    assert!(super::ExecutorReplyFault::for_job("job:faulted").is_none());
+    let path = std::env::temp_dir().join(format!(
+        "nesvo-executor-fault-{}.sqlite3",
+        hex::encode(crate::wire::random::<8>())
+    ));
+    let service = super::Service::open_with_executor_fault(
+        path.clone(),
+        super::ExecutorReplyFault::for_job("faulted").unwrap(),
+    )
+    .await
+    .unwrap();
+    let keys = [
+        "job:other:occurrence:executor",
+        "job:faulted:occurrence:attempt:2:executor",
+        "job:faulted:occurrence:run",
+        "faulted:occurrence:executor",
+        "job:faulted::executor",
+        "job:faulted:occurrence:executor",
+        "job:faulted:sibling:executor",
+    ];
+    let mut runs = Vec::new();
+    let mut outcomes = Vec::new();
+    for (index, key) in keys.iter().enumerate() {
+        let run = served_run(&service, index).await;
+        let reply = served_start(&service, &run, key).await;
+        if let Err(error) = &reply {
+            assert!(error.to_string().contains("Executor outcome unconfirmed"));
+        }
+        let executor = served_executor(&service, &run).await;
+        outcomes.push((*key, reply.is_ok(), executor["enabled"] == true));
+        runs.push(run);
+    }
+    assert_eq!(
+        outcomes,
+        keys.iter()
+            .map(|key| (*key, *key != "job:faulted:occurrence:executor", true))
+            .collect::<Vec<_>>()
+    );
+    let replay = served_start(&service, &runs[5], "job:faulted:occurrence:executor")
+        .await
+        .unwrap();
+    assert_eq!(
+        replay["executor"],
+        served_executor(&service, &runs[5]).await
+    );
+    service.shutdown().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let mut file = path.clone().into_os_string();
+        file.push(suffix);
+        let _ = std::fs::remove_file(file);
+    }
+}
