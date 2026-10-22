@@ -192,7 +192,12 @@ impl Context {
         self.native_permission_source = grant.source();
         self.native_permission_coordinator = grant.coordinator().map(str::to_owned);
         let client = self.client.as_ref().ok_or_else(||crate::api_error::Error::new("harness_client_unavailable","Harness needs a discoverable native nesvo executable beside the host or NESVO_CLIENT_BINARY"))?;
-        let config = json!({"mcpServers":{"nesvo":{"type":"stdio","command":crate::process::display_path(client),"args":["mcp"],"env":{"NESVO_AGENT_CONTEXT":self.path()}}}});
+        let mut servers = crate::mcp_servers::claude(command);
+        servers.insert(
+            "nesvo".into(),
+            json!({"type":"stdio","command":crate::process::display_path(client),"args":["mcp"],"env":{"NESVO_AGENT_CONTEXT":self.path()}}),
+        );
+        let config = json!({ "mcpServers": servers });
         crate::private_write(&self.mcp(), &serde_json::to_vec(&config)?)?;
         let argv = command.get_argv_mut();
         let index = argv
