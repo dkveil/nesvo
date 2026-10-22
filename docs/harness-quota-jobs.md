@@ -1,9 +1,13 @@
 # Configured-account quota admission
 
-Every native spawn passes one host quota gate. Configured-account waiting is
-additional explicit owner intent for installed Codex launchers; a job without
-`quotaPolicy` is admitted by the host gate alone. Neither buys credits nor
-bypasses a provider refusal.
+Every native spawn passes one host quota gate, except a configured-account Codex
+launch. Configured-account waiting is explicit owner intent for installed Codex
+launchers; a job without `quotaPolicy` is admitted by the host gate alone. A job
+with `quotaPolicy` is admitted by its account permit instead of the gate: the gate
+reads the ambient Codex account, while that launch runs under the approved
+reader's `CODEX_HOME`, which can be a different account, so the permit's fresh
+evidence for that exact account replaces the gate verdict and its gate row.
+Neither buys credits nor bypasses a provider refusal.
 
 ## Host-wide gate
 
