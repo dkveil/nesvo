@@ -1056,3 +1056,5 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
     }
     Ok(())
 }
+#[path = "support/provider_signals.rs"]
+mod provider_signals;
