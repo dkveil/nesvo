@@ -3,7 +3,13 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 macro_rules! events {
-    ($($variant:ident($payload:ty) = $kind:literal),+ $(,)?) => {
+    (@run run) => {
+        true
+    };
+    (@run) => {
+        false
+    };
+    ($($variant:ident($payload:ty) = $kind:literal $(in $family:ident)?),+ $(,)?) => {
         #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
         #[serde(tag = "kind", content = "payload")]
         pub enum Event {
@@ -25,6 +31,32 @@ macro_rules! events {
                 }
             }
         }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum EventKind {
+            $($variant,)+
+        }
+
+        impl EventKind {
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $kind,)+
+                }
+            }
+
+            pub fn parse(kind: &str) -> Option<Self> {
+                match kind {
+                    $($kind => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+
+            pub const fn is_run(self) -> bool {
+                match self {
+                    $(Self::$variant => events!(@run $($family)?),)+
+                }
+            }
+        }
     };
 }
 
@@ -43,40 +75,40 @@ events! {
     PrecheckApprovalChanged(PrecheckApprovalChanged) = "precheck.approval.changed",
     JobTriggerChanged(JobTriggerChanged) = "job.trigger_changed",
     JobTriggerDelivery(JobTriggerDelivery) = "job.trigger_delivery",
-    RunCreated(RunRevision) = "run.created",
-    RunPlanChanged(RunRevision) = "run.plan_changed",
-    RunActivated(RunRevision) = "run.activated",
-    RunAttemptAssigned(RunRevision) = "run.attempt_assigned",
-    RunResultReported(RunRevision) = "run.result_reported",
-    RunResultValidated(RunRevision) = "run.result_validated",
-    RunDraining(RunRevision) = "run.draining",
-    RunResumed(RunRevision) = "run.resumed",
-    RunCheckpointSaved(RunCheckpointSaved) = "run.checkpoint_saved",
-    RunConstraintsAdded(RunConstraints) = "run.constraints_added",
-    RunConstraintsAcknowledged(RunConstraints) = "run.constraints_acknowledged",
-    RunControlRequested(RunControl) = "run.control_requested",
-    RunControlProgress(RunControl) = "run.control_progress",
-    RunControlCompleted(RunControl) = "run.control_completed",
-    RunControlUnconfirmed(RunControl) = "run.control_unconfirmed",
-    RunCoordinatorRebound(RunCoordinatorRebound) = "run.coordinator_rebound",
-    RunDecisionAsked(RunDecision) = "run.decision_asked",
-    RunDecisionAnswered(RunDecision) = "run.decision_answered",
-    RunDecisionCanceled(RunDecision) = "run.decision_canceled",
-    RunDecisionsExpired(RunCount) = "run.decisions_expired",
-    RunDeliveryChanged(RunDelivery) = "run.delivery_changed",
-    RunDigestRecorded(RunDigestRecorded) = "run.digest_recorded",
-    RunExecutorChanged(RunExecutor) = "run.executor_changed",
-    RunMessageSent(RunMessage) = "run.message_sent",
-    RunMessagesAcknowledged(RunCount) = "run.messages_acknowledged",
-    RunLaunchReserved(RunAttempt) = "run.launch_reserved",
-    RunLaunchRecovered(RunAttempt) = "run.launch_recovered",
-    RunLaunchObserved(RunAttempt) = "run.launch_observed",
-    RunWorkspacePrepared(RunAttempt) = "run.workspace_prepared",
-    RunQuotaHoldChanged(RunAttempt) = "run.quota_hold_changed",
-    RunSessionReused(RunSessionReused) = "run.session_reused",
-    RunTimeBudgetExhausted(RunChanged) = "run.time_budget_exhausted",
-    RunBudgetChanged(RunChanged) = "run.budget_changed",
-    RunWakeChanged(RunWake) = "run.wake_changed",
+    RunCreated(RunRevision) = "run.created" in run,
+    RunPlanChanged(RunRevision) = "run.plan_changed" in run,
+    RunActivated(RunRevision) = "run.activated" in run,
+    RunAttemptAssigned(RunRevision) = "run.attempt_assigned" in run,
+    RunResultReported(RunRevision) = "run.result_reported" in run,
+    RunResultValidated(RunRevision) = "run.result_validated" in run,
+    RunDraining(RunRevision) = "run.draining" in run,
+    RunResumed(RunRevision) = "run.resumed" in run,
+    RunCheckpointSaved(RunCheckpointSaved) = "run.checkpoint_saved" in run,
+    RunConstraintsAdded(RunConstraints) = "run.constraints_added" in run,
+    RunConstraintsAcknowledged(RunConstraints) = "run.constraints_acknowledged" in run,
+    RunControlRequested(RunControl) = "run.control_requested" in run,
+    RunControlProgress(RunControl) = "run.control_progress" in run,
+    RunControlCompleted(RunControl) = "run.control_completed" in run,
+    RunControlUnconfirmed(RunControl) = "run.control_unconfirmed" in run,
+    RunCoordinatorRebound(RunCoordinatorRebound) = "run.coordinator_rebound" in run,
+    RunDecisionAsked(RunDecision) = "run.decision_asked" in run,
+    RunDecisionAnswered(RunDecision) = "run.decision_answered" in run,
+    RunDecisionCanceled(RunDecision) = "run.decision_canceled" in run,
+    RunDecisionsExpired(RunCount) = "run.decisions_expired" in run,
+    RunDeliveryChanged(RunDelivery) = "run.delivery_changed" in run,
+    RunDigestRecorded(RunDigestRecorded) = "run.digest_recorded" in run,
+    RunExecutorChanged(RunExecutor) = "run.executor_changed" in run,
+    RunMessageSent(RunMessage) = "run.message_sent" in run,
+    RunMessagesAcknowledged(RunCount) = "run.messages_acknowledged" in run,
+    RunLaunchReserved(RunAttempt) = "run.launch_reserved" in run,
+    RunLaunchRecovered(RunAttempt) = "run.launch_recovered" in run,
+    RunLaunchObserved(RunAttempt) = "run.launch_observed" in run,
+    RunWorkspacePrepared(RunAttempt) = "run.workspace_prepared" in run,
+    RunQuotaHoldChanged(RunAttempt) = "run.quota_hold_changed" in run,
+    RunSessionReused(RunSessionReused) = "run.session_reused" in run,
+    RunTimeBudgetExhausted(RunChanged) = "run.time_budget_exhausted" in run,
+    RunBudgetChanged(RunChanged) = "run.budget_changed" in run,
+    RunWakeChanged(RunWake) = "run.wake_changed" in run,
     WorkflowTemplatesApproved(RepositoryDigest) = "workflow.templates_approved",
     WorkflowTemplatesRevoked(RepositoryDigest) = "workflow.templates_revoked",
     WorktreeSetupApproved(RepositoryDigest) = "worktree.setup_approved",
@@ -387,4 +419,20 @@ pub struct WorktreeArchived {
     pub discarded: bool,
     pub blockers: Vec<String>,
     pub branch_deleted: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_kinds_round_trip_and_mark_exactly_the_run_journal() {
+        for kind in Event::KINDS {
+            let parsed = EventKind::parse(kind).unwrap();
+            assert_eq!(parsed.as_str(), *kind);
+            assert_eq!(parsed.is_run(), kind.starts_with("run."), "{kind}");
+        }
+        assert_eq!(EventKind::parse("run.unknown"), None);
+        assert!(!EventKind::OperationChanged.is_run());
+    }
 }
