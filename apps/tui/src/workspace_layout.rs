@@ -88,7 +88,15 @@ impl WorkspaceLayout {
                 .filter(|_| slot.role.hosts_session())
             {
                 app.focused = index;
-                commands.extend(app.open_session(id));
+                let opened = app.open_session(id);
+                if app.session(id).is_some_and(|session| session.hibernated()) {
+                    app.subscribed.remove(id);
+                    commands.extend(opened.into_iter().filter(|command| {
+                        command["type"] != "subscribe" || command["sessionId"] != id
+                    }));
+                } else {
+                    commands.extend(opened);
+                }
             }
         }
         app.focused = self.focused.min(count - 1);
@@ -179,6 +187,51 @@ mod tests {
         assert_eq!(app.sidebar_width, 30);
         assert_eq!(app.leaf_count(), 2);
         assert!(commands.iter().all(|c| c["type"] != "acquireControl"));
+    }
+
+    fn restarted(app: &mut App, hibernated: bool) {
+        let mut queued = json!({"id":"h","name":"queued","cwd":".","program":"claude","running":!hibernated,"cols":80,"rows":24,"groupId":null,"controllerId":null});
+        if hibernated {
+            queued["hibernation"] = json!({"state":"hibernated","hibernatedAt":1,"conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e","trigger":"shutdown","lastResumeFailure":null});
+        }
+        app.event(json!({"type":"sessions","groups":[],"sessions":[
+            {"id":"a","name":"agent","cwd":".","program":"claude","running":true,"cols":80,"rows":24,"groupId":null,"controllerId":null},
+            queued
+        ]})).unwrap();
+    }
+
+    #[test]
+    fn workspace_layout_reattaches_restored_ids_and_defers_sessions_still_hibernated() {
+        let saved = WorkspaceLayout {
+            panes: vec![Some("a".into()), Some("h".into())],
+            tabs: vec!["a".into(), "h".into()],
+            split: true,
+            focused: 1,
+            ..Default::default()
+        };
+        let mut app = App::new(2);
+        restarted(&mut app, true);
+        let commands = saved.apply(&mut app);
+        assert_eq!(app.panes[..2], [Some("a".into()), Some("h".into())]);
+        assert_eq!(app.tabs, ["a", "h"]);
+        assert!(
+            commands
+                .iter()
+                .any(|c| c["type"] == "subscribe" && c["sessionId"] == "a")
+        );
+        assert!(
+            commands
+                .iter()
+                .all(|c| !(c["type"] == "subscribe" && c["sessionId"] == "h"))
+        );
+        assert!(app.subscribed.contains("a") && !app.subscribed.contains("h"));
+        restarted(&mut app, false);
+        assert_eq!(app.panes[1].as_deref(), Some("h"));
+        assert!(
+            app.open_session("h")
+                .iter()
+                .any(|c| c["type"] == "subscribe" && c["sessionId"] == "h")
+        );
     }
 
     #[test]
