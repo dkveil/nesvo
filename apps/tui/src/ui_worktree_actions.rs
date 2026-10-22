@@ -110,11 +110,19 @@ pub fn render(frame: &mut Frame, app: &App) {
             render_confirm(frame, app, dialog, record, typed, *mismatch, body)
         }
         Page::Log {
-            title,
+            action,
             path,
             text,
             scroll,
-        } => render_log(frame, app, title, path, text.as_deref(), *scroll, body),
+        } => render_log(
+            frame,
+            app,
+            action.label(),
+            path,
+            text.as_deref(),
+            *scroll,
+            body,
+        ),
     }
 }
 

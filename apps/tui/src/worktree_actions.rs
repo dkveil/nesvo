@@ -246,7 +246,7 @@ pub enum Page {
         mismatch: bool,
     },
     Log {
-        title: &'static str,
+        action: Action,
         path: String,
         text: Option<String>,
         scroll: usize,
@@ -412,14 +412,6 @@ fn sanitize(text: &str) -> String {
         .collect()
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 fn observe(app: &mut App, event: &Value) {
     let state = &mut app.worktrees;
     match event["type"].as_str() {
@@ -556,13 +548,6 @@ fn action_reply(app: &mut App, event: &Value, action: Action) {
                 "Run steps started · log {}",
                 log.as_deref().unwrap_or("unavailable")
             )));
-            if let Some(record) = state.record_mut(&session) {
-                record.run = Some(Phase {
-                    state: "running".into(),
-                    log,
-                });
-                record.active = true;
-            }
         }
         (Action::Cancel, Some("worktreeCancelled")) => {
             dialog.notice = Some(Notice::Info(if event["cancelled"] == true {
@@ -587,12 +572,6 @@ fn action_reply(app: &mut App, event: &Value, action: Action) {
                     ""
                 }
             )));
-            if let Some(record) = state.record_mut(&session) {
-                record.archived_at = Some(now_ms());
-                record.discarded = discarded;
-                record.present = false;
-                record.active = false;
-            }
             if state.failed_launch.as_deref() == Some(session.as_str()) {
                 state.failed_launch = None;
             }
@@ -938,7 +917,7 @@ fn choose(app: &mut App, outcome: &mut Outcome) {
                 return;
             };
             dialog.page = Page::Log {
-                title: action.label(),
+                action,
                 path,
                 text: None,
                 scroll: 0,
@@ -956,17 +935,13 @@ fn reload_log(app: &mut App, outcome: &mut Outcome) {
         return;
     }
     let Page::Log {
-        title, path, text, ..
+        action, path, text, ..
     } = &mut dialog.page
     else {
         return;
     };
     *text = None;
-    let action = if *title == Action::RunLog.label() {
-        Action::RunLog
-    } else {
-        Action::SetupLog
-    };
+    let action = *action;
     let command = json!({"type":"readFile","path":path.clone(),"offset":0,"limit":LOG_LIMIT});
     send(app, action, command, outcome);
 }
@@ -1241,6 +1216,13 @@ pub(crate) mod tests {
             &run[0],
             json!({"type":"worktreeRunStarted","sessionId":"s1","worktree":"w","log":"C:/w/.nesvo/run.log"}),
         );
+        assert_eq!(
+            app.worktrees.stage("s1"),
+            Some(Stage::SetupPassed),
+            "the run state comes from the registry, not the reply"
+        );
+        assert!(app.worktrees.due);
+        load(&mut app, vec![record("passed", Some("running"))]);
         assert_eq!(app.worktrees.stage("s1"), Some(Stage::RunRunning));
         assert!(press(&mut app, KeyCode::Enter).is_empty(), "run is busy");
         let cancel = press(&mut app, KeyCode::Char('2'));
@@ -1267,6 +1249,11 @@ pub(crate) mod tests {
             &archive[0],
             json!({"type":"worktreeArchived","sessionId":"s1","worktree":"w","branch":"nesvo/0123456789abcdef","discarded":false,"blockers":[],"branchDeleted":true}),
         );
+        assert!(app.worktrees.records[0].archived_at.is_none());
+        let mut archived = record("passed", Some("cancelled"));
+        archived["archivedAt"] = 9.into();
+        archived["present"] = false.into();
+        load(&mut app, vec![archived]);
         assert_eq!(app.worktrees.stage("s1"), Some(Stage::Archived));
         assert!(
             press(&mut app, KeyCode::Char('3')).is_empty(),
@@ -1359,7 +1346,8 @@ pub(crate) mod tests {
             json!({"type":"worktreeArchived","sessionId":"s1","worktree":"w","branch":"nesvo/0123456789abcdef","discarded":true,"blockers":["dirty"],"branchDeleted":true}),
         );
         assert_eq!(app.worktrees.dialog.as_ref().unwrap().page, Page::Menu);
-        assert!(app.worktrees.records[0].discarded);
+        assert!(!app.worktrees.records[0].discarded);
+        assert!(app.worktrees.due);
     }
 
     #[test]
