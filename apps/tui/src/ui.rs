@@ -977,8 +977,11 @@ fn render_pane(
             let freshness = crate::session_row::freshness_header(session)
                 .map(|label| format!("{label} · "))
                 .unwrap_or_default();
+            let servers = crate::mcp_servers_header::header(app, &session.id)
+                .map(|label| format!("{label} · "))
+                .unwrap_or_default();
             format!(
-                "{freshness}{worktree}{control} · {}×{} · {}",
+                "{freshness}{worktree}{servers}{control} · {}×{} · {}",
                 session.cols, session.rows, session.cwd
             )
         })

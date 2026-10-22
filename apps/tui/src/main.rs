@@ -20,6 +20,7 @@ mod launch;
 mod layouts;
 mod mcp;
 mod mcp_events;
+mod mcp_servers_header;
 mod mcp_tools;
 mod model;
 mod network;

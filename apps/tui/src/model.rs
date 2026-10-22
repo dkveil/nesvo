@@ -566,6 +566,7 @@ pub struct App {
     pub files: crate::files_controller::FilesState,
     pub notes: crate::notes_controller::NotesState,
     pub worktrees: crate::worktree_actions::Worktrees,
+    pub mcp_servers: crate::mcp_servers_header::Servers,
     pub client_id: u64,
     pub sessions: Vec<Session>,
     pub groups: Vec<Group>,
@@ -623,6 +624,7 @@ impl App {
             files: Default::default(),
             notes: Default::default(),
             worktrees: Default::default(),
+            mcp_servers: Default::default(),
             overlay: None,
             palette_expanded: false,
             palette_category: 0,
@@ -1355,7 +1357,9 @@ impl App {
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
         let header = ReplyHeader::of(&event);
-        let kind = if crate::worktree_actions::host_event(self, &event) {
+        let kind = if crate::worktree_actions::host_event(self, &event)
+            || crate::mcp_servers_header::host_event(self, &event)
+        {
             ""
         } else if let Some(next) = crate::git_pane::host_event(self, &event) {
             commands.extend(next);
@@ -1692,6 +1696,7 @@ impl App {
         self.notes.disconnected();
         self.projects.disconnected();
         crate::worktree_actions::disconnect(self);
+        crate::mcp_servers_header::disconnect(self);
         self.notice = if self.capabilities.is_none() {
             "Host disconnected during setup; update nesvo-host and reconnect.".into()
         } else {
@@ -1757,6 +1762,7 @@ impl App {
                 .or_else(|| crate::git_pane::tick(self))
                 .or_else(|| crate::usage_panel::tick(self))
                 .or_else(|| crate::worktree_actions::tick(self))
+                .or_else(|| crate::mcp_servers_header::tick(self))
                 .or_else(|| crate::notes_controller::tick(self))
                 .or_else(|| crate::runs_controller::tick(self))
         }
