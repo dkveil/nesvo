@@ -1296,7 +1296,13 @@ pub(crate) async fn worktree_capability(connection: &mut Connection) -> Result<(
 
 async fn worktree(command: WorktreeCommand, connection: &mut Connection) -> Result<()> {
     let machine = command.machine();
-    let (query, kind) = match &command {
+    let (query, kind) = worktree_query(&command)?;
+    worktree_capability(connection).await?;
+    print_data(machine, request(connection, query, kind).await?)
+}
+
+fn worktree_query(command: &WorktreeCommand) -> Result<(Value, &'static str)> {
+    Ok(match command {
         WorktreeCommand::Describe { directory, .. } => {
             worktree_setup_query("describe", directory, None)?
         }
@@ -1314,9 +1320,7 @@ async fn worktree(command: WorktreeCommand, connection: &mut Connection) -> Resu
             session, discard, ..
         } => worktree_session_query("archive", session, *discard)?,
         WorktreeCommand::List { .. } => (json!({"type":"listWorktrees"}), "worktreeRegistry"),
-    };
-    worktree_capability(connection).await?;
-    print_data(machine, request(connection, query, kind).await?)
+    })
 }
 
 pub(crate) async fn workflow_templates_capability(connection: &mut Connection) -> Result<()> {
@@ -1337,25 +1341,29 @@ pub(crate) async fn workflow_templates_capability(connection: &mut Connection) -
 
 async fn workflow_templates(command: WorkflowCommand, connection: &mut Connection) -> Result<()> {
     let machine = command.machine();
-    let (query, kind) = match &command {
+    let (query, kind) = workflow_template_query(&command)?;
+    workflow_templates_capability(connection).await?;
+    print_data(machine, request(connection, query, kind).await?)
+}
+
+fn workflow_template_query(command: &WorkflowCommand) -> Result<(Value, &'static str)> {
+    match command {
         WorkflowCommand::Templates { directory, .. } => {
-            crate::runs::template_command("list", directory, None, None)?
+            crate::runs::template_command("list", directory, None, None)
         }
         WorkflowCommand::ApproveTemplates {
             directory, digest, ..
-        } => crate::runs::template_command("approve", directory, Some(digest), None)?,
+        } => crate::runs::template_command("approve", directory, Some(digest), None),
         WorkflowCommand::RevokeTemplates {
             directory, digest, ..
-        } => crate::runs::template_command("revoke", directory, Some(digest), None)?,
+        } => crate::runs::template_command("revoke", directory, Some(digest), None),
         WorkflowCommand::Start {
             name,
             directory,
             key,
             ..
-        } => crate::runs::template_command("start", directory, None, Some((name, key)))?,
-    };
-    workflow_templates_capability(connection).await?;
-    print_data(machine, request(connection, query, kind).await?)
+        } => crate::runs::template_command("start", directory, None, Some((name, key))),
+    }
 }
 
 fn bounded(value: &str, limit: usize) -> bool {
@@ -1503,8 +1511,16 @@ pub(crate) async fn review_capability(connection: &mut Connection) -> Result<()>
     Ok(())
 }
 
+fn review_kind(command: &ReviewCommand) -> &'static str {
+    match command {
+        ReviewCommand::Open { .. } => "reviewOpened",
+        ReviewCommand::Deliver { .. } => "reviewDelivered",
+    }
+}
+
 async fn review(command: ReviewCommand, connection: &mut Connection) -> Result<()> {
-    let (query, kind, machine) = match command {
+    let kind = review_kind(&command);
+    let (query, machine) = match command {
         ReviewCommand::Open {
             session,
             directory,
@@ -1518,7 +1534,6 @@ async fn review(command: ReviewCommand, connection: &mut Connection) -> Result<(
                 pull.as_deref(),
                 base.as_deref(),
             )?,
-            "reviewOpened",
             json,
         ),
         ReviewCommand::Deliver {
@@ -1541,7 +1556,6 @@ async fn review(command: ReviewCommand, connection: &mut Connection) -> Result<(
             };
             (
                 deliver_review_query(&review, &session, &text, key.as_deref())?,
-                "reviewDelivered",
                 json,
             )
         }
@@ -2985,7 +2999,10 @@ mod agent_convention_tests {
             failure_receipt(code, message, receipt)["error"],
             json!({"code":"operation_unconfirmed","message":message,"retryable":false,"exitCode":4})
         );
-        assert_eq!(error_value(&error)["error"]["code"], "operation_unconfirmed");
+        assert_eq!(
+            error_value(&error)["error"]["code"],
+            "operation_unconfirmed"
+        );
     }
 
     #[test]
@@ -3070,7 +3087,10 @@ mod agent_convention_tests {
             note_file: Some(stdin.into()),
             json: true,
         };
-        let refused = decide.resolved().err().expect("Two stdin readers are refused");
+        let refused = decide
+            .resolved()
+            .err()
+            .expect("Two stdin readers are refused");
         assert_eq!(code_of(&refused), "invalid_argument");
     }
 
@@ -3091,10 +3111,23 @@ mod agent_convention_tests {
     #[test]
     fn host_unreachable_failures_are_retryable_and_others_are_not() {
         for code in HOST_UNREACHABLE_CODES {
-            assert_eq!(failure_receipt(code, "m", None)["error"]["retryable"], true, "{code}");
+            assert_eq!(
+                failure_receipt(code, "m", None)["error"]["retryable"],
+                true,
+                "{code}"
+            );
         }
-        for code in ["busy", "operation_unconfirmed", "revision_conflict", "forbidden"] {
-            assert_eq!(failure_receipt(code, "m", None)["error"]["retryable"], false, "{code}");
+        for code in [
+            "busy",
+            "operation_unconfirmed",
+            "revision_conflict",
+            "forbidden",
+        ] {
+            assert_eq!(
+                failure_receipt(code, "m", None)["error"]["retryable"],
+                false,
+                "{code}"
+            );
         }
     }
 
@@ -3207,5 +3240,248 @@ mod agent_convention_tests {
             .command
             .machine()
         );
+    }
+}
+
+#[cfg(test)]
+mod reply_kind_tests {
+    use super::*;
+    use clap::{CommandFactory, Parser};
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Command,
+    }
+
+    const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const RECORD: &str = "0123456789abcdef0123456789abcdef";
+    const WORKFLOW_GROUPS: [&str; 3] = ["run", "job", "budget"];
+    const WITHOUT_ENVELOPE: [&str; 4] = ["mcp", "doctor", "session explain", "run recover-hook"];
+
+    const SAMPLES: &[&[&str]] = &[
+        &["operation", "op-1"],
+        &["events"],
+        &["quota"],
+        &["session", "create", "Shell", "--key", "k"],
+        &["session", "send", "s", "--key", "k", "--prompt", "p"],
+        &["session", "interrupt", "s", "--key", "k"],
+        &["session", "stop", "s", "--key", "k"],
+        &["session", "wake", "s"],
+        &["session", "wait", "op-1"],
+        &["session", "list"],
+        &["session", "get", "s"],
+        &["session", "current"],
+        &["session", "read", "s"],
+        &["session", "diff", "s"],
+        &["session", "providers"],
+        &["session", "recover", "list"],
+        &["session", "recover", "restore", RECORD],
+        &["session", "recover", "forget", RECORD],
+        &["review", "open", "--session", "s"],
+        &[
+            "review",
+            "deliver",
+            "--review",
+            "r",
+            "--session",
+            "s",
+            "--text",
+            "t",
+        ],
+        &["worktree", "describe", "--directory", "/repo"],
+        &[
+            "worktree",
+            "approve-setup",
+            "--directory",
+            "/repo",
+            "--digest",
+            DIGEST,
+        ],
+        &[
+            "worktree",
+            "revoke-setup",
+            "--directory",
+            "/repo",
+            "--digest",
+            DIGEST,
+        ],
+        &["worktree", "run", "s"],
+        &["worktree", "cancel", "s"],
+        &["worktree", "archive", "s"],
+        &["worktree", "list"],
+        &["project", "list"],
+        &["project", "pin", "/repo"],
+        &["project", "unpin", "/repo"],
+        &["project", "defaults", "/repo"],
+        &["project", "layout", "/repo", "Quad"],
+        &["inbox", "list"],
+        &["inbox", "ack", "session:s@1"],
+        &["decision", "list"],
+        &["decision", "decide", "d", "--choice", "yes"],
+        &["workflow", "templates", "--directory", "/repo"],
+        &[
+            "workflow",
+            "approve-templates",
+            "--directory",
+            "/repo",
+            "--digest",
+            DIGEST,
+        ],
+        &[
+            "workflow",
+            "revoke-templates",
+            "--directory",
+            "/repo",
+            "--digest",
+            DIGEST,
+        ],
+        &[
+            "workflow",
+            "start",
+            "triage",
+            "--directory",
+            "/repo",
+            "--key",
+            "k",
+        ],
+    ];
+
+    fn leaves(command: &clap::Command, path: &mut Vec<String>, found: &mut Vec<String>) {
+        let children: Vec<_> = command
+            .get_subcommands()
+            .filter(|child| child.get_name() != "help")
+            .collect();
+        if children.is_empty() {
+            found.push(path.join(" "));
+        }
+        for child in children {
+            path.push(child.get_name().to_owned());
+            leaves(child, path, found);
+            path.pop();
+        }
+    }
+
+    fn leaf(sample: &[&str]) -> String {
+        let mut command = Cli::command();
+        let mut path = Vec::new();
+        for word in sample {
+            let Some(child) = command.find_subcommand(word).cloned() else {
+                break;
+            };
+            path.push(*word);
+            command = child;
+        }
+        path.join(" ")
+    }
+
+    fn reply_kinds(command: &Command) -> Vec<&'static str> {
+        let built = |result: Result<(Value, &'static str)>| vec![result.expect("Sample builds").1];
+        match command {
+            Command::Job { .. } | Command::Budget { .. } | Command::Run { .. } => vec!["workflow"],
+            Command::Mcp | Command::Doctor { .. } => Vec::new(),
+            Command::Operation { .. } => vec!["operation"],
+            Command::Events { .. } => vec!["events"],
+            Command::Quota { .. } => vec!["providerQuota"],
+            Command::Review { command } => vec![review_kind(command)],
+            Command::Worktree { command } => built(worktree_query(command)),
+            Command::Project { command } => built(crate::project_commands::query(command)),
+            Command::Inbox { command } => built(attention::inbox_query(command)),
+            Command::Decision { command } => built(attention::decision_query(command)),
+            Command::Workflow { command } => built(workflow_template_query(command)),
+            Command::Session { command } => match command {
+                SessionCommand::Create(_)
+                | SessionCommand::Send(_)
+                | SessionCommand::Interrupt(_)
+                | SessionCommand::Stop(_)
+                | SessionCommand::Wait { .. } => vec!["operation"],
+                SessionCommand::Wake {
+                    id,
+                    enable,
+                    disable,
+                    ..
+                } => built(quota_wake_query(
+                    id,
+                    (*enable || *disable).then_some(*enable),
+                )),
+                SessionCommand::List { .. } => vec!["sessions"],
+                SessionCommand::Get { .. } | SessionCommand::Current { .. } => vec!["session"],
+                SessionCommand::Read { .. } => vec!["sessionRead"],
+                SessionCommand::Diff { .. } => vec!["diff"],
+                SessionCommand::Providers { .. } => vec!["providers"],
+                SessionCommand::Explain { .. } => Vec::new(),
+                SessionCommand::Recover { command } => {
+                    built(crate::session_recovery::query(command))
+                }
+            },
+        }
+    }
+
+    fn published() -> Vec<String> {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
+        schema["oneOf"][1]["properties"]["data"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|branch| branch["properties"]["type"]["const"].as_str())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn every_cli_reply_kind_has_a_published_schema_branch() {
+        let mut tree = Vec::new();
+        leaves(&Cli::command(), &mut Vec::new(), &mut tree);
+        let sampled: Vec<String> = SAMPLES.iter().map(|sample| leaf(sample)).collect();
+        for path in &sampled {
+            assert!(tree.contains(path), "Sample {path} is not a leaf command");
+        }
+        let unregistered: Vec<&String> = tree
+            .iter()
+            .filter(|path| {
+                !sampled.contains(path)
+                    && !WITHOUT_ENVELOPE.contains(&path.as_str())
+                    && !WORKFLOW_GROUPS
+                        .iter()
+                        .any(|group| path.split(' ').next() == Some(*group))
+            })
+            .collect();
+        assert!(
+            unregistered.is_empty(),
+            "Register a sample for each new CLI command: {unregistered:?}"
+        );
+        for group in WORKFLOW_GROUPS {
+            assert!(tree.iter().any(|path| path.starts_with(group)), "{group}");
+        }
+        let published = published();
+        let mut kinds = vec!["workflow"];
+        for sample in SAMPLES {
+            let argv: Vec<&str> = ["nesvo"].iter().chain(sample.iter()).copied().collect();
+            let command = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|error| panic!("{sample:?}: {error}"))
+                .command;
+            kinds.extend(reply_kinds(&command));
+        }
+        let missing: Vec<&&str> = kinds
+            .iter()
+            .filter(|kind| !published.iter().any(|branch| branch == **kind))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "docs/harness-cli.schema.json has no data.oneOf branch for {missing:?}"
+        );
+        for kind in [
+            "projects",
+            "projectPinned",
+            "projectLayout",
+            "projectDefaults",
+            "workflowTemplates",
+            "workflowTemplateStarted",
+            "workflowTemplatesApproved",
+            "workflowTemplatesRevoked",
+        ] {
+            assert!(kinds.contains(&kind), "{kind} is not reached by a sample");
+        }
     }
 }

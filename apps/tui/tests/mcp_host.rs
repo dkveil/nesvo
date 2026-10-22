@@ -75,6 +75,8 @@ mod native_tool_permissions;
 mod prechecks;
 #[path = "../../../crates/nesvo-process-fixture/src/locate.rs"]
 mod process_fixture;
+#[path = "support/project_templates.rs"]
+mod project_templates;
 #[path = "support/provider_quota.rs"]
 mod provider_quota;
 #[path = "support/quota_native_continuation.rs"]

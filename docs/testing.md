@@ -222,6 +222,30 @@ manufactured exit proof. They use controlled PTYs, not original model calls.
 See the
 [launch reconciliation contract](harness-job-launch-reconciliation.md).
 
+### Native CLI reply envelopes
+
+Scenarios that run the real CLI against an isolated host pipe its `--json`
+envelopes through `tests/fixtures/validate-harness-json.cjs`, which validates them
+against `docs/harness-cli.schema.json`. Run these after a reply shape or exit-code
+change:
+
+```powershell
+cargo test --package nesvo --test mcp_host --locked project_templates::project_and_template_cli_replies_match_the_published_schema -- --ignored --exact --test-threads=1
+cargo test --package nesvo --test mcp_host --locked run_wakes:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked run_checkpoints:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked inbox:: -- --ignored --test-threads=1
+```
+
+`tests/tui.integration.test.ts` validates session query and operation envelopes
+against the same schema. The project and template scenario launches one shell session in a private Git
+repository with a committed `nesvo.toml`, then validates the `projects`,
+`projectPinned`, `projectLayout`, `projectDefaults`, `workflowTemplates`,
+`workflowTemplatesApproved`, `workflowTemplateStarted` and
+`workflowTemplatesRevoked` replies. It starts the template as a draft run, so no
+provider is launched. Reply kinds that no scenario prints are covered only by the
+unit test `cli::reply_kind_tests::every_cli_reply_kind_has_a_published_schema_branch`,
+which asserts that each kind a CLI command can print has a `data.oneOf` branch.
+
 Initial native fixture startup retains a 60-second readiness deadline. On failure
 only, `NATIVE_HOST_STARTUP_DIAGNOSTIC` records child status, stdout counters,
 buffer occupancy and the presence/size of five fixed startup files. A dedicated

@@ -207,7 +207,12 @@ credentials are confined to the private process context.
 ## Version 1 query output
 
 The machine-readable schema is `docs/harness-cli.schema.json` (JSON Schema draft 7).
-Native integration tests validate real CLI success/failure output against it.
+Native integration scenarios validate real CLI success and failure envelopes against it
+for sessions, runs, wakes, decisions, projects and workflow templates; the
+[testing guide](testing.md#native-cli-reply-envelopes) lists them. Every other reply
+kind is checked only statically: a unit test walks the whole command tree and asserts
+that each kind a command can print has a `data.oneOf` branch. `doctor` and
+`session explain` print the bare diagnostics report, which has its own top-level branch.
 
 New session queries return one JSON object on stdout and no progress text:
 
