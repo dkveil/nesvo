@@ -2,6 +2,7 @@ pub mod files;
 pub mod jobs;
 pub mod layouts;
 pub mod notes;
+pub mod projects;
 pub mod review;
 pub mod runs;
 
