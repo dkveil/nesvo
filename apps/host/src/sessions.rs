@@ -21,6 +21,8 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, watch};
+#[path = "hibernation_session.rs"]
+mod hibernation_session;
 #[path = "quota_wake_session.rs"]
 mod quota_wake_session;
 #[path = "session_quota.rs"]
@@ -112,6 +114,7 @@ struct Session {
     attention_dirty: bool,
     titles: crate::titles::Titles,
     auto_title: bool,
+    hibernating: Option<String>,
 }
 
 impl Session {
@@ -191,6 +194,7 @@ pub struct State {
     attention_watchers: HashSet<u64>,
     freshness_watchers: HashSet<u64>,
     native_run_gates: HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
+    hibernated: crate::hibernation::Registry,
 }
 
 #[cfg(test)]
@@ -326,6 +330,7 @@ impl State {
             attention_watchers: HashSet::new(),
             freshness_watchers: HashSet::new(),
             native_run_gates: HashMap::new(),
+            hibernated: Default::default(),
         }
     }
 
@@ -1530,6 +1535,8 @@ impl State {
         event["git"] = true.into();
         event["sessionFreshness"] = true.into();
         event["sessionFreshnessBounds"] = crate::freshness::capability();
+        event["hibernation"] = self.event_log.is_some().into();
+        event["hibernationIdlePolicy"] = self.hibernated.idle.view();
         event
     }
 
@@ -1584,6 +1591,11 @@ impl State {
                 !self
                     .sessions
                     .contains_key(r["id"].as_str().unwrap_or_default())
+            })
+            .filter(|r| {
+                !self
+                    .hibernated
+                    .contains(r["id"].as_str().unwrap_or_default())
             })
             .collect();
         let total = records.len();
@@ -1816,6 +1828,10 @@ impl State {
                 info
             })
             .collect();
+        let mut sessions = sessions;
+        if caller.is_none() {
+            crate::hibernation::merge_views(&mut sessions, &self.hibernated, now);
+        }
         json!({"type":"sessions", "sessions":sessions, "groups":groups, "attentionSummary":summary,"revision":self.metadata.revision()})
     }
 
@@ -2330,7 +2346,7 @@ impl State {
             .filter(|session| session.info.running);
         limits.limits.admit(
             crate::budgets::Usage {
-                retained: self.sessions.len(),
+                retained: self.sessions.len() + self.hibernated.len(),
                 workers: live
                     .clone()
                     .filter(|s| s.policy.role == crate::caller::Role::Worker)
@@ -2445,6 +2461,13 @@ impl State {
             .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
         if !session.info.running {
             return Err(Error::new("process_exited", "Process has exited").into());
+        }
+        if session.hibernating.is_some() {
+            return Err(Error::new(
+                "session_hibernating",
+                "The session is being hibernated; no prompt was queued",
+            )
+            .into());
         }
         if let Some(refusal) = session
             .resume
@@ -3385,7 +3408,11 @@ impl State {
                     "Cannot forget a live session."
                 );
                 self.metadata.finish_recovery(&id, true)?;
+                self.discard_hibernated(&id);
                 self.respond(client_id, self.recovery_event(0)?, request_id);
+            }
+            Command::HibernateSession { .. } | Command::ResumeSession { .. } => {
+                return Err(anyhow!("Hibernation requires asynchronous dispatch."));
             }
             Command::RestoreSession { id, resume, exact } => {
                 ensure!(
@@ -3406,6 +3433,7 @@ impl State {
                     .and_then(|()| self.launch(&spec, pty_events));
                 self.metadata.finish_recovery(&id, result.is_ok())?;
                 let new_id = result?;
+                self.discard_hibernated(&id);
                 let mut created = json!({"type":"created","sessionId":new_id});
                 if let Some(gate) = self.sessions.get(&new_id).and_then(|s| s.resume.as_ref()) {
                     created["resume"] = json!(gate.verification());
@@ -3667,6 +3695,9 @@ impl State {
                 session.status.resize(rows, cols);
                 self.broadcast_control(&session_id);
             }
+            Command::Close { session_id } if self.hibernated.contains(&session_id) => {
+                self.close_hibernated(&session_id)?;
+            }
             Command::Close { session_id } => {
                 let session = self
                     .sessions
@@ -3925,6 +3956,7 @@ fn spawn_session(
         attention_dirty: false,
         titles: Default::default(),
         auto_title: false,
+        hibernating: None,
     })
 }
 

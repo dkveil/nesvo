@@ -224,6 +224,10 @@ mod workflow_session_reuse_tests;
 #[cfg(test)]
 #[path = "workflow_wakes_tests.rs"]
 mod workflow_wakes_tests;
+#[cfg(test)]
+pub(crate) fn test_journal() -> Connection {
+    Store::open(std::path::Path::new(":memory:")).unwrap().0
+}
 impl Store {
     fn open(path: &std::path::Path) -> Result<Self> {
         Self::open_with_schema(path, |schema| {
@@ -383,6 +387,10 @@ enum Work {
     QuotaWakes {
         work: crate::quota_wakes::Work,
         reply: oneshot::Sender<Result<crate::quota_wakes::Reply>>,
+    },
+    Hibernation {
+        work: crate::hibernation::Work,
+        reply: oneshot::Sender<Result<crate::hibernation::Reply>>,
     },
     ExternalTrigger {
         inbound: crate::job_triggers::Inbound,
@@ -598,6 +606,19 @@ impl Service {
             .map_err(|_| anyhow!("Quota wake journal is closed"))?;
         answer.await.map_err(|_| {
             anyhow!("Quota wake outcome is unconfirmed; inspect its original receipt")
+        })?
+    }
+    pub(crate) async fn hibernation(
+        &self,
+        work: crate::hibernation::Work,
+    ) -> Result<crate::hibernation::Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(Work::Hibernation { work, reply })
+            .await
+            .map_err(|_| anyhow!("Hibernation journal is closed"))?;
+        answer.await.map_err(|_| {
+            anyhow!("Hibernation outcome is unconfirmed; look up the same key before retrying")
         })?
     }
     pub async fn guard_run_dispatch(&self, session_id: &str, operation_id: &str) -> Result<()> {
@@ -837,6 +858,22 @@ impl Service {
                         Work::QuotaWakes { work, reply } => {
                             let result = crate::quota_wakes::handle(&mut store.0, work);
                             record_storage_failure(&result, &worker_failures, &changed_tx);
+                            notify_head(&store, &changed_tx);
+                            let _ = reply.send(result);
+                        }
+                        Work::Hibernation { work, reply } => {
+                            let result = crate::hibernation::handle(
+                                &mut store.0,
+                                work,
+                                crate::status::now_millis(),
+                            );
+                            if result
+                                .as_ref()
+                                .err()
+                                .is_none_or(|error| crate::hibernation::code(error).is_none())
+                            {
+                                record_storage_failure(&result, &worker_failures, &changed_tx);
+                            }
                             notify_head(&store, &changed_tx);
                             let _ = reply.send(result);
                         }

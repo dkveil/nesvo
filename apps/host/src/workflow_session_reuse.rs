@@ -11,7 +11,7 @@ pub struct Live {
     pub conversation: Option<String>,
 }
 
-const OPEN_ATTEMPTS: [&str; 4] = ["launching", "launchUnknown", "assigned", "reported"];
+pub(crate) const OPEN_ATTEMPTS: [&str; 4] = ["launching", "launchUnknown", "assigned", "reported"];
 
 fn refuse(code: &'static str, message: &'static str) -> anyhow::Error {
     Error::new(code, message).into()

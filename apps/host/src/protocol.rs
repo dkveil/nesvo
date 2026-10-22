@@ -151,6 +151,14 @@ pub enum Command {
     ForgetRecovery {
         id: String,
     },
+    HibernateSession {
+        session_id: String,
+        key: String,
+    },
+    ResumeSession {
+        session_id: String,
+        key: String,
+    },
     AcknowledgeAttention {
         session_id: String,
         sequence: u64,

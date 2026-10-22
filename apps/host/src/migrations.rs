@@ -73,6 +73,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "wake_delivery",
         sql: include_str!("../migrations/0013_wake_delivery.sql"),
     },
+    Migration {
+        version: 14,
+        name: "session_hibernation",
+        sql: include_str!("../migrations/0014_session_hibernation.sql"),
+    },
 ];
 
 const LEGACY_SCHEMA_VERSION: u32 = 7;

@@ -1452,6 +1452,43 @@
             },
             {
               "type": "object",
+              "required": ["type", "sessionId", "state", "replayed"],
+              "properties": {
+                "type": {
+                  "const": "sessionHibernation"
+                },
+                "sessionId": {
+                  "$ref": "#/definitions/id"
+                },
+                "state": {
+                  "enum": ["hibernated", "resumed"]
+                },
+                "replayed": {
+                  "type": "boolean"
+                },
+                "hibernation": {
+                  "$ref": "#/definitions/sessionHibernation"
+                },
+                "resume": {
+                  "$ref": "#/definitions/resumeVerification"
+                }
+              },
+              "if": {
+                "properties": {
+                  "state": {
+                    "const": "hibernated"
+                  }
+                }
+              },
+              "then": {
+                "required": ["hibernation"]
+              },
+              "else": {
+                "required": ["resume"]
+              }
+            },
+            {
+              "type": "object",
               "required": [
                 "type",
                 "repository",
@@ -3658,6 +3695,33 @@
         },
         "resume": {
           "$ref": "#/definitions/resumeVerification"
+        },
+        "hibernation": {
+          "$ref": "#/definitions/sessionHibernation"
+        }
+      }
+    },
+    "sessionHibernation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "hibernatedAt", "conversationId", "trigger", "lastResumeFailure"],
+      "properties": {
+        "state": {
+          "const": "hibernated"
+        },
+        "hibernatedAt": {
+          "$ref": "#/definitions/cursor"
+        },
+        "conversationId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "trigger": {
+          "enum": ["owner", "idlePolicy"]
+        },
+        "lastResumeFailure": {
+          "type": ["string", "null"],
+          "maxLength": 1024
         }
       }
     },

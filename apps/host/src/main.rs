@@ -20,6 +20,7 @@ mod git;
 mod git_repository;
 mod groups;
 mod handle_paths;
+mod hibernation;
 mod host_lock;
 mod job_attempts;
 mod job_calendar;
@@ -167,6 +168,12 @@ struct Args {
     /// Enable authenticated job webhooks on 127.0.0.1; use 0 for an ephemeral port.
     #[arg(long)]
     webhook_port: Option<u16>,
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u64).range(15..=1440),
+        help = "Hibernate eligible idle agent sessions after this many minutes (15-1440); off by default"
+    )]
+    hibernate_idle_minutes: Option<u64>,
     #[arg(long, env = "POCKET_HOST_ADDRESS")]
     advertise: Option<String>,
     #[arg(long, default_value = ".")]
@@ -474,6 +481,15 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     let (event_tx, event_rx) = mpsc::channel(128);
     state.lock().unwrap().set_caller_url(pairing.url.clone());
     state.lock().unwrap().set_event_log(event_log.clone());
+    state
+        .lock()
+        .unwrap()
+        .set_hibernation_idle_policy(hibernation::IdlePolicy::from_minutes(
+            args.hibernate_idle_minutes,
+        )?);
+    if let Err(error) = hibernation::restore(&state, &event_log).await {
+        eprintln!("Hibernated sessions are unavailable: {error}");
+    }
     span.end(true);
     let webhooks = match args.webhook_port {
         Some(port) => {
@@ -520,6 +536,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     let quota_runtime = provider_quota_runtime::Runtime::start(state.clone());
     let quota_wake_runtime = quota_wake_runtime::Runtime::start(state.clone(), event_log.clone());
     let repository_runtime = session_repository::Runtime::start(state.clone());
+    let idle_hibernation = hibernation::start_idle(state.clone(), event_log.clone());
     let permits = Arc::new(Semaphore::new(16));
     span.end(true);
     let span = trace.begin(Phase::ReadinessAnnounce);
@@ -552,6 +569,9 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         }
     }
     state.lock().unwrap().begin_shutdown();
+    if let Some(task) = idle_hibernation {
+        task.abort();
+    }
     quota_runtime.request_shutdown();
     quota_wake_runtime.request_shutdown();
     job_runtime.request_shutdown();
