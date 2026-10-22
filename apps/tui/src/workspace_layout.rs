@@ -3,20 +3,12 @@ use crate::{
     model::App,
 };
 use anyhow::{Result, ensure};
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use nesvo_wire::views::lenient;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashSet, fs, path::Path};
 
 const FILE_BYTES: usize = 64 * 1024;
-
-fn lenient<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: DeserializeOwned + Default,
-{
-    let value = Value::deserialize(deserializer)?;
-    Ok(serde_json::from_value(value).unwrap_or_default())
-}
 
 #[derive(Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

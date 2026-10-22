@@ -7,6 +7,7 @@ use crate::{
 use anyhow::Result;
 use nesvo_wire::views::{
     self,
+    layouts::{ReleaseControl, Subscribe, Unsubscribe},
     review::{DiffReply, SessionDiffRequest, WatchReviews},
 };
 use serde::Deserialize;
@@ -1202,7 +1203,7 @@ impl App {
         self.mode = Mode::Navigate;
         let mut commands = Vec::new();
         if self.subscribed.insert(id.into()) {
-            commands.push(json!({"type":"subscribe", "sessionId":id}));
+            commands.push(views::encode(&Subscribe { session_id: id }));
         }
         commands.extend(self.drop_hidden_subscriptions());
         commands
@@ -1219,11 +1220,14 @@ impl App {
             .collect();
         for id in stale {
             if let Some(lease) = self.leases.remove(&id) {
-                commands.push(json!({"type":"releaseControl","sessionId":id,"leaseId":lease}));
+                commands.push(views::encode(&ReleaseControl {
+                    session_id: &id,
+                    lease_id: &lease,
+                }));
             }
             self.subscribed.remove(&id);
             self.terminals.remove(&id);
-            commands.push(json!({"type":"unsubscribe","sessionId":id}));
+            commands.push(views::encode(&Unsubscribe { session_id: &id }));
         }
         commands
     }
@@ -1245,10 +1249,10 @@ impl App {
             }
             self.subscribed.remove(&stale);
             self.terminals.remove(&stale);
-            commands.push(json!({"type":"unsubscribe", "sessionId":stale}));
+            commands.push(views::encode(&Unsubscribe { session_id: &stale }));
         }
         if self.subscribed.insert(id.to_owned()) {
-            commands.push(json!({"type":"subscribe", "sessionId":id}));
+            commands.push(views::encode(&Subscribe { session_id: id }));
         }
         commands
     }
