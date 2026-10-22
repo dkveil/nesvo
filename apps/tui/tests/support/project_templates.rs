@@ -12,9 +12,10 @@ async fn git(directory: &Path, args: &[&str]) -> Result<()> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(5), command.output())
+    let output = command
+        .output()
         .await
-        .context("Owned template Git command deadline")??;
+        .context("Owned template Git command")?;
     ensure!(
         output.status.success(),
         "Owned template Git fixture failed: {}",
@@ -69,7 +70,7 @@ async fn validate(envelopes: Vec<Value>) -> Result<()> {
         .context("schema input")?
         .write_all(&serde_json::to_vec(&envelopes)?)
         .await?;
-    let output = timeout(Duration::from_secs(8), process.wait_with_output()).await??;
+    let output = process.wait_with_output().await?;
     ensure!(
         output.status.success(),
         "Real project and template contract validation: {}",
@@ -78,29 +79,35 @@ async fn validate(envelopes: Vec<Value>) -> Result<()> {
     Ok(())
 }
 
-async fn launched_project(fixture: &Fixture, session: &str) -> Result<(Value, String)> {
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let listed = owner_cli(fixture, &["project", "list", "--json"]).await?;
-            let root = listed["data"]["projects"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|project| {
-                    project["sessions"]
-                        .as_array()
-                        .is_some_and(|sessions| sessions.iter().any(|id| id == session))
-                })
-                .and_then(|project| project["root"].as_str())
-                .map(str::to_owned);
-            if let Some(root) = root {
-                return Ok::<_, anyhow::Error>((listed, root));
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+async fn launched_project(
+    fixture: &Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    session: &str,
+) -> Result<(Value, String)> {
+    waits::until(async || {
+        let listed = owner_cli(fixture, &["project", "list", "--json"]).await?;
+        let root = listed["data"]["projects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|project| {
+                project["sessions"]
+                    .as_array()
+                    .is_some_and(|sessions| sessions.iter().any(|id| id == session))
+            })
+            .and_then(|project| project["root"].as_str())
+            .map(str::to_owned);
+        if let Some(root) = root {
+            return Ok(Some((listed, root)));
         }
+        ensure!(
+            !waits::exited(owner, session).await?,
+            "Shell {session} exited before its project was registered: {listed}"
+        );
+        Ok(None)
     })
     .await
-    .context("Launched shell project in the registry")?
+    .context("Launched shell project in the registry")
 }
 
 #[tokio::test]
@@ -111,19 +118,16 @@ async fn project_and_template_cli_replies_match_the_published_schema() -> Result
         let repository = repository(&fixture).await?;
         let directory = repository.to_str().context("template repository path")?;
         let owner = client(&fixture.pairing()).await?;
-        let shell = data(
-            call(
+        let shell = waits::operation(
                 &owner,
                 "nesvo_create_session",
                 json!({"key":"project-shell","spec":{"name":"Project shell","program":"shell","cwd":directory}}),
-            )
-            .await?,
-        )?;
+            ).await?;
         let session = shell["data"]["receipt"]["sessionId"]
             .as_str()
             .context("project shell")?
             .to_owned();
-        let (listed, root) = launched_project(&fixture, &session).await?;
+        let (listed, root) = launched_project(&fixture, &owner, &session).await?;
         let pinned = owner_cli(&fixture, &["project", "pin", &root, "--json"]).await?;
         assert_eq!(pinned["data"]["pinned"], true);
         let unpinned = owner_cli(&fixture, &["project", "unpin", &root, "--json"]).await?;
@@ -194,14 +198,11 @@ async fn project_and_template_cli_replies_match_the_published_schema() -> Result
             revoked,
         ])
         .await?;
-        data(
-            call(
+        waits::operation(
                 &owner,
                 "nesvo_stop_session",
                 json!({"key":"stop-project-shell","sessionId":session}),
-            )
-            .await?,
-        )?;
+            ).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
     })

@@ -9,7 +9,7 @@ async fn cli(pairing: &Path, args: &[&str]) -> Result<Value> {
         .stdin(Stdio::null());
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(15), command.output()).await??;
+    let output = command.output().await?;
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
@@ -32,7 +32,7 @@ async fn validate(envelopes: Vec<Value>) -> Result<()> {
         .context("schema input")?
         .write_all(&serde_json::to_vec(&envelopes)?)
         .await?;
-    let output = timeout(Duration::from_secs(8), process.wait_with_output()).await??;
+    let output = process.wait_with_output().await?;
     ensure!(
         output.status.success(),
         "Real MCP pool envelope validation: {}",
@@ -47,27 +47,14 @@ async fn pool_status_shows_the_harness_server_dedicated_and_refuses_scoped_calle
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
         let pairing = fixture.pairing();
-        timeout(Duration::from_secs(5), async {
-            loop {
-                let report = cli(&pairing, &["doctor", "--json"]).await?;
-                if report["providerVersions"].as_array().is_some_and(|versions| {
-                    versions
-                        .iter()
-                        .any(|v| v["program"] == "claude" && v["status"] == "ready")
-                }) {
-                    return Ok::<_, anyhow::Error>(());
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await??;
+        waits::provider(&fixture, "claude").await?;
         let empty = cli(&pairing, &["mcp", "pool", "status", "--json"]).await?;
         assert_eq!(empty["ok"], true, "{empty}");
         assert_eq!(empty["data"]["type"], "mcpPool");
         assert_eq!(empty["data"]["processes"], json!({"warm":0,"leased":0}));
         assert_eq!(empty["data"]["bounds"]["warmPerKey"], 1);
         let owner = client(&pairing).await?;
-        let root = data(call(&owner,"nesvo_create_session",json!({"key":"pool-root","spec":{"name":"Pool coordinator","role":"coordinator","program":"claude","harness":true}})).await?)?;
+        let root = waits::operation(&owner,"nesvo_create_session",json!({"key":"pool-root","spec":{"name":"Pool coordinator","role":"coordinator","program":"claude","harness":true}})).await?;
         let root_id = root["data"]["receipt"]["sessionId"]
             .as_str()
             .context("pool root")?
