@@ -101,6 +101,8 @@ mod recovery_hooks;
 mod recovery_profile;
 #[path = "support/repository_context.rs"]
 mod repository_context;
+#[path = "support/restore.rs"]
+mod restore;
 #[path = "support/run_budgets.rs"]
 mod run_budgets;
 #[path = "support/run_checkpoints.rs"]
