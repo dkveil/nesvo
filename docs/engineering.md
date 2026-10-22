@@ -104,10 +104,10 @@ Every `uses:` in `.github/workflows` names a full 40-character commit SHA, first
 
 | Action                      | Release         | Commit                                     |
 | --------------------------- | --------------- | ------------------------------------------ |
-| `actions/checkout`          | v4.4.0          | `11d5960a326750d5838078e36cf38b85af677262` |
-| `actions/setup-node`        | v4.4.0          | `49933ea5288caeca8642d1e84afbd3f7d6820020` |
-| `actions/upload-artifact`   | v4.6.2          | `ea165f8d65b6e75b540449e92b4886f43607fa02` |
-| `actions/download-artifact` | v4.3.0          | `d3f86a106a0bac45b974a628896c90dbdf5c8093` |
+| `actions/checkout`          | v7.0.1          | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `actions/setup-node`        | v7.1.0          | `949feb2413d6458794dcd2491c4babbbce0c15c1` |
+| `actions/upload-artifact`   | v7.0.2          | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
+| `actions/download-artifact` | v8.0.2          | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
 | `dtolnay/rust-toolchain`    | `stable` branch | `b725eda525362e7cf34af9a7243cac1e3f01a7ec` |
 | `taiki-e/install-action`    | v2.87.29        | `8cca0918f8471c33515202b73f56ab27f2bed283` |
 
