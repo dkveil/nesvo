@@ -68,6 +68,15 @@ import {
 } from '../apps/mobile/src/shared/notifications/target';
 import { formatAge, formatRemaining, hasElapsed } from '../apps/mobile/src/shared/ui/format-age';
 
+const CLI_SCHEMA_PATHS = [
+  '../docs/harness-cli.schema.json',
+  './fixtures/harness-cli-handwritten.schema.json',
+];
+const cliValidators = () =>
+  CLI_SCHEMA_PATHS.map(path =>
+    new Ajv().compile(JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'))),
+  );
+
 const groups: SessionGroup[] = [
   { id: 'child', name: 'Mobile', parentId: 'root', order: 1 },
   { id: 'other', name: 'Server', parentId: null, order: 2 },
@@ -87,9 +96,24 @@ const session = {
 };
 
 test('published session schema keeps repository context optional and rejects contradictory states', () => {
-  const validate = new Ajv().compile(
-    JSON.parse(readFileSync(new URL('../docs/harness-cli.schema.json', import.meta.url), 'utf8')),
+  for (const validate of cliValidators()) assertSessionContexts(validate);
+});
+
+test('captured CLI envelopes match the generated and the hand-written schema', () => {
+  const envelopes: unknown[] = JSON.parse(
+    readFileSync(new URL('./fixtures/harness-cli-envelopes.json', import.meta.url), 'utf8'),
   );
+  assert.ok(envelopes.length > 0);
+  for (const [schema, validate] of cliValidators().entries())
+    for (const [index, envelope] of envelopes.entries())
+      assert.equal(
+        validate(envelope),
+        true,
+        `${CLI_SCHEMA_PATHS[schema]} envelope ${index}: ${JSON.stringify(validate.errors)}`,
+      );
+});
+
+function assertSessionContexts(validate: ReturnType<Ajv['compile']>) {
   const envelope = (context?: unknown) => ({
     schemaVersion: 1,
     ok: true,
@@ -132,7 +156,7 @@ test('published session schema keeps repository context optional and rejects con
     { ...ready, name: undefined },
   ])
     assert.equal(validate(envelope(context)), false);
-});
+}
 
 function retainedSnapshot(count: number) {
   return {
@@ -1334,9 +1358,10 @@ test('list ages and decision deadlines accept millisecond and second host timest
 });
 
 test('inbox fixtures used by the client match the published host schema', () => {
-  const validate = new Ajv().compile(
-    JSON.parse(readFileSync(new URL('../docs/harness-cli.schema.json', import.meta.url), 'utf8')),
-  );
+  for (const validate of cliValidators()) assertInboxFixtures(validate);
+});
+
+function assertInboxFixtures(validate: ReturnType<Ajv['compile']>) {
   const envelope = (data: Record<string, unknown>) => ({ schemaVersion: 1, ok: true, data });
   const { requestId: _inboxRequest, ...page } = inboxPage;
   assert.equal(validate(envelope(page)), true, JSON.stringify(validate.errors));
@@ -1361,7 +1386,7 @@ test('inbox fixtures used by the client match the published host schema', () => 
     inboxId: 'decision:run-1:question-1',
   };
   assert.equal(validate(envelope(decided)), true, JSON.stringify(validate.errors));
-});
+}
 
 const hookFreshness = {
   source: 'hook',

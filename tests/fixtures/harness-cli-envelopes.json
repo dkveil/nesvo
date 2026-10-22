@@ -1,0 +1,2898 @@
+[
+  {
+    "data": {
+      "limit": 256,
+      "projects": [
+        {
+          "defaultBranch": "master",
+          "lastActivityAt": 1792662077250,
+          "name": "templates",
+          "openSessions": 1,
+          "pinned": false,
+          "root": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+          "sessions": ["67e3c319919d7afe6bc664ec4eaa04e6"]
+        }
+      ],
+      "type": "projects"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "pinned": true,
+      "root": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "type": "projectPinned"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "pinned": false,
+      "root": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "type": "projectPinned"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "defaultLayout": "Quad",
+      "root": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "type": "projectLayout"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "defaultLayout": null,
+      "root": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "type": "projectLayout"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "defaultLayout": null,
+      "folders": [
+        {
+          "folder": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+          "lastLaunchAt": 1792662077235,
+          "launches": 1
+        }
+      ],
+      "launchFolder": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "name": "templates",
+      "root": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "type": "projectDefaults",
+      "worktreeSetup": {
+        "approved": false,
+        "available": true,
+        "configured": true,
+        "digest": "e9cc785d8068cdeaf719bc00836b7c77896cfd04c556422ea324e2bcdac1a598",
+        "openWorktrees": 0
+      }
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "approved": false,
+      "configured": true,
+      "digest": "05f19c89a26cee0cab0933b1064001f8ab8bda5bf6c5a656c1109e3d0d447af0",
+      "repository": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "source": "HEAD:nesvo.toml",
+      "templates": [
+        {
+          "budget": null,
+          "goal": "Triage the open issues",
+          "name": "triage",
+          "start": "draft",
+          "tasks": [
+            {
+              "allowedNesvoTools": null,
+              "dependencies": [],
+              "harness": null,
+              "instruction": "List the issues worth fixing",
+              "key": "triage",
+              "program": "claude",
+              "title": "triage",
+              "workspace": "shared"
+            }
+          ],
+          "title": "Triage"
+        }
+      ],
+      "type": "workflowTemplates"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "approvedAt": 1792662083148,
+      "digest": "05f19c89a26cee0cab0933b1064001f8ab8bda5bf6c5a656c1109e3d0d447af0",
+      "repository": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "type": "workflowTemplatesApproved"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "digest": "05f19c89a26cee0cab0933b1064001f8ab8bda5bf6c5a656c1109e3d0d447af0",
+      "executor": null,
+      "key": "template-start",
+      "profiles": [
+        {
+          "profile": {
+            "cwd": "C:/nesvo-fixture/nesvo-mcp-a8d6bcca35ef8334/templates",
+            "harness": null,
+            "name": null,
+            "program": "claude",
+            "workspace": "shared"
+          },
+          "taskId": "4ceca9b0fae830081782a3c4765d5e22"
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 0,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": null,
+          "timeState": "notStarted"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": null,
+        "createdAt": 1792662083282,
+        "goal": "Triage the open issues",
+        "id": "0a290c50d0764369f81fc8de76164978",
+        "revision": 2,
+        "state": "draft",
+        "taskResult": null,
+        "title": "Triage"
+      },
+      "start": "draft",
+      "tasks": [
+        {
+          "attempts": 0,
+          "currentAttempt": null,
+          "dependencies": [],
+          "dependencyState": "ready",
+          "id": "4ceca9b0fae830081782a3c4765d5e22",
+          "instruction": "List the issues worth fixing",
+          "key": "triage",
+          "state": "planned",
+          "taskResult": null,
+          "title": "triage"
+        }
+      ],
+      "template": "triage",
+      "type": "workflowTemplateStarted"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "digest": "05f19c89a26cee0cab0933b1064001f8ab8bda5bf6c5a656c1109e3d0d447af0",
+      "repository": "C:\\nesvo-fixture\\nesvo-mcp-a8d6bcca35ef8334\\templates",
+      "revoked": true,
+      "type": "workflowTemplatesRevoked"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "batches": [
+        {
+          "createdAt": 1792662176175,
+          "delivery": "delta",
+          "id": "a90d403c248c5e225b94b325d77920ac",
+          "native": {
+            "phase": "received"
+          },
+          "noticeCount": 1,
+          "phase": "dispatching",
+          "reason": null
+        },
+        {
+          "createdAt": 1792662171182,
+          "delivery": "delta",
+          "id": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "native": {
+            "phase": "settled"
+          },
+          "noticeCount": 3,
+          "phase": "settled",
+          "reason": null
+        }
+      ],
+      "deliveredThrough": 4,
+      "more": false,
+      "nextCursor": 4,
+      "notices": [
+        {
+          "batchId": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "createdAt": 1792662169644,
+          "id": "0614c60cecd74e409cd5a5bf5df3450a",
+          "kind": "question",
+          "reference": {
+            "messageId": "75291ad8ca2313f99632e40cc0c2ed62",
+            "messageSequence": 1
+          },
+          "sequence": 1
+        },
+        {
+          "batchId": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "createdAt": 1792662169658,
+          "id": "b1da1ed21e37bbf3671e44a6175b73cc",
+          "kind": "error",
+          "reference": {
+            "messageId": "bd71d14e1c38ffbceb8e482cdd348d69",
+            "messageSequence": 2
+          },
+          "sequence": 2
+        },
+        {
+          "batchId": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "createdAt": 1792662170376,
+          "id": "0eac96088f5c5c59c69fae65bff7032a",
+          "kind": "result",
+          "reference": {
+            "attemptId": "3c94327752cb5c5805396f5bfe2009f6",
+            "decisionId": null,
+            "decisionState": null,
+            "messageId": "88f4e1409895f941d8f824d78e791b71",
+            "messageSequence": 3,
+            "taskId": "f36fb650042dbab776115820240fb378"
+          },
+          "sequence": 3
+        },
+        {
+          "batchId": "a90d403c248c5e225b94b325d77920ac",
+          "createdAt": 1792662175854,
+          "id": "a784a1bcba9da9f21cbe095d4034bc3a",
+          "kind": "question",
+          "reference": {
+            "messageId": "521ed7b9bf90e64a8ac83bc4655797a2",
+            "messageSequence": 4
+          },
+          "sequence": 4
+        }
+      ],
+      "pendingCount": 0,
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662169192,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169129,
+        "goal": "No silent ACK or fabricated validation",
+        "id": "ebdfa808f5613a9aa11486353a706079",
+        "revision": 17,
+        "state": "active",
+        "taskResult": null,
+        "title": "Delta wake fixture"
+      },
+      "type": "workflow",
+      "wakePolicy": {
+        "coordinator": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169628,
+        "delivery": "delta",
+        "enabled": true,
+        "generation": 1,
+        "held": false,
+        "id": "b2548cc1f32c1422f43e92e5dd182cac",
+        "issuer": "session:520a740939de6bed5685b416917a05bc",
+        "phase": "waiting",
+        "reason": "wake_settlement_pending",
+        "runId": "ebdfa808f5613a9aa11486353a706079"
+      }
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "batches": [
+        {
+          "createdAt": 1792662176175,
+          "delivery": "delta",
+          "id": "a90d403c248c5e225b94b325d77920ac",
+          "native": {
+            "phase": "received"
+          },
+          "noticeCount": 1,
+          "phase": "dispatching",
+          "reason": null
+        },
+        {
+          "createdAt": 1792662171182,
+          "delivery": "delta",
+          "id": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "native": {
+            "phase": "settled"
+          },
+          "noticeCount": 3,
+          "phase": "settled",
+          "reason": null
+        }
+      ],
+      "deliveredThrough": 4,
+      "more": false,
+      "nextCursor": 4,
+      "notices": [
+        {
+          "batchId": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "createdAt": 1792662169644,
+          "id": "0614c60cecd74e409cd5a5bf5df3450a",
+          "kind": "question",
+          "reference": {
+            "messageId": "75291ad8ca2313f99632e40cc0c2ed62",
+            "messageSequence": 1
+          },
+          "sequence": 1
+        },
+        {
+          "batchId": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "createdAt": 1792662169658,
+          "id": "b1da1ed21e37bbf3671e44a6175b73cc",
+          "kind": "error",
+          "reference": {
+            "messageId": "bd71d14e1c38ffbceb8e482cdd348d69",
+            "messageSequence": 2
+          },
+          "sequence": 2
+        },
+        {
+          "batchId": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+          "createdAt": 1792662170376,
+          "id": "0eac96088f5c5c59c69fae65bff7032a",
+          "kind": "result",
+          "reference": {
+            "attemptId": "3c94327752cb5c5805396f5bfe2009f6",
+            "decisionId": null,
+            "decisionState": null,
+            "messageId": "88f4e1409895f941d8f824d78e791b71",
+            "messageSequence": 3,
+            "taskId": "f36fb650042dbab776115820240fb378"
+          },
+          "sequence": 3
+        },
+        {
+          "batchId": "a90d403c248c5e225b94b325d77920ac",
+          "createdAt": 1792662175854,
+          "id": "a784a1bcba9da9f21cbe095d4034bc3a",
+          "kind": "question",
+          "reference": {
+            "messageId": "521ed7b9bf90e64a8ac83bc4655797a2",
+            "messageSequence": 4
+          },
+          "sequence": 4
+        }
+      ],
+      "pendingCount": 0,
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662169192,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169129,
+        "goal": "No silent ACK or fabricated validation",
+        "id": "ebdfa808f5613a9aa11486353a706079",
+        "revision": 17,
+        "state": "active",
+        "taskResult": null,
+        "title": "Delta wake fixture"
+      },
+      "type": "workflow",
+      "wakePolicy": {
+        "coordinator": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169628,
+        "delivery": "delta",
+        "enabled": true,
+        "generation": 1,
+        "held": false,
+        "id": "b2548cc1f32c1422f43e92e5dd182cac",
+        "issuer": "session:520a740939de6bed5685b416917a05bc",
+        "phase": "waiting",
+        "reason": "wake_settlement_pending",
+        "runId": "ebdfa808f5613a9aa11486353a706079"
+      }
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "batches": [],
+      "cursor": 28,
+      "deliveredThrough": 0,
+      "more": false,
+      "nextCursor": 0,
+      "notices": [],
+      "pendingCount": 0,
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662169192,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169129,
+        "goal": "No silent ACK or fabricated validation",
+        "id": "ebdfa808f5613a9aa11486353a706079",
+        "revision": 5,
+        "state": "active",
+        "taskResult": null,
+        "title": "Delta wake fixture"
+      },
+      "type": "workflow",
+      "wakePolicy": {
+        "coordinator": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169628,
+        "delivery": "delta",
+        "enabled": true,
+        "generation": 1,
+        "held": false,
+        "id": "b2548cc1f32c1422f43e92e5dd182cac",
+        "issuer": "session:520a740939de6bed5685b416917a05bc",
+        "phase": "enabled",
+        "reason": null,
+        "runId": "ebdfa808f5613a9aa11486353a706079"
+      }
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "batches": [],
+      "cursor": 28,
+      "deliveredThrough": 0,
+      "more": false,
+      "nextCursor": 0,
+      "notices": [],
+      "pendingCount": 0,
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662169192,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169129,
+        "goal": "No silent ACK or fabricated validation",
+        "id": "ebdfa808f5613a9aa11486353a706079",
+        "revision": 5,
+        "state": "active",
+        "taskResult": null,
+        "title": "Delta wake fixture"
+      },
+      "type": "workflow",
+      "wakePolicy": {
+        "coordinator": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169628,
+        "delivery": "delta",
+        "enabled": true,
+        "generation": 1,
+        "held": false,
+        "id": "b2548cc1f32c1422f43e92e5dd182cac",
+        "issuer": "session:520a740939de6bed5685b416917a05bc",
+        "phase": "enabled",
+        "reason": null,
+        "runId": "ebdfa808f5613a9aa11486353a706079"
+      }
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662169192,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169129,
+        "goal": "No silent ACK or fabricated validation",
+        "id": "ebdfa808f5613a9aa11486353a706079",
+        "revision": 12,
+        "state": "active",
+        "taskResult": null,
+        "title": "Delta wake fixture"
+      },
+      "type": "workflow",
+      "wakeBatch": {
+        "afterSequence": 0,
+        "baseline": {
+          "checkpointDigest": null,
+          "checkpointId": null
+        },
+        "createdAt": 1792662171182,
+        "delivery": "delta",
+        "generation": 1,
+        "id": "ec95e87a8b9e10f3e9bc76294f0f3bb6",
+        "issuer": "session:520a740939de6bed5685b416917a05bc",
+        "native": {
+          "phase": "delivered"
+        },
+        "notices": [
+          {
+            "id": "0614c60cecd74e409cd5a5bf5df3450a",
+            "kind": "question",
+            "reference": {
+              "messageId": "75291ad8ca2313f99632e40cc0c2ed62",
+              "messageSequence": 1
+            },
+            "sequence": 1
+          },
+          {
+            "id": "b1da1ed21e37bbf3671e44a6175b73cc",
+            "kind": "error",
+            "reference": {
+              "messageId": "bd71d14e1c38ffbceb8e482cdd348d69",
+              "messageSequence": 2
+            },
+            "sequence": 2
+          },
+          {
+            "id": "0eac96088f5c5c59c69fae65bff7032a",
+            "kind": "result",
+            "reference": {
+              "attemptId": "3c94327752cb5c5805396f5bfe2009f6",
+              "decisionId": null,
+              "decisionState": null,
+              "messageId": "88f4e1409895f941d8f824d78e791b71",
+              "messageSequence": 3,
+              "taskId": "f36fb650042dbab776115820240fb378"
+            },
+            "sequence": 3
+          }
+        ],
+        "operationKey": "run-wake:ec95e87a8b9e10f3e9bc76294f0f3bb6",
+        "phase": "dispatching",
+        "policyId": "b2548cc1f32c1422f43e92e5dd182cac",
+        "reason": null,
+        "receiptId": "1ab12abafafc0d7f53b7346ad4d28ec9"
+      }
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662169192,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "520a740939de6bed5685b416917a05bc",
+        "createdAt": 1792662169129,
+        "goal": "No silent ACK or fabricated validation",
+        "id": "ebdfa808f5613a9aa11486353a706079",
+        "revision": 17,
+        "state": "active",
+        "taskResult": null,
+        "title": "Delta wake fixture"
+      },
+      "type": "workflow",
+      "wakeBatch": {
+        "afterSequence": 3,
+        "baseline": {
+          "checkpointDigest": null,
+          "checkpointId": null
+        },
+        "createdAt": 1792662176175,
+        "delivery": "delta",
+        "generation": 1,
+        "id": "a90d403c248c5e225b94b325d77920ac",
+        "issuer": "session:520a740939de6bed5685b416917a05bc",
+        "native": {
+          "phase": "received"
+        },
+        "notices": [
+          {
+            "id": "a784a1bcba9da9f21cbe095d4034bc3a",
+            "kind": "question",
+            "reference": {
+              "messageId": "521ed7b9bf90e64a8ac83bc4655797a2",
+              "messageSequence": 4
+            },
+            "sequence": 4
+          }
+        ],
+        "operationKey": "run-wake:a90d403c248c5e225b94b325d77920ac",
+        "phase": "dispatching",
+        "policyId": "b2548cc1f32c1422f43e92e5dd182cac",
+        "reason": null,
+        "receiptId": "6bf175d5e33d61b02e478e778fce2aa7"
+      }
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "headCursor": 4,
+      "mailbox": {
+        "recipientAttemptId": null,
+        "runId": "ebdfa808f5613a9aa11486353a706079"
+      },
+      "messages": [
+        {
+          "ackedAt": null,
+          "ackedBy": null,
+          "body": "PRIVATE_BODY_MUST_NOT_BECOME_NATIVE_WAKE_INPUT",
+          "correlationId": "untrusted $(not code)",
+          "createdAt": 1792662169644,
+          "id": "75291ad8ca2313f99632e40cc0c2ed62",
+          "kind": "question",
+          "payload": null,
+          "recipientAttemptId": null,
+          "runId": "ebdfa808f5613a9aa11486353a706079",
+          "sender": {
+            "role": "coordinator",
+            "sessionId": "520a740939de6bed5685b416917a05bc"
+          },
+          "sequence": 1
+        },
+        {
+          "ackedAt": null,
+          "ackedBy": null,
+          "body": "PRIVATE_BODY_MUST_NOT_BECOME_NATIVE_WAKE_INPUT",
+          "correlationId": "untrusted $(not code)",
+          "createdAt": 1792662169658,
+          "id": "bd71d14e1c38ffbceb8e482cdd348d69",
+          "kind": "error",
+          "payload": null,
+          "recipientAttemptId": null,
+          "runId": "ebdfa808f5613a9aa11486353a706079",
+          "sender": {
+            "role": "coordinator",
+            "sessionId": "520a740939de6bed5685b416917a05bc"
+          },
+          "sequence": 2
+        },
+        {
+          "ackedAt": null,
+          "ackedBy": null,
+          "body": "Controlled fixture result",
+          "correlationId": "3c94327752cb5c5805396f5bfe2009f6",
+          "createdAt": 1792662170376,
+          "id": "88f4e1409895f941d8f824d78e791b71",
+          "kind": "result",
+          "payload": {
+            "attemptId": "3c94327752cb5c5805396f5bfe2009f6",
+            "reportedOutcome": "succeeded",
+            "taskId": "f36fb650042dbab776115820240fb378"
+          },
+          "recipientAttemptId": null,
+          "runId": "ebdfa808f5613a9aa11486353a706079",
+          "sender": {
+            "attemptId": "3c94327752cb5c5805396f5bfe2009f6",
+            "role": "worker",
+            "sessionId": "24872b51a116a24bad43b9626065d4dc"
+          },
+          "sequence": 3
+        },
+        {
+          "ackedAt": null,
+          "ackedBy": null,
+          "body": "PRIVATE_BODY_MUST_NOT_BECOME_NATIVE_WAKE_INPUT",
+          "correlationId": "untrusted $(not code)",
+          "createdAt": 1792662175854,
+          "id": "521ed7b9bf90e64a8ac83bc4655797a2",
+          "kind": "question",
+          "payload": null,
+          "recipientAttemptId": null,
+          "runId": "ebdfa808f5613a9aa11486353a706079",
+          "sender": {
+            "role": "coordinator",
+            "sessionId": "520a740939de6bed5685b416917a05bc"
+          },
+          "sequence": 4
+        }
+      ],
+      "more": false,
+      "nextCursor": 4,
+      "pendingCount": 4,
+      "run": {
+        "id": "ebdfa808f5613a9aa11486353a706079",
+        "revision": 17,
+        "state": "active",
+        "title": "Delta wake fixture"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "checkpoint": {
+        "createdAt": 1792662219343,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "id": "b01f670b224ef495f7933a2282e4a2c2",
+        "issuer": "session:389c33a0935244d539a6d15b4f2f4c71",
+        "ordinal": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4,
+        "summary": "Manual note łódź: $(literal), not validation\nKeep the original goal."
+      },
+      "context": {
+        "baselineDiffers": false,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "kind": "historical",
+        "nativeEffectsRestored": false,
+        "partCount": 6,
+        "schemaVersion": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4
+      },
+      "currentConstraints": {
+        "acknowledgedRevision": 0,
+        "pending": false,
+        "revision": 0
+      },
+      "cursor": 25,
+      "nextOffset": null,
+      "parts": [
+        {
+          "data": {
+            "budget": {
+              "activeAttempts": 1,
+              "deadlineAt": null,
+              "exhaustedAt": null,
+              "limits": {
+                "maxAttemptsPerTask": 16,
+                "maxElapsedMs": null,
+                "maxParallel": 8
+              },
+              "ownerDrain": false,
+              "startedAt": 1792662218316,
+              "timeState": "unlimited"
+            },
+            "coordinatorBinding": null,
+            "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+            "createdAt": 1792662218283,
+            "goal": "Preserve the literal goal; never repeat uncertain input",
+            "id": "f780f8335e690fd84a19617687a95123",
+            "revision": 4,
+            "state": "active",
+            "taskResult": null,
+            "title": "Context preservation"
+          },
+          "kind": "run"
+        },
+        {
+          "data": {
+            "acknowledgedRevision": 0,
+            "pending": false,
+            "revision": 0
+          },
+          "kind": "constraintPolicy"
+        },
+        {
+          "data": {
+            "attempts": 1,
+            "currentAttempt": {
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned"
+            },
+            "dependencies": [],
+            "dependencyState": "ready",
+            "id": "a4eab0201b270529992c2e3f748447cd",
+            "instruction": "CONTEXT_TASK_ONCE",
+            "key": "work",
+            "state": "assigned",
+            "taskResult": null,
+            "title": "Work"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "attempts": 0,
+            "currentAttempt": null,
+            "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+            "dependencyState": "waiting",
+            "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+            "instruction": "WAIT_FOR_VALIDATION",
+            "key": "review",
+            "state": "planned",
+            "taskResult": null,
+            "title": "Review"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "deliveryId": null,
+            "deliveryNativePhase": null,
+            "deliveryPhase": null,
+            "deliveryReceiptId": null,
+            "id": "4209929b5768a2918a130b42ef848fea",
+            "launchPhase": null,
+            "launchReceiptId": null,
+            "ordinal": 1,
+            "reportedOutcome": null,
+            "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+            "state": "assigned",
+            "taskId": "a4eab0201b270529992c2e3f748447cd",
+            "validationPassed": null
+          },
+          "kind": "attempt"
+        },
+        {
+          "data": {
+            "messageHead": 0,
+            "pendingCoordinatorMessages": 0
+          },
+          "kind": "inbox"
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 4,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "error": {
+      "code": "operation_failed",
+      "message": "Inspect operation 4d634b1a9153c779d2bd768300e0d482 before creating another request",
+      "receipt": {
+        "id": "4d634b1a9153c779d2bd768300e0d482",
+        "operation": "send",
+        "phase": "failed",
+        "result": {
+          "code": "constraints_changed",
+          "effectStarted": false,
+          "message": "Read current owner constraints and deliberately acknowledge their exact revision before new automated work",
+          "submissionStage": "pasteFence",
+          "taskResult": null
+        },
+        "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3"
+      },
+      "retryable": false
+    },
+    "ok": false,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "checkpoint": {
+        "createdAt": 1792662219343,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "id": "b01f670b224ef495f7933a2282e4a2c2",
+        "issuer": "session:389c33a0935244d539a6d15b4f2f4c71",
+        "ordinal": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4,
+        "summary": "Manual note łódź: $(literal), not validation\nKeep the original goal."
+      },
+      "context": {
+        "baselineDiffers": false,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "kind": "historical",
+        "nativeEffectsRestored": false,
+        "partCount": 6,
+        "schemaVersion": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4
+      },
+      "currentConstraints": {
+        "acknowledgedRevision": 0,
+        "pending": false,
+        "revision": 0
+      },
+      "nextOffset": null,
+      "parts": [
+        {
+          "data": {
+            "budget": {
+              "activeAttempts": 1,
+              "deadlineAt": null,
+              "exhaustedAt": null,
+              "limits": {
+                "maxAttemptsPerTask": 16,
+                "maxElapsedMs": null,
+                "maxParallel": 8
+              },
+              "ownerDrain": false,
+              "startedAt": 1792662218316,
+              "timeState": "unlimited"
+            },
+            "coordinatorBinding": null,
+            "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+            "createdAt": 1792662218283,
+            "goal": "Preserve the literal goal; never repeat uncertain input",
+            "id": "f780f8335e690fd84a19617687a95123",
+            "revision": 4,
+            "state": "active",
+            "taskResult": null,
+            "title": "Context preservation"
+          },
+          "kind": "run"
+        },
+        {
+          "data": {
+            "acknowledgedRevision": 0,
+            "pending": false,
+            "revision": 0
+          },
+          "kind": "constraintPolicy"
+        },
+        {
+          "data": {
+            "attempts": 1,
+            "currentAttempt": {
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned"
+            },
+            "dependencies": [],
+            "dependencyState": "ready",
+            "id": "a4eab0201b270529992c2e3f748447cd",
+            "instruction": "CONTEXT_TASK_ONCE",
+            "key": "work",
+            "state": "assigned",
+            "taskResult": null,
+            "title": "Work"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "attempts": 0,
+            "currentAttempt": null,
+            "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+            "dependencyState": "waiting",
+            "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+            "instruction": "WAIT_FOR_VALIDATION",
+            "key": "review",
+            "state": "planned",
+            "taskResult": null,
+            "title": "Review"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "deliveryId": null,
+            "deliveryNativePhase": null,
+            "deliveryPhase": null,
+            "deliveryReceiptId": null,
+            "id": "4209929b5768a2918a130b42ef848fea",
+            "launchPhase": null,
+            "launchReceiptId": null,
+            "ordinal": 1,
+            "reportedOutcome": null,
+            "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+            "state": "assigned",
+            "taskId": "a4eab0201b270529992c2e3f748447cd",
+            "validationPassed": null
+          },
+          "kind": "attempt"
+        },
+        {
+          "data": {
+            "messageHead": 0,
+            "pendingCoordinatorMessages": 0
+          },
+          "kind": "inbox"
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 4,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "constraints": {
+        "acknowledgedRevision": 0,
+        "pending": true,
+        "revision": 1
+      },
+      "cursor": 26,
+      "hasMore": false,
+      "nextCursor": 1,
+      "records": [
+        {
+          "createdAt": 1792662219436,
+          "id": "932d4e83c458dd485716c572e68c6f15",
+          "issuer": "owner",
+          "revision": 1,
+          "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 5,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "error": {
+      "code": "forbidden",
+      "message": "Workers have access only to their own attempt context and result",
+      "retryable": false
+    },
+    "ok": false,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "checkpoint": {
+        "createdAt": 1792662219343,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "id": "b01f670b224ef495f7933a2282e4a2c2",
+        "issuer": "session:389c33a0935244d539a6d15b4f2f4c71",
+        "ordinal": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4,
+        "summary": "Manual note łódź: $(literal), not validation\nKeep the original goal."
+      },
+      "context": {
+        "baselineDiffers": true,
+        "digest": "dd84d5efdc5b2afa1cb019deddd07554b2ec1e95b6d24216a2fbd3d7094c97ec",
+        "kind": "current",
+        "nativeEffectsRestored": false,
+        "partCount": 7,
+        "schemaVersion": 1,
+        "sourceCursor": 26,
+        "sourceRunRevision": 5
+      },
+      "currentConstraints": {
+        "acknowledgedRevision": 0,
+        "pending": true,
+        "revision": 1
+      },
+      "nextOffset": null,
+      "parts": [
+        {
+          "data": {
+            "budget": {
+              "activeAttempts": 1,
+              "deadlineAt": null,
+              "exhaustedAt": null,
+              "limits": {
+                "maxAttemptsPerTask": 16,
+                "maxElapsedMs": null,
+                "maxParallel": 8
+              },
+              "ownerDrain": false,
+              "startedAt": 1792662218316,
+              "timeState": "unlimited"
+            },
+            "coordinatorBinding": null,
+            "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+            "createdAt": 1792662218283,
+            "goal": "Preserve the literal goal; never repeat uncertain input",
+            "id": "f780f8335e690fd84a19617687a95123",
+            "revision": 5,
+            "state": "active",
+            "taskResult": null,
+            "title": "Context preservation"
+          },
+          "kind": "run"
+        },
+        {
+          "data": {
+            "acknowledgedRevision": 0,
+            "pending": true,
+            "revision": 1
+          },
+          "kind": "constraintPolicy"
+        },
+        {
+          "data": {
+            "createdAt": 1792662219436,
+            "id": "932d4e83c458dd485716c572e68c6f15",
+            "issuer": "owner",
+            "revision": 1,
+            "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+          },
+          "kind": "constraint"
+        },
+        {
+          "data": {
+            "attempts": 1,
+            "currentAttempt": {
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned"
+            },
+            "dependencies": [],
+            "dependencyState": "ready",
+            "id": "a4eab0201b270529992c2e3f748447cd",
+            "instruction": "CONTEXT_TASK_ONCE",
+            "key": "work",
+            "state": "assigned",
+            "taskResult": null,
+            "title": "Work"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "attempts": 0,
+            "currentAttempt": null,
+            "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+            "dependencyState": "waiting",
+            "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+            "instruction": "WAIT_FOR_VALIDATION",
+            "key": "review",
+            "state": "planned",
+            "taskResult": null,
+            "title": "Review"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "deliveryId": null,
+            "deliveryNativePhase": null,
+            "deliveryPhase": null,
+            "deliveryReceiptId": null,
+            "id": "4209929b5768a2918a130b42ef848fea",
+            "launchPhase": null,
+            "launchReceiptId": null,
+            "ordinal": 1,
+            "reportedOutcome": null,
+            "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+            "state": "assigned",
+            "taskId": "a4eab0201b270529992c2e3f748447cd",
+            "validationPassed": null
+          },
+          "kind": "attempt"
+        },
+        {
+          "data": {
+            "messageHead": 0,
+            "pendingCoordinatorMessages": 0
+          },
+          "kind": "inbox"
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 5,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "checkpoint": {
+        "createdAt": 1792662219343,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "id": "b01f670b224ef495f7933a2282e4a2c2",
+        "issuer": "session:389c33a0935244d539a6d15b4f2f4c71",
+        "ordinal": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4,
+        "summary": "Manual note łódź: $(literal), not validation\nKeep the original goal."
+      },
+      "context": {
+        "baselineDiffers": false,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "kind": "historical",
+        "nativeEffectsRestored": false,
+        "partCount": 6,
+        "schemaVersion": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4
+      },
+      "currentConstraints": {
+        "acknowledgedRevision": 0,
+        "pending": true,
+        "revision": 1
+      },
+      "nextOffset": null,
+      "parts": [
+        {
+          "data": {
+            "budget": {
+              "activeAttempts": 1,
+              "deadlineAt": null,
+              "exhaustedAt": null,
+              "limits": {
+                "maxAttemptsPerTask": 16,
+                "maxElapsedMs": null,
+                "maxParallel": 8
+              },
+              "ownerDrain": false,
+              "startedAt": 1792662218316,
+              "timeState": "unlimited"
+            },
+            "coordinatorBinding": null,
+            "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+            "createdAt": 1792662218283,
+            "goal": "Preserve the literal goal; never repeat uncertain input",
+            "id": "f780f8335e690fd84a19617687a95123",
+            "revision": 4,
+            "state": "active",
+            "taskResult": null,
+            "title": "Context preservation"
+          },
+          "kind": "run"
+        },
+        {
+          "data": {
+            "acknowledgedRevision": 0,
+            "pending": false,
+            "revision": 0
+          },
+          "kind": "constraintPolicy"
+        },
+        {
+          "data": {
+            "attempts": 1,
+            "currentAttempt": {
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned"
+            },
+            "dependencies": [],
+            "dependencyState": "ready",
+            "id": "a4eab0201b270529992c2e3f748447cd",
+            "instruction": "CONTEXT_TASK_ONCE",
+            "key": "work",
+            "state": "assigned",
+            "taskResult": null,
+            "title": "Work"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "attempts": 0,
+            "currentAttempt": null,
+            "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+            "dependencyState": "waiting",
+            "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+            "instruction": "WAIT_FOR_VALIDATION",
+            "key": "review",
+            "state": "planned",
+            "taskResult": null,
+            "title": "Review"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "deliveryId": null,
+            "deliveryNativePhase": null,
+            "deliveryPhase": null,
+            "deliveryReceiptId": null,
+            "id": "4209929b5768a2918a130b42ef848fea",
+            "launchPhase": null,
+            "launchReceiptId": null,
+            "ordinal": 1,
+            "reportedOutcome": null,
+            "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+            "state": "assigned",
+            "taskId": "a4eab0201b270529992c2e3f748447cd",
+            "validationPassed": null
+          },
+          "kind": "attempt"
+        },
+        {
+          "data": {
+            "messageHead": 0,
+            "pendingCoordinatorMessages": 0
+          },
+          "kind": "inbox"
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 5,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "constraints": {
+        "acknowledgedRevision": 0,
+        "pending": true,
+        "revision": 1
+      },
+      "hasMore": false,
+      "nextCursor": 1,
+      "records": [
+        {
+          "createdAt": 1792662219436,
+          "id": "932d4e83c458dd485716c572e68c6f15",
+          "issuer": "owner",
+          "revision": 1,
+          "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 5,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "attempt": {
+        "decisionGate": {
+          "blocksSuccess": false,
+          "pending": 0,
+          "total": 0,
+          "unresolved": 0
+        },
+        "delivery": null,
+        "id": "4209929b5768a2918a130b42ef848fea",
+        "launch": null,
+        "ordinal": 1,
+        "result": null,
+        "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+        "state": "assigned",
+        "taskId": "a4eab0201b270529992c2e3f748447cd",
+        "validation": null
+      },
+      "constraints": {
+        "policy": {
+          "acknowledgedRevision": 1,
+          "pending": false,
+          "revision": 1
+        },
+        "records": [
+          {
+            "createdAt": 1792662219436,
+            "id": "932d4e83c458dd485716c572e68c6f15",
+            "issuer": "owner",
+            "revision": 1,
+            "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+          }
+        ]
+      },
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 6,
+        "state": "active",
+        "title": "Context preservation"
+      },
+      "task": {
+        "id": "a4eab0201b270529992c2e3f748447cd",
+        "instruction": "CONTEXT_TASK_ONCE",
+        "key": "work",
+        "title": "Work"
+      },
+      "type": "workflow",
+      "workingState": null
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "checkpoints": [
+        {
+          "createdAt": 1792662219343,
+          "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+          "id": "b01f670b224ef495f7933a2282e4a2c2",
+          "issuer": "session:389c33a0935244d539a6d15b4f2f4c71",
+          "ordinal": 1,
+          "sourceCursor": 24,
+          "sourceRunRevision": 4,
+          "summary": "Manual note łódź: $(literal), not validation\nKeep the original goal."
+        }
+      ],
+      "nextOffset": null,
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 6,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "checkpoint": {
+        "createdAt": 1792662219343,
+        "digest": "e29bf6dcafadd23d7102cdc1eda1b7159e5ec87176e559747c9d12f3a62597d4",
+        "id": "b01f670b224ef495f7933a2282e4a2c2",
+        "issuer": "session:389c33a0935244d539a6d15b4f2f4c71",
+        "ordinal": 1,
+        "sourceCursor": 24,
+        "sourceRunRevision": 4,
+        "summary": "Manual note łódź: $(literal), not validation\nKeep the original goal."
+      },
+      "context": {
+        "baselineDiffers": true,
+        "digest": "9b6de2cdb22dbee5530183be260e38bf3ec6b64413fb310277f39e0c81a5c0ac",
+        "kind": "current",
+        "nativeEffectsRestored": false,
+        "partCount": 7,
+        "schemaVersion": 1,
+        "sourceCursor": 54,
+        "sourceRunRevision": 9
+      },
+      "currentConstraints": {
+        "acknowledgedRevision": 1,
+        "pending": false,
+        "revision": 1
+      },
+      "nextOffset": null,
+      "parts": [
+        {
+          "data": {
+            "budget": {
+              "activeAttempts": 1,
+              "deadlineAt": null,
+              "exhaustedAt": null,
+              "limits": {
+                "maxAttemptsPerTask": 16,
+                "maxElapsedMs": null,
+                "maxParallel": 8
+              },
+              "ownerDrain": false,
+              "startedAt": 1792662218316,
+              "timeState": "unlimited"
+            },
+            "coordinatorBinding": null,
+            "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+            "createdAt": 1792662218283,
+            "goal": "Preserve the literal goal; never repeat uncertain input",
+            "id": "f780f8335e690fd84a19617687a95123",
+            "revision": 9,
+            "state": "active",
+            "taskResult": null,
+            "title": "Context preservation"
+          },
+          "kind": "run"
+        },
+        {
+          "data": {
+            "acknowledgedRevision": 1,
+            "pending": false,
+            "revision": 1
+          },
+          "kind": "constraintPolicy"
+        },
+        {
+          "data": {
+            "createdAt": 1792662219436,
+            "id": "932d4e83c458dd485716c572e68c6f15",
+            "issuer": "owner",
+            "revision": 1,
+            "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+          },
+          "kind": "constraint"
+        },
+        {
+          "data": {
+            "attempts": 1,
+            "currentAttempt": {
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned"
+            },
+            "dependencies": [],
+            "dependencyState": "ready",
+            "id": "a4eab0201b270529992c2e3f748447cd",
+            "instruction": "CONTEXT_TASK_ONCE",
+            "key": "work",
+            "state": "assigned",
+            "taskResult": null,
+            "title": "Work"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "attempts": 0,
+            "currentAttempt": null,
+            "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+            "dependencyState": "waiting",
+            "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+            "instruction": "WAIT_FOR_VALIDATION",
+            "key": "review",
+            "state": "planned",
+            "taskResult": null,
+            "title": "Review"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "deliveryId": "7e45781164985bb76c76200702a2608e",
+            "deliveryNativePhase": "settled",
+            "deliveryPhase": "sent",
+            "deliveryReceiptId": "6582f2fc9b0dbfcbd3eecce66ad83fbb",
+            "id": "4209929b5768a2918a130b42ef848fea",
+            "launchPhase": null,
+            "launchReceiptId": null,
+            "ordinal": 1,
+            "reportedOutcome": null,
+            "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+            "state": "assigned",
+            "taskId": "a4eab0201b270529992c2e3f748447cd",
+            "validationPassed": null
+          },
+          "kind": "attempt"
+        },
+        {
+          "data": {
+            "messageHead": 0,
+            "pendingCoordinatorMessages": 0
+          },
+          "kind": "inbox"
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662218316,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+        "createdAt": 1792662218283,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "f780f8335e690fd84a19617687a95123",
+        "revision": 9,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "bound": true,
+      "nativeEffectsRestored": false,
+      "page": {
+        "checkpoint": null,
+        "context": {
+          "baselineDiffers": null,
+          "digest": "dd84d5efdc5b2afa1cb019deddd07554b2ec1e95b6d24216a2fbd3d7094c97ec",
+          "kind": "current",
+          "nativeEffectsRestored": false,
+          "partCount": 7,
+          "schemaVersion": 1,
+          "sourceCursor": 26,
+          "sourceRunRevision": 5
+        },
+        "currentConstraints": {
+          "acknowledgedRevision": 0,
+          "pending": true,
+          "revision": 1
+        },
+        "nextOffset": null,
+        "parts": [
+          {
+            "data": {
+              "budget": {
+                "activeAttempts": 1,
+                "deadlineAt": null,
+                "exhaustedAt": null,
+                "limits": {
+                  "maxAttemptsPerTask": 16,
+                  "maxElapsedMs": null,
+                  "maxParallel": 8
+                },
+                "ownerDrain": false,
+                "startedAt": 1792662218316,
+                "timeState": "unlimited"
+              },
+              "coordinatorBinding": null,
+              "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+              "createdAt": 1792662218283,
+              "goal": "Preserve the literal goal; never repeat uncertain input",
+              "id": "f780f8335e690fd84a19617687a95123",
+              "revision": 5,
+              "state": "active",
+              "taskResult": null,
+              "title": "Context preservation"
+            },
+            "kind": "run"
+          },
+          {
+            "data": {
+              "acknowledgedRevision": 0,
+              "pending": true,
+              "revision": 1
+            },
+            "kind": "constraintPolicy"
+          },
+          {
+            "data": {
+              "createdAt": 1792662219436,
+              "id": "932d4e83c458dd485716c572e68c6f15",
+              "issuer": "owner",
+              "revision": 1,
+              "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+            },
+            "kind": "constraint"
+          },
+          {
+            "data": {
+              "attempts": 1,
+              "currentAttempt": {
+                "id": "4209929b5768a2918a130b42ef848fea",
+                "ordinal": 1,
+                "reportedOutcome": null,
+                "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+                "state": "assigned"
+              },
+              "dependencies": [],
+              "dependencyState": "ready",
+              "id": "a4eab0201b270529992c2e3f748447cd",
+              "instruction": "CONTEXT_TASK_ONCE",
+              "key": "work",
+              "state": "assigned",
+              "taskResult": null,
+              "title": "Work"
+            },
+            "kind": "task"
+          },
+          {
+            "data": {
+              "attempts": 0,
+              "currentAttempt": null,
+              "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+              "dependencyState": "waiting",
+              "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+              "instruction": "WAIT_FOR_VALIDATION",
+              "key": "review",
+              "state": "planned",
+              "taskResult": null,
+              "title": "Review"
+            },
+            "kind": "task"
+          },
+          {
+            "data": {
+              "deliveryId": null,
+              "deliveryNativePhase": null,
+              "deliveryPhase": null,
+              "deliveryReceiptId": null,
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "launchPhase": null,
+              "launchReceiptId": null,
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned",
+              "taskId": "a4eab0201b270529992c2e3f748447cd",
+              "validationPassed": null
+            },
+            "kind": "attempt"
+          },
+          {
+            "data": {
+              "messageHead": 0,
+              "pendingCoordinatorMessages": 0
+            },
+            "kind": "inbox"
+          }
+        ],
+        "run": {
+          "budget": {
+            "activeAttempts": 1,
+            "deadlineAt": null,
+            "exhaustedAt": null,
+            "limits": {
+              "maxAttemptsPerTask": 16,
+              "maxElapsedMs": null,
+              "maxParallel": 8
+            },
+            "ownerDrain": false,
+            "startedAt": 1792662218316,
+            "timeState": "unlimited"
+          },
+          "coordinatorBinding": null,
+          "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+          "createdAt": 1792662218283,
+          "goal": "Preserve the literal goal; never repeat uncertain input",
+          "id": "f780f8335e690fd84a19617687a95123",
+          "revision": 5,
+          "state": "active",
+          "taskResult": null,
+          "title": "Context preservation"
+        }
+      },
+      "scope": "coordinator",
+      "selectionRequired": false,
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "bound": true,
+      "nativeEffectsRestored": false,
+      "page": {
+        "checkpoint": null,
+        "context": {
+          "baselineDiffers": null,
+          "digest": "dd84d5efdc5b2afa1cb019deddd07554b2ec1e95b6d24216a2fbd3d7094c97ec",
+          "kind": "current",
+          "nativeEffectsRestored": false,
+          "partCount": 7,
+          "schemaVersion": 1,
+          "sourceCursor": 26,
+          "sourceRunRevision": 5
+        },
+        "currentConstraints": {
+          "acknowledgedRevision": 0,
+          "pending": true,
+          "revision": 1
+        },
+        "nextOffset": null,
+        "parts": [
+          {
+            "data": {
+              "budget": {
+                "activeAttempts": 1,
+                "deadlineAt": null,
+                "exhaustedAt": null,
+                "limits": {
+                  "maxAttemptsPerTask": 16,
+                  "maxElapsedMs": null,
+                  "maxParallel": 8
+                },
+                "ownerDrain": false,
+                "startedAt": 1792662218316,
+                "timeState": "unlimited"
+              },
+              "coordinatorBinding": null,
+              "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+              "createdAt": 1792662218283,
+              "goal": "Preserve the literal goal; never repeat uncertain input",
+              "id": "f780f8335e690fd84a19617687a95123",
+              "revision": 5,
+              "state": "active",
+              "taskResult": null,
+              "title": "Context preservation"
+            },
+            "kind": "run"
+          },
+          {
+            "data": {
+              "acknowledgedRevision": 0,
+              "pending": true,
+              "revision": 1
+            },
+            "kind": "constraintPolicy"
+          },
+          {
+            "data": {
+              "createdAt": 1792662219436,
+              "id": "932d4e83c458dd485716c572e68c6f15",
+              "issuer": "owner",
+              "revision": 1,
+              "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+            },
+            "kind": "constraint"
+          },
+          {
+            "data": {
+              "attempts": 1,
+              "currentAttempt": {
+                "id": "4209929b5768a2918a130b42ef848fea",
+                "ordinal": 1,
+                "reportedOutcome": null,
+                "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+                "state": "assigned"
+              },
+              "dependencies": [],
+              "dependencyState": "ready",
+              "id": "a4eab0201b270529992c2e3f748447cd",
+              "instruction": "CONTEXT_TASK_ONCE",
+              "key": "work",
+              "state": "assigned",
+              "taskResult": null,
+              "title": "Work"
+            },
+            "kind": "task"
+          },
+          {
+            "data": {
+              "attempts": 0,
+              "currentAttempt": null,
+              "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+              "dependencyState": "waiting",
+              "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+              "instruction": "WAIT_FOR_VALIDATION",
+              "key": "review",
+              "state": "planned",
+              "taskResult": null,
+              "title": "Review"
+            },
+            "kind": "task"
+          },
+          {
+            "data": {
+              "deliveryId": null,
+              "deliveryNativePhase": null,
+              "deliveryPhase": null,
+              "deliveryReceiptId": null,
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "launchPhase": null,
+              "launchReceiptId": null,
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned",
+              "taskId": "a4eab0201b270529992c2e3f748447cd",
+              "validationPassed": null
+            },
+            "kind": "attempt"
+          },
+          {
+            "data": {
+              "messageHead": 0,
+              "pendingCoordinatorMessages": 0
+            },
+            "kind": "inbox"
+          }
+        ],
+        "run": {
+          "budget": {
+            "activeAttempts": 1,
+            "deadlineAt": null,
+            "exhaustedAt": null,
+            "limits": {
+              "maxAttemptsPerTask": 16,
+              "maxElapsedMs": null,
+              "maxParallel": 8
+            },
+            "ownerDrain": false,
+            "startedAt": 1792662218316,
+            "timeState": "unlimited"
+          },
+          "coordinatorBinding": null,
+          "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+          "createdAt": 1792662218283,
+          "goal": "Preserve the literal goal; never repeat uncertain input",
+          "id": "f780f8335e690fd84a19617687a95123",
+          "revision": 5,
+          "state": "active",
+          "taskResult": null,
+          "title": "Context preservation"
+        }
+      },
+      "scope": "coordinator",
+      "selectionRequired": false,
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "error": {
+      "code": "invalid_argument",
+      "message": "Owner recovery requires an explicit run ID; UI focus is never a binding",
+      "retryable": false
+    },
+    "ok": false,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "bound": true,
+      "nativeEffectsRestored": false,
+      "scope": "worker",
+      "selectionRequired": false,
+      "taskContext": {
+        "attempt": {
+          "decisionGate": {
+            "blocksSuccess": false,
+            "pending": 0,
+            "total": 0,
+            "unresolved": 0
+          },
+          "delivery": null,
+          "id": "4209929b5768a2918a130b42ef848fea",
+          "launch": null,
+          "ordinal": 1,
+          "result": null,
+          "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+          "state": "assigned",
+          "taskId": "a4eab0201b270529992c2e3f748447cd",
+          "validation": null
+        },
+        "constraints": {
+          "policy": {
+            "acknowledgedRevision": 1,
+            "pending": false,
+            "revision": 1
+          },
+          "records": [
+            {
+              "createdAt": 1792662219436,
+              "id": "932d4e83c458dd485716c572e68c6f15",
+              "issuer": "owner",
+              "revision": 1,
+              "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+            }
+          ]
+        },
+        "run": {
+          "budget": {
+            "activeAttempts": 1,
+            "deadlineAt": null,
+            "exhaustedAt": null,
+            "limits": {
+              "maxAttemptsPerTask": 16,
+              "maxElapsedMs": null,
+              "maxParallel": 8
+            },
+            "ownerDrain": false,
+            "startedAt": 1792662218316,
+            "timeState": "unlimited"
+          },
+          "id": "f780f8335e690fd84a19617687a95123",
+          "revision": 6,
+          "state": "active",
+          "title": "Context preservation"
+        },
+        "task": {
+          "id": "a4eab0201b270529992c2e3f748447cd",
+          "instruction": "CONTEXT_TASK_ONCE",
+          "key": "work",
+          "title": "Work"
+        },
+        "workingState": null
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "error": {
+      "code": "forbidden",
+      "message": "Worker recovery only reads its own current task, without a run selector or parent manifest cursor",
+      "retryable": false
+    },
+    "ok": false,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "bound": false,
+      "hasMoreRuns": false,
+      "nativeEffectsRestored": false,
+      "runs": [
+        {
+          "id": "f780f8335e690fd84a19617687a95123",
+          "state": "active",
+          "title": "Context preservation"
+        },
+        {
+          "id": "0c0fa25580e6ba6b834367743555bf5c",
+          "state": "draft",
+          "title": "Second retained goal"
+        }
+      ],
+      "scope": "coordinator",
+      "selectionRequired": true,
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "bound": true,
+      "nativeEffectsRestored": false,
+      "page": {
+        "checkpoint": null,
+        "context": {
+          "baselineDiffers": null,
+          "digest": "9b6de2cdb22dbee5530183be260e38bf3ec6b64413fb310277f39e0c81a5c0ac",
+          "kind": "current",
+          "nativeEffectsRestored": false,
+          "partCount": 7,
+          "schemaVersion": 1,
+          "sourceCursor": 50,
+          "sourceRunRevision": 9
+        },
+        "currentConstraints": {
+          "acknowledgedRevision": 1,
+          "pending": false,
+          "revision": 1
+        },
+        "nextOffset": null,
+        "parts": [
+          {
+            "data": {
+              "budget": {
+                "activeAttempts": 1,
+                "deadlineAt": null,
+                "exhaustedAt": null,
+                "limits": {
+                  "maxAttemptsPerTask": 16,
+                  "maxElapsedMs": null,
+                  "maxParallel": 8
+                },
+                "ownerDrain": false,
+                "startedAt": 1792662218316,
+                "timeState": "unlimited"
+              },
+              "coordinatorBinding": null,
+              "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+              "createdAt": 1792662218283,
+              "goal": "Preserve the literal goal; never repeat uncertain input",
+              "id": "f780f8335e690fd84a19617687a95123",
+              "revision": 9,
+              "state": "active",
+              "taskResult": null,
+              "title": "Context preservation"
+            },
+            "kind": "run"
+          },
+          {
+            "data": {
+              "acknowledgedRevision": 1,
+              "pending": false,
+              "revision": 1
+            },
+            "kind": "constraintPolicy"
+          },
+          {
+            "data": {
+              "createdAt": 1792662219436,
+              "id": "932d4e83c458dd485716c572e68c6f15",
+              "issuer": "owner",
+              "revision": 1,
+              "text": "Do not publish. Preserve user edits. Literal $(never execute) łódź."
+            },
+            "kind": "constraint"
+          },
+          {
+            "data": {
+              "attempts": 1,
+              "currentAttempt": {
+                "id": "4209929b5768a2918a130b42ef848fea",
+                "ordinal": 1,
+                "reportedOutcome": null,
+                "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+                "state": "assigned"
+              },
+              "dependencies": [],
+              "dependencyState": "ready",
+              "id": "a4eab0201b270529992c2e3f748447cd",
+              "instruction": "CONTEXT_TASK_ONCE",
+              "key": "work",
+              "state": "assigned",
+              "taskResult": null,
+              "title": "Work"
+            },
+            "kind": "task"
+          },
+          {
+            "data": {
+              "attempts": 0,
+              "currentAttempt": null,
+              "dependencies": ["a4eab0201b270529992c2e3f748447cd"],
+              "dependencyState": "waiting",
+              "id": "6f437ae7667c1b55bcccfa8e64320ce0",
+              "instruction": "WAIT_FOR_VALIDATION",
+              "key": "review",
+              "state": "planned",
+              "taskResult": null,
+              "title": "Review"
+            },
+            "kind": "task"
+          },
+          {
+            "data": {
+              "deliveryId": "7e45781164985bb76c76200702a2608e",
+              "deliveryNativePhase": "settled",
+              "deliveryPhase": "sent",
+              "deliveryReceiptId": "6582f2fc9b0dbfcbd3eecce66ad83fbb",
+              "id": "4209929b5768a2918a130b42ef848fea",
+              "launchPhase": null,
+              "launchReceiptId": null,
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "73f4548557cdaeaea3cc9f183c0f8ec3",
+              "state": "assigned",
+              "taskId": "a4eab0201b270529992c2e3f748447cd",
+              "validationPassed": null
+            },
+            "kind": "attempt"
+          },
+          {
+            "data": {
+              "messageHead": 0,
+              "pendingCoordinatorMessages": 0
+            },
+            "kind": "inbox"
+          }
+        ],
+        "run": {
+          "budget": {
+            "activeAttempts": 1,
+            "deadlineAt": null,
+            "exhaustedAt": null,
+            "limits": {
+              "maxAttemptsPerTask": 16,
+              "maxElapsedMs": null,
+              "maxParallel": 8
+            },
+            "ownerDrain": false,
+            "startedAt": 1792662218316,
+            "timeState": "unlimited"
+          },
+          "coordinatorBinding": null,
+          "coordinatorSessionId": "389c33a0935244d539a6d15b4f2f4c71",
+          "createdAt": 1792662218283,
+          "goal": "Preserve the literal goal; never repeat uncertain input",
+          "id": "f780f8335e690fd84a19617687a95123",
+          "revision": 9,
+          "state": "active",
+          "taskResult": null,
+          "title": "Context preservation"
+        }
+      },
+      "scope": "coordinator",
+      "selectionRequired": false,
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "checkpoint": null,
+      "context": {
+        "baselineDiffers": null,
+        "digest": "a5fa4f12f28f5f69598e0f69db600173cd2eee77df299c5171462683740878f0",
+        "kind": "current",
+        "nativeEffectsRestored": false,
+        "partCount": 8,
+        "schemaVersion": 1,
+        "sourceCursor": 31,
+        "sourceRunRevision": 9
+      },
+      "currentConstraints": {
+        "acknowledgedRevision": 1,
+        "pending": false,
+        "revision": 1
+      },
+      "nextOffset": null,
+      "parts": [
+        {
+          "data": {
+            "budget": {
+              "activeAttempts": 1,
+              "deadlineAt": null,
+              "exhaustedAt": null,
+              "limits": {
+                "maxAttemptsPerTask": 16,
+                "maxElapsedMs": null,
+                "maxParallel": 8
+              },
+              "ownerDrain": false,
+              "startedAt": 1792662223734,
+              "timeState": "unlimited"
+            },
+            "coordinatorBinding": null,
+            "coordinatorSessionId": "d2db85fe6ca731dc4e9df4e446c19b6b",
+            "createdAt": 1792662223674,
+            "goal": "Preserve the literal goal; never repeat uncertain input",
+            "id": "3c88eee15581fefc817e9fac84b0b6cb",
+            "revision": 9,
+            "state": "active",
+            "taskResult": null,
+            "title": "Context preservation"
+          },
+          "kind": "run"
+        },
+        {
+          "data": {
+            "acknowledgedRevision": 1,
+            "pending": false,
+            "revision": 1
+          },
+          "kind": "constraintPolicy"
+        },
+        {
+          "data": {
+            "createdAt": 1792662223930,
+            "id": "10c22fa9744574a20cdcfb44c9dd98bd",
+            "issuer": "owner",
+            "revision": 1,
+            "text": "A new owner restriction arrived before Enter."
+          },
+          "kind": "constraint"
+        },
+        {
+          "data": {
+            "attempts": 1,
+            "currentAttempt": {
+              "id": "7ae1ca55f84f2a087fa2467b9c8a5df5",
+              "ordinal": 1,
+              "reportedOutcome": null,
+              "sessionId": "21265944bd322374a976bc1e520d2d98",
+              "state": "assigned"
+            },
+            "dependencies": [],
+            "dependencyState": "ready",
+            "id": "1bec5fa255b8b5677f1747deacf43b07",
+            "instruction": "CONTEXT_TASK_ONCE",
+            "key": "work",
+            "state": "assigned",
+            "taskResult": null,
+            "title": "Work"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "attempts": 0,
+            "currentAttempt": null,
+            "dependencies": ["1bec5fa255b8b5677f1747deacf43b07"],
+            "dependencyState": "waiting",
+            "id": "ffe16ddc5d1919a3f4e1e6a5c17ee46a",
+            "instruction": "WAIT_FOR_VALIDATION",
+            "key": "review",
+            "state": "planned",
+            "taskResult": null,
+            "title": "Review"
+          },
+          "kind": "task"
+        },
+        {
+          "data": {
+            "deliveryId": "00324097b41dcd5d6a867f3337565ace",
+            "deliveryNativePhase": "unknown",
+            "deliveryPhase": "unknown",
+            "deliveryReceiptId": "1ee45ddf7c9f41c3b2bbae1633b7c38a",
+            "id": "7ae1ca55f84f2a087fa2467b9c8a5df5",
+            "launchPhase": null,
+            "launchReceiptId": null,
+            "ordinal": 1,
+            "reportedOutcome": null,
+            "sessionId": "21265944bd322374a976bc1e520d2d98",
+            "state": "assigned",
+            "taskId": "1bec5fa255b8b5677f1747deacf43b07",
+            "validationPassed": null
+          },
+          "kind": "attempt"
+        },
+        {
+          "data": {
+            "operation": "send",
+            "phase": "unknown",
+            "receiptId": "1ee45ddf7c9f41c3b2bbae1633b7c38a",
+            "sessionId": "21265944bd322374a976bc1e520d2d98"
+          },
+          "kind": "nativeOperation"
+        },
+        {
+          "data": {
+            "messageHead": 0,
+            "pendingCoordinatorMessages": 0
+          },
+          "kind": "inbox"
+        }
+      ],
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662223734,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "d2db85fe6ca731dc4e9df4e446c19b6b",
+        "createdAt": 1792662223674,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "3c88eee15581fefc817e9fac84b0b6cb",
+        "revision": 9,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "cursor": 27,
+      "receipt": {
+        "id": "1ee45ddf7c9f41c3b2bbae1633b7c38a",
+        "operation": "send",
+        "phase": "unknown",
+        "result": {
+          "code": "constraints_changed",
+          "effectStarted": true,
+          "message": "Read current owner constraints and deliberately acknowledge their exact revision before new automated work",
+          "submissionStage": "submitFence",
+          "taskResult": null
+        },
+        "sessionId": "21265944bd322374a976bc1e520d2d98"
+      },
+      "type": "operation"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "attempts": [
+        {
+          "decisionGate": {
+            "blocksSuccess": false,
+            "pending": 0,
+            "total": 0,
+            "unresolved": 0
+          },
+          "delivery": {
+            "attemptId": "7ae1ca55f84f2a087fa2467b9c8a5df5",
+            "blocker": "constraints_changed",
+            "createdAt": 1792662223812,
+            "deadlineAt": 1792662283812,
+            "id": "00324097b41dcd5d6a867f3337565ace",
+            "native": {
+              "phase": "unknown",
+              "result": {
+                "code": "constraints_changed",
+                "effectStarted": true,
+                "message": "Read current owner constraints and deliberately acknowledge their exact revision before new automated work",
+                "submissionStage": "submitFence",
+                "taskResult": null
+              }
+            },
+            "operationKey": "run-delivery:00324097b41dcd5d6a867f3337565ace",
+            "phase": "unknown",
+            "receiptId": "1ee45ddf7c9f41c3b2bbae1633b7c38a",
+            "reuse": null
+          },
+          "id": "7ae1ca55f84f2a087fa2467b9c8a5df5",
+          "launch": null,
+          "ordinal": 1,
+          "result": null,
+          "sessionId": "21265944bd322374a976bc1e520d2d98",
+          "state": "assigned",
+          "taskId": "1bec5fa255b8b5677f1747deacf43b07",
+          "validation": null
+        }
+      ],
+      "nextOffset": null,
+      "run": {
+        "budget": {
+          "activeAttempts": 1,
+          "deadlineAt": null,
+          "exhaustedAt": null,
+          "limits": {
+            "maxAttemptsPerTask": 16,
+            "maxElapsedMs": null,
+            "maxParallel": 8
+          },
+          "ownerDrain": false,
+          "startedAt": 1792662223734,
+          "timeState": "unlimited"
+        },
+        "coordinatorBinding": null,
+        "coordinatorSessionId": "d2db85fe6ca731dc4e9df4e446c19b6b",
+        "createdAt": 1792662223674,
+        "goal": "Preserve the literal goal; never repeat uncertain input",
+        "id": "3c88eee15581fefc817e9fac84b0b6cb",
+        "revision": 8,
+        "state": "active",
+        "taskResult": null,
+        "title": "Context preservation"
+      },
+      "task": {
+        "id": "1bec5fa255b8b5677f1747deacf43b07",
+        "spec": {
+          "dependencies": [],
+          "instruction": "CONTEXT_TASK_ONCE",
+          "key": "work",
+          "title": "Work"
+        }
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "attempt": {
+        "id": "0e6f826d8254ce95414bcaebc4806cf5"
+      },
+      "cursor": 25,
+      "decision": {
+        "answer": null,
+        "askedBy": {
+          "role": "worker",
+          "sessionId": "0009210b834da5fa8e73799f726a420a"
+        },
+        "attemptId": "0e6f826d8254ce95414bcaebc4806cf5",
+        "audience": "owner",
+        "createdAt": 1792662227760,
+        "expiresAt": 1792662527760,
+        "id": "71d7931478c9fb4bddf73e6d6b641236",
+        "question": "Human decision: literal $(never-execute)\nsecond line",
+        "reason": null,
+        "resolvedAt": null,
+        "resolvedBy": null,
+        "revision": 1,
+        "runId": "924e77fd73e2d499592bbd69a77168b7",
+        "state": "pending",
+        "taskId": "268f7b8832b9a7ca854a9f55ffbc283b"
+      },
+      "run": {
+        "id": "924e77fd73e2d499592bbd69a77168b7",
+        "revision": 4,
+        "state": "active",
+        "title": "Inbox run"
+      },
+      "task": {
+        "id": "268f7b8832b9a7ca854a9f55ffbc283b"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "attempt": {
+        "id": "0e6f826d8254ce95414bcaebc4806cf5"
+      },
+      "decision": {
+        "answer": "Proceed within the assigned scope",
+        "askedBy": {
+          "role": "worker",
+          "sessionId": "0009210b834da5fa8e73799f726a420a"
+        },
+        "attemptId": "0e6f826d8254ce95414bcaebc4806cf5",
+        "audience": "owner",
+        "createdAt": 1792662227760,
+        "expiresAt": 1792662527760,
+        "id": "71d7931478c9fb4bddf73e6d6b641236",
+        "question": "Human decision: literal $(never-execute)\nsecond line",
+        "reason": null,
+        "resolvedAt": 1792662227854,
+        "resolvedBy": {
+          "role": "owner"
+        },
+        "revision": 2,
+        "runId": "924e77fd73e2d499592bbd69a77168b7",
+        "state": "answered",
+        "taskId": "268f7b8832b9a7ca854a9f55ffbc283b"
+      },
+      "run": {
+        "id": "924e77fd73e2d499592bbd69a77168b7",
+        "revision": 4,
+        "state": "active",
+        "title": "Inbox run"
+      },
+      "task": {
+        "id": "268f7b8832b9a7ca854a9f55ffbc283b"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "attempt": {
+        "id": "0e6f826d8254ce95414bcaebc4806cf5"
+      },
+      "decisions": [
+        {
+          "answer": "Proceed within the assigned scope",
+          "askedBy": {
+            "role": "worker",
+            "sessionId": "0009210b834da5fa8e73799f726a420a"
+          },
+          "attemptId": "0e6f826d8254ce95414bcaebc4806cf5",
+          "audience": "owner",
+          "createdAt": 1792662227760,
+          "expiresAt": 1792662527760,
+          "id": "71d7931478c9fb4bddf73e6d6b641236",
+          "question": "Human decision: literal $(never-execute)\nsecond line",
+          "reason": null,
+          "resolvedAt": 1792662227854,
+          "resolvedBy": {
+            "role": "owner"
+          },
+          "revision": 2,
+          "runId": "924e77fd73e2d499592bbd69a77168b7",
+          "state": "answered",
+          "taskId": "268f7b8832b9a7ca854a9f55ffbc283b"
+        }
+      ],
+      "nextOffset": null,
+      "run": {
+        "id": "924e77fd73e2d499592bbd69a77168b7",
+        "revision": 4,
+        "state": "active",
+        "title": "Inbox run"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "attempt": {
+        "id": "0e6f826d8254ce95414bcaebc4806cf5"
+      },
+      "cursor": 29,
+      "decision": {
+        "answer": "Proceed within the assigned scope",
+        "askedBy": {
+          "role": "worker",
+          "sessionId": "0009210b834da5fa8e73799f726a420a"
+        },
+        "attemptId": "0e6f826d8254ce95414bcaebc4806cf5",
+        "audience": "owner",
+        "createdAt": 1792662227760,
+        "expiresAt": 1792662527760,
+        "id": "71d7931478c9fb4bddf73e6d6b641236",
+        "question": "Human decision: literal $(never-execute)\nsecond line",
+        "reason": null,
+        "resolvedAt": 1792662227854,
+        "resolvedBy": {
+          "role": "owner"
+        },
+        "revision": 2,
+        "runId": "924e77fd73e2d499592bbd69a77168b7",
+        "state": "answered",
+        "taskId": "268f7b8832b9a7ca854a9f55ffbc283b"
+      },
+      "run": {
+        "id": "924e77fd73e2d499592bbd69a77168b7",
+        "revision": 4,
+        "state": "active",
+        "title": "Inbox run"
+      },
+      "task": {
+        "id": "268f7b8832b9a7ca854a9f55ffbc283b"
+      },
+      "type": "workflow"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "available": true,
+      "bounds": {
+        "connectMs": 30000,
+        "idleMs": 600000,
+        "processes": 4,
+        "sessions": 256,
+        "warmPerKey": 1
+      },
+      "entries": [],
+      "processes": {
+        "leased": 0,
+        "warm": 0
+      },
+      "sessions": [],
+      "type": "mcpPool"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  },
+  {
+    "data": {
+      "available": true,
+      "bounds": {
+        "connectMs": 30000,
+        "idleMs": 600000,
+        "processes": 4,
+        "sessions": 256,
+        "warmPerKey": 1
+      },
+      "entries": [],
+      "processes": {
+        "leased": 0,
+        "warm": 0
+      },
+      "sessions": [
+        {
+          "entryId": null,
+          "mode": "dedicated",
+          "program": "claude",
+          "reason": "sessionCredential",
+          "server": "nesvo",
+          "sessionId": "e38b51379ebd78ae778270cb7fb55913"
+        }
+      ],
+      "type": "mcpPool"
+    },
+    "ok": true,
+    "schemaVersion": 1
+  }
+]

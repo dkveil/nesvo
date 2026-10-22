@@ -18,12 +18,14 @@ import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Snapshot = Extract<HostEvent, { type: 'sessions' }>;
 type CommandResult = { code: number | null; stdout: string; stderr: string };
-const cliSchema = new Ajv().compile(
-  JSON.parse(readFileSync(resolve('docs/harness-cli.schema.json'), 'utf8')),
-);
+const cliSchemas = [
+  'docs/harness-cli.schema.json',
+  'tests/fixtures/harness-cli-handwritten.schema.json',
+].map(path => new Ajv().compile(JSON.parse(readFileSync(resolve(path), 'utf8'))));
 function queryOutput(text: string): unknown {
   const value: unknown = JSON.parse(text);
-  assert.equal(cliSchema(value), true, JSON.stringify(cliSchema.errors));
+  for (const cliSchema of cliSchemas)
+    assert.equal(cliSchema(value), true, JSON.stringify(cliSchema.errors));
   return value;
 }
 

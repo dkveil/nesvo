@@ -127,11 +127,10 @@ async fn assert_cli_schema(values: &[Value]) -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()?;
-    let source = "const Ajv=require('ajv'),fs=require('fs');const check=new Ajv().compile(JSON.parse(fs.readFileSync('docs/harness-cli.schema.json','utf8')));for(const value of JSON.parse(fs.readFileSync(0,'utf8'))){if(!check(value)){throw new Error(JSON.stringify(check.errors));}}";
     let mut command = Command::new("node");
     command
         .current_dir(root)
-        .args(["-e", source])
+        .arg("tests/fixtures/validate-harness-json.cjs")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
