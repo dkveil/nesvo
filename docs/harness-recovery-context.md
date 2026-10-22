@@ -230,7 +230,11 @@ gate, at most two at a time, with key `restore:SESSION:SHUTDOWN_AT`. Each verifi
 resume journals `session.resumed` with `reason:"restored"` (owner resumes carry
 `reason:"owner"`) and records `restored`. The restore runs once the host listens, so
 a client that connects first may see such a session as hibernated or still
-resuming; it keeps its ID throughout, so saved TUI layouts reattach to it. A resume
+resuming; it keeps its ID throughout, so saved TUI layouts reattach to it. The
+session snapshot is the only signal of that change: a resumed session starts with
+no subscribers and no separate client notice is broadcast, so a client subscribes
+again when the snapshot lists the session running. Subscribing to a hibernated
+session is refused with `session_hibernated` (not `Session no longer exists`). A resume
 that fails or is refused leaves the session hibernated (a mismatched or unconfirmed
 conversation also sets `lastResumeFailure`) and records `hibernated` with its code;
 it is not retried at a later start, and the owner can still resume, relaunch or
