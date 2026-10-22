@@ -102,6 +102,7 @@
               },
               "oneOf": [
                 {
+                  "description": "Constraint pages name their continuation flag hasMore; every other paged reply with a continuation flag names it more. Both mean another page follows the returned cursor.",
                   "required": ["run", "constraints", "records", "nextCursor", "hasMore"],
                   "properties": {
                     "run": {
@@ -552,7 +553,7 @@
                           ]
                         },
                         "createdAt": {
-                          "$ref": "#/definitions/cursor"
+                          "$ref": "#/definitions/timestamp"
                         },
                         "counts": {
                           "type": "object",
@@ -751,7 +752,7 @@
                                 "type": "string"
                               },
                               "ackedAt": {
-                                "$ref": "#/definitions/cursor"
+                                "$ref": "#/definitions/timestamp"
                               },
                               "ackedBy": {
                                 "type": "object",
@@ -1976,6 +1977,332 @@
                   "pattern": "^decision:"
                 }
               }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "projects", "limit"],
+              "properties": {
+                "type": {
+                  "const": "projects"
+                },
+                "projects": {
+                  "type": "array",
+                  "maxItems": 256,
+                  "items": {
+                    "$ref": "#/definitions/project"
+                  }
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "root", "pinned"],
+              "properties": {
+                "type": {
+                  "const": "projectPinned"
+                },
+                "root": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "pinned": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "root", "defaultLayout"],
+              "properties": {
+                "type": {
+                  "const": "projectLayout"
+                },
+                "root": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "defaultLayout": {
+                  "type": ["string", "null"],
+                  "minLength": 1,
+                  "maxLength": 40
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "root",
+                "name",
+                "defaultLayout",
+                "launchFolder",
+                "folders",
+                "worktreeSetup"
+              ],
+              "properties": {
+                "type": {
+                  "const": "projectDefaults"
+                },
+                "root": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "defaultLayout": {
+                  "type": ["string", "null"],
+                  "minLength": 1,
+                  "maxLength": 40
+                },
+                "launchFolder": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "folders": {
+                  "type": "array",
+                  "maxItems": 8,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["folder", "launches", "lastLaunchAt"],
+                    "properties": {
+                      "folder": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "launches": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "lastLaunchAt": {
+                        "$ref": "#/definitions/timestamp"
+                      }
+                    }
+                  }
+                },
+                "worktreeSetup": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["available"],
+                  "properties": {
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "digest": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      ]
+                    },
+                    "approved": {
+                      "type": "boolean"
+                    },
+                    "openWorktrees": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "error": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["code", "message"],
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]+$"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "repository",
+                "source",
+                "configured",
+                "digest",
+                "approved",
+                "templates"
+              ],
+              "properties": {
+                "type": {
+                  "const": "workflowTemplates"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "source": {
+                  "const": "HEAD:nesvo.toml"
+                },
+                "configured": {
+                  "type": "boolean"
+                },
+                "digest": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  ]
+                },
+                "approved": {
+                  "type": "boolean"
+                },
+                "templates": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "$ref": "#/definitions/workflowTemplate"
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "repository", "digest", "approvedAt"],
+              "properties": {
+                "type": {
+                  "const": "workflowTemplatesApproved"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "approvedAt": {
+                  "$ref": "#/definitions/timestamp"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "repository", "digest", "revoked"],
+              "properties": {
+                "type": {
+                  "const": "workflowTemplatesRevoked"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "revoked": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "template",
+                "digest",
+                "key",
+                "start",
+                "run",
+                "tasks",
+                "profiles",
+                "executor"
+              ],
+              "properties": {
+                "type": {
+                  "const": "workflowTemplateStarted"
+                },
+                "template": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 96
+                },
+                "start": {
+                  "enum": ["draft", "active", "executor"]
+                },
+                "run": {
+                  "type": "object",
+                  "required": ["id", "title", "revision", "state"]
+                },
+                "tasks": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "key", "state"]
+                  }
+                },
+                "profiles": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["taskId", "profile"],
+                    "properties": {
+                      "taskId": {
+                        "$ref": "#/definitions/id"
+                      },
+                      "profile": {
+                        "type": "object",
+                        "required": ["program", "workspace"]
+                      }
+                    }
+                  }
+                },
+                "executor": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/definitions/workflowExecutor"
+                    }
+                  ]
+                }
+              }
             }
           ]
         }
@@ -2143,10 +2470,10 @@
           "type": "object"
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "expiresAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "answer": {
           "type": ["string", "null"]
@@ -2221,7 +2548,7 @@
           "type": ["object", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "ackedAt": {
           "type": ["integer", "null"]
@@ -2283,7 +2610,7 @@
           "enum": ["shared", "worktree"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "code": {
           "type": ["string", "null"]
@@ -2370,7 +2697,7 @@
           "type": ["string", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "delivery": {
           "$ref": "#/definitions/workflowWakeDelivery"
@@ -2464,7 +2791,7 @@
           "type": ["string", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         }
       }
     },
@@ -2587,7 +2914,7 @@
           "type": ["string", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "delivery": {
           "$ref": "#/definitions/workflowWakeDelivery"
@@ -2642,7 +2969,7 @@
           "type": ["string", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "notices": {
           "type": "array",
@@ -2792,7 +3119,7 @@
           "type": ["string", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         }
       }
     },
@@ -2839,10 +3166,10 @@
           "type": ["string", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "deadlineAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "native": {
           "type": ["object", "null"],
@@ -2866,7 +3193,7 @@
               "type": "string"
             },
             "createdAt": {
-              "$ref": "#/definitions/cursor"
+              "$ref": "#/definitions/timestamp"
             }
           }
         }
@@ -3302,7 +3629,7 @@
           "enum": ["owner", "coordinator"]
         },
         "expiresAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "jobId": {
           "$ref": "#/definitions/id"
@@ -3325,7 +3652,7 @@
           "$ref": "#/definitions/cursor"
         },
         "acknowledgedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         }
       }
     },
@@ -4675,7 +5002,7 @@
           "enum": ["retainedSession", "recoveryRecord", "previousBinding", "unbound"]
         },
         "updatedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "nativeEffectsRestored": {
           "const": false
@@ -4748,7 +5075,7 @@
           ]
         },
         "decidedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "notBefore": {
           "$ref": "#/definitions/cursor"
@@ -4783,7 +5110,7 @@
       ],
       "properties": {
         "observedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "result": {
           "enum": ["absent", "noEffectProven", "attemptFound", "sessionFound"]
@@ -4933,7 +5260,7 @@
           ]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "schedule": {
           "oneOf": [
@@ -5131,7 +5458,7 @@
           "enum": ["schedule", "manual", "external"]
         },
         "dueAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "coalescedFromAt": {
           "anyOf": [
@@ -5144,7 +5471,7 @@
           ]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "state": {
           "enum": [
@@ -5439,7 +5766,7 @@
           "type": ["string", "null"]
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "claimedAt": {
           "type": ["integer", "null"],
@@ -5635,10 +5962,10 @@
           ]
         },
         "requestedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "observedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "reason": {
           "type": ["string", "null"]
@@ -5707,10 +6034,10 @@
           "$ref": "#/definitions/jobDefinition/properties/spec/properties/executionTimeoutMs"
         },
         "armedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "deadlineAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "state": {
           "enum": [
@@ -5728,7 +6055,7 @@
           "minimum": 0
         },
         "observedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "reason": {
           "type": ["string", "null"],
@@ -5863,7 +6190,7 @@
           "maxLength": 128
         },
         "acknowledgedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         }
       }
     },
@@ -5911,7 +6238,7 @@
           "type": "boolean"
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "trust": {
           "const": "ownerExactCommand"
@@ -6443,10 +6770,10 @@
           "minimum": 1
         },
         "createdAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "updatedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "spec": {
           "$ref": "#/definitions/jobTriggerSpec"
@@ -6502,7 +6829,7 @@
           "minimum": 1
         },
         "acceptedAt": {
-          "$ref": "#/definitions/cursor"
+          "$ref": "#/definitions/timestamp"
         },
         "disposition": {
           "enum": ["queued", "skipped", "ignored"]
@@ -6704,6 +7031,186 @@
           }
         }
       ]
+    },
+    "timestamp": {
+      "description": "Unix time in milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "name",
+        "defaultBranch",
+        "lastActivityAt",
+        "pinned",
+        "openSessions",
+        "sessions"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "defaultBranch": {
+          "type": ["string", "null"]
+        },
+        "lastActivityAt": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "openSessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/id"
+          }
+        }
+      }
+    },
+    "workflowTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "title", "goal", "start", "budget", "tasks"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "start": {
+          "enum": ["draft", "active", "executor"]
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["maxParallel", "maxAttemptsPerTask", "maxElapsedMs"],
+              "properties": {
+                "maxParallel": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 16
+                },
+                "maxAttemptsPerTask": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 16
+                },
+                "maxElapsedMs": {
+                  "type": ["integer", "null"],
+                  "minimum": 1000,
+                  "maximum": 604800000
+                }
+              }
+            }
+          ]
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "title",
+              "instruction",
+              "dependencies",
+              "program",
+              "workspace",
+              "harness",
+              "allowedNesvoTools"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "instruction": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "dependencies": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                }
+              },
+              "program": {
+                "enum": ["claude", "codex", "gemini"]
+              },
+              "workspace": {
+                "enum": ["shared", "worktree"]
+              },
+              "harness": {
+                "type": ["boolean", "null"]
+              },
+              "allowedNesvoTools": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^nesvo_[a-z_]+$"
+                    }
+                  }
+                ]
+              },
+              "checks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
