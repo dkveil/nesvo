@@ -156,8 +156,8 @@ async fn state(
     owner: &RunningService<RoleClient, ()>,
     job: &str,
     id: &str,
-    wanted: &str,
-    ordinal: u64,
+    description: &str,
+    wanted: impl Fn(&Value) -> bool,
     observation: &mut job_diagnostics::RetryWaitObservation,
     started: tokio::time::Instant,
 ) -> Result<Value> {
@@ -170,9 +170,7 @@ async fn state(
                 Err(_) => observation.failed(),
             }
             let view = response?;
-            if view["data"]["occurrence"]["state"] == wanted
-                && view["data"]["occurrence"]["jobAttemptOrdinal"] == ordinal
-            {
+            if wanted(&view["data"]["occurrence"]) {
                 return Ok::<_, anyhow::Error>(view);
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
@@ -181,7 +179,7 @@ async fn state(
     .await
     .with_context(|| {
         format!(
-            "Native retry occurrence did not reach {wanted}/{ordinal}; progress: {}",
+            "Native retry occurrence did not reach {description}; progress: {}",
             observation.summary(started.elapsed())
         )
     })?
@@ -206,9 +204,38 @@ async fn state_with_diagnostics(
     wanted: &str,
     ordinal: u64,
 ) -> Result<Value> {
+    observed_with_diagnostics(
+        fixture,
+        owner,
+        job,
+        id,
+        &format!("{wanted}/{ordinal}"),
+        |current| current["state"] == wanted && current["jobAttemptOrdinal"] == ordinal,
+    )
+    .await
+}
+
+async fn observed_with_diagnostics(
+    fixture: &mut Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    id: &str,
+    description: &str,
+    wanted: impl Fn(&Value) -> bool,
+) -> Result<Value> {
     let mut observation = job_diagnostics::RetryWaitObservation::new(job, id);
     let started = tokio::time::Instant::now();
-    match state(owner, job, id, wanted, ordinal, &mut observation, started).await {
+    match state(
+        owner,
+        job,
+        id,
+        description,
+        wanted,
+        &mut observation,
+        started,
+    )
+    .await
+    {
         Ok(view) => Ok(view),
         Err(error) => {
             let diagnostics = job_diagnostics::retry_timeout_diagnostics(
@@ -943,6 +970,629 @@ async fn waiting_job_retry_cancels_without_native_stop_and_restart_keeps_the_ori
     match outcome {
         Ok(result) => {
             result.context("Bounded backoff cancellation and restart scenarios")??;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}
+
+const EXECUTOR_CAPACITY: usize = 16;
+
+async fn occupied_executor(
+    fixture: &Fixture,
+    owner: &RunningService<RoleClient, ()>,
+    index: usize,
+) -> Result<String> {
+    let key = format!("executor-capacity-{index}");
+    let created = data(
+        call(
+            owner,
+            "nesvo_create_run",
+            json!({"key":format!("{key}:run"),"spec":{"title":"Executor capacity","goal":"Hold one enabled executor without a worker"}}),
+        )
+        .await?,
+    )?;
+    let run = created["data"]["run"]["id"]
+        .as_str()
+        .context("Capacity run")?
+        .to_owned();
+    let plan = data(
+        call(
+            owner,
+            "nesvo_set_run_plan",
+            json!({"key":format!("{key}:plan"),"runId":run,"expectedRevision":created["data"]["run"]["revision"],
+                "tasks":[{"key":"held","title":"Held","instruction":"UNSENT_CAPACITY"}]}),
+        )
+        .await?,
+    )?;
+    let active = data(
+        call(
+            owner,
+            "nesvo_activate_run",
+            json!({"key":format!("{key}:activate"),"runId":run,"expectedRevision":plan["data"]["run"]["revision"]}),
+        )
+        .await?,
+    )?;
+    data(
+        call(
+            owner,
+            "nesvo_start_run_executor",
+            json!({"key":format!("{key}:executor"),"runId":run,"expectedRevision":active["data"]["run"]["revision"],
+                "spec":{"tasks":[{"taskId":plan["data"]["tasks"][0]["id"],
+                    "profile":{"program":"claude","workspace":"shared","cwd":fixture.directory.join("capacity-cwd-absent"),"harness":true}}]}}),
+        )
+        .await?,
+    )?;
+    Ok(run)
+}
+
+async fn executor(owner: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
+    data(call(owner, "nesvo_get_run_executor", json!({"runId":run})).await?)
+}
+
+async fn occupied_capacity(
+    fixture: &Fixture,
+    owner: &RunningService<RoleClient, ()>,
+) -> Result<Vec<String>> {
+    let mut runs = Vec::new();
+    for index in 0..EXECUTOR_CAPACITY {
+        runs.push(occupied_executor(fixture, owner, index).await?);
+    }
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let mut settled = 0;
+            for run in &runs {
+                let view = executor(owner, run).await?;
+                ensure!(
+                    view["data"]["executor"]["enabled"] == true,
+                    "A capacity executor stopped holding its slot: {view}"
+                );
+                let tasks = run_checkpoints::view(owner, run).await?;
+                if tasks["tasks"][0]["state"] == "launchFailed"
+                    && view["data"]["executor"]["reason"] == "retry_requires_intent"
+                {
+                    settled += 1;
+                }
+            }
+            if settled == runs.len() {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .context("Capacity executors settle enabled without a worker")??;
+    Ok(runs)
+}
+
+async fn release_capacity(owner: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
+    timeout(Duration::from_secs(3), async {
+        loop {
+            let view = run_checkpoints::view(owner, run).await?;
+            let reply = call(
+                owner,
+                "nesvo_disable_run_executor",
+                json!({"key":"release-one-executor-slot","runId":run,"expectedRevision":view["run"]["revision"]}),
+            )
+            .await?;
+            if reply.is_error != Some(true) {
+                return data(reply);
+            }
+            let refusal = reply
+                .structured_content
+                .context("Capacity release refusal")?;
+            ensure!(
+                refusal["error"]["code"] == "revision_conflict",
+                "Unexpected capacity release refusal: {refusal}"
+            );
+        }
+    })
+    .await
+    .context("Release one executor slot")?
+}
+
+async fn overlapping(
+    owner: &RunningService<RoleClient, ()>,
+    job: &str,
+    key: &str,
+) -> Result<Value> {
+    let sibling = data(
+        call(
+            owner,
+            "nesvo_run_job_now",
+            json!({"key":key,"jobId":job,"expectedRevision":1}),
+        )
+        .await?,
+    )?;
+    assert_eq!(sibling["data"]["occurrence"]["state"], "skipped");
+    assert_eq!(sibling["data"]["occurrence"]["reason"], "overlap");
+    assert!(sibling["data"]["occurrence"]["jobAttemptId"].is_null());
+    Ok(sibling)
+}
+
+fn probed(probe: &Value, key: &str, run: &Value, result: &str, accepted: bool) {
+    assert_eq!(probe["result"], result);
+    assert_eq!(probe["launchKey"], key);
+    assert_eq!(probe["runId"], *run);
+    assert_eq!(probe["executorAccepted"].as_bool(), Some(accepted));
+    assert!(probe["observedAt"].is_i64());
+}
+
+#[tokio::test]
+#[ignore = "native CLI/MCP/host and controlled Node PTY; refused executor dispatch, absent probes and one fresh generation"]
+async fn uncertain_dispatch_absent_probes_admit_one_fresh_generation() -> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40), async {
+        ready(&fixture).await?;
+        let owner = client(&fixture.pairing()).await?;
+        let capacity = occupied_capacity(&fixture, &owner).await?;
+        let cwd = fixture.directory.join("uncertain-dispatch");
+        std::fs::create_dir(&cwd)?;
+        let (created, admitted) = admit(
+            &fixture,
+            &owner,
+            "uncertain-dispatch",
+            spec(&cwd, "shared", Some(retry(3, 4000))),
+        )
+        .await?;
+        let job = created["data"]["job"]["id"]
+            .as_str()
+            .context("Uncertain dispatch job")?;
+        let id = admitted["data"]["occurrence"]["id"]
+            .as_str()
+            .context("Uncertain dispatch occurrence")?;
+        let key = format!("job:{job}:{id}:executor");
+        let parked = observed_with_diagnostics(
+            &mut fixture,
+            &owner,
+            job,
+            id,
+            "retryWaiting/1 after an unconfirmed executor dispatch",
+            |current| current["state"] == "retryWaiting" && current["jobAttemptOrdinal"] == 1,
+        )
+        .await?;
+        let mut envelopes = Vec::new();
+        if parked["data"]["occurrence"]["reason"] == "retry_probe_pending" {
+            assert!(
+                parked["data"]["occurrence"]["retry"].is_null(),
+                "No decision exists before the first probe"
+            );
+            let pending = detail(
+                &owner,
+                job,
+                id,
+                &parked["data"]["occurrence"]["jobAttemptId"],
+            )
+            .await?;
+            let facts = &pending["data"]["jobAttempt"]["retryClassification"];
+            assert_eq!(facts["decision"], "probing");
+            assert_eq!(facts["class"], "uncertainEffect");
+            assert_eq!(facts["failure"], "dispatch_unconfirmed");
+            assert_eq!(facts["launchKey"], key);
+            assert!(facts["probe"].is_null() && facts["notBefore"].is_null());
+            envelopes.push(pending);
+        }
+        let waiting = observed_with_diagnostics(
+            &mut fixture,
+            &owner,
+            job,
+            id,
+            "retryWaiting/retry_backoff/1 after an absent first probe",
+            |current| {
+                current["state"] == "retryWaiting"
+                    && current["reason"] == "retry_backoff"
+                    && current["jobAttemptOrdinal"] == 1
+            },
+        )
+        .await?;
+        let first = &waiting["data"]["occurrence"];
+        let due = deadline(first, 4000)?;
+        let old_run = first["runId"]
+            .as_str()
+            .context("Unconfirmed dispatch run")?;
+        assert!(first["attemptId"].is_null() && first["launchReceiptId"].is_null());
+        assert!(first["sessionId"].is_null());
+        assert_eq!(first["retry"]["class"], "uncertainEffect");
+        probed(
+            &first["retry"]["probe"],
+            &key,
+            &first["runId"],
+            "absent",
+            false,
+        );
+        assert!(first["retry"]["probe"]["attemptId"].is_null());
+        assert_eq!(
+            first["retry"]["probe"]["observedAt"],
+            first["retry"]["decidedAt"]
+        );
+        let first_detail = detail(&owner, job, id, &first["jobAttemptId"]).await?;
+        let generation = &first_detail["data"]["jobAttempt"];
+        assert_eq!(generation["state"], "failed");
+        assert_eq!(generation["reason"], "launch_no_effect");
+        assert_eq!(generation["retry"], first["retry"]);
+        assert!(generation["retryAdmission"].is_null());
+        let facts = &generation["retryClassification"];
+        assert_eq!(facts["class"], "uncertainEffect");
+        assert_eq!(facts["failure"], "dispatch_unconfirmed");
+        assert_eq!(facts["launchKey"], key);
+        assert_eq!(facts["decision"], "retryWaiting");
+        assert_eq!(facts["decidedAt"], first["retry"]["decidedAt"]);
+        assert_eq!(facts["notBefore"], due);
+        assert_eq!(facts["nextOrdinal"], 2);
+        assert_eq!(facts["probe"], first["retry"]["probe"]);
+        let refused = executor(&owner, old_run).await?;
+        assert!(
+            refused["data"]["executor"].is_null(),
+            "The refused dispatch never created an executor to pause"
+        );
+        let old_view = run_checkpoints::view(&owner, old_run).await?;
+        assert_eq!(old_view["tasks"][0]["attempts"], 0);
+        envelopes.push(
+            fenced(
+                &owner,
+                old_run,
+                "no-rearm-during-uncertain-backoff",
+                "job_generation_retired",
+            )
+            .await?,
+        );
+        let sibling = overlapping(&owner, job, "uncertain-dispatch-overlap").await?;
+        ensure!(
+            now_ms() < due,
+            "Native fixture must release one executor slot before the original deadline"
+        );
+        let released = release_capacity(&owner, &capacity[0]).await?;
+        assert_eq!(released["data"]["executor"]["enabled"], false);
+        let window = Duration::from_millis(u64::try_from((due - 60 - now_ms()).max(0))?);
+        holds_throughout(window, async || {
+            let early = occurrence(&owner, job, id).await?;
+            if now_ms() < due {
+                ensure!(
+                    early["data"]["occurrence"]["jobAttemptOrdinal"] == 1
+                        && early["data"]["occurrence"]["retry"] == first["retry"],
+                    "No generation before notBefore: {early}"
+                );
+            }
+            Ok(())
+        })
+        .await?;
+        let reported =
+            state_with_diagnostics(&mut fixture, &owner, job, id, "needsValidation", 2).await?;
+        let second = &reported["data"]["occurrence"];
+        assert!(second["retry"].is_null());
+        for field in ["jobAttemptId", "runId"] {
+            assert_ne!(
+                first[field], second[field],
+                "Retry requires a fresh {field}"
+            );
+        }
+        for field in ["attemptId", "launchReceiptId", "sessionId"] {
+            assert!(second[field].is_string(), "Fresh native {field}");
+        }
+        let second_detail = detail(&owner, job, id, &second["jobAttemptId"]).await?;
+        let retried = &second_detail["data"]["jobAttempt"];
+        assert!(
+            retried["claimedAt"]
+                .as_i64()
+                .context("Uncertain retry claim time")?
+                >= due
+        );
+        assert!(retried["retryClassification"].is_null());
+        let admission = &retried["retryAdmission"];
+        assert_eq!(admission["sourceJobAttemptId"], first["jobAttemptId"]);
+        assert_eq!(admission["class"], "uncertainEffect");
+        probed(
+            &admission["claimProbe"],
+            &key,
+            &first["runId"],
+            "absent",
+            false,
+        );
+        assert!(
+            admission["claimProbe"]["observedAt"]
+                .as_i64()
+                .context("Claim probe time")?
+                >= due
+        );
+        assert_eq!(retried["result"]["outcome"], "succeeded");
+        let retained = detail(&owner, job, id, &first["jobAttemptId"]).await?;
+        assert_eq!(
+            retained["data"]["jobAttempt"]["retry"],
+            first_detail["data"]["jobAttempt"]["retry"]
+        );
+        assert_eq!(
+            retained["data"]["jobAttempt"]["retryClassification"],
+            first_detail["data"]["jobAttempt"]["retryClassification"]
+        );
+        let listed = generations(&owner, job, id).await?;
+        let rows = listed["data"]["jobAttempts"]
+            .as_array()
+            .context("Exactly two job generations")?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], second["jobAttemptId"]);
+        assert_eq!(rows[1]["id"], first["jobAttemptId"]);
+        let first_run = budgets::owner_cli(
+            &fixture,
+            &[
+                "run",
+                "mutation",
+                "--key",
+                &format!("job:{job}:{id}:run"),
+                "--json",
+            ],
+        )
+        .await?;
+        assert_eq!(first_run["data"]["run"]["id"], first["runId"]);
+        let retry_run = budgets::owner_cli(
+            &fixture,
+            &[
+                "run",
+                "mutation",
+                "--key",
+                &format!("job:{job}:{id}:attempt:2:run"),
+                "--json",
+            ],
+        )
+        .await?;
+        assert_eq!(retry_run["data"]["run"]["id"], second["runId"]);
+        let retry_launch = budgets::owner_cli(
+            &fixture,
+            &[
+                "run",
+                "mutation",
+                "--key",
+                &format!("job:{job}:{id}:attempt:2:executor"),
+                "--json",
+            ],
+        )
+        .await?;
+        assert_eq!(retry_launch["data"]["run"]["id"], second["runId"]);
+        let worker = second["sessionId"]
+            .as_str()
+            .context("Fresh controlled worker")?;
+        observed_output(&owner, worker, "FIXTURE_RESPONSE report-task").await?;
+        let report: Value = serde_json::from_slice(&std::fs::read(
+            fixture
+                .directory
+                .join("callers")
+                .join(format!("{worker}.result.json")),
+        )?)?;
+        assert_eq!(report["data"]["attempt"]["id"], second["attemptId"]);
+        let sessions = data(call(&owner, "nesvo_list_sessions", json!({})).await?)?;
+        assert_eq!(
+            sessions["data"]["sessions"]
+                .as_array()
+                .context("Exactly one physical worker")?
+                .len(),
+            1
+        );
+        assert_eq!(launched_workers(&fixture)?, 1);
+        let runs = data(call(&owner, "nesvo_list_runs", json!({})).await?)?;
+        let rest = data(call(&owner, "nesvo_list_runs", json!({"offset":16})).await?)?;
+        let listed_runs = runs["data"]["runs"]
+            .as_array()
+            .into_iter()
+            .chain(rest["data"]["runs"].as_array())
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(rest["data"]["nextOffset"].is_null());
+        assert_eq!(listed_runs.len(), EXECUTOR_CAPACITY + 2);
+        assert_eq!(
+            listed_runs
+                .iter()
+                .filter(|run| run["title"] == "Controlled native job retry")
+                .count(),
+            2,
+            "One fresh run per job generation"
+        );
+        let skipped = occurrence(
+            &owner,
+            job,
+            sibling["data"]["occurrence"]["id"]
+                .as_str()
+                .context("Overlap occurrence")?,
+        )
+        .await?;
+        assert_eq!(skipped["data"]["occurrence"]["state"], "skipped");
+        envelopes.extend(vec![
+            created.clone(),
+            admitted.clone(),
+            parked.clone(),
+            waiting.clone(),
+            first_detail.clone(),
+            refused,
+            sibling.clone(),
+            released,
+            reported.clone(),
+            second_detail.clone(),
+            retained,
+            listed,
+            first_run,
+            retry_run,
+            retry_launch,
+            report,
+            sessions,
+            runs,
+            rest,
+            skipped,
+        ]);
+        run_checkpoints::schema(envelopes).await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
+    }))
+    .catch_unwind()
+    .await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result.context("Bounded native uncertain dispatch retry scenario")??;
+            cleanup
+        }
+        Err(panic) => {
+            cleanup?;
+            std::panic::resume_unwind(panic)
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "native CLI/MCP/host, Node and Git; genuine unknown worktree launch found by the probe and adopted"]
+async fn uncertain_launch_found_by_probe_is_adopted_without_retry() -> Result<()> {
+    let mut fixture = Fixture::start_variant(true).await?;
+    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30), async {
+        ready(&fixture).await?;
+        let mut git = Command::new("git");
+        git.arg("-C")
+            .arg(&fixture.directory)
+            .args(["rev-parse", "--show-toplevel"])
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        git.creation_flags(0x08000000);
+        ensure!(
+            !timeout(Duration::from_secs(2), git.output())
+                .await??
+                .status
+                .success(),
+            "Refusing worktree fixture inside an inherited Git repository"
+        );
+        let owner = client(&fixture.pairing()).await?;
+        let uncertain = repository_whose_worktree_checkout_fails(&fixture).await?;
+        let (created, admitted) = admit(
+            &fixture,
+            &owner,
+            "uncertain-launch-adopted",
+            spec(&uncertain, "worktree", Some(retry(3, 1000))),
+        )
+        .await?;
+        let job = created["data"]["job"]["id"]
+            .as_str()
+            .context("Adopted uncertain job")?;
+        let id = admitted["data"]["occurrence"]["id"]
+            .as_str()
+            .context("Adopted uncertain occurrence")?;
+        let key = format!("job:{job}:{id}:executor");
+        let adopted = observed_with_diagnostics(
+            &mut fixture,
+            &owner,
+            job,
+            id,
+            "reconcile/launch_unconfirmed/1 after the adopting probe",
+            |current| {
+                current["state"] == "reconcile"
+                    && current["reason"] == "launch_unconfirmed"
+                    && current["jobAttemptOrdinal"] == 1
+            },
+        )
+        .await?;
+        let current = &adopted["data"]["occurrence"];
+        assert!(
+            current["retry"].is_null(),
+            "Adoption never records a retry decision"
+        );
+        let mut envelopes = launch_evidence(&owner, current, "unknown").await?;
+        let adopted_detail = detail(&owner, job, id, &current["jobAttemptId"]).await?;
+        let generation = &adopted_detail["data"]["jobAttempt"];
+        assert_eq!(generation["state"], "reconcile");
+        assert_eq!(generation["reason"], "launch_unconfirmed");
+        assert!(generation["retry"].is_null() && generation["retryAdmission"].is_null());
+        let facts = &generation["retryClassification"];
+        assert_eq!(facts["class"], "definiteEffect");
+        assert_eq!(facts["failure"], "launch_unconfirmed");
+        assert_eq!(facts["launchKey"], key);
+        assert_eq!(facts["decision"], "adopted");
+        assert!(facts["nextOrdinal"].is_null());
+        let probe = &facts["probe"];
+        probed(probe, &key, &current["runId"], "sessionFound", true);
+        assert_eq!(probe["attemptId"], current["attemptId"]);
+        assert_eq!(probe["attemptState"], "launchUnknown");
+        assert_eq!(probe["sessionId"], current["sessionId"]);
+        assert_eq!(probe["launchReceiptId"], current["launchReceiptId"]);
+        assert_eq!(facts["decidedAt"], probe["observedAt"]);
+        let reconciliation = &generation["launchReconciliation"];
+        if reconciliation.is_object() {
+            assert_eq!(reconciliation["retryClassification"]["state"], "adopted");
+            assert!(reconciliation["retryClassification"]["retryJobAttemptId"].is_null());
+        }
+        let run = current["runId"].as_str().context("Adopted native run")?;
+        let engine = executor(&owner, run).await?;
+        assert_ne!(
+            engine["data"]["executor"]["reason"], "job_retry_waiting",
+            "Adopted work is never paused for a retry"
+        );
+        let sibling = overlapping(&owner, job, "uncertain-launch-overlap").await?;
+        let observed_until = facts["decidedAt"].as_i64().context("Adoption time")? + 2500;
+        let window = Duration::from_millis(u64::try_from((observed_until - now_ms()).max(0))?);
+        holds_throughout(window, async || {
+            let held = occurrence(&owner, job, id).await?;
+            ensure!(
+                held["data"]["occurrence"]["state"] == "reconcile"
+                    && held["data"]["occurrence"]["jobAttemptOrdinal"] == 1
+                    && held["data"]["occurrence"]["retry"].is_null(),
+                "Adopted work must not be retried: {held}"
+            );
+            Ok(())
+        })
+        .await?;
+        let settled = detail(&owner, job, id, &current["jobAttemptId"]).await?;
+        assert_eq!(
+            settled["data"]["jobAttempt"]["retryClassification"], *facts,
+            "Later polls never reclassify adopted work"
+        );
+        let listed = generations(&owner, job, id).await?;
+        assert_eq!(
+            listed["data"]["jobAttempts"]
+                .as_array()
+                .context("No retry generation after adoption")?
+                .len(),
+            1
+        );
+        let view = run_checkpoints::view(&owner, run).await?;
+        assert_eq!(view["tasks"][0]["attempts"], 1);
+        let runs = data(call(&owner, "nesvo_list_runs", json!({})).await?)?;
+        assert_eq!(
+            runs["data"]["runs"]
+                .as_array()
+                .context("No fresh run after adoption")?
+                .len(),
+            1
+        );
+        let skipped = occurrence(
+            &owner,
+            job,
+            sibling["data"]["occurrence"]["id"]
+                .as_str()
+                .context("Overlap occurrence")?,
+        )
+        .await?;
+        assert_eq!(skipped["data"]["occurrence"]["state"], "skipped");
+        envelopes.push(no_workers(&fixture, &owner).await?);
+        envelopes.extend(vec![
+            created.clone(),
+            admitted.clone(),
+            adopted.clone(),
+            adopted_detail.clone(),
+            engine,
+            sibling.clone(),
+            settled,
+            listed,
+            runs,
+            skipped,
+        ]);
+        run_checkpoints::schema(envelopes).await?;
+        owner.cancel().await?;
+        Ok::<_, anyhow::Error>(())
+    }))
+    .catch_unwind()
+    .await;
+    let cleanup = fixture.close().await;
+    match outcome {
+        Ok(result) => {
+            result.context("Bounded native uncertain launch adoption scenario")??;
             cleanup
         }
         Err(panic) => {
