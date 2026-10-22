@@ -505,6 +505,10 @@ impl State {
         (order.into_iter().map(|(_, id)| id).collect(), kept)
     }
 
+    pub(crate) fn hibernated_program(&self, id: &str) -> Option<Program> {
+        self.hibernated.get(id).map(Record::program)
+    }
+
     pub(crate) fn is_hibernated(&self, id: &str) -> bool {
         self.hibernated.contains(id) || self.hibernated.resuming(id)
     }

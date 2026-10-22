@@ -226,7 +226,10 @@ reaped as before and nothing is owed a restore.
 
 At the next start the host resumes exactly the sessions marked `pending`, under
 their own IDs, through the [exact conversation resume](#exact-conversation-resume)
-gate, at most two at a time, with key `restore:SESSION:SHUTDOWN_AT`. Each verified
+gate, at most two at a time, with key `restore:SESSION:SHUTDOWN_AT`. Each restore
+first waits on the provider quota gate like any launch, so it starts once the
+first quota observation after startup admits it (at most 30 seconds) and a known
+limit holds it until the reset. Each verified
 resume journals `session.resumed` with `reason:"restored"` (owner resumes carry
 `reason:"owner"`) and records `restored`. The restore runs once the host listens, so
 a client that connects first may see such a session as hibernated or still

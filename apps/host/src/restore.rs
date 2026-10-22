@@ -297,14 +297,22 @@ async fn restore_one(
             Some("Restore on start is off; resume the session explicitly"),
         );
     }
-    let resumed = hibernation::resume_because(
-        state,
-        log,
-        events,
-        entry.session_id.clone(),
-        restore_key(&entry),
-        model::ResumeReason::Restored,
-    )
+    let resumed = async {
+        let program = state.lock().unwrap().hibernated_program(&entry.session_id);
+        if let Some(program) = program {
+            crate::quota_gate::admit(state, &entry.session_id, "restore", program, None, |_| {})
+                .await?;
+        }
+        hibernation::resume_because(
+            state,
+            log,
+            events,
+            entry.session_id.clone(),
+            restore_key(&entry),
+            model::ResumeReason::Restored,
+        )
+        .await
+    }
     .await;
     match resumed {
         Ok(_) => entry.settled(Outcome::Restored, None, None),
