@@ -1163,6 +1163,25 @@ impl Service {
 }
 
 #[cfg(test)]
+impl Service {
+    pub(crate) async fn settled(&self, count: usize) -> Vec<Event> {
+        let mut changed = self.subscribe();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                changed.borrow_and_update();
+                let page = self.read(0, MAX_PAGE, None).await.unwrap();
+                if page.events.len() >= count {
+                    return page.events;
+                }
+                changed.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("the journal reaches the expected length")
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -1878,6 +1897,75 @@ mod tests {
             }
         }
         assert_eq!(actual, expected);
+    }
+    #[tokio::test]
+    async fn worktree_and_workflow_events_reach_read_events_without_write_failures() {
+        let golden = include_str!("../../../crates/nesvo-wire/tests/fixtures/events.jsonl");
+        let records: Vec<model::EventRecord> = golden
+            .lines()
+            .map(|line| serde_json::from_str::<model::EventRecord>(line).unwrap())
+            .filter(|record| {
+                ["workflow.", "worktree."]
+                    .iter()
+                    .any(|prefix| record.event.kind().starts_with(prefix))
+            })
+            .collect();
+        let kinds: std::collections::BTreeSet<_> =
+            records.iter().map(|record| record.event.kind()).collect();
+        assert_eq!(kinds.len(), 7, "{kinds:?}");
+        let database = StartupDatabase::new();
+        let service = Service::open(database.path.clone()).await.unwrap();
+        for record in &records {
+            let observation = Observation {
+                session_id: record.session_id.clone(),
+                at: record.at,
+                event: record.event.clone(),
+            };
+            if record.session_id.is_none() {
+                service.observe(observation);
+            } else {
+                service.append(vec![observation]).await.unwrap();
+            }
+        }
+        assert_eq!(
+            service.health(),
+            json!({"observationDrops":0,"writeFailures":0})
+        );
+        let page = service.read(0, 32, None).await.unwrap();
+        assert!(!page.more && !page.gap);
+        assert_eq!(page.events.len(), records.len());
+        for (sequence, (event, record)) in page.events.iter().zip(&records).enumerate() {
+            assert_eq!(event.sequence, sequence as u64 + 1);
+            assert_eq!(event.kind, record.event.kind());
+            assert_eq!(event.session_id, record.session_id);
+            assert_eq!(event.at, record.at);
+            assert_eq!(event.payload, record.event.payload().unwrap());
+        }
+        let session = records
+            .iter()
+            .find_map(|record| record.session_id.clone())
+            .unwrap();
+        let scoped = service.read(0, 32, Some(session.clone())).await.unwrap();
+        assert_eq!(
+            scoped
+                .events
+                .iter()
+                .map(|event| event.kind.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "worktree.prepared",
+                "worktree.ran",
+                "worktree.archived",
+                "worktree.archived"
+            ]
+        );
+        assert!(
+            scoped
+                .events
+                .iter()
+                .all(|event| event.session_id.as_deref() == Some(session.as_str()))
+        );
+        service.shutdown().await;
     }
     #[test]
     fn early_response_beats_late_write_ack_and_send_restart_never_replays() {

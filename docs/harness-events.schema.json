@@ -1133,7 +1133,7 @@
     {
       "properties": {
         "kind": {
-          "const": "workflowTemplatesApproved",
+          "const": "workflow.templates_approved",
           "type": "string"
         },
         "payload": {
@@ -1146,7 +1146,7 @@
     {
       "properties": {
         "kind": {
-          "const": "workflowTemplatesRevoked",
+          "const": "workflow.templates_revoked",
           "type": "string"
         },
         "payload": {
@@ -1159,7 +1159,7 @@
     {
       "properties": {
         "kind": {
-          "const": "worktreeSetupApproved",
+          "const": "worktree.setup_approved",
           "type": "string"
         },
         "payload": {
@@ -1172,7 +1172,7 @@
     {
       "properties": {
         "kind": {
-          "const": "worktreeSetupRevoked",
+          "const": "worktree.setup_revoked",
           "type": "string"
         },
         "payload": {
@@ -1185,7 +1185,7 @@
     {
       "properties": {
         "kind": {
-          "const": "worktreePrepared",
+          "const": "worktree.prepared",
           "type": "string"
         },
         "payload": {
@@ -1198,7 +1198,7 @@
     {
       "properties": {
         "kind": {
-          "const": "worktreeRan",
+          "const": "worktree.ran",
           "type": "string"
         },
         "payload": {
@@ -1211,7 +1211,7 @@
     {
       "properties": {
         "kind": {
-          "const": "worktreeArchived",
+          "const": "worktree.archived",
           "type": "string"
         },
         "payload": {

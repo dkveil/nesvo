@@ -735,6 +735,70 @@ fn record(session_id: &str) -> Record {
 }
 
 #[tokio::test]
+async fn worktree_lifecycle_events_land_in_the_event_journal() {
+    let scratch = scratch();
+    let store: &'static Store = Box::leak(Box::new(store(&scratch)));
+    let log = event_log::Service::open(scratch.0.join("events.sqlite3"))
+        .await
+        .unwrap();
+    let step = toml_steps(&[fixture("emit 6f6b0a")]);
+    let config = format!("[worktree]\nsetup = [{step}]\nrun = [{step}]\n");
+    let repository = repository(&scratch, Some(&config)).await;
+    let directory = display_path(&repository);
+    let digest = parse(&config).unwrap().digest();
+    approve(store, Some(&log), &directory, &digest)
+        .await
+        .unwrap();
+    let session = "4".repeat(32);
+    let plan = plan_with(Some(store), &repository).await.unwrap();
+    let worktree = git::create_worktree(&repository).await.unwrap();
+    let fact = prepare_with(Some(store), plan, &worktree, &session, Some(log.clone()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fact.result, "passed");
+    run(store, Some(log.clone()), &session).await.unwrap();
+    idle(store, &session).await;
+    log.settled(3).await;
+    archive(store, Some(&log), &session, false, false)
+        .await
+        .unwrap();
+    revoke(store, Some(&log), &directory, &digest)
+        .await
+        .unwrap();
+    let events = log.settled(5).await;
+    let kinds: Vec<_> = events.iter().map(|event| event.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "worktree.setup_approved",
+            "worktree.prepared",
+            "worktree.ran",
+            "worktree.archived",
+            "worktree.setup_revoked"
+        ]
+    );
+    let repository_id = repository_key(&repository);
+    for event in [&events[0], &events[4]] {
+        assert_eq!(event.session_id, None);
+        assert_eq!(
+            event.payload,
+            json!({"repository":repository_id,"digest":digest})
+        );
+    }
+    for event in &events[1..4] {
+        assert_eq!(event.session_id.as_deref(), Some(session.as_str()));
+        assert_eq!(event.payload["sessionId"], session.as_str());
+    }
+    assert_eq!(events[1].payload["result"], "passed");
+    assert_eq!(events[1].payload["digest"], digest.as_str());
+    assert_eq!(events[2].payload["result"], "passed");
+    assert_eq!(events[3].payload["discarded"], false);
+    assert_eq!(log.health()["writeFailures"], 0);
+    log.shutdown().await;
+}
+
+#[tokio::test]
 async fn run_steps_come_from_the_approved_setup_not_the_agent_writable_worktree() {
     let scratch = scratch();
     let store: &'static Store = Box::leak(Box::new(store(&scratch)));

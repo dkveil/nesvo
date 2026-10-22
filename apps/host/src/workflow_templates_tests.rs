@@ -229,6 +229,44 @@ fn code(error: &anyhow::Error) -> &'static str {
 }
 
 #[tokio::test]
+async fn workflow_template_trust_changes_land_in_the_event_journal() {
+    let scratch = scratch();
+    let store = store(&scratch);
+    let log = event_log::Service::open(scratch.0.join("events.sqlite3"))
+        .await
+        .unwrap();
+    let repository = repository(&scratch, TEMPLATES).await;
+    let source = inspect(&display_path(&repository)).await.unwrap();
+    let digest = describe(&store, &source)["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    approve(&store, Some(&log), &source, &digest).unwrap();
+    revoke(&store, Some(&log), &source.repository, &digest).unwrap();
+    let events = log.settled(2).await;
+    let facts: Vec<_> = events
+        .iter()
+        .map(|event| {
+            (
+                event.kind.as_str(),
+                event.session_id.clone(),
+                &event.payload,
+            )
+        })
+        .collect();
+    let payload = json!({"repository":source.repository,"digest":digest});
+    assert_eq!(
+        facts,
+        [
+            ("workflow.templates_approved", None, &payload),
+            ("workflow.templates_revoked", None, &payload)
+        ]
+    );
+    assert_eq!(log.health()["writeFailures"], 0);
+    log.shutdown().await;
+}
+
+#[tokio::test]
 async fn workflow_templates_approval_gate_follows_the_committed_digest_and_revocation() {
     let scratch = scratch();
     let store = store(&scratch);

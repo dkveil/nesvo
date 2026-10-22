@@ -77,13 +77,13 @@ events! {
     RunTimeBudgetExhausted(RunChanged) = "run.time_budget_exhausted",
     RunBudgetChanged(RunChanged) = "run.budget_changed",
     RunWakeChanged(RunWake) = "run.wake_changed",
-    WorkflowTemplatesApproved(RepositoryDigest) = "workflowTemplatesApproved",
-    WorkflowTemplatesRevoked(RepositoryDigest) = "workflowTemplatesRevoked",
-    WorktreeSetupApproved(RepositoryDigest) = "worktreeSetupApproved",
-    WorktreeSetupRevoked(RepositoryDigest) = "worktreeSetupRevoked",
-    WorktreePrepared(WorktreePrepared) = "worktreePrepared",
-    WorktreeRan(WorktreeRan) = "worktreeRan",
-    WorktreeArchived(WorktreeArchived) = "worktreeArchived",
+    WorkflowTemplatesApproved(RepositoryDigest) = "workflow.templates_approved",
+    WorkflowTemplatesRevoked(RepositoryDigest) = "workflow.templates_revoked",
+    WorktreeSetupApproved(RepositoryDigest) = "worktree.setup_approved",
+    WorktreeSetupRevoked(RepositoryDigest) = "worktree.setup_revoked",
+    WorktreePrepared(WorktreePrepared) = "worktree.prepared",
+    WorktreeRan(WorktreeRan) = "worktree.ran",
+    WorktreeArchived(WorktreeArchived) = "worktree.archived",
 }
 
 pub fn journaled_kind(kind: &str) -> bool {

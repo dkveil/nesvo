@@ -27,8 +27,11 @@ Durable receipts add `operation.changed` (`operationId`, `operation`, `phase`) a
 workflow mutations add `run.*` events (`runId`, `revision`) whose subject is the
 run's coordinator session. `run.digest_recorded` also carries the run state,
 digest fingerprint and byte size; read the digest itself with `nesvo run digest`.
-Prompts, response text and tool arguments are not journaled here. Every kind and its
-payload fields are listed in [Event kinds](#event-kinds).
+Worktree trust and lifecycle add `worktree.*` events and workflow template trust adds
+`workflow.templates_*` events. Prompts, response text and tool arguments are not
+journaled here. Every kind and its payload fields are listed in
+[Event kinds](#event-kinds). New kinds join the stream without a capability change:
+consumers ignore kinds they do not recognize instead of failing the page.
 
 The default/maximum page is 32 events, each with at most 1024 encoded payload
 bytes. Output fits the authenticated frame budget. A future cursor or a limit
@@ -151,13 +154,13 @@ is never persisted.
 | `run.time_budget_exhausted`    | `runId` string                                                                                                                           | yes       |
 | `run.budget_changed`           | `runId` string                                                                                                                           | yes       |
 | `run.wake_changed`             | `runId` string; `policyId` string                                                                                                        | yes       |
-| `workflowTemplatesApproved`    | `repository` string; `digest` string                                                                                                     | no        |
-| `workflowTemplatesRevoked`     | `repository` string; `digest` string                                                                                                     | no        |
-| `worktreeSetupApproved`        | `repository` string; `digest` string                                                                                                     | no        |
-| `worktreeSetupRevoked`         | `repository` string; `digest` string                                                                                                     | no        |
-| `worktreePrepared`             | `sessionId` string; `result` string; `log` string; `worktree` string; `digest` string                                                    | no        |
-| `worktreeRan`                  | `sessionId` string; `result` string; `log` string                                                                                        | no        |
-| `worktreeArchived`             | `sessionId` string; `worktree` string; `branch` string or null; `discarded` boolean; `blockers` array of string; `branchDeleted` boolean | no        |
+| `workflow.templates_approved`  | `repository` string; `digest` string                                                                                                     | yes       |
+| `workflow.templates_revoked`   | `repository` string; `digest` string                                                                                                     | yes       |
+| `worktree.setup_approved`      | `repository` string; `digest` string                                                                                                     | yes       |
+| `worktree.setup_revoked`       | `repository` string; `digest` string                                                                                                     | yes       |
+| `worktree.prepared`            | `sessionId` string; `result` string; `log` string; `worktree` string; `digest` string                                                    | yes       |
+| `worktree.ran`                 | `sessionId` string; `result` string; `log` string                                                                                        | yes       |
+| `worktree.archived`            | `sessionId` string; `worktree` string; `branch` string or null; `discarded` boolean; `blockers` array of string; `branchDeleted` boolean | yes       |
 
 Enumerated payload types:
 

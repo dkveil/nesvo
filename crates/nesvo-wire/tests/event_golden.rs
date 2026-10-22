@@ -57,3 +57,12 @@ fn event_payload_rejects_unknown_fields_and_wrong_kinds() {
     let foreign = r#"{"sequence":1,"sessionId":null,"kind":"test.barrier","at":1,"payload":{}}"#;
     assert!(serde_json::from_str::<EventRecord>(foreign).is_err());
 }
+
+#[test]
+fn every_modeled_event_kind_passes_the_journal_kind_rule() {
+    let refused: Vec<_> = Event::KINDS
+        .iter()
+        .filter(|kind| !journaled_kind(kind))
+        .collect();
+    assert!(refused.is_empty(), "{refused:?} would never be journaled");
+}
