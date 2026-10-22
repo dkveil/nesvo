@@ -19,7 +19,7 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
         Err(error) => json!({"error":error.to_string()}),
     };
     let mut diagnostics = json!({"host":host});
-    let observed = timeout(Duration::from_millis(3800), async {
+    async {
         let owner = match client(&fixture.pairing()).await {
             Ok(owner) => owner,
             Err(error) => {
@@ -111,11 +111,8 @@ pub(super) async fn report_timeout_diagnostics(fixture: &mut Fixture, job: &str)
             .await;
         }
         let _ = owner.cancel().await;
-    })
-    .await;
-    if observed.is_err() {
-        diagnostics["diagnosticDeadlineElapsed"] = true.into();
     }
+    .await;
     diagnostics
 }
 
@@ -444,17 +441,16 @@ async fn retry_read(
     tool: &'static str,
     args: Value,
 ) -> RetryRead {
-    let (outcome, value) = match timeout(Duration::from_millis(600), call(owner, tool, args)).await
-    {
-        Ok(Ok(reply)) => match reply.structured_content {
+    let (outcome, value) = match call(owner, tool, args).await {
+        Ok(reply) => match reply.structured_content {
             Some(value) if reply.is_error != Some(true) && value["ok"] == true => {
                 ("observed", Some(value))
             }
+            Some(value) if value["error"]["code"] == "timeout" => ("adapterRequestBound", None),
             Some(_) => ("refused", None),
             None => ("malformed", None),
         },
-        Ok(Err(_)) => ("transportUnavailable", None),
-        Err(_) => ("deadlineElapsed", None),
+        Err(_) => ("transportUnavailable", None),
     };
     RetryRead { outcome, value }
 }
@@ -550,7 +546,7 @@ pub(super) async fn retry_timeout_diagnostics(
     let Some(current) = &observation.current else {
         return result;
     };
-    let collected = timeout(Duration::from_millis(3800),async {
+    async {
         let (run,operation,explain) = tokio::join!(
             async {match &current.run_id {Some(id)=>retry_read(owner,"nesvo_get_run",json!({"runId":id})).await,None=>RetryRead{outcome:"notObserved",value:None}}},
             async {match &current.launch_receipt_id {Some(id)=>retry_read(owner,"nesvo_get_operation",json!({"id":id})).await,None=>RetryRead{outcome:"notObserved",value:None}}},
@@ -597,10 +593,7 @@ pub(super) async fn retry_timeout_diagnostics(
                 result["fixtureStages"] = Value::Object(stages);
             }
         }
-    }).await;
-    if collected.is_err() {
-        result["diagnosticDeadlineElapsed"] = json!(true);
-    }
+    }.await;
     result
 }
 
