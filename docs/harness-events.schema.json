@@ -57,7 +57,7 @@
       "type": "string"
     },
     "HibernationTrigger": {
-      "enum": ["owner", "idlePolicy"],
+      "enum": ["owner", "idlePolicy", "shutdown"],
       "type": "string"
     },
     "HostStarted": {
@@ -307,6 +307,10 @@
       },
       "required": ["turnId", "taskResult"],
       "type": "object"
+    },
+    "ResumeReason": {
+      "enum": ["owner", "restored"],
+      "type": "string"
     },
     "RevisionChanged": {
       "additionalProperties": false,
@@ -589,6 +593,9 @@
         },
         "program": {
           "$ref": "#/definitions/Program"
+        },
+        "reason": {
+          "$ref": "#/definitions/ResumeReason"
         }
       },
       "required": ["program", "conversationId"],

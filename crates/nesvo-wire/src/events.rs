@@ -213,6 +213,14 @@ pub struct SessionClosed {}
 pub enum HibernationTrigger {
     Owner,
     IdlePolicy,
+    Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ResumeReason {
+    Owner,
+    Restored,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -228,6 +236,9 @@ pub struct SessionHibernated {
 pub struct SessionResumed {
     pub program: Program,
     pub conversation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ResumeReason")]
+    pub reason: Option<ResumeReason>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

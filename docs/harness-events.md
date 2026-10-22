@@ -125,7 +125,7 @@ is never persisted.
 | `session.created`              | `program` Program; `parentSessionId` string or null, optional                                                                            | yes       |
 | `session.closed`               | none                                                                                                                                     | yes       |
 | `session.hibernated`           | `program` Program; `conversationId` string; `trigger` HibernationTrigger                                                                 | yes       |
-| `session.resumed`              | `program` Program; `conversationId` string                                                                                               | yes       |
+| `session.resumed`              | `program` Program; `conversationId` string; `reason` ResumeReason, optional                                                              | yes       |
 | `process.exited`               | `exitCode` integer or null                                                                                                               | yes       |
 | `response.settled`             | `turnId` string; `taskResult` null                                                                                                       | yes       |
 | `agent.lifecycle`              | `event` string; `state` AgentState; `generation` integer; `sourceSequence` integer; `submissionEvidence` boolean                         | yes       |
@@ -186,7 +186,8 @@ is never persisted.
 Enumerated payload types:
 
 - `AgentState`: `working`, `idle`, `done`, `blocked`, `question`, `failed`, `unknown`.
-- `HibernationTrigger`: `owner`, `idlePolicy`.
+- `HibernationTrigger`: `owner`, `idlePolicy`, `shutdown`.
 - `Program`: `shell`, `claude`, `gemini`, `codex`.
+- `ResumeReason`: `owner`, `restored`.
 
 <!-- generated:event-kinds:end -->
