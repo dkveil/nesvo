@@ -2351,6 +2351,95 @@ mod contract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{env, fs};
+
+    const CATALOGUE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/harness-mcp-tools.json"
+    );
+    const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/harness-mcp.md");
+
+    fn catalogue() -> String {
+        serde_json::to_string_pretty(&published_names()).expect("Tool names serialize") + "\n"
+    }
+
+    fn effect(hints: Hints) -> &'static str {
+        if hints.read_only {
+            "read-only"
+        } else if hints.destructive {
+            "destructive"
+        } else {
+            "write"
+        }
+    }
+
+    fn first_sentence(description: &str) -> &str {
+        description
+            .find(". ")
+            .map_or(description, |end| &description[..=end])
+    }
+
+    fn docs_table() -> String {
+        let header = ["Tool", "Effect", "Summary"];
+        let rows: Vec<[&str; 3]> = TOOLS
+            .iter()
+            .map(|tool| {
+                [
+                    tool.name,
+                    effect(tool.hints),
+                    first_sentence(tool.description),
+                ]
+            })
+            .collect();
+        let widths: Vec<usize> = (0..header.len())
+            .map(|column| {
+                rows.iter()
+                    .map(|row| row[column].chars().count())
+                    .chain([header[column].chars().count()])
+                    .max()
+                    .unwrap_or_default()
+            })
+            .collect();
+        let line = |cells: [&str; 3]| {
+            let cells: Vec<String> = cells
+                .iter()
+                .zip(&widths)
+                .map(|(cell, width)| format!("{cell:<width$}"))
+                .collect();
+            format!("| {} |\n", cells.join(" | "))
+        };
+        let rule: Vec<String> = widths.iter().map(|width| "-".repeat(*width)).collect();
+        let mut table = line(header);
+        table.push_str(&format!("| {} |\n", rule.join(" | ")));
+        for row in rows {
+            table.push_str(&line(row));
+        }
+        table
+    }
+
+    fn with_docs_table(document: &str) -> String {
+        let lines: Vec<&str> = document.lines().collect();
+        let start = lines
+            .iter()
+            .position(|line| line.starts_with("| Tool "))
+            .expect("docs/harness-mcp.md keeps one tool table");
+        let end = lines[start..]
+            .iter()
+            .position(|line| !line.starts_with('|'))
+            .map_or(lines.len(), |offset| start + offset);
+        format!(
+            "{}\n{}{}\n",
+            lines[..start].join("\n"),
+            docs_table(),
+            lines[end..].join("\n")
+        )
+    }
+
+    fn committed(path: &str) -> String {
+        fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("{path}: {error}"))
+            .replace("\r\n", "\n")
+    }
 
     #[test]
     fn tool_table_publishes_each_tool_once() {
@@ -2361,6 +2450,26 @@ mod tests {
         );
         assert_eq!(names.len(), TOOL_COUNT);
         assert_eq!(catalog().len(), TOOL_COUNT);
+    }
+
+    #[test]
+    fn committed_catalogue_and_docs_table_match_the_tool_table() {
+        let catalogue = catalogue();
+        let docs = with_docs_table(&committed(DOCS));
+        if env::var("NESVO_UPDATE_CONTRACTS").as_deref() == Ok("1") {
+            fs::write(CATALOGUE, &catalogue).expect("Write the tool catalogue");
+            fs::write(DOCS, &docs).expect("Write the docs tool table");
+        }
+        assert_eq!(
+            committed(CATALOGUE),
+            catalogue,
+            "docs/harness-mcp-tools.json drifted from the tool table; rerun with NESVO_UPDATE_CONTRACTS=1"
+        );
+        assert_eq!(
+            committed(DOCS),
+            docs,
+            "The docs/harness-mcp.md tool table drifted from the tool table; rerun with NESVO_UPDATE_CONTRACTS=1"
+        );
     }
 
     fn string_values(schema: &Map<String, Value>) -> bool {

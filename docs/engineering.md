@@ -84,8 +84,6 @@ Root commands are the common entrypoints: `npm run typecheck`, `npm run lint`, `
 
 The [protocol contract](protocol-v2.md) is shared by mobile and TUI. Changes must preserve declared compatibility or explicitly version it. Authenticate before accepting commands; preserve challenge, direction and sequence checks. Never log pairing keys, leases or shell content as routine telemetry.
 
-Domain events are typed once in `nesvo_wire::events::Event`, one variant per kind with a payload struct; the host appends only through that model and clients keep reading the same JSON. `crates/nesvo-wire/tests/fixtures/events.jsonl` holds golden wire records captured from the host before the model existed, and per-kind tests prove the model and the host append path reproduce them byte for byte. `docs/harness-events.schema.json` and the kind table in [harness-events.md](harness-events.md#event-kinds) are generated from the model with `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts`; CI fails on drift, and `tests/client-contract.test.ts` validates the golden records against the schema. A new or changed kind updates the model, adds its golden record and regenerates both files.
-
 The host journal schema lives in numbered SQL files under `apps/host/migrations/`, registered in order in `apps/host/src/migrations.rs` and recorded in `schema_migrations`. Add a schema change as the next number in one new file and register it; startup applies pending files in order inside the journal's immediate transaction and refuses a database recorded by a newer host. Never edit, renumber or delete a merged migration; correct it with a later one. The per-module initializers are frozen at the pre-migration shape and only adopt databases created before the ledger existed.
 
 Test invariants at their boundary: group cycles and missing parents without PTYs; transactions and reload against a temporary SQLite database; real multi-client synchronization, control takeover and shell continuity against the host; keyboard intent/rendering against a deterministic TUI backend. Integration tests should assert observable behavior rather than mirror private functions.
@@ -93,6 +91,12 @@ Test invariants at their boundary: group cycles and missing parents without PTYs
 CI checks the mobile code and native Rust builds on Windows, macOS and Linux. Report native device testing separately. A browser viewport test is not proof of iOS safe-area or keyboard correctness, and cross-compilation is not proof of runtime behavior.
 
 Keep demo fixtures explicit. Persisted metadata does not imply that processes survive a host restart. Bounded terminal transcript replay does not imply an exact full-screen snapshot.
+
+## Generated contracts
+
+Two public contracts are generated from Rust types. Domain events are typed once in `nesvo_wire::events::Event`, one variant per kind with a payload struct; the host appends only through that model and clients keep reading the same JSON. `crates/nesvo-wire/tests/fixtures/events.jsonl` holds golden wire records captured from the host before the model existed, per-kind tests prove the model and the host append path reproduce them byte for byte, and `tests/client-contract.test.ts` validates the golden records against the schema. MCP tools are defined once in `apps/tui/src/mcp_tools.rs`, each with its name, description, typed argument struct deriving `serde::Deserialize` and `schemars::JsonSchema`, effect hints and handler binding; the input schemas sent to clients, `docs/harness-mcp-tools.json` (which the host also reads for permission validation) and the tool table in [harness-mcp.md](harness-mcp.md) are derived from that table, and the tool count is asserted once beside it.
+
+Regenerate after changing either model and commit the outputs. `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo-wire --test event_contracts` rewrites `docs/harness-events.schema.json` and the kind table in [harness-events.md](harness-events.md#event-kinds); a new or changed kind also adds its golden record. `NESVO_UPDATE_CONTRACTS=1 cargo test -p nesvo --bin nesvo mcp_tools` rewrites `docs/harness-mcp-tools.json` and the tool table. CI runs both tests without the variable and fails on drift.
 
 ## Language documentation
 
