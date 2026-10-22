@@ -531,8 +531,12 @@ retryability. Authentication errors distinguish fixed stages (`connect`,
 WebSocket close may include its numeric status; response bodies, close reasons,
 addresses, keys, scopes and nonces are never included. Unknown internal errors
 keep the adapter's generic message. These diagnostics do not prove admission
-saturation or permit automatic replay. Existing connection/read/write timeouts
-and host proof, nonce and protocol validation remain unchanged.
+saturation or permit automatic replay. The host answers an owner authentication
+proof from the connection itself, without waiting on shared host state that a
+launch or other long operation may hold, and the adapter bounds that answer by
+the same 65-second host-silence limit as an established connection rather than
+a short fixed window. The other connection/read/write timeouts and host proof,
+nonce and protocol validation remain unchanged.
 
 Existing legacy `nesvo --list` remains compatible.
 

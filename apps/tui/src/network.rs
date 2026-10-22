@@ -201,6 +201,8 @@ pub(crate) fn open_failure_message(error: &anyhow::Error, fallback: &str) -> Str
         .map_or_else(|| fallback.to_owned(), ToString::to_string)
 }
 
+const HOST_SILENCE_LIMIT: Duration = Duration::from_secs(65);
+
 struct OpenTimeouts {
     connect: Duration,
     challenge_read: Duration,
@@ -214,7 +216,7 @@ impl Default for OpenTimeouts {
             connect: Duration::from_secs(8),
             challenge_read: Duration::from_secs(5),
             auth_send: Duration::from_secs(3),
-            auth_read: Duration::from_secs(5),
+            auth_read: HOST_SILENCE_LIMIT,
         }
     }
 }
@@ -353,7 +355,7 @@ impl Connection {
                             let frame = wire::encode_client(command, &key, &challenge, sent)?;
                             timeout(Duration::from_secs(3), sink.send(Message::Text(frame.into()))).await??;
                         }
-                        frame = timeout(Duration::from_secs(65), stream.next()) => {
+                        frame = timeout(HOST_SILENCE_LIMIT, stream.next()) => {
                             match frame.context("Host heartbeat timed out")? {
                                 Some(Ok(Message::Text(text))) => {
                                     let payload = wire::decode_host(&text, &key, &challenge, received + 1)

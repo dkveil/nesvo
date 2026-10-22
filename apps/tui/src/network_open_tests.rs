@@ -92,7 +92,8 @@ fn unknown_open_errors_keep_the_callers_generic_message() {
     assert_eq!(timeouts.connect, Duration::from_secs(8));
     assert_eq!(timeouts.challenge_read, Duration::from_secs(5));
     assert_eq!(timeouts.auth_send, Duration::from_secs(3));
-    assert_eq!(timeouts.auth_read, Duration::from_secs(5));
+    assert_eq!(timeouts.auth_read, HOST_SILENCE_LIMIT);
+    assert_eq!(HOST_SILENCE_LIMIT, Duration::from_secs(65));
 }
 
 #[tokio::test]
