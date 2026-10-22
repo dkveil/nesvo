@@ -331,8 +331,10 @@ The digest holds `schemaVersion`, `kind`, `runId`, `title`, `state`,
 `sourceRevision`, `producedAt`, task counts by state, one `taskDigests` entry per
 plan task (current attempt, reported outcome, validation source, summary clipped
 to 240 bytes, up to 4 claimed files and their total, check counts, limitation
-count, up to 3 `nextSteps` of 160 bytes, answered decisions, native operation
-receipts bound to the worker session, and the workspace kind, directory and
+count, up to 3 `nextSteps` of 160 bytes, answered decisions, the native operation
+receipts of that attempt on the worker session (from its launch or delivery
+receipt until the next attempt that reuses the session; zero without either), and
+the workspace kind, directory and
 worktree branch from the host worktree registry), decision totals with up to 4
 open questions, the run budget snapshot, coordinator inbox counts and evidence
 pointers: the journal cursor at production and the latest 4 checkpoints with
@@ -342,7 +344,9 @@ The encoded digest is at most 8 KiB. When it would exceed that, the host sets
 `truncated:true`, compacts every task entry (summary 80 bytes, no file list, one
 next step, no directory), then drops task entries from the end of the plan and
 counts them in `omittedTasks`, and finally empties the open-question and
-checkpoint lists. `fingerprint` is the SHA-256 of the digest without
+checkpoint lists. If the fixed fields alone still exceed the bound, the title is
+clipped to 160 bytes and the budget snapshot and per-state counts are emptied, so
+the encoded digest never exceeds 8 KiB. `fingerprint` is the SHA-256 of the digest without
 `producedAt` and the journal cursor, so an unchanged run yields the same value.
 
 A worker's `run context` (and its recovery task context) carries

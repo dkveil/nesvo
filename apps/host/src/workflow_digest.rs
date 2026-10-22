@@ -153,14 +153,31 @@ fn task_digest(connection: &Connection, task: &Value) -> Result<Value> {
         id,
     )?
     .into();
-    digest["nativeOperations"] = count(
-        connection,
-        "SELECT count(*) FROM operation_receipts WHERE session_id=?1",
-        session,
-    )?
-    .into();
+    digest["nativeOperations"] = native_operations(connection, id, session)?.into();
     digest["workspace"] = workspace(connection, id, session)?;
     Ok(digest)
+}
+
+pub(crate) fn native_operations(
+    connection: &Connection,
+    attempt: &str,
+    session: &str,
+) -> Result<i64> {
+    Ok(connection.query_row(
+        "WITH linked(attempt_id,operation_id) AS (
+             SELECT attempt_id,operation_id FROM workflow_launches
+             UNION ALL SELECT attempt_id,operation_id FROM workflow_deliveries WHERE operation_id IS NOT NULL),
+         anchors(attempt_id,start) AS (
+             SELECT l.attempt_id,MIN(r.rowid) FROM linked l
+             JOIN workflow_attempts a ON a.id=l.attempt_id AND a.session_id=?2
+             JOIN operation_receipts r ON r.id=l.operation_id AND r.session_id=?2
+             GROUP BY l.attempt_id),
+         own(start) AS (SELECT start FROM anchors WHERE attempt_id=?1)
+         SELECT count(*) FROM operation_receipts r,own WHERE r.session_id=?2 AND r.rowid>=own.start
+           AND r.rowid<COALESCE((SELECT MIN(a.start) FROM anchors a WHERE a.start>own.start),9223372036854775807)",
+        params![attempt, session],
+        |row| row.get(0),
+    )?)
 }
 
 fn decisions(connection: &Connection, run_id: &str) -> Result<(Value, Vec<Value>)> {
@@ -265,6 +282,29 @@ pub(crate) fn bound(mut body: Value) -> Value {
             *checkpoints = json!([]);
         }
     }
+    if size(&body) > MAX_BYTES {
+        return skeleton(body, omitted);
+    }
+    body
+}
+
+fn skeleton(mut body: Value, omitted: usize) -> Value {
+    body["omittedTasks"] = (omitted + length(&body["taskDigests"])).into();
+    body["taskDigests"] = json!([]);
+    if let Some(title) = body["title"].as_str() {
+        body["title"] = clip(title, ITEM_BYTES).into();
+    }
+    for (field, empty) in [
+        ("budget", json!({})),
+        (
+            "tasks",
+            json!({"total": body["tasks"]["total"], "byState": {}}),
+        ),
+    ] {
+        if size(&body) > MAX_BYTES && body.get(field).is_some() {
+            body[field] = empty;
+        }
+    }
     body
 }
 
@@ -365,7 +405,16 @@ pub fn settle(transaction: &Transaction<'_>, run_id: &str, now: u64) -> Result<(
 }
 
 pub fn read(connection: &mut Connection, actor: &Actor, run_id: &str, now: u64) -> Result<Value> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let behavior = if settled(
+        orchestration::run(connection, actor, run_id)?["state"]
+            .as_str()
+            .unwrap_or_default(),
+    ) {
+        TransactionBehavior::Immediate
+    } else {
+        TransactionBehavior::Deferred
+    };
+    let transaction = connection.transaction_with_behavior(behavior)?;
     let run = orchestration::run(&transaction, actor, run_id)?;
     let summary = json!({"id": run["id"], "title": run["title"], "revision": run["revision"], "state": run["state"]});
     let result = if settled(run["state"].as_str().unwrap_or_default()) {

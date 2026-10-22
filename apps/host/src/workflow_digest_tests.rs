@@ -2,7 +2,7 @@ use super::{
     Store,
     orchestration_tests::{error, execute, prepare_run, worker},
 };
-use crate::workflow_digest::{MAX_BYTES, bound, clip, fingerprint, settle};
+use crate::workflow_digest::{MAX_BYTES, bound, clip, fingerprint, native_operations, settle};
 use serde_json::{Value, json};
 
 fn result(summary: &str, next_steps: &[&str]) -> Value {
@@ -267,4 +267,67 @@ fn digest_bounds_compact_long_task_records_and_count_what_was_omitted() {
     let clipped = clip(&"łódź ".repeat(200), 240);
     assert!(clipped.len() <= 240 && clipped.ends_with('…'));
     assert_eq!(clip("a\n\tb   c", 240), "a b c");
+}
+
+#[test]
+fn digest_bound_hard_caps_a_body_whose_fixed_fields_alone_exceed_the_limit() {
+    let body = json!({"schemaVersion":1,"kind":"final","runId":"run","title":"t".repeat(MAX_BYTES * 2),"state":"succeeded","sourceRevision":3,"producedAt":7,
+        "tasks":{"total":1,"byState":{"succeeded":1}},"taskDigests":[{"key":"k0","summary":"s"}],"omittedTasks":0,"truncated":false,
+        "decisions":{"total":0,"pending":0,"answered":0,"closed":0},"openDecisions":[],"budget":{"note":"b".repeat(MAX_BYTES * 2)},
+        "inbox":{"pendingCoordinatorMessages":0,"messageHead":0},"evidence":{"journalCursor":7,"checkpointCount":0,"checkpoints":[]}});
+    let bounded = bound(body);
+    assert!(serde_json::to_vec(&bounded).unwrap().len() <= MAX_BYTES);
+    assert_eq!(bounded["truncated"], true);
+    assert_eq!(bounded["omittedTasks"], 1);
+    assert_eq!(bounded["taskDigests"], json!([]));
+    for field in [
+        "producedAt",
+        "decisions",
+        "openDecisions",
+        "budget",
+        "inbox",
+        "evidence",
+    ] {
+        assert!(bounded.get(field).is_some(), "{field}");
+    }
+    assert_eq!(bounded["tasks"]["total"], 1);
+}
+
+#[test]
+fn digest_native_operations_count_only_the_receipts_of_that_attempt_on_a_reused_session() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let plan = prepare_run(&mut store);
+    let run = plan["run"]["id"].clone();
+    let assigned = execute(&mut store,Some("coordinator"),json!({"action":"assign","key":"bind","runId":run,"taskId":plan["tasks"][0]["id"],"sessionId":"reused","expectedRevision":3})).unwrap();
+    let first = assigned["tasks"][0]["currentAttempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before = native_operations(&store.0, &first, "reused").unwrap();
+    store
+        .0
+        .execute(
+            "UPDATE workflow_attempts SET state='failed' WHERE id=?1",
+            [&first],
+        )
+        .unwrap();
+    store.0.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES('second',?1,1,'reused','assigned')",[plan["tasks"][1]["id"].as_str().unwrap()]).unwrap();
+    for (id, attempt) in [
+        ("first-launch", Some(first.as_str())),
+        ("first-paste", None),
+        ("second-launch", Some("second")),
+        ("second-paste", None),
+        ("second-enter", None),
+    ] {
+        store.0.execute("INSERT INTO operation_receipts(id,issuer,key,digest,operation,phase,session_id,result) VALUES(?1,'owner',?1,'digest','paste','settled','reused','{}')",[id]).unwrap();
+        if let Some(attempt) = attempt {
+            store.0.execute("INSERT INTO workflow_launches(attempt_id,operation_id,operation_key,workspace,created_at) VALUES(?1,?2,?2,'shared',0)",[attempt,id]).unwrap();
+        }
+    }
+    assert_eq!(
+        native_operations(&store.0, &first, "reused").unwrap(),
+        before + 2
+    );
+    assert_eq!(native_operations(&store.0, "second", "reused").unwrap(), 3);
+    assert_eq!(native_operations(&store.0, "missing", "reused").unwrap(), 0);
 }
