@@ -595,7 +595,6 @@ fn valid_working_directory(path: &str) -> bool {
         && Path::new(path).is_absolute()
 }
 fn reported_working_directory(value: &Value, dialect: Dialect) -> Option<&str> {
-    // Gemini 0.65 reports its fixed startup directory, never a later one.
     if dialect == Dialect::Gemini {
         return None;
     }
