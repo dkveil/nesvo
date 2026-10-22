@@ -356,14 +356,14 @@ fn receipt_milestones_follow_the_host_wait_rules() {
     assert!(receipt_reached(&receipt("settled", json!({})), "settled"));
 }
 
-pub(super) async fn cli(mut command: Command) -> Result<Value> {
+pub(super) async fn cli(mut command: Command, label: &str) -> Result<Value> {
     command.stdin(Stdio::null()).kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     let output = command.output().await?;
     ensure!(
         output.status.success(),
-        "{}",
+        "{label} failed: {}",
         String::from_utf8_lossy(&output.stdout)
     );
     Ok(serde_json::from_slice(&output.stdout)?)

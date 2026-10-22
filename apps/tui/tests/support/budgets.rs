@@ -6,9 +6,7 @@ fn limits(slots: u16, workers: u16, shell: u16) -> Value {
 pub(super) async fn owner_cli(fixture: &Fixture, args: &[&str]) -> Result<Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
     command.arg("--pairing").arg(fixture.pairing()).args(args);
-    waits::cli(command)
-        .await
-        .with_context(|| format!("Owner CLI {}", args.join(" ")))
+    waits::cli(command, &format!("Owner CLI {}", args.join(" "))).await
 }
 #[tokio::test]
 #[ignore = "requires built native binaries and Node; process budget fixture without model calls"]

@@ -3,9 +3,7 @@ use super::*;
 pub(super) async fn scoped_cli(context: &Path, args: &[&str]) -> Result<Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
     command.env("NESVO_AGENT_CONTEXT", context).args(args);
-    waits::cli(command)
-        .await
-        .with_context(|| format!("Scoped CLI {}", args.join(" ")))
+    waits::cli(command, &format!("Scoped CLI {}", args.join(" "))).await
 }
 
 #[tokio::test]
