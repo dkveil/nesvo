@@ -56,7 +56,10 @@ inbox.
 
 Headless commands use the same paired, authenticated native host as the TUI.
 Running `nesvo` without a subcommand still opens the existing TUI. Help never
-loads pairing or contacts a host.
+loads pairing or contacts a host. The subcommands are `doctor`, `session`,
+`review`, `worktree`, `project`, `inbox`, `decision`, `workflow`, `job`, `run`,
+`budget`, `quota`, `operation`, `events` and `mcp`; `nesvo COMMAND --help` lists
+the verbs of each.
 
 Owner `nesvo quota [--program codex|claude|gemini] [--refresh] [--json]` inspects
 installed-provider observations through the shared host observer. Refresh is
