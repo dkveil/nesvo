@@ -64,6 +64,14 @@ rule-matching candidates, not an extra forced DTSTART occurrence.
 - A repeated local time means its first UTC instant only. Warsaw 02:30 on
   2026-10-25 runs at 00:30Z, never again at 01:30Z. The same policy applies to
   dense cron rules and to RRULE.
+- Dense RRULEs iterate local wall time, like cron. A MINUTELY or HOURLY candidate
+  in a gap is omitted and the search continues forward to the next existing
+  candidate: Warsaw `FREQ=MINUTELY;INTERVAL=15;BYHOUR=1,2,3` goes from 01:45+01:00
+  to 03:00+02:00 on 2027-03-28. In a fold each civil candidate keeps its first
+  instant, so the repeated hour has no occurrences: Warsaw `FREQ=HOURLY;BYMINUTE=0,30`
+  goes from 02:30+02:00 to 03:00+01:00 on 2026-10-25, and New York
+  `FREQ=HOURLY;BYMINUTE=0` goes from 01:00-04:00 to 02:00-05:00 on 2026-11-01.
+  Successive results are strictly increasing UTC instants.
 - An explicitly provided RRULE start in a gap is refused; an ambiguous start
   resolves to the first instant. This strict input policy is distinct from
   RFC5545's interpretation of an explicitly supplied DATE-TIME in a gap.
@@ -116,14 +124,31 @@ child. No helper runs on quiet timer ticks, in rendering or inside a SQLite
 transaction. Once instants need no subprocess.
 
 Calendar work also has candidate bounds: 4096 cron gap/fold candidates per
-direction, 200000 RRULE candidates, and at most 100000 candidate values per civil
-period. The engine's own barren-period/year limits are not trusted as evidence of
-rule exhaustion. Unsupported/complex searches fail explicitly with
-`calendar_limit` or `calendar_timeout`, not partial dates or a false completion.
-Simple unbounded FREQ/INTERVAL[/UNTIL] minute/hour/day/week rules seek on the
-original interval lattice. Other old dense rules may exceed the bound; efficient
-general seeking is still an open limitation. Re-anchor/simplify deliberately,
-taking original COUNT semantics into account. Subsecond scheduling is unsupported.
+direction, 200000 RRULE candidates per evaluation (generated candidates, gap
+candidates included), at most 100000 candidate values per civil period, and at
+most 64 upcoming instants per request. The engine's own barren-period/year limits
+are not trusted as evidence of rule exhaustion.
+
+RRULEs without COUNT whose frequency is MINUTELY, HOURLY, DAILY or WEEKLY seek
+instead of walking from the original start, whatever their `BYHOUR`, `BYMINUTE`,
+`BYSECOND`, `BYDAY`, `BYMONTHDAY`, `BYMONTH`, `BYSETPOS` and `UNTIL` parts. The
+expansion restarts two periods before the query instant on the original
+`INTERVAL` lattice, which keeps every period's candidates and `BYSETPOS` positions
+identical to the walk from the original start. When no earlier occurrence lies in
+that window, a binary search over lattice periods (at most 64 probes) finds the
+latest period holding one, so the previous slot of a sparse rule such as
+`FREQ=MINUTELY;BYMONTH=1;BYMONTHDAY=1;BYHOUR=0` is exact without visiting the
+months between. COUNT rules still walk from the original start because COUNT
+counts from there; COUNT is at most 10000. MONTHLY and YEARLY rules also walk from
+the start.
+
+A search that would exceed its candidate bound, or a rule with more than 100000
+candidates in one period, fails with `schedule_too_dense` and a message naming
+both bounds. A rule the engine stops expanding without an occurrence, such as
+`FREQ=MINUTELY;BYSECOND=0;BYSETPOS=2`, fails with `calendar_limit`; the adapter
+deadline fails with `calendar_timeout`. None of them reports partial dates or a
+false completion. Re-anchor or simplify deliberately, taking original COUNT
+semantics into account. Subsecond scheduling is unsupported.
 
 Three production dependencies are pinned to the source-reviewed/tested versions:
 

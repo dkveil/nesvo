@@ -334,6 +334,7 @@ fn due(spec: &Spec) -> Result<Option<u64>> {
                 let code = match failure.code.as_str() {
                     "calendar_timeout" => "calendar_timeout",
                     "calendar_limit" => "calendar_limit",
+                    "schedule_too_dense" => "schedule_too_dense",
                     "calendar_busy" => "calendar_busy",
                     "calendar_unavailable" => "calendar_unavailable",
                     _ => "invalid_calendar",

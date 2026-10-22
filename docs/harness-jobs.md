@@ -432,6 +432,15 @@ Recurring downtime coalesces to the latest eligible clock slot and exposes
 for DST, search bounds and durable calendar errors. `calendarState:exhausted`
 means no more automatic terms; it does not mean the last worker succeeded.
 
+Dense RRULEs are supported: MINUTELY and HOURLY rules with `BYHOUR`, `BYMINUTE`,
+`BYDAY`, `BYMONTHDAY`, `BYSETPOS` (negative positions included), `COUNT` or `UNTIL`
+are evaluated in the job's IANA zone on local wall time. Gap candidates are
+omitted and the search moves forward; a fold keeps only the first instant of each
+local time. Rules without COUNT seek from the query instant on the original
+interval lattice, so an old start costs nothing. An evaluation may generate at
+most 200000 candidates and 100000 per period; beyond either it fails with
+`schedule_too_dense` and the definition is refused or blocked, never truncated.
+
 At most eight due definitions are materialized per calendar/once pass and four eligible new/retry generations are
 claimed per host tick. Claims are transactional before native work. Dispatch
 preparation is bounded to four in-flight tasks; two independent calendar calculations

@@ -179,11 +179,193 @@ pub fn evaluate(query: Query) -> Answer {
             rule,
             start,
             time_zone,
-        } => rrule(&rule, &start, &time_zone, query.after),
+        } => rrule(&rule, &start, &time_zone, query.after, NEXT).map(|found| Window {
+            previous: found.previous,
+            next: found.upcoming.first().copied(),
+        }),
     }
 }
 
-fn rrule(text: &str, start: &str, time_zone: &str, after: u64) -> Answer {
+const RRULE_WALK: usize = 200_000;
+const RRULE_PERIOD: usize = 100_000;
+const RRULE_UPCOMING: usize = 64;
+
+#[derive(Clone, Copy)]
+struct Search {
+    walk: usize,
+    period: usize,
+    wanted: usize,
+    seek: bool,
+}
+const NEXT: Search = Search {
+    walk: RRULE_WALK,
+    period: RRULE_PERIOD,
+    wanted: 1,
+    seek: true,
+};
+
+#[derive(Debug, Default)]
+struct Found {
+    previous: Option<u64>,
+    upcoming: Vec<u64>,
+}
+
+struct Plan {
+    rule: IcalRecurRule,
+    start: i64,
+    zone: Tz,
+    count: Option<u32>,
+    until: Option<i64>,
+    step: Option<i64>,
+}
+
+fn too_dense(search: &Search) -> Failure {
+    Failure {
+        code: "schedule_too_dense".into(),
+        message: format!(
+            "RRULE search exceeded its bound of {} candidates or {} candidates per period; re-anchor the start or reduce the rule's density",
+            search.walk, search.period
+        ),
+    }
+}
+
+fn local_seconds(zone: Tz, value: u64) -> Result<i64, Failure> {
+    Ok(utc(value)?
+        .with_timezone(&zone)
+        .naive_local()
+        .and_utc()
+        .timestamp())
+}
+
+fn expansion(plan: &Plan, anchor: i64) -> IcalRecurExpand {
+    IcalRecurExpand::new(plan.rule.clone(), IcalRecurDateTime::from_seconds(anchor))
+}
+
+fn rrule(
+    text: &str,
+    start: &str,
+    time_zone: &str,
+    after: u64,
+    search: Search,
+) -> Result<Found, Failure> {
+    let plan = plan(text, start, time_zone, &search)?;
+    let wanted = search.wanted.clamp(1, RRULE_UPCOMING);
+    let mut budget = search.walk;
+    let Some(step) = plan.step else {
+        return walk(&plan, plan.start, after, wanted, &mut budget, &search);
+    };
+    let bound = plan
+        .until
+        .and_then(|last| u64::try_from(last).ok())
+        .map_or(after, |last| after.min(last));
+    let lattice = ((local_seconds(plan.zone, bound)? - plan.start).div_euclid(step) - 2).max(0);
+    let found = walk(
+        &plan,
+        plan.start + lattice * step,
+        after,
+        wanted,
+        &mut budget,
+        &search,
+    )?;
+    if found.previous.is_some()
+        || lattice == 0
+        || !probe(&plan, plan.start, bound, &mut budget, &search)?
+    {
+        return Ok(found);
+    }
+    let (mut low, mut high) = (0, lattice);
+    for _ in 0..64 {
+        if high - low <= 1 {
+            break;
+        }
+        let middle = low + (high - low) / 2;
+        if probe(
+            &plan,
+            plan.start + middle * step,
+            bound,
+            &mut budget,
+            &search,
+        )? {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    let previous = walk(
+        &plan,
+        plan.start + low * step,
+        after,
+        1,
+        &mut budget,
+        &search,
+    )?
+    .previous;
+    Ok(Found { previous, ..found })
+}
+
+fn walk(
+    plan: &Plan,
+    anchor: i64,
+    after: u64,
+    wanted: usize,
+    budget: &mut usize,
+    search: &Search,
+) -> Result<Found, Failure> {
+    let mut found = Found::default();
+    let mut emitted = 0;
+    let allowed = *budget;
+    for candidate in expansion(plan, anchor).take(allowed) {
+        *budget -= 1;
+        let Some(at) = instant(plan.zone, civil(candidate)?) else {
+            continue;
+        };
+        if plan.until.is_some_and(|last| at as i64 > last)
+            || plan.count.is_some_and(|n| emitted >= n)
+        {
+            return Ok(found);
+        }
+        emitted += 1;
+        if at > after {
+            found.upcoming.push(at);
+            if found.upcoming.len() >= wanted {
+                return Ok(found);
+            }
+        } else {
+            found.previous = Some(at);
+        }
+        if plan.count.is_some_and(|n| emitted >= n) {
+            return Ok(found);
+        }
+    }
+    Err(if *budget == 0 {
+        too_dense(search)
+    } else {
+        limit()
+    })
+}
+
+fn probe(
+    plan: &Plan,
+    anchor: i64,
+    bound: u64,
+    budget: &mut usize,
+    search: &Search,
+) -> Result<bool, Failure> {
+    let allowed = *budget;
+    for candidate in expansion(plan, anchor).take(allowed) {
+        *budget -= 1;
+        if let Some(at) = instant(plan.zone, civil(candidate)?) {
+            return Ok(at <= bound);
+        }
+    }
+    Err(if *budget == 0 {
+        too_dense(search)
+    } else {
+        limit()
+    })
+}
+
+fn plan(text: &str, start: &str, time_zone: &str, search: &Search) -> Result<Plan, Failure> {
     if text.is_empty() || text.len() > 1024 || !text.is_ascii() || start.len() != 19 {
         return Err(invalid(
             "Use an RRULE within 1024 ASCII bytes and local start YYYY-MM-DDTHH:MM:SS",
@@ -242,8 +424,8 @@ fn rrule(text: &str, start: &str, time_zone: &str, after: u64) -> Answer {
         * rule.by_hour.len().max(1)
         * rule.by_minute.len().max(1)
         * rule.by_second.len().max(1);
-    if period_candidates > 100_000 {
-        return Err(limit());
+    if period_candidates > search.period {
+        return Err(too_dense(search));
     }
     let zone = zone(time_zone)?;
     let start = NaiveDateTime::parse_from_str(start, "%Y-%m-%dT%H:%M:%S")
@@ -260,67 +442,25 @@ fn rrule(text: &str, start: &str, time_zone: &str, after: u64) -> Answer {
         .map(civil)
         .transpose()?
         .map(|t| t.and_utc().timestamp_millis());
-    let mut anchor = IcalRecurDateTime::from_seconds(start.and_utc().timestamp());
-    // Exact seek for unbounded rules whose only parts are FREQ/INTERVAL.
-    // Other rules keep DTSTART's expansion defaults and fail explicitly if
-    // the candidate budget is reached; never report a truncated rule as ended.
-    if count.is_none()
-        && seen
-            .iter()
-            .all(|key| matches!(*key, "FREQ" | "INTERVAL" | "UNTIL"))
-    {
-        let unit = match rule.freq {
-            IcalRecurFreq::Minutely => Some(60),
-            IcalRecurFreq::Hourly => Some(3600),
-            IcalRecurFreq::Daily => Some(86400),
-            IcalRecurFreq::Weekly => Some(604800),
-            _ => None,
-        };
-        if let Some(unit) = unit {
-            let step = unit * i64::from(rule.interval);
-            let seek_after = until
-                .and_then(|last| u64::try_from(last).ok())
-                .map_or(after, |last| after.min(last));
-            let delta = utc(seek_after)?
-                .with_timezone(&zone)
-                .naive_local()
-                .and_utc()
-                .timestamp()
-                - anchor.seconds();
-            let periods = (delta.div_euclid(step) - 2).max(0);
-            anchor = IcalRecurDateTime::from_seconds(anchor.seconds() + periods * step);
-        }
-    }
-    let mut emitted = 0;
-    let mut previous = None;
-    for candidate in IcalRecurExpand::new(rule, anchor).take(200_000) {
-        let Some(at) = instant(zone, civil(candidate)?) else {
-            continue;
-        };
-        if until.is_some_and(|last| at as i64 > last) || count.is_some_and(|n| emitted >= n) {
-            return Ok(Window {
-                previous,
-                next: None,
-            });
-        }
-        emitted += 1;
-        if at > after {
-            return Ok(Window {
-                previous,
-                next: Some(at),
-            });
-        }
-        previous = Some(at);
-        if count.is_some_and(|n| emitted >= n) {
-            return Ok(Window {
-                previous,
-                next: None,
-            });
-        }
-    }
-    // The iterator can give up on barren periods as well as reach year 9999.
-    // Neither is evidence that the requested finite recurrence was exhausted.
-    Err(limit())
+    let unit = match rule.freq {
+        IcalRecurFreq::Minutely => Some(60),
+        IcalRecurFreq::Hourly => Some(3600),
+        IcalRecurFreq::Daily => Some(86400),
+        IcalRecurFreq::Weekly => Some(604800),
+        _ => None,
+    };
+    let step = unit
+        .filter(|_| search.seek && count.is_none())
+        .map(|unit| unit * i64::from(rule.interval))
+        .filter(|step| *step > 0);
+    Ok(Plan {
+        rule,
+        start: start.and_utc().timestamp(),
+        zone,
+        count,
+        until,
+        step,
+    })
 }
 
 #[cfg(test)]
