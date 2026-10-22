@@ -1525,6 +1525,7 @@ impl State {
             crate::launch_profile::capabilities(&self.provider_versions);
         event["providers"] =
             crate::provider_availability::capabilities(&self.launchers, &self.provider_versions);
+        event["mcpPool"] = true.into();
         event["workflowPlans"] = true.into();
         event["reviews"] = true.into();
         event["files"] = true.into();
@@ -3319,6 +3320,9 @@ impl State {
             | Command::ListWorktrees => {
                 return Err(anyhow!("Worktrees require asynchronous dispatch."));
             }
+            Command::McpPoolStatus => {
+                self.respond(client_id, crate::mcp_pool::status(), request_id);
+            }
             Command::AttentionInbox { .. }
             | Command::AcknowledgeInbox { .. }
             | Command::Decisions { .. }
@@ -3702,6 +3706,7 @@ impl State {
                     session.kill()?;
                 }
                 self.metadata.finish_recovery(&session_id, true)?;
+                crate::mcp_pool::release_session(&session_id);
                 let mut removed = self.sessions.remove(&session_id);
                 self.repository.remove(&session_id);
                 self.repository_notify();
@@ -3861,6 +3866,7 @@ fn spawn_session(
         context.bind(&mut command);
         if identity.harness {
             context.configure_claude(&mut command, identity.native_grant)?;
+            crate::mcp_pool::attach_harness(&id, program, cwd, &context.path());
         }
     }
     let agent_context = if program == Program::Claude {

@@ -223,6 +223,7 @@ pub enum Command {
         discard: bool,
     },
     ListWorktrees,
+    McpPoolStatus,
     AttentionInbox {
         #[serde(default)]
         page: Option<u16>,

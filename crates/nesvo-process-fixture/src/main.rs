@@ -20,6 +20,7 @@ fn main() -> ExitCode {
         ["emit", bytes] => emit(bytes),
         ["echo", code] => echo(code, ""),
         ["echo", code, prefix] => echo(code, prefix),
+        ["lines", prefix] => lines(prefix),
         ["gate", release, program, rest @ ..] => gate(Path::new(release), program, rest),
         ["tree", address, role, descendants @ ..] => tree(address, role, descendants),
         _ => Err(format!("unsupported fixture arguments: {args:?}")),
@@ -52,6 +53,22 @@ fn echo(code: &str, prefix: &str) -> Result<ExitCode, String> {
     output.extend_from_slice(&input);
     write_stdout(&output)?;
     Ok(ExitCode::from(code))
+}
+
+fn lines(prefix: &str) -> Result<ExitCode, String> {
+    let prefix = decode_hex(prefix)?;
+    for line in std::io::stdin().lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        let mut output = match line.strip_prefix("env ") {
+            Some(name) => std::env::var(name)
+                .unwrap_or_else(|_| "-".into())
+                .into_bytes(),
+            None => [prefix.as_slice(), line.as_bytes()].concat(),
+        };
+        output.push(b'\n');
+        write_stdout(&output)?;
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn gate(release: &Path, program: &str, args: &[&str]) -> Result<ExitCode, String> {

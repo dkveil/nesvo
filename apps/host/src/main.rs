@@ -41,6 +41,7 @@ mod job_webhook_http;
 mod jobs;
 mod launch_profile;
 mod launchers;
+mod mcp_pool;
 mod migrations;
 mod notes;
 mod notifications;
@@ -447,6 +448,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         )
         .await,
     )?;
+    mcp_pool::configure(event_log.clone());
     if let Err(error) = projects::configure(&pairing_dir.join("metadata.sqlite3")) {
         eprintln!("Project registry is unavailable: {error}");
     }
@@ -580,6 +582,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     // Closed sessions may still be releasing ConPTY resources in background
     // workers. Keep the output dispatcher alive while they finish, without
     // holding the state lock that it needs to drain PTY output.
+    mcp_pool::shutdown().await;
     let mut cleanup_workers = {
         let mut state = state.lock().unwrap();
         state.shutdown()
