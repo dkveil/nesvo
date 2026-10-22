@@ -1218,3 +1218,24 @@ fn handle_paths_inside(directory: &Path, worktree: &Path) -> bool {
         .parent()
         .is_some_and(|parent| crate::handle_paths::same_path(parent, worktree))
 }
+
+#[tokio::test]
+async fn a_failed_registry_write_leaves_approvals_unchanged_in_memory() {
+    let scratch = scratch();
+    let store = store(&scratch);
+    let digest = "a".repeat(64);
+    store.approve("repository", &digest).await.unwrap();
+    let blocker = store.path.with_extension("json.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+    let other = "b".repeat(64);
+    assert!(store.approve("repository", &other).await.is_err());
+    assert!(!store.approved("repository", &other));
+    assert!(store.revoke("repository", &digest).await.is_err());
+    assert!(store.approved("repository", &digest));
+    std::fs::remove_dir(&blocker).unwrap();
+    assert!(store.revoke("repository", &digest).await.unwrap());
+    assert!(!store.approved("repository", &digest));
+    let reopened = Store::open(&scratch.0.join("host")).unwrap();
+    assert!(!reopened.approved("repository", &digest));
+    assert!(!reopened.approved("repository", &other));
+}

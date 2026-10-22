@@ -515,7 +515,7 @@ impl RunChecks {
     }
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Document {
     version: u32,
@@ -565,10 +565,12 @@ impl Store {
             .document
             .lock()
             .map_err(|_| anyhow!("Workflow template approvals are unavailable"))?;
-        let value = change(&mut document);
+        let mut next = document.clone();
+        let value = change(&mut next);
         let temporary = self.path.with_extension("json.tmp");
-        std::fs::write(&temporary, serde_json::to_vec_pretty(&*document)?)?;
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&next)?)?;
         std::fs::rename(&temporary, &self.path)?;
+        *document = next;
         Ok(value)
     }
 

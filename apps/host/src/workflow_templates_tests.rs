@@ -511,3 +511,24 @@ async fn workflow_templates_executor_start_configures_the_existing_executor() {
         started["tasks"][1]["id"]
     );
 }
+
+#[test]
+fn a_failed_approval_write_leaves_approvals_unchanged_in_memory() {
+    let scratch = scratch();
+    let store = store(&scratch);
+    let digest = "a".repeat(64);
+    store.approve("repository", &digest).unwrap();
+    let blocker = store.path.with_extension("json.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+    let other = "b".repeat(64);
+    assert!(store.approve("repository", &other).is_err());
+    assert!(!store.approved("repository", &other));
+    assert!(store.revoke("repository", &digest).is_err());
+    assert!(store.approved("repository", &digest));
+    std::fs::remove_dir(&blocker).unwrap();
+    assert!(store.revoke("repository", &digest).unwrap());
+    assert!(!store.approved("repository", &digest));
+    let reopened = Store::open(&scratch.0.join("host")).unwrap();
+    assert!(!reopened.approved("repository", &digest));
+    assert!(!reopened.approved("repository", &other));
+}

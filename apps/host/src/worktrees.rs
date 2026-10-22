@@ -10,10 +10,7 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -537,7 +534,7 @@ pub struct Record {
     pub discarded: bool,
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Document {
     version: u32,
@@ -548,8 +545,7 @@ struct Document {
 pub struct Store {
     path: PathBuf,
     document: Mutex<Document>,
-    revision: AtomicU64,
-    written: Arc<Mutex<u64>>,
+    updating: tokio::sync::Mutex<()>,
     active: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 
@@ -616,39 +612,23 @@ impl Store {
         Ok(Self {
             path,
             document: Mutex::new(document),
-            revision: AtomicU64::new(0),
-            written: Arc::new(Mutex::new(0)),
+            updating: tokio::sync::Mutex::new(()),
             active: Mutex::new(HashMap::new()),
         })
     }
     async fn update<T>(&self, change: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
-        let (value, bytes, revision) = {
-            let mut document = self
-                .document
-                .lock()
-                .map_err(|_| anyhow!("Worktree registry is unavailable"))?;
-            let value = change(&mut document)?;
-            let bytes = serde_json::to_vec_pretty(&*document)?;
-            (
-                value,
-                bytes,
-                self.revision.fetch_add(1, Ordering::SeqCst) + 1,
-            )
-        };
+        let _updating = self.updating.lock().await;
+        let mut next = self.read(Document::clone)?;
+        let value = change(&mut next)?;
+        let bytes = serde_json::to_vec_pretty(&next)?;
         let path = self.path.clone();
-        let written = self.written.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut last = written
-                .lock()
-                .map_err(|_| anyhow!("Worktree registry is unavailable"))?;
-            if *last < revision {
-                replace_private(&path, &bytes)?;
-                *last = revision;
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .map_err(|_| anyhow!("Worktree registry write was interrupted"))??;
+        tokio::task::spawn_blocking(move || replace_private(&path, &bytes))
+            .await
+            .map_err(|_| anyhow!("Worktree registry write was interrupted"))??;
+        *self
+            .document
+            .lock()
+            .map_err(|_| anyhow!("Worktree registry is unavailable"))? = next;
         Ok(value)
     }
     fn read<T>(&self, view: impl FnOnce(&Document) -> T) -> Result<T> {
