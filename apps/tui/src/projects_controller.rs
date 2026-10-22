@@ -221,6 +221,14 @@ fn message(event: &Value) -> String {
 }
 
 fn answer_defaults(app: &mut App, defaults: Defaults, intent: Intent) -> Vec<Value> {
+    let current = app.projects.open
+        && app
+            .projects
+            .selected_project()
+            .is_some_and(|project| project.root == defaults.root);
+    if !current {
+        return Vec::new();
+    }
     match intent {
         Intent::Launch => {
             launch(app, defaults.launch_folder);
@@ -237,6 +245,17 @@ fn answer_defaults(app: &mut App, defaults: Defaults, intent: Intent) -> Vec<Val
             apply_layout(app, &project, defaults.default_layout.as_deref(), width)
         }
     }
+}
+
+pub fn expire(app: &mut App) -> bool {
+    let expired = app.projects.expire();
+    if expired
+        .iter()
+        .any(|request| !matches!(request, Request::List))
+    {
+        app.notice = "The host did not answer the project request; try again.".into();
+    }
+    !expired.is_empty()
 }
 
 pub fn host_event(app: &mut App, event: &Value) -> Option<Vec<Value>> {
@@ -513,5 +532,83 @@ pub(crate) mod tests {
             ]}))
             .unwrap();
         assert!(broken.sessions[0].repository_context.is_none());
+    }
+
+    #[test]
+    fn projects_disconnect_closes_the_view_and_forgets_host_state() {
+        let mut app = loaded();
+        press(&mut app, KeyCode::Down);
+        let pending = press(&mut app, KeyCode::Enter);
+        app.projects.launch_folder = Some("C:/dev/nesvo".into());
+        app.disconnect("gone".into());
+        assert!(!app.projects.open);
+        assert_eq!(app.projects.load, Load::Idle);
+        assert!(app.projects.items.is_empty() && app.projects.defaults.is_empty());
+        assert!(app.projects.launch_folder.is_none() && !app.projects.listing());
+        reply(&mut app, &pending[0], defaults("C:/dev/nesvo", None));
+        assert!(app.session_kind.is_none());
+        assert_eq!(
+            app.top_surface(),
+            crate::model::Surface::Workspace,
+            "keys no longer route into a hidden view"
+        );
+    }
+
+    #[test]
+    fn projects_requests_expire_and_a_lost_list_stops_loading() {
+        let mut app = app();
+        let mut outcome = Outcome::default();
+        open(&mut app, &mut outcome);
+        assert_eq!(app.projects.load, Load::Loading);
+        app.projects
+            .age_requests(std::time::Duration::from_secs(21));
+        assert!(expire(&mut app));
+        assert!(
+            matches!(&app.projects.load, Load::Failed(message) if message.contains("did not answer"))
+        );
+        assert!(!app.projects.listing());
+        assert!(!expire(&mut app));
+    }
+
+    #[test]
+    fn projects_pending_cap_never_evicts_the_list_request() {
+        let mut app = app();
+        let mut outcome = Outcome::default();
+        open(&mut app, &mut outcome);
+        let list = outcome.commands[0].clone();
+        for index in 0..12 {
+            app.projects.track(
+                &format!("pin-{index}"),
+                Request::Pin {
+                    root: format!("C:/dev/{index}"),
+                },
+            );
+        }
+        assert!(app.projects.listing());
+        reply(&mut app, &list, listing());
+        assert_eq!(app.projects.load, Load::Ready);
+    }
+
+    #[test]
+    fn projects_late_defaults_after_escape_or_another_selection_do_nothing() {
+        let mut app = loaded();
+        press(&mut app, KeyCode::Down);
+        let launch = press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.projects.open);
+        reply(&mut app, &launch[0], defaults("C:/dev/nesvo", None));
+        assert!(app.session_kind.is_none() && app.projects.launch_folder.is_none());
+        assert!(app.projects.defaults.contains_key("C:/dev/nesvo"));
+        let mut moved = loaded();
+        press(&mut moved, KeyCode::Down);
+        let layout = press(&mut moved, KeyCode::Char('w'));
+        press(&mut moved, KeyCode::Down);
+        reply(
+            &mut moved,
+            &layout[0],
+            defaults("C:/dev/nesvo", Some("Quad")),
+        );
+        assert!(moved.projects.detail.is_none());
+        assert!(moved.projects.open);
     }
 }

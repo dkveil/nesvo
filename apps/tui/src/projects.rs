@@ -1,11 +1,15 @@
 use crate::model::Session;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 pub const PREFIX: char = '%';
 const PENDING_LIMIT: usize = 8;
 const DEFAULTS_LIMIT: usize = 64;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -110,26 +114,65 @@ pub struct Projects {
     pub detail: Option<String>,
     pub filter: Option<Filter>,
     pub launch_folder: Option<String>,
-    pending: Vec<(String, Request)>,
+    pending: Vec<(String, Request, Instant)>,
 }
 
 impl Projects {
     pub fn track(&mut self, request_id: &str, request: Request) {
         if self.pending.len() >= PENDING_LIMIT {
-            self.pending.remove(0);
+            let evicted = self
+                .pending
+                .iter()
+                .position(|(_, request, _)| *request != Request::List)
+                .unwrap_or(0);
+            self.pending.remove(evicted);
         }
-        self.pending.push((request_id.to_owned(), request));
+        self.pending
+            .push((request_id.to_owned(), request, Instant::now()));
     }
 
     pub fn take(&mut self, request_id: &str) -> Option<Request> {
-        let index = self.pending.iter().position(|(id, _)| id == request_id)?;
+        let index = self
+            .pending
+            .iter()
+            .position(|(id, _, _)| id == request_id)?;
         Some(self.pending.remove(index).1)
     }
 
     pub fn listing(&self) -> bool {
         self.pending
             .iter()
-            .any(|(_, request)| *request == Request::List)
+            .any(|(_, request, _)| *request == Request::List)
+    }
+
+    pub fn expire(&mut self) -> Vec<Request> {
+        let (expired, kept) = std::mem::take(&mut self.pending)
+            .into_iter()
+            .partition(|(_, _, sent)| sent.elapsed() > REQUEST_TIMEOUT);
+        self.pending = kept;
+        let expired: Vec<Request> = expired.into_iter().map(|(_, request, _)| request).collect();
+        if expired.contains(&Request::List) && !self.listing() && self.load == Load::Loading {
+            self.load = Load::Failed("The host did not answer the project list; r retries.".into());
+        }
+        expired
+    }
+
+    #[cfg(test)]
+    pub(crate) fn age_requests(&mut self, by: Duration) {
+        for (_, _, sent) in &mut self.pending {
+            *sent = sent.checked_sub(by).unwrap_or(*sent);
+        }
+    }
+
+    pub fn disconnected(&mut self) {
+        self.open = false;
+        self.detail = None;
+        self.pending.clear();
+        self.load = Load::Idle;
+        self.items.clear();
+        self.selected = 0;
+        self.defaults.clear();
+        self.launch_folder = None;
     }
 
     pub fn accept_list(&mut self, value: &Value, now_ms: u64) -> bool {

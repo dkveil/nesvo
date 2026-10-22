@@ -678,6 +678,7 @@ impl App {
             | crate::overview::tick(self, now)
             | crate::worktree_actions::expire(self)
             | crate::notes_controller::expire(self)
+            | crate::projects_controller::expire(self)
     }
 
     pub fn top_surface(&self) -> Surface {
@@ -1649,6 +1650,7 @@ impl App {
         self.reviews.picking = None;
         self.reviews.focused = false;
         self.notes.disconnected();
+        self.projects.disconnected();
         crate::worktree_actions::disconnect(self);
         self.notice = if self.capabilities.is_none() {
             "Host disconnected during setup; update nesvo-host and reconnect.".into()
