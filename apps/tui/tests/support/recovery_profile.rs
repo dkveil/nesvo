@@ -43,17 +43,7 @@ async fn stopped(owner: &Client, id: &str) -> Result<()> {
         json!({"key":format!("stop-{id}"),"sessionId":id}),
     )
     .await?;
-    timeout(Duration::from_secs(6), async {
-        loop {
-            if api(owner, "nesvo_get_session", json!({"sessionId":id})).await?["session"]["running"]
-                == false
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(30)).await;
-        }
-    })
-    .await??;
+    waits::session(owner, id, waits::Session::Stopped).await?;
     Ok(())
 }
 async fn delivered(client: &Client, run: &str, task: &Value, key: &str) -> Result<Value> {
@@ -64,30 +54,31 @@ async fn delivered(client: &Client, run: &str, task: &Value, key: &str) -> Resul
         json!({"key":key,"taskId":task}),
     )
     .await?;
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let history = api(
-                client,
-                "nesvo_get_task_attempts",
-                json!({"runId":run,"taskId":task}),
-            )
-            .await?;
-            let delivery = &history["attempts"][0]["delivery"];
-            if delivery["phase"] == "sent" && delivery["native"]["phase"] == "settled" {
-                return Ok::<_, anyhow::Error>(history);
-            }
-            ensure!(
-                !matches!(
-                    delivery["phase"].as_str(),
-                    Some("failed" | "unknown" | "paused")
-                ),
-                "Unsettled profile delivery: {delivery}"
-            );
-            tokio::time::sleep(Duration::from_millis(40)).await;
+    waits::until(async || {
+        let history = api(
+            client,
+            "nesvo_get_task_attempts",
+            json!({"runId":run,"taskId":task}),
+        )
+        .await?;
+        let delivery = &history["attempts"][0]["delivery"];
+        if delivery["phase"] == "sent" && delivery["native"]["phase"] == "settled" {
+            return Ok(Some(history));
         }
+        ensure!(
+            !matches!(
+                delivery["phase"].as_str(),
+                Some("failed" | "unknown" | "paused" | "expired" | "canceled")
+            ) && !matches!(
+                delivery["native"]["phase"].as_str(),
+                Some("failed" | "unknown" | "interrupted")
+            ),
+            "Unsettled profile delivery: {delivery}"
+        );
+        Ok(None)
     })
     .await
-    .context("Profile task native settlement")?
+    .context("Profile task native settlement")
 }
 fn result(marker: &str) -> Value {
     json!({"outcome":"succeeded","summary":marker,"files":[],"artifacts":[],"checks":[],
@@ -107,15 +98,7 @@ async fn recovery_profile_retains_questions_and_results_then_launches_one_review
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
         let p = profile()?;
-        timeout(Duration::from_secs(8), async {
-            loop {
-                let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-                if doctor["providerVersions"].as_array().is_some_and(|rows|rows.iter().any(|r|r["program"]=="claude"&&r["status"]=="ready")) {
-                    return Ok::<_,anyhow::Error>(());
-                }
-                tokio::time::sleep(Duration::from_millis(40)).await;
-            }
-        }).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let budget=api(&owner,"nesvo_get_host_budget",json!({})).await?;
         api(&owner,"nesvo_set_host_budget",json!({"key":"profile-host-budget","expectedRevision":budget["budget"]["revision"],"limits":p["hostLimits"]})).await?;

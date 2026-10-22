@@ -7,20 +7,10 @@ const PRODUCTION_CACHE_TTL: Duration = Duration::from_secs(30);
 const NATIVE_BOUNDARY_AFTER_OBSERVED_RECEIPT: Duration = Duration::from_secs(31);
 
 pub(super) async fn provider_ready(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
-            }) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Controlled fixture version before repository metadata acceptance")?
+    waits::provider(fixture, "claude")
+        .await
+        .context("Controlled fixture version before repository metadata acceptance")?;
+    Ok(())
 }
 
 fn write_unborn_repository_without_running_git(repository: &Path) -> Result<()> {
@@ -109,19 +99,22 @@ fn assert_newer_revision_since_wall_clock_may_roll_back(refreshed: &Value, first
 }
 
 async fn ready_context(owner: &Owner, id: &str, repository: &str, branch: &str) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let listed = list(owner).await?;
-            let context = &session(&listed, id)?["repositoryContext"];
-            if context["state"] == "ready" && context["branch"] == branch {
-                assert_ready(context, repository, branch);
-                return Ok::<_, anyhow::Error>(listed);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    waits::until(async || {
+        let listed = list(owner).await?;
+        let row = session(&listed, id)?;
+        let context = &row["repositoryContext"];
+        if context["state"] == "ready" && context["branch"] == branch {
+            assert_ready(context, repository, branch);
+            return Ok(Some(listed));
         }
+        ensure!(
+            row["running"] != false,
+            "Session {id} exited before repository metadata {branch}: {context}"
+        );
+        Ok(None)
     })
     .await
-    .context("Bounded native repository metadata refresh after explicit List")?
+    .context("Native repository metadata refresh after explicit List")
 }
 
 #[tokio::test]
@@ -217,10 +210,11 @@ async fn launch_repository_context_is_native_shared_and_refreshes_after_its_cool
     })).catch_unwind().await;
 
     let owner_cleanup = match owner.take() {
-        Some(owner) => match timeout(Duration::from_secs(2), owner.cancel()).await {
-            Ok(result) => result.map(|_| ()).context("Owned metadata SDK cleanup"),
-            Err(_) => Err(anyhow::anyhow!("Owned metadata SDK cleanup deadline")),
-        },
+        Some(owner) => owner
+            .cancel()
+            .await
+            .map(|_| ())
+            .context("Owned metadata SDK cleanup"),
         None => Ok(()),
     };
     owner_cleanup_uncertain |= owner_cleanup.is_err();

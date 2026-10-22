@@ -6,24 +6,27 @@ async fn control_state(
     control: &str,
     state: &str,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(6), async {
-        loop {
-            let view = data(
-                call(
-                    owner,
-                    "nesvo_get_run_control",
-                    json!({"runId":run,"controlId":control}),
-                )
-                .await?,
-            )?;
-            if view["data"]["control"]["state"] == state {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    waits::until(async || {
+        let view = data(
+            call(
+                owner,
+                "nesvo_get_run_control",
+                json!({"runId":run,"controlId":control}),
+            )
+            .await?,
+        )?;
+        let current = &view["data"]["control"]["state"];
+        if current == state {
+            return Ok(Some(view));
         }
+        ensure!(
+            current != "completed" && (state != "blocked" || current != "unconfirmed"),
+            "Native control settled before reaching {state}: {view}"
+        );
+        Ok(None)
     })
     .await
-    .context("Native control did not reach its expected observed state")?
+    .context("Native control did not reach its expected observed state")
 }
 #[tokio::test]
 #[ignore = "requires native binaries and Node; run stop/cancel with real native effects, no models"]
@@ -31,11 +34,7 @@ async fn controls_only_bound_workers_preserves_human_drafts_and_never_replays_si
 {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
-        timeout(Duration::from_secs(5),async {loop {
-            let report=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-            if report["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|version|version["program"]=="claude"&&version["status"]=="ready")) {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"control-root","spec":{"name":"Control coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("control root")?;
@@ -71,12 +70,8 @@ async fn controls_only_bound_workers_preserves_human_drafts_and_never_replays_si
         assert_eq!(receipt["data"]["receipt"]["result"]["effectStarted"],false);
         let replay=data(call(&owner,"nesvo_stop_run",json!({"key":"native-run-stop","runId":run,"expectedRevision":original_revision.parse::<u64>()?})).await?)?;
         assert_eq!(replay["data"],accepted["data"]);
-        drop(human.stdin.take());timeout(Duration::from_secs(5),human.wait()).await??;
-        timeout(Duration::from_secs(5),async {loop {
-            let session=data(call(&owner,"nesvo_get_session",json!({"sessionId":children[0]})).await?)?;
-            if session["data"]["session"]["controllerId"].is_null() {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+        drop(human.stdin.take());human.wait().await?;
+        waits::session(&owner,&children[0],waits::Session::Released).await?;
         let replay=data(call(&owner,"nesvo_stop_run",json!({"key":"native-run-stop","runId":run,"expectedRevision":original_revision.parse::<u64>()?})).await?)?;
         assert_eq!(replay["data"],accepted["data"],"Replay after human release must not signal again");
         let current=data(call(&owner,"nesvo_get_run",json!({"runId":run})).await?)?;

@@ -3,6 +3,27 @@ use super::*;
 async fn run_view(client: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
     Ok(data(call(client, "nesvo_get_run", json!({"runId":run})).await?)?["data"].clone())
 }
+async fn task_until(
+    client: &RunningService<RoleClient, ()>,
+    run: &str,
+    index: usize,
+    wanted: impl Fn(&Value) -> bool,
+) -> Result<Value> {
+    waits::until(async || {
+        let view = run_view(client, run).await?;
+        let task = &view["tasks"][index];
+        if wanted(task) {
+            return Ok(Some(view));
+        }
+        ensure!(
+            !waits::is_settled_run(&view["run"]["state"])
+                && !waits::is_settled_attempt(&task["currentAttempt"]["state"]),
+            "Executor task {index} settled before the expected state: {view}"
+        );
+        Ok(None)
+    })
+    .await
+}
 
 #[tokio::test]
 #[ignore = "requires native binaries, Node and Git; bounded automatic retry and uncertain-effect admission"]
@@ -12,7 +33,7 @@ async fn executor_bounds_known_failure_retries_and_never_retries_unknown_worktre
     let outcome=std::panic::AssertUnwindSafe(async{
         let mut git=Command::new("git");git.args(["-C"]).arg(&fixture.directory).args(["rev-parse","--show-toplevel"]);#[cfg(windows)]git.creation_flags(0x08000000);
         ensure!(!git.output().await?.status.success(),"Owned temporary fixture must be outside Git; refusing worktree effects against an inherited repository");
-        timeout(Duration::from_secs(5),async{loop{let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;if doctor["providerVersions"].as_array().is_some_and(|rows|rows.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::provider(&fixture,"claude").await?;
         let uncertain=job_retries::repository_whose_worktree_checkout_fails(&fixture).await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"retry-executor-root","spec":{"name":"Retry coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
@@ -27,7 +48,8 @@ async fn executor_bounds_known_failure_retries_and_never_retries_unknown_worktre
             data(call(&coordinator,"nesvo_activate_run",json!({"key":format!("retry-active-{unknown}"),"runId":run,"expectedRevision":3})).await?)?;
             let profiles:Vec<Value>=plan["data"]["tasks"].as_array().unwrap().iter().enumerate().map(|(i,t)|json!({"taskId":t["id"],"profile":{"program":"claude","workspace":if unknown && i==0 {"worktree"}else{"shared"},"cwd":if unknown && i==0 {uncertain.clone()}else if unknown {fixture.directory.clone()}else{fixture.directory.join("does-not-exist")},"harness":true}})).collect();
             data(call(&coordinator,"nesvo_start_run_executor",json!({"key":format!("retry-start-{unknown}"),"runId":run,"expectedRevision":4,"spec":{"tasks":profiles,"retryFailed":true,"retryDelayMs":1000}})).await?)?;
-            let observed=timeout(Duration::from_secs(10),async{loop{let view=run_view(&owner,run).await?;let expected=if unknown {"launchUnknown"}else{"launchFailed"};let count=if unknown {1}else{2};if view["tasks"][0]["state"]==expected && view["tasks"][0]["attempts"]==count {return Ok::<_,anyhow::Error>(view);}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+            let expected=if unknown {"launchUnknown"}else{"launchFailed"};let count=if unknown {1}else{2};
+            let observed=waits::until(async||{let view=run_view(&owner,run).await?;let task=&view["tasks"][0];if task["state"]==expected && task["attempts"]==count {return Ok(Some(view));}ensure!(task["attempts"].as_u64().is_some_and(|attempts|attempts<=count) && !waits::is_settled_run(&view["run"]["state"]),"Executor left its retry bound before {expected}: {view}");Ok(None)}).await?;
             assert_eq!(observed["run"]["budget"]["activeAttempts"],if unknown {1}else{0});
             holds_throughout(Duration::from_millis(1100), async || {
                 let view=run_view(&owner,run).await?;
@@ -64,7 +86,7 @@ async fn executor_cannot_send_after_quick_human_takeover_or_rearm_a_paused_instr
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async{
-        timeout(Duration::from_secs(5),async{loop{let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;if doctor["providerVersions"].as_array().is_some_and(|rows|rows.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"human-executor-root","spec":{"name":"Human priority coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;session_ready(&owner,root_id).await?;
@@ -77,10 +99,11 @@ async fn executor_cannot_send_after_quick_human_takeover_or_rearm_a_paused_instr
         let task=plan["data"]["tasks"][0]["id"].clone();
         data(call(&coordinator,"nesvo_activate_run",json!({"key":"human-engine-active","runId":run,"expectedRevision":2})).await?)?;
         data(call(&coordinator,"nesvo_start_run_executor",json!({"key":"human-engine-start","runId":run,"expectedRevision":3,"spec":{"tasks":[{"taskId":task,"profile":{"program":"claude","workspace":"shared","cwd":delayed,"harness":true}}]}})).await?)?;
-        let child=timeout(Duration::from_secs(10),async{loop{let current=run_view(&owner,run).await?;if current["tasks"][0]["state"]=="assigned" {return Ok::<_,anyhow::Error>(current["tasks"][0]["currentAttempt"]["sessionId"].as_str().context("owned worker")?.to_owned());}tokio::time::sleep(Duration::from_millis(25)).await;}}).await??;
+        let assigned=task_until(&owner,run,0,|task|task["state"]=="assigned").await?;
+        let child=assigned["tasks"][0]["currentAttempt"]["sessionId"].as_str().context("owned worker")?.to_owned();
         let mut human=human_control(&fixture.pairing(),&child).await?;
-        drop(human.stdin.take());ensure!(timeout(Duration::from_secs(8),human.wait()).await??.success(),"Human release helper");
-        let paused=timeout(Duration::from_secs(8),async{loop{let view=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;if view["data"]["attempts"][0]["delivery"]["phase"]=="paused" {return Ok::<_,anyhow::Error>(view);}tokio::time::sleep(Duration::from_millis(25)).await;}}).await??;
+        drop(human.stdin.take());ensure!(human.wait().await?.success(),"Human release helper");
+        let paused=waits::delivery(&owner,run,&task,0,"paused").await?;
         assert!(paused["data"]["attempts"][0]["delivery"]["receiptId"].is_null());
         session_ready(&owner,&child).await?;
         mutate(&owner,run,"nesvo_disable_run_executor",json!({"key":"disable-human-engine","runId":run})).await?;
@@ -114,17 +137,9 @@ async fn reported(
     run: &str,
     index: usize,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(12), async {
-        loop {
-            let view = run_view(client, run).await?;
-            if view["tasks"][index]["state"] == "reported" {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("Automatic worker report")?
+    task_until(client, run, index, |task| task["state"] == "reported")
+        .await
+        .context("Automatic worker report")
 }
 async fn mutate(
     client: &RunningService<RoleClient, ()>,
@@ -132,24 +147,20 @@ async fn mutate(
     name: &'static str,
     mut args: Value,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            args["expectedRevision"] = run_view(client, run).await?["run"]["revision"].clone();
-            let reply = call(client, name, args.clone()).await?;
-            if reply.is_error != Some(true) {
-                return Ok::<_, anyhow::Error>(data(reply)?["data"].clone());
-            }
-            let error = reply
-                .structured_content
-                .context("executor mutation refusal")?;
-            ensure!(
-                error["error"]["code"] == "revision_conflict",
-                "Unexpected executor mutation failure: {error}"
-            );
+    loop {
+        args["expectedRevision"] = run_view(client, run).await?["run"]["revision"].clone();
+        let reply = call(client, name, args.clone()).await?;
+        if reply.is_error != Some(true) {
+            return Ok(data(reply)?["data"].clone());
         }
-    })
-    .await
-    .context("Executor revision reconciliation")?
+        let error = reply
+            .structured_content
+            .context("executor mutation refusal")?;
+        ensure!(
+            error["error"]["code"] == "revision_conflict",
+            "Unexpected executor mutation {name} failure: {error}"
+        );
+    }
 }
 #[tokio::test]
 #[ignore = "requires native binaries and Node; automatic DAG scheduling through real PTYs without model calls"]
@@ -157,7 +168,7 @@ async fn executor_launches_only_ready_tasks_and_waits_for_validation_without_tou
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async{
-        timeout(Duration::from_secs(5),async{loop{let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;if doctor["providerVersions"].as_array().is_some_and(|rows|rows.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"executor-root","spec":{"name":"Executor coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("executor root")?;session_ready(&owner,root_id).await?;
@@ -178,12 +189,14 @@ async fn executor_launches_only_ready_tasks_and_waits_for_validation_without_tou
         let spec_path=fixture.directory.join("executor profiles łódź.json");std::fs::write(&spec_path,serde_json::to_vec(&spec)?)?;
         let replay=inbox::scoped_cli(&context,&["run","executor","start",run,"--key","executor-start","--revision","5","--file",spec_path.to_str().context("executor spec path")?,"--json"]).await?;
         assert_eq!(replay["data"],accepted["data"]);
-        let question=timeout(Duration::from_secs(12),async{loop {
+        let question=waits::until(async||{
             let path=fixture.directory.join("callers");
             let file=std::fs::read_dir(path)?.filter_map(|e|e.ok()).find(|e|e.file_name().to_string_lossy().ends_with(".question.json"));
-            if let Some(file)=file {return Ok::<_,anyhow::Error>(serde_json::from_slice::<Value>(&std::fs::read(file.path())?)?);}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+            if let Some(file)=file {return Ok(Some(serde_json::from_slice::<Value>(&std::fs::read(file.path())?)?));}
+            let view=run_view(&owner,run).await?;
+            ensure!(!waits::is_settled_run(&view["run"]["state"]) && !waits::is_settled_attempt(&view["tasks"][0]["currentAttempt"]["state"]),"Implementer settled before asking its question: {view}");
+            Ok(None)
+        }).await?;
         let waiting=run_view(&coordinator,run).await?;assert_eq!(waiting["tasks"][0]["state"],"assigned");assert_eq!(waiting["tasks"][1]["state"],"planned");
         let denied=call(&coordinator,"nesvo_answer_decision",json!({"key":"coordinator-cannot-answer-owner","runId":run,"decisionId":question["data"]["decision"]["id"],"expectedRevision":question["data"]["decision"]["revision"],"answer":"unauthorized"})).await?;
         assert_eq!(denied.structured_content.context("owner decision gate")?["error"]["code"],"forbidden");
@@ -219,7 +232,7 @@ async fn executor_launches_only_ready_tasks_and_waits_for_validation_without_tou
         }
         let canceled=mutate(&owner,run,"nesvo_cancel_run",json!({"key":"cancel-executed-run","runId":run})).await?;
         let control=canceled["control"]["id"].as_str().context("executor cancellation")?;
-        timeout(Duration::from_secs(8),async{loop{let view=data(call(&owner,"nesvo_get_run_control",json!({"runId":run,"controlId":control})).await?)?;if view["data"]["control"]["state"]=="completed"{return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::until(async||{let view=data(call(&owner,"nesvo_get_run_control",json!({"runId":run,"controlId":control})).await?)?;let state=&view["data"]["control"]["state"];if state=="completed"{return Ok(Some(()));}ensure!(state!="blocked","Executor cancellation blocked: {view}");Ok(None)}).await?;
         let executor=data(call(&owner,"nesvo_get_run_executor",json!({"runId":run})).await?)?;
         assert_eq!(executor["data"]["executor"]["spec"]["retryFailed"],false);
         let root=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;assert_eq!(root["data"]["session"]["running"],true);

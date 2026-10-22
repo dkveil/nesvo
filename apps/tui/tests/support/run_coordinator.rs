@@ -2,24 +2,10 @@ use super::*;
 use run_checkpoints::{mutate, schema, setup, view};
 
 async fn provider_probe_completed(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"]
-                .as_array()
-                .is_some_and(|versions| {
-                    versions
-                        .iter()
-                        .any(|v| v["program"] == "claude" && v["status"] == "ready")
-                })
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Replacement provider readiness after host restart")?
+    waits::provider(fixture, "claude")
+        .await
+        .context("Replacement provider readiness after host restart")?;
+    Ok(())
 }
 async fn replacement(
     fixture: &Fixture,
@@ -59,16 +45,7 @@ async fn stop(owner: &RunningService<RoleClient, ()>, id: &str) -> Result<()> {
         )
         .await?,
     )?;
-    timeout(Duration::from_secs(6), async {
-        loop {
-            let current = data(call(owner, "nesvo_get_session", json!({"sessionId":id})).await?)?;
-            if current["data"]["session"]["running"] == false {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(30)).await;
-        }
-    })
-    .await??;
+    waits::session(owner, id, waits::Session::Stopped).await?;
     Ok(())
 }
 async fn refusal(client: &RunningService<RoleClient, ()>, args: Value, code: &str) -> Result<()> {
@@ -152,7 +129,7 @@ async fn owner_rebind_recovers_metadata_but_preserves_target_draft_and_old_worke
         let forbidden_send=call(&owner,"nesvo_send_prompt",json!({"key":"preserved-human-draft","sessionId":new,"prompt":"MUST_NOT_REPLACE_DRAFT"})).await?;
         assert_eq!(forbidden_send.is_error,Some(true));
         schema(vec![bound,replay,recovered,inbox]).await?;
-        drop(human.stdin.take());ensure!(timeout(Duration::from_secs(5),human.wait()).await??.success(),"Owned human controller did not exit");
+        drop(human.stdin.take());ensure!(human.wait().await?.success(),"Owned human controller did not exit");
         foreign_client.cancel().await?;new_client.cancel().await?;old_client.cancel().await?;owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
     }).catch_unwind().await;
@@ -242,14 +219,13 @@ async fn coordinator_replacement_fences_partial_owner_input_without_clearing_or_
         let (sent,recovered)=tokio::join!(sender,recover);recovered?;
         let sent=sent?.structured_content.context("original fenced send receipt")?;
         let receipt=sent["data"]["receipt"]["id"].as_str().or_else(||sent["error"]["receipt"]["id"].as_str()).context("original input ID")?;
-        let observed=timeout(Duration::from_secs(8),async {
-            loop {
-                let state=data(call(&owner,"nesvo_get_operation",json!({"id":receipt})).await?)?;
-                if state["data"]["receipt"]["phase"]=="unknown" { return Ok::<_,anyhow::Error>(state); }
-                ensure!(state["data"]["receipt"]["phase"]!="settled","Old input was unexpectedly submitted");
-                tokio::time::sleep(Duration::from_millis(40)).await;
-            }
-        }).await??;
+        let observed=waits::until(async || {
+            let state=data(call(&owner,"nesvo_get_operation",json!({"id":receipt})).await?)?;
+            let phase=&state["data"]["receipt"]["phase"];
+            if phase=="unknown" { return Ok(Some(state)); }
+            ensure!(!matches!(phase.as_str(),Some("settled"|"failed"|"interrupted")),"Old input settled instead of staying uncertain: {state}");
+            Ok(None)
+        }).await?;
         assert_eq!(observed["data"]["receipt"]["result"]["code"],"coordinator_changed");
         assert_eq!(observed["data"]["receipt"]["result"]["effectStarted"],true);
         let replay=call(&owner,"nesvo_send_prompt",json!({"key":"owner-paste-before-rebind","sessionId":child,"prompt":"MUST_REMAIN_UNSUBMITTED"})).await?.structured_content.context("retained unknown intent")?;

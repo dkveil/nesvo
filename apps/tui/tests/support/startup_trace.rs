@@ -377,17 +377,19 @@ fn flood_and_record_bytes_are_bounded_and_never_hide_truncation() {
 }
 
 async fn completed_trace(fixture: &Fixture) -> Result<Value> {
-    timeout(Duration::from_secs(2), async {
-        loop {
-            let snapshot = view(&fixture.startup_trace);
-            if snapshot["complete"] == true {
-                return Ok::<_, anyhow::Error>(snapshot);
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    waits::until(async || {
+        let snapshot = view(&fixture.startup_trace);
+        if snapshot["complete"] == true {
+            return Ok(Some(snapshot));
         }
+        ensure!(
+            snapshot["truncated"] == false && snapshot["rejectedRecords"] == 0,
+            "Startup trace can no longer complete: {snapshot}"
+        );
+        Ok(None)
     })
     .await
-    .context("Startup trace did not finish after the original listener handshake")?
+    .context("Startup trace did not finish after the original listener handshake")
 }
 
 fn assert_startup(snapshot: &Value) {

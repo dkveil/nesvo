@@ -30,24 +30,9 @@ async fn create(fixture: &Fixture, owner: &Owner) -> Result<(Value, String)> {
     for name in ["nesvo_set_quota_wake", "nesvo_get_quota_wake"] {
         assert!(tools.iter().any(|tool| tool.name == name));
     }
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"]
-                .as_array()
-                .is_some_and(|versions| {
-                    versions
-                        .iter()
-                        .any(|row| row["program"] == "codex" && row["status"] == "ready")
-                })
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Controlled Codex version readiness")??;
+    waits::provider(fixture, "codex")
+        .await
+        .context("Controlled Codex version readiness")?;
     let created = data(
         call(
             owner,
@@ -72,7 +57,7 @@ async fn near_reset_started_when_refresh_is_admitted(
     fixture: &Fixture,
     owner: &Owner,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(9), async {
+    async {
         loop {
             let mut limited = snapshot();
             limited["rateLimits"]["primary"]["usedPercent"] = json!(95);
@@ -107,9 +92,9 @@ async fn near_reset_started_when_refresh_is_admitted(
                 _ => anyhow::bail!("Unexpected controlled context refresh: {accepted}"),
             }
         }
-    })
+    }
     .await
-    .context("Bounded near-reset reader observation")?
+    .context("Near-reset reader observation")
 }
 
 async fn blocked_prompt(owner: &Owner, session: &str) -> Result<(Value, String)> {
@@ -125,24 +110,30 @@ async fn blocked_prompt(owner: &Owner, session: &str) -> Result<(Value, String)>
         .as_str()
         .context("Original correlated send")?
         .to_owned();
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let session_view =
-                data(call(owner, "nesvo_get_session", json!({"sessionId":session})).await?)?;
-            let receipt = operation(owner, &id).await?;
-            if session_view["data"]["session"]["rateLimited"] == true
-                && session_view["data"]["session"]["status"]["state"] == "blocked"
-                && matches!(receipt["phase"].as_str(), Some("received" | "started"))
-            {
-                assert_eq!(receipt["result"]["providerPromptObserved"], true);
-                assert_eq!(receipt["result"]["taskResult"], Value::Null);
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
+    waits::until(async || {
+        let session_view =
+            data(call(owner, "nesvo_get_session", json!({"sessionId":session})).await?)?;
+        let receipt = operation(owner, &id).await?;
+        if session_view["data"]["session"]["rateLimited"] == true
+            && session_view["data"]["session"]["status"]["state"] == "blocked"
+            && matches!(receipt["phase"].as_str(), Some("received" | "started"))
+        {
+            assert_eq!(receipt["result"]["providerPromptObserved"], true);
+            assert_eq!(receipt["result"]["taskResult"], Value::Null);
+            return Ok(Some(()));
         }
+        ensure!(
+            session_view["data"]["session"]["running"] != false
+                && !matches!(
+                    receipt["phase"].as_str(),
+                    Some("failed" | "unknown" | "interrupted" | "settled")
+                ),
+            "Original send settled before the quota screen: {receipt}"
+        );
+        Ok(None)
     })
     .await
-    .context("Supported prompt correlation plus current quota screen")??;
+    .context("Supported prompt correlation plus current quota screen")?;
     Ok((sent, id))
 }
 
@@ -216,17 +207,12 @@ fn inputs(fixture: &Fixture, session: &str) -> Result<Vec<Value>> {
 }
 
 async fn paused(owner: &Owner, session: &str) -> Result<Value> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let view = quota_wake(owner, session).await?;
-            if view["phase"] == "paused" {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
+    waits::until(async || {
+        let view = quota_wake(owner, session).await?;
+        Ok((view["phase"] == "paused").then_some(view))
     })
     .await
-    .context("Retained one-shot arm must pause")?
+    .context("Retained one-shot arm must pause")
 }
 
 async fn stop(owner: &Owner, session: &str) -> Result<()> {
@@ -238,17 +224,10 @@ async fn stop(owner: &Owner, session: &str) -> Result<()> {
         )
         .await?,
     )?;
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let view = data(call(owner, "nesvo_get_session", json!({"sessionId":session})).await?)?;
-            if view["data"]["session"]["running"] == false {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Owned controlled quota process must exit")?
+    waits::session(owner, session, waits::Session::Stopped)
+        .await
+        .context("Owned controlled quota process must exit")?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -275,19 +254,20 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
         assert!(inputs(&fixture, &session)?.is_empty(), "Wall-clock reset alone cannot resume input");
         let owner = client(&fixture.pairing()).await?;
         after_reset(&owner, &fixture, &retained).await?;
-        let (finished_wake, finished_send) = timeout(Duration::from_secs(7), async {
-            loop {
-                let wake = quota_wake(&owner, &session).await?;
-                if let Some(operation_id) = wake["operationId"].as_str() {
-                    let receipt = operation(&owner, operation_id).await?;
-                    if settled_in_both_independent_snapshots(&wake, &receipt) {
-                        assert_eq!(wake["operationId"], receipt["id"]);
-                        return Ok::<_, anyhow::Error>((wake, receipt));
-                    }
+        let (finished_wake, finished_send) = waits::until(async || {
+            let wake = quota_wake(&owner, &session).await?;
+            if let Some(operation_id) = wake["operationId"].as_str() {
+                let receipt = operation(&owner, operation_id).await?;
+                if settled_in_both_independent_snapshots(&wake, &receipt) {
+                    assert_eq!(wake["operationId"], receipt["id"]);
+                    return Ok(Some((wake, receipt)));
                 }
-                tokio::time::sleep(Duration::from_millis(40)).await;
+                ensure!(!matches!(receipt["phase"].as_str(),Some("failed"|"unknown"|"interrupted")),"Quota continuation settled without a response: {receipt}");
+            } else {
+                ensure!(wake["phase"] != "paused","Quota wake paused without a continuation: {wake}");
             }
-        }).await.context("One controlled quota continuation must settle")??;
+            Ok(None)
+        }).await.context("One controlled quota continuation must settle")?;
         assert_eq!(finished_wake["id"], retained["id"]);
         assert_eq!(finished_wake["source"], retained["source"]);
         assert_eq!(finished_wake["predecessorId"], original);
@@ -354,9 +334,7 @@ async fn durable_quota_wake_stays_paused_after_takeover_disable_and_fresh_quota(
         let mut human = human_control(&fixture.pairing(), &session).await?;
         drop(human.stdin.take());
         ensure!(
-            timeout(Duration::from_secs(5), human.wait())
-                .await??
-                .success(),
+            human.wait().await?.success(),
             "Controlled owner lease must close cleanly"
         );
         let taken_over = paused(&owner, &session).await?;

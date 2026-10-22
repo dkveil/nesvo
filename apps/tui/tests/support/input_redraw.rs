@@ -5,13 +5,7 @@ use super::*;
 async fn submission_waits_for_fresh_editor_idle_without_repeating_paste() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
-        timeout(Duration::from_secs(5), async {
-            loop {
-                let doctor = budgets::owner_cli(&fixture, &["doctor", "--json"]).await?;
-                if doctor["providerVersions"].as_array().is_some_and(|rows| rows.iter().any(|row| row["program"] == "claude" && row["status"] == "ready")) { return Ok::<_, anyhow::Error>(()); }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await??;
+        waits::provider(&fixture, "claude").await?;
         std::fs::write(fixture.directory.join(".fixture-editor-redraw"), "")?;
         let owner = client(&fixture.pairing()).await?;
         let created = data(call(&owner, "nesvo_create_session", json!({

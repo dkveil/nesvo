@@ -6,24 +6,9 @@ async fn delivery(
     task: &Value,
     expected: &str,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let view = data(
-                call(
-                    owner,
-                    "nesvo_get_task_attempts",
-                    json!({"runId":run,"taskId":task}),
-                )
-                .await?,
-            )?;
-            if view["data"]["attempts"][0]["delivery"]["phase"] == expected {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("Expected task delivery outcome")?
+    waits::delivery(owner, run, task, 0, expected)
+        .await
+        .context("Expected task delivery outcome")
 }
 #[tokio::test]
 #[ignore = "requires native binaries and Node; guarded durable task instruction delivery through real PTYs"]
@@ -31,7 +16,7 @@ async fn queued_task_instruction_delivers_once_and_never_resumes_over_human_cont
 {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async{
-        timeout(Duration::from_secs(5),async{loop{let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;if doctor["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"delivery-root","spec":{"name":"Delivery coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;session_ready(&owner,root_id).await?;
@@ -66,7 +51,7 @@ async fn queued_task_instruction_delivers_once_and_never_resumes_over_human_cont
         observed_output(&owner,&workers[1],"FIXTURE_HOLDING_RESPONSE").await?;
         let queued=data(call(&owner,"nesvo_deliver_task",json!({"key":"human-wins","runId":run,"taskId":tasks[1]["id"],"expectedRevision":current["data"]["run"]["revision"]})).await?)?;
         let mut human=human_control(&fixture.pairing(),&workers[1]).await?;
-        drop(human.stdin.take());ensure!(timeout(Duration::from_secs(8),human.wait()).await??.success(),"Human release fixture");
+        drop(human.stdin.take());ensure!(human.wait().await?.success(),"Human release fixture");
         let paused=delivery(&owner,run,&tasks[1]["id"],"paused").await?;
         assert!(paused["data"]["attempts"][0]["delivery"]["receiptId"].is_null());
         assert!(queued["data"]["delivery"]["receiptId"].is_null());
@@ -76,12 +61,12 @@ async fn queued_task_instruction_delivers_once_and_never_resumes_over_human_cont
             let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
             let queued=data(call(&coordinator,"nesvo_deliver_task",json!({"key":format!("waiting-{index}"),"runId":run,"taskId":tasks[index]["id"],"expectedRevision":current["data"]["run"]["revision"],"timeoutMs":if index==2 {300000}else{150}})).await?)?;
             if index==2 {
-                timeout(Duration::from_secs(5),async{loop {
+                loop {
                     let current=data(call(&coordinator,"nesvo_get_run",json!({"runId":run})).await?)?;
                     let canceled=call(&coordinator,"nesvo_cancel_task_delivery",json!({"key":"cancel-waiting","runId":run,"deliveryId":queued["data"]["delivery"]["id"],"expectedRevision":current["data"]["run"]["revision"]})).await?;
-                    if canceled.is_error!=Some(true){return Ok::<_,anyhow::Error>(());}
+                    if canceled.is_error!=Some(true){break;}
                     assert_eq!(canceled.structured_content.context("cancel race")?["error"]["code"],"revision_conflict");
-                }}).await??;
+                }
                 delivery(&owner,run,&tasks[index]["id"],"canceled").await?;
             } else {delivery(&owner,run,&tasks[index]["id"],"expired").await?;}
         }
@@ -112,48 +97,41 @@ async fn attempt_state(
     field: &str,
     expected: &str,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let view = data(
-                call(
-                    owner,
-                    "nesvo_get_task_attempts",
-                    json!({"runId":run,"taskId":task}),
-                )
-                .await?,
-            )?;
-            let attempt = &view["data"]["attempts"][index];
-            let current = if field == "delivery" {
-                &attempt["delivery"]["phase"]
-            } else {
-                &attempt[field]
-            };
-            if current == expected {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    if field == "delivery" {
+        return waits::delivery(owner, run, task, index, expected)
+            .await
+            .context("Expected task attempt delivery");
+    }
+    waits::until(async || {
+        let view = data(
+            call(
+                owner,
+                "nesvo_get_task_attempts",
+                json!({"runId":run,"taskId":task}),
+            )
+            .await?,
+        )?;
+        let current = &view["data"]["attempts"][index][field];
+        if current == expected {
+            return Ok(Some(view));
         }
+        ensure!(
+            !waits::is_settled_attempt(current),
+            "Task attempt {index} settled before {field} reached {expected}: {view}"
+        );
+        Ok(None)
     })
     .await
-    .context("Expected task attempt state")?
+    .context("Expected task attempt state")
 }
 async fn settled(
     owner: &RunningService<RoleClient, ()>,
     receipt: &Value,
     session: &str,
 ) -> Result<()> {
-    let waited = data(
-        call(
-            owner,
-            "nesvo_wait_prompt",
-            json!({"id":receipt,"sessionId":session,"until":"settled","timeoutMs":8000}),
-        )
-        .await?,
-    )?;
-    ensure!(
-        waited["data"]["wait"]["reached"] == true,
-        "Instruction receipt did not settle: {waited}"
-    );
+    waits::receipt(owner, receipt, session, "settled")
+        .await
+        .context("Instruction receipt did not settle")?;
     Ok(())
 }
 async fn response_after(
@@ -162,31 +140,40 @@ async fn response_after(
     marker: &str,
     after: u64,
 ) -> Result<()> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let output = data(
-                call(
-                    owner,
-                    "nesvo_read_session",
-                    json!({"sessionId":session,"after":after,"maxBytes":8192}),
-                )
-                .await?,
-            )?;
-            ensure!(
-                output["data"]["page"]["gap"] == false,
-                "Response transcript expired"
-            );
-            if output["data"]["page"]["data"]
+    let responded = async || {
+        let output = data(
+            call(
+                owner,
+                "nesvo_read_session",
+                json!({"sessionId":session,"after":after,"maxBytes":8192}),
+            )
+            .await?,
+        )?;
+        ensure!(
+            output["data"]["page"]["gap"] == false,
+            "Response transcript expired"
+        );
+        Ok::<_, anyhow::Error>(
+            output["data"]["page"]["data"]
                 .as_str()
-                .is_some_and(|text| text.contains(marker))
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+                .is_some_and(|text| text.contains(marker)),
+        )
+    };
+    waits::until(async || {
+        if responded().await? {
+            return Ok(Some(()));
         }
+        if waits::exited(owner, session).await? {
+            ensure!(
+                responded().await?,
+                "Worker {session} exited without response {marker}"
+            );
+            return Ok(Some(()));
+        }
+        Ok(None)
     })
     .await
-    .context("Expected worker response")?
+    .context("Expected worker response")
 }
 async fn provider_turns(
     owner: &RunningService<RoleClient, ()>,
@@ -231,17 +218,19 @@ async fn settled_turns(
     session: &str,
     expected: usize,
 ) -> Result<[usize; 2]> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let turns = provider_turns(owner, session).await?;
-            if turns.iter().all(|count| *count >= expected) {
-                return Ok::<_, anyhow::Error>(turns);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    waits::until(async || {
+        let turns = provider_turns(owner, session).await?;
+        if turns.iter().all(|count| *count >= expected) {
+            return Ok(Some(turns));
         }
+        ensure!(
+            !waits::exited(owner, session).await?,
+            "Worker {session} exited with provider turns {turns:?}"
+        );
+        Ok(None)
     })
     .await
-    .context("Expected settled provider turns")?
+    .context("Expected settled provider turns")
 }
 fn refusal(result: CallToolResult) -> Result<String> {
     ensure!(
@@ -261,7 +250,7 @@ async fn settled_worker_session_is_reused_for_a_new_attempt_once_and_refused_whe
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async{
-        timeout(Duration::from_secs(5),async{loop{let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;if doctor["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"reuse-root","spec":{"name":"Reuse coordinator","program":"claude","role":"coordinator","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator")?;session_ready(&owner,root_id).await?;
@@ -294,7 +283,7 @@ async fn settled_worker_session_is_reused_for_a_new_attempt_once_and_refused_whe
         let mut human=human_control(&fixture.pairing(),&worker).await?;
         let busy=call(&coordinator,"nesvo_deliver_task",json!({"key":"reuse-busy","runId":run,"taskId":task,"expectedRevision":current["data"]["run"]["revision"],"sessionId":worker})).await?;
         assert_eq!(refusal(busy)?,"session_busy");
-        drop(human.stdin.take());ensure!(timeout(Duration::from_secs(8),human.wait()).await??.success(),"Human release fixture");
+        drop(human.stdin.take());ensure!(human.wait().await?.success(),"Human release fixture");
         session_ready(&owner,&worker).await?;
         let before_reuse=data(call(&owner,"nesvo_read_session",json!({"sessionId":worker,"maxBytes":1})).await?)?["data"]["page"]["headCursor"].as_u64().context("worker transcript head")?;
         let unchanged=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;

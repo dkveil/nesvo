@@ -19,7 +19,7 @@ async fn data_directory_has_one_live_host_and_os_lock_releases_after_owned_proce
             .kill_on_drop(true);
         #[cfg(windows)]
         command.creation_flags(0x08000000);
-        let output = timeout(Duration::from_secs(8), command.output()).await??;
+        let output = command.output().await?;
         ensure!(
             !output.status.success(),
             "A second host must not open the same metadata directory"

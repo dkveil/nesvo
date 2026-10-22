@@ -5,11 +5,7 @@ use super::*;
 async fn run_policy_drain_and_deadline_fence_native_workers_without_killing_them() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
-        timeout(Duration::from_secs(5),async {loop {
-            let report=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-            if report["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|version|version["program"]=="claude"&&version["status"]=="ready")) {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"run-budget-root","spec":{"name":"Run coordinator","role":"coordinator","program":"claude","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("run coordinator")?;
@@ -56,11 +52,10 @@ async fn run_policy_drain_and_deadline_fence_native_workers_without_killing_them
         data(call(&coordinator,"nesvo_assign_task",json!({"key":"budget-next","runId":run,"taskId":next,"sessionId":children[1],"expectedRevision":9})).await?)?;
         let timed=json!({"maxParallel":1,"maxAttemptsPerTask":2,"maxElapsedMs":1000});
         data(call(&owner,"nesvo_set_run_budget",json!({"key":"run-deadline","runId":run,"expectedRevision":10,"limits":timed})).await?)?;
-        timeout(Duration::from_secs(4),async {loop {
+        waits::until(async || {
             let policy=data(call(&owner,"nesvo_get_run_budget",json!({"runId":run})).await?)?;
-            if policy["data"]["policy"]["timeState"]=="exhausted" {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+            Ok((policy["data"]["policy"]["timeState"]=="exhausted").then_some(()))
+        }).await?;
         let before=data(call(&owner,"nesvo_read_session",json!({"sessionId":children[1],"maxBytes":8192})).await?)?;
         let refused=call(&coordinator,"nesvo_send_prompt",json!({"key":"late-native-send","sessionId":children[1],"prompt":"Never submit after the elapsed budget"})).await?;
         let refused=refused.structured_content.context("elapsed native send fence")?;

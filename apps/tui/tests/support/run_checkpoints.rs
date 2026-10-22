@@ -15,7 +15,7 @@ pub(super) async fn mutate(
     tool: &'static str,
     mut args: Value,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
+    async {
         loop {
             args["runId"] = run.into();
             args["expectedRevision"] = view(client, run).await?["run"]["revision"].clone();
@@ -33,8 +33,8 @@ pub(super) async fn mutate(
                 "Context mutation MCP {tool} failed: {value}"
             );
         }
-    })
-    .await?
+    }
+    .await
 }
 pub(super) async fn setup(
     fixture: &Fixture,
@@ -46,19 +46,7 @@ pub(super) async fn setup(
     PathBuf,
     RunningService<RoleClient, ()>,
 )> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let report = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if report["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|r| r["program"] == "claude" && r["status"] == "ready")
-            }) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await??;
+    waits::provider(fixture, "claude").await?;
     let root=data(call(owner,"nesvo_create_session",json!({"key":"context-root","spec":{"name":"Context coordinator","program":"claude","role":"coordinator","harness":true}})).await?)
         .context("Checkpoint setup owner: MCP nesvo_create_session for coordinator")?;
     let id = root["data"]["receipt"]["sessionId"]
@@ -122,7 +110,7 @@ pub(super) async fn schema(envelopes: Vec<Value>) -> Result<()> {
     let mut input = child.stdin.take().context("context schema stdin")?;
     input.write_all(&serde_json::to_vec(&envelopes)?).await?;
     drop(input);
-    let output = timeout(Duration::from_secs(8), child.wait_with_output()).await??;
+    let output = child.wait_with_output().await?;
     ensure!(
         output.status.success(),
         "Real context schema failed: {}",
@@ -226,13 +214,15 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         safe_phase.set("coordinator MCP nesvo_deliver_task");
         mutate(&coordinator,&run,"nesvo_deliver_task",json!({"key":"literal-owner-context-task","taskId":task})).await?;
         safe_phase.set("coordinator MCP nesvo_get_task_attempts: delivery receipt observation");
-        let receipt=timeout(Duration::from_secs(8),async{loop{
+        let receipt=waits::until(async||{
             let task=data(call(&coordinator,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;
-            if let Some(receipt)=task["data"]["attempts"][0]["delivery"]["receiptId"].as_str(){return Ok::<_,anyhow::Error>(receipt.to_owned());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
-        safe_phase.set("coordinator MCP nesvo_wait_prompt: context delivery settlement");
-        let settled=data(call(&coordinator,"nesvo_wait_prompt",json!({"id":receipt,"until":"settled","timeoutMs":5000})).await?)?;
+            let delivery=&task["data"]["attempts"][0]["delivery"];
+            if let Some(receipt)=delivery["receiptId"].as_str(){return Ok(Some(receipt.to_owned()));}
+            ensure!(!matches!(delivery["phase"].as_str(),Some("failed"|"paused"|"expired"|"canceled")),"Context delivery settled without a native receipt: {delivery}");
+            Ok(None)
+        }).await?;
+        safe_phase.set("coordinator MCP nesvo_get_operation: context delivery settlement");
+        let settled=waits::receipt(&coordinator,&json!(receipt),&child,"settled").await?;
         assert_eq!(settled["data"]["receipt"]["phase"],"settled");
         assert_eq!(settled["data"]["receipt"]["result"]["promptMatch"],"claudePasteWrapper");
         safe_phase.set("owner MCP nesvo_read_session: delivered context");
@@ -251,7 +241,7 @@ async fn historical_checkpoint_never_overwrites_current_constraints_or_replays_n
         safe_phase.set("owner MCP nesvo_stop_session: owned coordinator");
         data(call(&owner,"nesvo_stop_session",json!({"key":"owned-coordinator-exit","sessionId":id})).await?)?;
         safe_phase.set("owner MCP nesvo_get_session: coordinator exit observation");
-        timeout(Duration::from_secs(6),async{loop{let root=data(call(&owner,"nesvo_get_session",json!({"sessionId":id})).await?)?;if root["data"]["session"]["running"]==false{return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::session(&owner,&id,waits::Session::Stopped).await?;
         safe_phase.set("owner MCP nesvo_read_run_context: retained historical context");
         let retained=data(call(&owner,"nesvo_read_run_context",json!({"runId":run,"checkpointId":checkpoint})).await?)?;
         assert_eq!(retained["data"]["currentConstraints"]["revision"],1);assert_eq!(retained["data"]["context"]["nativeEffectsRestored"],false);
@@ -304,11 +294,7 @@ async fn new_constraint_after_task_paste_stops_enter_and_ack_never_rearms_the_ol
         mutate(&coordinator,&run,"nesvo_deliver_task",json!({"key":"old-context-delivery","taskId":task})).await?;
         observed_output(&owner,&child,"PASTE_PENDING_REDRAW").await?;
         mutate(&owner,&run,"nesvo_add_run_constraint",json!({"key":"owner-between-writes","text":"A new owner restriction arrived before Enter."})).await?;
-        let history=timeout(Duration::from_secs(8),async{loop{
-            let history=data(call(&owner,"nesvo_get_task_attempts",json!({"runId":run,"taskId":task})).await?)?;
-            if history["data"]["attempts"][0]["delivery"]["phase"]=="unknown" {return Ok::<_,anyhow::Error>(history);}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await.context("Constraint revision did not stop native Enter")??;
+        let history=waits::delivery(&owner,&run,&task,0,"unknown").await.context("Constraint revision did not stop native Enter")?;
         let receipt=history["data"]["attempts"][0]["delivery"]["receiptId"].clone();
         let native=data(call(&coordinator,"nesvo_get_operation",json!({"id":receipt})).await?)?;
         assert_eq!(native["data"]["receipt"]["phase"],"unknown");assert_eq!(native["data"]["receipt"]["result"]["code"],"constraints_changed");assert_eq!(native["data"]["receipt"]["result"]["effectStarted"],true);

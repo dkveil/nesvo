@@ -301,13 +301,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
         owner = Some(client(&fixture.pairing()).await?);
         let owner = owner.as_ref().context("Owned cancellation MCP process")?;
         phase.set("owner CLI doctor: controlled provider readiness");
-        loop {
-            let doctor = budgets::owner_cli(&fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows| rows.iter().any(|row| row["program"] == "claude" && row["status"] == "ready")) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        waits::provider(&fixture, "claude").await?;
         phase.set("owner MCP nesvo_create_session: controlled PTY");
         let created = data(call(owner, "nesvo_create_session", json!({
             "key":"cancel-wait-session","spec":{"name":"Passive cancellation fixture","program":"claude","harness":true}
@@ -323,9 +317,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
         phase.set("owner MCP nesvo_read_session: held natural response marker");
         observed_output(owner, session, "FIXTURE_HOLDING_NATURAL_RESPONSE").await?;
         phase.set("owner MCP nesvo_wait_prompt: original receipt started");
-        let started = data(call(owner, "nesvo_wait_prompt", json!({
-            "id":sent["data"]["receipt"]["id"],"sessionId":session,"until":"started","timeoutMs":2000
-        })).await?)?;
+        let started = waits::receipt(owner, &sent["data"]["receipt"]["id"], session, "started").await?;
         let receipt = &started["data"]["receipt"];
         assert_eq!(receipt["id"], sent["data"]["receipt"]["id"]);
         assert_eq!(receipt["phase"], "started");
@@ -361,10 +353,8 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
 
         phase.set("owned fixture release: original natural response");
         std::fs::write(release.as_ref().context("Owned natural response release")?, "")?;
-        phase.set("owner MCP nesvo_wait_prompt: original natural settlement");
-        let settled = data(call(owner, "nesvo_wait_prompt", json!({
-            "id":receipt["id"],"sessionId":session,"until":"settled","timeoutMs":5000
-        })).await?)?;
+        phase.set("owner MCP nesvo_get_operation: original natural settlement");
+        let settled = waits::receipt(owner, &receipt["id"], session, "settled").await?;
         let finished = &settled["data"]["receipt"];
         assert_eq!(finished["id"], receipt["id"]);
         assert_eq!(finished["phase"], "settled");
@@ -397,10 +387,8 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
         .transpose()
         .map(|_| ());
     let client_cleanup = match owner {
-        Some(owner) => timeout(Duration::from_secs(5), owner.cancel())
-            .await
-            .map(|result| result.map(|_| ())),
-        None => Ok(Ok(())),
+        Some(owner) => owner.cancel().await.map(|_| ()),
+        None => Ok(()),
     };
     let host_cleanup = fixture.close().await;
     match outcome {
@@ -419,7 +407,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
                     )
                 })?;
             release_before_fixture_fallback_wait?;
-            client_cleanup.context("Cancellation MCP cleanup deadline")??;
+            client_cleanup.context("Cancellation MCP cleanup")?;
             host_cleanup
         }
         Err(panic) => {

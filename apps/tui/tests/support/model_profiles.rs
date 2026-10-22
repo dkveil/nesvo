@@ -25,11 +25,9 @@ async fn model_profiles_are_literal_versioned_and_never_inherited_or_claimed_as_
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
         let owner=client(&fixture.pairing()).await?;
-        timeout(Duration::from_secs(5),async {loop {
-            let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-            if doctor["launchProfileSupport"].as_array().is_some_and(|rows|rows.iter().any(|r|r["program"]=="claude"&&r["supported"]==true)&&rows.iter().any(|r|r["program"]=="codex"&&r["supported"]==true)){return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }}).await??;
+        waits::provider(&fixture,"claude").await?;
+        let doctor=waits::provider(&fixture,"codex").await?;
+        ensure!(doctor["launchProfileSupport"].as_array().is_some_and(|rows|rows.iter().any(|r|r["program"]=="claude"&&r["supported"]==true)&&rows.iter().any(|r|r["program"]=="codex"&&r["supported"]==true)),"Probed providers must support launch profiles: {}",doctor["launchProfileSupport"]);
         let model="deployment łódź $(literal)";
         let created=budgets::owner_cli(&fixture,&["session","create","Explicit model coordinator","--key","native-model-profile","--program","claude","--role","coordinator","--harness","--model",model,"--effort","low","--json"]).await?;
         let id=created["data"]["receipt"]["sessionId"].as_str().context("model coordinator")?;

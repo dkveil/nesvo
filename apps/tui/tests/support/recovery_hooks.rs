@@ -64,7 +64,7 @@ async fn invoke(
         drop(stdin);
         None
     };
-    let result = timeout(Duration::from_secs(5), child.wait_with_output()).await??;
+    let result = child.wait_with_output().await?;
     drop(held);
     ensure!(
         result.status.success(),
@@ -102,22 +102,24 @@ async fn oversize_provider_context_with_run_constraints(
     Ok(())
 }
 async fn report(owner: &RunningService<RoleClient, ()>, id: &str, outcome: &str) -> Result<Value> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let current = data(call(owner, "nesvo_get_session", json!({"sessionId":id})).await?)?;
-            let harness = &current["data"]["session"]["harness"];
-            if harness["recovery"]["status"]["outcome"] == outcome {
-                assert_eq!(
-                    harness["loaded"],
-                    Value::Null,
-                    "Prepared context is not model consumption evidence"
-                );
-                return Ok::<_, anyhow::Error>(harness.clone());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    waits::until(async || {
+        let current = data(call(owner, "nesvo_get_session", json!({"sessionId":id})).await?)?;
+        let harness = &current["data"]["session"]["harness"];
+        if harness["recovery"]["status"]["outcome"] == outcome {
+            assert_eq!(
+                harness["loaded"],
+                Value::Null,
+                "Prepared context is not model consumption evidence"
+            );
+            return Ok(Some(harness.clone()));
         }
+        ensure!(
+            current["data"]["session"]["running"] != false,
+            "Session {id} exited before recovery outcome {outcome}: {harness}"
+        );
+        Ok(None)
     })
-    .await?
+    .await
 }
 
 #[tokio::test]

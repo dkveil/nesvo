@@ -9,67 +9,100 @@ async fn mutation(
     tool: &'static str,
     mut args: Value,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            args["runId"] = run.into();
-            args["expectedRevision"] = view(client, run).await?["run"]["revision"].clone();
-            let reply = call(client, tool, args.clone()).await?;
-            if reply.is_error != Some(true) {
-                return Ok::<_, anyhow::Error>(data(reply)?["data"].clone());
-            }
-            let refusal = reply.structured_content.context("wake mutation result")?;
-            ensure!(
-                refusal["error"]["code"] == "revision_conflict",
-                "Wake mutation failed: {refusal}"
-            );
+    loop {
+        args["runId"] = run.into();
+        args["expectedRevision"] = view(client, run).await?["run"]["revision"].clone();
+        let reply = call(client, tool, args.clone()).await?;
+        if reply.is_error != Some(true) {
+            return Ok(data(reply)?["data"].clone());
         }
-    })
-    .await
-    .with_context(|| format!("Native wake mutation deadline: {tool}"))?
+        let refusal = reply.structured_content.context("wake mutation result")?;
+        ensure!(
+            refusal["error"]["code"] == "revision_conflict",
+            "Wake mutation {tool} failed: {refusal}"
+        );
+    }
 }
 async fn provider(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
-            }) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("Native wake provider version probe deadline")?
+    waits::provider(fixture, "claude")
+        .await
+        .context("Native wake provider version probe")?;
+    Ok(())
 }
 async fn wake_view(client: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
     Ok(data(call(client, "nesvo_get_run_wakes", json!({"runId":run})).await?)?["data"].clone())
 }
-async fn waves(fixture: &Fixture, id: &str, count: usize) -> Result<Vec<Value>> {
-    timeout(Duration::from_secs(12), async {
-        loop {
-            let path = fixture
-                .directory
-                .join("callers")
-                .join(format!("{id}.wake-inputs.jsonl"));
-            if let Ok(text) = std::fs::read_to_string(path) {
-                let parsed = text
-                    .lines()
-                    .filter(|line| !line.is_empty())
-                    .map(serde_json::from_str::<Value>)
-                    .collect::<std::result::Result<Vec<_>, _>>();
-                if let Ok(values) = parsed
-                    && values.len() >= count
-                {
-                    return Ok::<_, anyhow::Error>(values);
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+async fn task_state(
+    client: &RunningService<RoleClient, ()>,
+    run: &str,
+    index: usize,
+    wanted: &str,
+) -> Result<Value> {
+    waits::until(async || {
+        let current = view(client, run).await?;
+        if current["tasks"][index]["state"] == wanted {
+            return Ok(Some(current));
         }
+        ensure!(
+            !waits::is_settled_run(&current["run"]["state"]),
+            "Run settled before task {index} reached {wanted}: {current}"
+        );
+        Ok(None)
     })
     .await
-    .context("Controlled native wake input")?
+}
+async fn notices_until(
+    client: &RunningService<RoleClient, ()>,
+    run: &str,
+    worker: &str,
+    wanted: impl Fn(&[Value]) -> bool,
+) -> Result<Value> {
+    waits::until(async || {
+        let current = wake_view(client, run).await?;
+        if wanted(current["notices"].as_array().context("wake notices")?) {
+            return Ok(Some(current));
+        }
+        ensure!(
+            !waits::exited(client, worker).await?,
+            "Worker {worker} exited before the wake notices were published: {current}"
+        );
+        Ok(None)
+    })
+    .await
+}
+fn received_waves(fixture: &Fixture, id: &str, count: usize) -> Option<Vec<Value>> {
+    let path = fixture
+        .directory
+        .join("callers")
+        .join(format!("{id}.wake-inputs.jsonl"));
+    let values = std::fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(serde_json::from_str::<Value>)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .ok()?;
+    (values.len() >= count).then_some(values)
+}
+async fn waves(
+    client: &RunningService<RoleClient, ()>,
+    fixture: &Fixture,
+    id: &str,
+    count: usize,
+) -> Result<Vec<Value>> {
+    waits::until(async || {
+        if let Some(values) = received_waves(fixture, id, count) {
+            return Ok(Some(values));
+        }
+        if waits::exited(client, id).await? {
+            return received_waves(fixture, id, count)
+                .with_context(|| format!("Coordinator {id} exited before {count} wake inputs"))
+                .map(Some);
+        }
+        Ok(None)
+    })
+    .await
+    .context("Controlled native wake input")
 }
 async fn message(
     client: &RunningService<RoleClient, ()>,
@@ -99,7 +132,7 @@ async fn schema(envelopes: Vec<Value>) -> Result<()> {
         .context("schema input")?
         .write_all(&serde_json::to_vec(&envelopes)?)
         .await?;
-    let output = timeout(Duration::from_secs(8), process.wait_with_output()).await??;
+    let output = process.wait_with_output().await?;
     ensure!(
         output.status.success(),
         "Real wake contract validation: {}",
@@ -142,17 +175,20 @@ async fn simple_run(
     Ok((id, run))
 }
 async fn paused(client: &RunningService<RoleClient, ()>, run: &str) -> Result<Value> {
-    timeout(Duration::from_secs(8), async {
-        loop {
-            let current = wake_view(client, run).await?;
-            if current["wakePolicy"]["phase"] == "paused" {
-                return Ok::<_, anyhow::Error>(current);
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
+    waits::until(async || {
+        let current = wake_view(client, run).await?;
+        let phase = &current["wakePolicy"]["phase"];
+        if phase == "paused" {
+            return Ok(Some(current));
         }
+        ensure!(
+            phase != "completed",
+            "Wake policy completed instead of pausing: {current}"
+        );
+        Ok(None)
     })
     .await
-    .context("Wake policy did not pause")?
+    .context("Wake policy did not pause")
 }
 
 #[tokio::test]
@@ -175,9 +211,10 @@ async fn quick_human_takeover_pauses_wakes_and_only_explicit_enable_can_deliver_
             .context("Native wake human takeover readiness")?;
         drop(human.stdin.take());
         ensure!(
-            timeout(Duration::from_secs(8), human.wait())
+            human
+                .wait()
                 .await
-                .context("Native wake human release helper deadline")??
+                .context("Native wake human release helper")?
                 .success(),
             "Human release helper"
         );
@@ -207,7 +244,7 @@ async fn quick_human_takeover_pauses_wakes_and_only_explicit_enable_can_deliver_
             restarted["wakePolicy"]["generation"].as_u64()
                 > stopped["wakePolicy"]["generation"].as_u64()
         );
-        let received = waves(&fixture, &id, 1).await?;
+        let received = waves(&owner, &fixture, &id, 1).await?;
         assert_eq!(received.len(), 1);
         assert_eq!(
             received[0]["batch"]["data"]["wakeBatch"]["notices"]
@@ -345,7 +382,7 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
         let enabled=mutation(&coordinator,run,"nesvo_enable_run_wakes",json!({"key":"wake-enable"})).await?;
         message(&coordinator,run,"delta-question","question").await?;message(&coordinator,run,"delta-error","error").await?;
         data(call(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"wake-worker-report","prompt":"report-task"})).await?)?;
-        timeout(Duration::from_secs(8),async{loop{if view(&coordinator,run).await?["tasks"][0]["state"]=="reported" {return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        task_state(&coordinator,run,0,"reported").await?;
         let pending=wake_view(&coordinator,run).await?;assert_eq!(pending["pendingCount"],3);
         assert!(!fixture.directory.join("callers").join(format!("{root_id}.wake-inputs.jsonl")).exists(),"Working coordinator gets no input");
         let recovered=inbox::scoped_cli(&context,&["run","mutation","--key","wake-enable","--json"]).await?;assert_eq!(recovered["data"],enabled);
@@ -353,7 +390,7 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
         let cli_replay = inbox::scoped_cli(&context, &["run","wake","enable",run,"--key","wake-enable","--revision",&original_revision,"--json"]).await?;
         assert_eq!(cli_replay["data"], enabled, "CLI/MCP replay shares one accepted policy mutation");
         std::fs::write(fixture.directory.join("callers").join(format!("{root_id}.release")),"")?;
-        let received=match waves(&fixture,root_id,1).await {Ok(values)=>values,Err(error)=>{
+        let received=match waves(&owner,&fixture,root_id,1).await {Ok(values)=>values,Err(error)=>{
             let policy=wake_view(&coordinator,run).await?;
             let state=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
             let output=data(call(&owner,"nesvo_read_session",json!({"sessionId":root_id,"maxBytes":8192})).await?)?;
@@ -363,14 +400,14 @@ async fn coordinator_wakes_only_for_new_deltas_after_idle_and_never_acks_or_vali
         assert_eq!(received[0]["inbox"]["data"]["pendingCount"],3);
         assert!(!received[0]["prompt"].as_str().unwrap().contains("PRIVATE_BODY"));
         let native_id=received[0]["batch"]["data"]["wakeBatch"]["receiptId"].as_str().context("wake receipt")?;
-        timeout(Duration::from_secs(8),async{loop{let receipt=data(call(&coordinator,"nesvo_get_operation",json!({"id":native_id})).await?)?;if receipt["data"]["receipt"]["phase"]=="settled" {return Ok::<_,anyhow::Error>(());}tokio::time::sleep(Duration::from_millis(50)).await;}}).await??;
+        waits::receipt(&coordinator,&json!(native_id),root_id,"settled").await?;
         for _ in 0..4 {wake_view(&coordinator,run).await?;}
         holds_throughout(Duration::from_millis(1100), async || {
-            ensure!(waves(&fixture,root_id,1).await?.len()==1,"No unchanged-state model heartbeat");
+            ensure!(waves(&owner,&fixture,root_id,1).await?.len()==1,"No unchanged-state model heartbeat");
             Ok(())
         }).await?;
         message(&coordinator,run,"second-delta","question").await?;
-        let received=waves(&fixture,root_id,2).await?;assert_eq!(received.len(),2);
+        let received=waves(&owner,&fixture,root_id,2).await?;assert_eq!(received.len(),2);
         assert_ne!(received[0]["batch"]["data"]["wakeBatch"]["id"],received[1]["batch"]["data"]["wakeBatch"]["id"]);
         let run_view=view(&coordinator,run).await?;assert_eq!(run_view["tasks"][0]["state"],"reported");assert!(run_view["tasks"][0]["taskResult"].is_null());assert_eq!(run_view["tasks"][1]["state"],"planned");
         let mail=data(call(&coordinator,"nesvo_read_inbox",json!({"runId":run})).await?)?;assert_eq!(mail["data"]["pendingCount"],4);
@@ -419,17 +456,9 @@ async fn native_worker_question_and_resolution_share_the_canonical_wake_projecti
         mutation(&owner, &run, "nesvo_enable_run_wakes", json!({"key":"question-wake-enable"})).await?;
         data(call(&owner, "nesvo_send_prompt", json!({"sessionId":child_id,"key":"question-wake-input","prompt":"question-task"})).await?)?;
         observed_output(&owner, child_id, "FIXTURE_AWAITING_DECISION").await?;
-        let blocked = timeout(Duration::from_secs(8), async {
-            loop {
-                let current = wake_view(&owner, &run).await?;
-                if current["notices"].as_array().context("wake notices")?.iter().any(|notice| {
-                    notice["kind"] == "blocker" && notice["reference"]["attention"]["reason"] == "question"
-                }) {
-                    return Ok::<_, anyhow::Error>(current);
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await.context("Native hook did not publish canonical blocker notice")??;
+        let blocked = notices_until(&owner, &run, child_id, |notices| notices.iter().any(|notice| {
+            notice["kind"] == "blocker" && notice["reference"]["attention"]["reason"] == "question"
+        })).await.context("Native hook did not publish canonical blocker notice")?;
         let notices = blocked["notices"].as_array().context("blocker notices")?;
         let blocker = notices.iter().find(|notice| notice["kind"] == "blocker").context("question blocker")?;
         assert_eq!(blocker["reference"]["attemptId"], attempt);
@@ -443,20 +472,13 @@ async fn native_worker_question_and_resolution_share_the_canonical_wake_projecti
             "key":"question-wake-owner-answer","runId":run,"decisionId":decision["id"],
             "expectedRevision":decision["revision"],"answer":"Finish the controlled transport test; no native permission is implied"
         })).await?)?;
-        timeout(Duration::from_secs(8), async {
-            loop {
-                let current = wake_view(&owner, &run).await?;
-                let notices = current["notices"].as_array().context("resolved notices")?;
-                if notices.iter().any(|notice| notice["kind"] == "result") && notices.iter().any(|notice| {
-                    notice["kind"] == "blocker" && notice["reference"]["attention"]["priority"] == 0
-                }) { return Ok::<_, anyhow::Error>(()); }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await.context("Native blocker resolution and result did not publish")??;
+        notices_until(&owner, &run, child_id, |notices| notices.iter().any(|notice| notice["kind"] == "result") && notices.iter().any(|notice| {
+            notice["kind"] == "blocker" && notice["reference"]["attention"]["priority"] == 0
+        })).await.context("Native blocker resolution and result did not publish")?;
         assert!(!fixture.directory.join("callers").join(format!("{id}.wake-inputs.jsonl")).exists());
         let before = data(call(&owner, "nesvo_get_run_wakes", json!({"runId":run})).await?)?;
         std::fs::write(fixture.directory.join("callers").join(format!("{id}.release")), "")?;
-        let received = waves(&fixture, &id, 1).await?;
+        let received = waves(&owner, &fixture, &id, 1).await?;
         assert_eq!(received.len(), 1);
         let notices = received[0]["batch"]["data"]["wakeBatch"]["notices"].as_array().context("native batch")?;
         for kind in ["decision", "blocker", "result"] {

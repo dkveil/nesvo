@@ -25,11 +25,7 @@ async fn owner_child_tool_policy_is_explicit_process_scoped_and_never_delegates_
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
         let owner=client(&fixture.pairing()).await?;
-        timeout(Duration::from_secs(5),async{loop {
-            let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows|rows.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }}).await.context("Child policy provider readiness")??;
+        waits::provider(&fixture,"claude").await.context("Child policy provider readiness")?;
         let created=budgets::owner_cli(&fixture,&["session","create","Owner child policy","--key","owner-child-policy","--program","claude","--role","coordinator","--harness","--allow-nesvo-tool","nesvo_create_session","--allow-child-nesvo-tool","nesvo_get_current_task","--allow-child-nesvo-tool","nesvo_report_task_result","--allow-child-nesvo-tool","nesvo_create_session","--json"]).await?;
         let id=created["data"]["receipt"]["sessionId"].as_str().context("policy coordinator")?;session_ready(&owner,id).await?;
         let policy=json!(["nesvo_get_current_task","nesvo_report_task_result","nesvo_create_session"]);
@@ -124,13 +120,7 @@ async fn owner_native_permissions_are_literal_process_additions_not_child_or_hos
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
         let owner=client(&fixture.pairing()).await?;
-        timeout(Duration::from_secs(10),async {
-            loop {
-                let report=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-                if report["providerVersions"].as_array().is_some_and(|rows|rows.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")){return Ok::<_,anyhow::Error>(());}
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await??;
+        waits::provider(&fixture,"claude").await?;
         let args=json!({"key":"explicit-native-policy","spec":{"name":"Owner approved coordinator","program":"claude","harness":true,"role":"coordinator","allowedNesvoTools":["nesvo_create_session"]}});
         let created=data(call(&owner,"nesvo_create_session",args.clone()).await?)?;
         let id=created["data"]["receipt"]["sessionId"].as_str().context("approved coordinator")?;

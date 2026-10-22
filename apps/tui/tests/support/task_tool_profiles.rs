@@ -73,11 +73,7 @@ async fn task_tool_selection_is_a_policy_subset_or_explicit_owner_intent_and_sur
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
         let owner=client(&fixture.pairing()).await?;
-        timeout(Duration::from_secs(5),async {loop {
-            let doctor=budgets::owner_cli(&fixture,&["doctor","--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|r|r.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")) {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+        waits::provider(&fixture,"claude").await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"task-tools-root","spec":{"name":"Task tools coordinator","program":"claude","role":"coordinator","harness":true,"childAllowedNesvoTools":["nesvo_get_current_task","nesvo_report_task_result"]}})).await?)?;
         let root=root["data"]["receipt"]["sessionId"].as_str().context("root")?;
         session_ready(&owner,root).await?;
@@ -138,11 +134,13 @@ async fn task_tool_selection_is_a_policy_subset_or_explicit_owner_intent_and_sur
         let executor=inbox::scoped_cli(&root_context,&["run","executor","start",&automatic,"--key","executor-subset","--revision",&revision,"--file",executor_file.to_str().context("executor profile file")?,"--json"]).await?;
         let stored=data(call(&coordinator,"nesvo_get_run_executor",json!({"runId":automatic})).await?)?;
         assert_eq!(stored["data"]["executor"]["spec"]["tasks"][0]["profile"]["allowedNesvoTools"],json!(["nesvo_report_task_result"]));
-        let automatic_history=timeout(Duration::from_secs(12),async {loop {
+        let automatic_history=waits::until(async || {
             let current=history(&coordinator,&automatic,&automatic_tasks[0]).await?;
-            if current["attempts"][0]["launch"]["phase"]=="created" {return Ok::<_,anyhow::Error>(current);}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await.context("automatic subset launch")??;
+            let phase=&current["attempts"][0]["launch"]["phase"];
+            if phase=="created" {return Ok(Some(current));}
+            ensure!(!matches!(phase.as_str(),Some("failed"|"unknown")),"Automatic subset launch settled as {phase}: {current}");
+            Ok(None)
+        }).await.context("automatic subset launch")?;
         let automatic_id=automatic_history["attempts"][0]["sessionId"].as_str().context("executor worker")?;
         session_ready(&owner,automatic_id).await?;
         assert_eq!(permissions(&fixture,automatic_id)?,json!(["mcp__nesvo__nesvo_report_task_result"]));

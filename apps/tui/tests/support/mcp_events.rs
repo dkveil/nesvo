@@ -12,7 +12,6 @@ use tokio::sync::mpsc;
 
 const OPERATIONS: &str = "nesvo://events/operations";
 const META_KEY: &str = "nesvo/events";
-const NOTIFICATION_DEADLINE: Duration = Duration::from_secs(10);
 
 fn adapter() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
@@ -122,9 +121,9 @@ impl ClientHandler for LegacyUpdates {
 }
 
 async fn modern_update(subscription: &mut Subscription, uri: &str) -> Result<Value> {
-    let notification = timeout(NOTIFICATION_DEADLINE, subscription.next())
-        .await
-        .context("Resource update notification deadline")??
+    let notification = subscription
+        .next()
+        .await?
         .context("Subscription ended before an update")?;
     let ServerNotification::ResourceUpdatedNotification(update) = notification else {
         anyhow::bail!("Unexpected subscription notification: {notification:?}");
@@ -146,10 +145,7 @@ async fn legacy_update_for(
     updates: &mut mpsc::Receiver<(String, Value)>,
     expected: &str,
 ) -> Result<Value> {
-    let (uri, meta) = timeout(NOTIFICATION_DEADLINE, updates.recv())
-        .await
-        .context("Legacy resource update deadline")?
-        .context("Legacy client closed")?;
+    let (uri, meta) = updates.recv().await.context("Legacy client closed")?;
     ensure!(
         uri == expected,
         "Legacy notification names the subscribed URI"
@@ -344,9 +340,9 @@ async fn worker_event_subscriptions_keep_their_subject_and_refuse_foreign_sessio
                     .build(),
             )
             .await?;
-        let error = timeout(NOTIFICATION_DEADLINE, refused.next())
+        let error = refused
+            .next()
             .await
-            .context("Foreign listen refusal deadline")?
             .expect_err("A foreign session subscription is refused");
         ensure!(refusal_code(&error) == Some(json!("forbidden")), "{error:?}");
 

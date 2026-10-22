@@ -8,20 +8,10 @@ use tokio_tungstenite::{
 type Owner = RunningService<RoleClient, ()>;
 
 async fn provider_ready(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(6), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
-            }) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Controlled Claude launcher readiness")?
+    waits::provider(fixture, "claude")
+        .await
+        .context("Controlled Claude launcher readiness")?;
+    Ok(())
 }
 
 fn launch_settings(fixture: &Fixture, id: &str) -> Result<Value> {
@@ -84,23 +74,14 @@ async fn hook(settings: &Value, event: &str, payload: Value, cwd: &Path) -> Resu
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     let mut child = command.spawn()?;
-    let result = timeout(Duration::from_secs(5), async {
-        let mut input = child.stdin.take().context("Native hook input")?;
-        input.write_all(&bytes).await?;
-        input.flush().await?;
-        drop(input);
-        Ok::<_, anyhow::Error>(child.wait().await?)
-    })
-    .await;
-    match result {
-        Ok(Ok(status)) => ensure!(status.success(), "Production context helper must succeed"),
-        _ => {
-            let _ = child.start_kill();
-            let reaped = timeout(Duration::from_secs(2), child.wait()).await;
-            ensure!(matches!(reaped, Ok(Ok(_))), "Owned context helper cleanup");
-            anyhow::bail!("Owned context helper failed or exceeded its deadline");
-        }
-    }
+    let mut input = child.stdin.take().context("Native hook input")?;
+    input.write_all(&bytes).await?;
+    input.flush().await?;
+    drop(input);
+    ensure!(
+        child.wait().await?.success(),
+        "Production context helper must succeed"
+    );
     Ok(())
 }
 
@@ -128,17 +109,7 @@ async fn unborn_repository_with_untracked_marker(
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let mut child = command.spawn()?;
-    let result = timeout(Duration::from_secs(5), child.wait()).await;
-    let status = match result {
-        Ok(result) => result?,
-        Err(_) => {
-            let _ = child.start_kill();
-            let reaped = timeout(Duration::from_secs(2), child.wait()).await;
-            ensure!(matches!(reaped, Ok(Ok(_))), "Owned Git init cleanup");
-            anyhow::bail!("Owned Git init deadline");
-        }
-    };
+    let status = command.spawn()?.wait().await?;
     ensure!(
         status.success(),
         "Initialize only this owned temporary repository"
@@ -191,25 +162,26 @@ fn assert_review(review: &Value, directory: &Path, source: &str, marker: &str) -
 }
 
 async fn identity(owner: &Owner, id: &str, provider: &str, generation: u64) -> Result<Value> {
-    timeout(Duration::from_secs(4), async {
-        loop {
-            let response =
-                data(call(owner, "nesvo_explain_session", json!({"sessionId": id})).await?)?;
-            let view = response["data"]["report"]["sessions"]
-                .as_array()
-                .and_then(|rows| rows.iter().find(|row| row["sessionId"] == id))
-                .context("Current owned session diagnostics")?
-                .clone();
-            if view["conversationIdentity"]["providerSessionId"] == provider
-                && view["conversationIdentity"]["generation"] == generation
-            {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
+    waits::until(async || {
+        let response = data(call(owner, "nesvo_explain_session", json!({"sessionId": id})).await?)?;
+        let view = response["data"]["report"]["sessions"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["sessionId"] == id))
+            .context("Current owned session diagnostics")?
+            .clone();
+        if view["conversationIdentity"]["providerSessionId"] == provider
+            && view["conversationIdentity"]["generation"] == generation
+        {
+            return Ok(Some(view));
         }
+        ensure!(
+            !waits::exited(owner, id).await?,
+            "Session {id} exited before generation {generation}: {view}"
+        );
+        Ok(None)
     })
     .await
-    .context("Public current generation projection")?
+    .context("Public current generation projection")
 }
 
 async fn pinned_over_owner_frames_because_mcp_omits_pin(
@@ -217,7 +189,7 @@ async fn pinned_over_owner_frames_because_mcp_omits_pin(
     id: &str,
     directory: &Path,
 ) -> Result<Value> {
-    timeout(Duration::from_secs(12), async {
+    async {
         let pairing: Value = serde_json::from_slice(&std::fs::read(fixture.pairing())?)?;
         ensure!(
             pairing["version"] == 1 && pairing["scopeId"].is_null(),
@@ -320,9 +292,9 @@ async fn pinned_over_owner_frames_because_mcp_omits_pin(
             }
         }
         anyhow::bail!("Bounded owner diff response frame count");
-    })
+    }
     .await
-    .context("Owned pinned GetDiff deadline")?
+    .context("Owned pinned GetDiff")
 }
 
 #[tokio::test]

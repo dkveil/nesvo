@@ -29,20 +29,28 @@ async fn explain(owner: &Owner, id: &str) -> Result<Value> {
         .clone())
 }
 
-async fn completed_capture(owner: &Owner, id: &str, outcome: &str) -> Result<Value> {
-    timeout(Duration::from_secs(4), async {
-        loop {
-            let view = explain(owner, id).await?;
-            if view["claudeQuotaCapture"]["delivery"]["latestCompleted"]["outcome"] == outcome
-                && view["claudeQuotaCapture"]["reader"]["outcome"] == "readable"
-            {
-                return Ok::<_, anyhow::Error>(view);
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
+async fn explained(owner: &Owner, id: &str, wanted: impl Fn(&Value) -> bool) -> Result<Value> {
+    waits::until(async || {
+        let view = explain(owner, id).await?;
+        if wanted(&view) {
+            return Ok(Some(view));
         }
+        ensure!(
+            view["running"] != false,
+            "Captured session exited before the wanted diagnostics: {view}"
+        );
+        Ok(None)
     })
     .await
-    .context("Typed native capture completion")?
+}
+
+async fn completed_capture(owner: &Owner, id: &str, outcome: &str) -> Result<Value> {
+    explained(owner, id, |view| {
+        view["claudeQuotaCapture"]["delivery"]["latestCompleted"]["outcome"] == outcome
+            && view["claudeQuotaCapture"]["reader"]["outcome"] == "readable"
+    })
+    .await
+    .context("Typed native capture completion")
 }
 
 fn private_capture(view: &Value) {
@@ -65,7 +73,7 @@ async fn human_capture(fixture: &Fixture, id: &str) -> Result<String> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(15), command.output()).await??;
+    let output = command.output().await?;
     ensure!(
         output.status.success(),
         "Human capture explain must succeed"
@@ -113,16 +121,15 @@ impl MissingJournal {
         let original = directory.join("events.sqlite3");
         let saved = directory.join("events.capture-sdk-backup");
         ensure!(!saved.exists(), "Owned journal backup must be new");
-        timeout(Duration::from_secs(2), async {
-            loop {
-                match std::fs::rename(&original, &saved) {
-                    Ok(()) => return Ok::<_, anyhow::Error>(()),
-                    Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-                }
+        waits::until(async || match std::fs::rename(&original, &saved) {
+            Ok(()) => Ok(Some(())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Err(anyhow::Error::new(error).context("Owned journal disappeared"))
             }
+            Err(_) => Ok(None),
         })
         .await
-        .context("Temporarily unavailable owned journal")??;
+        .context("Temporarily unavailable owned journal")?;
         Ok(Self {
             original,
             saved,
@@ -389,35 +396,25 @@ if(mode==='hang') {
     Ok(profile)
 }
 async fn ready(fixture: &Fixture) -> Result<()> {
-    timeout(Duration::from_secs(6), async {
-        loop {
-            let doctor = budgets::owner_cli(fixture, &["doctor", "--json"]).await?;
-            if doctor["providerVersions"].as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["program"] == "claude" && row["status"] == "ready")
-            }) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await
-    .context("Controlled Claude version")?
+    waits::provider(fixture, "claude")
+        .await
+        .context("Controlled Claude version")?;
+    Ok(())
 }
 async fn ended_process(fixture: &Fixture, pid: &str) -> Result<()> {
     let node = fixture
         .directory
         .join("bin")
         .join(if cfg!(windows) { "node.exe" } else { "node" });
-    timeout(Duration::from_secs(4),async { loop {
+    waits::until(async || {
         let mut command=Command::new(&node);
         command.args(["-e",r#"const pid=Number(process.argv[1]);try {process.kill(pid,0);if(process.platform==='linux'&&/\) Z /.test(require('node:fs').readFileSync('/proc/'+pid+'/stat','utf8')))process.exit(0);process.exit(1)}catch(e){process.exit(e.code==='ESRCH'?0:2)}"#,pid]);
         command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
         #[cfg(windows)] command.creation_flags(0x08000000);
-        let status=timeout(Duration::from_secs(1),command.status()).await??;
-        if status.success() {return Ok::<_,anyhow::Error>(());}
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }}).await.context("Owned declared display descendant cleanup")?
+        let status=command.status().await?;
+        ensure!(matches!(status.code(),Some(0|1)),"Owned PID probe failed: {status}");
+        Ok(status.success().then_some(()))
+    }).await.context("Owned declared display descendant cleanup")
 }
 
 #[tokio::test]
@@ -451,17 +448,11 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
         assert_eq!(recorded["env"],"owned raw handles");
         assert_eq!(PathBuf::from(recorded["cwd"].as_str().context("Declared display cwd")?).canonicalize()?,fixture.directory.canonicalize()?);
         assert_eq!(recorded["input"],hex::encode(&input));
-        timeout(Duration::from_secs(4),async {loop {
-            let view=explain(&owner,id).await?;
-            if view["nativeQuotaCallback"]["snapshot"]["reason"] == "observed" {
-                assert_eq!(view["nativeQuotaCallback"]["snapshot"]["five_hour"]["used_percentage"],23.0);
-                assert!(view["nativeQuotaCallback"]["ordinaryUsageAllowed"].is_null());
-                assert_eq!(view["claudeQuotaCapture"]["configured"],true);
-                assert!(view["claudeQuotaCapture"]["observed"].is_null());
-                return Ok::<_,anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(40)).await;
-        }}).await.context("Actual callback projection")??;
+        let view=explained(&owner,id,|view|view["nativeQuotaCallback"]["snapshot"]["reason"] == "observed").await.context("Actual callback projection")?;
+        assert_eq!(view["nativeQuotaCallback"]["snapshot"]["five_hour"]["used_percentage"],23.0);
+        assert!(view["nativeQuotaCallback"]["ordinaryUsageAllowed"].is_null());
+        assert_eq!(view["claudeQuotaCapture"]["configured"],true);
+        assert!(view["claudeQuotaCapture"]["observed"].is_null());
         let recorded = completed_capture(&owner, id, "recorded").await?;
         let first_attempt = recorded["claudeQuotaCapture"]["delivery"]["latestCompleted"]["attemptSequence"]
             .as_u64().context("Capture attempt sequence")?;
@@ -500,21 +491,14 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
         let mut expected_input = hex::decode("1b5b33356d5a61c5bcc3b3c582c48720e697a5e69cace8aa9e1b5b306d0d0a")?;
         expected_input.extend_from_slice(&input);
         assert_eq!(unavailable_output.stdout, expected_input, "Unavailable capture storage cannot change display bytes or exit");
-        timeout(Duration::from_secs(4), async {
-            loop {
-                let view = explain(&owner, id).await?;
-                if view["claudeQuotaCapture"]["reader"]["outcome"] == "unreadable"
-                    && view["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["outcome"] == "storageUnavailable"
-                {
-                    assert!(view["nativeQuotaCallback"].is_null(), "Read failure must clear accepted quota visibility");
-                    assert_eq!(view["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["stage"], "begin");
-                    assert_eq!(view["claudeQuotaCapture"]["reader"]["storageFailureOutcome"], "readable");
-                    private_capture(&view);
-                    return Ok::<_, anyhow::Error>(());
-                }
-                tokio::time::sleep(Duration::from_millis(40)).await;
-            }
-        }).await.context("Anchored storage failure is visible while the journal is unavailable")??;
+        let view = explained(&owner, id, |view| {
+            view["claudeQuotaCapture"]["reader"]["outcome"] == "unreadable"
+                && view["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["outcome"] == "storageUnavailable"
+        }).await.context("Anchored storage failure is visible while the journal is unavailable")?;
+        assert!(view["nativeQuotaCallback"].is_null(), "Read failure must clear accepted quota visibility");
+        assert_eq!(view["claudeQuotaCapture"]["delivery"]["lastStorageFailure"]["stage"], "begin");
+        assert_eq!(view["claudeQuotaCapture"]["reader"]["storageFailureOutcome"], "readable");
+        private_capture(&view);
         let human = human_capture(&fixture, id).await?;
         assert!(human.contains("Claude capture: reader unreadable"));
         assert!(human.contains("historical"));
