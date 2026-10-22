@@ -757,7 +757,7 @@ async fn startup_reconciliation_removes_hibernation_rows_of_sessions_that_no_lon
     assert_eq!(rows().len(), 2);
     let (state, log) = open(&database).await;
     hibernation::restore(&state, &log).await.unwrap();
-    assert_eq!(rows(), [kept.clone()]);
+    assert_eq!(rows(), std::slice::from_ref(&kept));
     {
         let guard = state.lock().unwrap();
         assert!(view(&guard, &closed).is_none());
