@@ -269,17 +269,15 @@ pub struct Session {
 }
 
 impl Session {
-    pub(crate) fn search_root_label(&self) -> (&'static str, &str) {
-        let Some(root) = &self.search_root else {
-            return ("launch", &self.cwd);
-        };
+    pub(crate) fn search_root_label(&self) -> Option<(&'static str, &str)> {
+        let root = self.search_root.as_ref()?;
         if let Some(cwd) = root.current_cwd() {
-            return ("cwd", cwd);
+            return Some(("cwd", cwd));
         }
         if root.reason == "outsideRoot" {
-            return ("launch, cwd outside", &self.cwd);
+            return Some(("launch, cwd outside", &self.cwd));
         }
-        ("launch", &self.cwd)
+        Some(("launch", &self.cwd))
     }
     pub fn attention_priority(&self) -> u8 {
         self.current_attention.as_ref().map_or_else(
@@ -2086,14 +2084,14 @@ mod tests {
         assert_eq!(current.quick_switch_results("agent-łódź")[0].id, "s");
         assert_eq!(
             current.sessions[0].search_root_label(),
-            ("cwd", "C:/dev/launch/agent-łódź")
+            Some(("cwd", "C:/dev/launch/agent-łódź"))
         );
         let outside = search_root_app(
             json!({"source":"launchDirectory","reason":"outsideRoot","path":null,"observedAt":5}),
         );
         assert_eq!(
             outside.sessions[0].search_root_label(),
-            ("launch, cwd outside", "C:/dev/launch")
+            Some(("launch, cwd outside", "C:/dev/launch"))
         );
         assert!(outside.quick_switch_results("agent").is_empty());
         for malformed in [
@@ -2107,10 +2105,7 @@ mod tests {
             let app = search_root_app(malformed);
             assert_eq!(app.sessions.len(), 1);
             assert!(app.sessions[0].search_root.is_none());
-            assert_eq!(
-                app.sessions[0].search_root_label(),
-                ("launch", "C:/dev/launch")
-            );
+            assert_eq!(app.sessions[0].search_root_label(), None);
             assert!(app.quick_switch_results("agent").is_empty());
         }
     }

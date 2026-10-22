@@ -372,8 +372,8 @@ pub fn render(frame: &mut Frame, app: &App, query: &str, target: Option<&crate::
         .and_then(|index| matches.get(index))
         .and_then(|result| result.target.session_id())
         .and_then(|id| app.session(id))
+        && let Some((kind, path)) = session.search_root_label()
     {
-        let (kind, path) = session.search_root_label();
         let label = format!(" · root {kind} ");
         let available = usize::from(layout.footer.width).saturating_sub(
             Line::from(footer.clone()).width() + Line::from(label.as_str()).width(),
@@ -514,6 +514,7 @@ mod tests {
                 80,
                 "Enter open",
             ),
+            (serde_json::Value::Null, true, 200, "Enter open"),
         ] {
             let mut app = App::new(1);
             app.palette_expanded = expanded;
@@ -539,7 +540,7 @@ mod tests {
                 .collect::<String>();
             let compact = line.split_whitespace().collect::<Vec<_>>().join(" ");
             assert!(compact.contains(expected), "{line}");
-            if !expanded {
+            if !expanded || root.is_null() {
                 assert!(!line.contains("root"), "{line}");
             } else if root["source"] == "currentCwd" {
                 assert!(line.trim_end().ends_with("agent-tail"), "{line}");
