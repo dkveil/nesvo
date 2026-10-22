@@ -36,6 +36,7 @@ const STATUS_STATES = wireMembers<SessionStatusState>({
 const HIBERNATION_TRIGGERS = wireMembers<SessionHibernation['trigger']>({
   owner: true,
   idlePolicy: true,
+  shutdown: true,
 });
 
 type RecordValue = Record<string, unknown>;
