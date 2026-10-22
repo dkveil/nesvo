@@ -453,9 +453,10 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         event_log
             .append(vec![event_log::Observation {
                 session_id: None,
-                kind: "host.started",
                 at: status::now_millis(),
-                payload: serde_json::json!({"buildId":env!("NESVO_BUILD_ID")}),
+                event: event_log::DomainEvent::HostStarted(event_log::model::HostStarted {
+                    build_id: env!("NESVO_BUILD_ID").into(),
+                }),
             }])
             .await,
     )?;
@@ -663,6 +664,10 @@ mod tests {
             "Service",
             "Observation",
             "Event",
+            "DomainEvent",
+            "model",
+            "program",
+            "agent_state",
             "Page",
             "monotonic_millis",
         ];

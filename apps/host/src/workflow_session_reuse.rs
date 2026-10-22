@@ -1,6 +1,6 @@
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
 };
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -192,9 +192,14 @@ pub fn admit(
         transaction,
         vec![Observation {
             session_id: subject,
-            kind: "run.session_reused",
             at: now,
-            payload: json!({"runId":run,"taskId":task,"attemptId":id,"previousAttemptId":previous.id,"sessionId":session}),
+            event: DomainEvent::RunSessionReused(model::RunSessionReused {
+                run_id: run.into(),
+                task_id: task.into(),
+                attempt_id: id.clone(),
+                previous_attempt_id: previous.id.clone(),
+                session_id: session.into(),
+            }),
         }],
     )?;
     Ok(id)

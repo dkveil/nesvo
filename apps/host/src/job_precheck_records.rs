@@ -1,7 +1,7 @@
 //! Durable precheck authorization/outcome, before any model dispatch.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     job_attempts::{self, Dispatch},
     job_definitions::{Reply, Spec},
     job_prechecks::{self, Outcome, OutcomeState},
@@ -267,9 +267,12 @@ fn phase(tx: &Transaction<'_>, id: &str, state: &str, now: u64) -> Result<()> {
         tx,
         vec![Observation {
             session_id: None,
-            kind: "job.changed",
             at: now,
-            payload: json!({"jobId":job,"occurrenceId":id,"phase":state}),
+            event: DomainEvent::JobChanged(model::JobChanged {
+                job_id: job,
+                occurrence_id: Some(id.into()),
+                phase: state.into(),
+            }),
         }],
     )?;
     Ok(())

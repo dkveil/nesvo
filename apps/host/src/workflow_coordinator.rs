@@ -1,7 +1,7 @@
 //! Explicit owner metadata rebinding. Native worker authority/effects are not adopted.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
 };
 use anyhow::{Result, anyhow};
@@ -195,9 +195,13 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Opti
         &transaction,
         vec![Observation {
             session_id: Some(request.coordinator_session_id.clone()),
-            kind: "run.coordinator_rebound",
             at: now,
-            payload: json!({"runId":request.run_id,"previousSessionId":request.expected_coordinator_session_id,"sessionId":request.coordinator_session_id,"generation":generation}),
+            event: DomainEvent::RunCoordinatorRebound(model::RunCoordinatorRebound {
+                run_id: request.run_id.clone(),
+                previous_session_id: request.expected_coordinator_session_id.clone(),
+                session_id: request.coordinator_session_id.clone(),
+                generation: u64::try_from(generation)?,
+            }),
         }],
     )?;
     let mut view = orchestration::view(&transaction, &actor, &request.run_id)?;

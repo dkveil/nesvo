@@ -1,7 +1,7 @@
 //! Durable, caller-bound operation intents. A launch is not an agent/task result.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     status::now_millis,
 };
 use anyhow::{Result, ensure};
@@ -35,9 +35,12 @@ pub struct Claim {
 fn event(receipt: &Receipt) -> Observation {
     Observation {
         session_id: Some(receipt.session_id.clone()),
-        kind: "operation.changed",
         at: now_millis(),
-        payload: json!({"operationId":receipt.id,"phase":receipt.phase,"operation":receipt.operation}),
+        event: DomainEvent::OperationChanged(model::OperationChanged {
+            operation_id: receipt.id.clone(),
+            operation: receipt.operation.clone(),
+            phase: receipt.phase.clone(),
+        }),
     }
 }
 fn valid_key(key: &str) -> Result<()> {

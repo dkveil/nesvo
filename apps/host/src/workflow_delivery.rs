@@ -1,7 +1,7 @@
 //! A durable task instruction intent, separate from native readiness and results.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor},
     receipts::Receipt,
 };
@@ -131,9 +131,11 @@ fn changed(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<u64> {
         transaction,
         vec![Observation {
             session_id: subject,
-            kind: "run.delivery_changed",
             at: now,
-            payload: json!({"runId":run,"deliveryId":id}),
+            event: DomainEvent::RunDeliveryChanged(model::RunDelivery {
+                run_id: run,
+                delivery_id: id.into(),
+            }),
         }],
     )
 }

@@ -928,17 +928,15 @@ pub(crate) async fn plan(directory: &Path) -> Result<Plan> {
 async fn journal(
     log: Option<&event_log::Service>,
     session_id: &str,
-    kind: &'static str,
-    payload: Value,
+    event: event_log::DomainEvent,
 ) {
     if let Some(log) = log {
         let _ = tokio::time::timeout(
             DRAIN_DEADLINE,
             log.append(vec![event_log::Observation {
                 session_id: Some(session_id.into()),
-                kind,
                 at: now_millis(),
-                payload,
+                event,
             }]),
         )
         .await;
@@ -1135,8 +1133,13 @@ async fn prepare_with(
     journal(
         log.as_ref(),
         session_id,
-        "worktreePrepared",
-        json!({"sessionId":session_id,"result":result,"log":log_path,"worktree":display,"digest":digest}),
+        event_log::DomainEvent::WorktreePrepared(event_log::model::WorktreePrepared {
+            session_id: session_id.into(),
+            result: result.into(),
+            log: log_path.clone(),
+            worktree: display.clone(),
+            digest: digest.clone(),
+        }),
     )
     .await;
     if outcome != Outcome::Passed {
@@ -1822,9 +1825,13 @@ async fn approve(
     if let Some(log) = log {
         log.observe(event_log::Observation {
             session_id: None,
-            kind: "worktreeSetupApproved",
             at: now_millis(),
-            payload: json!({"repository":repository,"digest":current}),
+            event: event_log::DomainEvent::WorktreeSetupApproved(
+                event_log::model::RepositoryDigest {
+                    repository: repository.clone(),
+                    digest: current.clone(),
+                },
+            ),
         });
     }
     Ok(
@@ -1853,9 +1860,13 @@ async fn revoke(
     if revoked && let Some(log) = log {
         log.observe(event_log::Observation {
             session_id: None,
-            kind: "worktreeSetupRevoked",
             at: now_millis(),
-            payload: json!({"repository":repository,"digest":digest}),
+            event: event_log::DomainEvent::WorktreeSetupRevoked(
+                event_log::model::RepositoryDigest {
+                    repository: repository.clone(),
+                    digest: digest.clone(),
+                },
+            ),
         });
     }
     Ok(
@@ -1953,8 +1964,11 @@ async fn run(
         journal(
             log.as_ref(),
             &session,
-            "worktreeRan",
-            json!({"sessionId":session,"result":result,"log":log_path}),
+            event_log::DomainEvent::WorktreeRan(event_log::model::WorktreeRan {
+                session_id: session.clone(),
+                result: result.into(),
+                log: log_path.clone(),
+            }),
         )
         .await;
     });
@@ -2146,7 +2160,23 @@ async fn archive(
         })
         .await?;
     let payload = json!({"sessionId":session_id,"worktree":record.worktree,"branch":record.branch,"discarded":discarded,"blockers":blockers,"branchDeleted":branch_deleted});
-    journal(log, session_id, "worktreeArchived", payload.clone()).await;
+    let archived = event_log::model::WorktreeArchived {
+        session_id: session_id.into(),
+        worktree: record.worktree.clone(),
+        branch: record.branch.clone(),
+        discarded,
+        blockers: blockers
+            .iter()
+            .map(|blocker| (*blocker).to_owned())
+            .collect(),
+        branch_deleted,
+    };
+    journal(
+        log,
+        session_id,
+        event_log::DomainEvent::WorktreeArchived(archived),
+    )
+    .await;
     let mut event = payload;
     event["type"] = "worktreeArchived".into();
     Ok(event)

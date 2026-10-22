@@ -1,7 +1,7 @@
 //! Durable addressed messages. Reading/ACK never executes or validates task work.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
     status::now_millis,
     workflow_attempts,
@@ -223,12 +223,7 @@ fn insert(
     }
     decode((sequence, source, None, None))
 }
-fn event(
-    transaction: &Transaction<'_>,
-    run_id: &str,
-    kind: &'static str,
-    payload: Value,
-) -> Result<u64> {
+fn event(transaction: &Transaction<'_>, run_id: &str, event: DomainEvent) -> Result<u64> {
     let subject: Option<String> = transaction.query_row(
         "SELECT coordinator_id FROM workflow_runs WHERE id=?1",
         [run_id],
@@ -238,9 +233,8 @@ fn event(
         transaction,
         vec![Observation {
             session_id: subject,
-            kind,
             at: now_millis(),
-            payload,
+            event,
         }],
     )
 }
@@ -420,8 +414,10 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
             let cursor = event(
                 &transaction,
                 run_id,
-                "run.message_sent",
-                json!({"runId":run_id,"messageId":message["id"]}),
+                DomainEvent::RunMessageSent(model::RunMessage {
+                    run_id: run_id.clone(),
+                    message_id: crate::event_log::field(&message["id"])?,
+                }),
             )?;
             mailbox.base["message"] = message;
             mailbox.base["cursor"] = cursor.into();
@@ -486,8 +482,10 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
                 event(
                     &transaction,
                     &run_id,
-                    "run.messages_acknowledged",
-                    json!({"runId":run_id,"count":acknowledged.len()}),
+                    DomainEvent::RunMessagesAcknowledged(model::RunCount {
+                        run_id: run_id.clone(),
+                        count: u64::try_from(acknowledged.len())?,
+                    }),
                 )?
             } else {
                 transaction.query_row(

@@ -2,7 +2,7 @@
 use crate::{
     api_error::Error,
     caller::Role,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     launchers::Program,
     orchestration::{self, Actor, Scope},
 };
@@ -236,9 +236,8 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
         &transaction,
         vec![Observation {
             session_id: None,
-            kind: "host.budget_changed",
             at: crate::status::now_millis(),
-            payload: json!({"revision":revision}),
+            event: DomainEvent::HostBudgetChanged(model::RevisionChanged { revision }),
         }],
     )?;
     let result = json!({"budget":load(&transaction)?,"cursor":cursor});

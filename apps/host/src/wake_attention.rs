@@ -1,18 +1,24 @@
 //! Bounded canonical-attention publication with durable ACK and local backoff.
-use crate::event_log::{Observation, Service};
-use serde_json::Value;
+use crate::event_log::{DomainEvent, Observation, Service, model::AgentAttention};
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 #[derive(Default)]
 pub struct Publisher {
-    published: Option<Value>,
-    pending: Option<(Value, oneshot::Receiver<anyhow::Result<u64>>)>,
+    published: Option<AgentAttention>,
+    pending: Option<(AgentAttention, oneshot::Receiver<anyhow::Result<u64>>)>,
     retry_at: Option<Instant>,
 }
 
 impl Publisher {
-    pub fn offer(&mut self, log: &Service, session: &str, payload: Value, at: u64, now: Instant) {
+    pub fn offer(
+        &mut self,
+        log: &Service,
+        session: &str,
+        payload: AgentAttention,
+        at: u64,
+        now: Instant,
+    ) {
         if let Some((fingerprint, ack)) = &mut self.pending {
             match ack.try_recv() {
                 Ok(Ok(_)) => self.published = Some(fingerprint.clone()),
@@ -28,9 +34,8 @@ impl Publisher {
         }
         match log.observe_confirmed(Observation {
             session_id: Some(session.into()),
-            kind: "agent.attention",
             at,
-            payload: payload.clone(),
+            event: DomainEvent::AgentAttention(payload.clone()),
         }) {
             Some(ack) => {
                 self.pending = Some((payload, ack));
@@ -44,13 +49,23 @@ impl Publisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::event_log::model::HostStarted;
+    fn attention(priority: u8, reason: Option<&str>) -> AgentAttention {
+        AgentAttention {
+            priority,
+            reason: reason.map(str::to_owned),
+            blocked_children: 0,
+            process_exited: false,
+            exit_code: None,
+        }
+    }
     async fn barrier(log: &Service) {
         log.append(vec![Observation {
             session_id: None,
-            kind: "test.barrier",
             at: 1,
-            payload: json!({}),
+            event: DomainEvent::HostStarted(HostStarted {
+                build_id: "barrier".into(),
+            }),
         }])
         .await
         .unwrap();
@@ -60,7 +75,7 @@ mod tests {
         let log = Service::open(":memory:".into()).await.unwrap();
         let now = Instant::now();
         let mut publisher = Publisher::default();
-        let idle = json!({"priority":0,"reason":null,"blockedChildren":0});
+        let idle = attention(0, None);
         publisher.offer(&log, "worker", idle.clone(), 1, now);
         barrier(&log).await;
         for _ in 0..20 {
@@ -76,7 +91,7 @@ mod tests {
                 .count(),
             1
         );
-        let blocked = json!({"priority":2,"reason":"permission","blockedChildren":0});
+        let blocked = attention(2, Some("permission"));
         publisher.offer(&log, "worker", blocked.clone(), 3, now);
         barrier(&log).await;
         publisher.offer(&log, "worker", blocked, 4, now);
@@ -97,7 +112,7 @@ mod tests {
     {
         let log = Service::open(":memory:".into()).await.unwrap();
         let now = Instant::now();
-        let blocked = json!({"priority":2,"reason":"permission","blockedChildren":0});
+        let blocked = attention(2, Some("permission"));
         let (sender, receiver) = oneshot::channel();
         sender
             .send(Err(anyhow::anyhow!("injected commit failure")))

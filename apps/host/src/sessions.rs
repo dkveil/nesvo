@@ -145,10 +145,16 @@ impl Session {
             self.program_status.blocked_children(),
         )
     }
-    fn wake_attention_payload(&self) -> Value {
+    fn wake_attention_payload(&self) -> crate::event_log::model::AgentAttention {
         let attention = self.current_attention();
         let exit = self.status.observed_exit();
-        json!({"priority":attention.priority,"reason":attention.reason,"blockedChildren":attention.blocked_children,"processExited":exit.is_some(),"exitCode":exit.flatten()})
+        crate::event_log::model::AgentAttention {
+            priority: attention.priority,
+            reason: attention.reason.map(str::to_owned),
+            blocked_children: attention.blocked_children as u64,
+            process_exited: exit.is_some(),
+            exit_code: exit.flatten(),
+        }
     }
 }
 
@@ -963,13 +969,12 @@ impl State {
         }
         Ok(requested)
     }
-    fn emit(&self, id: Option<&str>, kind: &'static str, payload: Value) {
+    fn emit(&self, id: Option<&str>, event: crate::event_log::DomainEvent) {
         if let Some(log) = &self.event_log {
             log.observe(crate::event_log::Observation {
                 session_id: id.map(str::to_owned),
-                kind,
                 at: now_millis(),
-                payload,
+                event,
             });
         }
     }
@@ -1154,9 +1159,8 @@ impl State {
             .filter_map(|id| self.sessions.get(id))
             .map(|s| crate::event_log::Observation {
                 session_id: Some(s.info.id.clone()),
-                kind: "agent.attention",
                 at: now_millis(),
-                payload: s.wake_attention_payload(),
+                event: crate::event_log::DomainEvent::AgentAttention(s.wake_attention_payload()),
             })
             .collect()
     }
@@ -2916,8 +2920,12 @@ impl State {
         }
         self.emit(
             Some(&id),
-            "session.created",
-            json!({"program":spec.program,"parentSessionId":spec.parent_session_id}),
+            crate::event_log::DomainEvent::SessionCreated(
+                crate::event_log::model::SessionCreated {
+                    program: crate::event_log::program(spec.program),
+                    parent_session_id: Some(spec.parent_session_id.clone()),
+                },
+            ),
         );
         // Durable launches publish once the authenticated child's grant is installed.
         if reserved.is_none() {
@@ -3540,8 +3548,12 @@ impl State {
                 }
                 self.emit(
                     Some(&session_id),
-                    "session.created",
-                    json!({"program":program}),
+                    crate::event_log::DomainEvent::SessionCreated(
+                        crate::event_log::model::SessionCreated {
+                            program: crate::event_log::program(program),
+                            parent_session_id: None,
+                        },
+                    ),
                 );
                 self.respond(
                     client_id,
@@ -3693,7 +3705,12 @@ impl State {
                 self.cleanup_workers.retain(|worker| !worker.is_finished());
                 self.cleanup_workers
                     .push(thread::spawn(move || drop(removed)));
-                self.emit(Some(&session_id), "session.closed", json!({}));
+                self.emit(
+                    Some(&session_id),
+                    crate::event_log::DomainEvent::SessionClosed(
+                        crate::event_log::model::SessionClosed {},
+                    ),
+                );
                 self.broadcast_list();
             }
             Command::CreateGroup {
@@ -4232,7 +4249,17 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         );
                                         session.attention_dirty |= new_response;
                                         if new_response && let Some(log) = &event_log {
-                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"response.settled",at:now_millis(),payload:json!({"turnId":turn.id,"taskResult":null})});
+                                            log.observe(crate::event_log::Observation {
+                                                session_id: Some(id.clone()),
+                                                at: now_millis(),
+                                                event:
+                                                    crate::event_log::DomainEvent::ResponseSettled(
+                                                        crate::event_log::model::ResponseSettled {
+                                                            turn_id: turn.id.into(),
+                                                            task_result: (),
+                                                        },
+                                                    ),
+                                            });
                                         }
                                     }
                                     if session.status.lifecycle_ordered(
@@ -4247,7 +4274,25 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                                         session.status.record_hook_reason(&event.name, event.state);
                                         session.status_projection_dirty = true;
                                         if let Some(log) = &event_log {
-                                            log.observe(crate::event_log::Observation{session_id:Some(id.clone()),kind:"agent.lifecycle",at:now_millis(),payload:json!({"event":event.name,"state":event.state,"generation":event.generation,"sourceSequence":event.sequence,"submissionEvidence":event.prompt_digest.is_some()||event.paste_digest.is_some()})});
+                                            log.observe(crate::event_log::Observation {
+                                                session_id: Some(id.clone()),
+                                                at: now_millis(),
+                                                event:
+                                                    crate::event_log::DomainEvent::AgentLifecycle(
+                                                        crate::event_log::model::AgentLifecycle {
+                                                            event: event.name.clone(),
+                                                            state: crate::event_log::agent_state(
+                                                                event.state,
+                                                            ),
+                                                            generation: event.generation,
+                                                            source_sequence: event.sequence,
+                                                            submission_evidence: event
+                                                                .prompt_digest
+                                                                .is_some()
+                                                                || event.paste_digest.is_some(),
+                                                        },
+                                                    ),
+                                            });
                                         }
                                     }
                                 }
@@ -4391,7 +4436,12 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         );
                     }
                     state.broadcast_control(&id);
-                    state.emit(Some(&id), "process.exited", json!({"exitCode":code}));
+                    state.emit(
+                        Some(&id),
+                        crate::event_log::DomainEvent::ProcessExited(
+                            crate::event_log::model::ProcessExited { exit_code: code },
+                        ),
+                    );
                     state.repository_working_directory(&id, None);
                     // The timer coalesces final state with other status changes.
                 }

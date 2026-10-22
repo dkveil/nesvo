@@ -1,7 +1,7 @@
 //! Run admission and native create identities commit before process setup.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     jobs::LaunchSpec,
     launchers::Program,
     orchestration::{self, Actor},
@@ -134,7 +134,7 @@ fn event(
     transaction: &Transaction<'_>,
     run: &str,
     attempt: &str,
-    kind: &'static str,
+    kind: fn(model::RunAttempt) -> DomainEvent,
     now: u64,
 ) -> Result<u64> {
     let subject: Option<String> = transaction.query_row(
@@ -146,9 +146,11 @@ fn event(
         transaction,
         vec![Observation {
             session_id: subject,
-            kind,
             at: now,
-            payload: json!({"runId":run,"attemptId":attempt}),
+            event: kind(model::RunAttempt {
+                run_id: run.into(),
+                attempt_id: attempt.into(),
+            }),
         }],
     )
 }
@@ -221,7 +223,7 @@ pub fn recover(connection: &mut Connection) -> Result<()> {
             &transaction,
             &run,
             &attempt,
-            "run.launch_recovered",
+            DomainEvent::RunLaunchRecovered,
             crate::status::now_millis(),
         )?;
     }
@@ -397,7 +399,7 @@ fn prepare(
         &transaction,
         &request.run_id,
         &attempt,
-        "run.launch_reserved",
+        DomainEvent::RunLaunchReserved,
         now,
     )?;
     let mut view = orchestration::view(&transaction, &actor, &request.run_id)?;
@@ -492,7 +494,13 @@ fn prepared_workspace(
             "UPDATE workflow_launches SET prepared_spec=?2,prepared_at=?3,derived_worktree=?4 WHERE operation_id=?1",
             params![operation, encoded, i64::try_from(now)?, derived_worktree],
         )?;
-        event(&transaction, &run, &attempt, "run.workspace_prepared", now)?;
+        event(
+            &transaction,
+            &run,
+            &attempt,
+            DomainEvent::RunWorkspacePrepared,
+            now,
+        )?;
     }
     transaction.commit()?;
     Ok(Reply::Done)
@@ -524,7 +532,13 @@ fn quota_hold(
         params![operation, reason],
     )?;
     if changed != 0 {
-        event(&transaction, &run, &attempt, "run.quota_hold_changed", now)?;
+        event(
+            &transaction,
+            &run,
+            &attempt,
+            DomainEvent::RunQuotaHoldChanged,
+            now,
+        )?;
     }
     transaction.commit()?;
     Ok(Reply::Done)
@@ -597,7 +611,13 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
                     [&run],
                 )?;
                 crate::workflow_budget::settle_drain(&transaction, &run)?;
-                event(&transaction, &run, &attempt_id, "run.launch_observed", now)?;
+                event(
+                    &transaction,
+                    &run,
+                    &attempt_id,
+                    DomainEvent::RunLaunchObserved,
+                    now,
+                )?;
                 crate::workflow_digest::settle(&transaction, &run, now)?;
             }
             transaction.commit()?;

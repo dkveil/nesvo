@@ -1,6 +1,7 @@
 //! Attempt ownership and explicit results; no native effects or inferred success.
 use crate::{
     api_error::Error,
+    event_log::{DomainEvent, RunRevisionEvent},
     orchestration::{Actor, Request, Scope, TaskSpec},
 };
 use anyhow::Result;
@@ -250,8 +251,8 @@ pub fn mutate(
     actor: &Actor,
     request: &Request,
     now: u64,
-) -> Result<(String, &'static str)> {
-    let (run_id, kind) = match request {
+) -> Result<(String, RunRevisionEvent)> {
+    let (run_id, kind): (String, RunRevisionEvent) = match request {
         Request::Activate {
             run_id,
             expected_revision,
@@ -271,7 +272,7 @@ pub fn mutate(
                 "UPDATE workflow_runs SET state='active' WHERE id=?1",
                 [run_id],
             )?;
-            (run_id.clone(), "run.activated")
+            (run_id.clone(), DomainEvent::RunActivated)
         }
         Request::Assign {
             run_id,
@@ -344,7 +345,7 @@ pub fn mutate(
             }
             let id = hex::encode(crate::wire::random::<16>());
             connection.execute("INSERT INTO workflow_attempts(id,task_id,ordinal,session_id,state) VALUES(?1,?2,?3,?4,'assigned')",params![id,task_id,ordinal,session_id])?;
-            (run_id.clone(), "run.attempt_assigned")
+            (run_id.clone(), DomainEvent::RunAttemptAssigned)
         }
         Request::Report {
             attempt_id, result, ..
@@ -403,7 +404,7 @@ pub fn mutate(
                     .as_str()
                     .ok_or_else(|| invalid("Missing assigned run identity"))?
                     .into(),
-                "run.result_reported",
+                DomainEvent::RunResultReported,
             )
         }
         Request::Validate {
@@ -492,7 +493,7 @@ pub fn mutate(
                     [run_id],
                 )?;
             }
-            (run_id.clone(), "run.result_validated")
+            (run_id.clone(), DomainEvent::RunResultValidated)
         }
         Request::Drain {
             run_id,
@@ -520,9 +521,9 @@ pub fn mutate(
             (
                 run_id.clone(),
                 if resume {
-                    "run.resumed"
+                    DomainEvent::RunResumed
                 } else {
-                    "run.draining"
+                    DomainEvent::RunDraining
                 },
             )
         }

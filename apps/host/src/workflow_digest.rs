@@ -1,5 +1,5 @@
 use crate::{
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
 };
 use anyhow::{Result, anyhow};
@@ -351,9 +351,14 @@ pub fn settle(transaction: &Transaction<'_>, run_id: &str, now: u64) -> Result<(
         transaction,
         vec![Observation {
             session_id: subject,
-            kind: "run.digest_recorded",
             at: now,
-            payload: json!({"runId": run_id, "revision": revision, "state": state, "fingerprint": fingerprint, "bytes": encoded.len()}),
+            event: DomainEvent::RunDigestRecorded(model::RunDigestRecorded {
+                run_id: run_id.into(),
+                revision: u64::try_from(revision)?,
+                state,
+                fingerprint,
+                bytes: u64::try_from(encoded.len())?,
+            }),
         }],
     )?;
     Ok(())

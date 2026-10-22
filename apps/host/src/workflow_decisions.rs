@@ -1,7 +1,7 @@
 //! Attempt-bound questions. A recorded answer is data, never a native permission grant.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
     workflow_attempts,
 };
@@ -9,6 +9,8 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+type RunDecisionEvent = fn(model::RunDecision) -> DomainEvent;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,13 +81,7 @@ fn text(value: &str) -> bool {
             .any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))
         && serde_json::to_string(value).is_ok_and(|s| s.len() <= 3072)
 }
-fn event(
-    transaction: &Transaction<'_>,
-    run: &Value,
-    kind: &'static str,
-    payload: Value,
-    now: u64,
-) -> Result<u64> {
+fn event(transaction: &Transaction<'_>, run: &Value, event: DomainEvent, now: u64) -> Result<u64> {
     let subject: Option<String> = transaction.query_row(
         "SELECT coordinator_id FROM workflow_runs WHERE id=?1",
         [run["id"].as_str()],
@@ -95,9 +91,8 @@ fn event(
         transaction,
         vec![Observation {
             session_id: subject,
-            kind,
             at: now,
-            payload,
+            event,
         }],
     )
 }
@@ -194,8 +189,10 @@ fn expire(
         event(
             &transaction,
             run,
-            "run.decisions_expired",
-            json!({"runId":run["id"],"count":count}),
+            DomainEvent::RunDecisionsExpired(model::RunCount {
+                run_id: crate::event_log::field(&run["id"])?,
+                count,
+            }),
             now,
         )?;
     }
@@ -502,7 +499,7 @@ pub fn execute(
         return Ok(previous);
     }
     orchestration::mutation_capacity(&transaction)?;
-    let (d, kind, to_worker, notice) = match &request {
+    let (d, kind, to_worker, notice): (_, RunDecisionEvent, _, _) = match &request {
         Request::Ask {
             attempt_id,
             audience,
@@ -563,7 +560,7 @@ pub fn execute(
                 .ok_or_else(|| invalid("Decision deadline exceeds clock bounds"))?;
             let d = json!({"id":id,"runId":run_id,"taskId":own["task"]["id"],"attemptId":attempt_id,"audience":audience,"question":question,"askedBy":identity(&actor),"createdAt":now,"expiresAt":expires,"revision":1,"state":"pending","answer":null,"reason":null,"resolvedAt":null,"resolvedBy":null});
             transaction.execute("INSERT INTO workflow_decisions(id,run_id,attempt_id,revision,state,data) VALUES(?1,?2,?3,1,'pending',?4)",params![id,run_id,attempt_id,serde_json::to_string(&d)?])?;
-            (d, "run.decision_asked", false, question.clone())
+            (d, DomainEvent::RunDecisionAsked, false, question.clone())
         }
         Request::Answer {
             decision_id,
@@ -629,9 +626,9 @@ pub fn execute(
             (
                 d,
                 if cancel {
-                    "run.decision_canceled"
+                    DomainEvent::RunDecisionCanceled
                 } else {
-                    "run.decision_answered"
+                    DomainEvent::RunDecisionAnswered
                 },
                 true,
                 answer.clone(),
@@ -644,8 +641,11 @@ pub fn execute(
     let cursor = event(
         &transaction,
         &run,
-        kind,
-        json!({"runId":run_id,"decisionId":result_base["decision"]["id"],"state":result_base["decision"]["state"]}),
+        kind(model::RunDecision {
+            run_id: run_id.clone(),
+            decision_id: crate::event_log::field(&result_base["decision"]["id"])?,
+            state: crate::event_log::field(&result_base["decision"]["state"])?,
+        }),
         now,
     )?;
     let mut result = result_base;

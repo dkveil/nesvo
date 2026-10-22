@@ -1,7 +1,7 @@
 //! Scoped external admission commits delivery dedupe and an ordinary job intent together.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     job_trigger_auth as auth,
     orchestration::{self, Actor, Scope},
 };
@@ -300,9 +300,11 @@ fn observe(tx: &Transaction<'_>, trigger: &str, phase: &'static str, now: u64) -
         tx,
         vec![Observation {
             session_id: None,
-            kind: "job.trigger_changed",
             at: now,
-            payload: json!({"triggerId":trigger,"phase":phase}),
+            event: DomainEvent::JobTriggerChanged(model::JobTriggerChanged {
+                trigger_id: trigger.into(),
+                phase: phase.into(),
+            }),
         }],
     )?;
     Ok(())
@@ -678,9 +680,12 @@ pub fn ingest(connection: &mut Connection, inbound: Inbound, now: u64) -> Result
         &tx,
         vec![Observation {
             session_id: None,
-            kind: "job.trigger_delivery",
             at: now,
-            payload: json!({"triggerId":inbound.trigger_id,"deliveryId":delivery,"disposition":disposition}),
+            event: DomainEvent::JobTriggerDelivery(model::JobTriggerDelivery {
+                trigger_id: inbound.trigger_id.clone(),
+                delivery_id: delivery.clone(),
+                disposition: disposition.into(),
+            }),
         }],
     )?;
     tx.commit()?;

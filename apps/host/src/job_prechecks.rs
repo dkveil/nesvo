@@ -1,7 +1,7 @@
 //! Owner-approved exact commands. Approval is explicit, immutable intent, not a sandbox.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
 };
 use anyhow::Result;
@@ -322,9 +322,11 @@ pub fn execute(
         &tx,
         vec![Observation {
             session_id: None,
-            kind: "precheck.approval.changed",
             at: now,
-            payload: json!({"approvalId":id,"phase":phase}),
+            event: DomainEvent::PrecheckApprovalChanged(model::PrecheckApprovalChanged {
+                approval_id: id.clone(),
+                phase: phase.into(),
+            }),
         }],
     )?;
     tx.commit()?;

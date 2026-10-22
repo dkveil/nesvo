@@ -1,7 +1,7 @@
 //! Run admission, retry/time budgets and drain. Native control receipts are separate.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
 };
 use anyhow::Result;
@@ -139,8 +139,7 @@ pub fn snapshot(connection: &Connection, run_id: &str, state: &str) -> Result<Va
 fn event(
     transaction: &Transaction<'_>,
     run_id: &str,
-    kind: &'static str,
-    payload: Value,
+    kind: fn(model::RunChanged) -> DomainEvent,
     now: u64,
 ) -> Result<u64> {
     let subject: Option<String> = transaction.query_row(
@@ -152,9 +151,10 @@ fn event(
         transaction,
         vec![Observation {
             session_id: subject,
-            kind,
             at: now,
-            payload,
+            event: kind(model::RunChanged {
+                run_id: run_id.into(),
+            }),
         }],
     )
 }
@@ -175,8 +175,7 @@ pub fn refresh(connection: &mut Connection, run_id: &str, now: u64) -> Result<()
         event(
             &transaction,
             run_id,
-            "run.time_budget_exhausted",
-            json!({"runId":run_id}),
+            DomainEvent::RunTimeBudgetExhausted,
             now,
         )?;
     }
@@ -464,13 +463,7 @@ fn execute_inner(
         "UPDATE workflow_runs SET revision=revision+1 WHERE id=?1",
         [run_id],
     )?;
-    let cursor = event(
-        &transaction,
-        run_id,
-        "run.budget_changed",
-        json!({"runId":run_id}),
-        now,
-    )?;
+    let cursor = event(&transaction, run_id, DomainEvent::RunBudgetChanged, now)?;
     let mut result = policy_view(&transaction, &actor, run_id)?;
     result["cursor"] = cursor.into();
     orchestration::remember(&transaction, &actor, key, &digest, &result)?;

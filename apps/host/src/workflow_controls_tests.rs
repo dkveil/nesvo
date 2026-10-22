@@ -88,9 +88,10 @@ fn exited(store: &mut Store, session: &str) -> u64 {
     store
         .append(vec![Observation {
             session_id: Some(session.into()),
-            kind: "process.exited",
             at: crate::status::now_millis(),
-            payload: json!({"exitCode":0}),
+            event: crate::event_log::DomainEvent::ProcessExited(
+                crate::event_log::model::ProcessExited { exit_code: Some(0) },
+            ),
         }])
         .unwrap()
 }

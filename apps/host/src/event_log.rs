@@ -1,6 +1,8 @@
 //! Durable domain observations. Terminal replay has a separate cursor space.
 use crate::api_error::Error;
 use anyhow::{Result, anyhow, ensure};
+pub use nesvo_wire::events as model;
+pub use nesvo_wire::events::Event as DomainEvent;
 use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
@@ -32,9 +34,33 @@ pub(crate) fn monotonic_millis() -> u64 {
 #[derive(Clone)]
 pub struct Observation {
     pub session_id: Option<String>,
-    pub kind: &'static str,
     pub at: u64,
-    pub payload: Value,
+    pub event: DomainEvent,
+}
+pub(crate) type RunRevisionEvent = fn(model::RunRevision) -> DomainEvent;
+pub(crate) fn program(program: crate::launchers::Program) -> model::Program {
+    use crate::launchers::Program;
+    match program {
+        Program::Shell => model::Program::Shell,
+        Program::Claude => model::Program::Claude,
+        Program::Gemini => model::Program::Gemini,
+        Program::Codex => model::Program::Codex,
+    }
+}
+pub(crate) fn agent_state(state: crate::status::StatusState) -> model::AgentState {
+    use crate::status::StatusState;
+    match state {
+        StatusState::Working => model::AgentState::Working,
+        StatusState::Idle => model::AgentState::Idle,
+        StatusState::Done => model::AgentState::Done,
+        StatusState::Blocked => model::AgentState::Blocked,
+        StatusState::Question => model::AgentState::Question,
+        StatusState::Failed => model::AgentState::Failed,
+        StatusState::Unknown => model::AgentState::Unknown,
+    }
+}
+pub(crate) fn field<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
+    Ok(serde_json::from_value(value.clone())?)
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,20 +98,11 @@ pub(crate) fn append_transaction(
                     && !id.chars().any(char::is_control)),
                 "Invalid event subject"
             );
-            ensure!(
-                !e.kind.is_empty()
-                    && e.kind.len() <= 64
-                    && e.kind
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b"._".contains(&b)),
-                "Invalid event kind"
-            );
+            ensure!(model::journaled_kind(e.event.kind()), "Invalid event kind");
             ensure!(e.at <= MAX_CURSOR, "Invalid event timestamp");
-            ensure!(
-                e.payload.is_object(),
-                "Event payload must be metadata object"
-            );
-            let payload = serde_json::to_string(&e.payload)?;
+            let payload = e.event.payload()?;
+            ensure!(payload.is_object(), "Event payload must be metadata object");
+            let payload = serde_json::to_string(&payload)?;
             ensure!(payload.len() <= 1024, "Event metadata exceeds 1024 bytes");
             Ok((e, payload))
         })
@@ -94,7 +111,12 @@ pub(crate) fn append_transaction(
     for (event, payload) in encoded {
         transaction.execute(
             "INSERT INTO domain_events(session_id,kind,at,payload) VALUES(?1,?2,?3,?4)",
-            params![event.session_id, event.kind, event.at as i64, payload],
+            params![
+                event.session_id,
+                event.event.kind(),
+                event.at as i64,
+                payload
+            ],
         )?;
         head = u64::try_from(transaction.last_insert_rowid())?;
         ensure!(head <= MAX_CURSOR, "Event sequence exhausted");
@@ -112,9 +134,6 @@ pub(crate) fn append_transaction(
 }
 
 struct Store(Connection);
-#[cfg(test)]
-#[path = "event_capture_tests.rs"]
-mod event_capture_tests;
 #[cfg(test)]
 #[path = "attention_inbox_tests.rs"]
 mod attention_inbox_tests;
@@ -260,20 +279,18 @@ impl Store {
         Ok((head, floor))
     }
     fn append(&mut self, observations: Vec<Observation>) -> Result<u64> {
-        let mut attention: Vec<_> = observations
-            .iter()
-            .filter(|observation| observation.kind == "agent.attention")
-            .filter_map(|event| {
-                event
-                    .session_id
-                    .as_ref()
-                    .map(|id| (id.clone(), event.payload.clone(), event.at))
-            })
-            .collect();
-        attention.extend(observations.iter().filter(|event|event.kind=="session.closed").filter_map(|event|event.session_id.as_ref().map(|id|(id.clone(),serde_json::json!({"priority":1,"reason":"session_closed","blockedChildren":0}),event.at))));
+        let mut attention = Vec::new();
+        for observation in &observations {
+            if let (DomainEvent::AgentAttention(_), Some(id)) =
+                (&observation.event, &observation.session_id)
+            {
+                attention.push((id.clone(), observation.event.payload()?, observation.at));
+            }
+        }
+        attention.extend(observations.iter().filter(|event|matches!(event.event,DomainEvent::SessionClosed(_))).filter_map(|event|event.session_id.as_ref().map(|id|(id.clone(),serde_json::json!({"priority":1,"reason":"session_closed","blockedChildren":0}),event.at))));
         let exits: Vec<_> = observations
             .iter()
-            .filter(|observation| observation.kind == "process.exited")
+            .filter(|observation| matches!(observation.event, DomainEvent::ProcessExited(_)))
             .filter_map(|observation| {
                 observation
                     .session_id
@@ -1820,10 +1837,47 @@ mod tests {
     fn event(id: &str, at: u64) -> Observation {
         Observation {
             session_id: Some(id.into()),
-            kind: "response.settled",
             at,
-            payload: serde_json::json!({"turnId":"launch:2"}),
+            event: DomainEvent::ResponseSettled(model::ResponseSettled {
+                turn_id: "launch:2".into(),
+                task_result: (),
+            }),
         }
+    }
+    #[test]
+    fn typed_event_appends_reproduce_the_golden_wire_records_byte_for_byte() {
+        let golden = include_str!("../../../crates/nesvo-wire/tests/fixtures/events.jsonl");
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let mut expected = Vec::new();
+        for line in golden.lines() {
+            let record: model::EventRecord = serde_json::from_str(line).unwrap();
+            let observation = Observation {
+                session_id: record.session_id,
+                at: record.at,
+                event: record.event,
+            };
+            if record.sequence == 0 {
+                assert!(store.append(vec![observation]).is_err(), "{line}");
+            } else {
+                assert_eq!(store.append(vec![observation]).unwrap(), record.sequence);
+                expected.push(line);
+            }
+        }
+        let mut actual = Vec::new();
+        let mut after = 0;
+        loop {
+            let page = store.read(after, 32, None).unwrap();
+            actual.extend(
+                page.events
+                    .iter()
+                    .map(|event| serde_json::to_string(event).unwrap()),
+            );
+            after = page.next_cursor;
+            if !page.more {
+                break;
+            }
+        }
+        assert_eq!(actual, expected);
     }
     #[test]
     fn early_response_beats_late_write_ack_and_send_restart_never_replays() {
@@ -2082,7 +2136,10 @@ mod tests {
         let mut changed = service.subscribe();
         changed.borrow_and_update();
         let mut oversized = event("s", 0);
-        oversized.payload = serde_json::json!({"value":"x".repeat(1024)});
+        oversized.event = DomainEvent::ResponseSettled(model::ResponseSettled {
+            turn_id: "x".repeat(1024),
+            task_result: (),
+        });
         assert!(service.append(vec![oversized]).await.is_err());
         changed.changed().await.unwrap();
         assert_eq!(

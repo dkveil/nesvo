@@ -1,7 +1,7 @@
 //! Durable workflow plans. DAG readiness is independent from process/task success.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     status::now_millis,
 };
 use anyhow::{Result, ensure};
@@ -577,7 +577,7 @@ fn execute_inner(
         return Ok(result);
     }
     mutation_capacity(&transaction)?;
-    let (id, kind) = match &request {
+    let (id, kind): (String, crate::event_log::RunRevisionEvent) = match &request {
         Request::Create { spec, .. } => {
             if !text(&spec.title, 80)
                 || spec.title.chars().any(char::is_control)
@@ -602,7 +602,7 @@ fn execute_inner(
             let id = random_id();
             transaction.execute("INSERT INTO workflow_runs(id,title,goal,coordinator_id,revision,state,created_at) VALUES(?1,?2,?3,?4,1,'draft',?5)",params![id,spec.title,spec.goal,spec.coordinator_session_id,now as i64])?;
             crate::workflow_budget::ensure_record(&transaction, &id)?;
-            (id, "run.created")
+            (id, DomainEvent::RunCreated)
         }
         Request::SetPlan {
             run_id,
@@ -644,7 +644,7 @@ fn execute_inner(
                 "UPDATE workflow_runs SET revision=revision+1 WHERE id=?1",
                 [run_id],
             )?;
-            (run_id.clone(), "run.plan_changed")
+            (run_id.clone(), DomainEvent::RunPlanChanged)
         }
         _ => crate::workflow_attempts::mutate(&transaction, &actor, &request, now)?,
     };
@@ -662,9 +662,11 @@ fn execute_inner(
         &transaction,
         vec![Observation {
             session_id: subject,
-            kind,
             at: now,
-            payload: json!({"runId":id,"revision":result["run"]["revision"]}),
+            event: kind(model::RunRevision {
+                run_id: id.clone(),
+                revision: crate::event_log::field(&result["run"]["revision"])?,
+            }),
         }],
     )?;
     crate::workflow_digest::settle(&transaction, &id, now)?;

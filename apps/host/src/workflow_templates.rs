@@ -720,13 +720,20 @@ pub(crate) fn describe(store: &Store, source: &Source) -> Value {
     json!({"type":"workflowTemplates","repository":source.repository,"source":format!("HEAD:{CONFIG_FILE}"),"configured":digest.is_some(),"digest":digest,"approved":approved,"templates":source.templates})
 }
 
-fn observe(log: Option<&event_log::Service>, kind: &'static str, payload: Value) {
+fn observe(
+    log: Option<&event_log::Service>,
+    kind: fn(event_log::model::RepositoryDigest) -> event_log::DomainEvent,
+    repository: &str,
+    digest: &str,
+) {
     if let Some(log) = log {
         log.observe(event_log::Observation {
             session_id: None,
-            kind,
             at: crate::status::now_millis(),
-            payload,
+            event: kind(event_log::model::RepositoryDigest {
+                repository: repository.into(),
+                digest: digest.into(),
+            }),
         });
     }
 }
@@ -755,8 +762,9 @@ pub(crate) fn approve(
     let approved_at = store.approve(&source.repository, &current)?;
     observe(
         log,
-        "workflowTemplatesApproved",
-        json!({"repository":source.repository,"digest":current}),
+        event_log::DomainEvent::WorkflowTemplatesApproved,
+        &source.repository,
+        &current,
     );
     Ok(
         json!({"type":"workflowTemplatesApproved","repository":source.repository,"digest":current,"approvedAt":approved_at}),
@@ -775,8 +783,9 @@ pub(crate) fn revoke(
     if revoked {
         observe(
             log,
-            "workflowTemplatesRevoked",
-            json!({"repository":repository,"digest":digest}),
+            event_log::DomainEvent::WorkflowTemplatesRevoked,
+            repository,
+            &digest,
         );
     }
     Ok(

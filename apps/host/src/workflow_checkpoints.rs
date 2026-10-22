@@ -1,7 +1,7 @@
 //! Immutable checkpoints and current context reads never restore native effects.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor},
     workflow_checkpoint_parts as parts,
 };
@@ -306,9 +306,12 @@ pub fn execute(
         &transaction,
         vec![Observation {
             session_id: run["coordinatorSessionId"].as_str().map(str::to_owned),
-            kind: "run.checkpoint_saved",
             at: now,
-            payload: json!({"runId":run_id,"checkpointId":id,"sourceRunRevision":expected_revision}),
+            event: DomainEvent::RunCheckpointSaved(model::RunCheckpointSaved {
+                run_id: run_id.clone(),
+                checkpoint_id: id.clone(),
+                source_run_revision: expected_revision,
+            }),
         }],
     )?;
     // Capturing history does not alter the plan/run revision or refresh native

@@ -2,7 +2,7 @@
 pub use crate::job_calendar::Schedule;
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
     workflow_launches::Profile,
 };
@@ -553,9 +553,12 @@ pub(crate) fn observe(
         transaction,
         vec![Observation {
             session_id: None,
-            kind: "job.changed",
             at: now,
-            payload: json!({"jobId":job,"occurrenceId":occurrence,"phase":phase}),
+            event: DomainEvent::JobChanged(model::JobChanged {
+                job_id: job.into(),
+                occurrence_id: occurrence.map(str::to_owned),
+                phase: phase.into(),
+            }),
         }],
     )?;
     Ok(())
@@ -1141,9 +1144,10 @@ pub fn work_at(connection: &mut Connection, work: Work, now: u64, elapsed: u64) 
                     &transaction,
                     vec![Observation {
                         session_id: None,
-                        kind: "provider.quota_changed",
                         at: now,
-                        payload: json!({"revision":observation.revision}),
+                        event: DomainEvent::ProviderQuotaChanged(model::RevisionChanged {
+                            revision: observation.revision,
+                        }),
                     }],
                 )?;
             }

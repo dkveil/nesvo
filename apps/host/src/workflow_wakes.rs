@@ -1,7 +1,7 @@
 //! Explicit coordinator wake policy. Messages, input receipts and ACK stay distinct.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor},
 };
 use anyhow::{Result, anyhow};
@@ -234,9 +234,11 @@ pub fn changed(transaction: &Transaction<'_>, policy: &str, now: u64) -> Result<
         transaction,
         vec![Observation {
             session_id: Some(coordinator),
-            kind: "run.wake_changed",
             at: now,
-            payload: json!({"runId":run,"policyId":policy}),
+            event: DomainEvent::RunWakeChanged(model::RunWake {
+                run_id: run,
+                policy_id: policy.into(),
+            }),
         }],
     )
 }

@@ -92,9 +92,16 @@ fn signal(store: &mut Store, priority: u8, reason: Option<&str>, children: usize
     store
         .append(vec![super::Observation {
             session_id: Some("worker-1".into()),
-            kind: "agent.attention",
             at: crate::status::now_millis(),
-            payload: json!({"priority":priority,"reason":reason,"blockedChildren":children}),
+            event: crate::event_log::DomainEvent::AgentAttention(
+                crate::event_log::model::AgentAttention {
+                    priority,
+                    reason: reason.map(str::to_owned),
+                    blocked_children: children as u64,
+                    process_exited: false,
+                    exit_code: None,
+                },
+            ),
         }])
         .unwrap();
 }
@@ -581,10 +588,21 @@ fn exit_without_report_is_missing_result_while_reported_clean_exit_is_not_task_s
         let run = current(&mut store, &run);
         enable(&mut store, &run);
         let before = count(&store, "workflow_wake_notices");
-        store.append(vec![super::Observation {
-            session_id: Some("worker-1".into()), kind: "agent.attention", at: crate::status::now_millis(),
-            payload: json!({"priority":0,"reason":null,"blockedChildren":0,"processExited":true,"exitCode":0}),
-        }]).unwrap();
+        store
+            .append(vec![super::Observation {
+                session_id: Some("worker-1".into()),
+                at: crate::status::now_millis(),
+                event: crate::event_log::DomainEvent::AgentAttention(
+                    crate::event_log::model::AgentAttention {
+                        priority: 0,
+                        reason: None,
+                        blocked_children: 0,
+                        process_exited: true,
+                        exit_code: Some(0),
+                    },
+                ),
+            }])
+            .unwrap();
         let after = current(&mut store, &run);
         assert_eq!(
             count(&store, "workflow_wake_notices"),

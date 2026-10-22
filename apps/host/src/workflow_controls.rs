@@ -1,7 +1,7 @@
 //! Durable run control intents. Physical effects and exit observations are separate.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
     receipts::Receipt,
 };
@@ -128,7 +128,7 @@ pub fn recover(connection: &mut Connection) -> Result<()> {
             &transaction,
             &run,
             &id,
-            "run.control_unconfirmed",
+            DomainEvent::RunControlUnconfirmed,
             crate::status::now_millis(),
         )?;
     }
@@ -139,7 +139,7 @@ fn event(
     transaction: &Transaction<'_>,
     run_id: &str,
     control_id: &str,
-    kind: &'static str,
+    kind: fn(model::RunControl) -> DomainEvent,
     now: u64,
 ) -> Result<u64> {
     let subject: Option<String> = transaction.query_row(
@@ -151,9 +151,11 @@ fn event(
         transaction,
         vec![Observation {
             session_id: subject,
-            kind,
             at: now,
-            payload: json!({"runId":run_id,"controlId":control_id}),
+            event: kind(model::RunControl {
+                run_id: run_id.into(),
+                control_id: control_id.into(),
+            }),
         }],
     )
 }
@@ -275,7 +277,13 @@ fn settle(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<()> {
                 )?;
             }
             transaction.execute("UPDATE workflow_attempts SET state='stopped' WHERE task_id IN (SELECT id FROM workflow_tasks WHERE run_id=?1) AND (state IN ('assigned','launching','launchUnknown') OR (?2='cancel' AND state='reported')) AND (?3=0 OR id IN (SELECT attempt_id FROM workflow_control_targets WHERE control_id=?4))",params![run_id,kind,timeout,id])?;
-            event(transaction, &run_id, id, "run.control_completed", now)?;
+            event(
+                transaction,
+                &run_id,
+                id,
+                DomainEvent::RunControlCompleted,
+                now,
+            )?;
             crate::workflow_digest::settle(transaction, &run_id, now)?;
         }
     }
@@ -388,7 +396,13 @@ fn prepare_job_timeout(
         "UPDATE workflow_runs SET state='stopping',revision=revision+1 WHERE id=?1",
         [run_id],
     )?;
-    event(&transaction, run_id, &id, "run.control_requested", now)?;
+    event(
+        &transaction,
+        run_id,
+        &id,
+        DomainEvent::RunControlRequested,
+        now,
+    )?;
     settle(&transaction, &id, now)?;
     let mut view = view(&transaction, &actor, run_id, &id, 0)?;
     view["cursor"] = u64::try_from(transaction.query_row(
@@ -528,7 +542,13 @@ fn prepare(connection: &mut Connection, actor: Actor, request: Request, now: u64
         "UPDATE workflow_runs SET state=?2,revision=revision+1 WHERE id=?1",
         params![run_id, kind.pending()],
     )?;
-    event(&transaction, run_id, &id, "run.control_requested", now)?;
+    event(
+        &transaction,
+        run_id,
+        &id,
+        DomainEvent::RunControlRequested,
+        now,
+    )?;
     settle(&transaction, &id, now)?;
     let cursor: u64 = u64::try_from(transaction.query_row(
         "SELECT head FROM domain_event_cursor WHERE id=1",
@@ -627,7 +647,13 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
                 observe_exit(&transaction, &session_id, now)?;
             }
             let (run, _) = identity(&transaction, &claim.id)?;
-            event(&transaction, &run, &claim.id, "run.control_progress", now)?;
+            event(
+                &transaction,
+                &run,
+                &claim.id,
+                DomainEvent::RunControlProgress,
+                now,
+            )?;
             settle(&transaction, &claim.id, now)?;
             transaction.commit()?;
             Ok(Reply::Done)

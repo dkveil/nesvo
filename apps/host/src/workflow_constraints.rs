@@ -1,7 +1,7 @@
 //! Owner constraints are append-only; handling acknowledgement is a separate act.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor, Scope},
     workflow_context as context,
 };
@@ -114,7 +114,7 @@ pub fn execute(
         .into());
     }
     let policy = context::summary(&transaction, run)?;
-    let kind = match &request {
+    let kind: fn(model::RunConstraints) -> DomainEvent = match &request {
         Request::Add { text, .. } => {
             if text.trim().is_empty()
                 || text.len() > 1024
@@ -146,7 +146,7 @@ pub fn execute(
             transaction.execute("UPDATE workflow_executors SET enabled=0,generation=generation+1,phase='paused',reason='constraints_changed' WHERE run_id=?1 AND enabled=1",[run])?;
             transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='paused',reason='constraints_changed' WHERE run_id=?1 AND enabled=1",[run])?;
             transaction.execute("UPDATE workflow_deliveries SET phase='paused',blocker='constraints_changed' WHERE run_id=?1 AND phase='queued'",[run])?;
-            "run.constraints_added"
+            DomainEvent::RunConstraintsAdded
         }
         Request::Acknowledge {
             constraint_revision,
@@ -167,7 +167,7 @@ pub fn execute(
                 .into());
             }
             transaction.execute("INSERT INTO workflow_context_ack(run_id,revision,issuer,at) VALUES(?1,?2,?3,?4) ON CONFLICT(run_id) DO UPDATE SET revision=excluded.revision,issuer=excluded.issuer,at=excluded.at",params![run,*constraint_revision as i64,actor.issuer,now as i64])?;
-            "run.constraints_acknowledged"
+            DomainEvent::RunConstraintsAcknowledged
         }
         _ => return Err(anyhow!("Unexpected constraint mutation")),
     };
@@ -179,9 +179,13 @@ pub fn execute(
         &transaction,
         vec![Observation {
             session_id: current["coordinatorSessionId"].as_str().map(str::to_owned),
-            kind,
             at: now,
-            payload: json!({"runId":run,"constraintRevision":context::summary(&transaction,run)?["revision"]}),
+            event: kind(model::RunConstraints {
+                run_id: run.into(),
+                constraint_revision: crate::event_log::field(
+                    &context::summary(&transaction, run)?["revision"],
+                )?,
+            }),
         }],
     )?;
     let mut result = view(&transaction, &actor, run, 0)?;

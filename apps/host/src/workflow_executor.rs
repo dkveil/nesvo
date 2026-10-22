@@ -1,7 +1,7 @@
 //! Opt-in durable DAG scheduling policy. Native effects use existing receipts.
 use crate::{
     api_error::Error,
-    event_log::{Observation, append_transaction},
+    event_log::{DomainEvent, Observation, append_transaction, model},
     orchestration::{self, Actor},
     workflow_launches::Profile,
 };
@@ -154,9 +154,11 @@ fn event(transaction: &Transaction<'_>, id: &str, run: &str, now: u64) -> Result
         transaction,
         vec![Observation {
             session_id: subject,
-            kind: "run.executor_changed",
             at: now,
-            payload: json!({"runId":run,"executorId":id}),
+            event: DomainEvent::RunExecutorChanged(model::RunExecutor {
+                run_id: run.into(),
+                executor_id: id.into(),
+            }),
         }],
     )
 }
