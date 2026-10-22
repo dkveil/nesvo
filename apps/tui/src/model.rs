@@ -1232,6 +1232,27 @@ impl App {
         commands
     }
 
+    fn resubscribe_resumed(&mut self, hibernated: &HashSet<String>) -> Vec<Value> {
+        let count = self.leaf_count();
+        let resumed: HashSet<String> = self.panes[..count]
+            .iter()
+            .flatten()
+            .filter(|id| hibernated.contains(*id))
+            .filter(|id| {
+                self.session(id)
+                    .is_some_and(|session| session.running && !session.hibernated())
+            })
+            .cloned()
+            .collect();
+        let mut commands = Vec::new();
+        for id in resumed {
+            self.terminals.remove(&id);
+            self.subscribed.insert(id.clone());
+            commands.push(views::encode(&Subscribe { session_id: &id }));
+        }
+        commands
+    }
+
     pub fn preview_session(&mut self, id: &str) -> Vec<Value> {
         let mut commands = Vec::new();
         let stale: Vec<_> = self
@@ -1408,6 +1429,12 @@ impl App {
                     .as_ref()
                     .map(|id| RowKind::Session(id.clone()))
                     .or_else(|| self.selected_row().map(|row| row.kind));
+                let hibernated: HashSet<String> = self
+                    .sessions
+                    .iter()
+                    .filter(|session| session.hibernated())
+                    .map(|session| session.id.clone())
+                    .collect();
                 self.sessions = serde_json::from_value(event["sessions"].clone())?;
                 self.refresh_session_times(std::time::Instant::now());
                 self.groups = serde_json::from_value(event["groups"].clone())?;
@@ -1435,6 +1462,7 @@ impl App {
                         *pane = None;
                     }
                 }
+                commands.extend(self.resubscribe_resumed(&hibernated));
                 if let Some(id) = self.pending_selection.take() {
                     commands.extend(self.activate_session(&id));
                 }
@@ -2476,6 +2504,59 @@ mod tests {
         assert_eq!(app.panes, panes);
         assert_eq!(app.focused, focused);
         assert_eq!(app.collapsed, collapsed);
+    }
+
+    #[test]
+    fn a_pane_resubscribes_when_its_hibernated_session_runs_again() {
+        let live = |id: &str| {
+            json!({"id":id,"name":id,"cwd":".","program":"claude","cols":80,"rows":24,
+                "running":true,"groupId":null,"controllerId":null})
+        };
+        let asleep = |id: &str| {
+            let mut session = live(id);
+            session["running"] = false.into();
+            session["hibernation"] = json!({"state":"hibernated","hibernatedAt":1,
+                "conversationId":"0f8fad5b-d9cb-469f-a165-70867728950e","trigger":"owner",
+                "lastResumeFailure":null});
+            session
+        };
+        let snapshot = |sessions: Vec<Value>| json!({"type":"sessions","revision":1,"groups":[],"sessions":sessions});
+        let subscribes = |commands: &[Value], id: &str| {
+            commands
+                .iter()
+                .filter(|command| command["type"] == "subscribe" && command["sessionId"] == id)
+                .count()
+        };
+        let mut app = App::new(1);
+        let first = app
+            .event(snapshot(vec![live("s"), live("hidden")]))
+            .unwrap();
+        assert_eq!(subscribes(&first, "s"), 1);
+        app.event(json!({"type":"subscribed","sessionId":"s","cols":80,"rows":24}))
+            .unwrap();
+        let slept = app
+            .event(snapshot(vec![asleep("s"), asleep("hidden")]))
+            .unwrap();
+        assert_eq!(subscribes(&slept, "s"), 0);
+        assert!(app.subscribed.contains("s"));
+        let woke = app
+            .event(snapshot(vec![live("s"), live("hidden")]))
+            .unwrap();
+        assert_eq!(subscribes(&woke, "s"), 1);
+        assert_eq!(subscribes(&woke, "hidden"), 0);
+        assert!(!app.terminals.contains_key("s"));
+        let again = app
+            .event(snapshot(vec![live("s"), live("hidden")]))
+            .unwrap();
+        assert_eq!(subscribes(&again, "s"), 0);
+
+        let mut restored = App::new(2);
+        restored.event(snapshot(vec![asleep("r")])).unwrap();
+        assert_eq!(restored.panes[0].as_deref(), Some("r"));
+        let queued = restored.event(snapshot(vec![asleep("r")])).unwrap();
+        assert_eq!(subscribes(&queued, "r"), 0);
+        let running = restored.event(snapshot(vec![live("r")])).unwrap();
+        assert_eq!(subscribes(&running, "r"), 1);
     }
 
     #[test]
