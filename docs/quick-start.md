@@ -57,7 +57,7 @@ npx.cmd eas-cli@latest whoami
 
 Complete the browser authorization, including any confirmation step, then sign into that account in Expo Go. Opening an Expo dashboard alone does not prove the CLI is authenticated. [Expo sign-in requirements](https://docs.expo.dev/troubleshooting/expo-go-sign-in-required/).
 
-Inside nesvo, choose **Połącz komputer** (connect computer), then scan the host's QR or paste its JSON. **Expo's QR opens the app; the host's QR grants terminal access.** Open a session and choose **Przejmij sterowanie** (take control) before entering a command.
+Inside nesvo, choose **Connect a computer**, then scan the host's QR or paste its JSON. **Expo's QR opens the app; the host's QR grants terminal access.** Open a session and choose **Take over** (**Take control** to screen readers) before entering a command.
 
 Other devices remain observers until they explicitly take control. Returning to the list releases control while the process continues. Stopping a session ends its process; restarting the host preserves groups but does not resurrect shells.
 

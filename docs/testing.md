@@ -392,7 +392,7 @@ tests complement the native HTTP/dispatch cases; they do not replace them.
 5. In another terminal at the repository root, start `npm.cmd run host:lan -- --workspace PATH` with an existing workspace directory.
 6. Ensure the phone can reach the advertised host address and port; start on the same Wi-Fi.
 7. Scan the host's separate pairing QR inside the app.
-8. Create or open a session and choose **Przejmij sterowanie** (take control) before typing.
+8. Create or open a session and choose **Take over** (**Take control** to screen readers) before typing.
 
 The app was aligned to Expo SDK 57 after an incompatibility report from the physical iPhone. Dependency checks and the iOS manifest verified the matching runtime. EAS project linkage and CLI sign-in were also verified. These infrastructure checks do not substitute for device interaction.
 
