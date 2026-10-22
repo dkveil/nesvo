@@ -3257,6 +3257,7 @@ impl State {
                         "sampledAtElapsedMs": crate::event_log::monotonic_millis(),
                         "counts": self.lifecycle_observer,
                     });
+                    report["sessionRestore"] = self.restore_report();
                 }
                 self.respond(
                     client_id,

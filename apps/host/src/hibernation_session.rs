@@ -3,6 +3,7 @@ use crate::{
     api_error::Error,
     event_log::model::HibernationTrigger,
     hibernation::{IdlePolicy, Outcome, Record, Work, refuse},
+    restore,
     resume::{Target, Verification},
     status::{StatusState, now_millis},
 };
@@ -23,7 +24,43 @@ impl State {
         self.hibernated.idle = policy;
     }
 
-    fn hibernation_refusal(&self, id: &str) -> Result<Target> {
+    fn shutdown_quiescence(&self, id: &str) -> Result<()> {
+        let session = self
+            .sessions
+            .get(id)
+            .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
+        if !session.info.running {
+            return Err(Error::new("process_exited", "Process has exited").into());
+        }
+        if session.hibernating.is_some() {
+            return Err(Error::new(
+                "session_hibernating",
+                "The session is being hibernated; no prompt was queued",
+            )
+            .into());
+        }
+        if session.pending_input.is_some() {
+            return Err(Error::new(
+                "submission_pending",
+                "A previous submission still needs correlation or reconciliation",
+            )
+            .into());
+        }
+        if !matches!(
+            session.status.status().state,
+            StatusState::Idle | StatusState::Done
+        ) || session.readiness.snapshot().phase != crate::readiness::Phase::Ready
+        {
+            return Err(Error::new(
+                "agent_not_ready",
+                "Agent must be ready and observably idle before hibernation",
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    fn hibernation_refusal(&self, id: &str, trigger: HibernationTrigger) -> Result<Target> {
         let Some(session) = self.sessions.get(id) else {
             return Err(if self.hibernated.contains(id) {
                 refuse("session_hibernated", "Session is already hibernated")
@@ -65,7 +102,11 @@ impl State {
                     "No provider conversation ID has been observed for this session",
                 )
             })?;
-        self.check_submission(id, PROBE, &crate::caller::Authority::Owner)?;
+        if trigger == HibernationTrigger::Shutdown {
+            self.shutdown_quiescence(id)?;
+        } else {
+            self.check_submission(id, PROBE, &crate::caller::Authority::Owner)?;
+        }
         let children = self
             .sessions
             .values()
@@ -154,7 +195,7 @@ impl State {
         key: &str,
         trigger: HibernationTrigger,
     ) -> Result<Record> {
-        let target = self.hibernation_refusal(id)?;
+        let target = self.hibernation_refusal(id, trigger)?;
         let record = self.hibernation_record(id, target, trigger)?;
         if let Some(session) = self.sessions.get_mut(id) {
             session.hibernating = Some(key.to_owned());
@@ -186,7 +227,7 @@ impl State {
             ));
         }
         session.hibernating = None;
-        let target = self.hibernation_refusal(id)?;
+        let target = self.hibernation_refusal(id, trigger)?;
         let record = self.hibernation_record(id, target, trigger)?;
         let session = self
             .sessions
@@ -405,12 +446,97 @@ impl State {
                     )
                     && policy.due(session.status.status().updated_at, now)
             })
-            .filter(|(id, _)| self.hibernation_refusal(id).is_ok())
+            .filter(|(id, _)| {
+                self.hibernation_refusal(id, HibernationTrigger::IdlePolicy)
+                    .is_ok()
+            })
             .map(|(id, session)| (id.clone(), session.status.status().updated_at))
             .collect();
         due.sort();
         due.truncate(IDLE_BATCH);
         due
+    }
+
+    fn lineage_depth(&self, id: &str) -> usize {
+        let mut depth = 0;
+        let mut current = id;
+        while let Some(parent) = self
+            .sessions
+            .get(current)
+            .and_then(|session| session.info.parent_session_id.as_deref())
+            .filter(|parent| self.sessions.contains_key(*parent))
+        {
+            depth += 1;
+            if depth > self.sessions.len() {
+                break;
+            }
+            current = parent;
+        }
+        depth
+    }
+
+    pub(crate) fn shutdown_plan(&self, at: u64) -> (Vec<String>, Vec<restore::Entry>) {
+        let mut order: Vec<(usize, String)> = self
+            .sessions
+            .keys()
+            .filter(|id| !self.hibernated.resuming(id))
+            .map(|id| (self.lineage_depth(id), id.clone()))
+            .collect();
+        order.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+        let mut kept: Vec<restore::Entry> = self
+            .hibernated
+            .records()
+            .map(|record| {
+                let code = match record.trigger {
+                    HibernationTrigger::Owner => "owner_hibernated",
+                    HibernationTrigger::IdlePolicy => "idle_hibernated",
+                    HibernationTrigger::Shutdown => "shutdown_hibernated",
+                };
+                restore::Entry::new(
+                    record.session_id.clone(),
+                    restore::Outcome::Hibernated,
+                    Some(code),
+                    record.last_resume_failure.as_deref(),
+                    at,
+                )
+            })
+            .collect();
+        kept.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+        (order.into_iter().map(|(_, id)| id).collect(), kept)
+    }
+
+    pub(crate) fn is_hibernated(&self, id: &str) -> bool {
+        self.hibernated.contains(id) || self.hibernated.resuming(id)
+    }
+
+    pub(crate) fn restore_outcome(&self, id: &str) -> restore::Outcome {
+        if self.is_hibernated(id) {
+            restore::Outcome::Hibernated
+        } else if self.sessions.contains_key(id) {
+            restore::Outcome::Restored
+        } else {
+            restore::Outcome::Reaped
+        }
+    }
+
+    pub(crate) fn set_restore_policy(&mut self, policy: restore::Policy) {
+        self.hibernated.restore_policy = policy;
+    }
+
+    pub(crate) fn install_restore_report(
+        &mut self,
+        entries: Vec<restore::Entry>,
+    ) -> restore::Policy {
+        self.hibernated.restore.replace(entries);
+        self.hibernated.restore_policy
+    }
+
+    pub(crate) fn settle_restore(&mut self, entry: restore::Entry) {
+        self.hibernated.restore.settle(entry);
+    }
+
+    pub(crate) fn restore_report(&self) -> serde_json::Value {
+        self.hibernated.restore.view(self.hibernated.restore_policy)
     }
 }
 

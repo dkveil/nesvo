@@ -68,6 +68,7 @@ mod recipes;
 mod refreshing_cache;
 mod registry_files;
 mod replay;
+mod restore;
 mod resume;
 mod review;
 mod scoped_context;
@@ -178,6 +179,9 @@ struct Args {
         help = "Hibernate eligible idle agent sessions after this many minutes (15-1440); off by default"
     )]
     hibernate_idle_minutes: Option<u64>,
+    /// Keep sessions hibernated by the last graceful shutdown hibernated instead of resuming them at startup.
+    #[arg(long)]
+    no_restore_on_start: bool,
     #[arg(long, env = "POCKET_HOST_ADDRESS")]
     advertise: Option<String>,
     #[arg(long, default_value = ".")]
@@ -500,6 +504,10 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
         .set_hibernation_idle_policy(hibernation::IdlePolicy::from_minutes(
             args.hibernate_idle_minutes,
         )?);
+    state
+        .lock()
+        .unwrap()
+        .set_restore_policy(restore::Policy::new(!args.no_restore_on_start));
     if let Err(error) = hibernation::restore(&state, &event_log).await {
         eprintln!("Hibernated sessions are unavailable: {error}");
     }
@@ -554,6 +562,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     let quota_wake_runtime = quota_wake_runtime::Runtime::start(state.clone(), event_log.clone());
     let repository_runtime = session_repository::Runtime::start(state.clone());
     let idle_hibernation = hibernation::start_idle(state.clone(), event_log.clone());
+    let session_restore = restore::start(state.clone(), event_log.clone(), event_tx.clone());
     let permits = Arc::new(Semaphore::new(16));
     span.end(true);
     let span = trace.begin(Phase::ReadinessAnnounce);
@@ -590,6 +599,9 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     if let Some(task) = idle_hibernation {
         task.abort();
     }
+    session_restore.abort();
+    let _ = session_restore.await;
+    restore::shutdown(&state, &event_log).await;
     quota_runtime.request_shutdown();
     quota_wake_runtime.request_shutdown();
     repository_runtime.request_shutdown();

@@ -78,6 +78,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "session_hibernation",
         sql: include_str!("../migrations/0014_session_hibernation.sql"),
     },
+    Migration {
+        version: 15,
+        name: "session_restore",
+        sql: include_str!("../migrations/0015_session_restore.sql"),
+    },
 ];
 
 const LEGACY_SCHEMA_VERSION: u32 = 7;

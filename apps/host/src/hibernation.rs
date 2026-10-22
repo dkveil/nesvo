@@ -143,12 +143,13 @@ impl Record {
         })
     }
 
-    pub fn resumed_reply(&self) -> Value {
+    pub fn resumed_reply(&self, reason: model::ResumeReason) -> Value {
         json!({
             "type": "sessionHibernation",
             "sessionId": self.session_id,
             "state": "resumed",
             "resume": {"state": "verified", "conversationId": self.conversation_id()},
+            "reason": reason,
             "replayed": false,
         })
     }
@@ -196,6 +197,8 @@ pub(crate) struct Registry {
     records: HashMap<String, Record>,
     resuming: HashMap<String, Record>,
     pub idle: IdlePolicy,
+    pub restore: crate::restore::Report,
+    pub restore_policy: crate::restore::Policy,
 }
 
 impl Registry {
@@ -238,6 +241,10 @@ impl Registry {
 
     pub fn take_resuming(&mut self, id: &str) -> Option<Record> {
         self.resuming.remove(id)
+    }
+
+    pub fn records(&self) -> impl Iterator<Item = &Record> {
+        self.records.values()
     }
 
     pub fn views(&self, now: u64) -> Vec<Value> {
@@ -293,6 +300,7 @@ pub(crate) enum Work {
     Resumed {
         key: String,
         record: Box<Record>,
+        reason: model::ResumeReason,
     },
     ResumeFailed {
         key: String,
@@ -301,11 +309,17 @@ pub(crate) enum Work {
     },
     Recover,
     Discard(Vec<String>),
+    RecordShutdown {
+        entries: Vec<crate::restore::Entry>,
+    },
+    RestorePlan,
+    RestoreSettle(crate::restore::Entry),
 }
 
 pub(crate) enum Reply {
     Key(Option<KeyRecord>),
     Records(Vec<Record>),
+    Restore(Vec<crate::restore::Entry>),
     Done,
 }
 
@@ -494,13 +508,19 @@ fn row_state(transaction: &Transaction<'_>, session: &str) -> Result<Option<Stri
         .optional()?)
 }
 
-fn journal(transaction: &Transaction<'_>, record: &Record, now: u64, resumed: bool) -> Result<()> {
+fn journal(
+    transaction: &Transaction<'_>,
+    record: &Record,
+    now: u64,
+    resumed: Option<model::ResumeReason>,
+) -> Result<()> {
     let program = crate::event_log::program(record.program());
     let conversation_id = record.conversation_id().to_owned();
-    let event = if resumed {
+    let event = if let Some(reason) = resumed {
         DomainEvent::SessionResumed(model::SessionResumed {
             program,
             conversation_id,
+            reason: Some(reason),
         })
     } else {
         DomainEvent::SessionHibernated(model::SessionHibernated {
@@ -590,7 +610,10 @@ pub(crate) fn handle(connection: &mut Connection, work: Work, now: u64) -> Resul
                 params![record.session_id, encode(&record)?, key, now as i64],
             )?;
             settle(&transaction, &key, &record.hibernated_reply())?;
-            journal(&transaction, &record, now, false)?;
+            journal(&transaction, &record, now, None)?;
+            if record.trigger == model::HibernationTrigger::Shutdown {
+                crate::restore::mark_pending(&transaction, &record.session_id, now)?;
+            }
             Reply::Done
         }
         Work::BeginResume { session_id, key } => {
@@ -628,14 +651,18 @@ pub(crate) fn handle(connection: &mut Connection, work: Work, now: u64) -> Resul
             )?;
             Reply::Done
         }
-        Work::Resumed { key, record } => {
+        Work::Resumed {
+            key,
+            record,
+            reason,
+        } => {
             change(
                 &transaction,
                 "DELETE FROM session_hibernations WHERE session_id=?1 AND state='resuming' AND operation_key=?2",
                 params![record.session_id, key],
             )?;
-            settle(&transaction, &key, &record.resumed_reply())?;
-            journal(&transaction, &record, now, true)?;
+            settle(&transaction, &key, &record.resumed_reply(reason))?;
+            journal(&transaction, &record, now, Some(reason))?;
             Reply::Done
         }
         Work::ResumeFailed {
@@ -688,6 +715,15 @@ pub(crate) fn handle(connection: &mut Connection, work: Work, now: u64) -> Resul
                     [id],
                 )?;
             }
+            Reply::Done
+        }
+        Work::RecordShutdown { entries } => {
+            crate::restore::record_shutdown(&transaction, &entries, now)?;
+            Reply::Done
+        }
+        Work::RestorePlan => Reply::Restore(crate::restore::load(&transaction)?),
+        Work::RestoreSettle(entry) => {
+            crate::restore::settle(&transaction, &entry, now)?;
             Reply::Done
         }
     };
@@ -837,6 +873,17 @@ pub(crate) async fn resume(
     session: String,
     key: String,
 ) -> Result<Value> {
+    resume_because(state, log, events, session, key, model::ResumeReason::Owner).await
+}
+
+pub(crate) async fn resume_because(
+    state: &Arc<Mutex<State>>,
+    log: &Service,
+    events: &mpsc::Sender<PtyEvent>,
+    session: String,
+    key: String,
+    reason: model::ResumeReason,
+) -> Result<Value> {
     valid_key(&key)?;
     valid_session(&session)?;
     if let Some(reply) = replay(log, &key, "resume", &session).await? {
@@ -866,12 +913,13 @@ pub(crate) async fn resume(
     match verification(state, &session).await {
         Outcome::Verified => {
             let record = state.lock().unwrap().finish_resume(&session)?;
-            let reply = record.resumed_reply();
+            let reply = record.resumed_reply(reason);
             work(
                 log,
                 Work::Resumed {
                     key,
                     record: Box::new(record),
+                    reason,
                 },
             )
             .await
@@ -1280,6 +1328,7 @@ mod tests {
             Work::Resumed {
                 key: "r4".into(),
                 record: Box::new(record(SESSION)),
+                reason: model::ResumeReason::Owner,
             },
             7,
         )
