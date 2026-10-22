@@ -295,6 +295,7 @@ fn the_environment_holds_only_allowlisted_host_variables() {
         digest: "d".repeat(64),
         approved: true,
         declarations: Vec::new(),
+        head: None,
     };
     let declaration = Declaration {
         name: "docs".into(),
@@ -334,7 +335,7 @@ async fn only_an_approved_head_digest_exposes_servers_through_bridge_leases() {
     ));
     let root = repo.0.canonicalize().unwrap();
     let repository_key = worktrees::repository_key(&root);
-    let (_unapproved_dir, unapproved) = store(&[]);
+    let (unapproved_dir, unapproved) = store(&[]);
     let source = resolve_head(Some(&unapproved), &repo.0, None)
         .await
         .unwrap();
@@ -344,12 +345,29 @@ async fn only_an_approved_head_digest_exposes_servers_through_bridge_leases() {
     let pool = pool(&log, 4);
     let session = "a".repeat(32);
     let bridge = PathBuf::from("C:/host/nesvo-host.exe");
-    assert!(expose(&pool, Program::Claude, &session, &source, &bridge).is_empty());
+    assert!(
+        expose(
+            &pool,
+            Program::Claude,
+            &session,
+            &source,
+            &bridge,
+            &unapproved_dir.0
+        )
+        .is_empty()
+    );
     assert!(pool.attachments(&repository_key).is_empty());
-    let (_approved_dir, approved) = store(&[(&repository_key, &source.digest)]);
+    let (approved_dir, approved) = store(&[(&repository_key, &source.digest)]);
     let source = resolve_head(Some(&approved), &repo.0, None).await.unwrap();
     assert!(source.approved);
-    let servers = expose(&pool, Program::Claude, &session, &source, &bridge);
+    let servers = expose(
+        &pool,
+        Program::Claude,
+        &session,
+        &source,
+        &bridge,
+        &approved_dir.0,
+    );
     assert_eq!(servers.keys().collect::<Vec<_>>(), ["docs"]);
     let entry = &servers["docs"];
     assert_eq!(entry["type"], "stdio");
@@ -381,17 +399,40 @@ async fn only_an_approved_head_digest_exposes_servers_through_bridge_leases() {
         changes.changed().await.unwrap();
     }
     let second = "b".repeat(32);
-    let pooled = expose(&pool, Program::Claude, &second, &source, &bridge);
+    let pooled = expose(
+        &pool,
+        Program::Claude,
+        &second,
+        &source,
+        &bridge,
+        &approved_dir.0,
+    );
     let lease = mcp_bridge::read(Path::new(pooled["docs"]["args"][1].as_str().unwrap())).unwrap();
-    let endpoint = lease.lease.expect("a pooled lease");
+    let endpoint = lease.lease.clone().expect("a pooled lease");
     assert_eq!(endpoint.token.len(), 64);
+    assert!(mcp_bridge::approved(&lease.approval).await);
     let lease_file = PathBuf::from(pooled["docs"]["args"][1].as_str().unwrap());
     release(&second);
     assert!(!lease_file.exists());
     commit(&repo.0, &fixture_server("docs", "."));
+    assert!(!mcp_bridge::approved(&lease.approval).await);
+    assert_eq!(
+        mcp_bridge::bridge(lease).await,
+        mcp_bridge::APPROVAL_WITHDRAWN
+    );
     let changed = resolve_head(Some(&approved), &repo.0, None).await.unwrap();
     assert!(!changed.approved);
-    assert!(expose(&pool, Program::Claude, &"c".repeat(32), &changed, &bridge).is_empty());
+    assert!(
+        expose(
+            &pool,
+            Program::Claude,
+            &"c".repeat(32),
+            &changed,
+            &bridge,
+            &approved_dir.0
+        )
+        .is_empty()
+    );
     release(&session);
     pool.shutdown().await;
     log.shutdown().await;
@@ -412,6 +453,63 @@ async fn sessions_outside_a_repository_or_without_declarations_resolve_nothing()
     assert_eq!(source.declarations.len(), 1);
 }
 
+#[tokio::test]
+async fn a_withdrawn_approval_refuses_the_bridge_and_removes_its_leases() {
+    let repo = repository(&fixture_server("docs", "."));
+    let repository_key = worktrees::repository_key(&repo.0.canonicalize().unwrap());
+    let digest = resolve_head(None, &repo.0, None).await.unwrap().digest;
+    let (registry, approved) = store(&[(&repository_key, &digest)]);
+    let source = resolve_head(Some(&approved), &repo.0, None).await.unwrap();
+    let (_journal_dir, log) = journal().await;
+    let pool = pool(&log, 4);
+    let session = "e".repeat(32);
+    let servers = expose(
+        &pool,
+        Program::Claude,
+        &session,
+        &source,
+        Path::new("C:/host/nesvo-host.exe"),
+        &registry.0,
+    );
+    let file = PathBuf::from(servers["docs"]["args"][1].as_str().unwrap());
+    let stale = mcp_bridge::read(&file).unwrap();
+    assert_eq!(stale.approval.registry, registry.0);
+    assert_eq!(stale.approval.repository, repository_key);
+    assert_eq!(stale.approval.digest, digest);
+    assert!(stale.approval.head.is_some());
+    assert!(mcp_bridge::approved(&stale.approval).await);
+    std::fs::write(
+        registry.0.join("worktrees.json"),
+        serde_json::to_vec(&json!({"version":1,"approvals":[],"worktrees":[]})).unwrap(),
+    )
+    .unwrap();
+    assert!(!mcp_bridge::approved(&stale.approval).await);
+    assert_eq!(
+        mcp_bridge::bridge(stale.clone()).await,
+        mcp_bridge::APPROVAL_WITHDRAWN
+    );
+    assert_eq!(invalidate(&repository_key, &"0".repeat(64)), 0);
+    assert_eq!(invalidate(&repository_key, &digest), 1);
+    assert!(!file.exists());
+    assert!(mcp_bridge::read(&file).is_none());
+    assert_eq!(invalidate(&repository_key, &digest), 0);
+    let mut unknown = stale;
+    unknown.approval.registry = scratch("no-registry").0.clone();
+    assert!(!mcp_bridge::approved(&unknown.approval).await);
+    release(&session);
+    pool.shutdown().await;
+    log.shutdown().await;
+}
+
+fn approval(directory: &Path) -> Approval {
+    Approval {
+        registry: directory.to_owned(),
+        repository: "C:/work/repo".into(),
+        digest: "d".repeat(64),
+        head: None,
+    }
+}
+
 #[test]
 fn lease_files_round_trip_and_refuse_foreign_documents() {
     let directory = scratch("lease");
@@ -428,7 +526,7 @@ fn lease_files_round_trip_and_refuse_foreign_documents() {
     let path = directory.0.join("docs.json");
     std::fs::write(
         &path,
-        serde_json::to_vec(&lease_document(&spec, &pooled)).unwrap(),
+        serde_json::to_vec(&lease_document(&spec, &pooled, approval(&directory.0))).unwrap(),
     )
     .unwrap();
     let lease = mcp_bridge::read(&path).unwrap();
@@ -440,12 +538,19 @@ fn lease_files_round_trip_and_refuse_foreign_documents() {
         })
     );
     assert_eq!(lease.spawn.command, spec.command);
-    let cold = lease_document(&spec, &json!({"mode":"cold","reason":"notPrepared"}));
+    assert_eq!(lease.approval, approval(&directory.0));
+    let cold = lease_document(
+        &spec,
+        &json!({"mode":"cold","reason":"notPrepared"}),
+        approval(&directory.0),
+    );
     assert_eq!(cold.lease, None);
+    let granted = serde_json::to_value(approval(&directory.0)).unwrap();
     for foreign in [
-        json!({"version":2,"server":"docs","lease":null,"spawn":{"command":display_path(&spec.command),"args":[],"cwd":display_path(&directory.0),"env":{}}}),
-        json!({"version":1,"server":"docs","lease":null,"spawn":{"command":"relative","args":[],"cwd":display_path(&directory.0),"env":{}}}),
-        json!({"version":1,"server":"docs","lease":null,"extra":1,"spawn":{"command":display_path(&spec.command),"args":[],"cwd":display_path(&directory.0),"env":{}}}),
+        json!({"version":2,"server":"docs","approval":granted,"lease":null,"spawn":{"command":display_path(&spec.command),"args":[],"cwd":display_path(&directory.0),"env":{}}}),
+        json!({"version":1,"server":"docs","approval":granted,"lease":null,"spawn":{"command":"relative","args":[],"cwd":display_path(&directory.0),"env":{}}}),
+        json!({"version":1,"server":"docs","approval":granted,"lease":null,"extra":1,"spawn":{"command":display_path(&spec.command),"args":[],"cwd":display_path(&directory.0),"env":{}}}),
+        json!({"version":1,"server":"docs","lease":null,"spawn":{"command":display_path(&spec.command),"args":[],"cwd":display_path(&directory.0),"env":{}}}),
     ] {
         std::fs::write(&path, serde_json::to_vec(&foreign).unwrap()).unwrap();
         assert!(mcp_bridge::read(&path).is_none(), "{foreign}");

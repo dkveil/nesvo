@@ -1058,6 +1058,7 @@ pub(crate) fn attach_harness(session_id: &str, program: Program, root: &Path, co
 }
 
 pub(crate) fn revoke(repository: &str, digest: &str) -> usize {
+    crate::mcp_servers::invalidate(repository, digest);
     global().revoke(repository, digest)
 }
 

@@ -1,4 +1,4 @@
-use crate::{command_scope, mcp_pool};
+use crate::{command_scope, mcp_pool, worktrees};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -14,6 +14,7 @@ pub(crate) const VERSION: u32 = 1;
 const LEASE_BYTES: u64 = 64 * 1024;
 const CONNECT_DEADLINE: Duration = Duration::from_secs(2);
 const LAUNCH_FAILED: i32 = 2;
+pub(crate) const APPROVAL_WITHDRAWN: i32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -33,11 +34,37 @@ pub(crate) struct Launch {
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Approval {
+    pub(crate) registry: PathBuf,
+    pub(crate) repository: String,
+    pub(crate) digest: String,
+    pub(crate) head: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Lease {
     pub(crate) version: u32,
     pub(crate) server: String,
+    pub(crate) approval: Approval,
     pub(crate) lease: Option<Endpoint>,
     pub(crate) spawn: Launch,
+}
+
+pub(crate) async fn approved(approval: &Approval) -> bool {
+    let Ok(store) = worktrees::Store::open(&approval.registry) else {
+        return false;
+    };
+    if !store.approved(&approval.repository, &approval.digest) {
+        return false;
+    }
+    let Some(root) = &approval.head else {
+        return true;
+    };
+    matches!(
+        worktrees::head_text(root).await,
+        Ok(Some(text)) if worktrees::parse(&text).is_ok_and(|config| config.digest() == approval.digest)
+    )
 }
 
 pub(crate) fn read(path: &Path) -> Option<Lease> {
@@ -71,7 +98,10 @@ pub(crate) fn run(path: &Path) -> i32 {
     code
 }
 
-async fn bridge(lease: Lease) -> i32 {
+pub(crate) async fn bridge(lease: Lease) -> i32 {
+    if !approved(&lease.approval).await {
+        return APPROVAL_WITHDRAWN;
+    }
     if let Some(endpoint) = &lease.lease
         && valid_token(&endpoint.token)
         && let Ok(Some(mut stream)) =

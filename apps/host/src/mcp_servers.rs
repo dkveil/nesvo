@@ -1,7 +1,7 @@
 use crate::{
     event_log::{DomainEvent, model},
     launchers::Program,
-    mcp_bridge::{self, Endpoint, Launch, Lease},
+    mcp_bridge::{self, Approval, Endpoint, Launch, Lease},
     mcp_pool::{self, Origin, Pool, Spec},
     process::display_path,
     worktrees::{self, CONFIG_FILE, Item, Store, command_failure},
@@ -227,6 +227,7 @@ struct Source {
     digest: String,
     approved: bool,
     declarations: Vec<Declaration>,
+    head: Option<PathBuf>,
 }
 
 fn has_config(root: &Path) -> bool {
@@ -258,6 +259,7 @@ async fn head_source(
         root,
         digest,
         declarations: config.mcp_servers,
+        head: Some(repository_root.to_owned()),
     })
 }
 
@@ -285,6 +287,7 @@ fn lookup(store: Option<&Store>, session_id: &str, cwd: &Path) -> Option<Lookup>
                 root,
                 digest: digest.clone(),
                 declarations: config.mcp_servers.clone(),
+                head: None,
             }));
         }
         let repository_root = PathBuf::from(&record.repository);
@@ -436,15 +439,53 @@ fn spec(
     })
 }
 
-fn leases() -> &'static Mutex<HashMap<String, PathBuf>> {
-    static LEASES: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+struct Leases {
+    directory: PathBuf,
+    files: Vec<(PathBuf, Origin)>,
+}
+
+fn leases() -> &'static Mutex<HashMap<String, Leases>> {
+    static LEASES: OnceLock<Mutex<HashMap<String, Leases>>> = OnceLock::new();
     LEASES.get_or_init(Mutex::default)
+}
+
+fn record_lease(session_id: &str, file: PathBuf, origin: Origin) {
+    if let Ok(mut leases) = leases().lock()
+        && let Some(session) = leases.get_mut(session_id)
+    {
+        session.files.retain(|(known, _)| *known != file);
+        session.files.push((file, origin));
+    }
+}
+
+pub(crate) fn invalidate(repository: &str, digest: &str) -> usize {
+    let stale: Vec<PathBuf> = leases()
+        .lock()
+        .map(|mut leases| {
+            leases
+                .values_mut()
+                .flat_map(|session| {
+                    let (stale, kept) = std::mem::take(&mut session.files).into_iter().partition(
+                        |(_, origin): &(PathBuf, Origin)| {
+                            origin.repository == repository && origin.digest == digest
+                        },
+                    );
+                    session.files = kept;
+                    stale.into_iter().map(|(file, _)| file).collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for file in &stale {
+        let _ = std::fs::remove_file(file);
+    }
+    stale.len()
 }
 
 fn lease_directory(session_id: &str) -> Option<PathBuf> {
     let mut leases = leases().lock().ok()?;
-    if let Some(directory) = leases.get(session_id) {
-        return Some(directory.clone());
+    if let Some(session) = leases.get(session_id) {
+        return Some(session.directory.clone());
     }
     let directory = std::env::temp_dir().join(format!(
         "{LEASE_PREFIX}{}",
@@ -459,7 +500,13 @@ fn lease_directory(session_id: &str) -> Option<PathBuf> {
             return None;
         }
     }
-    leases.insert(session_id.to_owned(), directory.clone());
+    leases.insert(
+        session_id.to_owned(),
+        Leases {
+            directory: directory.clone(),
+            files: Vec::new(),
+        },
+    );
     Some(directory)
 }
 
@@ -479,22 +526,27 @@ pub(crate) fn release(session_id: &str) {
         .lock()
         .ok()
         .and_then(|mut leases| leases.remove(session_id));
-    if let Some(directory) = directory {
-        remove_lease_directory(&directory);
+    if let Some(session) = directory {
+        remove_lease_directory(&session.directory);
     }
 }
 
 pub(crate) fn release_all() {
     let directories: Vec<PathBuf> = leases()
         .lock()
-        .map(|mut leases| leases.drain().map(|(_, directory)| directory).collect())
+        .map(|mut leases| {
+            leases
+                .drain()
+                .map(|(_, session)| session.directory)
+                .collect()
+        })
         .unwrap_or_default();
     for directory in directories {
         remove_lease_directory(&directory);
     }
 }
 
-fn lease_document(spec: &Spec, outcome: &Value) -> Lease {
+fn lease_document(spec: &Spec, outcome: &Value, approval: Approval) -> Lease {
     let lease = (outcome["mode"] == "pooled")
         .then(|| {
             Some(Endpoint {
@@ -506,6 +558,7 @@ fn lease_document(spec: &Spec, outcome: &Value) -> Lease {
     Lease {
         version: mcp_bridge::VERSION,
         server: spec.server.clone(),
+        approval,
         lease,
         spawn: Launch {
             command: spec.command.clone(),
@@ -522,11 +575,18 @@ fn expose(
     session_id: &str,
     source: &Source,
     bridge: &Path,
+    registry: &Path,
 ) -> Map<String, Value> {
     let mut servers = Map::new();
     if !source.approved {
         return servers;
     }
+    let approval = Approval {
+        registry: registry.to_owned(),
+        repository: source.repository.clone(),
+        digest: source.digest.clone(),
+        head: source.head.clone(),
+    };
     let Some(directory) = lease_directory(session_id) else {
         return servers;
     };
@@ -536,11 +596,15 @@ fn expose(
         };
         let outcome = pool.attach(&spec, session_id);
         let file = directory.join(format!("{}.json", declaration.name));
-        let Ok(bytes) = serde_json::to_vec(&lease_document(&spec, &outcome)) else {
+        let Ok(bytes) = serde_json::to_vec(&lease_document(&spec, &outcome, approval.clone()))
+        else {
             continue;
         };
         if crate::private_write(&file, &bytes).is_err() {
             continue;
+        }
+        if let Some(origin) = spec.origin.clone() {
+            record_lease(session_id, file.clone(), origin);
         }
         pool.journal(
             Some(session_id.into()),
@@ -565,7 +629,12 @@ fn expose(
 pub(crate) fn claude(command: &portable_pty::CommandBuilder) -> Map<String, Value> {
     let session = command.get_env("NESVO_SESSION_ID").and_then(OsStr::to_str);
     let cwd = command.get_cwd().map(Path::new);
-    let (Some(session), Some(cwd), Ok(bridge)) = (session, cwd, std::env::current_exe()) else {
+    let (Some(session), Some(cwd), Some(registry), Ok(bridge)) = (
+        session,
+        cwd,
+        worktrees::registry_directory(),
+        std::env::current_exe(),
+    ) else {
         return Map::new();
     };
     match discover(session, cwd) {
@@ -575,6 +644,7 @@ pub(crate) fn claude(command: &portable_pty::CommandBuilder) -> Map<String, Valu
             session,
             &source,
             &bridge,
+            registry,
         ),
         None => Map::new(),
     }
@@ -622,6 +692,7 @@ pub(crate) async fn list(store: &Store, directory: &str) -> Result<Value> {
         digest: digest.clone().unwrap_or_default(),
         approved,
         declarations,
+        head: Some(root.clone()),
     };
     let servers: Vec<Value> = source
         .declarations

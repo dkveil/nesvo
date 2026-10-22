@@ -800,7 +800,15 @@ pub fn configure(directory: &Path) -> Result<()> {
     let store = Store::open(directory)?;
     STORE
         .set(store)
-        .map_err(|_| anyhow!("Worktree registry is already configured"))
+        .map_err(|_| anyhow!("Worktree registry is already configured"))?;
+    let _ = REGISTRY_DIRECTORY.set(directory.to_owned());
+    Ok(())
+}
+
+static REGISTRY_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
+
+pub(crate) fn registry_directory() -> Option<&'static Path> {
+    REGISTRY_DIRECTORY.get().map(PathBuf::as_path)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
