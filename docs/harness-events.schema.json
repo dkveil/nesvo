@@ -172,6 +172,72 @@
       "required": ["entryId", "server", "reason"],
       "type": "object"
     },
+    "McpServerAttached": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "entryId": {
+          "type": ["string", "null"]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "repository": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": ["server", "repository", "digest", "root", "mode", "reason", "entryId"],
+      "type": "object"
+    },
+    "McpServerReaped": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "entryId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": ["entryId", "server", "repository", "digest", "reason"],
+      "type": "object"
+    },
+    "McpServerReleased": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": ["server", "repository", "reason"],
+      "type": "object"
+    },
     "OperationChanged": {
       "additionalProperties": false,
       "properties": {
@@ -1371,6 +1437,45 @@
         },
         "payload": {
           "$ref": "#/definitions/McpPoolReaped"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "mcp.server_attached",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/McpServerAttached"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "mcp.server_released",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/McpServerReleased"
+        }
+      },
+      "required": ["kind", "payload"],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "mcp.server_reaped",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/definitions/McpServerReaped"
         }
       },
       "required": ["kind", "payload"],

@@ -121,6 +121,9 @@ events! {
     McpPoolAttached(McpPoolAttached) = "mcp.pool_attached",
     McpPoolReleased(McpPoolReleased) = "mcp.pool_released",
     McpPoolReaped(McpPoolReaped) = "mcp.pool_reaped",
+    McpServerAttached(McpServerAttached) = "mcp.server_attached",
+    McpServerReleased(McpServerReleased) = "mcp.server_released",
+    McpServerReaped(McpServerReaped) = "mcp.server_reaped",
 }
 
 pub fn journaled_kind(kind: &str) -> bool {
@@ -471,6 +474,36 @@ pub struct McpPoolReleased {
 pub struct McpPoolReaped {
     pub entry_id: String,
     pub server: String,
+    pub digest: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpServerAttached {
+    pub server: String,
+    pub repository: String,
+    pub digest: String,
+    pub root: String,
+    pub mode: String,
+    pub reason: Option<String>,
+    pub entry_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpServerReleased {
+    pub server: String,
+    pub repository: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpServerReaped {
+    pub entry_id: String,
+    pub server: String,
+    pub repository: String,
     pub digest: String,
     pub reason: String,
 }

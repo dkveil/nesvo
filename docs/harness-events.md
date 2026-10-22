@@ -179,6 +179,9 @@ is never persisted.
 | `mcp.pool_attached`            | `entryId` string; `server` string; `program` Program; `digest` string; `root` string                                                     | yes       |
 | `mcp.pool_released`            | `entryId` string; `server` string; `reason` string                                                                                       | yes       |
 | `mcp.pool_reaped`              | `entryId` string; `server` string; `digest` string; `reason` string                                                                      | yes       |
+| `mcp.server_attached`          | `server` string; `repository` string; `digest` string; `root` string; `mode` string; `reason` string or null; `entryId` string or null   | yes       |
+| `mcp.server_released`          | `server` string; `repository` string; `reason` string                                                                                    | yes       |
+| `mcp.server_reaped`            | `entryId` string; `server` string; `repository` string; `digest` string; `reason` string                                                 | yes       |
 
 Enumerated payload types:
 
