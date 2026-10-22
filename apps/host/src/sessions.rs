@@ -53,6 +53,12 @@ struct SessionInfo {
     program: Program,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LaunchOrigin {
+    Created,
+    Resumed,
+}
+
 #[derive(Clone)]
 struct ControlLease {
     client_id: u64,
@@ -2760,7 +2766,7 @@ impl State {
         spec: &crate::jobs::LaunchSpec,
         events: &mpsc::Sender<PtyEvent>,
     ) -> Result<String> {
-        self.launch_inner(spec, events, None, None)
+        self.launch_inner(spec, events, None, None, LaunchOrigin::Created)
     }
     pub(crate) fn launch_reserved(
         &mut self,
@@ -2769,13 +2775,26 @@ impl State {
         id: &str,
         grant: Option<crate::tool_permissions::Grant>,
     ) -> Result<String> {
+        self.check_reserved(id)?;
+        self.launch_inner(spec, events, Some(id), grant, LaunchOrigin::Created)
+    }
+    pub(crate) fn resume_reserved(
+        &mut self,
+        spec: &crate::jobs::LaunchSpec,
+        events: &mpsc::Sender<PtyEvent>,
+        id: &str,
+    ) -> Result<String> {
+        self.check_reserved(id)?;
+        self.launch_inner(spec, events, Some(id), None, LaunchOrigin::Resumed)
+    }
+    fn check_reserved(&self, id: &str) -> Result<()> {
         ensure!(
             id.len() == 32
                 && id.bytes().all(|b| b.is_ascii_hexdigit())
                 && !self.sessions.contains_key(id),
             "Reserved process identity is invalid or already running"
         );
-        self.launch_inner(spec, events, Some(id), grant)
+        Ok(())
     }
     fn launch_inner(
         &mut self,
@@ -2783,6 +2802,7 @@ impl State {
         events: &mpsc::Sender<PtyEvent>,
         reserved: Option<&str>,
         grant: Option<crate::tool_permissions::Grant>,
+        origin: LaunchOrigin,
     ) -> Result<String> {
         let cwd = self.validate_launch(spec)?;
         crate::resume::check_launch(spec, self.lifecycle_hooks_available(spec.program))?;
@@ -2925,15 +2945,17 @@ impl State {
         if let Some(reason) = quota_unverified {
             self.quota_gate.mark_unverified(&id, reason);
         }
-        self.emit(
-            Some(&id),
-            crate::event_log::DomainEvent::SessionCreated(
-                crate::event_log::model::SessionCreated {
-                    program: crate::event_log::program(spec.program),
-                    parent_session_id: Some(spec.parent_session_id.clone()),
-                },
-            ),
-        );
+        if origin == LaunchOrigin::Created {
+            self.emit(
+                Some(&id),
+                crate::event_log::DomainEvent::SessionCreated(
+                    crate::event_log::model::SessionCreated {
+                        program: crate::event_log::program(spec.program),
+                        parent_session_id: Some(spec.parent_session_id.clone()),
+                    },
+                ),
+            );
+        }
         if reserved.is_none() {
             self.broadcast_list();
         }

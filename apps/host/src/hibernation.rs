@@ -71,6 +71,8 @@ pub(crate) struct Record {
     pub trigger: model::HibernationTrigger,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_resume_failure: Option<String>,
+    #[serde(default)]
+    pub attention_revision: u64,
 }
 
 impl Record {
@@ -1047,6 +1049,7 @@ mod tests {
             hibernated_at: 2000,
             trigger: model::HibernationTrigger::Owner,
             last_resume_failure: None,
+            attention_revision: 0,
         }
     }
 

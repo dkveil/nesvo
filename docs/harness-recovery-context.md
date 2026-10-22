@@ -174,7 +174,10 @@ within 65 seconds stops the relaunched process and refuses with
 `resume_unverifiable`; the session stays hibernated with `lastResumeFailure` and
 never poses as a continuation. The relaunch keeps the recorded role, harness,
 model profile, owner-granted native tool permissions and child-tool policy and
-grants nothing the session did not hold; it sends no prompt. The owner may then relaunch it fresh with
+grants nothing the session did not hold; it sends no prompt. The relaunch restores the
+session's attention (last event and unread flag, needs-you projection and inbox revision)
+from the hibernation record, raised to any durable inbox receipt, so an acknowledged item
+stays read and later items rank as new. The owner may then relaunch it fresh with
 `restoreSession` (`nesvo session recover restore ID`), which ends the hibernation;
 `close` and `forgetRecovery` end it without relaunching.
 

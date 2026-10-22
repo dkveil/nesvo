@@ -252,6 +252,18 @@ pub fn recover(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn session_receipt(connection: &Connection, session: &str) -> u64 {
+    connection
+        .query_row(
+            "SELECT revision FROM attention_receipts WHERE item_id=?1",
+            [format!("session:{session}")],
+            |r| r.get::<_, i64>(0),
+        )
+        .ok()
+        .and_then(|revision| u64::try_from(revision).ok())
+        .unwrap_or_default()
+}
+
 fn receipts(connection: &Connection) -> Result<HashMap<String, u64>> {
     let mut statement = connection.prepare("SELECT item_id,revision FROM attention_receipts")?;
     let rows = statement

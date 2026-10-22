@@ -1,5 +1,25 @@
 use crate::status::{SessionStatus, StatusSource, StatusState};
 use serde::Serialize;
+use serde_json::Value;
+
+const EVENT_KINDS: [&str; 5] = ["done", "question", "permission", "failed", "limit"];
+const EVENT_SUBJECTS: [&str; 1] = ["response"];
+const PROJECTED_REASONS: [&str; 9] = [
+    "startup",
+    "failure",
+    "question",
+    "permission",
+    "auth",
+    "setup",
+    "quota",
+    "child",
+    "unknown",
+];
+
+fn known(names: &[&'static str], value: &Value) -> Option<&'static str> {
+    let text = value.as_str()?;
+    names.iter().copied().find(|name| *name == text)
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +33,20 @@ pub struct Event {
     pub subject: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
+}
+
+impl Event {
+    fn restored(value: &Value) -> Option<Self> {
+        Some(Self {
+            sequence: value["sequence"].as_u64()?,
+            kind: known(&EVENT_KINDS, &value["kind"])?,
+            at: value["at"].as_u64().unwrap_or_default(),
+            unread: value["unread"].as_bool().unwrap_or(false),
+            source: serde_json::from_value(value["source"].clone()).ok()?,
+            subject: known(&EVENT_SUBJECTS, &value["subject"]),
+            turn_id: value["turnId"].as_str().map(str::to_owned),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -110,6 +144,26 @@ impl Attention {
             .map_or(0, |event| event.sequence)
             .max(self.projection_sequence)
     }
+    pub fn restore(&mut self, snapshot: &Value, revision: u64, acknowledged: u64) {
+        let mut event = Event::restored(&snapshot["attention"]);
+        if let Some(event) = event.as_mut()
+            && event.sequence <= acknowledged
+        {
+            event.unread = false;
+        }
+        let floor = revision
+            .max(acknowledged)
+            .max(event.as_ref().map_or(0, |event| event.sequence));
+        let projection = &snapshot["currentAttention"];
+        self.event = event;
+        self.projected = known(&PROJECTED_REASONS, &projection["reason"]);
+        self.projected_children = projection["blockedChildren"]
+            .as_u64()
+            .and_then(|children| usize::try_from(children).ok())
+            .unwrap_or_default();
+        self.sequence = floor;
+        self.projection_sequence = floor;
+    }
     pub fn acknowledge(&mut self, sequence: u64) {
         if let Some(event) = &mut self.event
             && event.sequence <= sequence
@@ -201,5 +255,43 @@ mod tests {
         assert!(third > second);
         assert!(attention.project(Some("startup"), 0));
         assert!(attention.revision() > third);
+    }
+    #[test]
+    fn restore_brings_back_the_last_event_projection_and_revision_floor_from_a_snapshot() {
+        let mut before = Attention::default();
+        assert!(before.response_settled(4, "launch:3", 50));
+        assert!(before.project(Some("child"), 1));
+        let snapshot = serde_json::json!({
+            "attention": before.event,
+            "currentAttention": {"reason": "child", "blockedChildren": 1},
+        });
+        let mut restored = Attention::default();
+        restored.restore(&snapshot, before.revision(), 0);
+        let event = restored.event.as_ref().unwrap();
+        assert_eq!(
+            (
+                event.kind,
+                event.subject,
+                event.turn_id.as_deref(),
+                event.unread
+            ),
+            ("done", Some("response"), Some("launch:3"), true)
+        );
+        assert_eq!(restored.revision(), before.revision());
+        assert!(!restored.project(Some("child"), 1));
+        assert!(restored.response_settled(2, "relaunch:1", 60));
+        assert!(restored.revision() > before.revision());
+        let mut acknowledged = Attention::default();
+        acknowledged.restore(&snapshot, 0, 9);
+        assert!(!acknowledged.event.as_ref().unwrap().unread);
+        assert_eq!(acknowledged.revision(), 9);
+        let mut empty = Attention::default();
+        empty.restore(
+            &serde_json::json!({"attention": {"kind": "invented"}}),
+            3,
+            0,
+        );
+        assert!(empty.event.is_none());
+        assert_eq!(empty.revision(), 3);
     }
 }

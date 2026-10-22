@@ -23,6 +23,8 @@ monotonic `sequence`, nullable `sessionId`, `kind`, host observation time `at`,
 and a bounded metadata object `payload`. Current kinds include `host.started`,
 `session.created`, `session.closed`, `process.exited`, `agent.lifecycle` and
 `response.settled`. A response event references its turn and has no task outcome.
+`session.created` is journaled once per session ID: the verified relaunch of a hibernated
+session journals `session.resumed` instead, and a failed resume journals neither.
 Durable receipts add `operation.changed` (`operationId`, `operation`, `phase`) and
 workflow mutations add `run.*` events (`runId`, `revision`) whose subject is the
 run's coordinator session. `run.digest_recorded` also carries the run state,

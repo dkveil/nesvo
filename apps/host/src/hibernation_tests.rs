@@ -664,6 +664,61 @@ async fn hibernated_sessions_stay_hibernated_across_a_host_restart() {
     log.shutdown().await;
 }
 
+#[tokio::test]
+async fn resume_journals_no_second_session_created_and_restores_attention_from_the_record() {
+    let fixture = Fixture::new();
+    let (state, log) = open(&fixture.database()).await;
+    let (events, _output) = mpsc::channel(256);
+    let (id, revision) = {
+        let mut guard = state.lock().unwrap();
+        let id = ready(&mut guard, &events);
+        let attention = &mut guard.sessions.get_mut(&id).unwrap().attention;
+        assert!(attention.response_settled(5, "launch:4", 1_000));
+        assert!(attention.project(Some("child"), 1));
+        assert!(!attention.project(None, 0));
+        let revision = attention.revision();
+        (id, revision)
+    };
+    hibernation::hibernate(&state, &log, id.clone(), "h".into(), OWNER)
+        .await
+        .unwrap();
+    state.lock().unwrap().launchers = fixture.claude_launchers();
+    let resumed = tokio::spawn({
+        let (state, log, events, id) = (state.clone(), log.clone(), events.clone(), id.clone());
+        async move { hibernation::resume(&state, &log, &events, id, "r".into()).await }
+    });
+    answer(&state, &id, CONVERSATION).await;
+    assert_eq!(resumed.await.unwrap().unwrap()["state"], "resumed");
+    {
+        let guard = state.lock().unwrap();
+        let attention = &guard.sessions[&id].attention;
+        let event = attention.event.as_ref().unwrap();
+        assert_eq!(
+            (event.subject, event.turn_id.as_deref(), event.unread),
+            (Some("response"), Some("launch:4"), true)
+        );
+        assert_eq!(attention.revision(), revision);
+        let item = guard
+            .attention_sessions()
+            .into_iter()
+            .find(|item| item.session_id == id)
+            .unwrap();
+        assert_eq!((item.reason, item.revision), ("done", revision));
+    }
+    let journal = kinds(&log, &id).await;
+    assert_eq!(
+        journal
+            .iter()
+            .filter(|kind| *kind == "session.created")
+            .count(),
+        1,
+        "{journal:?}"
+    );
+    assert!(journal.iter().any(|kind| kind == "session.resumed"));
+    finish(&state);
+    log.shutdown().await;
+}
+
 #[test]
 fn idle_policy_is_off_by_default_and_selects_only_due_unwatched_eligible_agents() {
     let fixture = Fixture::new();

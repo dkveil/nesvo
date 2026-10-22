@@ -144,6 +144,7 @@ impl State {
             hibernated_at: now_millis(),
             trigger,
             last_resume_failure: None,
+            attention_revision: session.attention.revision(),
         })
     }
 
@@ -267,8 +268,17 @@ impl State {
         {
             spec.group_id = None;
         }
-        match self.launch_reserved(&spec, events, id, None) {
+        match self.resume_reserved(&spec, events, id) {
             Ok(_) => {
+                let acknowledged =
+                    crate::attention_inbox::session_receipt(&self.metadata.connection, id);
+                if let Some(session) = self.sessions.get_mut(id) {
+                    session.attention.restore(
+                        &record.snapshot,
+                        record.attention_revision,
+                        acknowledged,
+                    );
+                }
                 if let Err(error) = self.metadata.finish_recovery(id, false) {
                     eprintln!("Could not keep the saved launch description: {error}");
                 }
