@@ -4,6 +4,7 @@ use crate::{
     launch::{Field, SessionForm},
     model::{App, Dialog, Mode, MoveTarget, RowKind, TextAction, folder_choices},
     session_kind::{Choice, Picker, SessionKind, SessionKindAction},
+    surface::{Interrupt, Leaf, Surface},
     theme::Theme,
     ui,
     ui_controls::{self, Action},
@@ -43,7 +44,23 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
     {
         app.pending_input = None;
     }
-    if app.notes.capture.is_some() {
+    let event = match &event {
+        Event::Key(key) => match crate::surface::interrupt(app, key) {
+            Some(Interrupt::Quit) => {
+                return Outcome {
+                    quit: true,
+                    ..Outcome::default()
+                };
+            }
+            Some(Interrupt::CancelEdit) => {
+                Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            }
+            None => event,
+        },
+        _ => event,
+    };
+    let top = app.top_surface();
+    if top == Surface::NoteCapture {
         return crate::notes_controller::capture_event(app, event, area);
     }
     if let Event::Key(key) = &event
@@ -52,35 +69,25 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         crate::notes_controller::begin_capture(app, area);
         return Outcome::default();
     }
-    if app.worktrees.dialog.is_some() {
-        return crate::worktree_actions::event(app, event);
+    match top {
+        Surface::NoteCapture => return crate::notes_controller::capture_event(app, event, area),
+        Surface::WorktreeActions => return crate::worktree_actions::event(app, event),
+        Surface::SessionKind => return session_kind_event(app, event, area),
+        Surface::LayoutPicker => return layouts_event(app, event, area),
+        Surface::Overlay => return crate::toolbox::event(app, event, area),
+        Surface::Jobs => return crate::jobs_controller::event(app, event),
+        Surface::Runs => return crate::runs_controller::event(app, event),
+        Surface::Projects => return crate::projects_controller::event(app, event, area),
+        Surface::Git => return crate::git_pane::event(app, event),
+        Surface::Notes => return crate::notes_controller::event(app, event, area),
+        Surface::Overview => return crate::overview::event(app, event, area),
+        Surface::Dialog | Surface::Workspace => {}
     }
-    if app.session_kind.is_some() {
-        return session_kind_event(app, event, area);
-    }
-    if app.layout_picker.is_some() {
-        return layouts_event(app, event, area);
-    }
-    if app.overlay.is_some() {
-        return crate::toolbox::event(app, event, area);
-    }
-    if app.jobs.is_some() && app.dialog.is_none() {
-        return crate::jobs_controller::event(app, event);
-    }
-    if crate::runs_controller::engaged(app) && app.dialog.is_none() {
-        return crate::runs_controller::event(app, event);
-    }
-    if app.projects.open && app.dialog.is_none() {
-        return crate::projects_controller::event(app, event, area);
-    }
-    if crate::git_pane::captures(app) {
-        return crate::git_pane::event(app, event);
-    }
-    if crate::notes_controller::captures(app) {
-        return crate::notes_controller::event(app, event, area);
-    }
-    if crate::overview::engaged(app) && app.dialog.is_none() {
-        return crate::overview::event(app, event, area);
+    match crate::surface::leaf_focus(app) {
+        Some(Leaf::Git) => return crate::git_pane::event(app, event),
+        Some(Leaf::Notes) => return crate::notes_controller::event(app, event, area),
+        Some(Leaf::Overview) => return crate::overview::event(app, event, area),
+        None => {}
     }
     let mut outcome = Outcome::default();
     match &event {
@@ -140,9 +147,7 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     || (key.modifiers.contains(KeyModifiers::CONTROL)
                         && matches!(key.code, KeyCode::Char('k' | 'K'))))
             {
-                app.mode = Mode::Navigate;
-                app.palette_expanded = true;
-                app.begin_palette(String::new());
+                app.open_palette(true);
             } else if app.dialog.is_some() {
                 dialog_key(app, key, area, &mut outcome);
             } else if key.code == KeyCode::F(app.shortcuts.keys[0]) && key.modifiers.is_empty() {
@@ -493,14 +498,7 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
             app.mode = Mode::Navigate;
             navigation_key(
                 app,
-                KeyEvent::new(
-                    if key == 'D' {
-                        KeyCode::F(4)
-                    } else {
-                        KeyCode::Char(key)
-                    },
-                    KeyModifiers::NONE,
-                ),
+                KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
                 area,
                 outcome,
             );
@@ -555,10 +553,7 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
         }
         Action::FocusSearch => {
             if !matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
-                app.mode = Mode::Navigate;
-                app.palette_expanded = false;
-                app.palette_category = 0;
-                app.begin_palette(String::new());
+                app.open_palette(false);
             }
         }
         Action::OpenRow(index) => {
@@ -593,7 +588,7 @@ fn mouse_action(app: &mut App, action: Action, area: Rect, outcome: &mut Outcome
 }
 
 fn dialog_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
-    if matches!(app.dialog, Some(Dialog::Help))
+    if matches!(app.dialog, Some(Dialog::Help { .. }))
         && matches!(key.code, KeyCode::Left | KeyCode::Right)
     {
         app.help_page = (app.help_page
@@ -1050,7 +1045,7 @@ fn dialog_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcome) {
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => submit = true,
             _ => {}
         },
-        Some(Dialog::Help | Dialog::PairPhone) => match key.code {
+        Some(Dialog::Help { .. } | Dialog::PairPhone) => match key.code {
             KeyCode::Tab | KeyCode::Down => app.dialog_button = Some(0),
             KeyCode::Enter => close = true,
             _ => {}
@@ -1082,7 +1077,7 @@ fn cancel_dialog(app: &mut App) {
         }
         Some(
             Dialog::Settings { .. }
-            | Dialog::Help
+            | Dialog::Help { from_menu: true }
             | Dialog::ExitConfirm {
                 from_menu: true, ..
             },
@@ -1104,7 +1099,7 @@ fn submit_focused_dialog(app: &mut App, outcome: &mut Outcome) {
         }
     } else if matches!(
         app.dialog,
-        Some(Dialog::Settings { .. } | Dialog::Help | Dialog::PairPhone)
+        Some(Dialog::Settings { .. } | Dialog::Help { .. } | Dialog::PairPhone)
     ) {
         cancel_dialog(app);
     } else if let Some(command) = app.submit_dialog() {
@@ -1194,7 +1189,7 @@ fn menu_choice(app: &mut App, index: usize, outcome: &mut Outcome) {
         }
         1 => app.dialog = Some(Dialog::PairPhone),
         2 => app.dialog = Some(Dialog::Settings { selected: 0 }),
-        3 => app.dialog = Some(Dialog::Help),
+        3 => app.dialog = Some(Dialog::Help { from_menu: true }),
         _ => {}
     }
 }
@@ -1252,14 +1247,7 @@ fn open_quick_choice(app: &mut App, area: Rect, outcome: &mut Outcome) {
         }
         crate::palette::Target::Command(key) => navigation_key(
             app,
-            KeyEvent::new(
-                if key == 'D' {
-                    KeyCode::F(4)
-                } else {
-                    KeyCode::Char(key)
-                },
-                KeyModifiers::NONE,
-            ),
+            KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
             Rect::new(0, 0, 80, 24),
             outcome,
         ),
@@ -1288,17 +1276,12 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         if key.code == KeyCode::Char('c') {
             outcome.quit = true;
         } else if matches!(key.code, KeyCode::Char('k' | 'K' | '\u{0b}')) {
-            app.palette_expanded = true;
-            app.begin_palette(String::new());
+            app.open_palette(true);
         }
         return;
     }
     match key.code {
-        KeyCode::Char('/' | '\u{0b}') => {
-            app.palette_expanded = true;
-            app.palette_category = 0;
-            app.begin_palette(String::new())
-        }
+        KeyCode::Char('/' | '\u{0b}') => app.open_palette(true),
         KeyCode::Char('w') => {
             if let Some(session) = app.active_session()
                 && (app.wake_available() || session.wake_at.is_some())
@@ -1329,15 +1312,13 @@ fn navigation_key(app: &mut App, key: KeyEvent, area: Rect, outcome: &mut Outcom
         KeyCode::Tab if app.review.visible => app.review.focused = true,
         KeyCode::Char('q') => outcome.quit = true,
         KeyCode::Char('z') => app.fullscreen = !app.fullscreen,
-        KeyCode::Char('?') => app.dialog = Some(Dialog::Help),
+        KeyCode::Char('?') => app.dialog = Some(Dialog::Help { from_menu: false }),
         KeyCode::Char('M') => app.dialog = Some(Dialog::Menu),
         KeyCode::Char('p') => app.dialog = Some(Dialog::PairPhone),
         KeyCode::Up | KeyCode::Char('k') => {
             app.selected = app.selected.saturating_sub(1);
             if app.selected == 0 {
-                app.palette_expanded = false;
-                app.palette_category = 0;
-                app.begin_palette(String::new());
+                app.open_palette(false);
             }
             preview_selected_session(app, outcome);
         }
@@ -2293,7 +2274,7 @@ mod tests {
     #[test]
     fn keyboard_help_sections_change_without_losing_close_button() {
         let mut app = App::new(1);
-        app.dialog = Some(Dialog::Help);
+        app.dialog = Some(Dialog::Help { from_menu: false });
         let area = Rect::new(0, 0, 80, 24);
         event(
             &mut app,
@@ -2351,13 +2332,36 @@ mod tests {
         );
         assert_eq!(app.menu_selected, 3);
         click(&mut app, area, Action::MenuChoice(3));
-        assert!(matches!(app.dialog, Some(Dialog::Help)));
+        assert!(matches!(app.dialog, Some(Dialog::Help { .. })));
         event(
             &mut app,
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             area,
         );
         assert!(matches!(app.dialog, Some(Dialog::Menu)));
+    }
+
+    #[test]
+    fn keyboard_reference_opened_from_navigation_returns_to_navigation() {
+        let mut app = App::new(1);
+        app.dialog = None;
+        app.onboarded = true;
+        let area = Rect::new(0, 0, 80, 24);
+        for code in [KeyCode::Char('?'), KeyCode::Esc] {
+            event(
+                &mut app,
+                Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+                area,
+            );
+            if code == KeyCode::Char('?') {
+                assert!(matches!(
+                    app.dialog,
+                    Some(Dialog::Help { from_menu: false })
+                ));
+            }
+        }
+        assert!(app.dialog.is_none());
+        assert!(app.mode == Mode::Navigate);
     }
 
     #[test]
@@ -2926,7 +2930,7 @@ mod tests {
                 detail: "Sure?".into(),
                 command: json!({"type":"close","sessionId":"s"}),
             },
-            Dialog::Help,
+            Dialog::Help { from_menu: false },
             Dialog::PairPhone,
         ];
         let area = Rect::new(0, 0, 100, 32);

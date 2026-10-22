@@ -117,9 +117,6 @@ pub fn editor_height(app: &App, frame_area: Rect) -> usize {
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
-    if !app.notes.open || app.dialog.is_some() || leaf_area(frame.area(), app).is_some() {
-        return;
-    }
     let (area, footer_area) = full_area(frame.area(), app);
     if area.is_empty() {
         return;

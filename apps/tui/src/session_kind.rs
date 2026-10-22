@@ -133,6 +133,10 @@ impl Picker {
         }
     }
 
+    pub fn typing(&self) -> bool {
+        matches!(self, Self::ReviewSource { selected: 1, .. })
+    }
+
     pub fn selected(&self) -> usize {
         match self {
             Self::Kind { selected } | Self::ReviewSource { selected, .. } => *selected,
@@ -146,7 +150,7 @@ impl Picker {
         {
             return None;
         }
-        let typing = matches!(self, Self::ReviewSource { selected: 1, .. });
+        let typing = self.typing();
         Some(match key.code {
             KeyCode::Esc => SessionKindAction::Cancel,
             KeyCode::Enter => SessionKindAction::Confirm,

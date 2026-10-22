@@ -5,6 +5,7 @@ use crate::{
     layouts::{MAX_LEAVES, Role},
     model::{App, Dialog, Mode, RowKind},
     status::{Source, State, Status},
+    surface::{Leaf, Surface},
     terminal::TerminalWidget,
     theme::{BACKGROUND, BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT, Theme, WARNING},
     ui_controls, ui_launch, ui_palette,
@@ -446,53 +447,11 @@ pub fn fullscreen_handle_area(_app: &App, footer: Rect) -> Rect {
 }
 
 pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
-    render_workspace(frame, app, logo_frame);
-    if let Some(jobs) = &app.jobs
-        && app.connected
-        && app.dialog.is_none()
-    {
-        crate::ui_jobs::render(frame, app, jobs);
+    let mut below = None;
+    for layer in crate::surface::layers(app) {
+        render_layer(frame, app, layer, below, logo_frame);
+        below = Some(layer);
     }
-    if let Some(runs) = app.runs.as_ref().filter(|runs| runs.open)
-        && app.jobs.is_none()
-        && app.connected
-        && app.dialog.is_none()
-    {
-        crate::ui_runs::render(frame, app, runs);
-    }
-    if app.projects.open && app.connected && app.dialog.is_none() {
-        crate::ui_projects::render(frame, app);
-    }
-    if app.connected
-        && (app.overview.open || crate::overview::engaged(app))
-        && !matches!(
-            app.dialog,
-            Some(
-                Dialog::Menu
-                    | Dialog::ExitConfirm {
-                        from_menu: true,
-                        ..
-                    }
-            )
-        )
-    {
-        crate::ui_overview::render(frame, app);
-        if let Some(dialog) = app.dialog.as_ref().filter(|_| app.overview.open) {
-            render_dialog(frame, app, dialog);
-            ui_controls::render(frame, app);
-        }
-    }
-    crate::ui_git::render(frame, app);
-    crate::ui_notes::render(frame, app);
-    crate::toolbox::render(frame, app);
-    crate::ui_worktree_actions::render(frame, app);
-    if let Some(picker) = &app.session_kind {
-        crate::ui_session_kind::render(frame, app, picker);
-    }
-    if let Some(picker) = &app.layout_picker {
-        crate::ui_layouts::render(frame, app, picker);
-    }
-    crate::ui_notes::render_capture(frame, app);
     if let Some(selection) = &app.selection {
         selection.render(frame.buffer_mut(), app.theme.selection());
     }
@@ -502,6 +461,59 @@ pub fn render(frame: &mut Frame, app: &App, logo_frame: usize) {
             Paragraph::new(format!(" {message} ")).style(Style::default().fg(TEXT).bg(SURFACE)),
             area,
         );
+    }
+}
+
+fn render_layer(
+    frame: &mut Frame,
+    app: &App,
+    layer: Surface,
+    below: Option<Surface>,
+    logo_frame: usize,
+) {
+    match layer {
+        Surface::Workspace => {
+            render_workspace(frame, app, logo_frame);
+            if app.connected && crate::surface::leaf_focus(app) == Some(Leaf::Overview) {
+                crate::ui_overview::render(frame, app);
+            }
+        }
+        _ if layer.is_view() && !app.connected => {}
+        Surface::Dialog => {
+            if let Some(dialog) = &app.dialog
+                && below.is_some_and(Surface::is_view)
+            {
+                render_dialog(frame, app, dialog);
+                ui_controls::render(frame, app);
+            }
+        }
+        Surface::Jobs => {
+            if let Some(jobs) = &app.jobs {
+                crate::ui_jobs::render(frame, app, jobs);
+            }
+        }
+        Surface::Runs => {
+            if let Some(runs) = &app.runs {
+                crate::ui_runs::render(frame, app, runs);
+            }
+        }
+        Surface::Projects => crate::ui_projects::render(frame, app),
+        Surface::Git => crate::ui_git::render(frame, app),
+        Surface::Notes => crate::ui_notes::render(frame, app),
+        Surface::Overview => crate::ui_overview::render(frame, app),
+        Surface::Overlay => crate::toolbox::render(frame, app),
+        Surface::WorktreeActions => crate::ui_worktree_actions::render(frame, app),
+        Surface::SessionKind => {
+            if let Some(picker) = &app.session_kind {
+                crate::ui_session_kind::render(frame, app, picker);
+            }
+        }
+        Surface::LayoutPicker => {
+            if let Some(picker) = &app.layout_picker {
+                crate::ui_layouts::render(frame, app, picker);
+            }
+        }
+        Surface::NoteCapture => crate::ui_notes::render_capture(frame, app),
     }
 }
 
@@ -1251,7 +1263,7 @@ pub fn dialog_area(size: Rect, dialog: &Dialog) -> Option<Rect> {
         Dialog::Settings { .. } => 13,
         Dialog::ExitConfirm { .. } => 10,
         Dialog::NewGroup { .. } => 18,
-        Dialog::Help => 27,
+        Dialog::Help { .. } => 27,
         Dialog::NewSession(_) | Dialog::FolderPicker { .. } => 27,
         Dialog::PairPhone => 20,
         Dialog::Move { choices, .. } => (choices.len() + 8).min(22) as u16,
@@ -1285,7 +1297,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
         Dialog::NewGroup { .. } => "New group",
         Dialog::Text { title, .. } | Dialog::Confirm { title, .. } => title.as_str(),
         Dialog::Move { .. } => "Move to group",
-        Dialog::Help => "Keyboard",
+        Dialog::Help { .. } => "Keyboard",
         Dialog::NewSession(form) => match form.kind {
             Some(crate::session_kind::SessionKind::Agent) => "New agent session",
             Some(crate::session_kind::SessionKind::Terminal) => "New terminal",
@@ -1543,7 +1555,7 @@ fn render_dialog(frame: &mut Frame, app: &App, dialog: &Dialog) {
                 );
             }
         }
-        Dialog::Help => render_keyboard_help(frame, app, inner),
+        Dialog::Help { .. } => render_keyboard_help(frame, app, inner),
     }
 }
 
@@ -1676,7 +1688,7 @@ mod tests {
     #[test]
     fn keyboard_reference_fits_small_terminal() {
         let mut app = App::new(1);
-        app.dialog = Some(Dialog::Help);
+        app.dialog = Some(Dialog::Help { from_menu: false });
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|frame| render(frame, &app, 0)).unwrap();
         let text: String = terminal
@@ -2217,7 +2229,7 @@ mod tests {
                 parent_index: 0,
                 editing_parent: false,
             },
-            Dialog::Help,
+            Dialog::Help { from_menu: false },
             Dialog::PairPhone,
             Dialog::NewSession(Default::default()),
             Dialog::FolderPicker {

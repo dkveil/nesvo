@@ -43,6 +43,7 @@ mod session_recovery;
 mod session_row;
 mod shortcuts;
 mod status;
+mod surface;
 mod terminal;
 mod theme;
 mod toolbox;

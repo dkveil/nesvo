@@ -175,7 +175,7 @@ fn f4_reviews_without_sidebar_and_restores_terminal_input() {
     app.mode = Mode::Navigate;
     key(&mut app, KeyCode::Char('D'));
     assert!(!app.review.visible);
-    app.dialog = Some(Dialog::Help);
+    app.dialog = Some(Dialog::Help { from_menu: false });
     key(&mut app, KeyCode::F(4));
     assert!(!app.review.visible);
 }
@@ -190,7 +190,7 @@ fn diff_refresh_waits_for_previous_response_and_pauses_when_hidden() {
     app.review.accept(data());
     app.review.scroll = 7;
     app.review.toggle_hunk();
-    app.dialog = Some(Dialog::Help);
+    app.dialog = Some(Dialog::Help { from_menu: false });
     assert!(app.auto_refresh_diff().is_none());
     app.dialog = None;
     assert!(app.auto_refresh_diff().is_some());
@@ -283,7 +283,7 @@ fn previous_session_toggles_and_previews_do_not_rewrite_history() {
     // With equal urgency, the previous session remains the first MRU result.
     app.sessions[1].status = app.sessions[0].status.clone();
     assert_eq!(app.palette_results("")[0].target.session_id(), Some("a"));
-    app.dialog = Some(Dialog::Help);
+    app.dialog = Some(Dialog::Help { from_menu: false });
     key(&mut app, KeyCode::F(6));
     assert_eq!(app.active_id(), Some("b"));
 }

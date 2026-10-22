@@ -29,19 +29,10 @@ const NARROW_HINTS: [(&str, &str); 4] = [
 ];
 const READ_ONLY: &str = "read-only: staging and committing are not available";
 
-pub fn leaf_area(area: Rect, app: &App) -> Option<Rect> {
-    let index = crate::git_pane::leaf_index(app)?;
-    let view = crate::ui::geometry(area, app).views[index];
-    (!view.is_empty()).then_some(view)
-}
-
 pub fn render(frame: &mut Frame, app: &App) {
     let Some(pane) = &app.git else {
         return;
     };
-    if app.dialog.is_some() || leaf_area(frame.area(), app).is_some() {
-        return;
-    }
     let (area, footer_area) = crate::ui_jobs::surface(frame, app);
     if area.is_empty() {
         return;
@@ -475,6 +466,12 @@ mod tests {
     use crate::layouts::{Direction, PaneTree, Role};
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+    fn leaf_area(area: Rect, app: &App) -> Option<Rect> {
+        let index = crate::git_pane::leaf_index(app)?;
+        let view = crate::ui::geometry(area, app).views[index];
+        (!view.is_empty()).then_some(view)
+    }
 
     fn draw(app: &App, width: u16, height: u16) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();

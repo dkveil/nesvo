@@ -434,19 +434,7 @@ pub struct TreeRow {
     pub label: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Surface {
-    Capture,
-    Worktrees,
-    SessionKind,
-    LayoutPicker,
-    Overlay,
-    Dialog,
-    Jobs,
-    Runs,
-    Projects,
-    Workspace,
-}
+pub use crate::surface::Surface;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -509,7 +497,9 @@ pub enum Dialog {
         detail: String,
         command: Value,
     },
-    Help,
+    Help {
+        from_menu: bool,
+    },
 }
 
 pub(crate) fn folder_choices<'a>(
@@ -683,27 +673,7 @@ impl App {
     }
 
     pub fn top_surface(&self) -> Surface {
-        if self.notes.capture.is_some() {
-            Surface::Capture
-        } else if self.worktrees.dialog.is_some() {
-            Surface::Worktrees
-        } else if self.session_kind.is_some() {
-            Surface::SessionKind
-        } else if self.layout_picker.is_some() {
-            Surface::LayoutPicker
-        } else if self.overlay.is_some() {
-            Surface::Overlay
-        } else if self.dialog.is_some() {
-            Surface::Dialog
-        } else if self.jobs.is_some() {
-            Surface::Jobs
-        } else if crate::runs_controller::engaged(self) {
-            Surface::Runs
-        } else if self.projects.open {
-            Surface::Projects
-        } else {
-            Surface::Workspace
-        }
+        crate::surface::top(self)
     }
 
     pub fn session(&self, id: &str) -> Option<&Session> {
@@ -922,6 +892,13 @@ impl App {
             .first()
             .map(|row| row.target.clone());
         self.dialog = Some(Dialog::QuickSwitch { query, selected });
+    }
+
+    pub fn open_palette(&mut self, expanded: bool) {
+        self.mode = Mode::Navigate;
+        self.palette_expanded = expanded;
+        self.palette_category = 0;
+        self.begin_palette(String::new());
     }
 
     pub fn palette_index(&self) -> Option<usize> {
@@ -1916,7 +1893,7 @@ impl App {
                 Some(self.request(command))
             }
             Dialog::Confirm { command, .. } => Some(self.request(command)),
-            Dialog::Help
+            Dialog::Help { .. }
             | Dialog::QuickSwitch { .. }
             | Dialog::PairPhone
             | Dialog::Menu

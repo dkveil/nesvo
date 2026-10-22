@@ -557,7 +557,7 @@ mod tests {
             logo_frame_for(&app, Rect::new(0, 0, 45, 12), true, blink),
             0
         );
-        app.dialog = Some(crate::model::Dialog::Help);
+        app.dialog = Some(crate::model::Dialog::Help { from_menu: false });
         assert_eq!(logo_frame_for(&app, area, true, blink), 0);
         app.dialog = None;
         // Even when the other split pane is empty, terminal activity must not

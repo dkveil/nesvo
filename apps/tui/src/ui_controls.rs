@@ -366,7 +366,7 @@ pub fn controls(app: &App, area: Rect) -> Vec<Control> {
                     &mut output,
                 );
             }
-            Dialog::Help | Dialog::PairPhone => {
+            Dialog::Help { .. } | Dialog::PairPhone => {
                 buttons(
                     dialog_actions(inner),
                     [("Close", Action::Cancel, true)],
