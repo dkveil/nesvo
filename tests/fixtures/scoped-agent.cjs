@@ -217,9 +217,26 @@ const editorRedraw = fs.existsSync(path.join(process.cwd(), '.fixture-editor-red
 const editorRedrawDelay = fs.existsSync(path.join(process.cwd(), '.fixture-slow-redraw'))
   ? 3000
   : 600;
-const editorBlocked =
-  editorRedraw &&
-  fs.readFileSync(path.join(process.cwd(), '.fixture-editor-redraw'), 'utf8') === 'working';
+const editorRedrawMode = editorRedraw
+  ? fs.readFileSync(path.join(process.cwd(), '.fixture-editor-redraw'), 'utf8')
+  : '';
+const editorBlocked = editorRedrawMode === 'working';
+const editorHeld = editorRedrawMode === 'held';
+const heldResponseConfig = path.join(process.cwd(), '.fixture-held-response-ms');
+const heldResponseLimit = fs.existsSync(heldResponseConfig)
+  ? Number(fs.readFileSync(heldResponseConfig, 'utf8'))
+  : Infinity;
+function whenFileExists(file, callback) {
+  let done = false;
+  const settle = () => {
+    if (done || !fs.existsSync(file)) return;
+    done = true;
+    watcher.close();
+    callback();
+  };
+  const watcher = fs.watch(path.dirname(file), settle);
+  settle();
+}
 if (
   !fs.readFileSync(process.env.NESVO_AGENT_SKILL, 'utf8').includes('NESVO_HARNESS_INSTRUCTIONS_V11')
 )
@@ -250,12 +267,15 @@ if (!codex) {
   );
 }
 // The fixture consumes only the host's bounded literal inline shape, not arbitrary TOML.
+const codexHookSource = codex
+  ? process.argv.find((arg, index) => process.argv[index - 1] === '-c' && arg.startsWith('hooks='))
+  : null;
 const codexHook = codex
-  ? JSON.parse(
-      process.argv
-        .find((arg, index) => process.argv[index - 1] === '-c' && arg.startsWith('hooks='))
-        .match(/command=("(?:[^"\\]|\\.)*")/)[1],
-    )
+  ? {
+      command: JSON.parse(codexHookSource.match(/command=("(?:[^"\\]|\\.)*")/)[1]),
+      args: [],
+      timeout: Number(codexHookSource.match(/timeout=(\d+)/)?.[1]),
+    }
   : null;
 if (codex && !process.argv.includes('--no-daemon'))
   throw new Error('Codex must own its local executor');
@@ -280,12 +300,13 @@ function subprocessFailure(label, result) {
 }
 function hook(name, extra = {}) {
   if (editorRedraw) return; // Explicit screen-only provider, no structured evidence.
-  const commands = codex ? [{ command: codexHook, args: [] }] : settings.hooks[name][0].hooks;
+  const commands = codex ? [codexHook] : settings.hooks[name][0].hooks;
   for (const command of commands) {
+    if (!(command.timeout > 0)) throw new Error(`Host published no ${name} hook timeout`);
     const result = spawnSync(command.command, command.args, {
       shell: codex, // Trusted host-produced command, payload stays on stdin.
       windowsHide: true,
-      timeout: 5000,
+      timeout: command.timeout * 1000,
       input: JSON.stringify({
         hook_event_name: name,
         session_id: `fixture-${id}`,
@@ -295,6 +316,7 @@ function hook(name, extra = {}) {
       }),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    if (result.error?.code === 'ETIMEDOUT') continue;
     if (result.status !== 0)
       throw subprocessFailure(`Fixture lifecycle helper failed (${name})`, result);
     if (result.stdout.length) {
@@ -424,15 +446,15 @@ function submit(prompt) {
   if (prompt === 'held-natural-response') {
     hook('PreToolUse', { tool_name: 'controlled_hold' });
     process.stdout.write('FIXTURE_HOLDING_NATURAL_RESPONSE\r\n');
-    const release = path.join(directory, `${id}.release`);
-    const deadline = Date.now() + 20000;
+    let finished = false;
     const finish = () => {
-      if (fs.existsSync(release) || Date.now() >= deadline) {
-        process.stdout.write('FIXTURE_NATURAL_RESPONSE_FINISHED\r\n');
-        hook('Stop');
-      } else setTimeout(finish, 50);
+      if (finished) return;
+      finished = true;
+      process.stdout.write('FIXTURE_NATURAL_RESPONSE_FINISHED\r\n');
+      hook('Stop');
     };
-    setTimeout(finish, 50);
+    whenFileExists(path.join(directory, `${id}.release`), finish);
+    if (Number.isFinite(heldResponseLimit)) setTimeout(finish, heldResponseLimit);
     return;
   }
   if (prompt === 'spawn-child') {
@@ -524,7 +546,8 @@ process.stdin.on('data', text => {
             ? '\x1b[2J\x1b[HPASTE_PENDING_REDRAW\r\nThinking (esc to interrupt)'
             : '\x1b[2J\x1b[HPASTE_PENDING_REDRAW\r\n',
         );
-        setTimeout(drawEditor, editorRedrawDelay);
+        if (editorHeld) whenFileExists(path.join(directory, `${id}.redraw-release`), drawEditor);
+        else setTimeout(drawEditor, editorRedrawDelay);
       }
     } else if (/^[\r\n]/.test(pending)) {
       pending = pending.slice(1);
