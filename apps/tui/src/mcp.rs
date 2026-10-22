@@ -13,7 +13,7 @@ use crate::{
     network::{Connection, Pairing, open_failure_message},
 };
 use anyhow::Result;
-use futures_util::{StreamExt, future};
+use futures_util::{Stream, StreamExt, future};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::{
@@ -805,8 +805,6 @@ impl HostTools {
             )),
             result = self.invoke(name, arguments) => result,
         }
-        // Dropping invoke releases its slot and connection. Accepted host work
-        // keeps its original identity and is never replayed or interrupted here.
     }
 
     async fn invoke(&self, name: &str, arguments: Value) -> Result<Value> {
@@ -1067,15 +1065,17 @@ impl ServerHandler for HostTools {
     }
 }
 
-pub async fn serve(pairing: PathBuf, url: Option<String>) -> Result<()> {
-    // The SDK's default stdio reader has no line limit. Use its codec with a cap;
-    // malformed/oversized input closes this adapter before dispatching that input.
-    let input = FramedRead::new(
+fn capped_stdin_messages() -> impl Stream<Item = RxJsonRpcMessage<RoleServer>> {
+    FramedRead::new(
         tokio::io::stdin(),
         JsonRpcMessageCodec::<RxJsonRpcMessage<RoleServer>>::new_with_max_length(MAX_MESSAGE),
     )
     .take_while(|message| future::ready(message.is_ok()))
-    .filter_map(|message| future::ready(message.ok()));
+    .filter_map(|message| future::ready(message.ok()))
+}
+
+pub async fn serve(pairing: PathBuf, url: Option<String>) -> Result<()> {
+    let input = capped_stdin_messages();
     let output = FramedWrite::new(
         tokio::io::stdout(),
         JsonRpcMessageCodec::<TxJsonRpcMessage<RoleServer>>::default(),

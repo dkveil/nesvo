@@ -18,7 +18,6 @@ import { stopFixtureHost } from './host-fixture-shutdown';
 
 type Snapshot = Extract<HostEvent, { type: 'sessions' }>;
 type CommandResult = { code: number | null; stdout: string; stderr: string };
-// Ajv is a test-only dependency; the native CLI has no JSON-schema runtime.
 const cliSchema = new Ajv().compile(
   JSON.parse(readFileSync(resolve('docs/harness-cli.schema.json'), 'utf8')),
 );

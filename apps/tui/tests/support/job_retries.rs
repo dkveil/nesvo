@@ -619,9 +619,6 @@ async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_ge
                 .join(format!("{worker}.result.json")),
         )?)?;
         assert_eq!(report["data"]["attempt"]["id"], second["attemptId"]);
-        // Exercise failure-evidence collection against an already successful
-        // controlled native generation without an artificial acceptance timeout.
-        // This uses the same MCP adapter; no diagnostic CLI children are started.
         let mut progress = job_diagnostics::RetryWaitObservation::new(job, id);
         progress.started(Duration::ZERO);
         progress.completed(&reported, Duration::ZERO);
