@@ -1,30 +1,8 @@
-use serde::Deserialize;
+pub use nesvo_wire::views::files::{FileEntry as Entry, FileKind as Kind};
 use std::collections::HashMap;
 
 pub const MAX_EXPANDED: usize = 256;
 pub const MAX_PATH_BYTES: usize = 512;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    File,
-    Dir,
-    Symlink,
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct Entry {
-    pub name: String,
-    pub kind: Kind,
-    #[serde(default)]
-    pub size: u64,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub ignored: bool,
-}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Listing {

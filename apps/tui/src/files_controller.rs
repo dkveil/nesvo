@@ -1,13 +1,18 @@
 use crate::{
-    files_tree::{self, Entry, Kind, Listing, Tree},
+    files_tree::{self, Kind, Listing, Tree},
     layouts::Role,
     model::{App, Dialog, Mode},
     palette::{ResultRow, Target},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use nesvo_wire::views::{
+    self, HostError, ReplyHeader,
+    files::{Entries, FileChunk, FileMatch, FindFiles, FoundFiles, ListEntries, ReadFile},
+    lenient,
+};
 use ratatui::layout::Rect;
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashSet;
 
 pub const MAX_IN_FLIGHT: usize = 2;
@@ -47,15 +52,6 @@ impl SidebarMode {
             .into_iter()
             .find(|mode| mode.key() == key)
     }
-}
-
-fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: DeserializeOwned + Default,
-{
-    let value = Value::deserialize(deserializer)?;
-    Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -138,18 +134,11 @@ impl Preview {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct Match {
-    pub path: String,
-    #[serde(default)]
-    pub score: i64,
-}
-
 #[derive(Debug, Default)]
 pub struct Find {
     pub root: String,
     pub query: String,
-    pub matches: Vec<Match>,
+    pub matches: Vec<FileMatch>,
     pub truncated: bool,
     pub error: Option<String>,
     requested: bool,
@@ -340,7 +329,10 @@ pub fn sync(app: &mut App) -> Vec<Value> {
         && let Some(offset) = preview.want
     {
         let path = preview.path.clone();
-        let command = app.request(json!({"type":"readFile","path":path,"offset":offset}));
+        let command = app.typed_request(&ReadFile {
+            path: &path,
+            offset,
+        });
         if let Some(preview) = &mut app.files.preview {
             preview.want = None;
             preview.pending = command["requestId"]
@@ -357,8 +349,11 @@ pub fn sync(app: &mut App) -> Vec<Value> {
             || app.files.find.root != root
             || app.files.find.query != query)
     {
-        let command =
-            app.request(json!({"type":"findFiles","root":root,"query":query,"limit":FIND_LIMIT}));
+        let command = app.typed_request(&FindFiles {
+            root: &root,
+            query: &query,
+            limit: FIND_LIMIT,
+        });
         if let Some(id) = command["requestId"].as_str() {
             app.files.find.pending = Some((id.to_owned(), root, query));
         }
@@ -375,8 +370,10 @@ pub fn sync(app: &mut App) -> Vec<Value> {
             if app.files.in_flight() >= MAX_IN_FLIGHT {
                 break;
             }
-            let command = app.request(json!({"type":"listEntries",
-                "directory":files_tree::absolute(&root, &directory),"showHidden":show_hidden}));
+            let command = app.typed_request(&ListEntries {
+                directory: &files_tree::absolute(&root, &directory),
+                show_hidden,
+            });
             if let (Some(tree), Some(id)) = (&mut app.files.tree, command["requestId"].as_str()) {
                 tree.mark_pending(&directory, id.to_owned());
             }
@@ -387,29 +384,30 @@ pub fn sync(app: &mut App) -> Vec<Value> {
 }
 
 pub fn host_event(app: &mut App, event: &Value) {
-    let Some(id) = event["requestId"].as_str() else {
+    let header = ReplyHeader::of(event);
+    let Some(id) = header.request_id.as_deref() else {
         return;
     };
     if app.files.orphans.remove(id) {
         return;
     }
-    match event["type"].as_str() {
+    match header.kind.as_deref() {
         Some("entries") => {
             let Some(tree) = app.files.tree.as_mut().filter(|tree| tree.owns_request(id)) else {
                 return;
             };
             app.files.busy = 0;
-            match serde_json::from_value::<Vec<Entry>>(event["entries"].clone()) {
-                Ok(entries) => {
+            match views::decode::<Entries>(event) {
+                Some(reply) => {
                     tree.accept(
                         id,
                         Listing {
-                            entries,
-                            truncated: event["truncated"] == true,
+                            entries: reply.entries,
+                            truncated: reply.truncated,
                         },
                     );
                 }
-                Err(_) => {
+                None => {
                     tree.fail(id, Some("The host sent an unreadable listing.".into()));
                 }
             }
@@ -425,22 +423,22 @@ pub fn host_event(app: &mut App, event: &Value) {
             };
             app.files.busy = 0;
             preview.pending = None;
-            let offset = event["offset"].as_u64().unwrap_or(0);
-            let length = event["length"].as_u64().unwrap_or(0);
+            let chunk: FileChunk = views::decode(event).unwrap_or_default();
+            let (offset, length) = (chunk.offset, chunk.length);
             if offset == 0 {
                 preview.text.clear();
                 preview.scroll = 0;
             }
             let room = PREVIEW_BYTES.saturating_sub(preview.text.len());
-            let text = event["text"].as_str().unwrap_or_default();
+            let text = chunk.text.as_str();
             let mut cut = text.len().min(room);
             while !text.is_char_boundary(cut) {
                 cut -= 1;
             }
             preview.text.push_str(&text[..cut]);
-            preview.size = event["size"].as_u64().unwrap_or(0);
+            preview.size = chunk.size;
             preview.next = offset + length;
-            preview.truncated = event["truncated"] == true && length > 0;
+            preview.truncated = chunk.truncated && length > 0;
             preview.error = None;
         }
         Some("files") => {
@@ -452,9 +450,10 @@ pub fn host_event(app: &mut App, event: &Value) {
             find.requested = true;
             find.root = root;
             find.query = query;
-            find.truncated = event["truncated"] == true;
+            let found: FoundFiles = views::decode(event).unwrap_or_default();
+            find.truncated = found.truncated;
             find.error = None;
-            find.matches = serde_json::from_value(event["matches"].clone()).unwrap_or_default();
+            find.matches = found.matches;
             if let Some(Dialog::QuickSwitch { selected: None, .. }) = &app.dialog {
                 app.select_palette(0);
             }
@@ -473,19 +472,18 @@ fn describe(code: &str, message: &str) -> String {
 }
 
 pub fn host_error(app: &mut App, event: &Value) {
-    let Some(id) = event["requestId"].as_str() else {
+    let error = HostError::of(event);
+    let Some(id) = error.request_id.as_deref() else {
         return;
     };
     if app.files.orphans.remove(id) {
         app.notice.clear();
         return;
     }
-    let code = event["code"].as_str().unwrap_or_default();
+    let code = error.code();
     let message = describe(
         code,
-        event["message"]
-            .as_str()
-            .unwrap_or("The host rejected the file request."),
+        error.message_or("The host rejected the file request."),
     );
     let retry = code == "busy" && app.files.busy < BUSY_RETRIES;
     let failure = (!retry).then(|| message.clone());
@@ -797,7 +795,7 @@ pub fn palette_rows(app: &App, query: &str) -> Option<Vec<ResultRow>> {
         return Some(Vec::new());
     }
     let words: Vec<String> = wanted.split_whitespace().map(str::to_lowercase).collect();
-    let mut matches: Vec<&Match> = find
+    let mut matches: Vec<&FileMatch> = find
         .matches
         .iter()
         .filter(|candidate| find.query == wanted || text_matches(&words, &candidate.path))
@@ -825,6 +823,7 @@ pub fn palette_rows(app: &App, query: &str) -> Option<Vec<ResultRow>> {
 mod tests {
     use super::*;
     use crate::controller::Outcome;
+    use serde_json::json;
 
     fn app() -> App {
         let mut app = App::new(7);
