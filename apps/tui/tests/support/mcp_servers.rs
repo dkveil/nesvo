@@ -367,7 +367,6 @@ async fn exercise(entry: &Value) -> Result<Exercise> {
         json!({"name":"environment","arguments":{}}),
     )
     .await?;
-    drop(exchange);
     drop(input);
     let status = child.wait().await?;
     ensure!(status.success(), "Bridge exit {status}");
