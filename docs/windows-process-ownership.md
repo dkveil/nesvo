@@ -39,6 +39,36 @@ if the exit was not observed; the output reader keeps draining until EOF even
 after its event channel is gone, because `ClosePseudoConsole` waits until its
 final frame is read. Resizing an exited session's released console is a no-op.
 
+## Graceful shutdown settlement
+
+A graceful host stop does not return while a session job may still hold files.
+Each native session job is recorded in a host ledger under its session id. Every
+termination request (stop, natural root exit, dropping the last session handle)
+first pins the job's current members by handle, rechecking each opened process
+with `IsProcessInJob` so a reused id is never pinned, and then terminates the
+job. The ledger entry is released only when the last session handle is gone:
+the wait thread holds one until it has closed the pseudo console, the session
+holds one until it is dropped, and the output reader holds one until its pipe
+reaches end of stream, which happens when the console host closes its side.
+`ClosePseudoConsole` on current Windows 11 builds can return while the console
+host is still running, so its return alone is not treated as the release. The
+host does not identify the console host by name or id. Dropping the last handle
+also terminates the job, so the former kill-on-close behaviour is unchanged.
+
+After the terminal cleanup workers, shutdown waits for every recorded job until
+its console handle is released, the job reports zero active processes and every
+pinned member handle is signaled. The wait is event driven: a private completion
+port associated with the job wakes it on job notifications, and pinned members
+are waited on directly. It shares the existing eight-second terminal cleanup
+bound instead of adding a clock of its own. A job still unsettled at that bound
+is reported on the host log by session id, for example `Session job ID still had
+active processes at the shutdown bound`, and the host still exits; kill-on-close
+then ends any remaining member when the host process ends. On Unix the job is
+the session's process group (portable-pty makes the root a session leader);
+shutdown waits for the group to have no members, rechecking with a short capped
+backoff because Unix has no group-exit notification. The Unix stop signal is
+unchanged.
+
 ## Failure and boundary conditions
 
 Job creation/configuration/enrollment failure refuses the launch with context
@@ -93,7 +123,13 @@ fixture with two shell sessions must have exactly two system console hosts and n
 loaded `conpty.dll`; stopping one session ends exactly one of them within five
 seconds and dropping the state ends the other. The host-death fixture adds a
 pseudo console whose startup query is never answered, and both of its console
-hosts must end within five seconds of the hard kill.
+hosts must end within five seconds of the hard kill. A second run of the console
+fixture shuts the host state down gracefully instead of dropping it: the session
+job ledger must settle with nothing to report, and the remaining console host
+must end within five seconds. Host unit tests drive the
+ledger with an owned descendant held by its standard input: settlement returns
+only after the console handle is released and the descendant has exited, and a
+zero bound reports the named job instead of waiting.
 
 The Windows CI jobs add a coarser, process-list based check around their test
 steps: `scripts/console-orphans.ps1` fails the job when a console host created

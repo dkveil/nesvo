@@ -255,6 +255,22 @@ as the host reports the pasted input, so the run guard, not editor or provider
 timing, refuses Enter.
 This checks the real PTY/event loop without calling a model or taking user control.
 
+## Graceful host stop
+
+The job runtime stops admitting work before the host seals session state, so
+every job dispatch still in flight ends as part of the stop. Such a dispatch is
+recorded with reason `host_stopping`: its occurrence enters `reconcile` without
+being marked failed or finished and starts no retry while the host is down. The
+next start hands each such occurrence to the retry classification as an
+uncertain-effect restart (`host_restarted`); its probe reads the launch key, so a
+launch that already happened is never repeated. A precheck interrupted by the
+stop keeps its `host_shutdown` refusal. A journal write that fails during the
+stop is reported on the host log, leaves the occurrence to restart recovery and
+does not change the host's exit status. The stop then waits, within the terminal
+cleanup bound, until every native session job is empty and its console host has
+exited ([session process ownership](windows-process-ownership.md#graceful-shutdown-settlement)),
+so the workspace can be removed as soon as the host exits.
+
 ## Backup and restore
 
 The pairing directory (see [host configuration](../apps/host/README.md)) holds the durable
