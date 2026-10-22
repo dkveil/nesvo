@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use nesvo_wire::views::{
-    self,
+    self, ReplyHeader,
     layouts::{ReleaseControl, Subscribe, Unsubscribe},
     review::{DiffReply, SessionDiffRequest, WatchReviews},
 };
@@ -1333,6 +1333,7 @@ impl App {
 
     pub fn event(&mut self, event: Value) -> Result<Vec<Value>> {
         let mut commands = Vec::new();
+        let header = ReplyHeader::of(&event);
         let kind = if crate::worktree_actions::host_event(self, &event) {
             ""
         } else if let Some(next) = crate::git_pane::host_event(self, &event) {
@@ -1346,7 +1347,7 @@ impl App {
         {
             ""
         } else {
-            event["type"].as_str().unwrap_or_default()
+            header.kind.as_deref().unwrap_or_default()
         };
         match kind {
             "diff" => {
