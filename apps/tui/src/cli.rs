@@ -1,3 +1,4 @@
+use crate::cli_replies::{DiagnosticsReport, Envelope, FailureError, Receipt, Reply};
 use crate::network::{Connection, NetworkEvent, Pairing, open_failure_message};
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
@@ -512,7 +513,7 @@ impl Scope {
 struct Failure {
     code: String,
     message: String,
-    receipt: Option<Value>,
+    receipt: Option<Box<Receipt>>,
 }
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -608,21 +609,32 @@ pub(crate) fn exit_code(code: &str) -> i32 {
     }
 }
 
-fn failure_envelope(code: &str, message: &str, receipt: Option<&Value>) -> Value {
-    let mut envelope = json!({"schemaVersion":1,"ok":false,"error":{"code":code,"message":message,"retryable":exit_code(code) == EXIT_HOST_UNREACHABLE}});
-    if let Some(receipt) = receipt {
-        envelope["error"]["receipt"] = receipt.clone();
-    }
-    envelope
+fn failure_envelope(
+    code: &str,
+    message: &str,
+    receipt: Option<&Receipt>,
+    exit: Option<i32>,
+) -> Value {
+    serde_json::to_value(Envelope::failure(FailureError {
+        code: code.into(),
+        message: message.into(),
+        retryable: exit_code(code) == EXIT_HOST_UNREACHABLE,
+        exit_code: exit,
+        receipt: receipt.cloned(),
+    }))
+    .expect("Failure envelopes serialize")
 }
 
-pub(crate) fn failure_receipt(code: &str, message: &str, receipt: Option<&Value>) -> Value {
-    let mut envelope = failure_envelope(code, message, receipt);
-    envelope["error"]["exitCode"] = exit_code(code).into();
-    envelope
+pub(crate) fn failure_receipt(code: &str, message: &str, receipt: Option<&Receipt>) -> Value {
+    failure_envelope(code, message, receipt, Some(exit_code(code)))
 }
 
-fn emit_failure_receipt(machine: bool, code: &str, message: &str, receipt: Option<&Value>) -> i32 {
+fn emit_failure_receipt(
+    machine: bool,
+    code: &str,
+    message: &str,
+    receipt: Option<&Receipt>,
+) -> i32 {
     if machine {
         println!("{}", failure_receipt(code, message, receipt));
     } else {
@@ -725,9 +737,9 @@ pub async fn execute(command: Command, pairing_path: &Path, url: Option<&str>) -
 const UNCONFIRMED_CODE: &str = "operation_unconfirmed";
 const UNCONFIRMED_MESSAGE: &str = "Look up the same idempotency key before retrying";
 
-fn failure_parts(error: &anyhow::Error) -> (&str, &str, Option<&Value>) {
+fn failure_parts(error: &anyhow::Error) -> (&str, &str, Option<&Receipt>) {
     match error.downcast_ref::<Failure>() {
-        Some(error) => (&error.code, &error.message, error.receipt.as_ref()),
+        Some(error) => (&error.code, &error.message, error.receipt.as_deref()),
         None => (UNCONFIRMED_CODE, UNCONFIRMED_MESSAGE, None),
     }
 }
@@ -842,15 +854,41 @@ pub(crate) fn valid_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
-pub(crate) fn print_data(machine: bool, mut value: Value) -> Result<()> {
-    if let Some(object) = value.as_object_mut() {
-        object.remove("requestId");
-    }
+const UNEXPECTED_REPLY_CODE: &str = "unexpected_reply";
+const UNEXPECTED_REPLY_MESSAGE: &str =
+    "Host reply does not match the published CLI reply contract; update nesvo or nesvo-host";
+
+fn unexpected_reply() -> anyhow::Error {
+    failure(UNEXPECTED_REPLY_CODE, UNEXPECTED_REPLY_MESSAGE)
+}
+
+pub(crate) fn typed_reply(value: Value) -> Result<Reply> {
+    Reply::from_host(value).map_err(|_| unexpected_reply())
+}
+
+fn typed_receipt(response: &Value) -> Result<Box<Receipt>> {
+    serde_json::from_value(response["receipt"].clone()).map_err(|_| unexpected_reply())
+}
+
+fn typed_report(report: &Value) -> Result<Envelope> {
+    serde_json::from_value::<DiagnosticsReport>(report.clone())
+        .map(|report| Envelope::Diagnostics(Box::new(report)))
+        .map_err(|_| unexpected_reply())
+}
+
+pub(crate) fn print_data(machine: bool, value: Value) -> Result<()> {
+    print_reply(machine, typed_reply(value)?)
+}
+
+pub(crate) fn print_reply(machine: bool, reply: Reply) -> Result<()> {
     if machine {
-        println!("{}", json!({"schemaVersion":1,"ok":true,"data":value}));
+        println!("{}", serde_json::to_value(Envelope::success(reply))?);
         std::io::stdout().flush()?;
     } else {
-        println!("{}", serde_json::to_string_pretty(&value)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::to_value(&reply)?)?
+        );
     }
     Ok(())
 }
@@ -1803,7 +1841,7 @@ pub(crate) fn check_wait(response: &Value) -> Result<()> {
             message: format!(
                 "Wait ended with {outcome}; inspect the same receipt before another submission"
             ),
-            receipt: Some(response["receipt"].clone()),
+            receipt: Some(typed_receipt(response)?),
         }
         .into());
     }
@@ -1821,7 +1859,7 @@ pub(crate) fn check_receipt(response: &Value) -> Result<()> {
                 "Inspect operation {} before creating another request",
                 response["receipt"]["id"].as_str().unwrap_or("unknown")
             ),
-            receipt: Some(response["receipt"].clone()),
+            receipt: Some(typed_receipt(response)?),
         }
         .into());
     }
@@ -1829,7 +1867,7 @@ pub(crate) fn check_receipt(response: &Value) -> Result<()> {
 }
 pub(crate) fn error_value(error: &anyhow::Error) -> Value {
     let (code, message, receipt) = failure_parts(error);
-    failure_envelope(code, message, receipt)
+    failure_envelope(code, message, receipt, None)
 }
 
 pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
@@ -2061,7 +2099,7 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
     .await?;
     let report = &response["report"];
     if machine {
-        println!("{}", serde_json::to_string(report)?);
+        println!("{}", serde_json::to_value(typed_report(report)?)?);
     } else {
         println!(
             "nesvo host {} · protocol {}",
@@ -3075,8 +3113,9 @@ mod agent_convention_tests {
 
     #[test]
     fn failure_receipts_carry_exit_code_and_stable_code_for_cli_only() {
-        let receipt = json!({"id":"op","phase":"failed"});
-        let value = failure_receipt("revision_conflict", "Revision changed", Some(&receipt));
+        let receipt = json!({"id":"0123456789abcdef0123456789abcdef","operation":"send","phase":"failed","sessionId":"fedcba9876543210fedcba9876543210","result":{}});
+        let typed: Receipt = serde_json::from_value(receipt.clone()).unwrap();
+        let value = failure_receipt("revision_conflict", "Revision changed", Some(&typed));
         assert_eq!(
             value,
             json!({"schemaVersion":1,"ok":false,"error":{"code":"revision_conflict","message":"Revision changed","retryable":false,"exitCode":5,"receipt":receipt}})
@@ -3094,7 +3133,8 @@ mod agent_convention_tests {
     fn untyped_errors_are_unconfirmed_in_the_cli_and_mcp_alike() {
         let error = anyhow::anyhow!("stdout closed");
         let (code, message, receipt) = failure_parts(&error);
-        assert_eq!((code, receipt), ("operation_unconfirmed", None));
+        assert_eq!(code, "operation_unconfirmed");
+        assert!(receipt.is_none());
         assert_eq!(exit_code(code), EXIT_HOST_ERROR);
         assert_eq!(
             failure_receipt(code, message, receipt)["error"],

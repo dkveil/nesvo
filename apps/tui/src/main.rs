@@ -2,6 +2,7 @@ mod brand;
 mod budgets;
 mod capture_explain;
 mod cli;
+mod cli_replies;
 mod controller;
 mod files_controller;
 mod files_tree;
