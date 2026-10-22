@@ -410,6 +410,8 @@ unpublished field when the schema is closed.
 | nesvo_list_recovery               | read-only   | Owner-only: list a bounded page of saved launch descriptions for sessions that are not running.                                                              |
 | nesvo_restore_session             | write       | Owner-only: start one new process from a saved description in its recorded folder, with optional exact resume.                                               |
 | nesvo_forget_recovery             | destructive | Owner-only: forget one saved description.                                                                                                                    |
+| nesvo_hibernate_session           | write       | Owner-only: stop one idle agent's provider process once per key while keeping its session ID, conversation, folder, attention and freshness.                 |
+| nesvo_resume_session              | write       | Owner-only: relaunch one hibernated session under its ID through the exact recorded conversation, replying once the provider proves it.                      |
 | nesvo_list_attention_inbox        | read-only   | Owner-only: one page of needs-you items across sessions, runs, pending decisions and finished job results, sorted by priority.                               |
 | nesvo_ack_attention_inbox         | write       | Owner-only: acknowledge 1–32 inbox items by id and revision.                                                                                                 |
 | nesvo_list_pending_decisions      | read-only   | Owner-only: pending decisions across all runs, oldest first, eight per page with their run and inbox id.                                                     |

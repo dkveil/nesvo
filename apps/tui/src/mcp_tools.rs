@@ -913,13 +913,13 @@ pub static TOOLS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
         ),
         tool::<contract::HibernationArgs>(
             "nesvo_hibernate_session",
-            "Owner-only: stop one idle agent's provider process once per key; the host keeps its session ID, recorded conversation, folder, attention and last-known freshness, and the session shows hibernation.state hibernated. Refused with a precise code for human control, drafts, pending input, unsettled attempts, pending decisions, active runs, armed wakes, children, non-idle agents and providers without verified exact resume (Gemini: hibernate_unsupported). Same key replays the original reply. Requires hibernation:true.",
+            "Owner-only: stop one idle agent's provider process once per key while keeping its session ID, conversation, folder, attention and freshness. The session then shows hibernation.state hibernated. Refused with a precise code for human control, drafts, pending input, unsettled attempts, pending decisions, active runs, armed wakes, children, non-idle agents and providers without verified exact resume (Gemini: hibernate_unsupported). Same key replays the original reply. Requires hibernation:true.",
             WRITE,
             Handler::Adapter(crate::session_hibernation::command),
         ),
         tool::<contract::HibernationArgs>(
             "nesvo_resume_session",
-            "Owner-only: relaunch one hibernated session under the same ID through the exact recorded provider conversation, once per key, and reply only after the provider proves that conversation. When identity cannot be proven the relaunch is stopped and refused with resume_unverifiable; the session stays hibernated and can still be relaunched fresh with nesvo_restore_session. Sends no prompt. Same key replays the original outcome. Requires hibernation:true.",
+            "Owner-only: relaunch one hibernated session under its ID through the exact recorded conversation, replying once the provider proves it. Runs once per key. When identity cannot be proven the relaunch is stopped and refused with resume_unverifiable; the session stays hibernated and can still be relaunched fresh with nesvo_restore_session. Sends no prompt. Same key replays the original outcome. Requires hibernation:true.",
             WRITE,
             Handler::Adapter(crate::session_hibernation::command),
         ),

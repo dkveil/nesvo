@@ -1727,7 +1727,7 @@ mod tests {
                 .collect::<String>()
         };
         assert!(screen(&app, 120, 30).contains("hibernated"));
-        app.dialog = Some(Dialog::Help);
+        app.dialog = Some(Dialog::Help { from_menu: false });
         app.help_page = 1;
         assert!(screen(&app, 80, 24).contains("Hibernate / resume an agent session"));
     }

@@ -835,6 +835,7 @@
                       "nesvo_get_run_wakes",
                       "nesvo_get_session",
                       "nesvo_get_task_attempts",
+                      "nesvo_hibernate_session",
                       "nesvo_interrupt_session",
                       "nesvo_launch_task",
                       "nesvo_list_attention_inbox",
@@ -863,6 +864,7 @@
                       "nesvo_report_task_result",
                       "nesvo_restore_session",
                       "nesvo_resume_run",
+                      "nesvo_resume_session",
                       "nesvo_revoke_job_trigger",
                       "nesvo_revoke_precheck",
                       "nesvo_rotate_job_trigger",
@@ -1415,6 +1417,7 @@
                       "nesvo_get_run_wakes",
                       "nesvo_get_session",
                       "nesvo_get_task_attempts",
+                      "nesvo_hibernate_session",
                       "nesvo_interrupt_session",
                       "nesvo_launch_task",
                       "nesvo_list_attention_inbox",
@@ -1443,6 +1446,7 @@
                       "nesvo_report_task_result",
                       "nesvo_restore_session",
                       "nesvo_resume_run",
+                      "nesvo_resume_session",
                       "nesvo_revoke_job_trigger",
                       "nesvo_revoke_precheck",
                       "nesvo_rotate_job_trigger",
@@ -2837,6 +2841,7 @@
                             "nesvo_get_run_wakes",
                             "nesvo_get_session",
                             "nesvo_get_task_attempts",
+                            "nesvo_hibernate_session",
                             "nesvo_interrupt_session",
                             "nesvo_launch_task",
                             "nesvo_list_attention_inbox",
@@ -2865,6 +2870,7 @@
                             "nesvo_report_task_result",
                             "nesvo_restore_session",
                             "nesvo_resume_run",
+                            "nesvo_resume_session",
                             "nesvo_revoke_job_trigger",
                             "nesvo_revoke_precheck",
                             "nesvo_rotate_job_trigger",
@@ -3338,6 +3344,7 @@
                   "nesvo_get_run_wakes",
                   "nesvo_get_session",
                   "nesvo_get_task_attempts",
+                  "nesvo_hibernate_session",
                   "nesvo_interrupt_session",
                   "nesvo_launch_task",
                   "nesvo_list_attention_inbox",
@@ -3366,6 +3373,7 @@
                   "nesvo_report_task_result",
                   "nesvo_restore_session",
                   "nesvo_resume_run",
+                  "nesvo_resume_session",
                   "nesvo_revoke_job_trigger",
                   "nesvo_revoke_precheck",
                   "nesvo_rotate_job_trigger",
@@ -5227,6 +5235,7 @@
                   "nesvo_get_run_wakes",
                   "nesvo_get_session",
                   "nesvo_get_task_attempts",
+                  "nesvo_hibernate_session",
                   "nesvo_interrupt_session",
                   "nesvo_launch_task",
                   "nesvo_list_attention_inbox",
@@ -5255,6 +5264,7 @@
                   "nesvo_report_task_result",
                   "nesvo_restore_session",
                   "nesvo_resume_run",
+                  "nesvo_resume_session",
                   "nesvo_revoke_job_trigger",
                   "nesvo_revoke_precheck",
                   "nesvo_rotate_job_trigger",
@@ -5356,6 +5366,7 @@
                   "nesvo_get_run_wakes",
                   "nesvo_get_session",
                   "nesvo_get_task_attempts",
+                  "nesvo_hibernate_session",
                   "nesvo_interrupt_session",
                   "nesvo_launch_task",
                   "nesvo_list_attention_inbox",
@@ -5384,6 +5395,7 @@
                   "nesvo_report_task_result",
                   "nesvo_restore_session",
                   "nesvo_resume_run",
+                  "nesvo_resume_session",
                   "nesvo_revoke_job_trigger",
                   "nesvo_revoke_precheck",
                   "nesvo_rotate_job_trigger",
@@ -7376,6 +7388,94 @@
       "type": "object"
     },
     "name": "nesvo_forget_recovery",
+    "outputSchema": {
+      "properties": {
+        "data": {
+          "type": "object"
+        },
+        "error": {
+          "type": "object"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "schemaVersion": {
+          "const": 1
+        }
+      },
+      "required": ["schemaVersion", "ok"],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Owner-only: stop one idle agent's provider process once per key while keeping its session ID, conversation, folder, attention and freshness. The session then shows hibernation.state hibernated. Refused with a precise code for human control, drafts, pending input, unsettled attempts, pending decisions, active runs, armed wakes, children, non-idle agents and providers without verified exact resume (Gemini: hibernate_unsupported). Same key replays the original reply. Requires hibernation:true.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "sessionId": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": ["sessionId", "key"],
+      "type": "object"
+    },
+    "name": "nesvo_hibernate_session",
+    "outputSchema": {
+      "properties": {
+        "data": {
+          "type": "object"
+        },
+        "error": {
+          "type": "object"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "schemaVersion": {
+          "const": 1
+        }
+      },
+      "required": ["schemaVersion", "ok"],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Owner-only: relaunch one hibernated session under its ID through the exact recorded conversation, replying once the provider proves it. Runs once per key. When identity cannot be proven the relaunch is stopped and refused with resume_unverifiable; the session stays hibernated and can still be relaunched fresh with nesvo_restore_session. Sends no prompt. Same key replays the original outcome. Requires hibernation:true.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "sessionId": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": ["sessionId", "key"],
+      "type": "object"
+    },
+    "name": "nesvo_resume_session",
     "outputSchema": {
       "properties": {
         "data": {

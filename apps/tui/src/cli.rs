@@ -3379,6 +3379,8 @@ mod reply_kind_tests {
         &["session", "recover", "list"],
         &["session", "recover", "restore", RECORD],
         &["session", "recover", "forget", RECORD],
+        &["session", "hibernate", RECORD, "--key", "k"],
+        &["session", "resume", RECORD, "--key", "k"],
         &["review", "open", "--session", "s"],
         &[
             "review",
@@ -3515,6 +3517,18 @@ mod reply_kind_tests {
                 SessionCommand::Recover { command } => {
                     built(crate::session_recovery::query(command))
                 }
+                SessionCommand::Hibernate { id, key, .. } => {
+                    built(crate::session_hibernation::query(
+                        crate::session_hibernation::Action::Hibernate,
+                        id,
+                        key,
+                    ))
+                }
+                SessionCommand::Resume { id, key, .. } => built(crate::session_hibernation::query(
+                    crate::session_hibernation::Action::Resume,
+                    id,
+                    key,
+                )),
             },
         }
     }
