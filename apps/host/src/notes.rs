@@ -525,9 +525,16 @@ fn load(path: &Path) -> Result<Option<Contents>> {
     if metadata.len() > NOTE_LIMIT as u64 {
         return Err(failure("too_large", "Notes are limited to 64 KiB"));
     }
+    let file = File::open(path).map_err(|_| failure("not_readable", "This note cannot be read"))?;
+    if !path
+        .parent()
+        .is_some_and(|directory| crate::handle_paths::opened_inside(&file, directory))
+    {
+        return Err(linked());
+    }
     let mut bytes = Vec::new();
-    File::open(path)
-        .and_then(|file| file.take(NOTE_LIMIT as u64 + 1).read_to_end(&mut bytes))
+    file.take(NOTE_LIMIT as u64 + 1)
+        .read_to_end(&mut bytes)
         .map_err(|_| failure("not_readable", "This note cannot be read"))?;
     if bytes.len() > NOTE_LIMIT {
         return Err(failure("too_large", "Notes are limited to 64 KiB"));
@@ -568,10 +575,20 @@ struct Stored {
 }
 
 fn store(target: &Target, text: &str, expected: Option<&str>) -> Result<Stored> {
+    store_with(target, text, expected, |_| {})
+}
+
+fn store_with(
+    target: &Target,
+    text: &str,
+    expected: Option<&str>,
+    checked: impl FnOnce(&Path),
+) -> Result<Stored> {
     let _guard = WRITES
         .lock()
         .map_err(|_| failure("notes_failed", "Note writer stopped"))?;
     let directory = target.directory(true)?;
+    checked(&directory);
     let path = directory.join(&target.name);
     let current = load(&path)?;
     let actual = current
@@ -585,19 +602,30 @@ fn store(target: &Target, text: &str, expected: Option<&str>) -> Result<Stored> 
         target.name,
         hex::encode(crate::wire::random::<6>())
     ));
-    let written = (|| -> std::io::Result<()> {
+    let written = (|| -> std::io::Result<bool> {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary)?;
+        if !crate::handle_paths::opened_inside(&file, &directory) {
+            return Ok(false);
+        }
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&temporary, &path)
+        std::fs::rename(&temporary, &path)?;
+        Ok(true)
     })();
-    if written.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(failure("not_writable", "The note cannot be written"));
+    match written {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(linked());
+        }
+        Err(_) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(failure("not_writable", "The note cannot be written"));
+        }
     }
     let metadata = std::fs::symlink_metadata(&path)
         .map_err(|_| failure("not_readable", "The saved note cannot be inspected"))?;
@@ -976,6 +1004,26 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(code(&listed), "outside_notes");
+    }
+
+    #[tokio::test]
+    async fn a_notes_folder_swapped_for_a_link_after_the_check_keeps_the_save_inside() {
+        let (_config, roots) = roots();
+        let repository = repository_fixture();
+        let elsewhere = temporary("swapped");
+        let path = display_path(&repository.join(".nesvo").join("notes").join("a.md"));
+        let target = target(&roots, &path).await.unwrap();
+        let error = store_with(&target, "x", None, |directory| {
+            std::fs::rename(directory, directory.with_file_name("moved")).unwrap();
+            assert!(link_directory(&elsewhere, directory));
+        })
+        .err()
+        .unwrap();
+        assert_eq!(code(&error), "outside_notes");
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+        std::fs::write(elsewhere.join("a.md"), "outside").unwrap();
+        let read = read_note(&roots, &path).await.unwrap_err();
+        assert_eq!(code(&read), "outside_notes");
     }
 
     #[tokio::test]
