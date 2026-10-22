@@ -330,7 +330,9 @@ fn main() -> Result<()> {
             .build()
             .context("Cannot start host runtime"),
     )?;
-    runtime.block_on(run(args, trace))
+    let outcome = runtime.block_on(run(args, trace));
+    runtime.shutdown_timeout(TERMINAL_CLEANUP_BOUND);
+    outcome
 }
 
 async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
