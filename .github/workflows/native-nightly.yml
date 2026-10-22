@@ -34,6 +34,11 @@ jobs:
       - name: Build native host and client
         id: native-build
         run: cargo build --workspace --locked
+      - name: Record console hosts before tests
+        id: console-hosts-before-tests
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && runner.os == 'Windows' }}
+        shell: pwsh
+        run: ./scripts/console-orphans.ps1 -Snapshot "$env:RUNNER_TEMP/console-hosts-before-tests.json"
       - name: Verify Windows statusline raw standard handles
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' && runner.os == 'Windows' }}
         timeout-minutes: 10
@@ -46,3 +51,7 @@ jobs:
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
         timeout-minutes: 30
         run: cargo nextest run --package nesvo --test mcp_host --locked --profile ci --run-ignored ignored-only --test-threads 1
+      - name: Fail on console hosts left by tests
+        if: ${{ always() && steps.console-hosts-before-tests.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/console-orphans.ps1 -Check "$env:RUNNER_TEMP/console-hosts-before-tests.json"

@@ -71,7 +71,16 @@ jobs:
         with:
           tool: cargo-nextest@0.9
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Record console hosts before tests
+        id: console-hosts-before-tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/console-orphans.ps1 -Snapshot "$env:RUNNER_TEMP/console-hosts-before-tests.json"
       - run: cargo nextest run --workspace --locked --profile ci
+      - name: Fail on console hosts left by tests
+        if: ${{ always() && steps.console-hosts-before-tests.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/console-orphans.ps1 -Check "$env:RUNNER_TEMP/console-hosts-before-tests.json"
       - run: cargo build --workspace --locked
       - name: Verify Windows development host probes and immutable runtime
         if: runner.os == 'Windows'
