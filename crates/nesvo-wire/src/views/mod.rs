@@ -1,6 +1,7 @@
 pub mod files;
 pub mod jobs;
 pub mod layouts;
+pub mod mcp;
 pub mod notes;
 pub mod projects;
 pub mod review;
