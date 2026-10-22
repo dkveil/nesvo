@@ -279,6 +279,7 @@ impl State {
             quota_salt,
         );
         let provider_versions = launchers.pending_versions();
+        crate::provider_availability::warm();
         let quota_gate = crate::quota_gate::Gate::new(
             quota_salt,
             &provider_limits
@@ -1517,6 +1518,8 @@ impl State {
         event["jobScheduleKinds"] = json!(["once", "cron", "rrule", "external"]);
         event["launchProfileSupport"] =
             crate::launch_profile::capabilities(&self.provider_versions);
+        event["providers"] =
+            crate::provider_availability::capabilities(&self.launchers, &self.provider_versions);
         event["workflowPlans"] = true.into();
         event["reviews"] = true.into();
         event["files"] = true.into();

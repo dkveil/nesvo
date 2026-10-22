@@ -141,6 +141,11 @@ impl Launchers {
         Self::discover_in(&search_paths(), Some(shell))
     }
 
+    #[cfg(test)]
+    pub(crate) fn locate(paths: &[PathBuf]) -> Self {
+        Self::discover_in(paths, None)
+    }
+
     fn discover_in(paths: &[PathBuf], shell: Option<Launcher>) -> Self {
         let mut entries = vec![(Program::Shell, shell)];
         for program in Program::ALL.into_iter().skip(1) {

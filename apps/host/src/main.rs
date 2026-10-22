@@ -49,6 +49,7 @@ mod process;
 mod program_status;
 mod projects;
 mod protocol;
+mod provider_availability;
 mod provider_quota;
 mod provider_quota_runtime;
 mod pty;
