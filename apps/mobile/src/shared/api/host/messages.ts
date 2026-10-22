@@ -219,9 +219,21 @@ function repositoryContext(value: unknown): boolean {
       return false;
   }
 }
+function hibernation(value: unknown): boolean {
+  return (
+    record(value) &&
+    value.state === 'hibernated' &&
+    integer(value.hibernatedAt) &&
+    text(value.conversationId) &&
+    (value.trigger === 'owner' || value.trigger === 'idlePolicy') &&
+    (value.lastResumeFailure === null || text(value.lastResumeFailure, 1024))
+  );
+}
 function session(value: unknown): value is RecordValue {
   return (
     record(value) &&
+    (value.hibernation === undefined ||
+      (value.running === false && hibernation(value.hibernation))) &&
     text(value.id) &&
     text(value.name, 320) &&
     (value.repositoryContext === undefined || repositoryContext(value.repositoryContext)) &&

@@ -191,6 +191,7 @@ export function SessionScreen({
               <SessionStatusBadge
                 status={session.status}
                 readiness={session.readiness}
+                hibernated={session.hibernated}
                 currentAttention={session.currentAttention}
                 source={session.statusSource}
                 demo={!session.live}

@@ -19,7 +19,11 @@ export function sessionLastKnownLabel(freshness: SessionStateFreshness | undefin
   return `Last known ${sessionStatusLabel(freshness.lastKnown).toLowerCase()}`;
 }
 
-export function sessionReadinessLabel(readiness: Session['readiness']): string | undefined {
+export function sessionReadinessLabel(
+  readiness: Session['readiness'],
+  hibernated?: boolean,
+): string | undefined {
+  if (hibernated) return 'Hibernated';
   if (readiness?.phase === 'starting') return 'Starting';
   if (readiness?.phase === 'timedOut') return 'Startup failed';
   return undefined;

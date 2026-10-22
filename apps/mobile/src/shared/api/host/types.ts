@@ -13,6 +13,13 @@ export type SessionFreshness = {
   boundMs: number | null;
   lastKnown: { state: SessionStatusState; observedAt: number } | null;
 };
+export type SessionHibernation = {
+  state: 'hibernated';
+  hibernatedAt: number;
+  conversationId: string;
+  trigger: 'owner' | 'idlePolicy';
+  lastResumeFailure: string | null;
+};
 export type SessionStatus = {
   state: SessionStatusState;
   source: SessionStatusSource;
@@ -160,6 +167,7 @@ export type TerminalSession = {
   currentAttention?: CurrentAttention;
   lifecycle?: SessionLifecycle;
   readiness?: SessionReadiness;
+  hibernation?: SessionHibernation;
   attention?: AttentionEvent | null;
   muted?: boolean;
   id: string;

@@ -397,6 +397,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                           <SessionStatusBadge
                             variant="plain"
                             readiness={session.readiness}
+                            hibernated={session.hibernated}
                             currentAttention={session.currentAttention}
                             status={session.status}
                             source={session.statusSource}
@@ -666,6 +667,7 @@ export function DashboardScreen({ tab, active = false }: { tab: DashboardTab; ac
                         <SessionStatusBadge
                           variant="plain"
                           readiness={session.readiness}
+                          hibernated={session.hibernated}
                           currentAttention={session.currentAttention}
                           status={session.status}
                           source={session.statusSource}

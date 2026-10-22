@@ -85,6 +85,7 @@ export function SessionStatusBadge({
   status,
   source,
   readiness,
+  hibernated = false,
   currentAttention,
   demo = false,
   variant = 'badge',
@@ -92,11 +93,12 @@ export function SessionStatusBadge({
   status: SessionStatus;
   source?: SessionStatusSource;
   readiness?: Session['readiness'];
+  hibernated?: boolean;
   currentAttention?: Session['currentAttention'];
   demo?: boolean;
   variant?: 'badge' | 'plain';
 }) {
-  const startup = sessionReadinessLabel(readiness);
+  const startup = sessionReadinessLabel(readiness, hibernated);
   const issue = currentAttention && currentAttention.priority > 0 ? currentAttention.reason : null;
   const reasons = {
     permission: 'Permission',

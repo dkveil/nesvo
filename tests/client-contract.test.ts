@@ -1433,6 +1433,44 @@ test('session freshness feeds the shared badge clock and stays absent for legacy
   assert.equal(sessionLastKnownLabel(undefined), undefined);
 });
 
+test('a hibernated session decodes as a stopped record with last-known freshness', () => {
+  const hibernation = {
+    state: 'hibernated',
+    hibernatedAt: 1_792_785_000_000,
+    conversationId: '0f8fad5b-d9cb-469f-a165-70867728950e',
+    trigger: 'owner',
+    lastResumeFailure: null,
+  };
+  const hibernated = {
+    ...session,
+    running: false,
+    readiness: { phase: 'exited', initialized: true, reason: 'Hibernated' },
+    status: {
+      state: 'unknown',
+      source: 'screen',
+      evidence: 'hook',
+      updatedAt: 1,
+      freshness: { ...lostFreshness, lastKnown: { state: 'idle', observedAt: 1 } },
+    },
+    hibernation,
+  };
+  const snapshot = { type: 'sessions', groups, sessions: [hibernated], revision: 4 };
+  assert.deepEqual(decodeServerMessage(snapshot), snapshot);
+  assert.equal(sessionReadinessLabel(hibernated.readiness, true), 'Hibernated');
+  assert.equal(sessionReadinessLabel(hibernated.readiness, false), undefined);
+  for (const invalid of [
+    { ...hibernated, running: true },
+    { ...hibernated, hibernation: { ...hibernation, state: 'sleeping' } },
+    { ...hibernated, hibernation: { ...hibernation, trigger: 'timer' } },
+    { ...hibernated, hibernation: { ...hibernation, hibernatedAt: -1 } },
+    { ...hibernated, hibernation: { ...hibernation, lastResumeFailure: 7 } },
+  ])
+    assert.throws(
+      () => decodeServerMessage({ ...snapshot, sessions: [invalid] }),
+      /Invalid host message/,
+    );
+});
+
 test('the client opts into session freshness and accepts the advertised flag', () => {
   const peer = connectInboxPeer();
   try {

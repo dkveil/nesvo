@@ -79,7 +79,12 @@ export function useHostConnection(mode: WorkspaceMode) {
                 : session.status?.source,
           statusUpdatedAt: session.status?.updatedAt,
           statusFreshness: sessionStateFreshness(session.status?.freshness, receivedAt),
-          preview: session.running ? 'Session runs on your computer' : 'Terminal process ended',
+          hibernated: session.hibernation?.state === 'hibernated',
+          preview: session.hibernation
+            ? 'Hibernated on your computer; its conversation is kept'
+            : session.running
+              ? 'Session runs on your computer'
+              : 'Terminal process ended',
           live: true,
         }));
         setSnapshot({ sessions, groups: event.groups, revision: event.revision });

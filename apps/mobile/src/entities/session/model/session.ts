@@ -49,6 +49,7 @@ export type Session = {
   groupId?: string | null;
   live?: boolean;
   running?: boolean;
+  hibernated?: boolean;
   controllerId?: number | null;
   cols?: number;
   rows?: number;
