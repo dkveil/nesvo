@@ -117,6 +117,8 @@ mod run_launches;
 mod run_wakes;
 #[path = "support/scoped_review_context.rs"]
 mod scoped_review_context;
+#[path = "support/shutdown.rs"]
+mod shutdown;
 #[path = "support/startup_trace.rs"]
 mod startup_trace;
 #[path = "support/task_tool_profiles.rs"]
