@@ -1,0 +1,11 @@
+{
+  "allowedComments": [
+    "// A direct git spawn races the Git-for-Windows shim; tests use the pre-enrolled helper.",
+    "// A stderr redirect makes Process.Start set STARTF_USESTDHANDLES, inheriting stdin/stdout.",
+    "// Drop order: the input channel must close before ConPTY's potentially blocking destructor.",
+    "// Git and native validation yield different Windows extended-path forms; use the CLI cwd's.",
+    "// Tokio stdin cannot be canceled; a dedicated reader thread lets the CLI exit on its deadline.",
+    "// Windows ChildStdin queues blocking writes; flush first or the reader may miss real EOF.",
+    "// json_extract maps false and 0 to one SQL integer; parse the JSON to keep them distinct."
+  ]
+}
