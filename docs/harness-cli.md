@@ -99,8 +99,16 @@ nesvo --pairing C:\private\pairing.json session send SESSION_ID --key review-tur
 nesvo --pairing C:\private\pairing.json session wait --key review-turn-1 --session SESSION_ID --until settled --timeout-ms 30000 --json
 nesvo --pairing C:\private\pairing.json session interrupt SESSION_ID --key review-interrupt-1 --json
 nesvo --pairing C:\private\pairing.json session stop SESSION_ID --key review-stop-1 --json
+nesvo --pairing C:\private\pairing.json session providers --json
 nesvo mcp
 ```
+
+`session providers` reads `getCapabilities` and prints the host's `providers`
+availability as `{type:"providers",providers:{claude,codex,gemini}}`, each with
+`state` (`ok`, `noCli`, `notLoggedIn`, `unknown`), optional `version` and
+`reason`. It starts no provider process; an older host without `providers`
+fails with `unsupported`. The rules are in the
+[protocol capabilities](protocol-v2.md#sessions-and-groups).
 
 Run-scoped admission and graceful drain are available through
 `nesvo run budget get|set`, `nesvo run drain` and `nesvo run resume`.

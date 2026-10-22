@@ -42,6 +42,7 @@ F4 opens Git review directly from terminal input as well as navigation: with the
 | `n`, then `F2`            | New session and advanced launch options                |
 | `F3` in new session       | Save the form as a launch template                     |
 | `N`                       | Session kind: agent with profile, terminal or review   |
+| Provider rows in `N` form | State per provider; CLI not found refuses the launch   |
 | `1`-`3` in session kind   | Pick directly; in Review, `1` is local, `2` a PR URL   |
 | `L`                       | Layouts: apply, save, rename, delete, set default      |
 | `s r d D` in Layouts      | Save current, rename, delete, default; Enter applies   |

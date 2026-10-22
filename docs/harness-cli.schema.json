@@ -1177,6 +1177,30 @@
             },
             {
               "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "providers"],
+              "properties": {
+                "type": {
+                  "const": "providers"
+                },
+                "providers": {
+                  "type": "object",
+                  "properties": {
+                    "claude": {
+                      "$ref": "#/definitions/providerAvailability"
+                    },
+                    "codex": {
+                      "$ref": "#/definitions/providerAvailability"
+                    },
+                    "gemini": {
+                      "$ref": "#/definitions/providerAvailability"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
               "required": ["type", "sessionId", "cols", "rows", "page"],
               "properties": {
                 "type": {
@@ -2915,6 +2939,21 @@
     "cursor": {
       "type": "integer",
       "minimum": 0
+    },
+    "providerAvailability": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "enum": ["ok", "noCli", "notLoggedIn", "unknown"]
+        },
+        "version": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
     },
     "session": {
       "type": "object",
