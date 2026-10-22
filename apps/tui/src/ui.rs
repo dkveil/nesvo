@@ -1566,6 +1566,10 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("↑ ↓", "Select session or group"),
             ("Enter", "Open selected session"),
             ("/  Ctrl+K", "Open command palette"),
+            (
+                "@ $ ! # %",
+                "Palette: agents, shells, attention, files, projects",
+            ),
             ("z", "Toggle full screen"),
             ("[ ]", "Resize sidebar; when diff is open, resize diff"),
             ("F6", "Previous session"),
@@ -1579,6 +1583,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("F8  F9", "Templates / restore sessions"),
             ("S  J  W  O", "Schedules / jobs / runs / overview"),
             ("P", "Projects: launch, layout, worktree setup"),
+            ("K", "Worktree actions: run, cancel, archive, logs"),
             ("F2 / F3", "New session: options / save template"),
             ("v  Tab  L", "Split / change pane / layouts"),
             ("1  2  F", "Sessions / files sidebar"),
@@ -1594,6 +1599,7 @@ fn render_keyboard_help(frame: &mut Frame, app: &App, area: Rect) {
             ("Ctrl+Q → z", "Toggle full screen from terminal input"),
             ("T  Ctrl+T", "Notes / quick note to today's note"),
             ("Settings → k", "Customize global function keys"),
+            ("[ ]", "Review tab: prev / next change; no border to move"),
         ],
     ];
     let mut lines = vec![

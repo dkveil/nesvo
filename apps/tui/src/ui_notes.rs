@@ -14,7 +14,7 @@ use ratatui::{
 
 const SPLIT_COLUMNS: u16 = 44;
 const WIDE_FOOTER: u16 = 120;
-const BROWSE_WIDE: [(&str, &str); 8] = [
+const BROWSE_WIDE: [(&str, &str); 10] = [
     ("j k", "move"),
     ("Enter", "edit"),
     ("n", "new"),
@@ -22,7 +22,9 @@ const BROWSE_WIDE: [(&str, &str); 8] = [
     ("/", "search"),
     ("y", "copy"),
     ("p", "paste path"),
-    ("Esc", "close"),
+    ("PgUp PgDn", "scroll"),
+    ("r", "refresh"),
+    ("Esc q", "close"),
 ];
 const BROWSE_NARROW: [(&str, &str); 4] = [
     ("Enter", "edit"),
@@ -31,8 +33,9 @@ const BROWSE_NARROW: [(&str, &str); 4] = [
     ("Esc", "close"),
 ];
 const EDIT_HINTS: [(&str, &str); 2] = [("Esc", "save and leave"), ("Ctrl+S", "save")];
-const SEARCH_HINTS: [(&str, &str); 2] = [("Enter", "keep filter"), ("Esc", "clear")];
-const CONFIRM_HINTS: [(&str, &str); 2] = [("y", "delete"), ("n", "keep")];
+const SEARCH_HINTS: [(&str, &str); 3] =
+    [("↑↓", "move"), ("Enter", "keep filter"), ("Esc", "clear")];
+const CONFIRM_HINTS: [(&str, &str); 2] = [("y Enter", "delete"), ("n Esc", "keep")];
 
 pub fn leaf_area(area: Rect, app: &App) -> Option<Rect> {
     let index = crate::notes_controller::leaf_index(app)?;

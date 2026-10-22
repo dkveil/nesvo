@@ -119,10 +119,10 @@ fn toggle_filter(app: &mut App) {
     app.selected = 0;
     app.notice = match (&app.projects.filter, enabled) {
         (Some(filter), true) => format!(
-            "Sidebar shows sessions of {}; press s here again to show all.",
+            "Sidebar and palette show sessions of {}; press s here again to show all.",
             filter.name
         ),
-        _ => "Sidebar shows all sessions again.".into(),
+        _ => "Sidebar and palette show all sessions again.".into(),
     };
 }
 
