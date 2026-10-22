@@ -332,7 +332,9 @@ evidence takes authority again. Silence alone never establishes that settlement.
 
 Provider versions are probed once asynchronously at host startup through each
 resolved launcher's literal `--version` argv. Probes have null stdin, no model
-prompt, a two-second deadline and a 1024-byte output cap. Diagnostics cache only
+prompt, a ten-second deadline and a 1024-byte output cap. The deadline only reaps a
+hung CLI: a Node-based CLI can need more than two seconds to answer under load,
+and a timed-out probe stays unavailable until the host restarts. Diagnostics cache only
 the version token and checking/ready/unavailable outcome, never arbitrary output.
 Listing capabilities or rendering does not spawn probes. Existing hooks, MCP,
 authentication and configuration are not changed by this read-only probe.

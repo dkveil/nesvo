@@ -194,6 +194,8 @@ impl Launchers {
             })
     }
 }
+const VERSION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub async fn read_version(program: Program, executable: PathBuf, args: Vec<OsString>) -> Version {
     use tokio::io::AsyncReadExt;
     let mut command = tokio::process::Command::new(executable);
@@ -209,7 +211,7 @@ pub async fn read_version(program: Program, executable: PathBuf, args: Vec<OsStr
     let version = match command.spawn() {
         Err(_) => None,
         Ok(mut child) => {
-            let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let result = tokio::time::timeout(VERSION_DEADLINE, async {
                 let mut bytes = Vec::new();
                 let stdout = child.stdout.take()?;
                 stdout.take(1025).read_to_end(&mut bytes).await.ok()?;
@@ -490,6 +492,36 @@ mod tests {
         assert!(!launchers.capabilities()[2].available);
         let refreshed = Launchers::discover_in(std::slice::from_ref(&fixture.0), None);
         assert!(refreshed.capabilities()[2].available);
+    }
+
+    #[tokio::test]
+    async fn version_probe_keeps_a_healthy_cli_that_answers_after_two_seconds() {
+        let fixture = Fixture::new();
+        let release = fixture.0.join("release");
+        #[cfg(windows)]
+        let answer: [OsString; 4] = [
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+                .join("System32")
+                .join("cmd.exe")
+                .into(),
+            "/d".into(),
+            "/c".into(),
+            "echo 2.1.303".into(),
+        ];
+        #[cfg(not(windows))]
+        let answer: [OsString; 3] = ["/bin/sh".into(), "-c".into(), "echo 2.1.303".into()];
+        let mut args = vec![OsString::from("gate"), release.clone().into_os_string()];
+        args.extend(answer);
+        let probe = tokio::spawn(read_version(
+            Program::Claude,
+            process_fixture::executable().to_owned(),
+            args,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+        fs::write(&release, "released").unwrap();
+        let version = probe.await.unwrap();
+        assert_eq!(version.status, "ready");
+        assert_eq!(version.version.as_deref(), Some("2.1.303"));
     }
 
     #[cfg(windows)]
