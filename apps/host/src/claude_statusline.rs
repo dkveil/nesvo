@@ -862,32 +862,20 @@ mod tests {
         std::env::current_exe().unwrap()
     }
     fn fixture_executable() -> &'static Path {
-        static COMPILED: OnceLock<PathBuf> = OnceLock::new();
-        COMPILED.get_or_init(|| compiled_fixture(process_fixture::executable()))
-    }
-    fn compiled_fixture(uplifted: &Path) -> PathBuf {
-        let compiled = uplifted.with_file_name("deps").join(format!(
-            "nesvo_process_fixture{}",
-            std::env::consts::EXE_SUFFIX
-        ));
-        if compiled.is_file() {
-            compiled
-        } else {
-            uplifted.to_owned()
-        }
+        process_fixture::executable()
     }
     #[test]
     fn statusline_fixture_runs_the_compiled_artifact_cargo_never_replaces() {
-        let uplifted = process_fixture::executable();
         let fixture = fixture_executable();
         assert!(fixture.is_file());
-        if cfg!(any(windows, target_os = "macos")) {
-            assert_eq!(
-                fixture.parent().and_then(Path::file_name),
-                Some(std::ffi::OsStr::new("deps"))
-            );
-            assert_ne!(fixture, uplifted);
-        }
+        let deps = fixture.parent().unwrap();
+        assert_eq!(deps.file_name(), Some(std::ffi::OsStr::new("deps")));
+        let uplifted = deps.parent().unwrap().join(format!(
+            "nesvo-process-fixture{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        assert!(uplifted.is_file());
+        assert_ne!(fixture, uplifted.as_path());
     }
     fn fixture_command(args: &[&str]) -> tokio::process::Command {
         let mut command = tokio::process::Command::new(fixture_executable());
