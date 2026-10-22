@@ -129,10 +129,12 @@ The quota receiver reads at most 16 KiB of callback JSON. Larger or unreadable
 input stores only the fixed `inputOversized` or `inputReadFailed` parse reason
 and no windows.
 
-Forwarded input is at most 256 KiB and stdout 64 KiB. Stdin collection has a
-two-second bound. The enclosed helper's lifetime is bounded, including framing
-and display execution; cleanup terminates its owned process group/job and checks
-reaping. Windows uses PowerShell to start the helper with raw inherited standard
+Forwarded input is at most 256 KiB and stdout 64 KiB. Stdin collection,
+including the capture record written around it, has the same four-second bound
+as the display exchange, so a slow runner that still runs the display does not
+lose the input first. Cleanup then has two seconds to reap and one to confirm
+the owned process group/job is empty. The helper exits itself after the sum of
+those bounds, eleven seconds. Windows uses PowerShell to start the helper with raw inherited standard
 handles rather than native-output text conversion. The encoded script calls only
 .NET members, never a cmdlet, so it needs no module discovery, auto-loading or
 analysis cache and emits no progress record; it copies the helper's stderr bytes

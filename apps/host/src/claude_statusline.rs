@@ -20,6 +20,16 @@ const INPUT_LIMIT: usize = 256 * 1024;
 const OUTPUT_LIMIT: usize = 64 * 1024;
 const FRAME_LIMIT: usize = 512 * 1024;
 const PROFILE_EXCHANGE_DEADLINE: Duration = Duration::from_secs(2);
+const DISPLAY_EXCHANGE: Duration = Duration::from_secs(4);
+const DISPLAY_REAP: Duration = Duration::from_secs(2);
+const DISPLAY_EMPTY: Duration = Duration::from_secs(1);
+const INPUT_WINDOW: Duration = DISPLAY_EXCHANGE;
+const HELPER_LIFETIME: Duration = Duration::from_secs(
+    INPUT_WINDOW.as_secs()
+        + DISPLAY_EXCHANGE.as_secs()
+        + DISPLAY_REAP.as_secs()
+        + DISPLAY_EMPTY.as_secs(),
+);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -644,7 +654,7 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
         Ok(scope) => scope,
         Err(_) => {
             let _ = child.start_kill();
-            let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+            let _ = tokio::time::timeout(DISPLAY_REAP, child.wait()).await;
             anyhow::bail!("Display containment unavailable");
         }
     };
@@ -656,7 +666,7 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
         .stdout
         .take()
         .ok_or_else(|| anyhow::anyhow!("Display gate unavailable"))?;
-    let result = tokio::time::timeout(Duration::from_secs(4), async {
+    let result = tokio::time::timeout(DISPLAY_EXCHANGE, async {
         write_frame(
             &mut stdin,
             &Request {
@@ -670,11 +680,11 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
     .await;
     let terminated = scope.terminate().is_ok();
     let reaped = matches!(
-        tokio::time::timeout(Duration::from_secs(2), child.wait()).await,
+        tokio::time::timeout(DISPLAY_REAP, child.wait()).await,
         Ok(Ok(_))
     );
     drop(stdin);
-    let empty = tokio::time::timeout(Duration::from_secs(1), async {
+    let empty = tokio::time::timeout(DISPLAY_EMPTY, async {
         loop {
             if scope.empty()? {
                 return Ok::<_, anyhow::Error>(());
@@ -691,7 +701,7 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
 }
 pub fn run(manifest: &Path) -> i32 {
     std::thread::spawn(|| {
-        std::thread::sleep(Duration::from_secs(10));
+        std::thread::sleep(HELPER_LIFETIME);
         std::process::exit(1);
     });
     match forward(manifest) {
@@ -739,20 +749,27 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
     );
     Ok(manifest)
 }
-fn forward(path: &Path) -> std::result::Result<i32, ForwardingStage> {
-    let manifest = read_manifest(path).map_err(|_| ForwardingStage::Profile)?;
+fn forwarded_input(
+    report: PathBuf,
+    anchor: Option<crate::claude_quota_diagnostics::Anchor>,
+    input: impl Read + Send + 'static,
+) -> std::result::Result<Vec<u8>, ForwardingStage> {
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        let _ = sender.send(collect_capture(
-            &manifest.report,
-            manifest.capture_anchor.as_ref(),
-            std::io::stdin(),
-        ));
+        let _ = sender.send(collect_capture(&report, anchor.as_ref(), input));
     });
-    let input = receiver
-        .recv_timeout(Duration::from_secs(2))
+    receiver
+        .recv_timeout(INPUT_WINDOW)
         .map_err(|_| ForwardingStage::InputTimeout)?
-        .map_err(|_| ForwardingStage::Input)?;
+        .map_err(|_| ForwardingStage::Input)
+}
+fn forward(path: &Path) -> std::result::Result<i32, ForwardingStage> {
+    let manifest = read_manifest(path).map_err(|_| ForwardingStage::Profile)?;
+    let input = forwarded_input(
+        manifest.report.clone(),
+        manifest.capture_anchor.clone(),
+        std::io::stdin(),
+    )?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1194,6 +1211,53 @@ mod tests {
             Some(&ForwardingStage::DisplayCleanup)
         );
     }
+    struct GatedInput {
+        started: Option<std::sync::mpsc::Sender<()>>,
+        release: std::sync::mpsc::Receiver<Vec<u8>>,
+        pending: std::io::Cursor<Vec<u8>>,
+    }
+    impl Read for GatedInput {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            if let Some(started) = self.started.take() {
+                let _ = started.send(());
+                self.pending = std::io::Cursor::new(self.release.recv().unwrap_or_default());
+            }
+            Read::read(&mut self.pending, bytes)
+        }
+    }
+    #[test]
+    fn input_released_only_after_the_helper_reads_still_reaches_the_display() {
+        let (started, observed) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let report = std::env::temp_dir()
+            .join(format!(
+                "nesvo-gated-input-{}",
+                hex::encode(crate::wire::random::<8>())
+            ))
+            .join("report.json");
+        let reader = std::thread::spawn(move || {
+            forwarded_input(
+                report,
+                None,
+                GatedInput {
+                    started: Some(started),
+                    release: released,
+                    pending: std::io::Cursor::new(Vec::new()),
+                },
+            )
+        });
+        observed.recv().unwrap();
+        release.send(b"{\"delayed\":true}".to_vec()).unwrap();
+        assert_eq!(reader.join().unwrap().unwrap(), b"{\"delayed\":true}");
+    }
+    #[test]
+    fn input_window_is_the_display_bound_inside_the_helper_lifetime() {
+        assert_eq!(INPUT_WINDOW, DISPLAY_EXCHANGE);
+        assert_eq!(
+            HELPER_LIFETIME,
+            INPUT_WINDOW + DISPLAY_EXCHANGE + DISPLAY_REAP + DISPLAY_EMPTY
+        );
+    }
     #[cfg(windows)]
     fn generated_script(command: &str) -> String {
         let encoded = command
@@ -1201,8 +1265,10 @@ mod tests {
             .unwrap();
         let bytes = STANDARD.decode(encoded).unwrap();
         let units: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         String::from_utf16(&units).unwrap()
     }
