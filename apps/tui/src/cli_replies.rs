@@ -1,14 +1,29 @@
+mod attention;
+mod context;
+mod digest;
+mod jobs;
 mod review;
+mod runs;
 mod session;
+mod triggers;
+mod wakes;
 mod worktrees;
 
+pub use attention::*;
+pub use context::*;
+pub use digest::*;
+pub use jobs::*;
 pub use review::*;
+pub use runs::*;
 pub use session::*;
+pub use triggers::*;
+pub use wakes::*;
 pub use worktrees::*;
 
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
 const SCHEMA_VERSION: u64 = 1;
 
@@ -80,6 +95,7 @@ impl Envelope {
 #[serde(tag = "type", rename_all = "camelCase")]
 #[schemars(inline)]
 pub enum TypedReply {
+    Workflow(Workflow),
     Operation(OperationReply),
     Events(EventsReply),
     Session(SessionReply),
@@ -99,6 +115,10 @@ pub enum TypedReply {
     WorktreeCancelled(WorktreeCancelledReply),
     WorktreeArchived(WorktreeArchivedReply),
     WorktreeRegistry(WorktreeRegistryReply),
+    AttentionInbox(AttentionInboxReply),
+    InboxAcknowledged(InboxAcknowledgedReply),
+    Decisions(DecisionsReply),
+    Decided(DecidedReply),
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -110,14 +130,9 @@ pub enum Reply {
 }
 
 const PENDING_KINDS: &[&str] = &[
-    "workflow",
     "providerQuota",
     "quotaWake",
     "wakeConfigured",
-    "attentionInbox",
-    "inboxAcknowledged",
-    "decisions",
-    "decided",
     "projects",
     "projectPinned",
     "projectLayout",
@@ -152,6 +167,10 @@ pub struct Id(#[schemars(length(min = 1, max = 128))] pub String);
 #[schemars(rename = "cursor")]
 pub struct Cursor(pub u64);
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "timestamp", description = "Unix time in milliseconds.")]
+pub struct Timestamp(pub u64);
+
 fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -177,6 +196,15 @@ fn nullable(schema: &mut Schema) {
 fn one_of(schema: &mut Schema) {
     if let Some(branches) = schema.remove("anyOf") {
         schema.insert("oneOf".into(), branches);
+    }
+}
+
+fn workflow_tag(schema: &mut Schema) {
+    if let Some(Value::Object(properties)) = schema.get_mut("properties") {
+        properties.insert(
+            "type".into(),
+            serde_json::json!({"type": "string", "const": "workflow"}),
+        );
     }
 }
 

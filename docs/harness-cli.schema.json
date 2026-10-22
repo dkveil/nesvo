@@ -11,7 +11,8 @@
           "type": "string"
         },
         "audience": {
-          "enum": ["owner", "coordinator"]
+          "enum": ["owner", "coordinator"],
+          "type": "string"
         },
         "decisionId": {
           "$ref": "#/definitions/id"
@@ -28,7 +29,8 @@
           "$ref": "#/definitions/id"
         },
         "kind": {
-          "enum": ["session", "decision", "run", "result"]
+          "enum": ["session", "decision", "run", "result"],
+          "type": "string"
         },
         "occurrenceId": {
           "$ref": "#/definitions/id"
@@ -39,7 +41,8 @@
           "type": "integer"
         },
         "program": {
-          "enum": ["claude", "codex", "gemini"]
+          "enum": ["claude", "codex", "gemini"],
+          "type": "string"
         },
         "reason": {
           "type": "string"
@@ -189,7 +192,8 @@
             "type": "string"
           },
           "outcome": {
-            "enum": ["passed", "failed", "skipped"]
+            "enum": ["passed", "failed", "skipped"],
+            "type": "string"
           }
         },
         "required": ["name", "outcome", "details"],
@@ -199,37 +203,260 @@
       "type": "array"
     },
     "jobAttemptDetail": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/jobAttemptSummary"
+      "properties": {
+        "attemptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
         },
-        {
+        "claimedAt": {
+          "minimum": 0,
+          "type": ["integer", "null"]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "executionTimeout": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobExecutionTimeout"
+            }
+          ],
+          "description": "Current generation's retained timeout evidence, or null without a timeout; historical accepted envelopes may omit this field. Cleanup acceptance is not observed native exit."
+        },
+        "finishedAt": {
+          "minimum": 0,
+          "type": ["integer", "null"]
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "jobId": {
+          "$ref": "#/definitions/id"
+        },
+        "launchReceiptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "launchReconciliation": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobLaunchReconciliation"
+            }
+          ],
+          "description": "Inspected exact-generation launch cleanup descriptor. Only available:true with its current digest permits an explicit owner acknowledgement. Historical accepted envelopes may omit this field."
+        },
+        "launchResolution": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobLaunchResolution"
+            }
+          ],
+          "description": "Retained owner acknowledgement releasing logical overlap after an exact no-effect launch. This does not prove exit, complete a native stop, retry work or undo precheck effects. Historical accepted envelopes may omit this field."
+        },
+        "occurrenceId": {
+          "$ref": "#/definitions/id"
+        },
+        "ordinal": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "precheck": {
           "properties": {
+            "approvalDigest": {
+              "type": ["string", "null"]
+            },
+            "approvalId": {
+              "type": "string"
+            },
+            "approvalRevision": {
+              "description": "Observed approval revision for generation 2 and later, or null when unavailable; omitted from legacy generation-1 records.",
+              "minimum": 1,
+              "type": ["integer", "null"]
+            },
+            "authorizedAt": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "finishedAt": {
+              "type": ["integer", "null"]
+            },
+            "observedAt": {
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "reason": {
+              "type": "string"
+            },
             "result": {
               "anyOf": [
                 {
                   "type": "null"
                 },
                 {
-                  "$ref": "#/definitions/jobAttemptResult"
+                  "$ref": "#/definitions/precheckOutcome"
                 }
               ]
             },
-            "validation": {
-              "anyOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/definitions/jobAttemptValidation"
-                }
-              ]
+            "state": {
+              "enum": [
+                "running",
+                "passed",
+                "skipped",
+                "failed",
+                "timedOut",
+                "outputLimit",
+                "refused",
+                "unknown",
+                "abandoned"
+              ],
+              "type": "string"
             }
           },
-          "required": ["result", "validation"],
-          "type": "object"
+          "required": [
+            "approvalId",
+            "approvalDigest",
+            "state",
+            "reason",
+            "authorizedAt",
+            "finishedAt",
+            "result",
+            "observedAt"
+          ],
+          "type": ["object", "null"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobAttemptResult"
+            }
+          ]
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryDecision"
+            }
+          ]
+        },
+        "retryAdmission": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryAdmission"
+            }
+          ]
+        },
+        "retryClassification": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobRetryClassification"
+            }
+          ]
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "runState": {
+          "type": ["string", "null"]
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/id"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "dispatching",
+            "prechecking",
+            "running",
+            "needsValidation",
+            "reconcile",
+            "canceling",
+            "succeeded",
+            "failed",
+            "skipped",
+            "canceled"
+          ],
+          "type": "string"
+        },
+        "validation": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobAttemptValidation"
+            }
+          ]
         }
-      ]
+      },
+      "required": [
+        "id",
+        "jobId",
+        "occurrenceId",
+        "ordinal",
+        "runId",
+        "runState",
+        "state",
+        "reason",
+        "createdAt",
+        "claimedAt",
+        "finishedAt",
+        "attemptId",
+        "sessionId",
+        "launchReceiptId",
+        "precheck",
+        "result",
+        "validation"
+      ],
+      "type": "object"
     },
     "jobAttemptResult": {
       "additionalProperties": false,
@@ -265,7 +492,8 @@
           "type": "array"
         },
         "outcome": {
-          "enum": ["succeeded", "failed", "blocked", "canceled"]
+          "enum": ["succeeded", "failed", "blocked", "canceled"],
+          "type": "string"
         },
         "summary": {
           "maxLength": 2048,
@@ -296,7 +524,15 @@
           "$ref": "#/definitions/timestamp"
         },
         "executionTimeout": {
-          "$ref": "#/definitions/jobOccurrence/properties/executionTimeout"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobExecutionTimeout"
+            }
+          ],
+          "description": "Current generation's retained timeout evidence, or null without a timeout; historical accepted envelopes may omit this field. Cleanup acceptance is not observed native exit."
         },
         "finishedAt": {
           "minimum": 0,
@@ -319,10 +555,26 @@
           ]
         },
         "launchReconciliation": {
-          "$ref": "#/definitions/jobOccurrence/properties/launchReconciliation"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobLaunchReconciliation"
+            }
+          ],
+          "description": "Inspected exact-generation launch cleanup descriptor. Only available:true with its current digest permits an explicit owner acknowledgement. Historical accepted envelopes may omit this field."
         },
         "launchResolution": {
-          "$ref": "#/definitions/jobOccurrence/properties/launchResolution"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/jobLaunchResolution"
+            }
+          ],
+          "description": "Retained owner acknowledgement releasing logical overlap after an exact no-effect launch. This does not prove exit, complete a native stop, retry work or undo precheck effects. Historical accepted envelopes may omit this field."
         },
         "occurrenceId": {
           "$ref": "#/definitions/id"
@@ -332,7 +584,68 @@
           "type": "integer"
         },
         "precheck": {
-          "$ref": "#/definitions/jobOccurrence/properties/precheck"
+          "properties": {
+            "approvalDigest": {
+              "type": ["string", "null"]
+            },
+            "approvalId": {
+              "type": "string"
+            },
+            "approvalRevision": {
+              "description": "Observed approval revision for generation 2 and later, or null when unavailable; omitted from legacy generation-1 records.",
+              "minimum": 1,
+              "type": ["integer", "null"]
+            },
+            "authorizedAt": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "finishedAt": {
+              "type": ["integer", "null"]
+            },
+            "observedAt": {
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/definitions/precheckOutcome"
+                }
+              ]
+            },
+            "state": {
+              "enum": [
+                "running",
+                "passed",
+                "skipped",
+                "failed",
+                "timedOut",
+                "outputLimit",
+                "refused",
+                "unknown",
+                "abandoned"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "approvalId",
+            "approvalDigest",
+            "state",
+            "reason",
+            "authorizedAt",
+            "finishedAt",
+            "result",
+            "observedAt"
+          ],
+          "type": ["object", "null"]
         },
         "reason": {
           "type": ["string", "null"]
@@ -402,7 +715,8 @@
             "failed",
             "skipped",
             "canceled"
-          ]
+          ],
+          "type": "string"
         }
       },
       "required": [
@@ -434,7 +748,8 @@
           "type": "boolean"
         },
         "source": {
-          "enum": ["ownerAttestation", "coordinatorAttestation"]
+          "enum": ["ownerAttestation", "coordinatorAttestation"],
+          "type": "string"
         },
         "summary": {
           "maxLength": 1024,
@@ -492,7 +807,8 @@
             "unconfirmed",
             "completed",
             "abandoned"
-          ]
+          ],
+          "type": "string"
         }
       },
       "required": ["state", "requestedAt", "observedAt", "reason", "controlKey", "controlId"],
@@ -501,26 +817,20 @@
     "jobDefinition": {
       "properties": {
         "calendarError": {
-          "anyOf": [
-            {
-              "type": "null"
+          "properties": {
+            "code": {
+              "type": "string"
             },
-            {
-              "properties": {
-                "code": {
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                }
-              },
-              "required": ["code", "message"],
-              "type": "object"
+            "message": {
+              "type": "string"
             }
-          ]
+          },
+          "required": ["code", "message"],
+          "type": ["object", "null"]
         },
         "calendarState": {
-          "enum": ["ready", "exhausted", "blocked"]
+          "enum": ["ready", "exhausted", "blocked"],
+          "type": "string"
         },
         "createdAt": {
           "$ref": "#/definitions/timestamp"
@@ -553,7 +863,8 @@
                   "type": "string"
                 },
                 "kind": {
-                  "const": "once"
+                  "const": "once",
+                  "type": "string"
                 }
               },
               "required": ["kind", "at"],
@@ -565,7 +876,8 @@
                   "type": "string"
                 },
                 "kind": {
-                  "const": "cron"
+                  "const": "cron",
+                  "type": "string"
                 },
                 "timeZone": {
                   "type": "string"
@@ -577,7 +889,8 @@
             {
               "properties": {
                 "kind": {
-                  "const": "rrule"
+                  "const": "rrule",
+                  "type": "string"
                 },
                 "rule": {
                   "type": "string"
@@ -596,7 +909,8 @@
               "additionalProperties": false,
               "properties": {
                 "kind": {
-                  "const": "external"
+                  "const": "external",
+                  "type": "string"
                 }
               },
               "required": ["kind"],
@@ -612,6 +926,7 @@
               "minimum": 1000,
               "type": "integer"
             },
+            "instruction": true,
             "profile": {
               "properties": {
                 "claudeQuotaCapture": {
@@ -625,9 +940,11 @@
             },
             "retry": {
               "$ref": "#/definitions/jobRetryPolicy"
-            }
+            },
+            "schedule": true,
+            "title": true
           },
-          "required": ["title", "instruction", "profile", "schedule"],
+          "required": ["profile", "title", "instruction", "schedule"],
           "type": "object"
         },
         "title": {
@@ -665,7 +982,10 @@
           "$ref": "#/definitions/timestamp"
         },
         "executionTimeoutMs": {
-          "$ref": "#/definitions/jobDefinition/properties/spec/properties/executionTimeoutMs"
+          "description": "Optional per-generation execution window from native launch admission; excludes prechecks and remains independent of maxElapsedMs. An accepted explicit worker report before the deadline disarms it.",
+          "maximum": 604800000,
+          "minimum": 1000,
+          "type": "integer"
         },
         "jobAttemptId": {
           "$ref": "#/definitions/id"
@@ -706,7 +1026,8 @@
             "blocked",
             "unconfirmed",
             "completed"
-          ]
+          ],
+          "type": "string"
         }
       },
       "required": [
@@ -751,7 +1072,8 @@
           "$ref": "#/definitions/id"
         },
         "kind": {
-          "const": "launchNoEffect"
+          "const": "launchNoEffect",
+          "type": "string"
         },
         "launchReceiptId": {
           "$ref": "#/definitions/id"
@@ -809,7 +1131,8 @@
           "$ref": "#/definitions/id"
         },
         "kind": {
-          "const": "launchNoEffect"
+          "const": "launchNoEffect",
+          "type": "string"
         },
         "launchReceiptId": {
           "$ref": "#/definitions/id"
@@ -960,74 +1283,68 @@
           "description": "Retained owner acknowledgement releasing logical overlap after an exact no-effect launch. This does not prove exit, complete a native stop, retry work or undo precheck effects. Historical accepted envelopes may omit this field."
         },
         "precheck": {
-          "anyOf": [
-            {
-              "type": "null"
+          "properties": {
+            "approvalDigest": {
+              "type": ["string", "null"]
             },
-            {
-              "properties": {
-                "approvalDigest": {
-                  "type": ["string", "null"]
+            "approvalId": {
+              "type": "string"
+            },
+            "approvalRevision": {
+              "description": "Observed approval revision for generation 2 and later, or null when unavailable; omitted from legacy generation-1 records.",
+              "minimum": 1,
+              "type": ["integer", "null"]
+            },
+            "authorizedAt": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "finishedAt": {
+              "type": ["integer", "null"]
+            },
+            "observedAt": {
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "null"
                 },
-                "approvalId": {
-                  "type": "string"
-                },
-                "approvalRevision": {
-                  "description": "Observed approval revision for generation 2 and later, or null when unavailable; omitted from legacy generation-1 records.",
-                  "minimum": 1,
-                  "type": ["integer", "null"]
-                },
-                "authorizedAt": {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "finishedAt": {
-                  "type": ["integer", "null"]
-                },
-                "observedAt": {
-                  "minimum": 0,
-                  "type": ["integer", "null"]
-                },
-                "reason": {
-                  "type": "string"
-                },
-                "result": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "$ref": "#/definitions/precheckOutcome"
-                    }
-                  ]
-                },
-                "state": {
-                  "enum": [
-                    "running",
-                    "passed",
-                    "skipped",
-                    "failed",
-                    "timedOut",
-                    "outputLimit",
-                    "refused",
-                    "unknown",
-                    "abandoned"
-                  ]
+                {
+                  "$ref": "#/definitions/precheckOutcome"
                 }
-              },
-              "required": [
-                "approvalId",
-                "approvalDigest",
-                "state",
-                "reason",
-                "authorizedAt",
-                "finishedAt",
-                "result",
-                "observedAt"
+              ]
+            },
+            "state": {
+              "enum": [
+                "running",
+                "passed",
+                "skipped",
+                "failed",
+                "timedOut",
+                "outputLimit",
+                "refused",
+                "unknown",
+                "abandoned"
               ],
-              "type": "object"
+              "type": "string"
             }
-          ]
+          },
+          "required": [
+            "approvalId",
+            "approvalDigest",
+            "state",
+            "reason",
+            "authorizedAt",
+            "finishedAt",
+            "result",
+            "observedAt"
+          ],
+          "type": ["object", "null"]
         },
         "quota": {
           "$ref": "#/definitions/jobQuotaDecision"
@@ -1073,6 +1390,7 @@
               "minimum": 1000,
               "type": "integer"
             },
+            "instruction": true,
             "profile": {
               "properties": {
                 "claudeQuotaCapture": {
@@ -1086,9 +1404,11 @@
             },
             "retry": {
               "$ref": "#/definitions/jobRetryPolicy"
-            }
+            },
+            "schedule": true,
+            "title": true
           },
-          "required": ["title", "instruction", "profile", "schedule"],
+          "required": ["profile", "title", "instruction", "schedule"],
           "type": "object"
         },
         "startedAt": {
@@ -1115,10 +1435,12 @@
             "prechecking",
             "canceling",
             "retryWaiting"
-          ]
+          ],
+          "type": "string"
         },
         "trigger": {
-          "enum": ["schedule", "manual", "external"]
+          "enum": ["schedule", "manual", "external"],
+          "type": "string"
         }
       },
       "required": [
@@ -1143,7 +1465,8 @@
           "type": ["string", "null"]
         },
         "state": {
-          "enum": ["waiting", "eligible", "notRequired"]
+          "enum": ["waiting", "eligible", "notRequired"],
+          "type": "string"
         }
       },
       "required": ["state", "reason"],
@@ -1162,7 +1485,8 @@
           "type": "string"
         },
         "mode": {
-          "const": "wait"
+          "const": "wait",
+          "type": "string"
         }
       },
       "required": ["mode", "contextId", "accountFingerprint"],
@@ -1183,7 +1507,8 @@
           ]
         },
         "class": {
-          "enum": ["noEffect", "uncertainEffect"]
+          "enum": ["noEffect", "uncertainEffect"],
+          "type": "string"
         },
         "sourceJobAttemptId": {
           "$ref": "#/definitions/id"
@@ -1207,14 +1532,16 @@
           ]
         },
         "class": {
-          "enum": ["noEffect", "uncertainEffect", "definiteEffect"]
+          "enum": ["noEffect", "uncertainEffect", "definiteEffect"],
+          "type": "string"
         },
         "decidedAt": {
           "minimum": 0,
           "type": ["integer", "null"]
         },
         "decision": {
-          "enum": ["probing", "adopted", "retryWaiting", "blocked", "canceled"]
+          "enum": ["probing", "adopted", "retryWaiting", "blocked", "canceled"],
+          "type": "string"
         },
         "failure": {
           "type": ["string", "null"]
@@ -1245,7 +1572,8 @@
           "type": ["string", "null"]
         },
         "state": {
-          "enum": ["waiting", "claimed", "canceled", "blocked", "adopted"]
+          "enum": ["waiting", "claimed", "canceled", "blocked", "adopted"],
+          "type": "string"
         }
       },
       "required": [
@@ -1275,7 +1603,8 @@
           ]
         },
         "class": {
-          "enum": ["noEffect", "uncertainEffect"]
+          "enum": ["noEffect", "uncertainEffect"],
+          "type": "string"
         },
         "decidedAt": {
           "$ref": "#/definitions/timestamp"
@@ -1336,7 +1665,8 @@
           "type": "integer"
         },
         "on": {
-          "enum": ["launchNoEffect"]
+          "enum": ["launchNoEffect"],
+          "type": "string"
         }
       },
       "required": ["on", "maxAttempts", "initialDelayMs", "maxDelayMs"],
@@ -1366,7 +1696,8 @@
           "$ref": "#/definitions/timestamp"
         },
         "result": {
-          "enum": ["absent", "noEffectProven", "attemptFound", "sessionFound"]
+          "enum": ["absent", "noEffectProven", "attemptFound", "sessionFound"],
+          "type": "string"
         },
         "runId": {
           "type": ["string", "null"]
@@ -1450,7 +1781,8 @@
           "type": "string"
         },
         "disposition": {
-          "enum": ["queued", "skipped", "ignored"]
+          "enum": ["queued", "skipped", "ignored"],
+          "type": "string"
         },
         "id": {
           "$ref": "#/definitions/id"
@@ -1514,7 +1846,8 @@
                   "type": "string"
                 },
                 "kind": {
-                  "const": "webhook"
+                  "const": "webhook",
+                  "type": "string"
                 }
               },
               "required": ["kind", "event"],
@@ -1596,10 +1929,12 @@
                   "type": ["string", "null"]
                 },
                 "event": {
-                  "enum": ["push", "pull_request", "workflow_run"]
+                  "enum": ["push", "pull_request", "workflow_run"],
+                  "type": "string"
                 },
                 "kind": {
-                  "const": "github"
+                  "const": "github",
+                  "type": "string"
                 },
                 "repository": {
                   "maxLength": 201,
@@ -1818,7 +2153,8 @@
           "type": "boolean"
         },
         "environmentPolicy": {
-          "const": "isolated-platform-v1"
+          "const": "isolated-platform-v1",
+          "type": "string"
         },
         "id": {
           "$ref": "#/definitions/id"
@@ -1835,9 +2171,21 @@
           "type": "integer"
         },
         "sandboxed": {
-          "const": false
+          "const": false,
+          "type": "boolean"
         },
         "spec": {
+          "properties": {
+            "arguments": true,
+            "cwd": true,
+            "environment": true,
+            "executable": true,
+            "passExitCodes": true,
+            "skipExitCodes": true,
+            "timeoutMs": true,
+            "title": true,
+            "version": true
+          },
           "required": [
             "version",
             "title",
@@ -1852,7 +2200,8 @@
           "type": "object"
         },
         "trust": {
-          "const": "ownerExactCommand"
+          "const": "ownerExactCommand",
+          "type": "string"
         }
       },
       "required": [
@@ -1887,7 +2236,8 @@
           "type": "string"
         },
         "state": {
-          "enum": ["passed", "skipped", "failed", "timedOut", "outputLimit", "refused", "unknown"]
+          "enum": ["passed", "skipped", "failed", "timedOut", "outputLimit", "refused", "unknown"],
+          "type": "string"
         },
         "stderr": {
           "maxLength": 512,
@@ -2547,7 +2897,8 @@
           "type": ["integer", "null"]
         },
         "timeState": {
-          "enum": ["notStarted", "untracked", "unlimited", "open", "exhausted"]
+          "enum": ["notStarted", "untracked", "unlimited", "open", "exhausted"],
+          "type": "string"
         }
       },
       "required": [
@@ -2792,7 +3143,8 @@
             "succeeded",
             "failed",
             "stopped"
-          ]
+          ],
+          "type": "string"
         },
         "taskId": {
           "type": "string"
@@ -2839,15 +3191,8 @@
           "type": "integer"
         },
         "summary": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "maxLength": 2048,
-              "type": "string"
-            }
-          ]
+          "maxLength": 2048,
+          "type": ["string", "null"]
         }
       },
       "required": [
@@ -2917,24 +3262,19 @@
       "additionalProperties": false,
       "properties": {
         "baselineDiffers": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "boolean"
-            }
-          ]
+          "type": ["boolean", "null"]
         },
         "digest": {
           "pattern": "^[a-f0-9]{64}$",
           "type": "string"
         },
         "kind": {
-          "enum": ["current", "historical"]
+          "enum": ["current", "historical"],
+          "type": "string"
         },
         "nativeEffectsRestored": {
-          "const": false
+          "const": false,
+          "type": "boolean"
         },
         "partCount": {
           "maximum": 16384,
@@ -2942,7 +3282,8 @@
           "type": "integer"
         },
         "schemaVersion": {
-          "const": 1
+          "const": 1,
+          "type": "integer"
         },
         "sourceCursor": {
           "minimum": 0,
@@ -2998,7 +3339,8 @@
                     "canceling",
                     "canceled",
                     "succeeded"
-                  ]
+                  ],
+                  "type": "string"
                 },
                 "title": {
                   "maxLength": 80,
@@ -3009,7 +3351,8 @@
               "type": "object"
             },
             "kind": {
-              "const": "run"
+              "const": "run",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3022,7 +3365,8 @@
               "$ref": "#/definitions/workflowConstraintPolicy"
             },
             "kind": {
-              "const": "constraintPolicy"
+              "const": "constraintPolicy",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3035,7 +3379,8 @@
               "$ref": "#/definitions/workflowConstraint"
             },
             "kind": {
-              "const": "constraint"
+              "const": "constraint",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3053,57 +3398,45 @@
                   "type": "integer"
                 },
                 "currentAttempt": {
-                  "anyOf": [
-                    {
-                      "type": "null"
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
                     },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "id": {
-                          "maxLength": 128,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "ordinal": {
-                          "maximum": 16,
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        "reportedOutcome": {
-                          "anyOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "enum": ["succeeded", "failed", "blocked", "canceled"]
-                            }
-                          ]
-                        },
-                        "sessionId": {
-                          "maxLength": 128,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "state": {
-                          "enum": [
-                            "planned",
-                            "launching",
-                            "launchUnknown",
-                            "launchFailed",
-                            "assigned",
-                            "reported",
-                            "stopped",
-                            "succeeded",
-                            "failed",
-                            "canceled"
-                          ]
-                        }
-                      },
-                      "required": ["id", "ordinal", "sessionId", "state", "reportedOutcome"],
-                      "type": "object"
+                    "ordinal": {
+                      "maximum": 16,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "reportedOutcome": {
+                      "enum": ["succeeded", "failed", "blocked", "canceled", null],
+                      "type": ["string", "null"]
+                    },
+                    "sessionId": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "planned",
+                        "launching",
+                        "launchUnknown",
+                        "launchFailed",
+                        "assigned",
+                        "reported",
+                        "stopped",
+                        "succeeded",
+                        "failed",
+                        "canceled"
+                      ],
+                      "type": "string"
                     }
-                  ]
+                  },
+                  "required": ["id", "ordinal", "sessionId", "state", "reportedOutcome"],
+                  "type": ["object", "null"]
                 },
                 "dependencies": {
                   "items": {
@@ -3115,7 +3448,8 @@
                   "type": "array"
                 },
                 "dependencyState": {
-                  "enum": ["ready", "waiting"]
+                  "enum": ["ready", "waiting"],
+                  "type": "string"
                 },
                 "id": {
                   "maxLength": 128,
@@ -3142,17 +3476,12 @@
                     "succeeded",
                     "failed",
                     "canceled"
-                  ]
+                  ],
+                  "type": "string"
                 },
                 "taskResult": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "enum": ["succeeded", "failed"]
-                    }
-                  ]
+                  "enum": ["succeeded", "failed", null],
+                  "type": ["string", "null"]
                 },
                 "title": {
                   "maxLength": 80,
@@ -3174,7 +3503,8 @@
               "type": "object"
             },
             "kind": {
-              "const": "task"
+              "const": "task",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3187,50 +3517,22 @@
               "additionalProperties": false,
               "properties": {
                 "deliveryId": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": ["string", "null"]
                 },
                 "deliveryNativePhase": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "deliveryPhase": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "deliveryReceiptId": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": ["string", "null"]
                 },
                 "id": {
                   "maxLength": 128,
@@ -3238,27 +3540,13 @@
                   "type": "string"
                 },
                 "launchPhase": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "launchReceiptId": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": ["string", "null"]
                 },
                 "ordinal": {
                   "maximum": 16,
@@ -3266,14 +3554,8 @@
                   "type": "integer"
                 },
                 "reportedOutcome": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "enum": ["succeeded", "failed", "blocked", "canceled"]
-                    }
-                  ]
+                  "enum": ["succeeded", "failed", "blocked", "canceled", null],
+                  "type": ["string", "null"]
                 },
                 "sessionId": {
                   "maxLength": 128,
@@ -3292,7 +3574,8 @@
                     "succeeded",
                     "failed",
                     "canceled"
-                  ]
+                  ],
+                  "type": "string"
                 },
                 "taskId": {
                   "maxLength": 128,
@@ -3300,14 +3583,7 @@
                   "type": "string"
                 },
                 "validationPassed": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "type": "boolean"
-                    }
-                  ]
+                  "type": ["boolean", "null"]
                 }
               },
               "required": [
@@ -3328,7 +3604,8 @@
               "type": "object"
             },
             "kind": {
-              "const": "attempt"
+              "const": "attempt",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3346,7 +3623,8 @@
                   "type": "string"
                 },
                 "audience": {
-                  "enum": ["owner", "coordinator"]
+                  "enum": ["owner", "coordinator"],
+                  "type": "string"
                 },
                 "expiresAt": {
                   "minimum": 0,
@@ -3362,14 +3640,16 @@
                   "type": "integer"
                 },
                 "state": {
-                  "enum": ["pending", "answered", "expired", "canceled"]
+                  "enum": ["pending", "answered", "canceled", "expired"],
+                  "type": "string"
                 }
               },
               "required": ["id", "attemptId", "revision", "state", "audience", "expiresAt"],
               "type": "object"
             },
             "kind": {
-              "const": "decision"
+              "const": "decision",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3382,27 +3662,13 @@
               "additionalProperties": false,
               "properties": {
                 "attemptId": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": ["string", "null"]
                 },
                 "code": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "id": {
                   "maxLength": 128,
@@ -3410,53 +3676,26 @@
                   "type": "string"
                 },
                 "kind": {
-                  "enum": ["stop", "cancel"]
+                  "enum": ["stop", "cancel"],
+                  "type": "string"
                 },
                 "operationKey": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "phase": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "receiptId": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": ["string", "null"]
                 },
                 "sessionId": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": ["string", "null"]
                 },
                 "state": {
                   "maxLength": 128,
@@ -3477,7 +3716,8 @@
               "type": "object"
             },
             "kind": {
-              "const": "control"
+              "const": "control",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3508,15 +3748,8 @@
                   "type": "string"
                 },
                 "reason": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "receiptId": {
                   "maxLength": 128,
@@ -3528,7 +3761,8 @@
               "type": "object"
             },
             "kind": {
-              "const": "wakeBatch"
+              "const": "wakeBatch",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3541,7 +3775,8 @@
               "additionalProperties": false,
               "properties": {
                 "operation": {
-                  "enum": ["create", "send", "interrupt", "stop"]
+                  "enum": ["create", "send", "interrupt", "stop"],
+                  "type": "string"
                 },
                 "phase": {
                   "maxLength": 128,
@@ -3562,7 +3797,8 @@
               "type": "object"
             },
             "kind": {
-              "const": "nativeOperation"
+              "const": "nativeOperation",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3591,25 +3827,20 @@
                   "type": "string"
                 },
                 "reason": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "maxLength": 128,
-                      "type": "string"
-                    }
-                  ]
+                  "maxLength": 128,
+                  "type": ["string", "null"]
                 },
                 "type": {
-                  "enum": ["executor", "wakes"]
+                  "enum": ["executor", "wakes"],
+                  "type": "string"
                 }
               },
               "required": ["id", "type", "enabled", "generation", "phase", "reason"],
               "type": "object"
             },
             "kind": {
-              "const": "automation"
+              "const": "automation",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3634,7 +3865,8 @@
               "type": "object"
             },
             "kind": {
-              "const": "inbox"
+              "const": "inbox",
+              "type": "string"
             }
           },
           "required": ["kind", "data"],
@@ -3658,7 +3890,8 @@
           "type": ["string", "null"]
         },
         "nativeEffectsRestored": {
-          "const": false
+          "const": false,
+          "type": "boolean"
         },
         "previousSessionId": {
           "maxLength": 128,
@@ -3671,13 +3904,15 @@
           "type": "string"
         },
         "source": {
-          "enum": ["retainedSession", "recoveryRecord", "previousBinding", "unbound"]
+          "enum": ["retainedSession", "recoveryRecord", "previousBinding", "unbound"],
+          "type": "string"
         },
         "updatedAt": {
           "$ref": "#/definitions/timestamp"
         },
         "workerAuthorityRestored": {
-          "const": false
+          "const": false,
+          "type": "boolean"
         }
       },
       "required": [
@@ -3705,7 +3940,8 @@
           "type": "string"
         },
         "audience": {
-          "enum": ["owner", "coordinator"]
+          "enum": ["owner", "coordinator"],
+          "type": "string"
         },
         "createdAt": {
           "$ref": "#/definitions/timestamp"
@@ -3736,7 +3972,8 @@
           "type": "string"
         },
         "state": {
-          "enum": ["pending", "answered", "canceled", "expired"]
+          "enum": ["pending", "answered", "canceled", "expired"],
+          "type": "string"
         },
         "taskId": {
           "type": "string"
@@ -3803,7 +4040,8 @@
             "expired",
             "canceled",
             "unknown"
-          ]
+          ],
+          "type": "string"
         },
         "receiptId": {
           "type": ["string", "null"]
@@ -3843,6 +4081,12 @@
           "type": "object"
         },
         "decisions": {
+          "properties": {
+            "answered": true,
+            "closed": true,
+            "pending": true,
+            "total": true
+          },
           "required": ["total", "pending", "answered", "closed"],
           "type": "object"
         },
@@ -3865,11 +4109,16 @@
           "type": "object"
         },
         "inbox": {
+          "properties": {
+            "messageHead": true,
+            "pendingCoordinatorMessages": true
+          },
           "required": ["pendingCoordinatorMessages", "messageHead"],
           "type": "object"
         },
         "kind": {
-          "enum": ["final", "workingState"]
+          "enum": ["final", "workingState"],
+          "type": "string"
         },
         "omittedTasks": {
           "minimum": 0,
@@ -3887,7 +4136,8 @@
           "type": "string"
         },
         "schemaVersion": {
-          "const": 1
+          "const": 1,
+          "type": "integer"
         },
         "sourceRevision": {
           "minimum": 1,
@@ -3903,6 +4153,11 @@
                 "type": ["object", "null"]
               },
               "checks": {
+                "properties": {
+                  "failed": true,
+                  "passed": true,
+                  "skipped": true
+                },
                 "required": ["passed", "failed", "skipped"],
                 "type": "object"
               },
@@ -3943,7 +4198,8 @@
                 "type": "array"
               },
               "outcome": {
-                "enum": [null, "succeeded", "failed", "blocked", "canceled"]
+                "enum": ["succeeded", "failed", "blocked", "canceled", null],
+                "type": ["string", "null"]
               },
               "state": {
                 "type": "string"
@@ -3956,26 +4212,20 @@
                 "type": ["object", "null"]
               },
               "workspace": {
-                "anyOf": [
-                  {
-                    "type": "null"
+                "properties": {
+                  "branch": {
+                    "type": ["string", "null"]
                   },
-                  {
-                    "properties": {
-                      "branch": {
-                        "type": ["string", "null"]
-                      },
-                      "directory": {
-                        "type": ["string", "null"]
-                      },
-                      "kind": {
-                        "enum": ["shared", "worktree"]
-                      }
-                    },
-                    "required": ["kind", "directory", "branch"],
-                    "type": "object"
+                  "directory": {
+                    "type": ["string", "null"]
+                  },
+                  "kind": {
+                    "enum": ["shared", "worktree"],
+                    "type": "string"
                   }
-                ]
+                },
+                "required": ["kind", "directory", "branch"],
+                "type": ["object", "null"]
               }
             },
             "required": [
@@ -4065,7 +4315,16 @@
           "type": "string"
         },
         "phase": {
-          "enum": ["enabled", "waiting", "blocked", "disabled", "paused", "completed", "scheduling"]
+          "enum": [
+            "enabled",
+            "waiting",
+            "blocked",
+            "disabled",
+            "paused",
+            "completed",
+            "scheduling"
+          ],
+          "type": "string"
         },
         "reason": {
           "type": ["string", "null"]
@@ -4116,10 +4375,12 @@
                         "type": ["string", "null"]
                       },
                       "program": {
-                        "enum": ["claude", "codex", "gemini"]
+                        "enum": ["claude", "codex", "gemini"],
+                        "type": "string"
                       },
                       "workspace": {
-                        "enum": ["shared", "worktree"]
+                        "enum": ["shared", "worktree"],
+                        "type": "string"
                       }
                     },
                     "required": ["program", "workspace"],
@@ -4180,31 +4441,25 @@
           "type": "string"
         },
         "phase": {
-          "enum": ["accepted", "dispatching", "created", "failed", "unknown"]
+          "enum": ["accepted", "dispatching", "created", "failed", "unknown"],
+          "type": "string"
         },
         "preparedWorkspace": {
-          "anyOf": [
-            {
-              "type": "null"
+          "additionalProperties": false,
+          "properties": {
+            "derivedWorktree": {
+              "type": ["boolean", "null"]
             },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "derivedWorktree": {
-                  "type": ["boolean", "null"]
-                },
-                "directory": {
-                  "type": ["string", "null"]
-                },
-                "preparedAt": {
-                  "minimum": 0,
-                  "type": ["integer", "null"]
-                }
-              },
-              "required": ["directory", "derivedWorktree", "preparedAt"],
-              "type": "object"
+            "directory": {
+              "type": ["string", "null"]
+            },
+            "preparedAt": {
+              "minimum": 0,
+              "type": ["integer", "null"]
             }
-          ]
+          },
+          "required": ["directory", "derivedWorktree", "preparedAt"],
+          "type": ["object", "null"]
         },
         "profile": {
           "description": "Immutable requested task profile; null for pre-migration records. This is not a restored native grant or a claim that rejected settings were applied.",
@@ -4222,7 +4477,7 @@
           "type": ["object", "null"]
         },
         "quotaHoldReason": {
-          "enum": [null, "quota_wait", "native_run_busy"],
+          "enum": ["quota_wait", "native_run_busy", null],
           "type": ["string", "null"]
         },
         "receiptId": {
@@ -4234,7 +4489,8 @@
           "type": "string"
         },
         "workspace": {
-          "enum": ["shared", "worktree"]
+          "enum": ["shared", "worktree"],
+          "type": "string"
         }
       },
       "required": [
@@ -4273,7 +4529,8 @@
           "type": "string"
         },
         "kind": {
-          "enum": ["note", "question", "error", "result", "decision"]
+          "enum": ["note", "question", "error", "result", "decision"],
+          "type": "string"
         },
         "payload": {
           "type": ["object", "null"]
@@ -4290,7 +4547,8 @@
               "type": "string"
             },
             "role": {
-              "enum": ["owner", "coordinator", "worker"]
+              "enum": ["owner", "coordinator", "worker"],
+              "type": "string"
             },
             "sessionId": {
               "type": "string"
@@ -4439,7 +4697,8 @@
           "type": "boolean"
         },
         "nativeEffectsRestored": {
-          "const": false
+          "const": false,
+          "type": "boolean"
         },
         "page": {
           "$ref": "#/definitions/workflowRecoveryPage"
@@ -4465,7 +4724,8 @@
           "type": "array"
         },
         "scope": {
-          "enum": ["owner", "coordinator", "worker"]
+          "enum": ["owner", "coordinator", "worker"],
+          "type": "string"
         },
         "selectionRequired": {
           "type": "boolean"
@@ -4474,7 +4734,8 @@
           "$ref": "#/definitions/workflowRecoveryTask"
         },
         "type": {
-          "const": "workflow"
+          "const": "workflow",
+          "type": "string"
         }
       },
       "required": ["scope", "bound", "selectionRequired", "nativeEffectsRestored"],
@@ -4500,16 +4761,9 @@
           "$ref": "#/definitions/workflowConstraintPolicy"
         },
         "nextOffset": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "maximum": 16384,
-              "minimum": 0,
-              "type": "integer"
-            }
-          ]
+          "maximum": 16384,
+          "minimum": 0,
+          "type": ["integer", "null"]
         },
         "parts": {
           "items": {
@@ -4549,10 +4803,22 @@
           "type": "object"
         },
         "run": {
+          "properties": {
+            "id": true,
+            "revision": true,
+            "state": true,
+            "title": true
+          },
           "required": ["id", "title", "revision", "state"],
           "type": "object"
         },
         "task": {
+          "properties": {
+            "id": true,
+            "instruction": true,
+            "key": true,
+            "title": true
+          },
           "required": ["id", "key", "title", "instruction"],
           "type": "object"
         },
@@ -4721,15 +4987,8 @@
       ],
       "properties": {
         "checkpointDigest": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "pattern": "^[a-f0-9]{64}$",
-              "type": "string"
-            }
-          ]
+          "pattern": "^[a-f0-9]{64}$",
+          "type": ["string", "null"]
         },
         "checkpointId": {
           "anyOf": [
@@ -4775,7 +5034,8 @@
                   "succeeded",
                   "failed",
                   "canceled"
-                ]
+                ],
+                "type": "string"
               }
             },
             "required": ["key", "state"],
@@ -4839,7 +5099,8 @@
           "type": "string"
         },
         "phase": {
-          "enum": ["dispatching", "settled", "failed", "unknown", "interrupted"]
+          "enum": ["dispatching", "settled", "failed", "unknown", "interrupted"],
+          "type": "string"
         },
         "policyId": {
           "$ref": "#/definitions/id"
@@ -4890,7 +5151,8 @@
           "type": "integer"
         },
         "phase": {
-          "enum": ["dispatching", "settled", "failed", "unknown", "interrupted"]
+          "enum": ["dispatching", "settled", "failed", "unknown", "interrupted"],
+          "type": "string"
         },
         "reason": {
           "type": ["string", "null"]
@@ -4900,7 +5162,8 @@
       "type": "object"
     },
     "workflowWakeDelivery": {
-      "enum": ["delta", "full"]
+      "enum": ["delta", "full"],
+      "type": "string"
     },
     "workflowWakeNative": {
       "additionalProperties": false,
@@ -4924,7 +5187,8 @@
           "$ref": "#/definitions/id"
         },
         "kind": {
-          "enum": ["result", "decision", "question", "error", "blocker"]
+          "enum": ["result", "decision", "question", "error", "blocker"],
+          "type": "string"
         },
         "reference": {
           "additionalProperties": false,
@@ -5029,7 +5293,8 @@
           "$ref": "#/definitions/id"
         },
         "phase": {
-          "enum": ["enabled", "waiting", "paused", "held", "disabled", "completed"]
+          "enum": ["enabled", "waiting", "paused", "held", "disabled", "completed"],
+          "type": "string"
         },
         "reason": {
           "type": ["string", "null"]
@@ -5096,6 +5361,1286 @@
       "properties": {
         "data": {
           "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/definitions/workflowRecoveryContext"
+                },
+                {
+                  "oneOf": [
+                    {
+                      "description": "Constraint pages name their continuation flag hasMore; every other paged reply with a continuation flag names it more. Both mean another page follows the returned cursor.",
+                      "properties": {
+                        "constraints": {
+                          "$ref": "#/definitions/workflowConstraintPolicy"
+                        },
+                        "hasMore": {
+                          "type": "boolean"
+                        },
+                        "nextCursor": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "records": {
+                          "items": {
+                            "$ref": "#/definitions/workflowConstraint"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "constraints", "records", "nextCursor", "hasMore"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "checkpoints": {
+                          "items": {
+                            "$ref": "#/definitions/workflowCheckpoint"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "nextOffset": {
+                          "maximum": 32,
+                          "minimum": 0,
+                          "type": ["integer", "null"]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "checkpoints", "nextOffset"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "checkpoint": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/definitions/workflowCheckpoint"
+                            }
+                          ]
+                        },
+                        "context": {
+                          "$ref": "#/definitions/workflowContextMetadata"
+                        },
+                        "currentConstraints": {
+                          "$ref": "#/definitions/workflowConstraintPolicy"
+                        },
+                        "nextOffset": {
+                          "maximum": 16384,
+                          "minimum": 0,
+                          "type": ["integer", "null"]
+                        },
+                        "parts": {
+                          "items": {
+                            "$ref": "#/definitions/workflowContextPart"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "run",
+                        "checkpoint",
+                        "context",
+                        "parts",
+                        "nextOffset",
+                        "currentConstraints"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "batches": {
+                          "items": {
+                            "$ref": "#/definitions/workflowWakeBatchSummary"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "deliveredThrough": {
+                          "$ref": "#/definitions/cursor"
+                        },
+                        "more": {
+                          "type": "boolean"
+                        },
+                        "nextCursor": {
+                          "$ref": "#/definitions/cursor"
+                        },
+                        "notices": {
+                          "items": {
+                            "$ref": "#/definitions/workflowWakeNotice"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "pendingCount": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "wakePolicy": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/definitions/workflowWakePolicy"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "run",
+                        "wakePolicy",
+                        "notices",
+                        "pendingCount",
+                        "nextCursor",
+                        "more",
+                        "deliveredThrough",
+                        "batches"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "wakeBatch": {
+                          "$ref": "#/definitions/workflowWakeBatch"
+                        }
+                      },
+                      "required": ["run", "wakeBatch"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "executor": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/definitions/workflowExecutor"
+                            }
+                          ]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "executor"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "nextOffset": {
+                          "type": ["integer", "null"]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "runs": {
+                          "items": {
+                            "properties": {
+                              "id": true,
+                              "revision": true,
+                              "state": true,
+                              "title": true
+                            },
+                            "required": ["id", "title", "revision", "state"],
+                            "type": "object"
+                          },
+                          "maxItems": 16,
+                          "type": "array"
+                        }
+                      },
+                      "required": ["runs", "nextOffset"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "digest": {
+                          "$ref": "#/definitions/workflowDigest"
+                        },
+                        "fingerprint": {
+                          "maxLength": 64,
+                          "minLength": 64,
+                          "type": "string"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true,
+                            "title": true
+                          },
+                          "required": ["id", "title", "revision", "state"],
+                          "type": "object"
+                        },
+                        "stored": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": ["run", "digest", "fingerprint", "stored"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "delivery": {
+                          "$ref": "#/definitions/workflowDelivery"
+                        },
+                        "launch": {
+                          "$ref": "#/definitions/workflowLaunch"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "goal": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "revision": {
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "state": {
+                              "enum": [
+                                "draft",
+                                "active",
+                                "draining",
+                                "drained",
+                                "stopping",
+                                "stopped",
+                                "canceling",
+                                "canceled",
+                                "succeeded"
+                              ],
+                              "type": "string"
+                            },
+                            "taskResult": {
+                              "enum": ["succeeded", null],
+                              "type": ["string", "null"]
+                            },
+                            "title": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["id", "title", "goal", "revision", "state", "taskResult"],
+                          "type": "object"
+                        },
+                        "tasks": {
+                          "items": {
+                            "properties": {
+                              "attempts": {
+                                "maximum": 16,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "dependencies": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "dependencyState": {
+                                "enum": ["ready", "waiting"],
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "instruction": true,
+                              "key": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "enum": [
+                                  "planned",
+                                  "launching",
+                                  "launchFailed",
+                                  "launchUnknown",
+                                  "assigned",
+                                  "reported",
+                                  "succeeded",
+                                  "failed",
+                                  "stopped"
+                                ],
+                                "type": "string"
+                              },
+                              "taskResult": {
+                                "enum": ["succeeded", "failed", null],
+                                "type": ["string", "null"]
+                              },
+                              "title": true
+                            },
+                            "required": [
+                              "id",
+                              "key",
+                              "dependencies",
+                              "state",
+                              "dependencyState",
+                              "attempts",
+                              "taskResult",
+                              "title",
+                              "instruction"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 64,
+                          "type": "array"
+                        }
+                      },
+                      "required": ["run", "tasks"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "attempt": {
+                          "properties": {
+                            "id": true
+                          },
+                          "required": ["id"],
+                          "type": "object"
+                        },
+                        "constraints": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "policy": {
+                              "$ref": "#/definitions/workflowConstraintPolicy"
+                            },
+                            "records": {
+                              "items": {
+                                "$ref": "#/definitions/workflowConstraint"
+                              },
+                              "maxItems": 16,
+                              "type": "array"
+                            }
+                          },
+                          "required": ["policy", "records"],
+                          "type": "object"
+                        },
+                        "decision": {
+                          "$ref": "#/definitions/workflowDecision"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true,
+                            "title": true
+                          },
+                          "required": ["id", "title", "revision", "state"],
+                          "type": "object"
+                        },
+                        "task": {
+                          "properties": {
+                            "id": true
+                          },
+                          "required": ["id"],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "task", "attempt", "decision"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "attempt": {
+                          "$ref": "#/definitions/workflowAttempt"
+                        },
+                        "constraints": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "policy": {
+                              "$ref": "#/definitions/workflowConstraintPolicy"
+                            },
+                            "records": {
+                              "items": {
+                                "$ref": "#/definitions/workflowConstraint"
+                              },
+                              "maxItems": 16,
+                              "type": "array"
+                            }
+                          },
+                          "required": ["policy", "records"],
+                          "type": "object"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true,
+                            "title": true
+                          },
+                          "required": ["id", "title", "revision", "state"],
+                          "type": "object"
+                        },
+                        "task": {
+                          "properties": {
+                            "id": true,
+                            "instruction": true,
+                            "key": true,
+                            "title": true
+                          },
+                          "required": ["id", "key", "title", "instruction"],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "task", "attempt"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "attempts": {
+                          "items": {
+                            "$ref": "#/definitions/workflowAttempt"
+                          },
+                          "maxItems": 4,
+                          "type": "array"
+                        },
+                        "nextOffset": {
+                          "type": ["integer", "null"]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true
+                          },
+                          "required": ["id", "revision", "state"],
+                          "type": "object"
+                        },
+                        "task": {
+                          "properties": {
+                            "id": true,
+                            "spec": true
+                          },
+                          "required": ["id", "spec"],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "task", "attempts", "nextOffset"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "decisions": {
+                          "items": {
+                            "$ref": "#/definitions/workflowDecision"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "nextOffset": {
+                          "type": ["integer", "null"]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true,
+                            "title": true
+                          },
+                          "required": ["id", "title", "revision", "state"],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "decisions", "nextOffset"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "control": {
+                          "properties": {
+                            "counts": {
+                              "additionalProperties": {
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "type": "object"
+                            },
+                            "createdAt": {
+                              "$ref": "#/definitions/timestamp"
+                            },
+                            "id": {
+                              "$ref": "#/definitions/id"
+                            },
+                            "kind": {
+                              "enum": ["stop", "cancel"],
+                              "type": "string"
+                            },
+                            "state": {
+                              "enum": [
+                                "dispatching",
+                                "awaitingExit",
+                                "blocked",
+                                "unconfirmed",
+                                "completed"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": ["id", "kind", "state", "createdAt", "counts"],
+                          "type": "object"
+                        },
+                        "nextOffset": {
+                          "type": ["integer", "null"]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true
+                          },
+                          "required": ["id", "revision", "state"],
+                          "type": "object"
+                        },
+                        "targets": {
+                          "items": {
+                            "properties": {
+                              "attemptId": {
+                                "$ref": "#/definitions/id"
+                              },
+                              "code": {
+                                "type": ["string", "null"]
+                              },
+                              "operationKey": {
+                                "maxLength": 128,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "phase": {
+                                "enum": [
+                                  "pending",
+                                  "dispatching",
+                                  "stopRequested",
+                                  "blocked",
+                                  "unknown",
+                                  "unavailable",
+                                  "exited"
+                                ],
+                                "type": "string"
+                              },
+                              "receiptId": {
+                                "type": ["string", "null"]
+                              },
+                              "sessionId": {
+                                "$ref": "#/definitions/id"
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "attemptId",
+                              "operationKey",
+                              "phase",
+                              "receiptId",
+                              "code"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        }
+                      },
+                      "required": ["run", "control", "targets", "nextOffset"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "policy": {
+                          "$ref": "#/definitions/runBudget"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true
+                          },
+                          "required": ["id", "revision", "state"],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "policy"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "budget": {
+                          "properties": {
+                            "limits": {
+                              "properties": {
+                                "maxSessions": {
+                                  "maximum": 16,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "maxWorkers": {
+                                  "maximum": 16,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "providers": {
+                                  "properties": {
+                                    "claude": {
+                                      "maximum": 16,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "codex": {
+                                      "maximum": 16,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "gemini": {
+                                      "maximum": 16,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "shell": {
+                                      "maximum": 16,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "required": ["shell", "claude", "codex", "gemini"],
+                                  "type": "object"
+                                }
+                              },
+                              "required": ["maxSessions", "maxWorkers", "providers"],
+                              "type": "object"
+                            },
+                            "revision": {
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": ["revision", "limits"],
+                          "type": "object"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": ["budget"],
+                      "type": "object"
+                    },
+                    {
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "headCursor": {
+                              "$ref": "#/definitions/cursor"
+                            },
+                            "messages": {
+                              "items": {
+                                "$ref": "#/definitions/workflowMessage"
+                              },
+                              "maxItems": 8,
+                              "type": "array"
+                            },
+                            "more": {
+                              "type": "boolean"
+                            },
+                            "nextCursor": {
+                              "$ref": "#/definitions/cursor"
+                            },
+                            "pendingCount": {
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "messages",
+                            "nextCursor",
+                            "headCursor",
+                            "pendingCount",
+                            "more"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "message": {
+                              "$ref": "#/definitions/workflowMessage"
+                            }
+                          },
+                          "required": ["message", "cursor"],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "acknowledged": {
+                              "items": {
+                                "properties": {
+                                  "ackedAt": {
+                                    "$ref": "#/definitions/timestamp"
+                                  },
+                                  "ackedBy": {
+                                    "properties": {
+                                      "role": true
+                                    },
+                                    "required": ["role"],
+                                    "type": "object"
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["id", "ackedAt", "ackedBy"],
+                                "type": "object"
+                              },
+                              "maxItems": 32,
+                              "minItems": 1,
+                              "type": "array"
+                            }
+                          },
+                          "required": ["acknowledged", "cursor"],
+                          "type": "object"
+                        }
+                      ],
+                      "properties": {
+                        "mailbox": {
+                          "properties": {
+                            "recipientAttemptId": {
+                              "type": ["string", "null"]
+                            },
+                            "runId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["runId", "recipientAttemptId"],
+                          "type": "object"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            },
+                            "id": true,
+                            "revision": true,
+                            "state": true,
+                            "title": true
+                          },
+                          "required": ["id", "title", "revision", "state"],
+                          "type": "object"
+                        }
+                      },
+                      "required": ["run", "mailbox"],
+                      "type": "object"
+                    },
+                    {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": ["run"]
+                          },
+                          {
+                            "required": ["tasks"]
+                          }
+                        ]
+                      },
+                      "properties": {
+                        "delivery": {
+                          "$ref": "#/definitions/jobTriggerDelivery"
+                        }
+                      },
+                      "required": ["delivery"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "trigger": {
+                          "$ref": "#/definitions/jobTrigger"
+                        }
+                      },
+                      "required": ["trigger"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "nextOffset": {
+                          "maximum": 4096,
+                          "minimum": 0,
+                          "type": ["integer", "null"]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "triggers": {
+                          "items": {
+                            "$ref": "#/definitions/jobTrigger"
+                          },
+                          "maxItems": 16,
+                          "type": "array"
+                        }
+                      },
+                      "required": ["triggers", "nextOffset"],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "deliveries": {
+                          "items": {
+                            "$ref": "#/definitions/jobTriggerDelivery"
+                          },
+                          "maxItems": 16,
+                          "type": "array"
+                        },
+                        "nextOffset": {
+                          "maximum": 4096,
+                          "minimum": 0,
+                          "type": ["integer", "null"]
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": ["deliveries", "nextOffset"],
+                      "type": "object"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "required": ["precheckApproval"]
+                        },
+                        {
+                          "required": ["precheckApprovals"]
+                        },
+                        {
+                          "required": ["precheckDescription"]
+                        }
+                      ],
+                      "properties": {
+                        "nextOffset": {
+                          "minimum": 0,
+                          "type": ["integer", "null"]
+                        },
+                        "precheckApproval": {
+                          "$ref": "#/definitions/precheckApproval"
+                        },
+                        "precheckApprovals": {
+                          "items": {
+                            "$ref": "#/definitions/precheckApproval"
+                          },
+                          "maxItems": 16,
+                          "type": "array"
+                        },
+                        "precheckDescription": {
+                          "properties": {
+                            "digest": {
+                              "maxLength": 64,
+                              "minLength": 64,
+                              "type": "string"
+                            },
+                            "environmentPolicy": {
+                              "const": "isolated-platform-v1",
+                              "type": "string"
+                            },
+                            "platformEnvironmentKeys": {
+                              "items": {
+                                "const": "SystemRoot"
+                              },
+                              "maxItems": 1,
+                              "type": "array"
+                            },
+                            "sandboxed": {
+                              "const": false,
+                              "type": "boolean"
+                            },
+                            "spec": {
+                              "type": "object"
+                            },
+                            "trust": {
+                              "const": "notApproved",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "spec",
+                            "digest",
+                            "trust",
+                            "sandboxed",
+                            "environmentPolicy",
+                            "platformEnvironmentKeys"
+                          ],
+                          "type": "object"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "required": ["job"]
+                        },
+                        {
+                          "required": ["jobs"]
+                        },
+                        {
+                          "required": ["occurrence"]
+                        },
+                        {
+                          "required": ["occurrences"]
+                        },
+                        {
+                          "required": ["jobAttempts", "nextOffset"]
+                        },
+                        {
+                          "required": ["jobAttempt"]
+                        }
+                      ],
+                      "properties": {
+                        "job": {
+                          "$ref": "#/definitions/jobDefinition"
+                        },
+                        "jobAttempt": {
+                          "$ref": "#/definitions/jobAttemptDetail"
+                        },
+                        "jobAttempts": {
+                          "items": {
+                            "$ref": "#/definitions/jobAttemptSummary"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "jobs": {
+                          "items": {
+                            "$ref": "#/definitions/jobDefinition"
+                          },
+                          "maxItems": 16,
+                          "type": "array"
+                        },
+                        "nextOffset": {
+                          "minimum": 0,
+                          "type": ["integer", "null"]
+                        },
+                        "occurrence": {
+                          "$ref": "#/definitions/jobOccurrence"
+                        },
+                        "occurrences": {
+                          "items": {
+                            "$ref": "#/definitions/jobOccurrence"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "run": {
+                          "properties": {
+                            "coordinatorBinding": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/definitions/workflowCoordinatorBinding"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ],
+                  "properties": {
+                    "cursor": {
+                      "$ref": "#/definitions/cursor"
+                    },
+                    "nativeEffectsRestored": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "signal": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "enum": ["blocked", "question"],
+                          "type": "string"
+                        },
+                        "options": {
+                          "items": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        }
+                      },
+                      "required": ["kind", "options"],
+                      "type": "object"
+                    },
+                    "workerAuthorityRestored": {
+                      "const": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "properties": {
+                "type": {
+                  "const": "workflow",
+                  "type": "string"
+                }
+              },
+              "required": ["type"],
+              "type": "object"
+            },
             {
               "properties": {
                 "cursor": {
@@ -5977,919 +7522,213 @@
               "type": "object"
             },
             {
-              "oneOf": [
-                {
-                  "description": "Constraint pages name their continuation flag hasMore; every other paged reply with a continuation flag names it more. Both mean another page follows the returned cursor.",
-                  "properties": {
-                    "constraints": {
-                      "$ref": "#/definitions/workflowConstraintPolicy"
-                    },
-                    "hasMore": {
-                      "type": "boolean"
-                    },
-                    "nextCursor": {
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "records": {
-                      "items": {
-                        "$ref": "#/definitions/workflowConstraint"
+              "properties": {
+                "items": {
+                  "items": {
+                    "$ref": "#/definitions/attentionItem"
+                  },
+                  "maxItems": 32,
+                  "type": "array"
+                },
+                "limit": {
+                  "maximum": 32,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "nextPage": {
+                  "minimum": 1,
+                  "type": ["integer", "null"]
+                },
+                "page": {
+                  "maximum": 1024,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "total": {
+                  "$ref": "#/definitions/cursor"
+                },
+                "type": {
+                  "const": "attentionInbox",
+                  "type": "string"
+                }
+              },
+              "required": ["type", "items", "page", "limit", "nextPage", "total"],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "acknowledged": {
+                  "items": {
+                    "$ref": "#/definitions/attentionReceipt"
+                  },
+                  "maxItems": 32,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "inboxAcknowledged",
+                  "type": "string"
+                }
+              },
+              "required": ["type", "acknowledged"],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "decisions": {
+                  "items": {
+                    "properties": {
+                      "answer": {
+                        "type": ["string", "null"]
                       },
-                      "maxItems": 8,
-                      "type": "array"
-                    },
-                    "run": {
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "constraints", "records", "nextCursor", "hasMore"]
-                },
-                {
-                  "properties": {
-                    "checkpoints": {
-                      "items": {
-                        "$ref": "#/definitions/workflowCheckpoint"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    },
-                    "nextOffset": {
-                      "anyOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "maximum": 32,
-                          "minimum": 0,
-                          "type": "integer"
-                        }
-                      ]
-                    },
-                    "run": {
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "checkpoints", "nextOffset"]
-                },
-                {
-                  "properties": {
-                    "checkpoint": {
-                      "anyOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/definitions/workflowCheckpoint"
-                        }
-                      ]
-                    },
-                    "context": {
-                      "$ref": "#/definitions/workflowContextMetadata"
-                    },
-                    "currentConstraints": {
-                      "$ref": "#/definitions/workflowConstraintPolicy"
-                    },
-                    "nextOffset": {
-                      "anyOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "maximum": 16384,
-                          "minimum": 0,
-                          "type": "integer"
-                        }
-                      ]
-                    },
-                    "parts": {
-                      "items": {
-                        "$ref": "#/definitions/workflowContextPart"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    },
-                    "run": {
-                      "type": "object"
-                    }
-                  },
-                  "required": [
-                    "run",
-                    "checkpoint",
-                    "context",
-                    "parts",
-                    "nextOffset",
-                    "currentConstraints"
-                  ]
-                },
-                {
-                  "properties": {
-                    "batches": {
-                      "items": {
-                        "$ref": "#/definitions/workflowWakeBatchSummary"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    },
-                    "deliveredThrough": {
-                      "$ref": "#/definitions/cursor"
-                    },
-                    "more": {
-                      "type": "boolean"
-                    },
-                    "nextCursor": {
-                      "$ref": "#/definitions/cursor"
-                    },
-                    "notices": {
-                      "items": {
-                        "$ref": "#/definitions/workflowWakeNotice"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    },
-                    "pendingCount": {
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "run": {
-                      "type": "object"
-                    },
-                    "wakePolicy": {
-                      "anyOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/definitions/workflowWakePolicy"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "run",
-                    "wakePolicy",
-                    "notices",
-                    "pendingCount",
-                    "nextCursor",
-                    "more",
-                    "deliveredThrough",
-                    "batches"
-                  ]
-                },
-                {
-                  "properties": {
-                    "run": {
-                      "type": "object"
-                    },
-                    "wakeBatch": {
-                      "$ref": "#/definitions/workflowWakeBatch"
-                    }
-                  },
-                  "required": ["run", "wakeBatch"]
-                },
-                {
-                  "properties": {
-                    "executor": {
-                      "anyOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/definitions/workflowExecutor"
-                        }
-                      ]
-                    },
-                    "run": {
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "executor"]
-                },
-                {
-                  "properties": {
-                    "nextOffset": {
-                      "type": ["integer", "null"]
-                    },
-                    "runs": {
-                      "items": {
-                        "required": ["id", "title", "revision", "state"],
+                      "askedBy": {
                         "type": "object"
                       },
-                      "maxItems": 16,
-                      "type": "array"
-                    }
-                  },
-                  "required": ["runs", "nextOffset"]
-                },
-                {
-                  "properties": {
-                    "digest": {
-                      "$ref": "#/definitions/workflowDigest"
-                    },
-                    "fingerprint": {
-                      "maxLength": 64,
-                      "minLength": 64,
-                      "type": "string"
-                    },
-                    "run": {
-                      "required": ["id", "title", "revision", "state"],
-                      "type": "object"
-                    },
-                    "stored": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": ["run", "digest", "fingerprint", "stored"]
-                },
-                {
-                  "properties": {
-                    "delivery": {
-                      "$ref": "#/definitions/workflowDelivery"
-                    },
-                    "launch": {
-                      "$ref": "#/definitions/workflowLaunch"
-                    },
-                    "run": {
-                      "properties": {
-                        "goal": {
-                          "type": "string"
-                        },
-                        "id": {
-                          "type": "string"
-                        },
-                        "revision": {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        "state": {
-                          "enum": [
-                            "draft",
-                            "active",
-                            "draining",
-                            "drained",
-                            "stopping",
-                            "stopped",
-                            "canceling",
-                            "canceled",
-                            "succeeded"
-                          ]
-                        },
-                        "taskResult": {
-                          "enum": [null, "succeeded"]
-                        },
-                        "title": {
-                          "type": "string"
-                        }
+                      "attemptId": {
+                        "type": "string"
                       },
-                      "required": ["id", "title", "goal", "revision", "state", "taskResult"],
-                      "type": "object"
-                    },
-                    "tasks": {
-                      "items": {
+                      "audience": {
+                        "enum": ["owner", "coordinator"],
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "$ref": "#/definitions/timestamp"
+                      },
+                      "expiresAt": {
+                        "$ref": "#/definitions/timestamp"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "inboxId": {
+                        "pattern": "^decision:",
+                        "type": "string"
+                      },
+                      "question": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": ["string", "null"]
+                      },
+                      "resolvedAt": {
+                        "type": ["integer", "null"]
+                      },
+                      "resolvedBy": {
+                        "type": ["object", "null"]
+                      },
+                      "revision": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "run": {
                         "properties": {
-                          "attempts": {
-                            "maximum": 16,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "dependencies": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "dependencyState": {
-                            "enum": ["ready", "waiting"]
-                          },
                           "id": {
-                            "type": "string"
-                          },
-                          "key": {
-                            "type": "string"
+                            "$ref": "#/definitions/id"
                           },
                           "state": {
-                            "enum": [
-                              "planned",
-                              "launching",
-                              "launchFailed",
-                              "launchUnknown",
-                              "assigned",
-                              "reported",
-                              "succeeded",
-                              "failed",
-                              "stopped"
-                            ]
-                          },
-                          "taskResult": {
-                            "enum": [null, "succeeded", "failed"]
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "key",
-                          "title",
-                          "instruction",
-                          "dependencies",
-                          "state",
-                          "dependencyState",
-                          "attempts",
-                          "taskResult"
-                        ],
-                        "type": "object"
-                      },
-                      "maxItems": 64,
-                      "type": "array"
-                    }
-                  },
-                  "required": ["run", "tasks"]
-                },
-                {
-                  "properties": {
-                    "attempt": {
-                      "$ref": "#/definitions/workflowAttempt"
-                    },
-                    "constraints": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "policy": {
-                          "$ref": "#/definitions/workflowConstraintPolicy"
-                        },
-                        "records": {
-                          "items": {
-                            "$ref": "#/definitions/workflowConstraint"
-                          },
-                          "maxItems": 16,
-                          "type": "array"
-                        }
-                      },
-                      "required": ["policy", "records"],
-                      "type": "object"
-                    },
-                    "run": {
-                      "required": ["id", "title", "revision", "state"],
-                      "type": "object"
-                    },
-                    "task": {
-                      "required": ["id", "key", "title", "instruction"],
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "task", "attempt"]
-                },
-                {
-                  "properties": {
-                    "attempts": {
-                      "items": {
-                        "$ref": "#/definitions/workflowAttempt"
-                      },
-                      "maxItems": 4,
-                      "type": "array"
-                    },
-                    "nextOffset": {
-                      "type": ["integer", "null"]
-                    },
-                    "run": {
-                      "required": ["id", "revision", "state"],
-                      "type": "object"
-                    },
-                    "task": {
-                      "required": ["id", "spec"],
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "task", "attempts", "nextOffset"]
-                },
-                {
-                  "properties": {
-                    "attempt": {
-                      "required": ["id"],
-                      "type": "object"
-                    },
-                    "constraints": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "policy": {
-                          "$ref": "#/definitions/workflowConstraintPolicy"
-                        },
-                        "records": {
-                          "items": {
-                            "$ref": "#/definitions/workflowConstraint"
-                          },
-                          "maxItems": 16,
-                          "type": "array"
-                        }
-                      },
-                      "required": ["policy", "records"],
-                      "type": "object"
-                    },
-                    "decision": {
-                      "$ref": "#/definitions/workflowDecision"
-                    },
-                    "run": {
-                      "required": ["id", "title", "revision", "state"],
-                      "type": "object"
-                    },
-                    "task": {
-                      "required": ["id"],
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "task", "attempt", "decision"]
-                },
-                {
-                  "properties": {
-                    "decisions": {
-                      "items": {
-                        "$ref": "#/definitions/workflowDecision"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    },
-                    "nextOffset": {
-                      "type": ["integer", "null"]
-                    },
-                    "run": {
-                      "required": ["id", "title", "revision", "state"],
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "decisions", "nextOffset"]
-                },
-                {
-                  "properties": {
-                    "control": {
-                      "properties": {
-                        "counts": {
-                          "additionalProperties": {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "type": "object"
-                        },
-                        "createdAt": {
-                          "$ref": "#/definitions/timestamp"
-                        },
-                        "id": {
-                          "$ref": "#/definitions/id"
-                        },
-                        "kind": {
-                          "enum": ["stop", "cancel"]
-                        },
-                        "state": {
-                          "enum": [
-                            "dispatching",
-                            "awaitingExit",
-                            "blocked",
-                            "unconfirmed",
-                            "completed"
-                          ]
-                        }
-                      },
-                      "required": ["id", "kind", "state", "createdAt", "counts"],
-                      "type": "object"
-                    },
-                    "nextOffset": {
-                      "type": ["integer", "null"]
-                    },
-                    "run": {
-                      "required": ["id", "revision", "state"],
-                      "type": "object"
-                    },
-                    "targets": {
-                      "items": {
-                        "properties": {
-                          "attemptId": {
-                            "$ref": "#/definitions/id"
-                          },
-                          "code": {
-                            "type": ["string", "null"]
-                          },
-                          "operationKey": {
-                            "maxLength": 128,
-                            "minLength": 1,
                             "type": "string"
                           },
-                          "phase": {
-                            "enum": [
-                              "pending",
-                              "dispatching",
-                              "stopRequested",
-                              "blocked",
-                              "unknown",
-                              "unavailable",
-                              "exited"
-                            ]
-                          },
-                          "receiptId": {
-                            "type": ["string", "null"]
-                          },
-                          "sessionId": {
-                            "$ref": "#/definitions/id"
+                          "title": {
+                            "type": "string"
                           }
                         },
-                        "required": [
-                          "sessionId",
-                          "attemptId",
-                          "operationKey",
-                          "phase",
-                          "receiptId",
-                          "code"
-                        ],
+                        "required": ["id", "title", "state"],
                         "type": "object"
                       },
-                      "maxItems": 8,
-                      "type": "array"
-                    }
-                  },
-                  "required": ["run", "control", "targets", "nextOffset"]
-                },
-                {
-                  "properties": {
-                    "policy": {
-                      "$ref": "#/definitions/runBudget"
-                    },
-                    "run": {
-                      "required": ["id", "revision", "state"],
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "policy"]
-                },
-                {
-                  "properties": {
-                    "budget": {
-                      "properties": {
-                        "limits": {
-                          "properties": {
-                            "maxSessions": {
-                              "maximum": 16,
-                              "minimum": 1,
-                              "type": "integer"
-                            },
-                            "maxWorkers": {
-                              "maximum": 16,
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "providers": {
-                              "properties": {
-                                "claude": {
-                                  "maximum": 16,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                "codex": {
-                                  "maximum": 16,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                "gemini": {
-                                  "maximum": 16,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                "shell": {
-                                  "maximum": 16,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                }
-                              },
-                              "required": ["shell", "claude", "codex", "gemini"],
-                              "type": "object"
-                            }
-                          },
-                          "required": ["maxSessions", "maxWorkers", "providers"],
-                          "type": "object"
-                        },
-                        "revision": {
-                          "minimum": 1,
-                          "type": "integer"
-                        }
+                      "runId": {
+                        "type": "string"
                       },
-                      "required": ["revision", "limits"],
-                      "type": "object"
-                    }
-                  },
-                  "required": ["budget"]
-                },
-                {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "headCursor": {
-                          "$ref": "#/definitions/cursor"
-                        },
-                        "messages": {
-                          "items": {
-                            "$ref": "#/definitions/workflowMessage"
-                          },
-                          "maxItems": 8,
-                          "type": "array"
-                        },
-                        "more": {
-                          "type": "boolean"
-                        },
-                        "nextCursor": {
-                          "$ref": "#/definitions/cursor"
-                        },
-                        "pendingCount": {
-                          "minimum": 0,
-                          "type": "integer"
-                        }
+                      "state": {
+                        "enum": ["pending", "answered", "canceled", "expired"],
+                        "type": "string"
                       },
-                      "required": ["messages", "nextCursor", "headCursor", "pendingCount", "more"]
-                    },
-                    {
-                      "properties": {
-                        "message": {
-                          "$ref": "#/definitions/workflowMessage"
-                        }
-                      },
-                      "required": ["message", "cursor"]
-                    },
-                    {
-                      "properties": {
-                        "acknowledged": {
-                          "items": {
-                            "properties": {
-                              "ackedAt": {
-                                "$ref": "#/definitions/timestamp"
-                              },
-                              "ackedBy": {
-                                "required": ["role"],
-                                "type": "object"
-                              },
-                              "id": {
-                                "type": "string"
-                              }
-                            },
-                            "required": ["id", "ackedAt", "ackedBy"],
-                            "type": "object"
-                          },
-                          "maxItems": 32,
-                          "minItems": 1,
-                          "type": "array"
-                        }
-                      },
-                      "required": ["acknowledged", "cursor"]
-                    }
-                  ],
-                  "properties": {
-                    "mailbox": {
-                      "properties": {
-                        "recipientAttemptId": {
-                          "type": ["string", "null"]
-                        },
-                        "runId": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["runId", "recipientAttemptId"],
-                      "type": "object"
-                    },
-                    "run": {
-                      "required": ["id", "title", "revision", "state"],
-                      "type": "object"
-                    }
-                  },
-                  "required": ["run", "mailbox"]
-                },
-                {
-                  "$ref": "#/definitions/workflowRecoveryContext"
-                },
-                {
-                  "anyOf": [
-                    {
-                      "required": ["job"]
-                    },
-                    {
-                      "required": ["jobs"]
-                    },
-                    {
-                      "required": ["occurrence"]
-                    },
-                    {
-                      "required": ["occurrences"]
-                    },
-                    {
-                      "required": ["jobAttempts", "nextOffset"]
-                    },
-                    {
-                      "required": ["jobAttempt"]
-                    }
-                  ],
-                  "properties": {
-                    "job": {
-                      "$ref": "#/definitions/jobDefinition"
-                    },
-                    "jobAttempt": {
-                      "$ref": "#/definitions/jobAttemptDetail"
-                    },
-                    "jobAttempts": {
-                      "items": {
-                        "$ref": "#/definitions/jobAttemptSummary"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    },
-                    "jobs": {
-                      "items": {
-                        "$ref": "#/definitions/jobDefinition"
-                      },
-                      "maxItems": 16,
-                      "type": "array"
-                    },
-                    "nextOffset": {
-                      "minimum": 0,
-                      "type": ["integer", "null"]
-                    },
-                    "occurrence": {
-                      "$ref": "#/definitions/jobOccurrence"
-                    },
-                    "occurrences": {
-                      "items": {
-                        "$ref": "#/definitions/jobOccurrence"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    }
-                  }
-                },
-                {
-                  "anyOf": [
-                    {
-                      "required": ["precheckApproval"]
-                    },
-                    {
-                      "required": ["precheckApprovals"]
-                    },
-                    {
-                      "required": ["precheckDescription"]
-                    }
-                  ],
-                  "properties": {
-                    "nextOffset": {
-                      "minimum": 0,
-                      "type": ["integer", "null"]
-                    },
-                    "precheckApproval": {
-                      "$ref": "#/definitions/precheckApproval"
-                    },
-                    "precheckApprovals": {
-                      "items": {
-                        "$ref": "#/definitions/precheckApproval"
-                      },
-                      "maxItems": 16,
-                      "type": "array"
-                    },
-                    "precheckDescription": {
-                      "properties": {
-                        "digest": {
-                          "maxLength": 64,
-                          "minLength": 64,
-                          "type": "string"
-                        },
-                        "environmentPolicy": {
-                          "const": "isolated-platform-v1"
-                        },
-                        "platformEnvironmentKeys": {
-                          "items": {
-                            "const": "SystemRoot"
-                          },
-                          "maxItems": 1,
-                          "type": "array"
-                        },
-                        "sandboxed": {
-                          "const": false
-                        },
-                        "spec": {
-                          "type": "object"
-                        },
-                        "trust": {
-                          "const": "notApproved"
-                        }
-                      },
-                      "required": [
-                        "spec",
-                        "digest",
-                        "trust",
-                        "sandboxed",
-                        "environmentPolicy",
-                        "platformEnvironmentKeys"
-                      ],
-                      "type": "object"
-                    }
-                  }
-                },
-                {
-                  "properties": {
-                    "trigger": {
-                      "$ref": "#/definitions/jobTrigger"
-                    }
-                  },
-                  "required": ["trigger"]
-                },
-                {
-                  "properties": {
-                    "nextOffset": {
-                      "maximum": 4096,
-                      "minimum": 0,
-                      "type": ["integer", "null"]
-                    },
-                    "triggers": {
-                      "items": {
-                        "$ref": "#/definitions/jobTrigger"
-                      },
-                      "maxItems": 16,
-                      "type": "array"
-                    }
-                  },
-                  "required": ["triggers", "nextOffset"]
-                },
-                {
-                  "properties": {
-                    "deliveries": {
-                      "items": {
-                        "$ref": "#/definitions/jobTriggerDelivery"
-                      },
-                      "maxItems": 16,
-                      "type": "array"
-                    },
-                    "nextOffset": {
-                      "maximum": 4096,
-                      "minimum": 0,
-                      "type": ["integer", "null"]
-                    }
-                  },
-                  "required": ["deliveries", "nextOffset"]
-                },
-                {
-                  "not": {
-                    "anyOf": [
-                      {
-                        "required": ["run"]
-                      },
-                      {
-                        "required": ["tasks"]
+                      "taskId": {
+                        "type": "string"
                       }
-                    ]
+                    },
+                    "required": [
+                      "inboxId",
+                      "run",
+                      "id",
+                      "runId",
+                      "taskId",
+                      "attemptId",
+                      "question",
+                      "revision",
+                      "state",
+                      "audience",
+                      "askedBy",
+                      "createdAt",
+                      "expiresAt",
+                      "answer",
+                      "reason",
+                      "resolvedBy",
+                      "resolvedAt"
+                    ],
+                    "type": "object"
                   },
-                  "properties": {
-                    "delivery": {
-                      "$ref": "#/definitions/jobTriggerDelivery"
-                    }
-                  },
-                  "required": ["delivery"]
+                  "maxItems": 8,
+                  "type": "array"
+                },
+                "nextPage": {
+                  "minimum": 1,
+                  "type": ["integer", "null"]
+                },
+                "page": {
+                  "maximum": 512,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "total": {
+                  "$ref": "#/definitions/cursor"
+                },
+                "type": {
+                  "const": "decisions",
+                  "type": "string"
                 }
-              ],
+              },
+              "required": ["type", "decisions", "page", "nextPage", "total"],
+              "type": "object"
+            },
+            {
               "properties": {
+                "attempt": {
+                  "type": "object"
+                },
                 "cursor": {
                   "$ref": "#/definitions/cursor"
                 },
-                "nativeEffectsRestored": {
-                  "const": false
+                "decision": {
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/workflowDecision"
+                    },
+                    {
+                      "properties": {
+                        "state": {
+                          "const": "answered"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "inboxId": {
+                  "pattern": "^decision:",
+                  "type": "string"
                 },
                 "run": {
-                  "properties": {
-                    "coordinatorBinding": {
-                      "anyOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/definitions/workflowCoordinatorBinding"
-                        }
-                      ]
-                    }
-                  },
                   "type": "object"
                 },
-                "signal": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "enum": ["blocked", "question"]
-                    },
-                    "options": {
-                      "items": {
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "maxItems": 8,
-                      "type": "array"
-                    }
-                  },
-                  "required": ["kind", "options"],
+                "task": {
                   "type": "object"
                 },
                 "type": {
-                  "const": "workflow"
-                },
-                "workerAuthorityRestored": {
-                  "const": false
+                  "const": "decided",
+                  "type": "string"
                 }
               },
-              "required": ["type"],
+              "required": ["type", "run", "decision", "cursor", "inboxId"],
               "type": "object"
             },
             {
@@ -6990,167 +7829,6 @@
                 }
               },
               "required": ["type", "sessionId", "wakeAt", "quotaWake"],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "items": {
-                  "items": {
-                    "$ref": "#/definitions/attentionItem"
-                  },
-                  "maxItems": 32,
-                  "type": "array"
-                },
-                "limit": {
-                  "maximum": 32,
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "nextPage": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "minimum": 1,
-                      "type": "integer"
-                    }
-                  ]
-                },
-                "page": {
-                  "maximum": 1024,
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "total": {
-                  "$ref": "#/definitions/cursor"
-                },
-                "type": {
-                  "const": "attentionInbox"
-                }
-              },
-              "required": ["type", "items", "page", "limit", "nextPage", "total"],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "acknowledged": {
-                  "items": {
-                    "$ref": "#/definitions/attentionReceipt"
-                  },
-                  "maxItems": 32,
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "type": {
-                  "const": "inboxAcknowledged"
-                }
-              },
-              "required": ["type", "acknowledged"],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "decisions": {
-                  "items": {
-                    "allOf": [
-                      {
-                        "$ref": "#/definitions/workflowDecision"
-                      },
-                      {
-                        "properties": {
-                          "inboxId": {
-                            "pattern": "^decision:",
-                            "type": "string"
-                          },
-                          "run": {
-                            "properties": {
-                              "id": {
-                                "$ref": "#/definitions/id"
-                              },
-                              "state": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              }
-                            },
-                            "required": ["id", "title", "state"],
-                            "type": "object"
-                          }
-                        },
-                        "required": ["inboxId", "run"],
-                        "type": "object"
-                      }
-                    ]
-                  },
-                  "maxItems": 8,
-                  "type": "array"
-                },
-                "nextPage": {
-                  "anyOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "minimum": 1,
-                      "type": "integer"
-                    }
-                  ]
-                },
-                "page": {
-                  "maximum": 512,
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "total": {
-                  "$ref": "#/definitions/cursor"
-                },
-                "type": {
-                  "const": "decisions"
-                }
-              },
-              "required": ["type", "decisions", "page", "nextPage", "total"],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "attempt": {
-                  "type": "object"
-                },
-                "cursor": {
-                  "$ref": "#/definitions/cursor"
-                },
-                "decision": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/workflowDecision"
-                    },
-                    {
-                      "properties": {
-                        "state": {
-                          "const": "answered"
-                        }
-                      },
-                      "type": "object"
-                    }
-                  ]
-                },
-                "inboxId": {
-                  "pattern": "^decision:",
-                  "type": "string"
-                },
-                "run": {
-                  "type": "object"
-                },
-                "task": {
-                  "type": "object"
-                },
-                "type": {
-                  "const": "decided"
-                }
-              },
-              "required": ["type", "run", "decision", "cursor", "inboxId"],
               "type": "object"
             },
             {

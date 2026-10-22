@@ -3169,7 +3169,7 @@ mod agent_convention_tests {
             .find(|variant| variant["properties"]["type"]["const"] == "workflow")
             .unwrap();
         assert_eq!(
-            workflow["properties"]["signal"]["properties"]["kind"]["enum"],
+            workflow["oneOf"][1]["properties"]["signal"]["properties"]["kind"]["enum"],
             json!(["blocked", "question"])
         );
     }

@@ -1821,14 +1821,15 @@ mod tests {
                     .contains(&json!(field))
             );
             assert_eq!(
-                summary["properties"][field]["$ref"],
-                format!("#/definitions/jobOccurrence/properties/{field}")
+                summary["properties"][field],
+                occurrence["properties"][field]
             );
         }
-        assert_eq!(
-            definitions["jobAttemptDetail"]["allOf"][0]["$ref"],
-            "#/definitions/jobAttemptSummary"
-        );
+        let summary = &definitions["jobAttemptSummary"]["properties"];
+        let detail = &definitions["jobAttemptDetail"]["properties"];
+        for (field, schema) in summary.as_object().unwrap() {
+            assert_eq!(&detail[field], schema, "{field}");
+        }
     }
 
     #[test]
