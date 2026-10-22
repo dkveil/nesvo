@@ -46,6 +46,16 @@ They verify process and byte behavior, not performance under CPU saturation. The
 serial `mcp_host` capture scenario separately checks the actual production helper,
 root callback correlation and cleanup of a hanging declared display.
 
+Both Windows wrapper checks force a cold, hostile PowerShell module state on every
+run: `PSModuleAnalysisCachePath` points at a fresh nonexistent file, and
+`PSModulePath` starts with a directory whose `Microsoft.PowerShell.Utility` module
+throws on import. A wrapper that resolved any cmdlet would fail there, and a
+console-less PowerShell that reported progress would put a `#< CLIXML` record on
+stderr; the checks require exit 7, exact stdout and empty stderr. The host check
+also requires the helper's own stderr to arrive unchanged. A forwarding failure
+prints a fixed stage such as `inputTimeout` or `displayCleanup`, which the
+scenario reports as `forwardingStage` without echoing stderr.
+
 The capture case can also be selected directly after the locked native build:
 
 ```text

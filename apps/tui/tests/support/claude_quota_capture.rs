@@ -178,6 +178,7 @@ async fn generated(command: &str, input: &[u8], cwd: &Path) -> Result<std::proce
             .arg(&release)
             .arg(system.join("cmd.exe"))
             .arg(format!("/d /s /c {command}"));
+        cold_powershell_module_state(&mut shell, cwd)?;
         (shell, release)
     };
     #[cfg(not(windows))]
@@ -265,12 +266,83 @@ async fn terminate_job_before_canceled_pipe_reads_outlive_runtime(
     Ok(())
 }
 
+const FORWARDING_STAGES: [&str; 7] = [
+    "profile",
+    "input",
+    "inputTimeout",
+    "display",
+    "displayTimeout",
+    "displayCleanup",
+    "output",
+];
+
+fn forwarding_stage(bytes: &[u8]) -> Option<&'static str> {
+    let prefix = &bytes[..bytes.len().min(4096)];
+    FORWARDING_STAGES.into_iter().find(|stage| {
+        let needle = format!("inspect the launch profile ({stage})");
+        prefix
+            .windows(needle.len())
+            .any(|part| part == needle.as_bytes())
+    })
+}
+
+fn forwarding_evidence(output: &std::process::Output, expected_stdout: &[u8]) -> Value {
+    json!({
+        "exitCode": output.status.code(),
+        "stdoutBytes": output.stdout.len(),
+        "expectedStdoutBytes": expected_stdout.len(),
+        "stdoutMatches": output.stdout == expected_stdout,
+        "stderrBytes": output.stderr.len(),
+        "stderrClass": stderr_class(&output.stderr),
+        "forwardingStage": forwarding_stage(&output.stderr),
+        "stderrPrefixTruncated": output.stderr.len() > 4096
+    })
+}
+
+#[cfg(windows)]
+fn cold_powershell_module_state(shell: &mut Command, cwd: &Path) -> Result<()> {
+    let shadow = cwd
+        .join(".shadowed-powershell-modules")
+        .join("Microsoft.PowerShell.Utility");
+    std::fs::create_dir_all(&shadow)?;
+    std::fs::write(
+        shadow.join("Microsoft.PowerShell.Utility.psd1"),
+        "@{ ModuleVersion = '9.9.9'; RootModule = 'shadow.psm1'; FunctionsToExport = @('New-Object'); CmdletsToExport = @() }",
+    )?;
+    std::fs::write(
+        shadow.join("shadow.psm1"),
+        "throw 'shadowed utility module'",
+    )?;
+    let system =
+        PathBuf::from(std::env::var_os("SystemRoot").context("Owned Windows system directory")?)
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("Modules");
+    shell
+        .env(
+            "PSModulePath",
+            std::env::join_paths([cwd.join(".shadowed-powershell-modules"), system])?,
+        )
+        .env(
+            "PSModuleAnalysisCachePath",
+            cwd.join(format!(
+                ".cold-module-analysis-cache-{}",
+                hex::encode(nesvo_wire::random::<16>())
+            )),
+        );
+    Ok(())
+}
+
 fn stderr_class(bytes: &[u8]) -> &'static str {
     if bytes.is_empty() {
         return "empty";
     }
     let prefix = &bytes[..bytes.len().min(4096)];
     let contains = |needle: &[u8]| prefix.windows(needle.len()).any(|part| part == needle);
+    if prefix.starts_with(b"#< CLIXML") {
+        return "powershellSerializedStream";
+    }
     match (
         contains(
             b"nesvo declared status-line forwarding is unavailable; inspect the launch profile",
@@ -442,9 +514,10 @@ async fn explicit_claude_capture_preserves_display_and_bounds_owned_helper_clean
         let callback=json!({"session_id":format!("fixture-{id}"),"agent":{"name":"configured-main-agent"},"rate_limits":{"five_hour":{"used_percentage":23,"resets_at":chrono::Utc::now().timestamp()+3600},"seven_day":{"used_percentage":31,"resets_at":chrono::Utc::now().timestamp()+86400}}});
         let input=serde_json::to_vec(&callback)?;
         let output=generated(command,&input,&fixture.directory).await?;
-        assert_eq!(output.status.code(),Some(7),"{}",String::from_utf8_lossy(&output.stderr));
         let mut expected=hex::decode("1b5b33356d5a61c5bcc3b3c582c48720e697a5e69cace8aa9e1b5b306d0d0a")?;
         expected.extend_from_slice(&input);
+        assert_eq!(output.status.code(),Some(7),"First forwarding failed: {}",forwarding_evidence(&output,&expected));
+        assert!(output.stderr.is_empty(),"Cold PowerShell module state reaches no stream: {}",forwarding_evidence(&output,&expected));
         assert_eq!(output.stdout,expected,"Production shell/helper must preserve exact Unicode/ANSI/input bytes");
         let recorded:Value=serde_json::from_slice(&std::fs::read(fixture.directory.join("echo.display.json"))?)?;
         assert_eq!(recorded["env"],"owned raw handles");
