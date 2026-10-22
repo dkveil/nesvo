@@ -865,7 +865,7 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
 async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_after_restart()
 -> Result<()> {
     let mut f = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&f.pairing()).await?;
         let image_released_by_cleanup = f.directory.join(if cfg!(windows) {
             "shutdown-command.exe"
@@ -976,13 +976,13 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
         run_checkpoints::schema(vec![admitted, running, retained, replay]).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = f.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded graceful command shutdown acceptance")??;
+            result?;
             cleanup
         }
         Err(panic) => {

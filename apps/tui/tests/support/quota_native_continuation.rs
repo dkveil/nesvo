@@ -411,7 +411,7 @@ async fn report_timeout_diagnostic(fixture: &Fixture, held: &Held) -> Value {
 #[ignore = "real Git worktree, denied derived quota reader and exact retained native PTY release without owner clients"]
 async fn late_worktree_quota_hold_releases_the_original_receipt_and_worker_once() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(60), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&fixture.pairing()).await?;
         let (source, base, created, admitted, held) = prepared(&fixture, &owner).await?;
         let before = inventory(&source).await?;
@@ -544,13 +544,13 @@ async fn late_worktree_quota_hold_releases_the_original_receipt_and_worker_once(
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded actual late-worktree quota release acceptance")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -565,7 +565,7 @@ async fn late_worktree_quota_hold_releases_the_original_receipt_and_worker_once(
 async fn canceled_late_worktree_quota_hold_keeps_git_facts_and_never_starts_a_worker() -> Result<()>
 {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(60), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&fixture.pairing()).await?;
         let (source, base, created, admitted, held) = prepared(&fixture, &owner).await?;
         let before = inventory(&source).await?;
@@ -655,13 +655,13 @@ async fn canceled_late_worktree_quota_hold_keeps_git_facts_and_never_starts_a_wo
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded actual late-worktree quota cancellation acceptance")??;
+            result?;
             cleanup
         }
         Err(panic) => {

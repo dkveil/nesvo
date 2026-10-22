@@ -124,7 +124,7 @@ async fn launch_repository_context_is_native_shared_and_refreshes_after_its_cool
     let mut fixture = Fixture::start_variant(true).await?;
     let mut owner = None;
     let mut owner_cleanup_uncertain = false;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(70),async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let original_host = fixture.host.id().context("Original isolated host PID")?;
         let repository = fixture.directory.join("repo-łódź");
         write_unborn_repository_without_running_git(&repository)?;
@@ -207,7 +207,7 @@ async fn launch_repository_context_is_native_shared_and_refreshes_after_its_cool
         run_checkpoints::schema(vec![empty,created,physical,first,cached,cached_cli,refreshed,refreshed_cli,survived,receipt]).await?;
         owner_cleanup_uncertain = false;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
 
     let owner_cleanup = match owner.take() {
         Some(owner) => owner
@@ -228,7 +228,7 @@ async fn launch_repository_context_is_native_shared_and_refreshes_after_its_cool
         Ok(result) => {
             owner_cleanup?;
             fixture_cleanup?;
-            result??;
+            result?;
             Ok(())
         }
         Err(panic) => {

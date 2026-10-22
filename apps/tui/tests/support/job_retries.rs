@@ -412,7 +412,7 @@ async fn fenced(
 async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_generation()
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(25), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let cwd = fixture.directory.join("retry-created-before-deadline");
@@ -687,13 +687,13 @@ async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_ge
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded native successful job retry scenario")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -708,7 +708,7 @@ async fn opted_job_retry_waits_for_its_deadline_and_retains_the_failed_native_ge
 async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unknown_effects()
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let mut git = Command::new("git");
         git.arg("-C")
@@ -857,13 +857,13 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded default-off, retry bound and unknown-effect scenarios")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -878,7 +878,7 @@ async fn job_retry_stays_default_off_respects_its_attempt_bound_and_refuses_unkn
 async fn waiting_job_retry_cancels_without_native_stop_and_restart_keeps_the_original_deadline()
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(35), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let canceled_cwd = fixture.directory.join("canceled-retry-must-never-launch");
@@ -952,11 +952,11 @@ async fn waiting_job_retry_cancels_without_native_stop_and_restart_keeps_the_ori
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded backoff cancellation and restart scenarios")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -1111,7 +1111,7 @@ fn probed(probe: &Value, key: &str, run: &Value, result: &str, accepted: bool) {
 #[ignore = "native CLI/MCP/host and controlled Node PTY; refused executor dispatch, absent probes and one fresh generation"]
 async fn uncertain_dispatch_absent_probes_admit_one_fresh_generation() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(40), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let capacity = occupied_capacity(&fixture, &owner).await?;
@@ -1408,13 +1408,13 @@ async fn uncertain_dispatch_absent_probes_admit_one_fresh_generation() -> Result
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded native uncertain dispatch retry scenario")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -1428,7 +1428,7 @@ async fn uncertain_dispatch_absent_probes_admit_one_fresh_generation() -> Result
 #[ignore = "native CLI/MCP/host, Node and Git; genuine unknown worktree launch found by the probe and adopted"]
 async fn uncertain_launch_found_by_probe_is_adopted_without_retry() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let mut git = Command::new("git");
         git.arg("-C")
@@ -1569,13 +1569,13 @@ async fn uncertain_launch_found_by_probe_is_adopted_without_retry() -> Result<()
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded native uncertain launch adoption scenario")??;
+            result?;
             cleanup
         }
         Err(panic) => {

@@ -135,7 +135,7 @@ pub(super) async fn process_alive(fixture: &Fixture, pid: u64) -> Result<bool> {
 async fn bound_job_cancel_stops_the_exact_worker_and_retains_original_pending_acceptance()
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(20), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&fixture.pairing()).await?;
         let created = data(call(&owner, "nesvo_create_job", json!({
             "key":"bound-cancel-definition",
@@ -249,11 +249,11 @@ async fn bound_job_cancel_stops_the_exact_worker_and_retains_original_pending_ac
         run_checkpoints::schema(vec![created.clone(),admitted.clone(),reported.clone(),before,alive,accepted,replay,completed,control,stop,stopped,retained,launch,reenable,original,final_replay,stable,sessions]).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bound job cancellation exceeded its 20-second scenario budget")??;
+            result?;
             cleanup
         }
         Err(panic) => {

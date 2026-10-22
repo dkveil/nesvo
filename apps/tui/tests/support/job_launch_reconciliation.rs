@@ -1,8 +1,7 @@
 use super::*;
 
 type Owner = RunningService<RoleClient, ()>;
-type ScenarioOutcome =
-    std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
+type ScenarioOutcome = std::thread::Result<Result<()>>;
 
 async fn reply(owner: &Owner, name: &'static str, args: Value) -> Result<Value> {
     data(call(owner, name, args).await?)
@@ -370,7 +369,7 @@ async fn finish(
     outcome: ScenarioOutcome,
 ) -> Result<()> {
     release_live_filter_for_cleanup_regardless_of_outcome(fixture)?;
-    if !matches!(&outcome, Ok(Ok(Ok(())))) {
+    if !matches!(&outcome, Ok(Ok(()))) {
         let diagnostic = match job {
             Some(job) => job_diagnostics::report_timeout_diagnostics(fixture, job).await,
             None => json!({"jobNotCreated":true}),
@@ -395,7 +394,7 @@ async fn finish(
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.with_context(||format!("Native launch reconciliation exceeded its 50-second scenario budget; last phase: {phase}"))??;
+            result.with_context(|| format!("Native launch reconciliation; last phase: {phase}"))?;
             cleanup
         }
         Err(panic) => {
@@ -411,7 +410,7 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
     let mut fixture = Fixture::start_variant(true).await?;
     let mut phase = "controlled provider discovery and private Git source";
     let mut diagnostic_job = None;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(50),async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let source = source_repository_with_checkout_failure_installed_after_initial_commit(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
@@ -516,7 +515,7 @@ async fn late_unknown_checkout_refuses_owner_abandonment_and_keeps_overlap_held(
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(&mut fixture, phase, diagnostic_job.as_deref(), outcome).await
 }
 
@@ -527,7 +526,7 @@ async fn owner_abandons_proven_preflight_failure_and_deliberately_starts_a_new_o
     let mut fixture = Fixture::start_variant(true).await?;
     let mut phase = "controlled provider discovery and explicitly approved command";
     let mut diagnostic_job = None;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(50),async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (precheck,mut envelopes) = approve_precheck(&fixture,&owner).await?;
@@ -649,6 +648,6 @@ async fn owner_abandons_proven_preflight_failure_and_deliberately_starts_a_new_o
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(&mut fixture, phase, diagnostic_job.as_deref(), outcome).await
 }

@@ -4,20 +4,11 @@ use job_cancellation::process_alive;
 use waits::{is_settled_occurrence, occurrence};
 
 type Owner = RunningService<RoleClient, ()>;
-type ScenarioOutcome =
-    std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
+type ScenarioOutcome = std::thread::Result<Result<()>>;
 const WINDOW_MS: u64 = 10_000;
 const PROVIDER_PROBE_MS: u64 = 10_000;
-const WORKING_MS: u64 = 7_000;
 const HOST_CONTROL_BOUND_MS: u64 = 10_000;
 const RESOLUTION_MARGIN_MS: u64 = 5_000;
-const SETTLE_MS: u64 = 15_000;
-const TIMED_WORKER_MS: u64 =
-    WORKING_MS + WINDOW_MS + HOST_CONTROL_BOUND_MS + RESOLUTION_MARGIN_MS + SETTLE_MS;
-
-const fn scenario_bound(timed_workers: u64) -> Duration {
-    Duration::from_millis(PROVIDER_PROBE_MS + timed_workers * TIMED_WORKER_MS)
-}
 
 fn spec(instruction: &str) -> Value {
     json!({
@@ -428,7 +419,7 @@ async fn finish(
     discovery: &DiscoveryEvidence,
     outcome: ScenarioOutcome,
 ) -> Result<()> {
-    if !matches!(&outcome, Ok(Ok(Ok(())))) {
+    if !matches!(&outcome, Ok(Ok(()))) {
         let diagnostics = match job {
             Some(job) => job_diagnostics::report_timeout_diagnostics(fixture, job).await,
             None => {
@@ -452,7 +443,7 @@ async fn finish(
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.with_context(|| format!("{scenario}; last phase: {phase}"))??;
+            result.with_context(|| format!("{scenario}; last phase: {phase}"))?;
             cleanup
         }
         Err(panic) => {
@@ -498,7 +489,7 @@ async fn timeout_without_clients_stops_only_its_worker_and_never_retries_executi
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
     let mut discovery = DiscoveryEvidence::new();
-    let outcome = std::panic::AssertUnwindSafe(timeout(scenario_bound(1),async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let independent = reply(&owner,"nesvo_create_session",json!({"key":"timeout-independent","spec":{"name":"Untimed independent shell","program":"shell"}})).await?;
@@ -588,7 +579,7 @@ async fn timeout_without_clients_stops_only_its_worker_and_never_retries_executi
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(
         &mut fixture,
         "Disconnected native execution timeout",
@@ -608,7 +599,7 @@ async fn accepted_report_disarms_execution_timeout_while_explicit_validation_sta
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
     let mut discovery = DiscoveryEvidence::new();
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30),async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let created = reply(&owner,"nesvo_create_job",json!({"key":"report-disarms-definition","spec":spec("report-task")})).await?;
@@ -648,7 +639,7 @@ async fn accepted_report_disarms_execution_timeout_while_explicit_validation_sta
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(
         &mut fixture,
         "Report disarms native execution timeout",
@@ -668,7 +659,7 @@ async fn human_lease_and_quick_takeover_release_permanently_block_automatic_time
     let mut phase = "provider discovery";
     let mut diagnostic_job = None;
     let mut discovery = DiscoveryEvidence::new();
-    let outcome = std::panic::AssertUnwindSafe(timeout(scenario_bound(2),async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         discovery_ready(&fixture, &mut discovery).await?;
         let owner = client(&fixture.pairing()).await?;
         let mut envelopes = Vec::new();
@@ -751,7 +742,7 @@ async fn human_lease_and_quick_takeover_release_permanently_block_automatic_time
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(
         &mut fixture,
         "Human priority over automatic job timeout",

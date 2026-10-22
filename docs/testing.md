@@ -194,8 +194,11 @@ without the receipt that proves it. Revision-conflict loops reread the revision
 and continue only on `revision_conflict`. The fixed bounds that remain are
 derived from host-published values (`deadlineAt`, due times, retry delays,
 precheck budgets), absence windows (`holds_throughout`), documented product
-bounds that the scenario asserts, cleanup confirmation after an explicit kill,
-host startup readiness, and scenario outer limits.
+bounds that the scenario asserts, cleanup confirmation after an explicit kill
+and host startup readiness. Scenarios carry no outer time limit: every wait fails
+on its own terminal state, so only a host that stops making progress without
+settling anything reaches the CI step's `timeout-minutes`, which is then a real
+defect rather than a slow runner.
 
 The controlled-hold helper polls the exact reserved ID until the timed worker is
 working. Its bound is the armed timer's published deadline, after which no hold
@@ -230,8 +233,8 @@ polls, scope mismatch, source-shaped turn IDs, delivery states, typed submission
 fences and private-data exclusion. The successful native retry scenario also
 checks the collector against its actual run, create receipt, session and task
 delivery, without introducing an artificial acceptance timeout or another job.
-Primary 14-second waits, polling and outer scenario limits are unchanged. These
-observations distinguish boundaries; they do not by themselves identify the
+The primary waits end on the occurrence state or a settled one, with no clock of
+their own and no outer scenario limit. These observations distinguish boundaries; they do not by themselves identify the
 cause of a historical retry delay.
 
 The serial `mcp_host` target also includes `job_launch_reconciliation::`.

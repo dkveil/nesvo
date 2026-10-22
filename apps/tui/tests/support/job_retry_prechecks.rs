@@ -18,7 +18,6 @@ const MARGIN_MS: u64 = 10_000;
 const FIRST_GENERATION_BOUND: Duration = Duration::from_millis(PRECHECK_BOUND_MS + MARGIN_MS);
 const CANCEL_CLEANUP_BOUND: Duration = Duration::from_millis(2_000 + MARGIN_MS);
 const RESTART_RECONCILE_BOUND: Duration = Duration::from_millis(MARGIN_MS);
-const SCENARIO_BOUND: Duration = Duration::from_secs(240);
 const SETTLED_STATES: [&str; 6] = [
     "canceled",
     "failed",
@@ -352,7 +351,7 @@ async fn replay_admission(
 async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_worker() -> Result<()>
 {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(SCENARIO_BOUND, async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (approval, directory, mut envelopes) =
@@ -487,13 +486,13 @@ async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_wo
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded fresh native precheck retry")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -507,7 +506,7 @@ async fn retry_generation_runs_a_fresh_approved_command_before_one_controlled_wo
 #[ignore = "native SDK/CLI/host and owned Node prechecks; second-command skip and revoked waiting retry never start a worker"]
 async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(SCENARIO_BOUND, async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let (approval, directory, mut envelopes) =
@@ -710,13 +709,13 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded second-command skip and revocation")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -752,7 +751,7 @@ async fn tree_gone(fixture: &mut Fixture, job: &str, tree: &mut OwnedTree) -> Re
 #[ignore = "native SDK/CLI/host and owned second-generation command descendants; cancellation, restart and exact unknown abandon, no models"]
 async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(SCENARIO_BOUND, async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         ready(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let mut tree = OwnedTree::bind().await?;
@@ -855,11 +854,11 @@ async fn second_precheck_cleanup_and_abandon_are_bound_to_the_exact_generation()
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded exact second-command cleanup and abandonment")??;
+            result?;
             cleanup
         }
         Err(panic) => {

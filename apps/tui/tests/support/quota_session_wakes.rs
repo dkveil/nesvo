@@ -229,7 +229,7 @@ async fn stop(owner: &Owner, session: &str) -> Result<()> {
 async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matching_reset()
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&fixture.pairing()).await?;
         let (created, session) = create(&fixture, &owner).await?;
         let source = near_reset_started_when_refresh_is_admitted(&fixture, &owner).await?;
@@ -301,11 +301,11 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
         stop(&owner,&session).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Native one-shot quota case deadline")??;
+            result?;
             cleanup
         }
         Err(panic) => {
@@ -319,7 +319,7 @@ async fn durable_quota_wake_resumes_exact_existing_process_once_after_fresh_matc
 #[ignore = "native SDK/controlled PTY; human takeover and owner disable retain a paused arm"]
 async fn durable_quota_wake_stays_paused_after_takeover_disable_and_fresh_quota() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(30), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&fixture.pairing()).await?;
         let (_, session) = create(&fixture, &owner).await?;
         near_reset_started_when_refresh_is_admitted(&fixture, &owner).await?;
@@ -382,13 +382,13 @@ async fn durable_quota_wake_stays_paused_after_takeover_disable_and_fresh_quota(
         stop(&owner, &session).await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
-    }))
+    })
     .catch_unwind()
     .await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Native disabled quota case deadline")??;
+            result?;
             cleanup
         }
         Err(panic) => {

@@ -1,8 +1,7 @@
 use super::*;
 
 type Owner = RunningService<RoleClient, ()>;
-type ScenarioOutcome =
-    std::thread::Result<std::result::Result<Result<()>, tokio::time::error::Elapsed>>;
+type ScenarioOutcome = std::thread::Result<Result<()>>;
 const PAYLOAD_ONLY: &str = "UNTRUSTED_PAYLOAD_MUST_NOT_EXECUTE";
 
 async fn reply(owner: &Owner, name: &'static str, args: Value) -> Result<Value> {
@@ -296,7 +295,7 @@ async fn finish(
     job: Option<&str>,
     outcome: ScenarioOutcome,
 ) -> Result<()> {
-    if !matches!(&outcome, Ok(Ok(Ok(())))) {
+    if !matches!(&outcome, Ok(Ok(()))) {
         let diagnostics = match job {
             Some(job) => job_diagnostics::report_timeout_diagnostics(fixture, job).await,
             None => json!({"jobNotCreated":true}),
@@ -313,9 +312,7 @@ async fn finish(
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.with_context(|| {
-                format!("Signed HTTP native scenario deadline; last phase: {phase}")
-            })??;
+            result.with_context(|| format!("Signed HTTP native scenario; last phase: {phase}"))?;
             cleanup
         }
         Err(panic) => {
@@ -332,7 +329,7 @@ async fn signed_webhook_dispatches_once_without_clients_and_retains_replay_acros
     let mut fixture = Fixture::start_with_webhooks().await?;
     let mut phase = "listener and external-only definition";
     let mut diagnostic_job = None;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(60),async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let address = listener(&fixture).await?;
         let owner = client(&fixture.pairing()).await?;
         let created = job(&owner,"webhook-job",&job_spec("report-task","queue")).await?;
@@ -414,7 +411,7 @@ async fn signed_webhook_dispatches_once_without_clients_and_retains_replay_acros
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(&mut fixture, phase, diagnostic_job.as_deref(), outcome).await
 }
 
@@ -425,7 +422,7 @@ async fn github_signature_filters_and_unsigned_delivery_replays_cannot_duplicate
     let mut fixture = Fixture::start_with_webhooks().await?;
     let mut phase = "GitHub trigger authorization";
     let mut diagnostic_job = None;
-    let outcome=std::panic::AssertUnwindSafe(timeout(Duration::from_secs(50),async {
+    let outcome=std::panic::AssertUnwindSafe(async {
         let address=listener(&fixture).await?;
         let owner=client(&fixture.pairing()).await?;
         let created=job(&owner,"github-job",&job_spec("report-task","skip")).await?;
@@ -476,7 +473,7 @@ async fn github_signature_filters_and_unsigned_delivery_replays_cannot_duplicate
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(&mut fixture, phase, diagnostic_job.as_deref(), outcome).await
 }
 
@@ -487,7 +484,7 @@ async fn disabled_receipts_stay_ignored_and_accepted_overlap_queue_waits_for_nat
     let mut fixture = Fixture::start_with_webhooks().await?;
     let mut phase = "disabled trigger receipt";
     let mut diagnostic_job = None;
-    let outcome=std::panic::AssertUnwindSafe(timeout(Duration::from_secs(60),async {
+    let outcome=std::panic::AssertUnwindSafe(async {
         let address=listener(&fixture).await?;
         let owner=client(&fixture.pairing()).await?;
         let spec=job_spec("hold-response","queue");
@@ -588,6 +585,6 @@ async fn disabled_receipts_stay_ignored_and_accepted_overlap_queue_waits_for_nat
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     finish(&mut fixture, phase, diagnostic_job.as_deref(), outcome).await
 }

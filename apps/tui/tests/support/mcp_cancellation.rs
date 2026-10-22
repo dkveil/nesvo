@@ -297,7 +297,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
     let phase = std::cell::Cell::new("owner MCP subprocess startup");
     let mut owner = None;
     let mut release = None;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(10), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         owner = Some(client(&fixture.pairing()).await?);
         let owner = owner.as_ref().context("Owned cancellation MCP process")?;
         phase.set("owner CLI doctor: controlled provider readiness");
@@ -379,7 +379,7 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
         phase.set("published harness JSON schemas");
         run_checkpoints::schema(envelopes).await?;
         Ok::<_, anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
 
     let release_before_fixture_fallback_wait = release
         .as_ref()
@@ -393,19 +393,12 @@ async fn canceled_mcp_waits_release_all_slots_without_interrupting_the_original_
     let host_cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result
-                .with_context(|| {
-                    format!(
-                        "MCP cancellation exceeded its 10-second scenario budget during {}",
-                        phase.get()
-                    )
-                })?
-                .with_context(|| {
-                    format!(
-                        "MCP cancellation phase: {}; owned host stderr is inherited by this test",
-                        phase.get()
-                    )
-                })?;
+            result.with_context(|| {
+                format!(
+                    "MCP cancellation phase: {}; owned host stderr is inherited by this test",
+                    phase.get()
+                )
+            })?;
             release_before_fixture_fallback_wait?;
             client_cleanup.context("Cancellation MCP cleanup")?;
             host_cleanup

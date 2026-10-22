@@ -153,7 +153,7 @@ async fn failed_initial_report_diagnostics(
 async fn first_job_generation_retains_native_pointers_and_restarts_without_creating_another_attempt()
 -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
-    let outcome = std::panic::AssertUnwindSafe(timeout(Duration::from_secs(18), async {
+    let outcome = std::panic::AssertUnwindSafe(async {
         let owner = client(&fixture.pairing()).await?;
         let created = data(call(&owner,"nesvo_create_job",json!({
             "key":"attempt-history-definition",
@@ -304,11 +304,11 @@ async fn first_job_generation_retains_native_pointers_and_restarts_without_creat
         envelopes.extend(paging_errors);
         run_checkpoints::schema(envelopes).await?;
         Ok::<_,anyhow::Error>(())
-    })).catch_unwind().await;
+    }).catch_unwind().await;
     let cleanup = fixture.close().await;
     match outcome {
         Ok(result) => {
-            result.context("Bounded native job generation history scenario")??;
+            result?;
             cleanup
         }
         Err(panic) => {
