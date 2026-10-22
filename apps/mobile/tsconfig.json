@@ -12,5 +12,5 @@
       "@shared/*": ["./src/shared/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "../../tests/fixtures/mobile-wire-fixtures.ts"]
 }

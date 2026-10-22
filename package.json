@@ -19,7 +19,7 @@
     "format:check": "prettier --check \"apps/mobile/**/*.{ts,tsx,json,js,mjs}\" \"packages/**/*.{json,md}\" \"tests/*.{ts,mjs}\" \"scripts/**/*.{js,mjs,cjs,json}\" \"*.{json,js,md}\" \"docs/*.md\" \"apps/*/README.md\" \".github/workflows/*.yml\"",
     "contracts:types": "node apps/mobile/scripts/generate-contract-types.mjs",
     "test:contract-types": "node --test tests/contract-types.test.mjs",
-    "test:client": "node --import tsx --test --test-timeout=180000 --test-force-exit tests/client-replay.test.ts tests/client-contract.test.ts tests/client-control.test.ts tests/contract-types.test.mjs",
+    "test:client": "node --import tsx --test --test-timeout=180000 --test-force-exit tests/client-replay.test.ts tests/client-contract.test.ts tests/client-schema.test.ts tests/client-control.test.ts tests/contract-types.test.mjs",
     "test:web": "node tests/app.browser.mjs",
     "test:create-session": "node --import tsx tests/create-session.browser.ts",
     "test:fleet": "node --import tsx tests/fleet.browser.ts",
