@@ -323,6 +323,8 @@ pub struct Worktrees {
     due: bool,
     known: HashSet<String>,
     polled: Option<Instant>,
+    run_started: Option<String>,
+    listing_predates_run: bool,
 }
 
 impl Worktrees {
@@ -340,6 +342,21 @@ impl Worktrees {
 
     pub fn stage(&self, session_id: &str) -> Option<Stage> {
         self.record(session_id).map(Record::stage)
+    }
+
+    fn acting_record(&self, session_id: &str) -> Option<Record> {
+        let mut record = self.record(session_id).cloned()?;
+        if self.run_started.as_deref() == Some(session_id) {
+            record.active = true;
+        }
+        Some(record)
+    }
+
+    fn registry_settled(&mut self) {
+        self.listing = None;
+        if !std::mem::take(&mut self.listing_predates_run) {
+            self.run_started = None;
+        }
     }
 }
 
@@ -488,8 +505,8 @@ fn journal_fact(app: &mut App, event: &Value) {
 
 fn registry_reply(app: &mut App, event: &Value) {
     let state = &mut app.worktrees;
-    state.listing = None;
     if event["type"] == "worktreeRegistry" {
+        state.registry_settled();
         state.records = event["worktrees"]
             .as_array()
             .into_iter()
@@ -499,7 +516,11 @@ fn registry_reply(app: &mut App, event: &Value) {
             .filter(|record| !record.session_id.is_empty())
             .collect();
         state.loaded = true;
-    } else if event["code"] == "busy" {
+        return;
+    }
+    state.listing = None;
+    state.listing_predates_run = false;
+    if event["code"] == "busy" {
         state.due = true;
     } else if let Some(dialog) = &mut state.dialog {
         dialog.notice = Some(refusal(event));
@@ -543,6 +564,8 @@ fn action_reply(app: &mut App, event: &Value, action: Action) {
     }
     match (action, event["type"].as_str()) {
         (Action::Run, Some("worktreeRunStarted")) => {
+            state.run_started = Some(session.clone());
+            state.listing_predates_run = state.listing.is_some();
             let log = event["log"].as_str().map(str::to_owned);
             dialog.notice = Some(Notice::Info(format!(
                 "Run steps started · log {}",
@@ -637,6 +660,7 @@ pub fn tick(app: &mut App) -> Option<Value> {
         .is_some_and(|(_, sent)| sent.elapsed() > REGISTRY_TIMEOUT)
     {
         state.listing = None;
+        state.listing_predates_run = false;
     }
     if state.listing.is_some() {
         return None;
@@ -684,6 +708,7 @@ pub fn expire(app: &mut App) -> bool {
 pub fn disconnect(app: &mut App) {
     let state = &mut app.worktrees;
     state.listing = None;
+    state.listing_predates_run = false;
     state.loaded = false;
     state.probe = None;
     state.known.clear();
@@ -872,7 +897,7 @@ fn choose(app: &mut App, outcome: &mut Outcome) {
     let action = Action::ALL[dialog.selected.min(Action::ALL.len() - 1)];
     let session = dialog.session_id.clone();
     let waiting = dialog.waiting();
-    let record = app.worktrees.record(&session).cloned();
+    let record = app.worktrees.acting_record(&session);
     let Some(dialog) = app.worktrees.dialog.as_mut() else {
         return;
     };
@@ -1262,6 +1287,58 @@ pub(crate) mod tests {
         press(&mut app, KeyCode::Esc);
         assert!(app.worktrees.dialog.is_none());
         assert!(app.dialog.is_none(), "Esc closes only the worktree dialog");
+    }
+
+    #[test]
+    fn worktree_run_started_refuses_a_second_run_until_a_later_registry_refresh() {
+        let mut app = app();
+        load(&mut app, vec![record("passed", None)]);
+        press(&mut app, KeyCode::Char('K'));
+        let refresh = tick(&mut app).unwrap();
+        reply(
+            &mut app,
+            &refresh,
+            json!({"type":"worktreeRegistry","worktrees":[record("passed", None)]}),
+        );
+        let run = press(&mut app, KeyCode::Enter);
+        assert_eq!(run[0]["type"], "runWorktree");
+        press(&mut app, KeyCode::Char('r'));
+        let earlier = tick(&mut app).expect("registry request in flight");
+        reply(
+            &mut app,
+            &run[0],
+            json!({"type":"worktreeRunStarted","sessionId":"s1","worktree":"w","log":"C:/w/.nesvo/run.log"}),
+        );
+        let busy = Some(Notice::Info(
+            "Run steps: a step is already running.".into(),
+        ));
+        assert!(press(&mut app, KeyCode::Enter).is_empty());
+        assert_eq!(notice(&app), busy);
+        reply(
+            &mut app,
+            &earlier,
+            json!({"type":"worktreeRegistry","worktrees":[record("passed", None)]}),
+        );
+        assert!(
+            press(&mut app, KeyCode::Enter).is_empty(),
+            "a registry read sent before the run started does not lift the guard"
+        );
+        let later = tick(&mut app).expect("refresh after the run started");
+        reply(
+            &mut app,
+            &later,
+            json!({"type":"error","code":"forbidden","message":"owner only"}),
+        );
+        assert!(matches!(
+            notice(&app),
+            Some(Notice::Refused { code, .. }) if code == "forbidden"
+        ));
+        assert!(press(&mut app, KeyCode::Enter).is_empty());
+        assert_eq!(notice(&app), busy);
+        press(&mut app, KeyCode::Char('r'));
+        load(&mut app, vec![record("passed", Some("passed"))]);
+        let again = press(&mut app, KeyCode::Enter);
+        assert_eq!(again[0]["type"], "runWorktree");
     }
 
     #[test]
