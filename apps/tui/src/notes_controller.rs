@@ -186,6 +186,14 @@ impl NotesState {
         self.job = None;
         self.capture = None;
         self.root = None;
+        self.listing = None;
+        self.contents.clear();
+        self.failed.clear();
+        self.error = None;
+        self.preview_scroll = 0;
+        if self.view == View::ConfirmDelete {
+            self.view = View::Browse;
+        }
         if let Some(draft) = self.draft.as_mut() {
             draft.saving = false;
         }
@@ -303,7 +311,6 @@ impl NotesState {
             .is_none_or(|known| known.directory != listing.directory);
         if moved {
             self.contents.clear();
-            self.selected = None;
             self.preview_scroll = 0;
         } else {
             let fresh: HashMap<&str, (u64, Option<u64>)> = listing
@@ -1552,6 +1559,32 @@ pub mod tests {
         app.connected = true;
         let commands = sync(&mut app);
         assert_eq!(only(&commands, "listNotes")["root"], "/w");
+    }
+
+    #[test]
+    fn notes_disconnect_forgets_the_listing_and_search_index_and_reloads_after_reconnect() {
+        let mut app = loaded();
+        let read = only(&press(&mut app, KeyCode::Char('j')), "readNote").clone();
+        reply(
+            &mut app,
+            &read,
+            json!({"type":"note","path":IDEAS,"name":"ideas.md","text":"deploy later",
+                "size":12,"modifiedMs":1,"revision":"i1"}),
+        );
+        app.notes.query = "ship".into();
+        assert_eq!(app.notes.visible().len(), 1);
+        app.disconnect("gone".into());
+        assert!(app.notes.listing.is_none());
+        assert!(app.notes.contents.is_empty() && app.notes.failed.is_empty());
+        assert!(app.notes.visible().is_empty());
+        assert_eq!(app.notes.selected.as_deref(), Some(IDEAS));
+        app.notes.query.clear();
+        app.connected = true;
+        let commands = sync(&mut app);
+        let list = only(&commands, "listNotes").clone();
+        assert_eq!(only(&commands, "readNote")["path"], IDEAS);
+        reply(&mut app, &list, listing());
+        assert_eq!(app.notes.visible().len(), 2);
     }
 
     fn age_requests(app: &mut App) {
