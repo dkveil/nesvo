@@ -60,6 +60,13 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::job_launch_resolutions::initialize(connection)?;
     Ok(())
 }
+pub fn key_prefix(job: &str, occurrence: &str, ordinal: i64) -> String {
+    if ordinal == 1 {
+        format!("job:{job}:{occurrence}")
+    } else {
+        format!("job:{job}:{occurrence}:attempt:{ordinal}")
+    }
+}
 pub(crate) fn capacity(connection: &Connection, additional: usize) -> Result<()> {
     let count: i64 =
         connection.query_row("SELECT count(*) FROM harness_job_attempts", [], |r| {
@@ -192,7 +199,7 @@ pub fn retire(tx: &Transaction<'_>, dispatch: &Dispatch) -> Result<()> {
 /// preparation token. Historical runs remain readable but cannot admit effects.
 pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
     crate::job_launch_resolutions::guard_run(connection, run)?;
-    let retired: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.id=a.occurrence_id WHERE a.run_id=?1 AND (o.current_job_attempt_id IS NULL OR o.current_job_attempt_id<>a.id OR EXISTS(SELECT 1 FROM harness_job_retries retry WHERE retry.source_attempt_id=a.id)))",[run],|r|r.get(0))?;
+    let retired: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.id=a.occurrence_id WHERE a.run_id=?1 AND (o.current_job_attempt_id IS NULL OR o.current_job_attempt_id<>a.id OR EXISTS(SELECT 1 FROM harness_job_retries retry WHERE retry.source_attempt_id=a.id AND retry.state<>'adopted' AND NOT (retry.state='waiting' AND retry.next_ordinal IS NULL))))",[run],|r|r.get(0))?;
     if retired {
         return Err(Error::new("job_generation_retired","This run belongs to a historical job generation; inspect its evidence instead of admitting new effects").into());
     }
@@ -251,6 +258,9 @@ pub fn sync(
     }
     let finished = finished_at.map(i64::try_from).transpose()?;
     tx.execute("UPDATE harness_job_attempts SET state=?2,reason=?3,finished_at=COALESCE(finished_at,?4) WHERE occurrence_id=?1 AND id=(SELECT current_job_attempt_id FROM harness_job_occurrences WHERE id=?1) AND (state<>?2 OR reason IS NOT ?3 OR (finished_at IS NULL AND ?4 IS NOT NULL))",params![occurrence,state,reason,finished])?;
+    if let ("reconcile", Some(failure)) = (state, reason) {
+        crate::job_retries::classify(tx, occurrence, failure)?;
+    }
     Ok(())
 }
 fn record(
@@ -264,6 +274,8 @@ fn record(
     value["precheck"] =
         crate::job_precheck_records::view_attempt(connection, occurrence, id, detail)?;
     value["retry"] = crate::job_retries::view(connection, id)?;
+    value["retryClassification"] = crate::job_retries::classification(connection, id)?;
+    value["retryAdmission"] = crate::job_retries::admission(connection, id)?;
     value["executionTimeout"] = crate::job_timeouts::view_attempt(connection, id)?;
     let (reconciliation, resolution) = crate::job_launch_resolutions::view_attempt(connection, id)?;
     value["launchReconciliation"] = reconciliation;

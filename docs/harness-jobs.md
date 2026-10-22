@@ -12,11 +12,12 @@ with no timer due date; other schedule kinds may also attach a trigger.
 
 Once, [recurring IANA calendars](harness-job-calendars.md) and
 [owner-approved command prechecks](harness-job-prechecks.md), bounded no-effect
-retry, optional [execution timeouts](harness-job-timeouts.md), and explicit
+retry with probed [uncertain-effect retry classes](#retry-classes), optional
+[execution timeouts](harness-job-timeouts.md), and explicit
 [owner reconciliation of no-effect launches](harness-job-launch-reconciliation.md)
 are available.
-Safe reuse, authenticated triggers, broader retry classes, cleanup after reported
-results and quota queues remain separate implementation gates. Existing legacy
+Safe reuse, authenticated triggers, cleanup after reported results and quota
+queues remain separate implementation gates. Existing legacy
 once schedules and their storage/API remain unchanged until a tested migration
 can preserve their launch semantics. The new `job` commands and the TUI
 [Jobs view](#jobs-view-in-the-tui) list the new records.
@@ -138,8 +139,8 @@ native worker's task attempt. Current occurrence reads expose nullable
 An unclaimed queued occurrence has no generation. The host records generation 1
 when work is claimed. An explicit `launchNoEffect` retry policy
 can admit later generations of the same occurrence after a confirmed native
-pre-spawn refusal, as described below. A deliberate `run-now` creates a separate
-occurrence.
+pre-spawn refusal, or after an uncertain launch whose fenced probes found nothing,
+as described below. A deliberate `run-now` creates a separate occurrence.
 
 Summaries include the generation state/reason, generation `createdAt` (the
 original intent time for generation 1), actual
@@ -148,13 +149,16 @@ launch receipt pointers and bounded precheck evidence without stdout/stderr.
 Detail adds retained precheck output, the worker's explicit `result` and its
 `validation` evidence, including the validator's source and session when present.
 Null native pointers do not prove that an uncertain effect never happened;
-`reconcile` remains distinct from success and confirmed cleanup.
+`reconcile` remains distinct from success and confirmed cleanup. Summaries and
+detail also carry `retryClassification` and `retryAdmission`, described under
+[retry classes](#retry-classes).
 
 Original mutation replay preserves its historical acceptance, including absent
 generation pointers in older records. Read the current occurrence and exact
 generation for later observations. Reads and mutation replay never allocate a
 generation or repeat native effects. Restart retains journal identity and pending
-retry decisions; interrupted native effects still require reconciliation.
+retry decisions; interrupted native effects still require reconciliation unless
+an opted retry policy's probe adopts them or proves them absent.
 
 Each new dispatch also has a private host-only preparation token tied to its
 exact current generation. Precheck supervision/completion, Run binding and
@@ -218,11 +222,12 @@ once: the first retry waits `initialDelayMs`, then the delay doubles up to
 `maxDelayMs`. A read, reconnect, mutation replay or restart does not reset it.
 
 Only an exact failed native create receipt containing JSON boolean
-`effectStarted:false` qualifies. This is the native pre-spawn validation refusal
-class. An exception from spawning, PTY setup or worktree preparation remains an
-unknown outcome unless that exact no-effect evidence exists. Provider exit,
-result failure, idle/silence, timeouts, missing receipts and unknown effects do
-not qualify. Retrying does not relax provider permissions, workspace constraints,
+`effectStarted:false` qualifies for this proven no-effect class. This is the
+native pre-spawn validation refusal class. An exception from spawning, PTY setup
+or worktree preparation remains an unknown outcome unless that exact no-effect
+evidence exists. Provider exit, result failure, idle/silence, timeouts and
+missing receipts do not qualify; unknown launch outcomes follow the probed
+[retry classes](#retry-classes) instead. Retrying does not relax provider permissions, workspace constraints,
 budgets or input guards. When a precheck is present, the failed source generation
 must also have its own passed command outcome with `commandStarted:true` and
 `cleanupConfirmed:true`. Skip, failure, timeout, abandonment, interruption and
@@ -255,6 +260,90 @@ a hard process timeout. Exhausting the generation limit retains the final failur
 Canceling while waiting fences further admissions for that occurrence and keeps
 the outgoing decision as historical evidence. A separate `run-now` remains a new
 occurrence with its own intent and overlap checks.
+
+## Retry classes
+
+The same opt-in `retry` policy classifies every failed generation before the
+host decides anything. There is no new specification field: a job without a
+policy keeps its existing `reconcile` and failure behaviour. The class, each
+probe result and the decision are written in the writer transaction that moves
+the occurrence, and each decision publishes `job.changed`.
+
+| Class             | Recorded when                                                               | Probes                              | Retries                                                  |
+| ----------------- | --------------------------------------------------------------------------- | ----------------------------------- | -------------------------------------------------------- |
+| `noEffect`        | the exact failed create receipt with `effectStarted:false` described above  | none; the receipt is the proof      | up to `maxAttempts` generations with capped backoff      |
+| `uncertainEffect` | the generation enters `reconcile` with one of the four reasons listed below | two: next scheduler tick, due claim | the same `maxAttempts` budget, only if both find nothing |
+| `definiteEffect`  | a probe finds a native attempt or session for the generation                | none after the finding              | never                                                    |
+
+A generation is classified `uncertainEffect` only when it enters `reconcile`
+with `dispatch_unconfirmed` (the executor reply was lost or timed out after the
+native request was sent), `dispatch_interrupted` (the dispatch task failed),
+`launch_unconfirmed` (the native create receipt is `unknown`, for example a spawn
+timeout) or `host_restarted` (a crash between journal entries). Precheck
+uncertainty, execution timeouts, cancellation and owner reconciliation keep their
+own rules, and a generation whose required precheck has not passed with confirmed
+cleanup is not classified. The occurrence becomes `retryWaiting` with `reason:retry_probe_pending`;
+overlap still counts it as active, so a sibling occurrence cannot start.
+
+### Probe contract
+
+The probe is keyed by the generation's launch idempotency key,
+`job:JOB_ID:OCCURRENCE_ID[:attempt:N]:executor`, and its Run key with the same
+prefix and `:run`. It reads only journal rows: the bound Run or the Run accepted
+under that key, whether the executor start was accepted, every native attempt in
+that Run with its `run-launch:` create receipt, and session evidence for each
+reserved session (a `created` receipt, a process exit, any journal event or any
+other receipt). It never contacts a process or provider and waits until the
+generation's dispatch token has been retired, so an active dispatch is never
+classified mid-flight. Until the first probe the Run is not fenced: a launch
+reserved in the meantime is found and adopted rather than refused. A probe reports `absent`, `noEffectProven`,
+`attemptFound` or `sessionFound`.
+
+- `attemptFound` or `sessionFound` adopts the existing work as `definiteEffect`
+  with decision `adopted`. The occurrence returns to `running` and follows that
+  attempt. An `unknown` native create returns to `reconcile` with
+  `launch_unconfirmed`, and work found after `host_restarted` stays in
+  `reconcile`. No retry happens and the Run stays admissible.
+- `noEffectProven` hands the generation to the `noEffect` class with the same
+  evidence, approval and authority checks; when any of them fails the occurrence
+  fails with `attempt_failed`, as the generic failure projection would.
+- `absent` pauses the Run's executor (`job_retry_waiting`) and retires the
+  generation in the same transaction, so no later launch reservation, delivery,
+  wake or executor enable can admit effects for that Run. The generation becomes
+  `failed` with `launch_no_effect` and the occurrence waits with `retry_backoff`.
+  At the generation limit the occurrence fails with `retry_exhausted`. A revoked
+  approval, an owner control or constraint, a coordinator binding, a drain or a
+  disabled executor blocks it in `reconcile` with `retry_blocked`.
+
+At the due claim the probe runs again. Anything found blocks the retry in
+`reconcile` with `retry_evidence_changed` and records that claim probe; nothing
+found admits a fresh generation with its own Run, keys and native launch, exactly
+as a no-effect retry does. The fenced source Run is never reused, so its keys
+cannot replay into the new generation and two live attempts for one job cannot
+exist.
+
+Probes add no timer of their own. The first runs in the next scheduler poll (the
+existing one-to-thirty-second job tick), or in the same poll when that poll's
+refresh observed the failure, and the second at the policy's capped backoff
+deadline, so an uncertain retry is never sooner than a no-effect retry.
+
+### Retry class evidence
+
+`retry` on the occurrence and attempt keeps the immutable decision and adds
+`class`; uncertain decisions also carry the deciding `probe`. It stays null while
+probing and after adoption. Attempt summaries and detail add
+`retryClassification` with `class`, `failure`, `launchKey`, `decision`
+(`probing`, `adopted`, `retryWaiting`, `blocked` or `canceled`), `decidedAt`,
+`notBefore`, `nextOrdinal` and `probe`. A retried generation's `retryAdmission`
+names its `sourceJobAttemptId`, the class and the `claimProbe`. For uncertain and
+definite classes, `launchReconciliation` also shows the live
+`retryClassification` with its `state`, `retryJobAttemptId` and `claimProbe`;
+owner abandonment stays unavailable for them.
+
+Canceling while the first probe is pending marks the class `canceled` and
+continues the normal cancellation of the bound Run. Canceling a fenced decision
+whose probe still finds nothing is logical, like canceling a no-effect backoff,
+and sends no native stop.
 
 ## Cancel one occurrence
 
@@ -364,9 +453,11 @@ Each occurrence uses deterministic workflow keys prefixed
 `job:JOB_ID:OCCURRENCE_ID` for `run`, `plan`, `budget`, `activate` and `executor`.
 The first generation preserves its original keys; later generations use distinct
 keys and Runs. Each run pointer is persisted before native executor admission. A metadata failure
-is retained as a refusal; an unconfirmed native dispatch requires reconciliation.
-After restart, unfinished native claims are marked `reconcile`, never automatically
-restarted. Persisted eligible retry decisions remain subject to their original
+is retained as a refusal; an unconfirmed native dispatch requires reconciliation
+unless an opted policy's [retry class](#retry-classes) probe resolves it.
+After restart, unfinished native claims are marked `reconcile` and are never
+restarted in place; with a retry policy they are probed, and only a fenced absence
+admits a fresh generation. Persisted eligible retry decisions remain subject to their original
 backoff and current occurrence state. Retained results may still be inspected/validated. Unclaimed eligible
 queued intent can run once; it has not previously performed a native effect.
 The scheduler waits for the host's bounded provider-version probes before

@@ -617,3 +617,137 @@ fn published_journal_migration_adds_pointers_without_manufacturing_dispatch_auth
             .is_none()
     );
 }
+
+fn poll(store: &mut Store, now: u64) -> Vec<Claim> {
+    match job_definitions::work(&mut store.0, Work::Poll { slots: 4 }, now).unwrap() {
+        Reply::Claims(claims) => claims,
+        _ => panic!("Expected scheduler claims"),
+    }
+}
+
+#[test]
+fn lost_executor_reply_is_probed_by_its_keys_and_retried_by_a_fresh_generation() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let profile = json!({"program":"claude","workspace":"shared"});
+    let job = job_definitions::execute(&mut store.0,owner(),serde_json::from_value(json!({
+        "action":"create","key":"definition:uncertain","spec":{
+            "title":"uncertain","instruction":"No native effects in this fixture","profile":profile,
+            "schedule":{"kind":"once","at":chrono::DateTime::from_timestamp_millis((NOW+60_000)as i64).unwrap().to_rfc3339()},
+            "retry":{"on":"launchNoEffect","maxAttempts":2,"initialDelayMs":1000,"maxDelayMs":1000}
+        }
+    })).unwrap(),NOW).unwrap()["job"].clone();
+    job_definitions::execute(&mut store.0,owner(),serde_json::from_value(json!({"action":"runNow","key":"manual:uncertain","jobId":job["id"],"expectedRevision":1})).unwrap(),NOW).unwrap();
+    let mut claims = poll(&mut store, NOW);
+    let claim = claims.pop().unwrap();
+    assert_eq!(claim.ordinal, 1);
+    assert!(matches!(
+        job_definitions::work(
+            &mut store.0,
+            Work::BeginPrecheck {
+                dispatch: claim.dispatch.clone()
+            },
+            NOW
+        )
+        .unwrap(),
+        Reply::Precheck(None)
+    ));
+    let prefix = job_attempts::key_prefix(&claim.job_id, &claim.id, 1);
+    assert_eq!(prefix, format!("job:{}:{}", claim.job_id, claim.id));
+    let created = prepared(
+        &mut store,
+        &claim.dispatch,
+        json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":"Uncertain","goal":"Metadata only"}}),
+    );
+    let run = created["run"]["id"].as_str().unwrap().to_owned();
+    job_definitions::work(
+        &mut store.0,
+        Work::BindRun {
+            dispatch: claim.dispatch.clone(),
+            run: run.clone(),
+        },
+        NOW,
+    )
+    .unwrap();
+    let plan = prepared(
+        &mut store,
+        &claim.dispatch,
+        json!({"action":"setPlan","key":format!("{prefix}:plan"),"runId":run,"expectedRevision":created["run"]["revision"],"tasks":[{"key":"job","title":"Uncertain","instruction":"No native effects"}]}),
+    );
+    let budget = prepared(
+        &mut store,
+        &claim.dispatch,
+        json!({"action":"runBudget","request":{"action":"set","key":format!("{prefix}:budget"),"runId":run,"expectedRevision":plan["run"]["revision"],"limits":{"maxParallel":1,"maxAttemptsPerTask":1,"maxElapsedMs":300000}}}),
+    );
+    let active = prepared(
+        &mut store,
+        &claim.dispatch,
+        json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run,"expectedRevision":budget["run"]["revision"]}),
+    );
+    let crate::workflow_executor::Reply::Managed { pump, .. } = crate::workflow_executor::execute(
+        &mut store.0,
+        crate::workflow_executor::Work::Manage {
+            actor: owner(),
+            request: serde_json::from_value(json!({"action":"start","key":format!("{prefix}:executor"),"runId":run,"expectedRevision":active["run"]["revision"],"spec":{"tasks":[{"taskId":plan["tasks"][0]["id"],"profile":profile}],"retryFailed":false}})).unwrap(),
+        },
+        NOW,
+    )
+    .unwrap() else {
+        panic!("Expected the accepted executor start");
+    };
+    assert!(pump.is_some());
+    assert!(matches!(
+        job_definitions::work(
+            &mut store.0,
+            Work::Refused {
+                dispatch: claim.dispatch.clone(),
+                uncertain: true
+            },
+            NOW + 1
+        )
+        .unwrap(),
+        Reply::Done
+    ));
+    let current = job_definitions::occurrence(&store.0, &claim.job_id, &claim.id, true).unwrap();
+    assert_eq!(current["state"], "retryWaiting");
+    assert_eq!(current["reason"], "retry_probe_pending");
+    job_attempts::guard_run(&store.0, &run).unwrap();
+    assert!(poll(&mut store, NOW + 2).is_empty());
+    let current = job_definitions::occurrence(&store.0, &claim.job_id, &claim.id, true).unwrap();
+    assert_eq!(current["reason"], "retry_backoff");
+    let retry = &current["retry"];
+    assert_eq!(retry["class"], "uncertainEffect");
+    assert_eq!(retry["notBefore"], NOW + 1002);
+    assert_eq!(retry["probe"]["result"], "absent");
+    assert_eq!(retry["probe"]["executorAccepted"], true);
+    assert_eq!(retry["probe"]["runId"], run);
+    assert_eq!(retry["probe"]["launchKey"], format!("{prefix}:executor"));
+    let paused: (bool, String) = store
+        .0
+        .query_row(
+            "SELECT enabled,reason FROM workflow_executors WHERE run_id=?1",
+            [&run],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(paused, (false, "job_retry_waiting".into()));
+    code(
+        job_attempts::guard_run(&store.0, &run),
+        "job_generation_retired",
+    );
+    assert!(poll(&mut store, NOW + 1001).is_empty());
+    let mut retried = poll(&mut store, NOW + 1002);
+    assert_eq!(retried.len(), 1);
+    let next = retried.pop().unwrap();
+    assert_eq!(next.ordinal, 2);
+    assert_ne!(next.dispatch.attempt, claim.dispatch.attempt);
+    assert_eq!(
+        job_attempts::key_prefix(&next.job_id, &next.id, i64::from(next.ordinal)),
+        format!("{prefix}:attempt:2")
+    );
+    let attempts: i64 = store
+        .0
+        .query_row("SELECT count(*) FROM workflow_attempts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(attempts, 0);
+    assert!(poll(&mut store, NOW + 5000).is_empty());
+}

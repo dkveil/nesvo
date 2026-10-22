@@ -63,6 +63,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "workflow_digests",
         sql: include_str!("../migrations/0011_workflow_digests.sql"),
     },
+    Migration {
+        version: 12,
+        name: "job_retry_classes",
+        sql: include_str!("../migrations/0012_job_retry_classes.sql"),
+    },
 ];
 
 const LEGACY_SCHEMA_VERSION: u32 = 7;

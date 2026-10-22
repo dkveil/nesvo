@@ -1057,3 +1057,62 @@ fn postresolution_coordinator_binding_is_metadata_but_new_wake_admission_and_dis
     assert_eq!(view, accepted);
     assert!(pump.is_none());
 }
+
+#[test]
+fn uncertain_classification_is_in_the_launch_diagnostic_and_never_authorizes_abandonment() {
+    use super::job_retries_tests as retries;
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let fixture = retries::seed(&store, "diagnostic", Some(retries::retry(3)), 1);
+    let proven = resolutions::view_attempt(&store.0, &fixture.source)
+        .unwrap()
+        .0;
+    assert!(proven.get("retryClassification").is_none());
+    retries::native_state(
+        &store,
+        &fixture,
+        "launchUnknown",
+        "unknown",
+        json!({"code":"launch_unconfirmed"}),
+    );
+    retries::retire_producer(&store, &fixture);
+    retries::fail(&mut store, &fixture, "launch_unconfirmed", NOW + 5);
+    let probing = resolutions::view_attempt(&store.0, &fixture.source)
+        .unwrap()
+        .0;
+    assert_eq!(probing["retryClassification"]["decision"], "probing");
+    assert!(retries::claim(&mut store, &fixture, NOW + 6).is_none());
+    let descriptor = resolutions::view_attempt(&store.0, &fixture.source)
+        .unwrap()
+        .0;
+    assert_eq!(descriptor["available"], false);
+    assert!(descriptor["digest"].is_null());
+    let class = &descriptor["retryClassification"];
+    assert_eq!(class["class"], "definiteEffect");
+    assert_eq!(class["decision"], "adopted");
+    assert_eq!(class["state"], "adopted");
+    assert_eq!(class["probe"]["result"], "attemptFound");
+    assert_eq!(class["probe"]["launchReceiptId"], fixture.receipt);
+    assert_eq!(class["probe"]["observedAt"], NOW + 6);
+    let occurrence =
+        job_definitions::occurrence(&store.0, &fixture.job, &fixture.occurrence, true).unwrap();
+    assert_eq!(occurrence["launchReconciliation"], descriptor);
+    assert_eq!(occurrence["state"], "reconcile");
+    let facts = native_facts(&store.0);
+    let tx = store.0.transaction().unwrap();
+    code(
+        resolutions::accept(
+            &tx,
+            &owner(),
+            &fixture.job,
+            &fixture.occurrence,
+            &fixture.source,
+            &"0".repeat(64),
+            true,
+            "abandon-adopted-launch",
+            NOW + 7,
+        ),
+        "occurrence_conflict",
+    );
+    drop(tx);
+    assert_eq!(native_facts(&store.0), facts);
+}

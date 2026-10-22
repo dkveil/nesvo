@@ -1,5 +1,5 @@
 //! Metadata-only generation fixtures; no public retry or process is simulated.
-use super::Store;
+use super::{Store, job_retries_tests as retries};
 use crate::{
     job_attempts, job_cancellations,
     orchestration::{Actor, Scope},
@@ -587,4 +587,123 @@ fn legacy_disk_reopen_backfills_once_and_preserves_original_evidence_and_keys() 
         );
     }
     std::fs::remove_file(path).unwrap();
+}
+
+fn generation_record(store: &Store, fixture: &retries::Fixture) -> Value {
+    job_attempts::view(
+        &store.0,
+        &fixture.job,
+        &fixture.occurrence,
+        Some(&fixture.source),
+        0,
+    )
+    .unwrap()["jobAttempt"]
+        .clone()
+}
+
+#[test]
+fn generation_sync_classifies_only_uncertain_launch_reasons_and_only_once() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let fixture = retries::seed(&store, "sync-class", Some(retries::retry(3)), 1);
+    retries::without_native(&store, &fixture);
+    retries::retire_producer(&store, &fixture);
+    retries::fail(&mut store, &fixture, "precheck_unconfirmed", NOW as u64 + 5);
+    let unclassified = generation_record(&store, &fixture);
+    assert_eq!(unclassified["state"], "reconcile");
+    assert_eq!(unclassified["reason"], "precheck_unconfirmed");
+    assert!(unclassified["retryClassification"].is_null());
+    retries::fail(&mut store, &fixture, "launch_unconfirmed", NOW as u64 + 6);
+    let classified = generation_record(&store, &fixture);
+    assert_eq!(classified["state"], "reconcile");
+    assert_eq!(classified["reason"], "launch_unconfirmed");
+    assert_eq!(
+        classified["retryClassification"]["class"],
+        "uncertainEffect"
+    );
+    assert_eq!(classified["retryClassification"]["decision"], "probing");
+    assert_eq!(
+        classified["retryClassification"]["failure"],
+        "launch_unconfirmed"
+    );
+    assert!(classified["retry"].is_null() && classified["retryAdmission"].is_null());
+    let parked: (String, String) = store
+        .0
+        .query_row(
+            "SELECT state,reason FROM harness_job_occurrences WHERE id=?1",
+            [&fixture.occurrence],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        parked,
+        ("retryWaiting".into(), "retry_probe_pending".into())
+    );
+    retries::fail(&mut store, &fixture, "dispatch_interrupted", NOW as u64 + 7);
+    assert_eq!(
+        generation_record(&store, &fixture)["retryClassification"]["failure"],
+        "launch_unconfirmed"
+    );
+    let rows: i64 = store
+        .0
+        .query_row("SELECT count(*) FROM harness_job_retries", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 1);
+}
+
+#[test]
+fn run_fence_ignores_probing_and_adopted_classes_but_holds_every_decided_retry() {
+    let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+    let probing = retries::seed(&store, "fence-probing", Some(retries::retry(3)), 1);
+    retries::without_native(&store, &probing);
+    retries::retire_producer(&store, &probing);
+    retries::fail(&mut store, &probing, "dispatch_unconfirmed", NOW as u64 + 5);
+    job_attempts::guard_run(&store.0, &probing.run).unwrap();
+
+    let adopted = retries::seed(&store, "fence-adopted", Some(retries::retry(3)), 1);
+    retries::native_state(&store, &adopted, "launching", "dispatching", json!({}));
+    retries::retire_producer(&store, &adopted);
+    retries::fail(&mut store, &adopted, "dispatch_unconfirmed", NOW as u64 + 5);
+    assert!(retries::claim(&mut store, &adopted, NOW as u64 + 6).is_none());
+    assert_eq!(
+        retries::classification(&store, &adopted)["decision"],
+        "adopted"
+    );
+    job_attempts::guard_run(&store.0, &adopted.run).unwrap();
+
+    let decided = retries::seed(&store, "fence-decided", Some(retries::retry(3)), 1);
+    retries::without_native(&store, &decided);
+    retries::retire_producer(&store, &decided);
+    retries::fail(&mut store, &decided, "host_restarted", NOW as u64 + 5);
+    assert!(retries::claim(&mut store, &decided, NOW as u64 + 6).is_none());
+    code(
+        job_attempts::guard_run(&store.0, &decided.run),
+        "job_generation_retired",
+    );
+
+    let exhausted = retries::seed(&store, "fence-exhausted", Some(retries::retry(1)), 1);
+    retries::without_native(&store, &exhausted);
+    retries::retire_producer(&store, &exhausted);
+    retries::fail(
+        &mut store,
+        &exhausted,
+        "dispatch_interrupted",
+        NOW as u64 + 5,
+    );
+    assert!(retries::claim(&mut store, &exhausted, NOW as u64 + 6).is_none());
+    code(
+        job_attempts::guard_run(&store.0, &exhausted.run),
+        "job_generation_retired",
+    );
+}
+
+#[test]
+fn generation_keys_follow_the_ordinal_used_by_dispatch_and_probes() {
+    assert_eq!(
+        job_attempts::key_prefix("job", "occurrence", 1),
+        "job:job:occurrence"
+    );
+    assert_eq!(
+        job_attempts::key_prefix("job", "occurrence", 2),
+        "job:job:occurrence:attempt:2"
+    );
 }

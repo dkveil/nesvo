@@ -362,13 +362,17 @@ pub fn view_attempt(connection: &Connection, attempt: &str) -> Result<(Value, Va
         descriptor["digest"] = Value::Null;
         return Ok((descriptor, resolution));
     }
-    Ok((
-        evidence(connection, attempt)?
-            .map(|e| e.descriptor())
-            .transpose()?
-            .unwrap_or(Value::Null),
-        resolution,
-    ))
+    let mut descriptor = evidence(connection, attempt)?
+        .map(|e| e.descriptor())
+        .transpose()?
+        .unwrap_or(Value::Null);
+    let classification = crate::job_retries::diagnostic(connection, attempt)?;
+    if descriptor.is_object()
+        && !matches!(classification["class"].as_str(), None | Some("noEffect"))
+    {
+        descriptor["retryClassification"] = classification;
+    }
+    Ok((descriptor, resolution))
 }
 
 pub fn view_current(connection: &Connection, occurrence: &str) -> Result<(Value, Value)> {

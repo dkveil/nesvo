@@ -251,14 +251,8 @@ impl Runner {
             _ => return Err(anyhow!("Precheck admission was not confirmed")),
         }
         let mut native_requested = false;
-        let prefix = if claim.ordinal == 1 {
-            format!("job:{}:{}", claim.job_id, claim.id)
-        } else {
-            format!(
-                "job:{}:{}:attempt:{}",
-                claim.job_id, claim.id, claim.ordinal
-            )
-        };
+        let prefix =
+            crate::job_attempts::key_prefix(&claim.job_id, &claim.id, i64::from(claim.ordinal));
         let result=async {
             self.admission_open()?;
             let run=self.workflow(&mut permit,&claim.dispatch,json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
@@ -276,8 +270,6 @@ impl Runner {
             Ok::<_,anyhow::Error>(())
         }.await;
         if result.is_err() {
-            // Never retry an unknown native effect or guess a replacement run.
-            // The occurrence prefix recovers each immutable metadata acceptance.
             self.log
                 .jobs(Work::Refused {
                     dispatch: claim.dispatch.clone(),
