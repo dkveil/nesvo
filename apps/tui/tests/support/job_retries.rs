@@ -1,4 +1,3 @@
-//! Opted-in retry uses genuine native launch receipts and controlled Node PTYs.
 use super::*;
 
 #[path = "job_retry_prechecks.rs"]

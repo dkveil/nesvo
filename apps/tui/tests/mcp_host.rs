@@ -1,4 +1,3 @@
-//! Real official SDK client -> native MCP subprocess -> isolated native host.
 use anyhow::{Context, Result, ensure};
 use futures_util::FutureExt;
 use rmcp::{
@@ -23,6 +22,7 @@ use tokio::{
 };
 
 const HOST_READINESS_DEADLINE: Duration = Duration::from_secs(60);
+const STARTUP_DIAGNOSTICS_OPT_IN: &str = "NESVO_STARTUP_DIAGNOSTICS";
 
 struct Fixture {
     directory: PathBuf,
@@ -165,8 +165,7 @@ impl Fixture {
         mut command: Command,
     ) -> Result<(Child, startup_trace::Shared)> {
         command
-            // Explicit owned-fixture opt-in; ordinary host startup stays quiet.
-            .env("NESVO_STARTUP_DIAGNOSTICS", "1")
+            .env(STARTUP_DIAGNOSTICS_OPT_IN, "1")
             .env("CODEX_HOME", directory.join("codex-home"))
             .env_remove("OPENAI_BASE_URL")
             .env_remove("OPENAI_API_KEY")
@@ -217,45 +216,8 @@ impl Fixture {
             };
             let observed_at_ms = started.elapsed().as_millis();
             let buffered_bytes = output.get_ref().buffer().len();
-            let owned_directory = directory.to_path_buf();
-            // A detached diagnostic thread cannot hold Tokio runtime shutdown
-            // if filesystem metadata stalls. Never read private file contents.
-            let (files_tx, files_rx) = tokio::sync::oneshot::channel();
-            let _diagnostic = std::thread::Builder::new()
-                .name("fixture-startup-diagnostic".into())
-                .spawn(move || {
-                    let files = [
-                        "host.lock",
-                        "pairing.json",
-                        "pairing.svg",
-                        "metadata.sqlite3",
-                        "metadata.sqlite3-wal",
-                    ]
-                    .into_iter()
-                    .map(|name| {
-                        let facts = match std::fs::metadata(owned_directory.join(name)) {
-                            Ok(metadata) => json!({"present":true,"bytes":metadata.len()}),
-                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                                json!({"present":false})
-                            }
-                            Err(_) => json!({"unavailable":true}),
-                        };
-                        (name.to_owned(), facts)
-                    })
-                    .collect::<serde_json::Map<String, Value>>();
-                    let _ = files_tx.send(files);
-                });
-            let files = match timeout(Duration::from_secs(1), files_rx).await {
-                Ok(Ok(files)) => Value::Object(files),
-                _ => json!({"unavailable":true}),
-            };
-            // Failure before Fixture exists must still reap this owned child.
-            // This observes cleanup; it never retries startup or extends readiness.
-            let kill_requested = host.start_kill().is_ok();
-            let cleanup = match timeout(Duration::from_secs(2), host.wait()).await {
-                Ok(Ok(status)) => json!({"confirmed":true,"code":status.code()}),
-                _ => json!({"confirmed":false}),
-            };
+            let files = startup_file_metadata_from_detached_thread(directory).await;
+            let (kill_requested, cleanup) = kill_and_observe_reap_of_unready_host(&mut host).await;
             eprintln!(
                 "NATIVE_HOST_STARTUP_DIAGNOSTIC {}",
                 json!({
@@ -272,14 +234,7 @@ impl Fixture {
                 Ok(Ok(())) => unreachable!(),
             };
         }
-        // Keep draining after readiness; closing the pipe here could race the
-        // host's remaining startup lines and cause a platform-specific BrokenPipe.
-        let remaining_trace = startup_trace.clone();
-        tokio::spawn(async move {
-            while let Ok(Some(line)) = output.next_line().await {
-                startup_trace::consume(&remaining_trace, &line);
-            }
-        });
+        drain_host_output_after_readiness_to_avoid_broken_pipe(output, startup_trace.clone());
         Ok((host, startup_trace))
     }
     fn pairing(&self) -> PathBuf {
@@ -361,6 +316,56 @@ impl Fixture {
         Ok(())
     }
 }
+async fn startup_file_metadata_from_detached_thread(directory: &Path) -> Value {
+    let owned_directory = directory.to_path_buf();
+    let (files_tx, files_rx) = tokio::sync::oneshot::channel();
+    let _diagnostic = std::thread::Builder::new()
+        .name("fixture-startup-diagnostic".into())
+        .spawn(move || {
+            let files = [
+                "host.lock",
+                "pairing.json",
+                "pairing.svg",
+                "metadata.sqlite3",
+                "metadata.sqlite3-wal",
+            ]
+            .into_iter()
+            .map(|name| {
+                let facts = match std::fs::metadata(owned_directory.join(name)) {
+                    Ok(metadata) => json!({"present":true,"bytes":metadata.len()}),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        json!({"present":false})
+                    }
+                    Err(_) => json!({"unavailable":true}),
+                };
+                (name.to_owned(), facts)
+            })
+            .collect::<serde_json::Map<String, Value>>();
+            let _ = files_tx.send(files);
+        });
+    match timeout(Duration::from_secs(1), files_rx).await {
+        Ok(Ok(files)) => Value::Object(files),
+        _ => json!({"unavailable":true}),
+    }
+}
+async fn kill_and_observe_reap_of_unready_host(host: &mut Child) -> (bool, Value) {
+    let kill_requested = host.start_kill().is_ok();
+    let cleanup = match timeout(Duration::from_secs(2), host.wait()).await {
+        Ok(Ok(status)) => json!({"confirmed":true,"code":status.code()}),
+        _ => json!({"confirmed":false}),
+    };
+    (kill_requested, cleanup)
+}
+fn drain_host_output_after_readiness_to_avoid_broken_pipe(
+    mut output: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    startup_trace: startup_trace::Shared,
+) {
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = output.next_line().await {
+            startup_trace::consume(&startup_trace, &line);
+        }
+    });
+}
 async fn install_agent_fixture(directory: &Path, host: &mut Command) -> Result<()> {
     let bin = directory.join("bin");
     let callers = directory.join("callers");
@@ -420,11 +425,10 @@ fn agent_fixture_environment(directory: &Path, host: &mut Command) -> Result<()>
     Ok(())
 }
 async fn scoped_client(context: &Path, id: &str) -> Result<RunningService<RoleClient, ()>> {
-    let config = context.with_file_name("mcp.json");
-    let mut command = if config.exists() {
-        // Consume the actual provider-facing launch config, not a hand-built equivalent.
-        let config: Value = serde_json::from_slice(&std::fs::read(config)?)?;
-        let server = &config["mcpServers"]["nesvo"];
+    let provider_facing_mcp_config = context.with_file_name("mcp.json");
+    let mut command = if provider_facing_mcp_config.exists() {
+        let launch: Value = serde_json::from_slice(&std::fs::read(provider_facing_mcp_config)?)?;
+        let server = &launch["mcpServers"]["nesvo"];
         assert_eq!(server["args"], json!(["mcp"]));
         assert_eq!(server["env"]["NESVO_AGENT_CONTEXT"], json!(context));
         let mut command = Command::new(
@@ -445,6 +449,58 @@ async fn scoped_client(context: &Path, id: &str) -> Result<RunningService<RoleCl
     #[cfg(windows)]
     command.creation_flags(0x08000000);
     Ok(().serve(TokioChildProcess::new(command)?).await?)
+}
+async fn assert_invalid_context_is_refused_not_replaced_by_the_human_key(
+    fixture: &Fixture,
+) -> Result<()> {
+    let mut forged: Value = serde_json::from_slice(&std::fs::read(fixture.pairing())?)?;
+    forged["scopeId"] = json!("f".repeat(32));
+    let context = fixture.directory.join("invalid-context.json");
+    std::fs::write(&context, serde_json::to_vec(&forged)?)?;
+    let scoped = client(&context).await?;
+    assert_eq!(
+        scoped.list_all_tools().await?.len(),
+        published_tool_count(),
+        "catalog/help need no host effects"
+    );
+    let refused = call(&scoped, "nesvo_list_sessions", json!({})).await?;
+    assert_eq!(refused.is_error, Some(true));
+    assert_eq!(
+        refused.structured_content.context("error")?["error"]["code"],
+        "host_unavailable"
+    );
+    scoped.cancel().await?;
+    Ok(())
+}
+async fn assert_malformed_or_oversized_stdio_lines_end_before_host_dispatch(
+    pairing: &Path,
+) -> Result<()> {
+    for input in [b"{broken json}\n".to_vec(), vec![b'x'; 65537]] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
+        command
+            .arg("--pairing")
+            .arg(pairing)
+            .arg("mcp")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let mut process = command.spawn()?;
+        process
+            .stdin
+            .take()
+            .context("stdio")?
+            .write_all(&input)
+            .await?;
+        let output = process.wait_with_output().await?;
+        assert!(
+            output.stdout.is_empty(),
+            "stdout contains only protocol frames"
+        );
+    }
+    Ok(())
 }
 async fn session_ready(client: &RunningService<RoleClient, ()>, id: &str) -> Result<()> {
     waits::session(client, id, waits::Session::Ready)
@@ -563,6 +619,14 @@ async fn observed_output(
     Ok(())
 }
 
+#[cfg(windows)]
+async fn wait_for_initialized_powershell_prompt(
+    client: &RunningService<RoleClient, ()>,
+    id: &str,
+) -> Result<()> {
+    observed_output(client, id, "PS ").await
+}
+
 async fn report_from_controlled_worker(
     client: &RunningService<RoleClient, ()>,
     directory: &Path,
@@ -667,10 +731,8 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         assert_eq!(child_view["data"]["session"]["controllerId"],Value::Null);
         assert_eq!(receipt["data"]["receipt"], created["data"]["receipt"]);
         assert!(receipt["data"]["cursor"].as_u64().context("cursor")? >= 3);
-        // NoLogo/NoProfile PowerShell can still initialize after process creation.
-        // Wait for this fixture's prompt, rather than equate PTY creation with readiness.
         #[cfg(windows)]
-        observed_output(&mcp,id,"PS ").await?;
+        wait_for_initialized_powershell_prompt(&mcp,id).await?;
         let sent = waits::operation(&mcp,"nesvo_send_prompt",json!({"sessionId":id,"key":"sdk-send","prompt":"echo NESVO_MCP_SEND"})).await?;
         assert_eq!(sent["data"]["receipt"]["phase"],"delivered");
         assert_eq!(sent["data"]["receipt"]["result"]["nativeWriteFlushed"],true);
@@ -732,19 +794,17 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let interrupted=waits::operation(&mcp,"nesvo_interrupt_session",json!({"sessionId":id,"key":"sdk-interrupt"})).await?;
         assert_eq!(interrupted["data"]["receipt"]["phase"],"delivered");
         assert_eq!(interrupted["data"]["receipt"]["result"]["agentStopped"],Value::Null);
-        // Ctrl+C is allowed to exit the original shell, especially on Windows.
-        // Exercise actual native stop on a separate process that was not interrupted.
-        let stop_fixture=waits::operation(&mcp,"nesvo_create_session",json!({"key":"sdk-stop-fixture","spec":{"name":"Stop fixture","program":"shell","cwd":fixture.directory}})).await?;
-        let stop_id=stop_fixture["data"]["receipt"]["sessionId"].as_str().context("stop fixture")?;
-        let stopped=waits::operation(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-stop"})).await?;
+        let uninterrupted_shell=waits::operation(&mcp,"nesvo_create_session",json!({"key":"sdk-stop-fixture","spec":{"name":"Stop fixture","program":"shell","cwd":fixture.directory}})).await?;
+        let uninterrupted_shell_id=uninterrupted_shell["data"]["receipt"]["sessionId"].as_str().context("stop fixture")?;
+        let stopped=waits::operation(&mcp,"nesvo_stop_session",json!({"sessionId":uninterrupted_shell_id,"key":"sdk-stop"})).await?;
         assert_eq!(stopped["data"]["receipt"]["phase"],"stopRequested");
         let replay_stop=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing())
-            .args(["session","stop",stop_id,"--key","sdk-stop","--json"]).output().await?;
+            .args(["session","stop",uninterrupted_shell_id,"--key","sdk-stop","--json"]).output().await?;
         ensure!(replay_stop.status.success(),"CLI stop replay failed");
         let replay_stop:Value=serde_json::from_slice(&replay_stop.stdout)?;
         assert_eq!(replay_stop["data"]["receipt"],stopped["data"]["receipt"]);
-        waits::session(&mcp,stop_id,waits::Session::Stopped).await?;
-        let already_stopped=waits::operation(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-already-stopped"})).await?;
+        waits::session(&mcp,uninterrupted_shell_id,waits::Session::Stopped).await?;
+        let already_stopped=waits::operation(&mcp,"nesvo_stop_session",json!({"sessionId":uninterrupted_shell_id,"key":"sdk-already-stopped"})).await?;
         assert_eq!(already_stopped["data"]["receipt"]["phase"],"stopped");
         assert_eq!(already_stopped["data"]["receipt"]["result"]["processExited"],true);
         assert_eq!(already_stopped["data"]["receipt"]["result"]["nativeStopRequested"],false);
@@ -784,51 +844,8 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         assert_eq!(data(current)?["data"]["session"]["id"], id);
         legacy.cancel().await?;
 
-        // Invalid pairing/context is an error, never a fallback to the human key.
-        let mut forged: Value = serde_json::from_slice(&std::fs::read(fixture.pairing())?)?;
-        forged["scopeId"] = json!("f".repeat(32));
-        let context = fixture.directory.join("invalid-context.json");
-        std::fs::write(&context, serde_json::to_vec(&forged)?)?;
-        let scoped = client(&context).await?;
-        assert_eq!(
-            scoped.list_all_tools().await?.len(),
-            published_tool_count(),
-            "catalog/help need no host effects"
-        );
-        let refused = call(&scoped, "nesvo_list_sessions", json!({})).await?;
-        assert_eq!(refused.is_error, Some(true));
-        assert_eq!(
-            refused.structured_content.context("error")?["error"]["code"],
-            "host_unavailable"
-        );
-        scoped.cancel().await?;
-
-        // A malformed or oversized stdio line must terminate before host dispatch.
-        for input in [b"{broken json}\n".to_vec(), vec![b'x'; 65537]] {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
-            command
-                .arg("--pairing")
-                .arg(fixture.pairing())
-                .arg("mcp")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .kill_on_drop(true);
-            #[cfg(windows)]
-            command.creation_flags(0x08000000);
-            let mut process = command.spawn()?;
-            process
-                .stdin
-                .take()
-                .context("stdio")?
-                .write_all(&input)
-                .await?;
-            let output = process.wait_with_output().await?;
-            assert!(
-                output.stdout.is_empty(),
-                "stdout contains only protocol frames"
-            );
-        }
+        assert_invalid_context_is_refused_not_replaced_by_the_human_key(&fixture).await?;
+        assert_malformed_or_oversized_stdio_lines_end_before_host_dispatch(&fixture.pairing()).await?;
         let disconnected = client(&fixture.pairing()).await?;
         drop(fixture.host.stdin.take());
         ensure!(fixture.host.wait().await?.success(), "host shutdown");

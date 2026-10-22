@@ -7,6 +7,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const PER_SPAWN_CALLER_BINDING_VARIABLES: [&str; 5] = [
+    "NESVO_AGENT_CONTEXT",
+    "NESVO_AGENT_SKILL",
+    "NESVO_CLI",
+    "NESVO_GEMINI_HOOK",
+    "NESVO_LIFECYCLE_REPORT",
+];
+#[cfg(windows)]
+const NPM_WRAPPER_EXTENSIONS: [&str; 3] = ["cmd", "ps1", "bat"];
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Program {
@@ -82,25 +92,18 @@ impl Launcher {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("NESVO_SESSION", "1");
-        // Each native process receives its own caller binding later at spawn.
-        for key in [
-            "NESVO_AGENT_CONTEXT",
-            "NESVO_AGENT_SKILL",
-            "NESVO_CLI",
-            "NESVO_GEMINI_HOOK",
-            "NESVO_LIFECYCLE_REPORT",
-        ] {
+        for key in PER_SPAWN_CALLER_BINDING_VARIABLES {
             command.env_remove(key);
         }
-        // Codex and CI commonly run the host with NO_COLOR=1. That setting
-        // belongs to the host's own output, not to the interactive PTY viewed
-        // on another terminal or phone. Let each CLI emit its native colors.
-        command.env_remove("NO_COLOR");
+        leave_color_to_each_cli(&mut command);
         command
     }
 }
 
-// Resolve once at startup. Capabilities never run a CLI or inspect credentials.
+fn leave_color_to_each_cli(command: &mut CommandBuilder) {
+    command.env_remove("NO_COLOR");
+}
+
 pub struct Launchers {
     entries: Vec<(Program, Option<Launcher>)>,
 }
@@ -171,7 +174,6 @@ impl Launchers {
             .any(|(id, launcher)| *id == program && launcher.is_some())
     }
 
-    /// Reuse the resolved launcher for read-only CLI integration, including npm's Windows wrapper.
     pub fn probe_command(&self, program: Program) -> Option<(PathBuf, Vec<OsString>)> {
         self.entries
             .iter()
@@ -310,14 +312,9 @@ fn find_program(program: Program, paths: &[PathBuf]) -> Option<Launcher> {
             {
                 return Some(Launcher::direct(path));
             }
-            // npm's Windows wrappers cannot be passed to CreateProcess directly.
-            // Resolve their known package entrypoint and pass it as a Node argv;
-            // never interpolate paths into cmd.exe or PowerShell source.
-            if ["cmd", "ps1", "bat"].iter().any(|extension| {
-                directory
-                    .join(format!("{}.{extension}", program.executable()))
-                    .is_file()
-            }) && let Some(launcher) = npm_launcher(program, directory, paths)
+            if has_npm_wrapper(program, directory)
+                && let Some(launcher) =
+                    node_launcher_for_package_entrypoint(program, directory, paths)
             {
                 return Some(launcher);
             }
@@ -331,7 +328,20 @@ fn find_program(program: Program, paths: &[PathBuf]) -> Option<Launcher> {
 }
 
 #[cfg(windows)]
-fn npm_launcher(program: Program, directory: &Path, paths: &[PathBuf]) -> Option<Launcher> {
+fn has_npm_wrapper(program: Program, directory: &Path) -> bool {
+    NPM_WRAPPER_EXTENSIONS.iter().any(|extension| {
+        directory
+            .join(format!("{}.{extension}", program.executable()))
+            .is_file()
+    })
+}
+
+#[cfg(windows)]
+fn node_launcher_for_package_entrypoint(
+    program: Program,
+    directory: &Path,
+    paths: &[PathBuf],
+) -> Option<Launcher> {
     use std::io::Read;
     let package = directory
         .join("node_modules")
@@ -569,7 +579,6 @@ mod tests {
     }
 }
 
-/// Explicit user selection in the CLI avoids guessing which conversation belongs to a process.
 pub fn resume_arguments(program: Program) -> Result<&'static [&'static str]> {
     match program {
         Program::Claude => Ok(&["--resume"]),

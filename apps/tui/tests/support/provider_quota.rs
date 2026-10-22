@@ -1,4 +1,3 @@
-//! Official SDK/CLI -> native host -> controlled read-only Codex JSON-lines RPC.
 use super::*;
 
 const ACCOUNT: &str = "PRIVATE_QUOTA_ACCOUNT_DO_NOT_EXPOSE";
@@ -338,13 +337,13 @@ async fn native_quota_refresh_coalesces_and_failed_read_cannot_refresh_success_o
                 .is_some_and(|value| value > 0)
         );
 
-        // Equal source contents still form a new completed observation revision.
         configure(&f, "snapshot", saved.clone(), 0)?;
         let unchanged_request = refresh(&owner).await?;
         let unchanged_target = unchanged_request["data"]["refresh"]["revision"]
             .as_u64()
             .context("Unchanged read target")?;
-        assert_eq!(unchanged_target, target + 1);
+        let new_revision_despite_equal_contents = target + 1;
+        assert_eq!(unchanged_target, new_revision_despite_equal_contents);
         let unchanged = revision(&owner, unchanged_target).await?;
         assert_eq!(row(&unchanged)?["windows"], good_row["windows"]);
         assert_eq!(row(&unchanged)?["contextId"], good_row["contextId"]);
@@ -355,7 +354,6 @@ async fn native_quota_refresh_coalesces_and_failed_read_cannot_refresh_success_o
         assert!(row(&unchanged)?["observedAt"].as_u64() > good_row["observedAt"].as_u64());
         assert_eq!(read_count(&f)?, 3);
 
-        // A sparse quota notification is not a full account/permission read.
         configure(&f, "sparseThenError", saved, 0)?;
         let failed_request = refresh(&owner).await?;
         let failed_target = failed_request["data"]["refresh"]["revision"]
@@ -444,14 +442,12 @@ async fn native_quota_rejects_malformed_secondary_and_sparse_notifications_witho
         assert_eq!(read_count(&f)?, 3);
         no_sessions(&owner).await?;
 
-        // The controlled original process exercises the actual scoped caller,
-        // rather than supplying an invented owner identity to an internal helper.
         let created = waits::operation(&owner,"nesvo_create_session",json!({"key":"quota-owner-only-worker","spec":{"name":"Quota owner-only fixture","program":"claude","harness":true}})).await?;
         let id = created["data"]["receipt"]["sessionId"].as_str().context("Quota scoped worker")?;
         session_ready(&owner, id).await?;
         let context = PathBuf::from(std::fs::read_to_string(f.directory.join("callers").join(format!("{id}.txt")))?);
-        let worker = scoped_client(&context, id).await?;
-        let denied = call(&worker,"nesvo_get_provider_quota",json!({"program":"codex","refresh":true})).await?;
+        let scoped_worker = scoped_client(&context, id).await?;
+        let denied = call(&scoped_worker,"nesvo_get_provider_quota",json!({"program":"codex","refresh":true})).await?;
         assert_eq!(denied.is_error, Some(true));
         let denied = denied.structured_content.context("Scoped quota refusal")?;
         assert_eq!(denied["error"]["code"], "forbidden");
@@ -459,7 +455,7 @@ async fn native_quota_rejects_malformed_secondary_and_sparse_notifications_witho
         let envelopes = vec![initial,malformed_request,invalid,sparse_request,sparse,created,denied];
         private(&envelopes, &f)?;
         run_checkpoints::schema(envelopes).await?;
-        worker.cancel().await?;
+        scoped_worker.cancel().await?;
         owner.cancel().await?;
         Ok::<_, anyhow::Error>(())
     }).catch_unwind().await;
@@ -499,8 +495,6 @@ async fn admit_quota_job(
     directory: &Path,
     binding: &Value,
 ) -> Result<(Value, Value)> {
-    // Controlled Codex PTY reports through its session-bound CLI context.
-    // This does not assert original Codex MCP injection support.
     let created=data(call(owner,"nesvo_create_job",json!({"key":format!("{key}:definition"),"spec":{
         "title":"Controlled configured-account quota job","instruction":"report-task",
         "profile":{"program":"codex","workspace":"shared","cwd":directory},
@@ -613,9 +607,7 @@ async fn native_quota_contexts_release_only_matching_jobs_and_cancellation_stays
         let job_b=definition_b["data"]["job"]["id"].as_str().context("Eligible job")?;
         let occurrence_b=admitted_b["data"]["occurrence"]["id"].as_str().context("Eligible occurrence")?;
 
-        // A real eligible worker/result proves the scheduler ran while older
-        // denied-context work stayed out of its four dispatch slots.
-        let reported_b=quota_occurrence(&owner,job_b,occurrence_b,"needsValidation").await?;
+        let eligible_b_reported_past_older_denied_work=quota_occurrence(&owner,job_b,occurrence_b,"needsValidation").await?;
         let held_a=quota_occurrence(&owner,job_a,occurrence_a,"queued").await?;
         let held_cancel=quota_occurrence(&owner,job_cancel,occurrence_cancel,"queued").await?;
         unclaimed(&held_a["data"]["occurrence"]);
@@ -655,7 +647,7 @@ async fn native_quota_contexts_release_only_matching_jobs_and_cancellation_stays
         let quota_envelopes=vec![first,source_a,source_b,repeated,cli,refresh,recovered];
         private(&quota_envelopes,&fixture)?;
         let mut envelopes=quota_envelopes;
-        envelopes.extend([definition_a,admitted_a,definition_cancel,admitted_cancel,definition_b,admitted_b,reported_b,held_a,held_cancel,before_a,before_cancel,canceled,terminal,reported_a,replay,cancel_replay,after_cancel,after_a,after_b,canceled_generations,sessions]);
+        envelopes.extend([definition_a,admitted_a,definition_cancel,admitted_cancel,definition_b,admitted_b,eligible_b_reported_past_older_denied_work,held_a,held_cancel,before_a,before_cancel,canceled,terminal,reported_a,replay,cancel_replay,after_cancel,after_a,after_b,canceled_generations,sessions]);
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;
         Ok::<_,anyhow::Error>(())

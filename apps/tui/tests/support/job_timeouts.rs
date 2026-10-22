@@ -1,4 +1,3 @@
-//! Explicit native job execution windows; controlled workers, never model calls.
 use super::*;
 use job_cancellation::process_alive;
 use waits::{is_settled_occurrence, occurrence};
@@ -171,11 +170,8 @@ async fn discovery_ready(fixture: &Fixture, evidence: &mut DiscoveryEvidence) ->
     result.context("Controlled provider discovery before execution timeout admission")
 }
 
-fn working_session(result: CallToolResult, worker: &str) -> Result<Option<Value>> {
-    // Storage reserves this exact session ID and arms its deadline before the
-    // native process is created. Only this typed absence is a pending read;
-    // authority, malformed replies and transport failures are not readiness.
-    if result.is_error == Some(true)
+fn is_typed_absence_of_reserved_session(result: &CallToolResult) -> bool {
+    result.is_error == Some(true)
         && result.structured_content.as_ref().is_some_and(|reply| {
             reply["schemaVersion"] == 1
                 && reply["ok"] == false
@@ -184,7 +180,10 @@ fn working_session(result: CallToolResult, worker: &str) -> Result<Option<Value>
                 && reply["error"]["message"].is_string()
                 && reply.get("data").is_none()
         })
-    {
+}
+
+fn working_session(result: CallToolResult, worker: &str) -> Result<Option<Value>> {
+    if is_typed_absence_of_reserved_session(&result) {
         return Ok(None);
     }
     let session = data(result)?;
@@ -268,9 +267,8 @@ fn timed_worker_waits_for_reserved_id_but_rejects_foreign_or_untyped_missing_ses
     ] {
         assert!(working_session(CallToolResult::structured_error(malformed), &worker).is_err());
     }
-    // The MCP error flag is part of the typed refusal. A body merely containing
-    // the same code cannot turn an otherwise malformed success into a wait.
-    assert!(working_session(CallToolResult::structured(missing), &worker).is_err());
+    let success_that_merely_contains_the_refusal_body = CallToolResult::structured(missing);
+    assert!(working_session(success_that_merely_contains_the_refusal_body, &worker).is_err());
     assert!(working_session(CallToolResult::structured(json!({})), &worker).is_err());
 }
 
@@ -367,7 +365,6 @@ async fn past_deadline(timer: &Value) -> Result<()> {
 }
 
 async fn release_human(mut human: Child) -> Result<()> {
-    // The existing helper waits for the host's lease-release acknowledgement.
     drop(human.stdin.take());
     ensure!(
         human.wait().await?.success(),

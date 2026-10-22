@@ -1,4 +1,3 @@
-//! Fresh command authorization for every opted-in native job generation.
 use super::prechecks::{OwnedTree, TREE_EXIT_DEADLINE};
 use super::*;
 
@@ -66,17 +65,15 @@ async fn approve(
         &script,
         include_str!("../../../../tests/fixtures/job-precheck.cjs"),
     )?;
-    let directory = fixture.directory.join(format!("check-{mode}"));
-    std::fs::create_dir(&directory)?;
-    // This existing command cwd is deliberately independent of the missing
-    // worker cwd which produces the genuine native failed/no-effect receipt.
+    let existing_command_cwd = fixture.directory.join(format!("check-{mode}"));
+    std::fs::create_dir(&existing_command_cwd)?;
     let environment = match tree {
         Some(tree) => tree.environment()?,
         None => json!({"CHECK_LITERAL":LITERAL}),
     };
     let command = json!({
         "title":format!("Repeated owned {mode}"),"executable":node(fixture),
-        "cwd":directory,"arguments":[script,mode,directory,"root",LITERAL],
+        "cwd":existing_command_cwd,"arguments":[script,mode,existing_command_cwd,"root",LITERAL],
         "timeoutMs":COMMAND_TIMEOUT_MS,"environment":environment
     });
     let description = data(call(owner, "nesvo_describe_precheck", json!({"spec":command})).await?)?;
@@ -113,7 +110,7 @@ async fn approve(
     assert_eq!(replay["data"], approved["data"]);
     Ok((
         approved["data"]["precheckApproval"].clone(),
-        directory,
+        existing_command_cwd,
         vec![description, approved, replay],
     ))
 }
@@ -683,10 +680,11 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
             )
             .await?,
         );
-        // The terminal skip remains terminal beyond another full configured
-        // delay while the independent revoked retry is checked.
-        let still_skipped = occurrence(&owner, job, id).await?;
-        assert_eq!(still_skipped["data"], skipped["data"]);
+        let still_skipped_after_another_full_delay = occurrence(&owner, job, id).await?;
+        assert_eq!(
+            still_skipped_after_another_full_delay["data"],
+            skipped["data"]
+        );
         assert_eq!(count(&directory)?, 2);
         envelopes.push(no_workers(&fixture, &owner).await?);
         envelopes.extend(vec![
@@ -704,7 +702,7 @@ async fn retry_generation_does_not_reuse_the_old_pass_after_skip_or_revocation()
             blocked,
             retained,
             journal,
-            still_skipped,
+            still_skipped_after_another_full_delay,
         ]);
         run_checkpoints::schema(envelopes).await?;
         owner.cancel().await?;

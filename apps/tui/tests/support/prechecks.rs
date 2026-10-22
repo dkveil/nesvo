@@ -1,4 +1,3 @@
-//! Real owner CLI/MCP, native timer, bounded command scopes and fake provider.
 use super::*;
 use tokio::io::AsyncReadExt;
 const LITERAL: &str = "literal $(x); & łódź \"quoted\"";
@@ -709,11 +708,9 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
             .context("active occurrence ID")?;
         tree_ready(&mut tree).await?;
 
-        // The live first occurrence holds the overlap gate, so the second one
-        // is durably queued without racing a claim from an otherwise idle host.
-        let queued = now(&owner, job, "queued-tree").await?;
-        assert_eq!(queued["data"]["occurrence"]["state"], "queued");
-        let queued_id = queued["data"]["occurrence"]["id"]
+        let queued_behind_live_first_occurrence = now(&owner, job, "queued-tree").await?;
+        assert_eq!(queued_behind_live_first_occurrence["data"]["occurrence"]["state"], "queued");
+        let queued_id = queued_behind_live_first_occurrence["data"]["occurrence"]["id"]
             .as_str()
             .context("queued occurrence ID")?;
         let queued_cancel = budgets::owner_cli(
@@ -830,7 +827,7 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
         run_checkpoints::schema(vec![
             created,
             active,
-            queued,
+            queued_behind_live_first_occurrence,
             queued_cancel,
             active_cancel,
             completed,
@@ -858,6 +855,20 @@ async fn owner_occurrence_cancellation_stops_precheck_tree_and_never_replays_aft
             std::panic::resume_unwind(panic)
         }
     }
+}
+
+async fn shut_down_host_by_closing_stdin_only(f: &mut Fixture) -> Result<()> {
+    drop(f.host.stdin.take());
+    let status = f
+        .host
+        .wait()
+        .await
+        .context("Graceful owned host exit while precheck descendants are active")?;
+    ensure!(
+        status.success(),
+        "Native host did not confirm its runtime shutdown: {status}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -915,18 +926,7 @@ async fn graceful_host_shutdown_reaps_precheck_descendants_and_retains_refusal_a
         no_model(&owner).await?;
         owner.cancel().await?;
 
-        // The same graceful stdin-close path used by the fixture is the action
-        // under test. No release file, cancellation API or process kill is used.
-        drop(f.host.stdin.take());
-        let status = f
-            .host
-            .wait()
-            .await
-            .context("Graceful owned host exit while precheck descendants are active")?;
-        ensure!(
-            status.success(),
-            "Native host did not confirm its runtime shutdown: {status}"
-        );
+        shut_down_host_by_closing_stdin_only(&mut f).await?;
         tree_gone(&mut tree).await?;
         std::fs::remove_file(&image_released_by_cleanup).with_context(|| {
             format!(

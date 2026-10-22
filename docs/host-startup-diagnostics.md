@@ -36,9 +36,11 @@ stdio can; this is not a startup performance guarantee.
 The SDK fixture explicitly opts in for each owned child and restart. It keeps
 the same 60-second readiness deadline and owned kill/reap behavior. Its existing
 stdout reader consumes prefixed records before matching the listening line and
-continues draining after readiness. A bounded strict parser retains only known
-fields, labels, sequence and duration evidence. Invalid/oversized/out-of-order
-records increment fixed rejection counters; their text is never echoed.
+continues draining after readiness; closing the pipe there could race the host's
+remaining startup lines and cause a platform-specific `BrokenPipe`. A bounded
+strict parser retains only known fields, labels, sequence and duration evidence.
+Invalid/oversized/out-of-order records increment fixed rejection counters; their
+text is never echoed.
 
 `NATIVE_HOST_STARTUP_DIAGNOSTIC.startupTrace` reports records, active phases,
 last completion, elapsed time and completeness. Each newly spawned child gets
