@@ -200,8 +200,7 @@ fn projects_launch_dedupe_evicts_the_least_recent_entry_instead_of_clearing() {
     assert!(recent.insert(key(1)));
 }
 
-#[test]
-fn projects_writes_take_the_write_lock_up_front_and_never_starve_the_journal() {
+fn contended() -> (std::path::PathBuf, Connection, Store) {
     let directory = std::env::temp_dir().join(format!(
         "nesvo-projects-contention-{}",
         hex::encode(crate::wire::random::<8>())
@@ -216,30 +215,99 @@ fn projects_writes_take_the_write_lock_up_front_and_never_starve_the_journal() {
     journal
         .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE contention(id INTEGER PRIMARY KEY, at INTEGER NOT NULL);")
         .unwrap();
-    let mut store = Store::open(&path).unwrap();
-    let blocker = Connection::open(&path).unwrap();
+    let store = Store::open(&path).unwrap();
+    (directory, journal, store)
+}
+
+fn blocker(store: &Store) -> Connection {
+    let path = store.connection.path().unwrap().to_owned();
+    let blocker = Connection::open(path).unwrap();
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let started = std::time::Instant::now();
+    blocker
+}
+
+fn refusals(store: &mut Store) -> std::sync::mpsc::Receiver<usize> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    store.observe_refusals(move |attempt| sender.send(attempt).unwrap());
+    receiver
+}
+
+#[test]
+fn projects_writes_retry_a_busy_refusal_once_the_write_lock_is_released() {
+    let (directory, journal, mut store) = contended();
+    let mut held = Some(blocker(&store));
+    let (sender, observed) = std::sync::mpsc::channel();
+    store.observe_refusals(move |attempt| {
+        if let Some(blocker) = held.take() {
+            blocker.execute_batch("ROLLBACK").unwrap();
+        }
+        sender.send(attempt).unwrap();
+    });
+    store.record_all(&[seen("retried", 1)]).unwrap();
+    assert_eq!(observed.try_iter().collect::<Vec<_>>(), [1]);
+    assert_eq!(store.rows().unwrap().len(), 1);
+    drop((store, journal));
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn projects_writes_give_up_busy_after_exactly_three_attempts_and_recover_after_release() {
+    let (directory, journal, mut store) = contended();
+    let blocker = blocker(&store);
+    let observed = refusals(&mut store);
     let refused = store.record_all(&[seen("blocked", 1)]).unwrap_err();
     assert!(busy(&refused));
-    assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+    assert_eq!(observed.try_iter().collect::<Vec<_>>(), [1, 2, 3]);
+    assert_eq!(BUSY_ATTEMPTS, 3);
     blocker.execute_batch("ROLLBACK").unwrap();
-    let writer = std::thread::spawn(move || {
-        for index in 0..200u64 {
-            store
-                .record_all(&[launched("busy", &root("busy"), &format!("s{index}"), index)])
-                .unwrap();
-        }
-        store
-    });
-    for index in 0..200i64 {
-        journal
-            .execute("INSERT INTO contention(at) VALUES(?1)", [index])
-            .unwrap();
-    }
-    let store = writer.join().unwrap();
+    store.record_all(&[seen("blocked", 2)]).unwrap();
+    assert_eq!(observed.try_iter().count(), 0);
     assert_eq!(store.rows().unwrap().len(), 1);
     drop((store, journal, blocker));
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn projects_writes_hold_the_lock_only_for_their_own_statements_so_the_journal_is_never_starved() {
+    let (directory, journal, mut store) = contended();
+    let observed = refusals(&mut store);
+    let mode: String = store
+        .connection
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+    let synchronous: i64 = store
+        .connection
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(synchronous, 1);
+    let journal_synchronous: i64 = journal
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal_synchronous, 2);
+    store
+        .record_all(&[launched("busy", &root("busy"), "s0", 0)])
+        .unwrap();
+    assert!(store.connection.is_autocommit());
+    journal
+        .execute("INSERT INTO contention(at) VALUES(?1)", [0i64])
+        .unwrap();
+    assert!(journal.is_autocommit());
+    store
+        .record_all(&[launched("busy", &root("busy"), "s1", 1)])
+        .unwrap();
+    assert!(store.connection.is_autocommit());
+    assert_eq!(observed.try_iter().count(), 0);
+    let inserted: i64 = journal
+        .query_row("SELECT count(*) FROM contention", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(inserted, 1);
+    assert_eq!(store.rows().unwrap().len(), 1);
+    assert_eq!(
+        store.defaults(&root("busy")).unwrap().folders[0].launches,
+        2
+    );
+    drop((store, journal));
     let _ = std::fs::remove_dir_all(&directory);
 }
 

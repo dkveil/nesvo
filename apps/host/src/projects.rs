@@ -219,6 +219,8 @@ fn busy(error: &anyhow::Error) -> bool {
 pub(crate) struct Store {
     connection: Connection,
     seen: Recent,
+    #[cfg(test)]
+    refusals: Option<Box<dyn FnMut(usize) + Send>>,
 }
 
 impl Store {
@@ -242,8 +244,25 @@ impl Store {
         Ok(Self {
             connection,
             seen: Recent::default(),
+            #[cfg(test)]
+            refusals: None,
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn observe_refusals(&mut self, observer: impl FnMut(usize) + Send + 'static) {
+        self.refusals = Some(Box::new(observer));
+    }
+
+    #[cfg(test)]
+    fn refused(&mut self, attempt: usize) {
+        if let Some(observer) = self.refusals.as_mut() {
+            observer(attempt);
+        }
+    }
+
+    #[cfg(not(test))]
+    fn refused(&mut self, _attempt: usize) {}
 
     pub(crate) fn record_all(&mut self, observations: &[Observation]) -> Result<()> {
         let mut launches = Vec::with_capacity(observations.len());
@@ -260,7 +279,13 @@ impl Store {
         let mut attempt = 1;
         loop {
             match self.write(observations, &launches) {
-                Err(error) if busy(&error) && attempt < BUSY_ATTEMPTS => attempt += 1,
+                Err(error) if busy(&error) => {
+                    self.refused(attempt);
+                    if attempt == BUSY_ATTEMPTS {
+                        return Err(error);
+                    }
+                    attempt += 1;
+                }
                 result => return result,
             }
         }
