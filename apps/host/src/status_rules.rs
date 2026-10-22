@@ -37,6 +37,8 @@ struct Rule {
     footer_all: Vec<String>,
     #[serde(default)]
     footer_any: Vec<String>,
+    #[serde(default)]
+    none: Vec<String>,
     cursor_prompt: Option<char>,
 }
 
@@ -84,7 +86,7 @@ impl Catalog {
                         | StatusState::Question
                 )
                 || lists.iter().all(|list| list.is_empty())
-                || lists.iter().any(|list| {
+                || lists.iter().chain([&&rule.none]).any(|list| {
                     list.len() > 12
                         || list.iter().any(|s| {
                             s.is_empty() || s.len() > 256 || s.chars().any(char::is_control)
@@ -164,6 +166,7 @@ pub fn detect(program: Program, screen: &vt100::Screen) -> Option<Match> {
             && rule.footer_all.iter().all(|s| footer_text.contains(s))
             && (rule.footer_any.is_empty()
                 || rule.footer_any.iter().any(|s| footer_text.contains(s)))
+            && !rule.none.iter().any(|s| joined.contains(s))
             && cursor_matches
         {
             return Some(Match {
@@ -260,7 +263,7 @@ mod tests {
             let matched = detect(Program::Gemini, p.screen()).unwrap_or_else(|| panic!("{id}"));
             assert!(matched.rule.starts_with(id), "{} for {id}", matched.rule);
             assert_eq!((matched.state, matched.reason), (state, reason));
-            assert_eq!(matched.revision, "2026-10-21.1");
+            assert_eq!(matched.revision, "2026-10-22.1");
             assert!(
                 detect(Program::Claude, p.screen()).is_none_or(|m| !m.rule.starts_with("gemini_"))
             );
@@ -277,5 +280,84 @@ mod tests {
             p.process(partial.as_bytes());
             assert!(detect(Program::Gemini, p.screen()).is_none(), "{partial}");
         }
+    }
+
+    const GEMINI_065_INPUT: &str = " >   Type your message or @path/to/file";
+    const GEMINI_065_FOOTER: &str =
+        " ~/fixture (main*)      no sandbox (see /docs)      auto (100% context left)";
+
+    fn gemini_screen(body: &str) -> vt100::Parser {
+        let mut p = vt100::Parser::new(32, 100, 0);
+        p.process(format!("{body}\r\n{GEMINI_065_INPUT}\r\n{GEMINI_065_FOOTER}").as_bytes());
+        p
+    }
+
+    #[test]
+    fn gemini_065_synthesized_work_prompt_and_quota_screens_match_and_guards_hold() {
+        for (body, id, state, reason) in [
+            (
+                "✦ Previous answer\r\n ⠋ Thinking... (esc to cancel, 3s)",
+                "gemini_work_v1",
+                StatusState::Working,
+                "cancel timer",
+            ),
+            (
+                " ⠼ Reading the repository layout (esc to cancel, 1m 4s)",
+                "gemini_work_v1",
+                StatusState::Working,
+                "cancel timer",
+            ),
+            (
+                "✦ Previous answer\r\n                                   ? for shortcuts",
+                "gemini_prompt_v1",
+                StatusState::Idle,
+                "empty input prompt",
+            ),
+            (
+                "╭──────────────────────────────────────────────────────────╮\r\n│ Usage limit reached for all Pro models.                  │\r\n│ Access resets at 4:00 PM.                                │\r\n│ /stats model for usage details                           │\r\n│ ● 1. Use AI Credits - Continue this request (Overage)    │\r\n│   2. Stop - Abort request                                │\r\n╰──────────────────────────────────────────────────────────╯",
+                "quota_v1",
+                StatusState::Blocked,
+                "quota",
+            ),
+        ] {
+            let p = gemini_screen(body);
+            let matched = detect(Program::Gemini, p.screen()).unwrap_or_else(|| panic!("{id}"));
+            assert_eq!(
+                (matched.rule, matched.state, matched.reason),
+                (id, state, reason)
+            );
+            assert_eq!(matched.revision, "2026-10-22.1");
+        }
+        for (body, case) in [
+            (
+                "│ ✓  Shell  npm install (PID: 4242) (Focused)               │\r\n│ added 12 packages                                         │",
+                "a focused embedded shell keeps the response loop open",
+            ),
+            (
+                " ! Shell awaiting input (Tab to focus)",
+                "a shell waiting for input is not an idle agent",
+            ),
+            (
+                "│ ?  Custom tool                                            │\r\n│ ● 1. Allow once                                           │\r\n│   2. Allow for this session                               │",
+                "an unrecognized approval with an expanded drawer is not idle",
+            ),
+        ] {
+            let p = gemini_screen(body);
+            assert!(detect(Program::Gemini, p.screen()).is_none(), "{case}");
+        }
+        let mut shell_mode = vt100::Parser::new(32, 100, 0);
+        shell_mode
+            .process(format!(" !   Type your shell command\r\n{GEMINI_065_FOOTER}").as_bytes());
+        assert!(detect(Program::Gemini, shell_mode.screen()).is_none());
+        let p = gemini_screen("✦ Previous answer");
+        assert!(detect(Program::Claude, p.screen()).is_none());
+        assert!(detect(Program::Codex, p.screen()).is_none());
+        assert!(
+            Catalog::load(
+                r#"{"schemaVersion":1,"revision":"a","rules":[{"id":"only_absent","program":null,"state":"idle","reason":"x","scope":"tail","none":["x"]}]}"#
+            )
+            .is_err(),
+            "an absence list alone is not evidence"
+        );
     }
 }

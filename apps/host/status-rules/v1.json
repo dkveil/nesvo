@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-10-21.1",
+  "revision": "2026-10-22.1",
   "rules": [
     {
       "id": "claude_trust_v1",
@@ -152,6 +152,23 @@
       "reason": "model selection",
       "scope": "visible",
       "all": ["select model", "remember model for future sessions:", "(press esc to close)"]
+    },
+    {
+      "id": "gemini_work_v1",
+      "program": "gemini",
+      "state": "working",
+      "reason": "cancel timer",
+      "scope": "tail",
+      "any": ["(esc to cancel, "]
+    },
+    {
+      "id": "gemini_prompt_v1",
+      "program": "gemini",
+      "state": "idle",
+      "reason": "empty input prompt",
+      "scope": "visible",
+      "all": ["type your message or @path/to/file"],
+      "none": ["(esc to cancel, ", "shell awaiting input", "(focused)", "allow once"]
     }
   ]
 }

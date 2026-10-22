@@ -808,6 +808,78 @@ mod tests {
     }
 
     #[test]
+    fn gemini_cancellation_settles_only_after_a_real_escape_and_a_new_empty_prompt() {
+        const PROMPT: &str = "\x1b[2J\x1b[H✦ Partial answer\r\n >   Type your message or @path/to/file\r\n ~/fixture      no sandbox      auto";
+        const RESPONDING: &str = "\x1b[2J\x1b[H ⠋ Thinking... (esc to cancel, 2s)\r\n >   Type your message or @path/to/file\r\n ~/fixture      no sandbox      auto";
+        let hook = |name: &str| {
+            crate::gemini_adapter::state(
+                &serde_json::json!({"hook_event_name":name,"session_id":"gemini-root"}),
+            )
+            .unwrap()
+            .unwrap()
+        };
+        let mut tracker = StatusTracker::new(Program::Gemini, 24, 100, 0);
+        tracker.lifecycle_ordered(
+            crate::agent_context::LifecycleReport {
+                state: hook("BeforeAgent"),
+                sequence: 1,
+            },
+            10,
+        );
+        tracker.output(RESPONDING, 100);
+        tracker.refresh(1_000);
+        assert_eq!(
+            (tracker.status.state, tracker.status.source),
+            (StatusState::Working, StatusSource::Hook),
+            "an agreeing screen keeps hook provenance"
+        );
+        tracker.output(PROMPT, 1_100);
+        tracker.refresh(60_000);
+        assert_eq!(
+            (tracker.status.state, tracker.status.source),
+            (StatusState::Working, StatusSource::Hook),
+            "an empty prompt alone never settles confirmed work"
+        );
+        tracker.interrupted(60_001);
+        tracker.output(PROMPT, 60_002);
+        tracker.refresh(60_003);
+        assert_eq!(
+            (tracker.status.state, tracker.status.source),
+            (StatusState::Idle, StatusSource::Screen),
+            "Gemini has no interrupt hook; escape plus a new prompt settles"
+        );
+        assert_eq!(
+            tracker.explain(60_004)["matchedRule"]["rule"],
+            "gemini_prompt_v1"
+        );
+        tracker.lifecycle_ordered(
+            crate::agent_context::LifecycleReport {
+                state: hook("BeforeAgent"),
+                sequence: 2,
+            },
+            70_000,
+        );
+        tracker.refresh(70_001);
+        assert_eq!(
+            (tracker.status.state, tracker.status.source),
+            (StatusState::Working, StatusSource::Hook)
+        );
+        let mut unlinked = StatusTracker::new(Program::Gemini, 24, 100, 0);
+        unlinked.output(RESPONDING, 1);
+        unlinked.refresh(2);
+        assert_eq!(
+            (unlinked.status.state, unlinked.status.source),
+            (StatusState::Working, StatusSource::Screen)
+        );
+        unlinked.output(PROMPT, 3);
+        unlinked.refresh(4);
+        assert_eq!(
+            (unlinked.status.state, unlinked.status.source),
+            (StatusState::Idle, StatusSource::Screen)
+        );
+    }
+
+    #[test]
     fn screen_detection_handles_chunked_ansi_and_cleared_prompts() {
         let mut tracker = StatusTracker::new(Program::Codex, 24, 100, 0);
         for chunk in APPROVAL.as_bytes().chunks(3) {
