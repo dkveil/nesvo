@@ -1073,9 +1073,21 @@ async fn startup_with_the_policy_off_leaves_the_shutdown_set_hibernated_with_its
         .await
         .unwrap();
     {
-        let guard = state.lock().unwrap();
+        let mut guard = state.lock().unwrap();
         assert!(guard.hibernated.contains(&restored));
         assert!(!guard.sessions.contains_key(&restored));
+        let _receiver = owner(&mut guard);
+        let refused = guard
+            .command(
+                1,
+                Command::Subscribe {
+                    session_id: restored.clone(),
+                },
+                None,
+                &events,
+            )
+            .unwrap_err();
+        assert_eq!(code(refused), "session_hibernated");
     }
     let rows = report(&state);
     assert_eq!(reported(&rows, &restored)["outcome"], "hibernated");

@@ -2170,6 +2170,13 @@ impl State {
     }
 
     fn subscribe(&mut self, client_id: u64, session_id: &str) -> Result<()> {
+        if self.hibernated.contains(session_id) {
+            return Err(crate::api_error::Error::new(
+                "session_hibernated",
+                "Session is hibernated; it has no terminal until it resumes",
+            )
+            .into());
+        }
         let session = self
             .sessions
             .get_mut(session_id)
