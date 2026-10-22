@@ -16,6 +16,9 @@ use std::{
 use tokio::sync::watch;
 
 pub(crate) const CLAUDE_FRESHNESS_MS: u64 = 15_000;
+pub(crate) const CLAUDE_READ_INTERVAL_MS: u64 = 15_000;
+const CLAUDE_READ_BOUND_MS: u64 = crate::usage::CLAUDE_CACHE_TIMEOUT.as_millis() as u64
+    + 2 * ACCOUNT_READ_TIMEOUT.as_millis() as u64;
 const CLAUDE_FUTURE_TOLERANCE_MS: u64 = 2_000;
 const AWAITING_BOUND_MS: u64 = 30_000;
 const QUEUE_CAPACITY: usize = 64;
@@ -548,7 +551,7 @@ pub(crate) fn claude_admission(
     Admission {
         revision,
         fresh_until_elapsed_ms: Some(
-            started_elapsed_ms.saturating_add(CLAUDE_FRESHNESS_MS - age_ms),
+            started_elapsed_ms.saturating_add(CLAUDE_READ_INTERVAL_MS + CLAUDE_READ_BOUND_MS),
         ),
         account,
         limit: exhausted.then(|| Limit {

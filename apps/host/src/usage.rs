@@ -148,7 +148,7 @@ pub(crate) async fn read_claude_observation() -> ClaudeObservation {
 }
 
 const CLAUDE_CACHE_MAX_BYTES: u64 = 16_384;
-const CLAUDE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const CLAUDE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClaudeCacheFailure {

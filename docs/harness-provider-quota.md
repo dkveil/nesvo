@@ -40,8 +40,11 @@ omit it.
   reports it unknown with `no_admission_source`.
 
 For the [host launch gate](harness-quota-jobs.md#host-wide-gate), the same Claude
-cache is admission-grade only when its `at` is under 15 seconds old and an account
-fingerprint is present. The fingerprint hashes `oauthAccount.accountUuid` and
+cache is admission-grade only when its `at` is under 15 seconds old at the read and
+an account fingerprint is present. Such a reading stays valid until the next
+scheduled read can replace it: the 15-second read period plus the six-second read
+bound (two seconds for the cache, two for each account file), so launches between
+reads do not fall back to unknown. The fingerprint hashes `oauthAccount.accountUuid` and
 `organizationUuid` from `.claude.json` (in `CLAUDE_CONFIG_DIR`, else
 `~/.claude/.claude.json`, then `~/.claude.json`) with the host-epoch salt; nothing
 else from that file is kept and `.credentials.json` is never read. Otherwise the

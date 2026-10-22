@@ -95,7 +95,7 @@ fn recorded_statusline_capture_is_admission_grade_only_while_fresh_with_an_accou
         Verdict::Allow
     );
     assert_eq!(
-        gate.verdict(Program::Claude, SOURCE_AT_MS + 20_000, ELAPSED + 11_001),
+        gate.verdict(Program::Claude, SOURCE_AT_MS + 20_000, ELAPSED + 21_001),
         Verdict::Unknown {
             reason: "observation_expired"
         }
@@ -122,6 +122,47 @@ fn recorded_statusline_capture_is_admission_grade_only_while_fresh_with_an_accou
         ELAPSED,
     );
     assert_eq!(future.fresh_until_elapsed_ms, None);
+}
+
+#[test]
+fn an_admission_grade_reading_stays_fresh_until_the_next_scheduled_read_can_land() {
+    let mut gate = gate();
+    assert!(claude(
+        &mut gate,
+        RECORDED_CACHE,
+        CLAUDE_FRESHNESS_MS - 1,
+        1
+    ));
+    let next_read = ELAPSED + CLAUDE_READ_INTERVAL_MS;
+    let landed = next_read + CLAUDE_READ_BOUND_MS;
+    for elapsed in [ELAPSED + 1, next_read - 1, next_read, landed - 1] {
+        assert_eq!(
+            gate.verdict(Program::Claude, SOURCE_AT_MS + 20_000, elapsed),
+            Verdict::Allow,
+            "{elapsed}"
+        );
+    }
+    assert_eq!(
+        gate.verdict(Program::Claude, SOURCE_AT_MS + 40_000, landed),
+        Verdict::Unknown {
+            reason: "observation_expired"
+        }
+    );
+    let refreshed = claude_admission(
+        &cache(RECORDED_CACHE, SOURCE_AT_MS + 2_000),
+        account(&gate),
+        2,
+        next_read,
+    );
+    assert!(gate.observe(
+        Program::Claude,
+        refreshed,
+        next_read + CLAUDE_READ_BOUND_MS - 1
+    ));
+    assert_eq!(
+        gate.verdict(Program::Claude, SOURCE_AT_MS + 40_000, landed),
+        Verdict::Allow
+    );
 }
 
 #[test]

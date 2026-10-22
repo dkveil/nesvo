@@ -38,7 +38,9 @@ impl Runtime {
             let mut stopped = stop.subscribe();
             let state = state.clone();
             tasks.spawn(async move {
-                let mut timer = tokio::time::interval(Duration::from_secs(15));
+                let mut timer = tokio::time::interval(Duration::from_millis(
+                    crate::quota_gate::CLAUDE_READ_INTERVAL_MS,
+                ));
                 timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 let account_paths = crate::quota_gate::claude_account_paths();
                 let mut revision = 0u64;
