@@ -571,7 +571,7 @@ fn form_label(field: FormField) -> &'static str {
         FormField::Expression => "CRON · minute hour day month weekday",
         FormField::Rule => "RRULE · e.g. FREQ=WEEKLY;BYDAY=MO",
         FormField::LocalStart => "LOCAL START · YYYY-MM-DDTHH:MM:SS",
-        FormField::TimeZone => "TIME ZONE · IANA, blank uses Europe/Warsaw",
+        FormField::TimeZone => "TIME ZONE · IANA, blank uses the host default",
     }
 }
 
@@ -1085,6 +1085,10 @@ mod tests {
                 "Quota · a known provider limit",
             ] {
                 assert!(all.contains(needle), "{width}x{height} {needle}\n{all}");
+            }
+            assert!(!all.contains("blank uses Europe"), "{all}");
+            if width == 150 {
+                assert!(all.contains("blank uses the host default"), "{all}");
             }
             let (_, zone) = find(&buffer, "TIME ZONE").unwrap();
             let input = if height == 44 { zone + 1 } else { zone };

@@ -364,6 +364,19 @@ impl FormField {
         Self::Schedule,
     ];
 
+    pub fn limit(self) -> usize {
+        match self {
+            Self::Title => 80,
+            Self::Folder => 4096,
+            Self::Instruction => 8192,
+            Self::Start | Self::TimeZone => 64,
+            Self::Expression => 256,
+            Self::Rule => 1024,
+            Self::LocalStart => 19,
+            Self::Agent | Self::Schedule => 0,
+        }
+    }
+
     pub fn order(kind: ScheduleKind) -> Vec<Self> {
         Self::BASE.iter().chain(kind.fields()).copied().collect()
     }
@@ -439,6 +452,13 @@ impl Form {
         } else {
             (index + count - 1) % count
         }];
+    }
+
+    pub fn type_text(&mut self, input: &str) {
+        let limit = self.field.limit();
+        if let Some(text) = self.text_mut() {
+            crate::input::append_field(text, input, limit);
+        }
     }
 
     pub fn text_mut(&mut self) -> Option<&mut String> {

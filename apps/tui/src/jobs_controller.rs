@@ -68,13 +68,8 @@ pub fn event(app: &mut App, event: Event) -> Outcome {
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => key_event(app, key, &mut outcome),
         Event::Paste(text) => {
-            if let Some(field) = app
-                .jobs
-                .as_mut()
-                .and_then(|jobs| jobs.form.as_mut())
-                .and_then(|form| form.text_mut())
-            {
-                field.push_str(&text.replace(['\r', '\n'], " "));
+            if let Some(form) = app.jobs.as_mut().and_then(|jobs| jobs.form.as_mut()) {
+                form.type_text(&text);
             }
         }
         Event::Resize(..) => {}
@@ -201,9 +196,7 @@ fn form_key(app: &mut App, key: KeyEvent, outcome: &mut Outcome) {
                         .modifiers
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
-                    if let Some(text) = form.text_mut() {
-                        text.push(character);
-                    }
+                    form.type_text(&character.to_string());
                 }
                 _ => outcome.redraw = false,
             }
@@ -449,5 +442,30 @@ mod tests {
         let retry = press(&mut app, KeyCode::Char('r'));
         assert_eq!(retry.commands[0]["request"]["request"]["action"], "list");
         assert_eq!(app.jobs.as_ref().unwrap().load, Load::Loading);
+    }
+
+    #[test]
+    fn form_fields_drop_control_characters_and_stop_at_their_caps() {
+        let mut app = opened();
+        press(&mut app, KeyCode::Char('n'));
+        let paste = |app: &mut App, text: &str| {
+            crate::controller::event(app, Event::Paste(text.into()), Rect::new(0, 0, 150, 44));
+        };
+        paste(&mut app, "Nightly\u{1b}[31m\tcheck\n");
+        let form = app.jobs.as_ref().unwrap().form.as_ref().unwrap();
+        assert_eq!(form.title, "Nightly[31m check ");
+        let form = app.jobs.as_mut().unwrap().form.as_mut().unwrap();
+        form.title.clear();
+        form.field = FormField::TimeZone;
+        paste(&mut app, &"Z".repeat(200));
+        press(&mut app, KeyCode::Char('Q'));
+        let form = app.jobs.as_mut().unwrap().form.as_mut().unwrap();
+        assert_eq!(form.time_zone.len(), FormField::TimeZone.limit());
+        assert!(!form.time_zone.contains('Q'));
+        form.field = FormField::Rule;
+        paste(&mut app, &"R".repeat(5000));
+        let form = app.jobs.as_ref().unwrap().form.as_ref().unwrap();
+        assert_eq!(form.rule.len(), FormField::Rule.limit());
+        assert!(form.title.is_empty());
     }
 }
