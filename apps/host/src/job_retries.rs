@@ -56,7 +56,8 @@ impl Policy {
     }
 }
 
-pub fn initialize(connection: &Connection) -> Result<()> {
+pub fn initialize_legacy_schema(connection: &Connection) -> Result<()> {
+    crate::migrations::ensure_pre_ledger(connection)?;
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS harness_job_retries(
             source_attempt_id TEXT PRIMARY KEY REFERENCES harness_job_attempts(id),

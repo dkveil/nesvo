@@ -179,6 +179,7 @@ pub enum Request {
     },
 }
 pub fn initialize(connection: &Connection) -> Result<()> {
+    crate::migrations::ensure_pre_ledger(connection)?;
     connection.execute_batch("CREATE TABLE IF NOT EXISTS workflow_runs(id TEXT PRIMARY KEY,title TEXT NOT NULL,goal TEXT NOT NULL,coordinator_id TEXT,revision INTEGER NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS workflow_runs_coordinator ON workflow_runs(coordinator_id,created_at);
       CREATE TABLE IF NOT EXISTS workflow_tasks(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES workflow_runs(id),task_key TEXT NOT NULL,spec TEXT NOT NULL,UNIQUE(run_id,task_key));
@@ -187,7 +188,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::workflow_inbox::initialize(connection)?;
     crate::workflow_decisions::initialize(connection)?;
     crate::workflow_budget::initialize(connection)?;
-    crate::workflow_controls::initialize(connection)?;
+    crate::workflow_controls::initialize_legacy_schema(connection)?;
     crate::workflow_launches::initialize(connection)?;
     crate::workflow_delivery::initialize(connection)?;
     crate::workflow_executor::initialize(connection)?;

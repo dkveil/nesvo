@@ -836,7 +836,7 @@ fn generation_initializer_installs_the_permanent_fence_for_the_legacy_schema_sub
         INSERT INTO workflow_runs VALUES('old-run');
         INSERT INTO harness_job_occurrences VALUES('old-occurrence','old-run',1,2,NULL,'running',NULL);").unwrap();
     crate::job_attempts::initialize(&connection).unwrap();
-    crate::job_retries::initialize(&connection).unwrap();
+    crate::job_retries::initialize_legacy_schema(&connection).unwrap();
     let tx = connection.unchecked_transaction().unwrap();
     crate::job_attempts::backfill(&tx).unwrap();
     tx.commit().unwrap();

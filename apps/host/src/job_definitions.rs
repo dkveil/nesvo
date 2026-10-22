@@ -282,7 +282,7 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     crate::job_attempts::initialize(connection)?;
     crate::job_timeouts::initialize(connection)?;
     crate::job_precheck_records::initialize(connection)?;
-    crate::job_retries::initialize(connection)?;
+    crate::job_retries::initialize_legacy_schema(connection)?;
     crate::job_triggers::initialize(connection)?;
     crate::job_quota::initialize(connection)?;
     Ok(())

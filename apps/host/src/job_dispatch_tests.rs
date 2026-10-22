@@ -538,7 +538,7 @@ fn published_journal_migration_adds_pointers_without_manufacturing_dispatch_auth
       INSERT INTO harness_job_attempts VALUES('published-generation','historical',1,'historical-run',10,11,NULL,'running','original reason');
       INSERT INTO harness_job_mutations VALUES('owner','original','fingerprint','{  \"accepted\": true  }');").unwrap();
     job_attempts::initialize(&connection).unwrap();
-    crate::job_retries::initialize(&connection).unwrap();
+    crate::job_retries::initialize_legacy_schema(&connection).unwrap();
     {
         let tx = connection.transaction().unwrap();
         job_attempts::backfill(&tx).unwrap();

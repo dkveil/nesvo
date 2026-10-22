@@ -94,11 +94,13 @@ fn apply_through(connection: &Connection, target: u32) -> Result<Vec<u32>> {
         "Schema migrations must run inside the caller's immediate transaction"
     );
     let adopting = !has_ledger(connection)? && predates_ledger(connection)?;
-    connection.execute_batch(LEDGER)?;
-    let applied_at = i64::try_from(crate::status::now_millis())?;
     if adopting {
         crate::orchestration::initialize(connection)
             .context("Could not bring the pre-migration journal schema to its last legacy shape")?;
+    }
+    connection.execute_batch(LEDGER)?;
+    let applied_at = i64::try_from(crate::status::now_millis())?;
+    if adopting {
         for migration in MIGRATIONS
             .iter()
             .filter(|migration| migration.version <= LEGACY_SCHEMA_VERSION)
@@ -134,6 +136,14 @@ fn latest_version() -> u32 {
 
 fn file_name(migration: &Migration) -> String {
     format!("{:04}_{}.sql", migration.version, migration.name)
+}
+
+pub(crate) fn ensure_pre_ledger(connection: &Connection) -> Result<()> {
+    ensure!(
+        !has_ledger(connection)?,
+        "Legacy schema initializers run only on a journal created before the migration ledger"
+    );
+    Ok(())
 }
 
 fn has_ledger(connection: &Connection) -> Result<bool> {
@@ -324,6 +334,29 @@ mod tests {
             schema_snapshot(&legacy),
             "migrations 0001 through the legacy version hold exactly the schema the pre-migration initializer creates"
         );
+    }
+
+    #[test]
+    fn legacy_schema_initializers_never_run_once_the_migration_ledger_exists() {
+        let ledgered = migrated_database();
+        let before = schema_snapshot(&ledgered);
+        assert!(crate::job_retries::initialize_legacy_schema(&ledgered).is_err());
+        assert!(crate::workflow_controls::initialize_legacy_schema(&ledgered).is_err());
+        assert!(crate::orchestration::initialize(&ledgered).is_err());
+        let mut reopened = ledgered;
+        let transaction = reopened
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        assert!(apply_pending(&transaction).unwrap().is_empty());
+        transaction.commit().unwrap();
+        assert_eq!(schema_snapshot(&reopened), before);
+        let mut adopted = legacy_schema();
+        let transaction = adopted
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        assert!(!apply_pending(&transaction).unwrap().is_empty());
+        transaction.commit().unwrap();
+        assert!(crate::job_retries::initialize_legacy_schema(&adopted).is_err());
     }
 
     #[test]
