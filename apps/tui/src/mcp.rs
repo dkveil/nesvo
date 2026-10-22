@@ -3019,17 +3019,25 @@ mod tests {
         let schema: Value =
             serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
         let definitions = &schema["definitions"];
-        for (name, extra) in [
-            ("jobLaunchReconciliation", ["available", "reason", "digest"]),
+        for (name, extra, optional) in [
+            (
+                "jobLaunchReconciliation",
+                ["available", "reason", "digest"],
+                1,
+            ),
             (
                 "jobLaunchResolution",
                 ["digest", "mutationKey", "acknowledgedAt"],
+                0,
             ),
         ] {
             let object = &definitions[name];
             assert_eq!(object["type"], "object");
             assert_eq!(object["additionalProperties"], false);
-            assert_eq!(object["properties"].as_object().unwrap().len(), 11);
+            assert_eq!(
+                object["properties"].as_object().unwrap().len(),
+                11 + optional
+            );
             let required = object["required"].as_array().unwrap();
             assert_eq!(required.len(), 11);
             assert_eq!(object["properties"]["kind"]["const"], "launchNoEffect");
@@ -3063,6 +3071,16 @@ mod tests {
         assert_eq!(
             definitions["jobLaunchReconciliation"]["properties"]["digest"]["type"],
             json!(["string", "null"])
+        );
+        assert_eq!(
+            definitions["jobLaunchReconciliation"]["properties"]["retryClassification"]["$ref"],
+            "#/definitions/jobRetryClassification"
+        );
+        assert!(
+            !definitions["jobLaunchReconciliation"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("retryClassification"))
         );
         assert_eq!(
             definitions["jobLaunchResolution"]["properties"]["digest"]["type"],
