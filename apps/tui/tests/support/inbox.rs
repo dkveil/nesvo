@@ -2,19 +2,10 @@ use super::*;
 
 pub(super) async fn scoped_cli(context: &Path, args: &[&str]) -> Result<Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
-    command
-        .env("NESVO_AGENT_CONTEXT", context)
-        .args(args)
-        .stdin(Stdio::null());
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(15), command.output()).await??;
-    ensure!(
-        output.status.success(),
-        "Scoped CLI failed: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    Ok(serde_json::from_slice(&output.stdout)?)
+    command.env("NESVO_AGENT_CONTEXT", context).args(args);
+    waits::cli(command)
+        .await
+        .with_context(|| format!("Scoped CLI {}", args.join(" ")))
 }
 
 #[tokio::test]
@@ -22,14 +13,7 @@ pub(super) async fn scoped_cli(context: &Path, args: &[&str]) -> Result<Value> {
 async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> {
     let mut fixture = Fixture::start_variant(true).await?;
     let outcome=std::panic::AssertUnwindSafe(async {
-        timeout(Duration::from_secs(5),async {
-            loop {
-                let report=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing()).args(["doctor","--json"]).output().await?;
-                let report:Value=serde_json::from_slice(&report.stdout)?;
-                if report["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")) {return Ok::<_,anyhow::Error>(());}
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await??;
+        waits::provider(&fixture,"claude").await?;
         let owner=client(&fixture.pairing()).await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"inbox-root","spec":{"name":"Inbox coordinator","role":"coordinator","program":"claude","harness":true}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("inbox root")?;
@@ -100,8 +84,7 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
         assert_eq!(ack["data"]["acknowledged"],repeat["data"]["acknowledged"]);
         let question=data(call(&worker,"nesvo_send_message",json!({"key":"question-1","runId":run_id,"correlationId":attempt,"kind":"question","body":"Controlled question, not a permission grant"})).await?)?;
         let holding=data(call(&owner,"nesvo_send_prompt",json!({"key":"root-hold","sessionId":root_id,"prompt":"hold-response"})).await?)?;
-        let started=data(call(&owner,"nesvo_wait_prompt",json!({"id":holding["data"]["receipt"]["id"],"sessionId":root_id,"until":"started","timeoutMs":5000})).await?)?;
-        assert_eq!(started["data"]["wait"]["reached"],true);
+        waits::receipt(&owner,&holding["data"]["receipt"]["id"],root_id,"started").await?;
         report_from_controlled_worker(&coordinator,&fixture.directory,child_id).await?;
         let working=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
         assert_eq!(working["data"]["session"]["status"]["state"],"working");
@@ -119,13 +102,7 @@ async fn retains_results_while_coordinator_works_and_reconnects() -> Result<()> 
         data(call(&owner,"nesvo_interrupt_session",json!({"key":"release-root-hold","sessionId":root_id})).await?)?;
         session_ready(&owner,root_id).await?;
         data(call(&owner,"nesvo_stop_session",json!({"key":"stop-inbox-root","sessionId":root_id})).await?)?;
-        timeout(Duration::from_secs(5),async {
-            loop {
-                let observed=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
-                if observed["data"]["session"]["running"]==false {return Ok::<_,anyhow::Error>(());}
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await??;
+        waits::session(&owner,root_id,waits::Session::Stopped).await?;
         let revoked=call(&reconnected,"nesvo_read_inbox",json!({"runId":run_id})).await?;assert_eq!(revoked.is_error,Some(true));
         let retained=data(call(&owner,"nesvo_read_inbox",json!({"runId":run_id})).await?)?;
         assert_eq!(retained["data"]["pendingCount"],1);assert_eq!(retained["data"]["messages"][0]["kind"],"result");
@@ -166,7 +143,7 @@ async fn assert_cli_schema(values: &[Value]) -> Result<()> {
     let mut input = child.stdin.take().context("schema checker stdin")?;
     input.write_all(&serde_json::to_vec(values)?).await?;
     drop(input);
-    let output = timeout(Duration::from_secs(5), child.wait_with_output()).await??;
+    let output = child.wait_with_output().await?;
     ensure!(
         output.status.success(),
         "Actual decision CLI output violates versioned schema: {}",

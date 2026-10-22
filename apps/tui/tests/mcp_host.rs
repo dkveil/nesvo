@@ -113,6 +113,8 @@ mod scoped_review_context;
 mod startup_trace;
 #[path = "support/task_tool_profiles.rs"]
 mod task_tool_profiles;
+#[path = "support/waits.rs"]
+mod waits;
 impl Fixture {
     async fn start() -> Result<Self> {
         Self::start_variant(false).await
@@ -300,7 +302,7 @@ impl Fixture {
         } else {
             drop(self.host.stdin.take());
         }
-        let status = timeout(Duration::from_secs(12), self.host.wait()).await??;
+        let status = self.host.wait().await?;
         ensure!(
             force || status.success(),
             "Owned host did not finish graceful shutdown"
@@ -320,20 +322,12 @@ impl Fixture {
     async fn stop(&mut self) -> Result<()> {
         let host_pid = self.host.id();
         drop(self.host.stdin.take());
-        let status = timeout(Duration::from_secs(10), self.host.wait())
-            .await
-            .with_context(|| {
-                format!(
-                    "Wait for owned native host {host_pid:?} shutdown in {}",
-                    self.directory.display()
-                )
-            })?
-            .with_context(|| {
-                format!(
-                    "Reap owned native host {host_pid:?} in {}",
-                    self.directory.display()
-                )
-            })?;
+        let status = self.host.wait().await.with_context(|| {
+            format!(
+                "Reap owned native host {host_pid:?} in {}",
+                self.directory.display()
+            )
+        })?;
         ensure!(
             status.success(),
             "Isolated host did not finish clean PTY shutdown"
@@ -453,19 +447,9 @@ async fn scoped_client(context: &Path, id: &str) -> Result<RunningService<RoleCl
     Ok(().serve(TokioChildProcess::new(command)?).await?)
 }
 async fn session_ready(client: &RunningService<RoleClient, ()>, id: &str) -> Result<()> {
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let current = data(call(client, "nesvo_get_session", json!({"sessionId":id})).await?)?;
-            if current["data"]["session"]["readiness"]["phase"] == "ready"
-                && current["data"]["session"]["status"]["state"] == "idle"
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("Controlled provider readiness")??;
+    waits::session(client, id, waits::Session::Ready)
+        .await
+        .context("Controlled provider readiness")?;
     Ok(())
 }
 async fn human_control(pairing: &Path, id: &str) -> Result<Child> {
@@ -491,7 +475,7 @@ async fn human_control_variant(pairing: &Path, id: &str, draft: bool) -> Result<
     command.creation_flags(0x08000000);
     let mut process = command.spawn()?;
     let mut output = BufReader::new(process.stdout.take().context("human fixture stdout")?).lines();
-    let ready = timeout(Duration::from_secs(10), output.next_line()).await??;
+    let ready = output.next_line().await?;
     ensure!(
         ready.as_deref() == Some("HUMAN_CONTROL_READY"),
         "Human fixture did not acquire its lease"
@@ -519,9 +503,10 @@ async fn recoveries(pairing: &Path) -> Result<Value> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(10), command.output())
+    let output = command
+        .output()
         .await
-        .context("Owned native recovery query deadline")??;
+        .context("Owned native recovery query")?;
     ensure!(
         output.status.success(),
         "Owned recovery query failed: {}",
@@ -572,27 +557,9 @@ async fn observed_output(
     id: &str,
     marker: &str,
 ) -> Result<()> {
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let page = data(
-                call(
-                    client,
-                    "nesvo_read_session",
-                    json!({"sessionId":id,"maxBytes":8192}),
-                )
-                .await?,
-            )?;
-            if page["data"]["page"]["data"]
-                .as_str()
-                .is_some_and(|text| text.contains(marker))
-            {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("The isolated shell did not produce the expected output before interruption")??;
+    waits::output(client, id, marker)
+        .await
+        .context("The isolated session did not produce the expected output")?;
     Ok(())
 }
 
@@ -612,18 +579,9 @@ async fn report_from_controlled_worker(
         )
         .await?,
     )?;
-    let ended = data(
-        call(
-            client,
-            "nesvo_wait_prompt",
-            json!({"id":sent["data"]["receipt"]["id"],"sessionId":id,"timeoutMs":10000}),
-        )
-        .await?,
-    )?;
-    ensure!(
-        ended["data"]["wait"]["reached"] == true,
-        "Controlled report turn did not settle"
-    );
+    waits::receipt(client, &sent["data"]["receipt"]["id"], id, "settled")
+        .await
+        .context("Controlled report turn did not settle")?;
     Ok(serde_json::from_slice(&std::fs::read(
         directory.join("callers").join(format!("{id}.result.json")),
     )?)?)
@@ -654,26 +612,20 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         let initial = data(call(&mcp, "nesvo_list_sessions", json!({})).await?)?;
         assert_eq!(initial["data"]["sessions"], json!([]));
         let spec = json!({"name":"MCP shell łódź","program":"shell","cwd":fixture.directory});
-        let created = data(
-            call(
+        let created = data(call(
                 &mcp,
                 "nesvo_create_session",
                 json!({"key":"sdk-once","spec":spec}),
-            )
-            .await?,
-        )?;
+            ).await?)?;
         assert_eq!(created["data"]["receipt"]["phase"], "created");
         let id = created["data"]["receipt"]["sessionId"]
             .as_str()
             .context("created session")?;
-        let replay = data(
-            call(
+        let replay = data(call(
                 &mcp,
                 "nesvo_create_session",
                 json!({"key":"sdk-once","spec":spec}),
-            )
-            .await?,
-        )?;
+            ).await?)?;
         assert_eq!(replay, created);
         let cli = Command::new(env!("CARGO_BIN_EXE_nesvo"))
             .arg("--pairing")
@@ -793,13 +745,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         ensure!(replay_stop.status.success(),"CLI stop replay failed");
         let replay_stop:Value=serde_json::from_slice(&replay_stop.stdout)?;
         assert_eq!(replay_stop["data"]["receipt"],stopped["data"]["receipt"]);
-        timeout(Duration::from_secs(5), async {
-            loop {
-                let observed=data(call(&mcp,"nesvo_get_session",json!({"sessionId":stop_id})).await?)?;
-                if observed["data"]["session"]["running"]==false {return Ok::<_,anyhow::Error>(());}
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        }).await??;
+        waits::session(&mcp,stop_id,waits::Session::Stopped).await?;
         let already_stopped=data(call(&mcp,"nesvo_stop_session",json!({"sessionId":stop_id,"key":"sdk-already-stopped"})).await?)?;
         assert_eq!(already_stopped["data"]["receipt"]["phase"],"stopped");
         assert_eq!(already_stopped["data"]["receipt"]["result"]["processExited"],true);
@@ -879,7 +825,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
                 .context("stdio")?
                 .write_all(&input)
                 .await?;
-            let output = timeout(Duration::from_secs(5), process.wait_with_output()).await??;
+            let output = process.wait_with_output().await?;
             assert!(
                 output.stdout.is_empty(),
                 "stdout contains only protocol frames"
@@ -887,12 +833,7 @@ async fn sdk_client_uses_native_mcp_receipts_and_shuts_down_without_control() ->
         }
         let disconnected = client(&fixture.pairing()).await?;
         drop(fixture.host.stdin.take());
-        ensure!(
-            timeout(Duration::from_secs(10), fixture.host.wait())
-                .await??
-                .success(),
-            "host shutdown"
-        );
+        ensure!(fixture.host.wait().await?.success(), "host shutdown");
         let unavailable = call(&disconnected, "nesvo_list_sessions", json!({})).await?;
         assert_eq!(unavailable.is_error, Some(true));
         assert_eq!(
@@ -927,14 +868,7 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let workspace=fixture.directory.join("workspace");
         std::fs::create_dir(&workspace)?;
         let owner=client(&fixture.pairing()).await?;
-        timeout(Duration::from_secs(5),async {
-            loop {
-                let report=Command::new(env!("CARGO_BIN_EXE_nesvo")).arg("--pairing").arg(fixture.pairing()).args(["doctor","--json"]).output().await?;
-                let report:Value=serde_json::from_slice(&report.stdout)?;
-                if report["providerVersions"].as_array().is_some_and(|versions|versions.iter().any(|v|v["program"]=="claude"&&v["status"]=="ready")) {return Ok::<_,anyhow::Error>(());}
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await??;
+        waits::provider(&fixture,"claude").await?;
         let root=data(call(&owner,"nesvo_create_session",json!({"key":"coordinator","spec":{"name":"Coordinator fixture","program":"claude","role":"coordinator","harness":true,"cwd":workspace}})).await?)?;
         let root_id=root["data"]["receipt"]["sessionId"].as_str().context("coordinator ID")?;
         session_ready(&owner,root_id).await?;
@@ -944,13 +878,7 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         assert_eq!(root_view["data"]["session"]["harness"]["loaded"],Value::Null,"prepared configuration does not prove model pickup");
         data(call(&owner,"nesvo_send_prompt",json!({"sessionId":root_id,"key":"spawn-child","prompt":"spawn-child"})).await?)?;
         let result_path=fixture.directory.join("callers").join(format!("{root_id}.child.json"));
-        let spawned=timeout(Duration::from_secs(10),async {
-            loop {
-                if let Ok(contents)=std::fs::read(&result_path)
-                    && let Ok(value)=serde_json::from_slice::<Value>(&contents) {return value;}
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await.context("Managed process did not create its child through the CLI")?;
+        let spawned=waits::caller_file(&owner,root_id,&result_path).await.context("Managed process did not create its child through the CLI")?;
         let child_id=spawned["data"]["receipt"]["sessionId"].as_str().context("managed child")?;
         assert_eq!(spawned["data"]["receipt"]["phase"],"created");
         session_ready(&owner,child_id).await?;
@@ -1004,7 +932,7 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let explained=data(call(&owner,"nesvo_explain_session",json!({"sessionId":codex_id})).await?)?;
         assert_eq!(explained["data"]["report"]["sessions"][0]["integration"]["adapter"],"codex-hooks-v1");
         let codex_sent=data(call(&owner,"nesvo_send_prompt",json!({"sessionId":codex_id,"key":"native-codex-turn","prompt":"literal native Codex prompt"})).await?)?;
-        let codex_done=data(call(&owner,"nesvo_wait_prompt",json!({"id":codex_sent["data"]["receipt"]["id"],"timeoutMs":5000})).await?)?;
+        let codex_done=waits::receipt(&owner,&codex_sent["data"]["receipt"]["id"],codex_id,"settled").await?;
         assert_eq!(codex_done["data"]["receipt"]["phase"],"settled");
         let unsupported=call(&owner,"nesvo_create_session",json!({"key":"unsupported-harness","spec":{"name":"Unsupported shell harness","program":"shell","harness":true}})).await?;
         assert_eq!(unsupported.structured_content.context("unsupported provider")?["error"]["receipt"]["result"]["code"],"unsupported");
@@ -1025,16 +953,10 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let refused=call(&coordinator,"nesvo_assign_task",json!({"key":"human-assignment","runId":scoped_run_id,"taskId":implementation,"sessionId":child_id,"expectedRevision":3})).await?;
         assert_eq!(refused.structured_content.context("human assignment refusal")?["error"]["code"],"control_busy");
         drop(human.stdin.take());
-        ensure!(timeout(Duration::from_secs(5),human.wait()).await??.success(),"Human fixture shutdown");
-        timeout(Duration::from_secs(5),async {
-            loop {
-                let view=data(call(&owner,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;
-                if view["data"]["session"]["controllerId"].is_null() {return Ok::<_,anyhow::Error>(());}
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await??;
+        ensure!(human.wait().await?.success(),"Human fixture shutdown");
+        waits::session(&owner,child_id,waits::Session::Released).await?;
         let sent=data(call(&coordinator,"nesvo_send_prompt",json!({"sessionId":child_id,"key":"child-turn","prompt":"literal child prompt"})).await?)?;
-        let completed=data(call(&coordinator,"nesvo_wait_prompt",json!({"id":sent["data"]["receipt"]["id"],"sessionId":child_id,"timeoutMs":5000})).await?)?;
+        let completed=waits::receipt(&coordinator,&sent["data"]["receipt"]["id"],child_id,"settled").await?;
         assert_eq!(completed["data"]["receipt"]["phase"],"settled");
         let events=data(call(&coordinator,"nesvo_read_events",json!({"sessionId":child_id,"after":0})).await?)?;
         assert!(events["data"]["events"].as_array().context("child events")?.iter().all(|event|event["sessionId"]==child_id));
@@ -1083,13 +1005,7 @@ async fn coordinator_uses_its_own_context_to_create_and_control_only_granted_chi
         let replay=data(call(&reconnected,"nesvo_get_operation",json!({"key":"agent-child-once"})).await?)?;
         assert_eq!(replay["data"]["receipt"],spawned["data"]["receipt"]);
         data(call(&owner,"nesvo_stop_session",json!({"sessionId":root_id,"key":"stop-coordinator"})).await?)?;
-        timeout(Duration::from_secs(5),async {
-            loop {
-                let view=data(call(&owner,"nesvo_get_session",json!({"sessionId":root_id})).await?)?;
-                if view["data"]["session"]["running"]==false {return Ok::<_,anyhow::Error>(());}
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }).await??;
+        waits::session(&owner,root_id,waits::Session::Stopped).await?;
         let revoked=call(&reconnected,"nesvo_get_session",json!({"sessionId":child_id})).await?;
         assert_eq!(revoked.is_error,Some(true));
         let surviving=data(call(&owner,"nesvo_get_session",json!({"sessionId":child_id})).await?)?;

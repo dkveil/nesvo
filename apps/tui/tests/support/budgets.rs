@@ -5,21 +5,10 @@ fn limits(slots: u16, workers: u16, shell: u16) -> Value {
 }
 pub(super) async fn owner_cli(fixture: &Fixture, args: &[&str]) -> Result<Value> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nesvo"));
-    command
-        .arg("--pairing")
-        .arg(fixture.pairing())
-        .args(args)
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(15), command.output()).await??;
-    ensure!(
-        output.status.success(),
-        "Budget CLI failed: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    Ok(serde_json::from_slice(&output.stdout)?)
+    command.arg("--pairing").arg(fixture.pairing()).args(args);
+    waits::cli(command)
+        .await
+        .with_context(|| format!("Owner CLI {}", args.join(" ")))
 }
 #[tokio::test]
 #[ignore = "requires built native binaries and Node; process budget fixture without model calls"]
@@ -67,11 +56,7 @@ async fn owner_budgets_bound_native_and_scoped_creation_without_terminating_work
         assert_eq!(current["data"]["sessions"].as_array().context("preserved native work")?.len(),10);
         assert!(current["data"]["sessions"].as_array().unwrap().iter().all(|s|s["running"]==true&&s["controllerId"].is_null()),"Policy changes do not kill work or acquire control");
         data(call(&owner,"nesvo_stop_session",json!({"key":"budget-stop","sessionId":shells[0]})).await?)?;
-        timeout(Duration::from_secs(5),async {loop {
-            let view=data(call(&owner,"nesvo_get_session",json!({"sessionId":shells[0]})).await?)?;
-            if view["data"]["session"]["running"]==false {return Ok::<_,anyhow::Error>(());}
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }}).await??;
+        waits::session(&owner,&shells[0],waits::Session::Stopped).await?;
         data(call(&coordinator,"nesvo_create_session",json!({"key":"released-provider-slot","spec":{"name":"Allowed fresh child","program":"shell"}})).await?)?;
         data(call(&owner,"nesvo_set_host_budget",json!({"key":"retention-limit","expectedRevision":4,"limits":limits(1,16,16)})).await?)?;
         let historical=owner_cli(&fixture,&["run","mutation","--key","large-budget","--json"]).await?;
