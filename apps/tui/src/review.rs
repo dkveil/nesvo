@@ -2,6 +2,7 @@ use crate::{
     model::App,
     theme::{BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT},
 };
+pub use nesvo_wire::views::review::{FileDiff, ReviewData};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -9,29 +10,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Clear, Paragraph},
 };
-use serde::Deserialize;
 use std::collections::HashSet;
 
-#[derive(Default, Deserialize)]
-pub struct ReviewData {
-    #[serde(default)]
-    pub directory: Option<String>,
-    #[serde(default)]
-    pub source: Option<String>,
-    #[serde(default)]
-    pub revision: Option<String>,
-    pub files: Vec<FileDiff>,
-    pub truncated: bool,
-}
-#[derive(Deserialize)]
-pub struct FileDiff {
-    pub path: String,
-    pub status: String,
-    pub patch: String,
-    pub additions: usize,
-    pub deletions: usize,
-    pub truncated: bool,
-}
 #[derive(Default)]
 pub struct ReviewState {
     pub return_to_input: bool,

@@ -4,9 +4,16 @@ use crate::{
     review_comments::{self, Anchor, Comments, Side},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use nesvo_wire::views::{
+    self, HostError, ReplyHeader,
+    review::{
+        DeliverReview, DeliveryPath, DiffReply, OpenReview, OpenedScope, ProvenanceFile,
+        ReviewContext, ReviewContextRequest, ReviewDelivered, ReviewDiffRequest, ReviewOpened,
+        ReviewProgress, ReviewSource, ReviewSourceKind,
+    },
+};
 use ratatui::layout::Rect;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -349,93 +356,6 @@ fn longest_increasing(found: &[(usize, usize)]) -> Vec<(usize, usize)> {
     run
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct BaseInfo {
-    #[serde(rename = "ref")]
-    pub name: String,
-    pub oid: String,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct HeadInfo {
-    #[serde(default, rename = "ref")]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub oid: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Checks {
-    pub total: u64,
-    pub passed: u64,
-    pub failed: u64,
-    pub pending: u64,
-    #[serde(default)]
-    pub current: Option<bool>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Opened {
-    pub review_id: String,
-    pub directory: String,
-    pub source: Value,
-    #[serde(default)]
-    pub base: Option<BaseInfo>,
-    #[serde(default)]
-    pub head: HeadInfo,
-    pub scope: String,
-    pub revision: String,
-    #[serde(default)]
-    pub checks: Option<Checks>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct BaseRelation {
-    #[serde(default)]
-    pub behind: u64,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct Readiness {
-    #[serde(default)]
-    pub blockers: Vec<String>,
-    #[serde(default)]
-    pub ready: bool,
-    #[serde(default)]
-    pub branch: Option<String>,
-    #[serde(default)]
-    pub base: Option<BaseRelation>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ProvenanceFile {
-    pub path: String,
-    pub attribution: String,
-    #[serde(default, rename = "thisTurn")]
-    pub this_turn: bool,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct Provenance {
-    #[serde(default)]
-    pub evidence: String,
-    #[serde(default)]
-    pub files: Vec<ProvenanceFile>,
-    #[serde(default)]
-    pub truncated: bool,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct Context {
-    pub readiness: Readiness,
-    #[serde(default)]
-    pub provenance: Option<Provenance>,
-    #[serde(default)]
-    pub checks: Option<Checks>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
     Info,
@@ -511,18 +431,18 @@ pub struct ReviewTab {
     pub pull_url: Option<String>,
     pub stage: Option<String>,
     pub error: Option<String>,
-    pub opened: Option<Opened>,
+    pub opened: Option<ReviewOpened>,
     pub scope: Scope,
     pub base: Option<String>,
     pub data: ReviewData,
     pub revision: Option<String>,
-    pub context: Option<Context>,
+    pub context: Option<ReviewContext>,
     pub comments: Comments,
     pub view: View,
     pub input: Option<Input>,
     pub list: Option<usize>,
     pub status: Option<Status>,
-    source: Value,
+    source: ReviewSource,
     opening: Option<String>,
     expired_open: Option<String>,
     open_pending: Option<Value>,
@@ -540,12 +460,12 @@ pub struct ReviewTab {
 }
 
 impl ReviewTab {
-    fn new(label: String, source: Value) -> Self {
+    fn new(label: String, source: ReviewSource) -> Self {
         Self {
             review_id: None,
             label,
-            session_id: source["sessionId"].as_str().map(str::to_owned),
-            pull_url: source["url"].as_str().map(str::to_owned),
+            session_id: source.session_id.clone(),
+            pull_url: source.url.clone(),
             stage: None,
             error: None,
             opened: None,
@@ -1065,7 +985,7 @@ pub fn open(app: &mut App, source: Source) -> Vec<Value> {
                 .position(|tab| tab.session_id.as_deref() == Some(id) && tab.pull_url.is_none()),
             app.session(id)
                 .map_or_else(|| "local changes".into(), |session| session.name.clone()),
-            json!({"kind":"local","sessionId":id}),
+            ReviewSource::local(id),
         ),
         Source::Pull(url) => (
             app.reviews
@@ -1073,7 +993,7 @@ pub fn open(app: &mut App, source: Source) -> Vec<Value> {
                 .iter()
                 .position(|tab| tab.pull_url.as_deref() == Some(url)),
             pull_label(url),
-            json!({"kind":"pull","url":url}),
+            ReviewSource::pull(url),
         ),
     };
     if let Some(index) = existing {
@@ -1095,7 +1015,7 @@ pub fn open(app: &mut App, source: Source) -> Vec<Value> {
 
 fn restart_open(app: &mut App, index: usize) {
     let source = app.reviews.tabs[index].source.clone();
-    let command = app.request(json!({"type":"openReview","source":source}));
+    let command = app.typed_request(&OpenReview { source: &source });
     let tab = &mut app.reviews.tabs[index];
     tab.opening = command["requestId"].as_str().map(str::to_owned);
     tab.open_pending = Some(command);
@@ -1109,19 +1029,17 @@ fn pull_label(url: &str) -> String {
         .replacen("/pull/", "#", 1)
 }
 
-fn source_label(app: &App, opened: &Opened) -> String {
+fn source_label(app: &App, opened: &ReviewOpened) -> String {
     let source = &opened.source;
-    if source["kind"] == "pull"
-        && let (Some(owner), Some(repo), Some(number)) = (
-            source["owner"].as_str(),
-            source["repo"].as_str(),
-            source["number"].as_u64(),
-        )
+    if source.kind == ReviewSourceKind::Pull
+        && let (Some(owner), Some(repo), Some(number)) =
+            (&source.owner, &source.repo, source.number)
     {
         return format!("{owner}/{repo}#{number}");
     }
-    source["sessionId"]
-        .as_str()
+    source
+        .session_id
+        .as_deref()
         .and_then(|id| app.session(id))
         .map(|session| session.name.clone())
         .unwrap_or_else(|| {
@@ -1157,11 +1075,11 @@ pub fn pump(app: &mut App) -> Vec<Value> {
             continue;
         };
         let key = tab.key();
-        let mut command = json!({"type":"getDiff","reviewId":review_id,"scope":"branch"});
-        if let Some(base) = &key.base {
-            command["base"] = base.clone().into();
-        }
-        let command = app.request(command);
+        let command = app.typed_request(&ReviewDiffRequest {
+            review_id: &review_id,
+            scope: "branch",
+            base: key.base.as_deref(),
+        });
         let tab = &mut app.reviews.tabs[index];
         tab.diff_wanted = false;
         tab.diff_request = command["requestId"].as_str().map(str::to_owned);
@@ -1175,7 +1093,9 @@ pub fn pump(app: &mut App) -> Vec<Value> {
         let Some(review_id) = tab.review_id.clone().filter(|_| tab.context_wanted) else {
             continue;
         };
-        let command = app.request(json!({"type":"reviewContext","reviewId":review_id}));
+        let command = app.typed_request(&ReviewContextRequest {
+            review_id: &review_id,
+        });
         let tab = &mut app.reviews.tabs[index];
         tab.context_wanted = false;
         tab.context_request = command["requestId"].as_str().map(str::to_owned);
@@ -1223,8 +1143,9 @@ pub fn tick(app: &mut App) -> Vec<Value> {
 }
 
 pub fn host_event(app: &mut App, event: &Value) -> Option<()> {
-    let request = event["requestId"].as_str();
-    match event["type"].as_str()? {
+    let header = ReplyHeader::of(event);
+    let request = header.request_id.as_deref();
+    match header.kind.as_deref()? {
         "reviewProgress" => {
             if let Some(tab) = app
                 .reviews
@@ -1232,15 +1153,18 @@ pub fn host_event(app: &mut App, event: &Value) -> Option<()> {
                 .iter_mut()
                 .find(|tab| tab.opening.is_some() && tab.opening.as_deref() == request)
             {
-                tab.stage = event["stage"].as_str().map(str::to_owned);
+                let progress: ReviewProgress = views::decode(event).unwrap_or_default();
+                tab.stage = progress.stage;
             }
         }
-        "reviewOpened" => opened(app, event),
-        "diff" if event["reviewId"].is_string() => {
+        "reviewOpened" => opened(app, event, request),
+        "diff" => {
+            let reply: DiffReply = views::decode(event).unwrap_or_default();
+            reply.review_id.as_ref()?;
             let index = app.reviews.tabs.iter().position(|tab| {
                 tab.diff_request.is_some() && tab.diff_request.as_deref() == request
             })?;
-            accept_diff(app, index, event);
+            accept_diff(app, index, reply);
         }
         "reviewContext" => {
             let index = app.reviews.tabs.iter().position(|tab| {
@@ -1249,13 +1173,13 @@ pub fn host_event(app: &mut App, event: &Value) -> Option<()> {
             let tab = &mut app.reviews.tabs[index];
             tab.context_request = None;
             tab.sent_at = None;
-            match serde_json::from_value::<Context>(event.clone()) {
-                Ok(context) => {
+            match views::decode::<ReviewContext>(event) {
+                Some(context) => {
                     tab.context = Some(context);
                     tab.context_revision = tab.revision.clone();
                     tab.clamp();
                 }
-                Err(_) => {
+                None => {
                     tab.status = Status::new(Tone::Warning, "The host sent unreadable readiness.")
                 }
             }
@@ -1266,7 +1190,7 @@ pub fn host_event(app: &mut App, event: &Value) -> Option<()> {
                     .as_ref()
                     .is_some_and(|(id, _, _)| Some(id.as_str()) == request)
             })?;
-            delivered(app, index, event);
+            delivered(app, index, views::decode(event).unwrap_or_default());
         }
         "error" => {
             let request = request?;
@@ -1279,15 +1203,15 @@ pub fn host_event(app: &mut App, event: &Value) -> Option<()> {
                         .as_ref()
                         .is_some_and(|(id, _, _)| id == request)
             })?;
-            failed(app, index, request, event);
+            failed(app, index, request, &HostError::of(event));
         }
         _ => return None,
     }
     Some(())
 }
 
-fn opened(app: &mut App, event: &Value) {
-    let Ok(opened) = serde_json::from_value::<Opened>(event.clone()) else {
+fn opened(app: &mut App, event: &Value, request: Option<&str>) {
+    let Some(opened) = views::decode::<ReviewOpened>(event) else {
         app.notice = "The host sent an unreadable review.".into();
         return;
     };
@@ -1295,7 +1219,6 @@ fn opened(app: &mut App, event: &Value) {
         app.notice = "The host sent an invalid review id.".into();
         return;
     }
-    let request = event["requestId"].as_str();
     let by_request = request.and_then(|id| {
         app.reviews.tabs.iter().position(|tab| {
             tab.opening.as_deref() == Some(id) || tab.expired_open.as_deref() == Some(id)
@@ -1318,15 +1241,15 @@ fn opened(app: &mut App, event: &Value) {
     let store = app.reviews.store.clone();
     let tab = &mut app.reviews.tabs[index];
     if tab.review_id.is_none() {
-        tab.scope = if opened.scope == "branch" {
+        tab.scope = if opened.scope == OpenedScope::Branch {
             Scope::Branch
         } else {
             Scope::Uncommitted
         };
     }
     tab.label = label;
-    tab.session_id = opened.source["sessionId"].as_str().map(str::to_owned);
-    tab.pull_url = opened.source["url"].as_str().map(str::to_owned);
+    tab.session_id = opened.source.session_id.clone();
+    tab.pull_url = opened.source.url.clone();
     tab.review_id = Some(opened.review_id.clone());
     tab.opening = None;
     tab.expired_open = None;
@@ -1362,17 +1285,17 @@ fn opened(app: &mut App, event: &Value) {
     }
 }
 
-fn accept_diff(app: &mut App, index: usize, event: &Value) {
+fn accept_diff(app: &mut App, index: usize, reply: DiffReply) {
     let store = app.reviews.store.clone();
     let tab = &mut app.reviews.tabs[index];
     tab.diff_request = None;
     tab.sent_at = None;
     let key = tab.requested_key.take();
-    if let Some(error) = event["error"].as_str() {
-        tab.error = Some(error.to_owned());
+    if let Some(error) = reply.error {
+        tab.error = Some(error);
         return;
     }
-    let Ok(data) = serde_json::from_value::<ReviewData>(event["review"].clone()) else {
+    let Some(data) = reply.review.0 else {
         tab.error = Some("The host sent an unreadable diff.".into());
         return;
     };
@@ -1422,26 +1345,27 @@ fn session_name(app: &App, id: &str) -> String {
         .map_or_else(|| "the session".into(), |session| session.name.clone())
 }
 
-fn delivered(app: &mut App, index: usize, event: &Value) {
+fn delivered(app: &mut App, index: usize, reply: ReviewDelivered) {
     let Some((_, session, note)) = app.reviews.tabs[index].delivery.take() else {
         return;
     };
     let name = session_name(app, &session);
-    let receipt = &event["receipt"];
-    let id: String = receipt["id"]
-        .as_str()
-        .or(receipt["operationId"].as_str())
+    let receipt = &reply.receipt;
+    let id: String = receipt
+        .id
+        .as_deref()
+        .or(receipt.operation_id.as_deref())
         .unwrap_or("none")
         .chars()
         .take(8)
         .collect();
-    let bytes = event["bytes"].as_u64().unwrap_or(0);
-    let text = if event["path"] == "paste" {
+    let bytes = reply.bytes.unwrap_or(0);
+    let text = if reply.path == Some(DeliveryPath::Paste) {
         format!(
             "Pasted into {name} ({bytes} bytes, receipt {id}); press Enter there to submit.{note}"
         )
     } else {
-        let phase = receipt["phase"].as_str().unwrap_or("accepted");
+        let phase = receipt.phase.as_deref().unwrap_or("accepted");
         format!("Sent to {name} ({bytes} bytes, {phase}, receipt {id}).{note}")
     };
     app.reviews.tabs[index].status = Status::new(Tone::Success, text);
@@ -1461,13 +1385,9 @@ fn refusal(code: &str, message: &str) -> String {
     }
 }
 
-fn failed(app: &mut App, index: usize, request: &str, event: &Value) {
-    let code = event["code"].as_str().unwrap_or_default();
-    let message = event["message"]
-        .as_str()
-        .unwrap_or("Host rejected the request")
-        .to_owned();
-    let text = refusal(code, &message);
+fn failed(app: &mut App, index: usize, request: &str, error: &HostError) {
+    let code = error.code();
+    let text = refusal(code, error.message_or("Host rejected the request"));
     let tab = &mut app.reviews.tabs[index];
     if tab
         .delivery
@@ -1509,11 +1429,12 @@ pub fn deliver(app: &mut App, review_id: &str, session_id: &str) -> Option<Value
         review_comments::OPERATION_BYTES
     };
     let document = review_comments::document(&app.reviews.tabs[index].comments, cap);
-    let mut command = json!({"type":"deliverReview","reviewId":review_id,"sessionId":session_id,"text":document.text});
-    if let Some(lease) = lease {
-        command["leaseId"] = lease.into();
-    }
-    let command = app.request(command);
+    let command = app.typed_request(&DeliverReview {
+        review_id,
+        session_id,
+        text: &document.text,
+        lease_id: lease.as_deref(),
+    });
     let note = if document.truncated() {
         format!(
             " Truncated to {} bytes: {} of {} comments included.",
@@ -1982,6 +1903,7 @@ pub fn scroll(app: &mut App, up: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn review_rows_number_both_sides_and_keep_meta_without_hunks() {

@@ -1,6 +1,6 @@
 use anyhow::{Result, ensure};
+use nesvo_wire::views::{Tolerant, lenient};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -74,6 +74,26 @@ pub struct Comment {
     pub text: String,
     #[serde(default)]
     pub drifted: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredComments<'a> {
+    comments: &'a [Comment],
+    next_id: u64,
+    summary: &'a str,
+    version: u8,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct LoadedComments {
+    #[serde(deserialize_with = "lenient")]
+    comments: Vec<Tolerant<Comment>>,
+    #[serde(deserialize_with = "lenient")]
+    next_id: Option<u64>,
+    #[serde(deserialize_with = "lenient")]
+    summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -204,12 +224,12 @@ impl Comments {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        serde_json::to_vec(&json!({
-            "version": 1,
-            "summary": self.summary,
-            "nextId": self.next_id,
-            "comments": self.comments,
-        }))
+        serde_json::to_vec(&StoredComments {
+            comments: &self.comments,
+            next_id: self.next_id,
+            summary: &self.summary,
+            version: 1,
+        })
         .unwrap_or_default()
     }
 
@@ -217,12 +237,12 @@ impl Comments {
         if bytes.len() > STORE_BYTES {
             return Self::default();
         }
-        let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        let Ok(stored) = serde_json::from_slice::<LoadedComments>(bytes) else {
             return Self::default();
         };
         let mut comments: Vec<Comment> = Vec::new();
-        for entry in value["comments"].as_array().into_iter().flatten() {
-            let Ok(mut comment) = serde_json::from_value::<Comment>(entry.clone()) else {
+        for Tolerant(entry) in stored.comments {
+            let Some(mut comment) = entry else {
                 continue;
             };
             let Ok(text) = normalized_text(&comment.text) else {
@@ -238,13 +258,13 @@ impl Comments {
             comment.anchor.snippet = snippet(comment.anchor.snippet.lines());
             comments.push(comment);
         }
-        let next_id = value["nextId"]
-            .as_u64()
+        let next_id = stored
+            .next_id
             .unwrap_or(1)
             .max(comments.iter().map(|c| c.id + 1).max().unwrap_or(1));
         Self {
-            summary: value["summary"]
-                .as_str()
+            summary: stored
+                .summary
                 .map(|text| clean(text.trim(), true).chars().take(TEXT_CHARS).collect())
                 .unwrap_or_default(),
             comments,

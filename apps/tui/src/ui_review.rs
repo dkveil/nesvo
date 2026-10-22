@@ -209,7 +209,7 @@ fn source_line(tab: &ReviewTab, accent: Color) -> Line<'static> {
         tab.scope.label().to_owned(),
         Style::default().fg(accent).add_modifier(Modifier::BOLD),
     )];
-    if let Some(title) = opened.source["title"].as_str() {
+    if let Some(title) = &opened.source.title {
         spans.push(Span::styled(
             format!(" · {title}"),
             Style::default().fg(TEXT),

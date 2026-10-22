@@ -5,6 +5,10 @@ use crate::{
     theme::Theme,
 };
 use anyhow::Result;
+use nesvo_wire::views::{
+    self,
+    review::{DiffReply, SessionDiffRequest, WatchReviews},
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -1342,20 +1346,24 @@ impl App {
         };
         match kind {
             "diff" => {
-                if event["requestId"].as_str() == self.review.request_id.as_deref()
-                    && event["sessionId"].as_str() == Some(self.review.session_id.as_str())
+                let reply: DiffReply = views::decode(&event).unwrap_or_default();
+                if reply.request_id.as_deref() == self.review.request_id.as_deref()
+                    && reply.session_id.as_deref() == Some(self.review.session_id.as_str())
                 {
                     self.review.request_id = None;
-                    self.review.error = event["error"].as_str().map(str::to_owned);
+                    self.review.error = reply.error;
                     if self.review.error.is_none() {
-                        self.review
-                            .accept(serde_json::from_value(event["review"].clone())?);
+                        self.review.accept(
+                            reply.review.0.ok_or_else(|| {
+                                anyhow::anyhow!("The host sent an unreadable diff")
+                            })?,
+                        );
                     }
                 }
             }
             "capabilities" => {
                 if event["reviews"] == true && self.host_features["reviews"] != true {
-                    commands.push(json!({"type":"watchReviews"}));
+                    commands.push(views::encode(&WatchReviews {}));
                 }
                 self.host_features = event.clone();
                 self.capabilities = Some(serde_json::from_value(event)?);
@@ -1740,7 +1748,12 @@ impl App {
             self.review.folded.clear();
         }
         self.review.session_id = id.clone();
-        let command = self.request(json!({"type":"getDiff", "sessionId":id, "scope":crate::review::SCOPES[self.review.scope], "directory":self.review.directory}));
+        let directory = self.review.directory.clone();
+        let command = self.typed_request(&SessionDiffRequest {
+            session_id: &id,
+            scope: crate::review::SCOPES[self.review.scope],
+            directory: directory.as_deref(),
+        });
         self.review.request_id = command["requestId"].as_str().map(str::to_owned);
         Some(command)
     }
@@ -1756,6 +1769,10 @@ impl App {
         }
         command["requestId"] = id.into();
         command
+    }
+
+    pub fn typed_request<T: serde::Serialize>(&mut self, request: &T) -> Value {
+        self.request(nesvo_wire::views::encode(request))
     }
 
     pub fn browse_directory(&mut self, path: String) -> Value {
