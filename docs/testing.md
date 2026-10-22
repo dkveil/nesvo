@@ -328,6 +328,55 @@ shutdown; owned-child kill/reap observation is bounded at two seconds. No pairin
 keys, SQLite contents, prompt text or raw startup lines are sampled. Diagnostics
 do not retry startup or establish the root cause of a timeout by themselves.
 
+### Native hibernation, host checks, wake holds and decision replay
+
+These ignored `mcp_host` scenarios give native evidence to behavior that host unit
+tests covered alone. They use the controlled Node worker and real Git, never a
+model, and run in the `Native nightly` cohort like the others:
+
+```powershell
+cargo test --package nesvo --test mcp_host --locked hibernation:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked host_checks:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked wake_holds:: -- --ignored --test-threads=1
+cargo test --package nesvo --test mcp_host --locked decision_replay:: -- --ignored --test-threads=1
+```
+
+- `hibernation` refuses a shell with `hibernate_unsupported`, hibernates an idle
+  worker through the owner CLI, replays the key over MCP, restarts the host and
+  resumes the session under its ID through the verified exact-resume gate. The
+  worker answers a prompt again and the journal holds `session.hibernated` then
+  `session.resumed`. `tests/fixtures/resumable-identity.cjs` wraps the controlled
+  worker so its hooks report a UUID conversation and, when launched with
+  `--resume`, a `resume` session start for that conversation.
+- `host_checks` approves a committed `nesvo.toml` template whose tasks declare
+  checks, starts it with the executor in host-created worktrees and validates both
+  results with `hostChecks:true`. A committed script writes a marker into the
+  worktree, never the source checkout; the failing task keeps its `passed`,
+  `failed`, `passed` outcomes and exit code, ends `failed` with
+  `refusedBy:"hostChecks"`, and its replay does not run the checks again.
+- `wake_holds` holds an enabled wake policy, queues a question, restarts the host
+  and sees the hold still listed. After coordinator recovery the hold stays and the
+  coordinator cannot release it; the owner's release delivers exactly one batch,
+  and replaying the release key delivers nothing more.
+- `decision_replay` writes `nesvo_decide` to a raw MCP adapter whose stdout is
+  discarded, waits until the host records the answer and kills the adapter, so the
+  reply is lost. The replay returns the same decision, the CLI shares it, another
+  answer is refused with `decision_resolved`, and the journal, worker mailbox and
+  inbox show one decision.
+
+The same file holds the golden writer for the client contract:
+`real_inbox_and_decision_replies_match_the_client_contract_goldens` captures real
+`attentionInbox`, `decisions`, `inboxAcknowledged` and `decided` replies, replaces
+IDs, timestamps and cursors with stable placeholders and compares them with
+`tests/fixtures/host-inbox-replies.json`, failing on drift.
+`tests/client-contract.test.ts` decodes and schema-checks that file. Regenerate it
+after a deliberate reply change and review the diff:
+
+```powershell
+$env:NESVO_UPDATE_CONTRACTS = "1"
+cargo test --package nesvo --test mcp_host --locked decision_replay::real_inbox_and_decision_replies_match_the_client_contract_goldens -- --ignored --exact
+```
+
 ### Ultraviolet checks
 
 `npm run test:brand` checks the shared palette, exact SVG-to-terminal glyph geometry and six-second motion timeline. `npm run test:brand:web` checks the rendered logo, full violet visor during blinking, session creation from the launchpad, narrow layout, reduced motion and animation suspension when hidden or offscreen. These checks run in CI alongside the existing application and terminal tests.
