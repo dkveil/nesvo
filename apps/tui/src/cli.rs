@@ -119,6 +119,15 @@ pub enum McpCommand {
         #[command(subcommand)]
         command: McpPoolCommand,
     },
+    #[command(
+        about = "Owner-only list of a repository's declared nesvo.toml MCP servers with approval, resolution and attached sessions; runs nothing"
+    )]
+    Servers {
+        #[arg(long)]
+        directory: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 #[derive(Subcommand)]
 pub enum McpPoolCommand {
@@ -651,6 +660,9 @@ impl Command {
                     Some(McpCommand::Pool {
                         command: McpPoolCommand::Status { json },
                     }),
+            } => *json,
+            Self::Mcp {
+                command: Some(McpCommand::Servers { json, .. }),
             } => *json,
             Self::Run { command } => command.machine(),
             Self::Job { command } => command.machine(),
@@ -1368,6 +1380,35 @@ pub(crate) fn worktree_session_query(
     })
 }
 
+pub(crate) fn mcp_servers_query(directory: &str) -> Result<(Value, &'static str)> {
+    if !bounded(directory, 4096) {
+        return Err(failure(
+            "invalid_argument",
+            "Use an absolute host folder inside a Git repository",
+        ));
+    }
+    Ok((
+        json!({"type":"listMcpServers","directory":directory}),
+        "mcpServers",
+    ))
+}
+
+pub(crate) async fn mcp_servers_capability(connection: &mut Connection) -> Result<()> {
+    let caps = request(
+        connection,
+        json!({"type":"getCapabilities"}),
+        "capabilities",
+    )
+    .await?;
+    if caps["mcpServers"] != true {
+        return Err(failure(
+            "unsupported",
+            "Host does not list declared MCP servers; update nesvo-host",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) async fn worktree_capability(connection: &mut Connection) -> Result<()> {
     let caps = request(
         connection,
@@ -1935,6 +1976,13 @@ pub async fn run(command: Command, connection: &mut Connection) -> Result<()> {
                 json,
                 request(connection, json!({"type":"mcpPoolStatus"}), "mcpPool").await?,
             );
+        }
+        Command::Mcp {
+            command: Some(McpCommand::Servers { directory, json }),
+        } => {
+            let (query, kind) = mcp_servers_query(&directory)?;
+            mcp_servers_capability(connection).await?;
+            return print_data(json, request(connection, query, kind).await?);
         }
         Command::Mcp { command: None } => {
             return Err(failure(
@@ -3406,6 +3454,7 @@ mod reply_kind_tests {
         &["doctor"],
         &["session", "explain", "s"],
         &["mcp", "pool", "status"],
+        &["mcp", "servers", "--directory", "/repo"],
         &["events"],
         &["quota"],
         &["session", "create", "Shell", "--key", "k"],
@@ -3528,6 +3577,9 @@ mod reply_kind_tests {
             Command::Job { .. } | Command::Budget { .. } | Command::Run { .. } => vec!["workflow"],
             Command::Mcp { command: None } => Vec::new(),
             Command::Doctor { .. } => vec![DIAGNOSTICS],
+            Command::Mcp {
+                command: Some(McpCommand::Servers { directory, .. }),
+            } => built(mcp_servers_query(directory)),
             Command::Mcp { command: Some(_) } => vec!["mcpPool"],
             Command::Operation { .. } => vec!["operation"],
             Command::Events { .. } => vec!["events"],
@@ -3683,6 +3735,27 @@ mod mcp_pool_cli_tests {
             }
         ));
         assert!(crate::Arguments::try_parse_from(["nesvo", "mcp", "pool"]).is_err());
+        let servers = crate::Arguments::try_parse_from([
+            "nesvo",
+            "mcp",
+            "servers",
+            "--directory",
+            "/repo",
+            "--json",
+        ])
+        .unwrap()
+        .command
+        .unwrap();
+        assert!(servers.machine());
+        assert!(crate::Arguments::try_parse_from(["nesvo", "mcp", "servers"]).is_err());
+        assert_eq!(
+            mcp_servers_query("/repo").unwrap(),
+            (
+                json!({"type":"listMcpServers","directory":"/repo"}),
+                "mcpServers"
+            )
+        );
+        assert!(mcp_servers_query("").is_err());
         let schema: Value =
             serde_json::from_str(include_str!("../../../docs/harness-cli.schema.json")).unwrap();
         assert!(

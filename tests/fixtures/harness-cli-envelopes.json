@@ -2894,5 +2894,50 @@
     },
     "ok": true,
     "schemaVersion": 1
+  },
+  {
+    "data": {
+      "approved": true,
+      "attached": [
+        {
+          "entryId": null,
+          "mode": "cold",
+          "program": "claude",
+          "reason": "notPrepared",
+          "repository": "C:\fixturemcp-servers",
+          "server": "docs",
+          "sessionId": "7d2c0e8a9b1f4c3d8e6a5b4c3d2e1f00"
+        }
+      ],
+      "bounds": {
+        "processes": 4,
+        "serversPerRepository": 8,
+        "warmPerKey": 1
+      },
+      "configured": true,
+      "digest": "4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f",
+      "providers": {
+        "claude": "launchConfig",
+        "codex": "unsupported",
+        "gemini": "unsupported"
+      },
+      "repository": "C:\fixturemcp-servers",
+      "servers": [
+        {
+          "args": ["server.cjs"],
+          "command": "node",
+          "cwd": "tools/mcp",
+          "env": ["PATH"],
+          "name": "docs",
+          "problem": null,
+          "resolvedCommand": "C:\fixture\bin\node.exe",
+          "state": "approved"
+        }
+      ],
+      "source": "HEAD:nesvo.toml",
+      "type": "mcpServers"
+    },
+    "ok": true,
+    "schemaVersion": 1
   }
 ]

@@ -8411,6 +8411,191 @@
               },
               "required": ["type", "available", "bounds", "processes", "entries", "sessions"],
               "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approved": {
+                  "type": "boolean"
+                },
+                "attached": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "entryId": {
+                        "type": ["string", "null"]
+                      },
+                      "mode": {
+                        "enum": ["pooled", "cold", "dedicated"],
+                        "type": "string"
+                      },
+                      "program": {
+                        "enum": ["shell", "claude", "codex", "gemini"],
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": ["string", "null"]
+                      },
+                      "repository": {
+                        "type": "string"
+                      },
+                      "server": {
+                        "type": "string"
+                      },
+                      "sessionId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "server",
+                      "program",
+                      "mode",
+                      "reason",
+                      "entryId",
+                      "repository"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 256,
+                  "type": "array"
+                },
+                "bounds": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "processes": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "serversPerRepository": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "warmPerKey": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["serversPerRepository", "processes", "warmPerKey"],
+                  "type": "object"
+                },
+                "configured": {
+                  "type": "boolean"
+                },
+                "digest": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": ["string", "null"]
+                },
+                "providers": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "claude": {
+                      "enum": ["launchConfig", "unsupported"],
+                      "type": "string"
+                    },
+                    "codex": {
+                      "enum": ["launchConfig", "unsupported"],
+                      "type": "string"
+                    },
+                    "gemini": {
+                      "enum": ["launchConfig", "unsupported"],
+                      "type": "string"
+                    }
+                  },
+                  "required": ["claude", "codex", "gemini"],
+                  "type": "object"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "servers": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "args": {
+                        "items": {
+                          "maxLength": 4096,
+                          "type": "string"
+                        },
+                        "maxItems": 64,
+                        "type": "array"
+                      },
+                      "command": {
+                        "maxLength": 1024,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "cwd": {
+                        "maxLength": 512,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "env": {
+                        "items": {
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+                          "type": "string"
+                        },
+                        "maxItems": 32,
+                        "type": "array"
+                      },
+                      "name": {
+                        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                        "type": "string"
+                      },
+                      "problem": {
+                        "enum": [
+                          "commandUnavailable",
+                          "cwdUnavailable",
+                          "cwdOutsideRepository",
+                          null
+                        ],
+                        "type": ["string", "null"]
+                      },
+                      "resolvedCommand": {
+                        "type": ["string", "null"]
+                      },
+                      "state": {
+                        "enum": ["approved", "unapproved"],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "command",
+                      "args",
+                      "env",
+                      "cwd",
+                      "state",
+                      "resolvedCommand",
+                      "problem"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 8,
+                  "type": "array"
+                },
+                "source": {
+                  "const": "HEAD:nesvo.toml",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "mcpServers",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "repository",
+                "source",
+                "configured",
+                "digest",
+                "approved",
+                "servers",
+                "attached",
+                "providers",
+                "bounds"
+              ],
+              "type": "object"
             }
           ]
         },

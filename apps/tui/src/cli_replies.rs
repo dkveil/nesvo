@@ -7,6 +7,7 @@ mod projects;
 mod quota;
 mod review;
 mod runs;
+mod servers;
 mod session;
 mod templates;
 mod triggers;
@@ -22,6 +23,7 @@ pub use projects::*;
 pub use quota::*;
 pub use review::*;
 pub use runs::*;
+pub use servers::*;
 pub use session::*;
 pub use templates::*;
 pub use triggers::*;
@@ -139,6 +141,7 @@ pub enum Reply {
     WorkflowTemplatesRevoked(WorkflowTemplatesRevokedReply),
     WorkflowTemplateStarted(WorkflowTemplateStartedReply),
     McpPool(McpPoolReply),
+    McpServers(McpServersReply),
 }
 
 impl Reply {

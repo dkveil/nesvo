@@ -921,6 +921,43 @@ export type HarnessCliEnvelope =
               sessionId: string;
             }[];
             type: 'mcpPool';
+          }
+        | {
+            approved: boolean;
+            attached: {
+              entryId: string | null;
+              mode: 'pooled' | 'cold' | 'dedicated';
+              program: 'shell' | 'claude' | 'codex' | 'gemini';
+              reason: string | null;
+              repository: string;
+              server: string;
+              sessionId: string;
+            }[];
+            bounds: {
+              processes: number;
+              serversPerRepository: number;
+              warmPerKey: number;
+            };
+            configured: boolean;
+            digest: string | null;
+            providers: {
+              claude: 'launchConfig' | 'unsupported';
+              codex: 'launchConfig' | 'unsupported';
+              gemini: 'launchConfig' | 'unsupported';
+            };
+            repository: string;
+            servers: {
+              args: string[];
+              command: string;
+              cwd: string;
+              env: string[];
+              name: string;
+              problem: 'commandUnavailable' | 'cwdUnavailable' | 'cwdOutsideRepository' | null;
+              resolvedCommand: string | null;
+              state: 'approved' | 'unapproved';
+            }[];
+            source: 'HEAD:nesvo.toml';
+            type: 'mcpServers';
           };
       ok: true;
       schemaVersion: 1;
