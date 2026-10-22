@@ -608,6 +608,7 @@ export type HarnessCliEnvelope =
           }
         | {
             hibernation?: SessionHibernation;
+            reason?: 'owner' | 'restored';
             replayed: boolean;
             resume?: ResumeVerification;
             sessionId: Id;
@@ -937,6 +938,7 @@ export type HarnessCliEnvelope =
       programs: unknown[];
       providerVersions: unknown[];
       schemaVersion: 1;
+      sessionRestore?: SessionRestoreReport;
       sessions: unknown[];
       [k: string]: unknown | undefined;
     };
@@ -2250,7 +2252,7 @@ export type SessionHibernation = {
   hibernatedAt: Cursor;
   lastResumeFailure: string | null;
   state: 'hibernated';
-  trigger: 'owner' | 'idlePolicy';
+  trigger: 'owner' | 'idlePolicy' | 'shutdown';
 };
 export type LaunchProfile = {
   inheritedByChildren: false;
@@ -2379,4 +2381,17 @@ export type LaunchProfileSupport = {
   program: 'claude' | 'codex' | 'gemini';
   supported: boolean;
   version: string | null;
+};
+export type SessionRestoreReport = {
+  policy: {
+    concurrency: number;
+    enabled: boolean;
+  };
+  sessions: {
+    code: string | null;
+    message: string | null;
+    outcome: 'pending' | 'restored' | 'hibernated' | 'reaped';
+    sessionId: Id;
+    shutdownAt: Cursor;
+  }[];
 };

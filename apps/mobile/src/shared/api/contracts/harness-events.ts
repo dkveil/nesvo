@@ -322,8 +322,9 @@ export type HarnessEventRecord = {
 );
 export type AgentState =
   'working' | 'idle' | 'done' | 'blocked' | 'question' | 'failed' | 'unknown';
-export type HibernationTrigger = 'owner' | 'idlePolicy';
+export type HibernationTrigger = 'owner' | 'idlePolicy' | 'shutdown';
 export type Program = 'shell' | 'claude' | 'gemini' | 'codex';
+export type ResumeReason = 'owner' | 'restored';
 export type SessionClosed = Record<string, never>;
 
 export type AgentAttention = {
@@ -500,6 +501,7 @@ export type SessionHibernated = {
 export type SessionResumed = {
   conversationId: string;
   program: Program;
+  reason?: ResumeReason;
 };
 export type WorktreeArchived = {
   blockers: string[];
