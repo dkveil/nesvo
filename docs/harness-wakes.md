@@ -60,10 +60,15 @@ commit with their source transaction. Failed publication remains pending with
 bounded local retry; a failed durable notice insertion does not silently accept
 the source mutation. No status/render path performs SQLite or network I/O.
 
-`run wake get` returns at most eight notice references, `nextCursor`, `hasMore`
-and `pendingCount` (notices not yet assigned a batch). Continue with
-`--after NEXT_CURSOR`; this cursor belongs to wake notices, not domain events,
-terminal bytes or inbox messages. A cursor ahead of the run is rejected.
+`run wake get` returns the run and its `wakePolicy` (`id`, `runId`,
+`coordinator`, `issuer`, `enabled`, `generation`, `phase`, `reason`, `createdAt`
+in Unix milliseconds, `delivery` and `held`; `null` before the first enable). It
+also returns at most eight notice references, `pendingCount` (notices not yet
+assigned a batch), `nextCursor`, `more`, `deliveredThrough` (the highest notice
+sequence any batch has claimed, 0 before the first) and `batches` (the newest
+eight batch summaries). Continue with `--after NEXT_CURSOR` while `more` is true;
+this cursor belongs to wake notices, not domain events, terminal bytes or inbox
+messages. A cursor ahead of the run is rejected.
 References include the actual inbox `messageId`/`messageSequence` or the current
 attempt/session and canonical attention. Reading does not claim or send them.
 
@@ -129,11 +134,10 @@ the run's latest saved checkpoint ID and digest. A `full` batch additionally car
 the current context digest and part count, the unacknowledged inbox count and up to
 eight task key/state pairs, and its fixed prompt names that digest so the
 coordinator can read `nesvo run checkpoint context` without guessing. It restores no
-native effect and never resends a claimed notice. `run wake get` now also returns
-`deliveredThrough` and the newest eight batch summaries (`id`, `phase`, `reason`,
-`delivery`, `noticeCount`, `native.phase`); `run wake batch` adds `delivery`,
-`afterSequence` and `baseline`. Older batches report `delivery:"delta"` and null
-checkpoint fields.
+native effect and never resends a claimed notice. In `run wake get`, each batch
+summary holds `id`, `phase`, `reason`, `createdAt`, `delivery`, `noticeCount` and
+`native.phase`; `run wake batch` also reports `delivery`, `afterSequence` and
+`baseline`. Older batches report `delivery:"delta"` and null checkpoint fields.
 
 The TUI Runs view (`W`) shows this policy for the selected run and the newest three
 batches: `w` enables, holds or resumes delivery, and `f` switches between delta-only
