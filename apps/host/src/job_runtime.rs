@@ -201,12 +201,37 @@ impl Runner {
             _ => Err(anyhow!("Job metadata preparation was not confirmed")),
         }
     }
-    async fn dispatch(&self, claim: Claim, permit: OwnedSemaphorePermit) -> Result<()> {
-        self.admission_open()?;
+    async fn dispatch(
+        &self,
+        claim: Claim,
+        permit: OwnedSemaphorePermit,
+    ) -> std::result::Result<(), Failure> {
         let mut permit = Some(permit);
+        let admitted = self.admit(&claim, &mut permit).await;
+        if !admitted.map_err(|error| Failure {
+            error,
+            stage: Stage::Admission,
+        })? {
+            return Ok(());
+        }
+        let mut native_requested = false;
+        let launched = self
+            .launch(&claim, &mut permit, &mut native_requested)
+            .await;
+        launched.map_err(|error| Failure {
+            error,
+            stage: Stage::Launch { native_requested },
+        })
+    }
+    async fn admit(
+        &self,
+        claim: &Claim,
+        permit: &mut Option<OwnedSemaphorePermit>,
+    ) -> Result<bool> {
+        self.admission_open()?;
         match quota_step(
             &self.slots,
-            &mut permit,
+            permit,
             self.log.subscribe(),
             self.shutdown.clone(),
             || {
@@ -235,41 +260,158 @@ impl Runner {
                         .await?,
                     Reply::PrecheckPassed(true)
                 ) {
-                    return Ok(());
+                    return Ok(false);
                 }
             }
             Reply::Precheck(None) => {}
-            Reply::PrecheckPassed(false) => return Ok(()),
+            Reply::PrecheckPassed(false) => return Ok(false),
             _ => return Err(anyhow!("Precheck admission was not confirmed")),
         }
-        let mut native_requested = false;
+        Ok(true)
+    }
+    async fn launch(
+        &self,
+        claim: &Claim,
+        permit: &mut Option<OwnedSemaphorePermit>,
+        native_requested: &mut bool,
+    ) -> Result<()> {
         let prefix =
             crate::job_attempts::key_prefix(&claim.job_id, &claim.id, i64::from(claim.ordinal));
-        let result=async {
-            self.admission_open()?;
-            let run=self.workflow(&mut permit,&claim.dispatch,json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
-            let run_id=run["run"]["id"].as_str().ok_or_else(||anyhow!("Job run identity was not confirmed"))?;
-            self.admission_open()?;
-            quota_step(&self.slots,&mut permit,self.log.subscribe(),self.shutdown.clone(),||self.log.jobs(Work::BindRun{dispatch:claim.dispatch.clone(),run:run_id.into()})).await?;
-            let plan=self.workflow(&mut permit,&claim.dispatch,json!({"action":"setPlan","key":format!("{prefix}:plan"),"runId":run_id,"expectedRevision":run["run"]["revision"],"tasks":[{"key":"job","title":claim.spec.title,"instruction":claim.spec.instruction}]})).await?;
-            let limits=self.workflow(&mut permit,&claim.dispatch,json!({"action":"runBudget","request":{"action":"set","key":format!("{prefix}:budget"),"runId":run_id,"expectedRevision":plan["run"]["revision"],"limits":{"maxParallel":1,"maxAttemptsPerTask":1,"maxElapsedMs":claim.spec.max_elapsed_ms}}})).await?;
-            let active=self.workflow(&mut permit,&claim.dispatch,json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run_id,"expectedRevision":limits["run"]["revision"]})).await?;
-            let request=serde_json::from_value(json!({"action":"start","key":format!("{prefix}:executor"),"runId":run_id,"expectedRevision":active["run"]["revision"],"spec":{"tasks":[{"taskId":plan["tasks"][0]["id"],"profile":claim.spec.profile}],"retryFailed":false}}))?;
-            self.admission_open()?;
-            native_requested=true;
-            crate::workflow_executor_runtime::execute(self.state.clone(),self.events.clone(),self.log.clone(),owner(),Authority::Owner,request).await?;
-            self.log.jobs(Work::Started{dispatch:claim.dispatch.clone()}).await?;
-            Ok::<_,anyhow::Error>(())
-        }.await;
-        if result.is_err() {
-            self.log
-                .jobs(Work::Refused {
+        self.admission_open()?;
+        let run=self.workflow(permit,&claim.dispatch,json!({"action":"create","key":format!("{prefix}:run"),"spec":{"title":claim.spec.title,"goal":claim.spec.instruction}})).await?;
+        let run_id = run["run"]["id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Job run identity was not confirmed"))?;
+        self.admission_open()?;
+        quota_step(
+            &self.slots,
+            permit,
+            self.log.subscribe(),
+            self.shutdown.clone(),
+            || {
+                self.log.jobs(Work::BindRun {
                     dispatch: claim.dispatch.clone(),
-                    uncertain: native_requested,
+                    run: run_id.into(),
                 })
-                .await?;
+            },
+        )
+        .await?;
+        let plan=self.workflow(permit,&claim.dispatch,json!({"action":"setPlan","key":format!("{prefix}:plan"),"runId":run_id,"expectedRevision":run["run"]["revision"],"tasks":[{"key":"job","title":claim.spec.title,"instruction":claim.spec.instruction}]})).await?;
+        let limits=self.workflow(permit,&claim.dispatch,json!({"action":"runBudget","request":{"action":"set","key":format!("{prefix}:budget"),"runId":run_id,"expectedRevision":plan["run"]["revision"],"limits":{"maxParallel":1,"maxAttemptsPerTask":1,"maxElapsedMs":claim.spec.max_elapsed_ms}}})).await?;
+        let active=self.workflow(permit,&claim.dispatch,json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run_id,"expectedRevision":limits["run"]["revision"]})).await?;
+        let request = serde_json::from_value(
+            json!({"action":"start","key":format!("{prefix}:executor"),"runId":run_id,"expectedRevision":active["run"]["revision"],"spec":{"tasks":[{"taskId":plan["tasks"][0]["id"],"profile":claim.spec.profile}],"retryFailed":false}}),
+        )?;
+        self.admission_open()?;
+        *native_requested = true;
+        crate::workflow_executor_runtime::execute(
+            self.state.clone(),
+            self.events.clone(),
+            self.log.clone(),
+            owner(),
+            Authority::Owner,
+            request,
+        )
+        .await?;
+        self.log
+            .jobs(Work::Started {
+                dispatch: claim.dispatch.clone(),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+enum Stage {
+    Admission,
+    Launch { native_requested: bool },
+}
+
+struct Failure {
+    error: anyhow::Error,
+    stage: Stage,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Closing {
+    Stopped,
+    Refused { uncertain: bool },
+    Interrupted,
+}
+
+type DispatchOutcome = std::thread::Result<std::result::Result<(), Failure>>;
+
+fn host_stopping(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<crate::api_error::Error>()
+        .is_some_and(|error| error.code == "host_stopping")
+}
+
+fn closing(outcome: &DispatchOutcome, stopping: bool) -> Option<Closing> {
+    match outcome {
+        Ok(Ok(())) => None,
+        Ok(Err(failure)) if stopping || host_stopping(&failure.error) => Some(Closing::Stopped),
+        Ok(Err(Failure {
+            stage: Stage::Launch { native_requested },
+            ..
+        })) => Some(Closing::Refused {
+            uncertain: *native_requested,
+        }),
+        Ok(Err(_)) | Err(_) => Some(Closing::Interrupted),
+    }
+}
+
+async fn settle(
+    log: &Service,
+    stopping: bool,
+    dispatch: crate::job_attempts::Dispatch,
+    outcome: DispatchOutcome,
+) -> Result<()> {
+    let Some(closing) = closing(&outcome, stopping) else {
+        return Ok(());
+    };
+    let shutdown = stopping || closing == Closing::Stopped;
+    let recorded = match closing {
+        Closing::Stopped => {
+            log.jobs(Work::Stopped {
+                dispatch: dispatch.clone(),
+            })
+            .await
         }
-        result
+        Closing::Refused { uncertain } => match log
+            .jobs(Work::Refused {
+                dispatch: dispatch.clone(),
+                uncertain,
+            })
+            .await
+        {
+            Err(_) => {
+                log.jobs(Work::Interrupted {
+                    dispatch: dispatch.clone(),
+                })
+                .await
+            }
+            recorded => recorded,
+        },
+        Closing::Interrupted => {
+            log.jobs(Work::Interrupted {
+                dispatch: dispatch.clone(),
+            })
+            .await
+        }
+    };
+    if let Err(error) = recorded {
+        if !shutdown {
+            return Err(error);
+        }
+        eprintln!(
+            "Job dispatch {} shutdown record is unconfirmed: {error}",
+            dispatch.occurrence
+        );
+    }
+    match outcome {
+        Err(_) => Err(anyhow!("Job dispatch was interrupted")),
+        Ok(_) => Ok(()),
     }
 }
 
@@ -420,24 +562,12 @@ async fn run(
                         let runner = runner.clone();
                         dispatches.spawn(async move {
                             let dispatch = claim.dispatch.clone();
-                            let result =
+                            let outcome =
                                 std::panic::AssertUnwindSafe(runner.dispatch(claim, permit))
                                     .catch_unwind()
                                     .await;
-                            if !matches!(result, Ok(Ok(()))) {
-                                runner.log.jobs(Work::Interrupted { dispatch }).await?;
-                            }
-                            match result {
-                                Ok(Err(error))
-                                    if error
-                                        .downcast_ref::<crate::api_error::Error>()
-                                        .is_some_and(|e| e.code == "host_stopping") =>
-                                {
-                                    Ok(())
-                                }
-                                Ok(result) => result,
-                                Err(_) => Err(anyhow!("Job dispatch was interrupted")),
-                            }
+                            let stopping = shutdown_requested(&runner.shutdown);
+                            settle(&runner.log, stopping, dispatch, outcome).await
                         });
                     }
                 }
@@ -644,5 +774,211 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.reason, "host_shutdown");
+    }
+
+    fn dispatch() -> crate::job_attempts::Dispatch {
+        crate::job_attempts::Dispatch {
+            occurrence: "occurrence".into(),
+            attempt: "attempt".into(),
+            token: "token".into(),
+        }
+    }
+
+    fn failed(stage: Stage, error: anyhow::Error) -> DispatchOutcome {
+        Ok(Err(Failure { error, stage }))
+    }
+
+    fn stopping_refusal() -> anyhow::Error {
+        crate::api_error::Error::new("host_stopping", "Job runtime is shutting down").into()
+    }
+
+    #[test]
+    fn dispatch_ended_by_graceful_shutdown_is_recorded_as_host_stopping() {
+        let refused_by_stopping_state = || {
+            failed(
+                Stage::Launch {
+                    native_requested: true,
+                },
+                anyhow!("Host is shutting down."),
+            )
+        };
+        assert_eq!(
+            closing(&refused_by_stopping_state(), true),
+            Some(Closing::Stopped)
+        );
+        assert_eq!(
+            closing(&failed(Stage::Admission, stopping_refusal()), false),
+            Some(Closing::Stopped)
+        );
+        assert_eq!(
+            closing(&refused_by_stopping_state(), false),
+            Some(Closing::Refused { uncertain: true })
+        );
+        assert_eq!(
+            closing(
+                &failed(
+                    Stage::Launch {
+                        native_requested: false
+                    },
+                    anyhow!("refused")
+                ),
+                false
+            ),
+            Some(Closing::Refused { uncertain: false })
+        );
+        assert_eq!(
+            closing(&failed(Stage::Admission, anyhow!("journal")), false),
+            Some(Closing::Interrupted)
+        );
+        let panicked: DispatchOutcome = Err(Box::new("fixture panic"));
+        assert_eq!(closing(&panicked, true), Some(Closing::Interrupted));
+        assert_eq!(closing(&Ok(Ok(())), true), None);
+    }
+
+    #[tokio::test]
+    async fn shutdown_journal_failure_is_reported_without_failing_the_runtime() {
+        let (log, writes) = Service::held();
+        drop(writes);
+        let during_shutdown = failed(
+            Stage::Launch {
+                native_requested: true,
+            },
+            anyhow!("Host is shutting down."),
+        );
+        settle(&log, true, dispatch(), during_shutdown)
+            .await
+            .unwrap();
+        settle(
+            &log,
+            false,
+            dispatch(),
+            failed(Stage::Admission, stopping_refusal()),
+        )
+        .await
+        .unwrap();
+        settle(&log, false, dispatch(), Ok(Ok(()))).await.unwrap();
+        let ordinary = failed(
+            Stage::Launch {
+                native_requested: false,
+            },
+            anyhow!("refused"),
+        );
+        assert!(
+            settle(&log, false, dispatch(), ordinary).await.is_err(),
+            "Outside shutdown an unrecorded refusal remains an unconfirmed dispatch"
+        );
+        let panicked: DispatchOutcome = Err(Box::new("fixture panic"));
+        assert!(settle(&log, true, dispatch(), panicked).await.is_err());
+    }
+
+    #[test]
+    fn stopped_dispatch_keeps_host_stopping_and_restart_hands_it_to_retry_classification() {
+        const NOW: u64 = 1_792_416_000_000;
+        let mut journal = crate::event_log::test_journal();
+        let at = chrono::DateTime::from_timestamp_millis((NOW + 60_000) as i64)
+            .unwrap()
+            .to_rfc3339();
+        let job = crate::job_definitions::execute(
+            &mut journal,
+            owner(),
+            serde_json::from_value(json!({
+                "action":"create","key":"definition:stopping","spec":{
+                    "title":"Stopped dispatch","instruction":"No native effects in this fixture",
+                    "profile":{"program":"claude","workspace":"shared"},
+                    "schedule":{"kind":"once","at":at},
+                    "retry":{"on":"launchNoEffect","maxAttempts":2,"initialDelayMs":1000,"maxDelayMs":1000}
+                }
+            }))
+            .unwrap(),
+            NOW,
+        )
+        .unwrap()["job"]
+            .clone();
+        crate::job_definitions::execute(
+            &mut journal,
+            owner(),
+            serde_json::from_value(json!({"action":"runNow","key":"manual:stopping","jobId":job["id"],"expectedRevision":1}))
+                .unwrap(),
+            NOW,
+        )
+        .unwrap();
+        let Reply::Claims(mut claims) =
+            crate::job_definitions::work(&mut journal, Work::Poll { slots: 1 }, NOW).unwrap()
+        else {
+            panic!("Expected one job claim");
+        };
+        let claim = claims.pop().unwrap();
+        crate::job_definitions::work(
+            &mut journal,
+            Work::Stopped {
+                dispatch: claim.dispatch.clone(),
+            },
+            NOW + 1,
+        )
+        .unwrap();
+        let row = |journal: &rusqlite::Connection| {
+            journal
+                .query_row(
+                    "SELECT o.state,o.reason,a.state,a.reason,a.dispatch_token IS NULL,
+                        (SELECT COUNT(*) FROM harness_job_retries r WHERE r.occurrence_id=o.id)
+                     FROM harness_job_occurrences o
+                     JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id
+                     WHERE o.id=?1",
+                    [&claim.id],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, Option<String>>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, Option<String>>(3)?,
+                            r.get::<_, bool>(4)?,
+                            r.get::<_, i64>(5)?,
+                        ))
+                    },
+                )
+                .unwrap()
+        };
+        let stopping = Some("host_stopping".to_owned());
+        assert_eq!(
+            row(&journal),
+            (
+                "reconcile".into(),
+                stopping.clone(),
+                "reconcile".into(),
+                stopping.clone(),
+                true,
+                0
+            ),
+            "A graceful stop is not a job failure and starts no retry before restart"
+        );
+        crate::job_definitions::recover(&mut journal, NOW + 2).unwrap();
+        assert_eq!(
+            row(&journal),
+            (
+                "retryWaiting".into(),
+                Some("retry_probe_pending".into()),
+                "reconcile".into(),
+                stopping,
+                true,
+                1
+            )
+        );
+        let classified: (String, String) = journal
+            .query_row(
+                "SELECT class,failure FROM harness_job_retries WHERE occurrence_id=?1",
+                [&claim.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            classified,
+            ("uncertainEffect".into(), "host_restarted".into())
+        );
+        crate::job_definitions::recover(&mut journal, NOW + 3).unwrap();
+        assert_eq!(
+            row(&journal).5,
+            1,
+            "A later restart does not classify twice"
+        );
     }
 }

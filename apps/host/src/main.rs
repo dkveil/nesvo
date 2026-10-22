@@ -576,13 +576,13 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
             }
         }
     }
+    job_runtime.request_shutdown();
     state.lock().unwrap().begin_shutdown();
     if let Some(task) = idle_hibernation {
         task.abort();
     }
     quota_runtime.request_shutdown();
     quota_wake_runtime.request_shutdown();
-    job_runtime.request_shutdown();
     repository_runtime.request_shutdown();
     let (job_shutdown, webhook_shutdown) = tokio::join!(job_runtime.shutdown(), async {
         if let Some(listener) = webhooks {

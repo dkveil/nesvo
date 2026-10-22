@@ -206,6 +206,9 @@ pub enum Work {
     Interrupted {
         dispatch: crate::job_attempts::Dispatch,
     },
+    Stopped {
+        dispatch: crate::job_attempts::Dispatch,
+    },
     CalendarDue,
     AdvanceCalendar {
         id: String,
@@ -311,6 +314,16 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
             false,
             now,
         )?;
+    }
+    let stopped = {
+        let mut q = transaction.prepare(
+            "SELECT id FROM harness_job_occurrences WHERE state='reconcile' AND reason='host_stopping'",
+        )?;
+        q.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for id in stopped {
+        crate::job_retries::classify(&transaction, &id, "host_restarted")?;
     }
     crate::job_cancellations::recover(&transaction, now)?;
     crate::job_timeouts::recover(&transaction, now)?;
@@ -599,6 +612,59 @@ pub(crate) fn transition(
         observe(transaction, &job, Some(id), &stored, now)?;
     }
     Ok(())
+}
+fn interrupt(
+    transaction: &Transaction<'_>,
+    dispatch: &crate::job_attempts::Dispatch,
+    reason: &str,
+    now: u64,
+) -> Result<Reply> {
+    crate::job_attempts::guard(
+        transaction,
+        dispatch,
+        &["dispatching", "prechecking", "canceling", "canceled"],
+    )?;
+    let occurrence = dispatch.occurrence.clone();
+    let phase: Option<String> = transaction
+        .query_row(
+            "SELECT state FROM harness_job_occurrences WHERE id=?1",
+            [&occurrence],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let running_precheck = crate::job_precheck_records::view_attempt(
+        transaction,
+        &occurrence,
+        &dispatch.attempt,
+        false,
+    )?["state"]
+        == "running";
+    if running_precheck {
+        let result = crate::job_prechecks::Outcome::failed(
+            crate::job_prechecks::OutcomeState::Unknown,
+            "dispatch_interrupted",
+        );
+        crate::job_precheck_records::finish_attempt(transaction, dispatch, result, now)?;
+        transition(
+            transaction,
+            &occurrence,
+            "reconcile",
+            Some("precheck_unconfirmed"),
+            false,
+            now,
+        )?;
+    } else if matches!(phase.as_deref(), Some("dispatching" | "running")) {
+        transition(
+            transaction,
+            &occurrence,
+            "reconcile",
+            Some(reason),
+            false,
+            now,
+        )?;
+    }
+    crate::job_attempts::retire(transaction, dispatch)?;
+    Ok(Reply::Done)
 }
 fn insert_occurrence(
     transaction: &Transaction<'_>,
@@ -1189,53 +1255,9 @@ pub fn work_at(connection: &mut Connection, work: Work, now: u64, elapsed: u64) 
             Reply::Done
         }
         Work::Interrupted { dispatch } => {
-            crate::job_attempts::guard(
-                &transaction,
-                &dispatch,
-                &["dispatching", "prechecking", "canceling", "canceled"],
-            )?;
-            let occurrence = dispatch.occurrence.clone();
-            let phase: Option<String> = transaction
-                .query_row(
-                    "SELECT state FROM harness_job_occurrences WHERE id=?1",
-                    [&occurrence],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let running_precheck = crate::job_precheck_records::view_attempt(
-                &transaction,
-                &occurrence,
-                &dispatch.attempt,
-                false,
-            )?["state"]
-                == "running";
-            if running_precheck {
-                let result = crate::job_prechecks::Outcome::failed(
-                    crate::job_prechecks::OutcomeState::Unknown,
-                    "dispatch_interrupted",
-                );
-                crate::job_precheck_records::finish_attempt(&transaction, &dispatch, result, now)?;
-                transition(
-                    &transaction,
-                    &occurrence,
-                    "reconcile",
-                    Some("precheck_unconfirmed"),
-                    false,
-                    now,
-                )?;
-            } else if matches!(phase.as_deref(), Some("dispatching" | "running")) {
-                transition(
-                    &transaction,
-                    &occurrence,
-                    "reconcile",
-                    Some("dispatch_interrupted"),
-                    false,
-                    now,
-                )?;
-            }
-            crate::job_attempts::retire(&transaction, &dispatch)?;
-            Reply::Done
+            interrupt(&transaction, &dispatch, "dispatch_interrupted", now)?
         }
+        Work::Stopped { dispatch } => interrupt(&transaction, &dispatch, "host_stopping", now)?,
         Work::BeginPrecheck { dispatch } => {
             crate::job_attempts::guard(&transaction, &dispatch, &["dispatching"])?;
             crate::job_quota::guard_dispatch(&transaction, &dispatch, elapsed)?;
