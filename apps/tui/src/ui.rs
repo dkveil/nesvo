@@ -1,4 +1,3 @@
-//! Rendering is a pure projection of App. No filesystem, network, or process calls.
 use crate::{
     brand,
     launch::Program,
@@ -219,8 +218,6 @@ pub fn pane_content(area: Rect, fullscreen: bool) -> Rect {
     if fullscreen {
         return area;
     }
-    // The tab is the title. Keep only side borders and the ownership row;
-    // controller resize and mouse geometry use this same content rectangle.
     Block::default()
         .borders(Borders::RIGHT | Borders::BOTTOM)
         .inner(area)
@@ -387,7 +384,6 @@ pub(crate) fn shortcut_spans(hint: &str) -> Vec<Span<'static>> {
     spans
 }
 
-/// Wrap complete key-description pairs; never leave a keycap without its label.
 pub(crate) fn shortcut_lines(items: &[&str], width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut spans = Vec::new();
@@ -872,7 +868,6 @@ fn render_tree(frame: &mut Frame, app: &App, area: Rect) {
             && app.jobs.is_none()
             && !crate::runs_controller::engaged(app)
         {
-            // Highlight the entire selectable row, including provider and status.
             let highlight_start = entry.x;
             for y in entry.y..entry.bottom() {
                 for x in highlight_start..entry.right() {

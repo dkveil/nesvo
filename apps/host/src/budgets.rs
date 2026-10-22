@@ -1,4 +1,3 @@
-//! Durable host admission policy. Reducing a limit never kills existing work.
 use crate::{
     api_error::Error,
     caller::Role,
@@ -12,16 +11,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::{Arc, RwLock};
 
-/// A transport/retention safety ceiling, distinct from the owner's lower policy.
 pub const SESSION_CEILING: u16 = 16;
-/// Reserve startup metadata before a provider can execute an initial prompt.
-/// Actual admission is checked again before persistence; the 8 KiB allowance
-/// exceeds fixed startup fields while user-controlled name/path bytes are exact.
+pub const SNAPSHOT_BUDGET_BYTES: usize = 48 * 1024;
+const STARTUP_METADATA_ALLOWANCE_BYTES: usize = 8 * 1024;
 pub fn admit_snapshot_bytes(current: usize, extra_text: usize) -> Result<()> {
     if current
         .checked_add(extra_text)
-        .and_then(|n| n.checked_add(8192))
-        .is_none_or(|n| n > 48 * 1024)
+        .and_then(|n| n.checked_add(STARTUP_METADATA_ALLOWANCE_BYTES))
+        .is_none_or(|n| n > SNAPSHOT_BUDGET_BYTES)
     {
         return Err(Error::new(
             "budget_snapshot_capacity",

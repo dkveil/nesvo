@@ -1,4 +1,3 @@
-//! Immutable checkpoints and current context reads never restore native effects.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -314,8 +313,6 @@ pub fn execute(
             }),
         }],
     )?;
-    // Capturing history does not alter the plan/run revision or refresh native
-    // grants. The immutable source revision remains useful for comparison.
     let mut result = read(&transaction, &actor, &run_id, Some(&id), 0, false, None)?;
     result["cursor"] = cursor.into();
     orchestration::remember(&transaction, &actor, &key, &fingerprint, &result)?;

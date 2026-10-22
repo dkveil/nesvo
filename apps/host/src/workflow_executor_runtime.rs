@@ -1,4 +1,3 @@
-//! Deterministic scheduling of explicit task profiles; never an LLM heartbeat.
 use crate::{
     caller::Authority,
     event_log::Service,
@@ -132,8 +131,6 @@ impl Runner {
                     }
                 }
             }
-            // Consume our own coalesced note, then debounce external changes.
-            // The timer checks deterministic policy only, never model input.
             changed.borrow_and_update();
             tokio::select! {
                 _=tokio::time::sleep(std::time::Duration::from_secs(1))=>{},

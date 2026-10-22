@@ -1,4 +1,3 @@
-//! Host-owned coordinator notices; CLI never constructs or injects their text.
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 

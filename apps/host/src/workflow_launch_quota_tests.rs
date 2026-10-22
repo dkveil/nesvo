@@ -1,4 +1,3 @@
-//! Metadata evidence for retained native quota continuations; no Git or process runs.
 use super::Store;
 use crate::{
     job_definitions::{self, Work as JobWork},

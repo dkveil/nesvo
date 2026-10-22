@@ -1,4 +1,3 @@
-//! Writer-only quota admission fixtures; no command, provider or process runs.
 use super::Store;
 use crate::{
     job_definitions::{self, Claim, Reply, Work},
@@ -176,8 +175,6 @@ fn one_publication_cannot_claim_overlapping_siblings_in_the_same_poll() {
     let mut store = store();
     let (_, first) = queued(&mut store, "siblings", spec(Some(&binding())));
     let second = "f".repeat(32);
-    // Imported/persisted queued intents can coexist before this transaction.
-    // Candidate selection precedes both transitions, so each claim rechecks.
     store.0.execute("INSERT INTO harness_job_occurrences(id,job_id,job_revision,spec,trigger_key,trigger_kind,due_at,created_at,state) SELECT ?2,job_id,job_revision,spec,'manual:sibling','manual',due_at,created_at,'queued' FROM harness_job_occurrences WHERE id=?1",params![first,second]).unwrap();
     publish(&mut store, observation(1, Some(binding()), true));
     let claims = poll(&mut store, 4, NOW, ELAPSED);

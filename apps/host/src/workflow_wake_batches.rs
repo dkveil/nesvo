@@ -1,4 +1,3 @@
-//! A coalesced wake and native send receipt commit together before any input.
 use crate::{
     api_error::Error,
     workflow_wakes::{self, Dispatch, Guard, Policy, Reply},
@@ -91,8 +90,6 @@ fn transition(transaction: &Transaction<'_>, id: &str, now: u64) -> Result<bool>
         params![id, native, reason],
     )?;
     if native != "settled" {
-        // A fresh enable is not a replay of this batch. Its notice bindings and
-        // native receipt stay retained, including a proven no-effect refusal.
         transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='paused',reason=?2 WHERE id=?1 AND enabled=1 AND generation=?3 AND issuer=?4",params![policy,reason,generation,issuer])?;
     }
     workflow_wakes::changed(transaction, &policy, now)?;

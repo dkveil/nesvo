@@ -1,4 +1,3 @@
-//! Durable, caller-bound operation intents. A launch is not an agent/task result.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -101,8 +100,6 @@ pub fn accept(
     transaction.commit()?;
     Ok(accepted)
 }
-/// Reserve a native effect inside the caller's durable admission transaction.
-/// This only allocates a receipt/session identity; it never dispatches effects.
 pub(crate) fn accept_transaction(
     transaction: &rusqlite::Transaction<'_>,
     issuer: &str,

@@ -1,4 +1,3 @@
-//! Scoped external admission commits delivery dedupe and an ordinary job intent together.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -9,6 +8,9 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+const TRIGGER_LIMIT: i64 = 128;
+const ORDINARY_MUTATION_RECEIPT_LIMIT: i64 = 4096;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
@@ -396,8 +398,6 @@ pub fn execute(
         _ => unreachable!(),
     };
     orchestration::validate_key(key)?;
-    // The fingerprint binds the full request, while retained response bodies
-    // contain only metadata. Secrets never enter events or public views.
     let digest = auth::digest(&serde_json::to_vec(
         &json!({"action":"jobTriggers","request":request}),
     )?);
@@ -424,10 +424,7 @@ pub fn execute(
         [],
         |r| r.get(0),
     )?;
-    // Permanent revocation needs one reserved acceptance per retained trigger
-    // even when ordinary management retention is full. A revoked trigger can
-    // never consume another new key, bounding this reserve to 128 rows.
-    if retained >= 4096 && !matches!(request, Request::Revoke { .. }) {
+    if retained >= ORDINARY_MUTATION_RECEIPT_LIMIT && !matches!(request, Request::Revoke { .. }) {
         return Err(Error::new(
             "busy",
             "Trigger mutation retention is full; accepted keys were preserved",
@@ -440,7 +437,7 @@ pub fn execute(
                 tx.query_row("SELECT count(*) FROM harness_job_triggers", [], |r| {
                     r.get(0)
                 })?;
-            if count >= 128 {
+            if count >= TRIGGER_LIMIT {
                 return Err(Error::new(
                     "busy",
                     "Trigger retention is full; retained credentials were preserved",

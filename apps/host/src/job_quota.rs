@@ -1,4 +1,3 @@
-//! Configured-reader quota admission. No provider calls or native effects.
 use crate::{api_error::Error, job_attempts, launchers::Program};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -52,8 +51,6 @@ pub struct Permit {
     pub binding: Binding,
 }
 
-/// Only the trusted provider reader publishes this internal type. Its source ID
-/// stays stable when the reader's context/account changes and is never public.
 #[derive(Clone, Debug)]
 pub struct Observation {
     pub source_id: String,
@@ -64,8 +61,6 @@ pub struct Observation {
     pub reason: String,
 }
 
-/// Outer occurrence alias is `o`; parameter three is the current elapsed clock.
-/// Filtering here, before LIMIT, prevents held work from occupying claim slots.
 pub const ELIGIBLE_SQL: &str = "(
     ((json_type(o.spec,'$.quotaPolicy') IS NULL OR json_type(o.spec,'$.quotaPolicy')='null')
      AND NOT EXISTS(SELECT 1 FROM harness_job_quota_sources quota_gate
@@ -189,8 +184,6 @@ fn validate_binding(binding: &Binding) -> Result<()> {
     Ok(())
 }
 
-/// Every newer attempt replaces this source's entire previous authority,
-/// including failed observations with no known binding. Old revisions are quiet.
 pub fn publish(tx: &Transaction<'_>, observation: &Observation) -> Result<bool> {
     if observation.source_id.is_empty()
         || observation.source_id.len() > 128
@@ -226,8 +219,6 @@ pub fn publish(tx: &Transaction<'_>, observation: &Observation) -> Result<bool> 
             .into());
         }
     }
-    // Malformed trusted-reader metadata must invalidate, rather than preserve,
-    // the last positive observation. No raw provider reason is serialized.
     let binding = observation
         .binding
         .as_ref()
@@ -468,9 +459,6 @@ pub fn authorize(
 
 pub fn recover(tx: &Transaction<'_>, now: u64) -> Result<()> {
     tx.execute("DELETE FROM harness_job_quota_sources", [])?;
-    // A restart cannot turn a fresh background read into renewed owner intent.
-    // Retain the effective binding so the explicit compare-and-authorize action
-    // can acknowledge the exact old account/context without rewriting the spec.
     tx.execute(
         "INSERT INTO harness_job_quota_authorizations(occurrence_id,context_id,account_fingerprint,paused,authorized_at)
          SELECT o.id,COALESCE(a.context_id,json_extract(o.spec,'$.quotaPolicy.contextId')),

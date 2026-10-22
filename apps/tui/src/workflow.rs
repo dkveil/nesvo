@@ -1,4 +1,3 @@
-//! CLI/MCP wire adapter for durable host plans, separate from native processes.
 use crate::{cli, network::Connection};
 use anyhow::Result;
 use clap::Subcommand;
@@ -739,7 +738,6 @@ struct CoordinatorRequest {
     expected_coordinator_session_id: Option<String>,
     coordinator_session_id: String,
 }
-// These DTOs validate the wire shape only; the host owns DAG, access and revision rules.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RunSpec {

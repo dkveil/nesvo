@@ -1,6 +1,3 @@
-//! Private, launch-owned Claude status-line observations. A callback can repeat
-//! cached provider data: receipt time and sequence are not backend freshness or
-//! permission to start work. This module does not install or run a status line.
 use crate::agent_events::{self, RootQuotaTicket};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -28,8 +25,6 @@ pub(crate) struct Window {
     pub(crate) resets_at: i64,
 }
 
-/// An allowlisted projection only. No prompts, paths, arbitrary error strings,
-/// account identifiers or native payload extensions can be serialized here.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoredSnapshot {
@@ -100,19 +95,18 @@ impl ReceiptClock {
     pub fn now() -> Result<Self> {
         Ok(Self {
             wall_ms: crate::status::now_millis(),
-            monotonic_ms: monotonic_millis()?,
+            monotonic_ms: system_monotonic_millis()?,
         })
     }
 }
 
 #[cfg(windows)]
-fn monotonic_millis() -> Result<u64> {
-    // System uptime is comparable across this launch's short-lived helpers.
+fn system_monotonic_millis() -> Result<u64> {
     Ok(unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() })
 }
 
 #[cfg(unix)]
-fn monotonic_millis() -> Result<u64> {
+fn system_monotonic_millis() -> Result<u64> {
     let mut value = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -130,9 +124,6 @@ fn monotonic_millis() -> Result<u64> {
         .ok_or_else(|| anyhow::anyhow!("Quota monotonic clock exhausted"))
 }
 
-/// The caller owns the helper's wall-time deadline. This reads at most 16 KiB
-/// plus one byte and uses the existing bounded SQLite lock wait. A blocking
-/// arbitrary `Read` cannot itself be interrupted safely by this synchronous API.
 pub(crate) fn receive(report: &Path, input: impl Read) -> Result<ReceiveOutcome> {
     let started = ReceiptClock::now()?;
     let Some(ticket) = agent_events::begin_root_quota(report)? else {
@@ -150,8 +141,6 @@ pub(crate) fn receive(report: &Path, input: impl Read) -> Result<ReceiveOutcome>
     } else {
         match serde_json::from_slice::<Value>(&bytes) {
             Ok(value) => {
-                // A callback cannot establish identity. A valid root payload
-                // must match the already-bound conversation captured at start.
                 if !root_matches(&value, &ticket) {
                     return Ok(ReceiveOutcome::RejectedScope);
                 }
@@ -326,8 +315,6 @@ fn parse_windows(value: &Value, received_wall_ms: u64) -> (Option<Window>, Optio
             }))
     };
     let (Some(five_hour), Some(seven_day)) = (parse("five_hour"), parse("seven_day")) else {
-        // A malformed present bucket cannot be omitted to leave a positive
-        // partial result. Optional absent buckets remain explicitly absent.
         return (None, None, Reason::InvalidWindow);
     };
     let reason = match (five_hour.is_some(), seven_day.is_some()) {
@@ -338,9 +325,6 @@ fn parse_windows(value: &Value, received_wall_ms: u64) -> (Option<Window>, Optio
     (five_hour, seven_day, reason)
 }
 
-/// Returns only this host session's current bound launch generation. Consumers
-/// must check receipt age and each reset; a repeated callback does not establish
-/// a new backend observation, account identity or ordinary-usage permission.
 #[cfg(test)]
 pub(crate) fn read(report: &Path, host_session: &str) -> Result<Option<Observation>> {
     Ok(agent_events::read_root_quota(report, host_session)?
@@ -442,8 +426,6 @@ mod tests {
     fn named_main_agent_is_not_a_subagent_identity() {
         let fixture = Fixture::new(true);
         let mut input = payload();
-        // Native statusLine includes agent.name for a configured main agent.
-        // Child IDs and aggregate task scopes remain excluded.
         input["agent"] = json!({"name":"PRIVATE-AGENT-NOT-STORED"});
         assert_eq!(fixture.receive(input.clone()), ReceiveOutcome::Recorded);
         assert_eq!(fixture.read().unwrap().snapshot.reason, Reason::Observed);

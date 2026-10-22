@@ -1,4 +1,3 @@
-//! Cross-component regressions. All session and diff data here are explicit fixtures.
 use crate::{
     controller,
     launch::{Field, Program, SessionForm},
@@ -257,7 +256,6 @@ fn session_click_and_passive_mouse_events_preserve_input() {
     ]})).unwrap();
     assert!(app.mode == Mode::Input);
     assert!(app.owns("a"));
-    // Real ownership loss must still stop terminal input.
     app.event(json!({"type":"control","sessionId":"a","controllerId":2,"cols":90,"rows":30}))
         .unwrap();
     assert!(app.mode == Mode::Navigate);
@@ -280,7 +278,6 @@ fn previous_session_toggles_and_previews_do_not_rewrite_history() {
         Some("b"),
         "A current blocker outranks MRU even in the active session"
     );
-    // With equal urgency, the previous session remains the first MRU result.
     app.sessions[1].status = app.sessions[0].status.clone();
     assert_eq!(app.palette_results("")[0].target.session_id(), Some("a"));
     app.dialog = Some(Dialog::Help { from_menu: false });

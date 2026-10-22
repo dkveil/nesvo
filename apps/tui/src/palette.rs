@@ -1,4 +1,3 @@
-//! Search targets have stable identities independent of display order.
 use crate::model::App;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,7 +68,6 @@ fn text_matches(words: &[String], text: &str) -> bool {
     })
 }
 
-/// Checks only the saved identity; never builds or sorts the other results.
 pub fn eligible(app: &App, query: &str, target: &Target) -> bool {
     if let Some(rows) = crate::files_controller::palette_rows(app, query)
         .or_else(|| crate::projects_controller::palette_rows(app, query))
@@ -267,7 +265,6 @@ mod ranking_tests {
     fn app(snapshot: Value) -> App {
         let mut app = App::new(1);
         app.event(snapshot).unwrap();
-        // Test rank independently of the optional active-session tie breaker.
         app.panes = Default::default();
         app
     }

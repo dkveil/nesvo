@@ -1,4 +1,3 @@
-//! Run admission, retry/time budgets and drain. Native control receipts are separate.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -158,7 +157,6 @@ fn event(
         }],
     )
 }
-/// Persist first observed exhaustion independently of a rejected admission.
 pub fn refresh(connection: &mut Connection, run_id: &str, now: u64) -> Result<()> {
     let record = load(connection, run_id)?;
     if record.exhausted.is_some() || !deadline(&record).is_some_and(|at| now >= at) {
@@ -217,8 +215,6 @@ pub fn admit_attempt(connection: &Connection, run_id: &str, ordinal: i64) -> Res
     }
     Ok(())
 }
-/// A retained launch already occupies its attempt/parallel slot. Rechecking it
-/// must not count that same attempt as a fresh admission or allow owner drain.
 pub fn guard_admitted_launch(connection: &Connection, run_id: &str, now: u64) -> Result<()> {
     let state: String = connection.query_row(
         "SELECT state FROM workflow_runs WHERE id=?1",
@@ -326,7 +322,6 @@ pub fn execute(
 ) -> Result<Value> {
     execute_inner(connection, actor, request, now, None, None)
 }
-/// Job setup uses the same budget mutation with its proof inside the writer.
 pub fn execute_for_job_at(
     connection: &mut Connection,
     actor: &Actor,
@@ -470,8 +465,6 @@ fn execute_inner(
     transaction.commit()?;
     Ok(result)
 }
-/// Automated paste AND submit must pass. This never grants native authority or
-/// affects a human's direct PTY input; native readiness/control guards still apply.
 pub fn guard_dispatch(connection: &mut Connection, session: &str, now: u64) -> Result<()> {
     let run: Option<String> = connection.query_row("SELECT t.run_id FROM workflow_attempts a JOIN workflow_tasks t ON t.id=a.task_id WHERE a.session_id=?1",[session],|r|r.get(0)).optional()?;
     if let Some(run) = run {
@@ -479,7 +472,6 @@ pub fn guard_dispatch(connection: &mut Connection, session: &str, now: u64) -> R
     }
     guard_dispatch_transaction(connection, session, now)
 }
-/// Recheck inside the writer transaction without nesting an exhaustion commit.
 pub(crate) fn guard_dispatch_transaction(
     connection: &Connection,
     session: &str,

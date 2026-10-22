@@ -1,4 +1,3 @@
-//! Explicit owner-declared display forwarding. Callback data is not quota permission.
 use crate::{
     api_error::Error,
     jobs::LaunchSpec,
@@ -252,7 +251,6 @@ impl Drop for ProfileReader {
         if self.child.is_none() {
             return;
         }
-        // Signals precede the first wait, never a recycled/reaped group identity.
         if self.may_terminate {
             let _ = self.terminate();
         }
@@ -262,8 +260,6 @@ impl Drop for ProfileReader {
         let scope = self.scope.take();
         let slot = self.slot.take();
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            // No live runtime can admit another reader. Retain rather than
-            // release capacity without observing the exact child's cleanup.
             std::mem::forget((child, scope, slot));
             return;
         };
@@ -357,7 +353,6 @@ async fn read_started_profile(
     ensure!(owned.cleanup().await, "Profile reader cleanup unconfirmed");
     result.map_err(|_| anyhow::anyhow!("Profile reader timed out"))?
 }
-/// Called only after immutable receipt replay, before Git or native spawn.
 pub async fn prepare(spec: &mut LaunchSpec) -> Result<()> {
     let Some(options) = &spec.claude_quota_capture else {
         return Ok(());
@@ -390,7 +385,6 @@ pub async fn prepare(spec: &mut LaunchSpec) -> Result<()> {
     spec.claude_quota_prepared = Some(prepared);
     Ok(())
 }
-/// Private pipe-only adapter. It cannot execute the declared display command.
 pub fn profile_child() -> i32 {
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(3));
@@ -427,7 +421,6 @@ pub fn profile_child() -> i32 {
         output.write_all(&u32::try_from(bytes.len())?.to_be_bytes())?;
         output.write_all(&bytes)?;
         output.flush()?;
-        // Keep the leader identity reserved until contained parent cleanup.
         let mut one = [0];
         let _ = input.read(&mut one);
         Ok(())
@@ -503,9 +496,7 @@ fn inherited_command(executable: &str, args: &[&str]) -> String {
         .map(|arg| argument(arg))
         .collect::<Vec<_>>()
         .join(" ");
-    // Framework Process.Start sets STARTF_USESTDHANDLES only when a redirect
-    // is requested. Redirect/drain stderr to force explicit inherited stdin
-    // and stdout without reading input or marshaling output through PowerShell.
+    // A stderr redirect makes Process.Start set STARTF_USESTDHANDLES, inheriting stdin/stdout.
     let script = format!(
         "$s=New-Object System.Diagnostics.ProcessStartInfo; $s.FileName='{}'; $s.Arguments='{}'; $s.UseShellExecute=$false; $s.CreateNoWindow=$true; $s.RedirectStandardError=$true; $p=[System.Diagnostics.Process]::Start($s); $d=$p.StandardError.BaseStream.CopyToAsync([System.IO.Stream]::Null); $p.WaitForExit(); [void]$d.GetAwaiter().GetResult(); $r=$p.ExitCode; $p.Dispose(); exit $r",
         executable.replace('\'', "''"),
@@ -540,8 +531,6 @@ fn collect_capture(
     mut input: impl Read,
 ) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    // receive captures its root/generation ticket before Tee's first read.
-    // Failure/rejected scope does not prevent the declared display from running.
     let tee = Tee {
         input: &mut input,
         copy: &mut bytes,
@@ -616,8 +605,7 @@ async fn display(display: Display, input: Vec<u8>) -> Result<Output> {
         .ok_or_else(|| anyhow::anyhow!("Display stdout unavailable"))?;
     let write = async {
         stdin.write_all(&input).await?;
-        // Windows Tokio ChildStdin queues blocking writes. Await flush before
-        // closing the final writer so the recipient can observe actual EOF.
+        // Windows ChildStdin queues blocking writes; flush first or the reader may miss real EOF.
         stdin.flush().await?;
         drop(stdin);
         Ok::<_, anyhow::Error>(())
@@ -668,7 +656,6 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
         .stdout
         .take()
         .ok_or_else(|| anyhow::anyhow!("Display gate unavailable"))?;
-    // The enrolled gate cannot execute the declared command before this frame.
     let result = tokio::time::timeout(Duration::from_secs(4), async {
         write_frame(
             &mut stdin,
@@ -681,8 +668,6 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
         read_frame::<Output>(&mut stdout).await
     })
     .await;
-    // The gate deliberately stays alive after its reply, keeping its identity
-    // reserved until the entire owned process group/job is terminated here.
     let terminated = scope.terminate().is_ok();
     let reaped = matches!(
         tokio::time::timeout(Duration::from_secs(2), child.wait()).await,
@@ -705,8 +690,6 @@ async fn dispatch(display: Display, input: Vec<u8>) -> Result<Output> {
     result.map_err(|_| anyhow::anyhow!("Declared display timed out"))?
 }
 pub fn run(manifest: &Path) -> i32 {
-    // This is a standalone helper. Bound even an unresponsive filesystem or
-    // blocking stdin thread without detaching it into the host process.
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(10));
         std::process::exit(1);
@@ -758,7 +741,6 @@ pub fn child() -> i32 {
         if group <= 1 || group != i32::try_from(std::process::id()).unwrap_or(0) {
             return 1;
         }
-        // Independent bounded cleanup if Claude cancels/kills the outer wrapper.
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(3));
             unsafe {
@@ -800,7 +782,6 @@ pub fn child() -> i32 {
         stdout.write_all(&u32::try_from(bytes.len())?.to_be_bytes())?;
         stdout.write_all(&bytes)?;
         stdout.flush()?;
-        // Keep the group leader alive until the parent has killed/reaped it.
         let mut one = [0];
         let _ = stdin.read(&mut one);
         #[cfg(unix)]
@@ -937,8 +918,6 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let manifest = root.join("declared.json");
         std::fs::write(&manifest,serde_json::to_vec(&json!({"display":{"program":executable(),"args":["private manifest argument"]},"padding":2,"refreshInterval":9,"hideVimModeIndicator":true})).unwrap()).unwrap();
-        // Unit tests cannot re-exec the production main from a Rust test binary.
-        // Native acceptance covers that reader; bind its validated response here.
         let bound =
             prepared(serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap()).unwrap();
         let mut spec = LaunchSpec {

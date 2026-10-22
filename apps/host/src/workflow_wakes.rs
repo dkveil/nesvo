@@ -1,4 +1,3 @@
-//! Explicit coordinator wake policy. Messages, input receipts and ACK stay distinct.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -572,7 +571,6 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             };
             crate::workflow_budget::refresh(connection, &policy.run_id, now)?;
             let active_batch = crate::workflow_wake_batches::reconcile(connection, &policy, now)?;
-            // Reconciliation can pause this generation; recheck before effects.
             match guard(connection, &expected, &issuer) {
                 Ok(_) => {}
                 Err(error)

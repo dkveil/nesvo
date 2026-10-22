@@ -1,4 +1,3 @@
-//! MCP description and translation of the shared owner trigger DTOs.
 use anyhow::Result;
 use serde_json::{Value, json};
 

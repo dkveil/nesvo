@@ -179,8 +179,6 @@ fn repeated_claude_cache_preserves_source_age_across_wall_rollback() {
         "backend_permission_unavailable"
     );
 
-    // Reading the same bytes near their source deadline refreshes the read,
-    // while the original cache source keeps its independent 900-second age.
     tracker.apply_claude(claude(WALL - 50_000), 899_000, 899_010);
     let repeated = view(&mut tracker, Program::Claude, WALL - 49_990, 899_010);
     assert_eq!(repeated.revision, 2);

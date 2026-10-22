@@ -1,4 +1,3 @@
-//! Launch-scoped native hooks. Never store prompts, output, or transcript contents.
 use anyhow::Result;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
@@ -183,7 +182,6 @@ impl Tracker {
 }
 impl Drop for Tracker {
     fn drop(&mut self) {
-        // Only this randomly allocated session directory is owned by the tracker.
         let Ok(parent) = self.5.canonicalize() else {
             return;
         };
@@ -410,7 +408,6 @@ fn receive_reported(report: &Path, input: impl Read, dialect: Dialect) -> Result
     let result = receive_dialect(report, input, dialect);
     let diagnostic = report.with_file_name("diagnostic.json");
     if result.is_err() {
-        // Constant metadata only: serde errors can contain supplied payload text.
         let _ = crate::private_write(&diagnostic, br#"{"code":"hook_receive_failed"}"#);
     } else if diagnostic.exists() {
         let _ = std::fs::remove_file(diagnostic);
@@ -432,7 +429,6 @@ fn receive_inner(report: &Path, input: impl Read, codex: bool) -> Result<()> {
 }
 fn receive_dialect(report: &Path, input: impl Read, dialect: Dialect) -> Result<()> {
     let claude = dialect == Dialect::Claude;
-    // Immutable mode does not depend on whether the current journal exists.
     let descriptor = crate::scoped_context::load(report).ok();
     let ticket = if claude && let Some(descriptor) = &descriptor {
         crate::scoped_context::begin(report, descriptor)
@@ -520,7 +516,6 @@ fn receive_dialect(report: &Path, input: impl Read, dialect: Dialect) -> Result<
                 None => return Ok(()),
             }
         } else {
-            // Only explicitly legacy fixtures use unscoped status/context JSON.
             chrono::Utc::now()
                 .timestamp_nanos_opt()
                 .unwrap_or_default()
@@ -538,8 +533,6 @@ fn receive_dialect(report: &Path, input: impl Read, dialect: Dialect) -> Result<
         result?;
     }
     if claude && let Some(context) = extract(&value) {
-        // An upgraded helper can still deliver lifecycle events to an old valid
-        // journal, but an absent/invalid descriptor never grants context authority.
         let descriptor = descriptor
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Scoped review context is unavailable"))?;
@@ -658,7 +651,6 @@ pub async fn observe_working_directory(report: &Path) -> Option<WorkingDirectory
         provider_session: record.provider_session,
     })
 }
-/// Only lifecycle metadata is persisted; never prompts or tool arguments.
 #[derive(Serialize, Deserialize)]
 pub struct LifecycleReport {
     pub state: crate::status::StatusState,
@@ -666,7 +658,6 @@ pub struct LifecycleReport {
 }
 pub(crate) fn lifecycle_state(value: &Value) -> Option<crate::status::StatusState> {
     use crate::status::StatusState::*;
-    // A subagent finishing must not mark the owning conversation idle.
     if is_child(value) {
         return None;
     }
@@ -754,7 +745,6 @@ pub async fn resolve(
 ) -> Context {
     if let Some(report) = report {
         if let Some(expected_session) = expected_session {
-            // SQLite work stays off the async runtime and outside the State lock.
             if let Ok(Ok(Some(context))) = tokio::task::spawn_blocking(move || {
                 let descriptor = crate::scoped_context::load(&report)?;
                 crate::scoped_context::read(&report, &descriptor, &expected_session)
@@ -768,7 +758,6 @@ pub async fn resolve(
                 source: "Auto: launch folder".into(),
             };
         }
-        // Compatibility is explicit. An unknown/missing descriptor is not legacy.
         if !matches!(
             crate::scoped_context::load(&report),
             Ok(crate::scoped_context::Descriptor::Legacy)
@@ -778,7 +767,6 @@ pub async fn resolve(
                 source: "Auto: launch folder".into(),
             };
         }
-        // Reports contain only two bounded strings, never the original hook payload.
         if let Ok(file) = tokio::fs::File::open(report).await {
             use tokio::io::AsyncReadExt;
             let mut bytes = Vec::new();
@@ -1195,8 +1183,6 @@ invalid",
                     connection
                         .execute("UPDATE scope SET launch_id=?1 WHERE id=1", [replacement])
                         .unwrap();
-                    // Trusted fixture append represents work in the replacement
-                    // launch; provider ID and generation deliberately stay equal.
                     crate::agent_events::append(
                         &report,
                         Some("a"),
@@ -1423,7 +1409,6 @@ invalid",
         let tracker = Tracker::install_for(&mut CommandBuilder::new("fixture"), "owner").unwrap();
         let report = tracker.report();
         std::fs::remove_file(report.with_file_name("context-scope.json")).unwrap();
-        // This is a pre-F05 journal, not an explicitly legacy no-journal handle.
         crate::agent_events::capture_connection(&report)
             .unwrap()
             .execute_batch("DROP TABLE review_context")
@@ -1447,8 +1432,6 @@ invalid",
             std::fs::read(report.with_file_name("diagnostic.json")).unwrap(),
             br#"{"code":"hook_receive_failed"}"#
         );
-        // A malformed descriptor has the same context refusal and journal-only
-        // lifecycle behavior; it cannot opt into the JSON compatibility branch.
         std::fs::write(
             report.with_file_name("context-scope.json"),
             b"not a descriptor",

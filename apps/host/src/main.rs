@@ -130,6 +130,10 @@ use tokio::{
     sync::{Semaphore, mpsc, oneshot},
 };
 
+const STABLE_REPOSITORY_PAIRING_DIRECTORY: &str = "host/.local";
+const LEGACY_WINDOWS_DATA_DIRECTORY: &str = "PocketSessions";
+const LEGACY_UNIX_DATA_DIRECTORY: &str = "pocket-sessions";
+
 #[derive(Parser)]
 #[command(
     version,
@@ -198,8 +202,7 @@ fn private_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn local_ip() -> Option<IpAddr> {
-    // UDP connect selects the default route; it sends no datagram.
+fn default_route_local_ip() -> Option<IpAddr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("192.0.2.1:80").ok()?;
     Some(socket.local_addr().ok()?.ip())
@@ -209,8 +212,7 @@ fn repository_pairing_directory(root: &Path) -> Option<PathBuf> {
     ["apps/host/Cargo.toml", "host/Cargo.toml"]
         .iter()
         .any(|manifest| root.join(manifest).is_file())
-        // Source layout changes must not move existing pairing credentials.
-        .then(|| root.join("host/.local"))
+        .then(|| root.join(STABLE_REPOSITORY_PAIRING_DIRECTORY))
 }
 
 fn stdin_close_signal() -> oneshot::Receiver<()> {
@@ -288,7 +290,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if let Some(report) = args.agent_context_hook {
-        // Tracking must never prevent an agent tool from completing.
         if agent_context::receive(&report).is_err() {
             eprintln!(
                 "nesvo hook delivery failed; inspect this session with nesvo session explain"
@@ -300,8 +301,6 @@ fn main() -> Result<()> {
         println!("{}", env!("NESVO_BUILD_ID"));
         return Ok(());
     }
-    // High-frequency hook invocations do only synchronous bounded file work.
-    // Construct the multi-thread runtime exclusively for the actual host.
     let trace = startup_trace::Trace::from_env();
     let span = trace.begin(startup_trace::Phase::RuntimeCreate);
     let runtime = span.result(
@@ -341,7 +340,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     let span = trace.begin(Phase::AdvertiseResolve);
     let advertised = args.advertise.unwrap_or_else(|| {
         if bind.is_unspecified() {
-            local_ip()
+            default_route_local_ip()
                 .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
                 .to_string()
         } else {
@@ -372,8 +371,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
             std::env::var_os("LOCALAPPDATA")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("."))
-                // Preserve the existing data directory and pairing credentials.
-                .join("PocketSessions")
+                .join(LEGACY_WINDOWS_DATA_DIRECTORY)
                 .join("pairing")
         } else {
             std::env::var_os("XDG_STATE_HOME")
@@ -382,8 +380,7 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
                     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
                 })
                 .unwrap_or_else(|| PathBuf::from(".local"))
-                // Preserve the existing data directory and pairing credentials.
-                .join("pocket-sessions")
+                .join(LEGACY_UNIX_DATA_DIRECTORY)
         }
     });
     fs::create_dir_all(&pairing_dir)?;
@@ -554,8 +551,6 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
             }
         }
     }
-    // Fence final native spawn/input under the same lock before stopping either
-    // producer. Command checks still need the event journal to persist cleanup.
     state.lock().unwrap().begin_shutdown();
     quota_runtime.request_shutdown();
     quota_wake_runtime.request_shutdown();
@@ -579,9 +574,6 @@ async fn run(args: Args, trace: startup_trace::Trace) -> Result<()> {
     if !repository_runtime.shutdown().await {
         eprintln!("Session repository metadata cleanup is unconfirmed");
     }
-    // Closed sessions may still be releasing ConPTY resources in background
-    // workers. Keep the output dispatcher alive while they finish, without
-    // holding the state lock that it needs to drain PTY output.
     mcp_pool::shutdown().await;
     let mut cleanup_workers = {
         let mut state = state.lock().unwrap();

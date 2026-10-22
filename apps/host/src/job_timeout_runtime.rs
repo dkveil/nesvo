@@ -1,4 +1,3 @@
-//! Execution-limit supervision is independent of dispatch and precheck capacity.
 use crate::{
     event_log::{Service, monotonic_millis},
     job_definitions::{Reply, Work},
@@ -18,8 +17,6 @@ const CONTROL_BOUND: Duration = Duration::from_secs(10);
 const OBSERVATION_INTERVAL: Duration = Duration::from_secs(1);
 const COALESCE: Duration = Duration::from_millis(50);
 
-/// Only the retained result is retried after a storage error. The native effect
-/// future has already ended and is never reconstructed by this finalizer.
 async fn retain_result(log: &Service, claim: Claim, result: Option<serde_json::Value>) {
     let mut delay = Duration::from_secs(1);
     loop {
@@ -49,8 +46,6 @@ async fn retain_result(log: &Service, claim: Claim, result: Option<serde_json::V
 
 async fn dispatch(state: Arc<Mutex<State>>, log: Service, claim: Claim) {
     let work = crate::workflow_control_runtime::timeout_job(state, log.clone(), claim.clone());
-    // Dropping an overdue producer creates uncertainty; it never creates another
-    // native dispatch claim. Even a panic retains the original timeout identity.
     let result = std::panic::AssertUnwindSafe(tokio::time::timeout(CONTROL_BOUND, work))
         .catch_unwind()
         .await
@@ -83,14 +78,11 @@ pub async fn run(state: Arc<Mutex<State>>, log: Service) {
     let mut next_poll = Instant::now();
     let mut backoff = Duration::from_secs(1);
     loop {
-        // Coalesce journal bursts. No terminal/model heartbeat is generated.
         tokio::time::sleep_until(next_poll).await;
         if log.is_closed() {
             return;
         }
         while dispatches.try_join_next().is_some() {}
-        // Consume observations BEFORE reading, so a concurrent new deadline
-        // cannot disappear between the journal snapshot and our next wait.
         changed.borrow_and_update();
         let schedule = match log
             .jobs(Work::TimeoutPoll {
@@ -104,8 +96,6 @@ pub async fn run(state: Arc<Mutex<State>>, log: Service) {
             }
             _ if log.is_closed() => return,
             _ => {
-                // A failed read may itself update health. Ignore that wake until
-                // bounded backoff; unavailable storage never authorizes a stop.
                 next_poll = Instant::now() + backoff;
                 backoff = (backoff * 2).min(Duration::from_secs(5));
                 continue;
@@ -118,8 +108,6 @@ pub async fn run(state: Arc<Mutex<State>>, log: Service) {
             dispatches.spawn(dispatch(state.clone(), log.clone(), claim));
         }
         next_poll = Instant::now() + COALESCE;
-        // With no armed/cleanup record this sleeps on journal changes only.
-        // Native control futures remain independently polled in their JoinSet.
         tokio::select! {
             _ = wait_until(next) => {},
             result = changed.changed() => { if result.is_err() { return; } },

@@ -1,4 +1,3 @@
-//! Windows waiting leader: the parent enrolls its job before releasing Git.
 use super::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,8 +16,6 @@ const TEST_GATE: &str = "NESVO_REPOSITORY_TEST_HELPER";
 pub(super) enum Builtin {
     Discovery,
     Symbolic,
-    // These variants/entrypoints do not exist in the shipped host. They let
-    // standard ignored exact libtest entries exercise the same gated code.
     #[cfg(test)]
     Fixture {
         args: Vec<String>,
@@ -113,8 +110,6 @@ pub(super) async fn run(
             Ok::<_, ()>(Output { status: ExitStatus::from_raw(u32::from_ne_bytes(code.to_ne_bytes())), stdout, stderr })
         }) => result.map_err(|_| ()).and_then(|result| result),
     };
-    // Helper deliberately holds its leader until this exact job termination.
-    // No try_wait or reaping occurs before its termination right is retired.
     if !owned.cleanup().await {
         return Err(());
     }
@@ -213,8 +208,6 @@ fn execute(request: Request) -> Result<Output, ()> {
         }
     };
     command.current_dir(request.directory);
-    // This command is already a descendant of the enrolled waiting leader.
-    // Use inherited job containment; do not create another job after it runs.
     sanitize(&mut command);
     let mut child = command.as_std_mut().spawn().map_err(|_| ())?;
     let stdout = child.stdout.take().ok_or(())?;
@@ -281,8 +274,6 @@ fn write_response(output: &mut impl Write, result: Result<Output, ()>) -> Result
 fn stdio_to(mut input: impl Read, mut output: impl Write) -> i32 {
     let result = read_frame(&mut input).and_then(execute);
     let failed = write_response(&mut output, result).is_err();
-    // Keep the leader and all its descendants in the parent's exact job until
-    // scope termination. Never accept a second executable request.
     let mut ignored = [0; 1];
     while matches!(input.read(&mut ignored), Ok(1)) {}
     i32::from(failed)
@@ -347,8 +338,6 @@ mod tests {
         if !enabled() {
             return;
         }
-        // Libtest may print a header to stdout. Frame stderr only in this
-        // test binary; the production early helper uses raw stdout instead.
         std::process::exit(stdio_to(std::io::stdin(), std::io::stderr()));
     }
 
@@ -377,7 +366,6 @@ mod tests {
             serde_json::to_vec(&[std::process::id(), child.id()]).unwrap(),
         )
         .unwrap();
-        // Parent cancellation must terminate both runnable wrapper and child.
         std::thread::sleep(Duration::from_secs(60));
         drop(child);
     }
@@ -395,8 +383,7 @@ mod tests {
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         };
-        // SAFETY: fixture publishes only descendants owned by this test. The
-        // independent handle pins that exact process before cancellation.
+        // SAFETY: the fixture publishes only this test's descendants; the handle pins that one.
         let raw = unsafe {
             OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
@@ -408,7 +395,7 @@ mod tests {
             !raw.is_null(),
             "Open the exact owned wrapper descendant before cancel"
         );
-        // SAFETY: successful OpenProcess returns an independently owned handle.
+        // SAFETY: a successful OpenProcess returns an independently owned handle.
         unsafe { OwnedHandle::from_raw_handle(raw) }
     }
     fn exited(process: &OwnedHandle) -> bool {

@@ -1,4 +1,3 @@
-//! Owner resolution fixtures retain SQLite/native facts; they launch no process.
 use super::{Store, job_timeouts_tests::due_fixture};
 use crate::{
     job_definitions::{self, Request},
@@ -434,8 +433,6 @@ fn old_descriptor_cannot_resolve_a_replacement_generation() {
 #[test]
 fn original_owner_control_key_replays_after_resolution_but_fresh_control_is_fenced() {
     let (mut store, claim) = fixture(false);
-    // The retained create receipt is temporarily unknown so ordinary control
-    // freezes its exact worker target, as it would before the late refusal.
     store
         .0
         .execute(
@@ -824,8 +821,6 @@ fn unavailable_historical_descriptor_stays_stable_as_retry_and_current_pointer_c
     crate::job_cancellations::recover(&tx, NOW + 3000).unwrap();
     job_timeouts::recover(&tx, NOW + 3000).unwrap();
     tx.commit().unwrap();
-    // Recovery may honestly update unresolved cleanup evidence. The new
-    // admission diagnostic itself must not mirror that mutable projection.
     assert_eq!(
         descriptor(&store, &claim),
         original["jobAttempt"]["launchReconciliation"]
@@ -994,8 +989,6 @@ fn postresolution_coordinator_binding_is_metadata_but_new_wake_admission_and_dis
         receipts
     );
 
-    // Retained producer-shaped metadata isolates both final fences. No input
-    // was sent and no new policy is accepted through the retired public Run.
     store.0.execute("INSERT INTO workflow_wake_policies(id,run_id,coordinator_id,issuer,enabled,generation,phase,created_at) VALUES('old-policy',?1,'later-coordinator','owner',1,1,'enabled',1)",[&claim.identity.run_id]).unwrap();
     store.0.execute("INSERT INTO operation_receipts(id,issuer,key,digest,operation,phase,session_id,result) VALUES('old-wake-receipt','owner','run-wake:old-batch','retained','send','accepted','later-coordinator','{}')",[]).unwrap();
     store.0.execute("INSERT INTO workflow_wake_batches(id,policy_id,generation,issuer,operation_id,phase,created_at) VALUES('old-batch','old-policy',1,'owner','old-wake-receipt','dispatching',1)",[]).unwrap();

@@ -1,8 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// Windows console layouts report AltGr text as Ctrl+Alt plus its Unicode scalar.
-/// Normalize that otherwise unencodable text before shortcuts or PTY encoding.
-/// ASCII control chords, other modifier combinations and release kinds stay intact.
 pub fn normalize_key(key: KeyEvent) -> KeyEvent {
     normalize_altgr(key, cfg!(windows))
 }
@@ -18,7 +15,6 @@ fn normalize_altgr(mut key: KeyEvent, windows: bool) -> KeyEvent {
     key
 }
 
-/// Encode key events for the inner PTY, honoring its cursor-key mode.
 pub fn encode_key(key: KeyEvent, screen: &vt100::Screen) -> Option<String> {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -128,7 +124,6 @@ pub fn append_field(field: &mut String, input: &str, max_bytes: usize) {
 }
 
 pub fn encode_paste(text: &str, screen: &vt100::Screen) -> String {
-    // Remove embedded escapes so a paste cannot terminate its own bracket.
     let text = text
         .replace('\x1b', "")
         .replace("\r\n", "\n")
@@ -140,7 +135,6 @@ pub fn encode_paste(text: &str, screen: &vt100::Screen) -> String {
     }
 }
 
-/// Forward wheel gestures only when the inner application requests mouse input.
 pub fn encode_wheel(screen: &vt100::Screen, up: bool, col: u16, row: u16) -> Option<String> {
     if screen.mouse_protocol_mode() == vt100::MouseProtocolMode::None {
         return None;

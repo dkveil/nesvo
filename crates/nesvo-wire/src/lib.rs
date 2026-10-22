@@ -1,6 +1,3 @@
-//! Shared XSalsa20Poly1305 frames with connection, direction and sequence checks.
-//! This crate performs no networking, process execution or credential storage.
-
 use anyhow::{Result, anyhow, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use crypto_secretbox::{

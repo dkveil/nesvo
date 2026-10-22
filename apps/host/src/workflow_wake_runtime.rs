@@ -1,4 +1,3 @@
-//! Delta-only coordinator notices. Timers inspect local state, never call a model.
 use crate::{
     caller::Authority,
     event_log::Service,

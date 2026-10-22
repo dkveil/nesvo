@@ -1,4 +1,3 @@
-//! Attempt-bound questions. A recorded answer is data, never a native permission grant.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -151,8 +150,6 @@ fn save(transaction: &Transaction<'_>, decision: &Value) -> Result<()> {
     )?;
     Ok(())
 }
-/// Housekeeping commits before the requested action, so a rejected late answer
-/// cannot roll a deadline back into a pending question. No model/native effect.
 fn expire(
     connection: &mut Connection,
     run: &Value,
@@ -418,7 +415,6 @@ pub fn execute(
         } => return decide(connection, actor, decision_id, choice, note, now),
         request => request,
     };
-    // Derive the run/attempt before any expiration or message side effect.
     let (run_id, filter) = match &request {
         Request::Ask { attempt_id, .. } => {
             let own = workflow_attempts::context(connection, &actor, Some(attempt_id))?;

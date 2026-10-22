@@ -478,7 +478,6 @@ fn recovery_honors_exit_committed_before_timeout_projection_without_rearming_cle
     let tx = store.0.transaction().unwrap();
     crate::workflow_controls::observe_exit(&tx, &identity.session_id, NOW + 50).unwrap();
     tx.commit().unwrap();
-    // Simulate a crash after trusted exit persistence but before any timer poll.
     assert_eq!(
         job_timeouts::view_current(&store.0, &identity.occurrence_id).unwrap()["state"],
         "armed"
@@ -534,7 +533,6 @@ fn recovery_honors_exit_committed_before_timeout_projection_without_rearming_cle
         0
     );
     tx.commit().unwrap();
-    // Terminal evidence releases overlap for separate deliberate owner intent.
     let next = crate::job_definitions::execute(
         &mut store.0,
         crate::orchestration::Actor {
@@ -667,8 +665,6 @@ fn lost_dispatch_callback_stays_unconfirmed_until_the_original_stop_receipt_arri
         );
         tx.commit().unwrap();
 
-        // Observe a late completion of the same admitted control/receipt path.
-        // This does not allocate another timeout/control or dispatch a signal.
         if target.is_none() {
             let Reply::Targets(mut targets) = workflow_controls::execute(
                 &mut store.0,

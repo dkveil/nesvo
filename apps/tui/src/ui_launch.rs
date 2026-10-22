@@ -1,4 +1,3 @@
-//! Launch and pairing views, rendered solely from validated client state.
 use crate::{
     launch::{Field, Program, SessionForm},
     model::{App, folder_choices},

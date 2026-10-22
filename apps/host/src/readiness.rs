@@ -1,4 +1,3 @@
-//! Startup readiness is separate from process lifetime and task success.
 use crate::{
     launchers::Program,
     status::{SessionStatus, StatusSource, StatusState},
@@ -72,7 +71,6 @@ impl Tracker {
                 "provider initialized; inspect current agent state separately",
             )
         } else {
-            // Consent can wait indefinitely; clearing it starts a fresh readiness window.
             if self.snapshot.phase == Phase::Waiting {
                 self.phase_at = elapsed;
             }

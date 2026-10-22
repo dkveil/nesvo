@@ -1,4 +1,3 @@
-//! Metadata-only command admission fixtures; no command or worker is executed.
 use super::Store;
 use crate::{
     job_attempts::{self, Dispatch},
@@ -41,8 +40,6 @@ fn seed(store: &mut Store, occurrence: &str) -> Dispatch {
     dispatch
 }
 
-/// This fixture only supplies the next journal identity. Public retry proof and
-/// native admission are exercised by their separate integration tests.
 fn next_generation(store: &mut Store, previous: &Dispatch) -> Dispatch {
     let tx = store.0.transaction().unwrap();
     let ordinal: i64 = tx

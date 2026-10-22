@@ -1,4 +1,3 @@
-//! MCP is a transport adapter to the authenticated host, never a session engine.
 use crate::{
     cli, mcp_events,
     mcp_tools::{

@@ -1,4 +1,3 @@
-//! Bounded builtin-only repository labels; no diff, hooks, network or models.
 use std::{
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
@@ -115,8 +114,6 @@ fn sanitize(command: &mut Command) {
     ] {
         command.env_remove(key);
     }
-    // Keep normal global/system configuration and its managed safety policy;
-    // command-specific injection and repository/trace routing are removed.
     command
         .env("LC_ALL", "C")
         .env("LANG", "C")
@@ -187,8 +184,6 @@ impl Drop for OwnedCommand {
             std::mem::forget((child, scope, slot));
             return;
         };
-        // Retain the single global slot until both exact root and scope are
-        // observed terminated. After reaping, scope queries never send signals.
         runtime.spawn(async move {
             loop {
                 if child.wait().await.is_ok() {
@@ -275,8 +270,7 @@ async fn run_command(
 ) -> Result<(Output, OwnedSemaphorePermit), ()> {
     #[cfg(windows)]
     {
-        // Only compiled into unit tests. Fixture setup also goes through the
-        // pre-enrolled test helper instead of racing the Git-for-Windows shim.
+        // A direct git spawn races the Git-for-Windows shim; tests use the pre-enrolled helper.
         let directory = command.as_std().get_current_dir().ok_or(())?.to_owned();
         if command.as_std().get_program() != std::ffi::OsStr::new("git") {
             return Err(());
@@ -321,9 +315,6 @@ async fn run_command(
             result = timeout_at(deadline, async {
                 let (stdout, stderr) = tokio::try_join!(bounded_read(stdout, limit), bounded_read(stderr, STDERR_BYTES))?;
                 loop {
-                    // This synchronous observation either leaves an unreaped root
-                    // eligible for exact termination, or retires that right before
-                    // any subsequent await. Never signal a recycled numeric group.
                     if let Some(status) = owned.child.as_mut().ok_or(())?.try_wait().map_err(|_| ())? {
                         owned.may_terminate = false;
                         return Ok::<_, ()>(Output { status, stdout, stderr });
@@ -601,8 +592,6 @@ mod tests {
         use tokio::io::AsyncWriteExt;
         let (reader, mut writer) = tokio::io::duplex(64);
         writer.write_all(b"123456789").await.unwrap();
-        // Writer deliberately remains open. The overflow sentinel must finish
-        // this read without EOF; no source body is carried by the error.
         assert!(
             timeout(Duration::from_secs(1), bounded_read(reader, 8))
                 .await

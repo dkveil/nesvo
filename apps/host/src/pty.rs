@@ -1,4 +1,3 @@
-//! Native PTY ownership and blocking process I/O adapters.
 use anyhow::{Result, anyhow};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 #[cfg(windows)]
@@ -24,7 +23,7 @@ pub enum PtyEvent {
 
 pub struct Pty {
     process_id: Option<u32>,
-    // Close the input channel before ConPTY's potentially blocking destructor.
+    // Drop order: the input channel must close before ConPTY's potentially blocking destructor.
     input: sync_mpsc::SyncSender<Input>,
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
@@ -52,7 +51,6 @@ pub(crate) enum QueueAdmissionError {
 }
 impl std::fmt::Display for QueueAdmissionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Keep the existing adapter message; only its private type is new.
         f.write_str("Terminal input queue is full or closed. Input was not queued.")
     }
 }
@@ -197,9 +195,6 @@ impl Pty {
         let mut descendants = killer.clone_killer();
         thread::spawn(move || {
             let exit = child.wait().ok().map(|status| status.exit_code());
-            // A native root can exit while MCP helpers still own terminal pipes.
-            // Request descendant termination before publishing the root exit;
-            // acceptance still does not prove every process has been reaped.
             #[cfg(windows)]
             if let Err(error) = descendants.kill() {
                 eprintln!("Native session descendant cleanup failed: {error}");
@@ -222,7 +217,6 @@ impl Pty {
             .map_err(|_| anyhow!("Terminal input queue is full or closed. Input was not sent."))
     }
 
-    /// Acknowledges native write+flush only, never provider pickup or completion.
     pub fn send_confirmed(&self, data: String) -> Result<oneshot::Receiver<bool>> {
         confirmed_enqueue(data, |data, confirmation| self.enqueue(data, confirmation))
     }
@@ -246,8 +240,6 @@ impl Pty {
         self.process_id
     }
 
-    /// Finish the initial ConPTY handshake and drain earlier input before kill.
-    /// An empty barrier flushes an already queued reply without duplicating it.
     #[cfg(windows)]
     pub fn prepare_termination(&self, reply_initial_cursor: bool) -> Result<()> {
         let (flushed_tx, flushed_rx) = sync_mpsc::channel();
@@ -324,7 +316,6 @@ mod tests {
             "Terminal input queue is full or closed. Input was not queued."
         );
         assert!(!error.to_string().contains("PRIVATE_INPUT"));
-        // A separate accepted input still exercises the unchanged real writer.
         let (sender, inputs) = sync_mpsc::sync_channel(1);
         let _answer = confirmed_enqueue("accepted once".into(), |data, confirmation| {
             sender.try_send(Input {

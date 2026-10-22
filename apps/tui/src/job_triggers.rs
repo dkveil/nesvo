@@ -1,4 +1,3 @@
-//! Owner trigger DTOs; external HTTP never receives owner authority.
 use crate::{cli, workflow};
 use anyhow::Result;
 use clap::{Args, Subcommand};

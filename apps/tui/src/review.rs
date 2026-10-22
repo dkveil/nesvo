@@ -1,4 +1,3 @@
-//! Read-only review state and rendering. All repository I/O belongs to the host.
 use crate::{
     model::App,
     theme::{BORDER, DANGER, MUTED, SUCCESS, SURFACE, TEXT},
@@ -82,7 +81,6 @@ impl ReviewState {
     }
 }
 
-/// Pair adjacent deletion/addition runs, then resume shared context on one row.
 pub fn aligned(lines: &[&str]) -> Vec<(String, String)> {
     let mut rows = Vec::new();
     let mut index = 0;

@@ -1,4 +1,3 @@
-//! Bounded read-only provider observers, shared by periodic and owner refreshes.
 use crate::{launchers::Program, sessions::State};
 use std::{
     sync::{Arc, Mutex},
@@ -51,8 +50,6 @@ impl Runtime {
                         _ = timer.tick() => {},
                         requested = refresh.recv() => if requested.is_none() { break; },
                     }
-                    // Start and drain under the same lock used by owner
-                    // admission. No acknowledged token can slip between them.
                     let started = {
                         let mut state = state.lock().unwrap();
                         let started = state.quota_read_started(Program::Claude);
@@ -145,8 +142,6 @@ impl Runtime {
     }
 }
 
-/// Preserve the newest unpublished source revision after any writer failure.
-/// No process/config I/O runs under State or on the journal worker.
 pub(crate) async fn publish(state: &Arc<Mutex<State>>, log: &crate::event_log::Service) -> bool {
     let observations = state.lock().unwrap().take_quota_observations();
     let mut complete = true;

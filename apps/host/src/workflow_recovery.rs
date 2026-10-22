@@ -1,4 +1,3 @@
-//! Resolve authenticated recovery bindings without adopting or replaying effects.
 use crate::{
     api_error::Error,
     orchestration::{Actor, Scope},
@@ -45,7 +44,6 @@ pub fn read(
                 )
                 .into());
             };
-            // Do not pick the newest run or use names/UI focus as authority.
             let mut query=connection.prepare("SELECT id,title,state FROM workflow_runs WHERE coordinator_id=?1 ORDER BY created_at,id LIMIT 9")?;
             let runs=query.query_map(params![session],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"state":r.get::<_,String>(2)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
             if runs.len() != 1 {

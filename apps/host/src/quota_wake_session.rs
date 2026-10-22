@@ -1,4 +1,3 @@
-//! Live process fences for an explicitly armed one-shot quota continuation.
 use super::{
     Program, Session, State,
     session_quota::{LaunchBinding, Release},
@@ -226,8 +225,6 @@ impl State {
             .expect("Validated quota target");
         if let Some(predecessor) = session.pending_input.take() {
             let _ = predecessor.canceled.send(true);
-            // Keep original correlation until the provider confirms pickup of
-            // the new prompt. Never invent a lifecycle source sequence.
             session.quota_predecessor = Some(predecessor);
         }
         let digest = crate::submission::digest(prompt)
@@ -259,7 +256,6 @@ impl State {
             receiver,
         ))
     }
-    // Called immediately before both native queue writes; ordinary send readiness is unchanged.
     pub(crate) fn guard_quota_submission(&mut self, id: &str, operation: &str) -> Result<bool> {
         let Some(arm) = self
             .sessions
@@ -280,7 +276,6 @@ impl State {
             .pending_input
             .as_ref()
             .expect("Quota submission retained");
-        // A paste can change I/O activity, but never authorizes a semantic change of state.
         let after_paste = pending.queued;
         if pending.quota_sequence != Some(session.lifecycle_cursor)
             || pending.quota_semantic_revision != Some(session.status.semantic_revision())

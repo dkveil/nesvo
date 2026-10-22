@@ -1,4 +1,3 @@
-//! A durable task instruction intent, separate from native readiness and results.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -166,8 +165,6 @@ pub fn recover(connection: &mut Connection) -> Result<()> {
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (id, phase) in rows {
-        // A queued record has no native receipt/effect. A dispatch claim is
-        // deliberately uncertain; restart never resumes either authority.
         transaction.execute(
             "UPDATE workflow_deliveries SET phase=?2,blocker='host_restart' WHERE id=?1",
             params![
@@ -398,7 +395,6 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
             crate::workflow_budget::guard_dispatch(connection, &session, now)?;
             let transaction =
                 connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            // A second writer may cancel after the preliminary budget refresh.
             let queued: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM workflow_deliveries WHERE id=?1 AND phase='queued')",
                 [&id],

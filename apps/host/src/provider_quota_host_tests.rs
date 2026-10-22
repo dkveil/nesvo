@@ -6,7 +6,6 @@ fn state() -> State {
         MetadataStore::open(Path::new(":memory:")).unwrap(),
         Launchers::discover(),
     );
-    // Explicit installed-provider fixture; no provider command is run.
     state.provider_quota =
         crate::provider_quota::Tracker::new(&[Program::Codex, Program::Gemini], [9; 32]);
     state.provider_limits = vec![ProviderLimit {

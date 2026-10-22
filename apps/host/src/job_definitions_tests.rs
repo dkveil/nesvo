@@ -216,7 +216,7 @@ fn recurring_sleep_coalesces_to_latest_slot_and_persists_one_unique_utc_cursor()
     );
     let first = job["nextDueAt"].as_u64().unwrap();
     let now = first + 180_000 + 3000;
-    assert!(tick(&mut store, now).is_empty()); // SQLite never evaluates calendars.
+    assert!(tick(&mut store, now).is_empty());
     let due = calendars(&mut store, now).pop().unwrap();
     assert_eq!(due.due, first);
     advance(&mut store, due, now);

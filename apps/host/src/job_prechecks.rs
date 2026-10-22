@@ -1,4 +1,3 @@
-//! Owner-approved exact commands. Approval is explicit, immutable intent, not a sandbox.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -38,7 +37,6 @@ pub struct Command {
     pub pass_exit_codes: Vec<i32>,
     #[serde(default = "skip")]
     pub skip_exit_codes: Vec<i32>,
-    /// Explicit environment only; no ambient credentials or pairing context.
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
 }

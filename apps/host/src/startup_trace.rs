@@ -1,4 +1,3 @@
-//! Explicit, bounded startup evidence. Disabled for helpers and ordinary startup.
 use serde::Serialize;
 use std::{
     ffi::OsStr,
@@ -113,8 +112,6 @@ impl Emitter {
             || self.writer.write_all(line.as_bytes()).is_err()
             || self.writer.flush().is_err()
         {
-            // Diagnostic I/O must not replace the actual startup result or
-            // panic on a closed pipe. Stop rather than retrying partial writes.
             self.failed = true;
             return None;
         }

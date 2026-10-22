@@ -1,4 +1,3 @@
-//! Local visible-cell selection. Snapshot only on a press, never on every frame.
 use crate::{model::App, ui};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{

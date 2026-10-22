@@ -1,4 +1,3 @@
-//! Isolated calendar computation, before host/provider/storage initialization.
 use crate::job_calendar::{self, Answer, Failure, Query, Schedule};
 use std::io::{Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -29,7 +28,6 @@ pub fn stdio() -> anyhow::Result<()> {
 }
 
 pub async fn next(schedule: Schedule, after: u64) -> Answer {
-    // Absolute and externally driven schedules require no helper or native I/O.
     if matches!(schedule, Schedule::Once { .. } | Schedule::External) {
         return job_calendar::evaluate(Query { schedule, after });
     }
@@ -93,8 +91,6 @@ async fn evaluate_child(schedule: Schedule, after: u64) -> Answer {
     match result {
         Ok(Ok(answer)) => answer,
         failed => {
-            // This helper never forks. Kill and reap our exact child on every
-            // non-success path, including overlong output and parser failures.
             let _ = child.kill().await;
             let _ = child.wait().await;
             Err(Failure::new(

@@ -1,4 +1,3 @@
-//! Bounded full usage snapshots from the original CLI, never model or auth RPCs.
 use super::LimitWindow;
 use serde_json::{Value, json};
 use std::{
@@ -106,8 +105,6 @@ pub struct BucketCompleteness {
 }
 
 impl BucketCompleteness {
-    /// A full RPC may legitimately omit either quota window. Absence supplies
-    /// no numeric capacity; every advertised window must still be complete.
     pub fn complete_window_count(self) -> Option<usize> {
         let states = [self.primary, self.secondary];
         (!states.contains(&WindowState::Incomplete)).then(|| {
@@ -121,7 +118,6 @@ impl BucketCompleteness {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodexSnapshot {
-    // Opaque reader account/workspace metadata, never a native-process binding.
     pub account_id: Option<String>,
     pub ordinary_usage_allowed: Option<bool>,
     pub windows: Vec<LimitWindow>,
@@ -149,7 +145,6 @@ pub struct CodexObservation {
     pub outcome: ReadOutcome,
 }
 impl CodexObservation {
-    /// A fresh read is still only reader evidence, never a grant to a native CLI.
     pub fn fresh_at(&self, elapsed_ms: u64, max_age_ms: u64) -> bool {
         matches!(self.outcome, ReadOutcome::Snapshot(_))
             && self.finished_elapsed_ms >= self.started_elapsed_ms
@@ -208,7 +203,6 @@ fn window(bucket: &Value, key: &str) -> Result<(WindowState, Option<LimitWindow>
     } else {
         WindowState::Incomplete
     };
-    // The legacy display requires a duration; absent reset remains visible.
     let display = duration.map(|duration| LimitWindow {
         used_percent: used,
         duration_mins: duration as u32,
@@ -389,7 +383,6 @@ struct RouteEnvironment {
 }
 impl RouteEnvironment {
     fn current() -> Self {
-        // Only presence is inspected. Never read or retain a credential or URL.
         Self {
             openai_base_url: std::env::var_os("OPENAI_BASE_URL").is_some(),
             api_key: std::env::var_os("OPENAI_API_KEY").is_some()
@@ -444,7 +437,6 @@ fn config_origins(result: &Value) -> Result<Value, ReadFailure> {
             })
             .ok_or(ReadFailure::InvalidResponse)?;
         let version = optional_text(origin, "version", 512)?.ok_or(ReadFailure::InvalidResponse)?;
-        // File paths, profile names and layer bodies are deliberately excluded.
         selected.push(json!([field, kind, version]));
     }
     Ok(Value::Array(selected))
@@ -524,8 +516,6 @@ fn parse_route(
             }
             _ => return Err(ReadFailure::InvalidResponse),
         };
-        // These are configured-route facts at read time, not an immutable auth
-        // lease. No endpoint, header, environment value or raw config is hashed.
         let projection = json!({
             "provider":provider,"model":model,"serviceTier":tier,"login":login,
             "requiresOpenaiAuth":requires_auth,"oss":oss,"ossProvider":oss_provider,
@@ -771,8 +761,6 @@ fn read_outcome(
     match (answer, snapshot) {
         (Ok(()), Some(snapshot)) => ReadOutcome::Snapshot(snapshot),
         (Err(_), Some(snapshot)) => {
-            // A full quota result remains useful for display even when another
-            // read fails. No incomplete RPC exchange grants route admission.
             if let Some(context) = context {
                 context.route = RouteObservation::unknown("route_metadata_unavailable");
                 let bytes = format!("{}\0route_metadata_unavailable", context.context_id);
@@ -843,8 +831,6 @@ pub async fn read_codex_in_context(
             Ok(Ok(_))
         ) {
             outcome = ReadOutcome::Failure(ReadFailure::CleanupUnconfirmed);
-            // Keep sole-reader capacity until the exact child is reaped. No
-            // retry or fresh numeric process signal is issued by this observer.
             tokio::spawn(async move {
                 loop {
                     if child.wait().await.is_ok() {

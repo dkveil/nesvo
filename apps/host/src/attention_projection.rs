@@ -1,4 +1,3 @@
-//! Current actionable attention, independent of historical unread notifications.
 use crate::{
     groups::Group,
     readiness::Phase,
@@ -12,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 pub struct Projection {
     pub priority: u8,
     pub reason: Option<&'static str>,
-    /// Representative indicator for aggregate UI only; does not replace agent state.
     pub status: Option<SessionStatus>,
     pub blocked_children: usize,
 }
@@ -196,7 +194,6 @@ mod tests {
         );
         let (_, summary) = rollup(&groups, [(Some("b"), &working), (Some("a"), &child)]);
         assert_eq!(summary["a"].highest.as_ref().unwrap().reason, Some("child"));
-        // Defensive bounds even if corrupted persisted metadata contains a cycle.
         let mut cyclic = groups;
         cyclic[0].parent_id = Some("b".into());
         let (_, summary) = rollup(&cyclic, [(Some("b"), &question)]);

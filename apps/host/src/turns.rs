@@ -1,4 +1,3 @@
-//! A response turn is separate from task outcome, process lifetime and unread state.
 use crate::status::StatusState;
 use serde::Serialize;
 use std::collections::VecDeque;

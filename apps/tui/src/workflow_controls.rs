@@ -1,4 +1,3 @@
-//! CLI/MCP request DTOs for durable native run control.
 use clap::Args;
 use serde::{Deserialize, Serialize};
 

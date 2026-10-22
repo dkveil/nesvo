@@ -1,4 +1,3 @@
-//! Stable attention episodes, independent of output volume and viewer redraws.
 use crate::status::{SessionStatus, StatusSource, StatusState};
 use serde::Serialize;
 

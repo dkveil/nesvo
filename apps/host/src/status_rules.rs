@@ -1,4 +1,3 @@
-//! Versioned literal current-screen rules. No regex code, shell or file I/O.
 use crate::{launchers::Program, status::StatusState};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::OnceLock};

@@ -1,4 +1,3 @@
-//! Host-reported state. Terminal I/O alone is not evidence that an agent is working.
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -28,7 +27,6 @@ pub enum Source {
 pub struct Status {
     pub state: State,
     pub source: Source,
-    // Preserve the required wire field without introducing wall-clock reads in rendering.
     pub _updated_at: u64,
     pub freshness: Option<Freshness>,
 }

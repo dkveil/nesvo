@@ -1,4 +1,3 @@
-//! Storage/application invariants only; no HTTP, provider or process is launched here.
 use super::Store;
 use crate::{
     job_definitions as jobs,
@@ -1009,7 +1008,6 @@ fn overlap_rules_apply_to_external_occurrences_and_failed_admission_rolls_back_d
     assert_eq!(second["delivery"]["reason"], "queue_full");
     assert_eq!(second["delivery"]["disposition"], "skipped");
     assert_eq!(count(&store, "harness_job_trigger_deliveries"), 2);
-    // Simulate an exhausted occurrence journal without executing any work.
     store.0.execute("CREATE TRIGGER fixture_refuse_external BEFORE INSERT ON harness_job_occurrences BEGIN SELECT RAISE(ABORT,'fixture admission refusal'); END",[]).unwrap();
     assert!(
         triggers::ingest(
@@ -1094,8 +1092,6 @@ async fn restricted_writer_serializes_concurrent_duplicates_without_owner_scope_
 #[test]
 fn full_management_journal_preserves_one_permanent_revocation_reserve_and_exact_replay() {
     let (mut store, _, trigger) = fixture(true);
-    // Capacity-shaped retained responses exercise the reserve without thousands
-    // of irrelevant management transitions or any native/session activity.
     store.0.execute("WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<4094) INSERT INTO harness_job_trigger_mutations(issuer,key,digest,view) SELECT 'owner','retained-'||n,'retained','{}' FROM rows",[]).unwrap();
     assert_eq!(count(&store, "harness_job_trigger_mutations"), 4096);
     code(

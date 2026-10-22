@@ -1,4 +1,3 @@
-//! Bounded context reconstruction from authoritative records, without native I/O.
 use crate::{
     api_error::Error,
     orchestration::{self, Actor},
@@ -50,8 +49,6 @@ pub fn build(connection: &Connection, actor: &Actor, run: &str) -> Result<Vec<Va
     {
         parts.push(json!({"kind":"task","data":task}));
     }
-    // Results/checks stay in their immutable attempt history. These are exact
-    // pointers and stored validation milestones, never terminal-state guesses.
     sql_parts(
         connection,
         run,
@@ -91,7 +88,6 @@ pub fn build(connection: &Connection, actor: &Actor, run: &str) -> Result<Vec<Va
         ("workflow_executors", "executor"),
         ("workflow_wake_policies", "wakes"),
     ] {
-        // Fixed internal table names, never caller-supplied SQL identifiers.
         let row: Option<(String, bool, i64, String, Option<String>)> = connection
             .query_row(
                 &format!("SELECT id,enabled,generation,phase,reason FROM {table} WHERE run_id=?1"),

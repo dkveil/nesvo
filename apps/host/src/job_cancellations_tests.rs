@@ -273,7 +273,6 @@ fn finish_native_target(store: &mut Store, claim: &workflow_controls::Claim, exi
     };
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].session_id, "worker");
-    // Controlled native-adapter evidence; this test never creates a process.
     workflow_controls::execute(
         &mut store.0,
         workflow_controls::Work::Finish {
@@ -591,8 +590,6 @@ fn cancellation_fences_pending_validation_without_breaking_an_earlier_acceptance
         let before = workflow(&mut store, json!({"action":"get","runId":run["run"]["id"]}));
         assert_eq!(before["run"]["state"], "active");
         cancel(&mut store, &job, &occurrence);
-        // Job intent does not alter the run revision. This is the exact race in
-        // which an otherwise-current validation could incorrectly finish a run.
         let after = workflow(&mut store, json!({"action":"get","runId":run["run"]["id"]}));
         assert_eq!(after["run"]["revision"], before["run"]["revision"]);
         if let Some(accepted) = accepted {
@@ -644,8 +641,6 @@ fn cancellation_claim_survives_native_projection_and_queue_waits_for_exit_proof(
         workflow_controls::Kind::Cancel,
     );
     finish_native_target(&mut store, &native, false);
-    // Refresh may see the underlying control before the async dispatcher reports
-    // it. The live job claim and its token must remain valid throughout this race.
     assert!(cancellations(&mut store, NOW + 250).is_empty());
     let token: Option<String> = store
         .0

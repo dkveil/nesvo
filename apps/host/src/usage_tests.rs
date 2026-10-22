@@ -318,7 +318,6 @@ async fn route_rpc_fixture(
         }
         let mut quota = full();
         quota["id"] = json!(4);
-        // Quota arrives before the independent metadata replies.
         for response in [quota, config, account] {
             server_output
                 .write_all(format!("{response}\n").as_bytes())
@@ -696,8 +695,6 @@ impl ClaudeCacheFixture {
 
 impl Drop for ClaudeCacheFixture {
     fn drop(&mut self) {
-        // Remove only the known paths created by this fixture, including a FIFO or
-        // final symlink without traversing it.
         let _ = std::fs::remove_file(&self.path);
         let _ = std::fs::remove_dir(&self.path);
         let _ = std::fs::remove_file(self.directory.join("target.json"));
@@ -745,7 +742,6 @@ async fn claude_stalled_cache_read_has_a_deadline_without_fabricating_source_tim
 
     let (reader, mut writer) = tokio::io::duplex(128);
     writer.write_all(b"{\"at\":1000}").await.unwrap();
-    // Keep the writer open: a complete JSON prefix is not a completed file read.
     let observation = crate::usage::observe_claude_cache(
         1_100_000,
         crate::usage::read_claude_cache_bytes(reader),
@@ -773,8 +769,6 @@ async fn claude_fifo_is_refused_and_a_swapped_fifo_cannot_block_open() {
     assert_eq!(observation.source_at_ms, None);
     assert!(observation.windows.is_empty());
 
-    // Bypass the preliminary path check to exercise replacement between stat and
-    // open. No FIFO writer exists; the nonblocking open must still finish.
     let opened = tokio::time::timeout(
         Duration::from_secs(1),
         crate::usage::open_claude_cache(&fixture.path),

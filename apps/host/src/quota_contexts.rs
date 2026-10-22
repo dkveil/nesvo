@@ -1,4 +1,3 @@
-//! Bounded process-local readers. A context is configuration, never a quota lease.
 use crate::{
     launchers::Program,
     provider_quota::{Tracker, View},
@@ -18,8 +17,7 @@ pub(crate) struct ReaderSpec {
 }
 impl ReaderSpec {
     pub(crate) fn normalized(mut self) -> Self {
-        // Git and native validation use different Windows extended-path forms.
-        // Match the exact display form also passed to the spawned CLI's cwd.
+        // Git and native validation yield different Windows extended-path forms; use the CLI cwd's.
         self.directory = PathBuf::from(crate::process::display_path(&self.directory));
         self
     }
@@ -131,7 +129,6 @@ impl Registry {
                 .filter(|reservation| reservation.reader_id.is_none())
                 .count()
     }
-    /// One live native receipt owns capacity before Git can create a directory.
     pub fn reserve_derived(&mut self, receipt: &str) -> anyhow::Result<()> {
         if receipt.len() != 32 || !receipt.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(crate::api_error::Error::new(
@@ -160,8 +157,6 @@ impl Registry {
         });
         Ok(())
     }
-    /// Consume only this receipt's reserved capacity; an owner may already have
-    /// registered the actual directory, in which case its pinned reader wins.
     pub fn consume_derived(&mut self, receipt: &str, spec: ReaderSpec) -> anyhow::Result<String> {
         let spec = spec.normalized();
         let index = self
@@ -196,8 +191,6 @@ impl Registry {
         debug_assert!(self.used_capacity() <= CAPACITY);
         Ok(reader)
     }
-    /// Releasing one continuation never removes another receipt's reader or a
-    /// reader pinned by an owner query. Late in-flight completions are ignored.
     pub fn release_derived(&mut self, receipt: &str) {
         let Some(index) = self
             .reservations

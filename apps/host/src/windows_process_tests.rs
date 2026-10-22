@@ -1,5 +1,3 @@
-//! Native Rust ownership fixtures use real ConPTY without a shell, Node or model.
-//! The separately ignored startup diagnostic uses an installed Node fixture.
 use crate::{
     pty::{Pty, PtyEvent},
     terminal_protocol::{Decoder, Event},
@@ -54,8 +52,6 @@ fn native_tree_fixture() {
         _ => None,
     };
     if let Some(next) = next {
-        // Intentionally leave the descendant alive when this helper exits.
-        // The process job, not a cooperative child Drop, must contain it.
         let _descendant = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", HELPER, "--ignored", "--nocapture"])
             .env("NESVO_PROCESS_FIXTURE_ROLE", next)
@@ -81,8 +77,7 @@ impl PinnedProcess {
         let record: serde_json::Value =
             serde_json::from_slice(&fs::read(directory.join(format!("{role}.json"))).unwrap())
                 .unwrap();
-        // SAFETY: open only the identity reported by this owned fixture. The
-        // creation timestamp is checked before observation or cleanup by handle.
+        // SAFETY: opens only the pid this owned fixture reported and checks its creation time.
         let raw = unsafe {
             OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
@@ -107,7 +102,6 @@ impl PinnedProcess {
 }
 impl Drop for PinnedProcess {
     fn drop(&mut self) {
-        // Failure cleanup uses only a creation-validated, retained owned handle.
         if self.running() {
             unsafe { TerminateProcess(self.0.as_raw_handle(), 1) };
         }
@@ -248,7 +242,6 @@ async fn abrupt_owned_host_death_closes_noninherited_jobs_and_reaps_observed_des
     }
     let processes =
         ["root", "child", "grandchild"].map(|role| PinnedProcess::read(&directory, role));
-    // std::process::Child retains this exact created host handle, not a PID kill.
     host.0.kill().unwrap();
     host.0.wait().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -283,7 +276,7 @@ async fn stopping_or_exiting_one_pty_reaps_its_descendants_and_preserves_another
             fs::write(directory.join("exit-root"), b"owner fixture release").unwrap();
         } else {
             tree.pty.kill().unwrap();
-            tree.pty.kill().unwrap(); // Original stop replay/natural-exit race is harmless.
+            tree.pty.kill().unwrap();
         }
         let deadline = Instant::now() + Duration::from_secs(5);
         while processes.iter().any(PinnedProcess::running) {

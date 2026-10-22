@@ -1,4 +1,3 @@
-//! Bounded OSC 7501 data. Reports are observations, never command authority.
 use base64::{
     Engine,
     engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
@@ -9,6 +8,7 @@ use std::collections::BTreeMap;
 pub const REPLY: &str =
     "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\";
 pub const MAX_SEQUENCE: usize = 4096;
+const SEQUENCE_FRAMING_BYTES: usize = 9;
 const MAX_RECORDS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -72,13 +72,20 @@ fn text(value: &str, encoded: usize, decoded: usize) -> Option<String> {
     if value.chars().any(char::is_control) {
         return None;
     }
-    // Disarm bidi overrides/isolates when a record is displayed outside its grid.
-    Some(value.chars().filter(|c| !matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')).collect())
+    Some(
+        value
+            .chars()
+            .filter(|c| !is_invisible_or_bidi_control(*c))
+            .collect(),
+    )
+}
+
+fn is_invisible_or_bidi_control(c: char) -> bool {
+    matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')
 }
 
 pub fn parse(body: &str) -> Option<Report> {
-    // OSC + "7501;" + ST occupy nine bytes.
-    if body.len() + 9 > MAX_SEQUENCE {
+    if body.len() + SEQUENCE_FRAMING_BYTES > MAX_SEQUENCE {
         return None;
     }
     let mut pairs = BTreeMap::new();
@@ -197,8 +204,6 @@ impl Records {
             .count()
     }
     pub fn summary(&self) -> serde_json::Value {
-        // Child text is not broadcast in aggregate: 256 full messages could
-        // exceed a wire frame. Explain/read endpoints can paginate later.
         let blocked_apps: std::collections::BTreeSet<_> = self
             .records
             .iter()

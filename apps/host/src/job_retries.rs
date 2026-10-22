@@ -42,8 +42,6 @@ impl Policy {
         Ok(())
     }
 
-    /// The failed first generation waits one initial delay. Every following
-    /// generation doubles that delay, with checked arithmetic and a fixed cap.
     pub fn delay_ms(&self, source_ordinal: u16) -> Result<u64> {
         self.validate()?;
         if !(1..=8).contains(&source_ordinal) {
@@ -83,8 +81,6 @@ fn parsed(text: Option<String>) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// Only immutable decision facts belong in an old generation's public view.
-/// Claiming or canceling a later retry cannot rewrite a previously read body.
 pub fn view(connection: &Connection, source_attempt: &str) -> Result<Value> {
     let row = connection
         .query_row(
@@ -301,8 +297,6 @@ struct Evidence {
     receipt: String,
 }
 
-/// A label such as launchFailed is not proof. Read the exact bound receipt and
-/// reject every other task admission, result, delivery, exit or native receipt.
 fn evidence(connection: &Connection, source: &Source) -> Result<Option<Evidence>> {
     let Some(run) = &source.run else {
         return Ok(None);
@@ -341,8 +335,7 @@ fn evidence(connection: &Connection, source: &Source) -> Result<Option<Evidence>
     let Some((native, receipt, result)) = row else {
         return Ok(None);
     };
-    // SQLite's json_extract maps false and 0 to the same SQL integer. Parsing
-    // the JSON value keeps those distinct and refuses absent/null/string data.
+    // json_extract maps false and 0 to one SQL integer; parse the JSON to keep them distinct.
     if !no_effect_result(Some(&result)) {
         return Ok(None);
     }
@@ -905,8 +898,6 @@ struct Decision {
     failure: Option<String>,
 }
 
-/// The scheduler supplies its common fair candidate order and available slots.
-/// This revalidation and fresh token allocation share its writer transaction.
 #[cfg(test)]
 pub fn claim(
     tx: &Transaction<'_>,
@@ -1075,8 +1066,6 @@ pub fn claim_at(
     )))
 }
 
-/// An owner can cancel a known no-effect backoff without inventing native stop
-/// receipts. The caller owns the occurrence transition and cancellation event.
 pub fn cancel_waiting(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<bool> {
     let Some(source) = source(tx, occurrence)? else {
         return Ok(false);

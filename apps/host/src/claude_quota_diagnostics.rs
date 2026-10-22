@@ -1,4 +1,3 @@
-//! Launch-local callback diagnostics. These records never grant quota authority.
 use crate::{agent_events, claude_quota};
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};

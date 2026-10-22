@@ -448,7 +448,6 @@ fn separate_sqlite_writers_observe_the_reserved_parallel_slot_before_spawn() {
     ));
     let mut first = Store::open(&path).unwrap();
     let run = fixture(&mut first);
-    // Both connections are opened before admission; opening is host recovery.
     let mut second = Store::open(&path).unwrap();
     prepare(&mut first, "coordinator", request(&run, "writer-one", 0)).unwrap();
     let snapshot = current(&mut second, &run);

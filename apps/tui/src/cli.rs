@@ -1,4 +1,3 @@
-//! Headless operations over the same authenticated host connection as TUI.
 use crate::network::{Connection, NetworkEvent, Pairing, open_failure_message};
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};

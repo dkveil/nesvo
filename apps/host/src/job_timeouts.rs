@@ -1,4 +1,3 @@
-//! Exact-generation execution deadlines; clocks and native effects stay outside storage.
 use crate::{api_error::Error, job_definitions};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
@@ -96,7 +95,6 @@ fn record(row: &Row<'_>) -> rusqlite::Result<Record> {
 }
 
 fn load(connection: &Connection, column: &str, value: &str) -> Result<Option<Record>> {
-    // Column names come only from fixed calls in this module, never wire input.
     Ok(connection
         .query_row(
             &format!("SELECT {COLUMNS} FROM harness_job_timeouts WHERE {column}=?1"),
@@ -166,8 +164,6 @@ fn current(connection: &Connection, identity: &Identity) -> Result<bool> {
     )?)
 }
 
-/// Called in native admission after reserving its attempt/session/receipt. A
-/// legacy or ordinary Run is a no-op; an opted-in generation gets one deadline.
 pub fn arm(
     tx: &Transaction<'_>,
     run: &str,
@@ -389,8 +385,6 @@ fn disarm(tx: &Transaction<'_>, record: &Record, reason: &str, now: u64) -> Resu
     Ok(())
 }
 
-/// Passive projection of exact stored receipts and trusted process exits. Live
-/// dispatch tokens remain untouched until their owned completion callback.
 pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
     let mut query=tx.prepare(&format!("SELECT {COLUMNS} FROM harness_job_timeouts WHERE state IN ('armed','dispatching','awaitingExit','blocked','unconfirmed') AND token IS NULL ORDER BY job_attempt_id LIMIT 4096"))?;
     let rows = query
@@ -450,8 +444,6 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
             }
             continue;
         }
-        // A previous host's armed timer never acquired stop authority. Its old
-        // monotonic origin cannot establish expiration or process adoption.
         if record.requested_at.is_none() {
             continue;
         }
@@ -519,9 +511,6 @@ pub fn schedule(tx: &Transaction<'_>, slots: u8, now: u64, elapsed_ms: u64) -> R
 }
 
 pub fn recover(tx: &Transaction<'_>, now: u64) -> Result<()> {
-    // Honor evidence committed before the crash without claiming native work
-    // or reading the previous host's monotonic clock. Only remaining timers
-    // lose authority below; an already proven exit cannot hold overlap forever.
     refresh(tx, now)?;
     tx.execute("UPDATE harness_job_timeouts SET state='unconfirmed',token=NULL,reason='host_restarted',observed_at=?1 WHERE state NOT IN ('disarmed','completed') AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.job_attempt_id=harness_job_timeouts.job_attempt_id)",[i64::try_from(now)?])?;
     Ok(())

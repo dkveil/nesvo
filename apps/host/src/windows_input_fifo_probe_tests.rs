@@ -1,4 +1,3 @@
-//! Opt-in observation of one startup ordering hypothesis, never an OS-hang assertion.
 use super::*;
 use crate::pty::{InputTraceEvent, InputTraceKind, InputTracePhase};
 use std::os::windows::process::CommandExt;
@@ -9,13 +8,10 @@ use windows_sys::Win32::{
 };
 
 const HOLDER: &str = "process::windows::tests::input_fifo_probe::native_input_fifo_holder_fixture";
-// One bounded paste matching the reported payload size. Never retry these bytes.
 const PASTE: &str = "\x1b[200~report-task\x1b[201~";
 const READY_LIMIT: Duration = Duration::from_secs(3);
 const OBSERVATION_LIMIT: Duration = Duration::from_secs(2);
 
-// This owned script has no libtest banner and touches stdout only after the
-// controller has pinned the ready process. It needs no packages or model.
 const NODE_CHILD: &str = r#"
 'use strict';
 const net = require('node:net');
@@ -130,7 +126,6 @@ impl ProbeDirectory {
 }
 impl Drop for ProbeDirectory {
     fn drop(&mut self) {
-        // Revalidate this freshly created target before any recursive deletion.
         if let Ok(resolved) = fs::canonicalize(&self.path)
             && resolved == self.path
             && resolved.starts_with(&self.temporary)
@@ -140,7 +135,6 @@ impl Drop for ProbeDirectory {
     }
 }
 
-/// No call to Decoder::feed is allowed until this owned gate is released once.
 #[derive(Default)]
 struct CursorQueryGate {
     held: String,
@@ -153,7 +147,6 @@ impl CursorQueryGate {
             let event = tokio::time::timeout_at(deadline, fixture.events.recv()).await;
             match event {
                 Ok(Some(PtyEvent::Data(_, data))) => {
-                    // Bound fixture output independently of the production parser.
                     if self.held.len() + data.len() > 64 * 1024 {
                         return false;
                     }
@@ -196,9 +189,7 @@ fn installed_node() -> PathBuf {
 }
 
 fn retain_ready_child(directory: &Path, process_id: u32) -> PinnedProcess {
-    // SAFETY: this PID is both the real Pty root and the authenticated ready
-    // child, which stays alive waiting for our query-release byte. Pin it before
-    // release and retain the handle through cleanup; do not kill through a PID.
+    // SAFETY: the pid is the live Pty root and ready child; the handle pins it through cleanup.
     let raw = unsafe {
         OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
@@ -349,8 +340,6 @@ async fn observe_input_fifo(directory: &Path, report: &mut ProbeReport) {
         report.trace(event);
     }
     report.mark("owned_conpty_cleanup_started");
-    // This existing Drop answers an outstanding cursor query once, then kills
-    // the owned job. The outer holder watchdog also bounds ConPTY destruction.
     drop(fixture);
     for event in trace.try_iter() {
         report.trace(event);
@@ -359,7 +348,7 @@ async fn observe_input_fifo(directory: &Path, report: &mut ProbeReport) {
         let exited = wait_owned(child.0.as_raw_handle(), Duration::from_secs(5));
         report.value["owned_child_exit_observed"] = exited.into();
         if !exited {
-            // SAFETY: retain and terminate only the creation-validated owned handle.
+            // SAFETY: only the creation-validated owned handle is retained and terminated.
             unsafe { TerminateProcess(child.0.as_raw_handle(), 1) };
             report.value["child_cleanup_fallback_exited"] =
                 wait_owned(child.0.as_raw_handle(), Duration::from_secs(2)).into();
@@ -388,7 +377,7 @@ fn native_input_fifo_holder_fixture() {
 }
 
 fn wait_owned(handle: std::os::windows::io::RawHandle, duration: Duration) -> bool {
-    // SAFETY: retained process handle, bounded duration, no PID lookup.
+    // SAFETY: the retained process handle is valid for the bounded wait and no pid is looked up.
     let status = unsafe { WaitForSingleObject(handle, duration.as_millis() as u32) };
     assert!(
         status == WAIT_OBJECT_0 || status == WAIT_TIMEOUT,
@@ -401,8 +390,7 @@ fn wait_owned(handle: std::os::windows::io::RawHandle, duration: Duration) -> bo
 fn pin_observed_child(directory: &Path) -> Option<PinnedProcess> {
     let record: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.join("child.json")).ok()?).ok()?;
-    // SAFETY: this fixture directory records the ready child's retained native
-    // handle identity. Revalidate its creation time before observation or kill.
+    // SAFETY: the recorded child identity is revalidated by creation time before any use.
     let raw = unsafe {
         OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,

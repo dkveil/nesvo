@@ -1,4 +1,3 @@
-//! Exact-byte signatures and bounded provider payloads; no native authority.
 use crate::{
     api_error::Error,
     job_triggers::{Adapter, Inbound},
@@ -152,8 +151,6 @@ fn push_shape(body: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Provider shape is checked even for replay. Policy/freshness outcomes apply
-/// only to a new delivery, after its immutable replay identities are checked.
 pub fn parse(adapter: &Adapter, inbound: &Inbound) -> Result<Parsed> {
     match adapter {
         Adapter::Webhook { event } => {
@@ -166,7 +163,6 @@ pub fn parse(adapter: &Adapter, inbound: &Inbound) -> Result<Parsed> {
             {
                 return Err(malformed());
             }
-            // Deserialization requires payload, including an explicit null.
             let _ = body.payload;
             Ok(Parsed {
                 matches: body.event == *event,

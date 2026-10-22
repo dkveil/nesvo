@@ -1,4 +1,3 @@
-//! Headless job DTOs over the same authenticated host workflow adapter.
 use crate::{cli, network::Connection, workflow_launches::Profile};
 use anyhow::Result;
 use clap::Subcommand;
@@ -415,11 +414,12 @@ struct QuotaPolicy {
     #[serde(deserialize_with = "quota_binding")]
     account_fingerprint: String,
 }
-fn quota_policy<'de, D>(deserializer: D) -> std::result::Result<Option<QuotaPolicy>, D::Error>
+fn explicit_quota_policy<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<QuotaPolicy>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    // An explicit field is a policy selection, never a null spelling of omission.
     QuotaPolicy::deserialize(deserializer).map(Some)
 }
 
@@ -536,7 +536,7 @@ pub struct Spec {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "quota_policy"
+        deserialize_with = "explicit_quota_policy"
     )]
     quota_policy: Option<QuotaPolicy>,
     #[serde(default)]
@@ -672,8 +672,6 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    // Canonical serialization before executionTimeoutMs was introduced. Keeping
-    // these exact bytes preserves fingerprints of legacy job mutation intent.
     const LEGACY: &str = concat!(
         r#"{"title":"Legacy","instruction":"Report result","profile":{"name":null,"cwd":null,"program":"claude","workspace":"shared","harness":null},"#,
         r#""schedule":{"kind":"once","at":"2026-12-01T00:00:00Z"},"misfire":"catchUp","graceMs":60000,"overlap":"skip","maxElapsedMs":300000}"#

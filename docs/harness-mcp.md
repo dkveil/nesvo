@@ -273,6 +273,9 @@ default system instructions, suppress global tools, skip permissions, or write
 global configuration. The generated stdio server inherits only the scoped
 authentication path, not an owner pairing argument/key. Effective configuration
 is visible through session queries/explain; prepared is separate from loaded.
+The appended file inlines the bundled control references: requiring a new provider
+Read permission to learn safe control would deadlock a blocked coordinator. Generic
+skill users still get the same references as separate files.
 These native flags are documented in the official
 [Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
 

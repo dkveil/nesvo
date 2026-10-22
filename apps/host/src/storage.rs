@@ -70,8 +70,6 @@ impl MetadataStore {
     pub fn claim_schedule(&mut self) -> Result<Option<(String, crate::jobs::LaunchSpec)>> {
         use rusqlite::OptionalExtension;
         let now = chrono::Utc::now().timestamp();
-        // Quiet legacy ticks share this database with the event journal. A WAL
-        // reader needs no writer reservation or wait under the session-state lock.
         let due: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM schedules WHERE state='pending' AND due<=?1)",
             [now],
@@ -80,8 +78,6 @@ impl MetadataStore {
         if !due {
             return Ok(None);
         }
-        // The preflight is only a hint. Re-read after reserving the writer so a
-        // competing claim or cancellation cannot launch stale pending work.
         let transaction = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -345,8 +341,6 @@ mod tests {
                 .iter()
                 .any(|row| row["id"] == future && row["state"] == "pending")
         );
-        // Positive control: the other writer is still live and this handler
-        // would detect any attempted writer reservation on the idle path.
         assert!(
             store
                 .connection
@@ -399,8 +393,6 @@ mod tests {
                 .claim_schedule()
                 .map(|claimed| claimed.map(|(id, _)| id))
         });
-        // WAL preflight sees the earlier pending state. Only writer reservation
-        // waits, allowing the competing cancellation to commit before recheck.
         let reservation = blocked.recv_timeout(Duration::from_secs(2));
         writer.commit().unwrap();
         let _ = release.send(());

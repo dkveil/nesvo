@@ -1,4 +1,3 @@
-//! Codex 0.156 native hook adapter. No transcript parsing or global config writes.
 use anyhow::{Result, ensure};
 use portable_pty::CommandBuilder;
 use serde_json::Value;
@@ -34,8 +33,6 @@ pub fn configure(command: &mut CommandBuilder, report: &Path) -> Result<()> {
         .iter()
         .position(|arg| arg == "--")
         .unwrap_or(argv.len());
-    // A separate local executor keeps another app-server's environment from
-    // owning this process's hook path. Login and approval policy stay native.
     argv.splice(
         index..index,
         [

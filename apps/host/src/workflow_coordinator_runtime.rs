@@ -1,4 +1,3 @@
-//! Owner replacement of an unavailable coordinator; never native effect adoption.
 use crate::{
     api_error::Error,
     caller::Authority,

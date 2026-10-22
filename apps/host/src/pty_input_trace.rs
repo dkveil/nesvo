@@ -1,4 +1,3 @@
-//! Bounded test-only ordering evidence; no terminal contents or production cost.
 use super::{Confirmation, Input};
 use std::sync::{Arc, Mutex, mpsc};
 
@@ -80,8 +79,6 @@ impl Trace {
         data: String,
         confirmation: Option<Confirmation>,
     ) -> Result<(), mpsc::TrySendError<Input>> {
-        // The writer's trace lock cannot pass this admission record. try_send
-        // never waits for native I/O, including when its queue is already full.
         let mut state = self.0.lock().unwrap();
         state.input_sequence += 1;
         let envelope = Envelope {

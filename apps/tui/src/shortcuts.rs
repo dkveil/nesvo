@@ -1,4 +1,3 @@
-//! Global terminal shortcuts are function keys, never printable agent input.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -40,7 +39,6 @@ impl Shortcuts {
         true
     }
     pub fn hints(&self, text: &str) -> String {
-        // Replace through placeholders so swapped assignments cannot cascade.
         let mut output = text.to_owned();
         for (i, key) in Self::default().keys.iter().enumerate() {
             output = output.replace(&format!("F{key}"), &format!("{{key{i}}}"));

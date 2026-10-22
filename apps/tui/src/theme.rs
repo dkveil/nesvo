@@ -1,7 +1,5 @@
-//! The canonical palette is validated and embedded at compile time.
 include!(concat!(env!("OUT_DIR"), "/brand_colors.rs"));
 
-/// Accent variants share terminal ink, backgrounds and semantic status colors.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Theme {

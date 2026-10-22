@@ -1,4 +1,3 @@
-//! Small modal workflows with exclusive keyboard and pointer focus.
 use crate::{
     controller::Outcome,
     model::{App, Session},

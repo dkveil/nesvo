@@ -1,4 +1,3 @@
-//! Per-process capabilities. A caller's declared session ID never grants authority.
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -31,7 +30,6 @@ pub fn supports_claude_harness(version: &str) -> bool {
     numbers.is_some_and(|v| v.len() == 3 && v[0] == 2 && v[1] == 1 && v[2] >= 303)
 }
 
-// Explicit owner configuration wins. An invalid override never falls through to PATH.
 fn resolve_client(explicit: Option<OsString>, host: &Path) -> Option<PathBuf> {
     let candidate = explicit
         .map(PathBuf::from)
@@ -104,8 +102,6 @@ pub enum Authority {
         id: String,
         scope_id: String,
     },
-    /// Host-created grant for a fixed coordinator wake, never authenticated from
-    /// client input. General API/launch/control paths reject this authority.
     RunWake {
         id: String,
         scope_id: String,
@@ -147,17 +143,14 @@ impl Context {
             std::fs::set_permissions(context.references(), std::fs::Permissions::from_mode(0o700))?;
         }
         crate::private_write(&context.skill(), INSTRUCTIONS.as_bytes())?;
-        let mut instructions = INSTRUCTIONS.to_owned();
+        let mut inlined_instructions = INSTRUCTIONS.to_owned();
         for (name, content) in REFERENCES {
             crate::private_write(&context.references().join(name), content.as_bytes())?;
-            instructions.push_str(&format!(
+            inlined_instructions.push_str(&format!(
                 "\n\n---\n\nBundled reference: references/{name}\n\n{content}"
             ));
         }
-        // Native injection includes referenced control rules up front. Requiring
-        // a new provider Read permission to learn safe control would deadlock a
-        // blocked coordinator. Generic skill users still get normal references.
-        crate::private_write(&context.instructions(), instructions.as_bytes())?;
+        crate::private_write(&context.instructions(), inlined_instructions.as_bytes())?;
         crate::private_write(
             &context.path(),
             &serde_json::to_vec(
@@ -261,7 +254,6 @@ impl Drop for Context {
             let _ = std::fs::remove_file(directory.join("mcp.json"));
             let _ = std::fs::remove_file(directory.join("instructions.md"));
             let _ = std::fs::remove_file(directory.join("recovery.json"));
-            // Remove only our named references, never caller-created contents.
             let reference = directory.join("references");
             if reference
                 .canonicalize()
@@ -272,7 +264,6 @@ impl Drop for Context {
                 }
                 let _ = std::fs::remove_dir(reference);
             }
-            // Never recursively delete caller-controlled contents.
             let _ = std::fs::remove_dir(directory);
         }
     }
@@ -294,7 +285,6 @@ struct RecoveryReport {
     run_id: Option<String>,
     constraint_revision: Option<u64>,
 }
-/// Called by the lifecycle I/O task, never by snapshot rendering or under State.
 pub async fn observe_recovery(path: &Path) -> serde_json::Value {
     use tokio::io::AsyncReadExt;
     let metadata = match tokio::fs::symlink_metadata(path).await {

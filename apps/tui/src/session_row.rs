@@ -1,4 +1,3 @@
-//! Shared single-row presentation for the sidebar and both session switchers.
 use crate::{
     launch::Program,
     model::Session,

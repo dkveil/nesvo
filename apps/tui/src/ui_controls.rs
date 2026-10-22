@@ -1,4 +1,3 @@
-//! Shared, pure geometry for visible controls and mouse hit testing.
 use crate::{
     brand,
     launch::{Field, Program},
@@ -439,7 +438,6 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
     {
         return control.enabled.then_some(control.action);
     }
-    // A popup owns the whole interaction surface; never click through it.
     if app.dialog.is_some() {
         return None;
     }
@@ -466,7 +464,6 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Action> 
 
 pub fn render(frame: &mut Frame, app: &App) {
     if matches!(app.dialog, Some(Dialog::QuickSwitch { .. })) {
-        // The palette draws its rows and categories; their controls only hit-test.
         return;
     }
     let footer_has_submit = matches!(

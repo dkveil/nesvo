@@ -1,9 +1,9 @@
-//! Observed terminal activity and conservative, informational CLI screen hints.
 use crate::launchers::Program;
 use serde::{Deserialize, Serialize};
 
 const QUIET_MS: u64 = 1_500;
 const VISIBLE_TAIL_LINES: usize = 12;
+const NO_SCROLLBACK: usize = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -68,8 +68,8 @@ impl StatusTracker {
     pub fn new(program: Program, rows: u16, cols: u16, now: u64) -> Self {
         Self {
             program,
-            // No scrollback: inference must only see the current visible screen.
-            parser: (program != Program::Shell).then(|| vt100::Parser::new(rows, cols, 0)),
+            parser: (program != Program::Shell)
+                .then(|| vt100::Parser::new(rows, cols, NO_SCROLLBACK)),
             screen_hint: None,
             screen_rule: None,
             screen_dirty: false,
@@ -256,8 +256,6 @@ impl StatusTracker {
     pub fn input(&mut self, now: u64) {
         if !self.exited {
             self.last_activity = Some(now);
-            // A key may answer the visible prompt. Do not retain that inference
-            // until the program produces new screen output.
             self.screen_hint = None;
             self.screen_rule = None;
             self.screen_dirty = false;
@@ -288,7 +286,6 @@ impl StatusTracker {
         self.exited.then_some(self.exit_code)
     }
 
-    /// Called by the coalesced host timer, never broadcast for each PTY chunk.
     pub fn refresh(&mut self, now: u64) -> bool {
         let (state, source) = if self.exited {
             (
@@ -324,8 +321,6 @@ impl StatusTracker {
                 if self.lifecycle.is_none() {
                     return true;
                 }
-                // A prompt can remain visible during a real turn. New output or
-                // elapsed time alone cannot turn confirmed work into idle.
                 self.lifecycle != Some(*hint)
                     && !(*hint == StatusState::Idle
                         && self.lifecycle == Some(StatusState::Working)

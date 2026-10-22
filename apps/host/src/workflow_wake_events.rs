@@ -1,4 +1,3 @@
-//! Transactional wake references. Untrusted bodies never become native input.
 use crate::api_error::Error;
 use anyhow::{Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -68,8 +67,6 @@ pub fn message(
     let kind = message["kind"]
         .as_str()
         .ok_or_else(|| anyhow!("Wake source has no kind"))?;
-    // Only host-authored result/decision fields or stable message identity are
-    // exposed. Caller body/correlation/payload text is never a wake instruction.
     let data = if matches!(kind, "result" | "decision") {
         json!({"messageId":id,"taskId":message["payload"]["taskId"],"attemptId":message["payload"]["attemptId"],"decisionId":message["payload"]["decisionId"],"decisionState":message["payload"]["state"]})
     } else {

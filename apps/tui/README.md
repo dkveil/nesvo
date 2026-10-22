@@ -143,6 +143,8 @@ cargo test --manifest-path apps/tui/Cargo.toml --locked
 
 Unit tests cover input and VT response ownership, mode transitions, session creation correlation, the group tree, key encoding, alternate screens, and rendering through Ratatui TestBackend. A real PTY with concurrent clients is a separate integration test.
 
+`cargo run -p nesvo --example design_concepts -- <output-directory>` exports six cell-buffer JSON files (three layouts, workspace and search states) of design fixtures. They are real Ratatui cells; the example never starts a host or an agent.
+
 ### Sidebar search and keyboard reference
 
 Click the bordered Search sessions input, or navigate Up to it, to type a quick filter. Escape clears the query and returns to the session list. `/` and Ctrl+K open the expanded palette in navigation mode; F2 or Tab expands a quick search without losing its query. Main menu → Keyboard shortcuts (or `?`) shows the reference; Left/Right switch its Navigation, Sessions and Review pages. While typing in a session, use Ctrl+Q then z to toggle full screen; the reference lists this sequence. The highlighted session includes both its name and status/provider line.

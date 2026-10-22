@@ -126,7 +126,6 @@ fn retry_cooldown_starts_at_observed_failure_and_does_not_reset_on_reads() {
             [&attempt],
         )
         .unwrap();
-    // The launch was at 20_001, so its age cannot substitute for cooldown.
     for (at, ready) in [
         (30_000, false),
         (30_999, false),

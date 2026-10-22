@@ -1,4 +1,3 @@
-//! Explicit owner metadata rebinding. Native worker authority/effects are not adopted.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -187,7 +186,6 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Opti
         params![request.run_id, request.coordinator_session_id],
     )?;
     transaction.execute("INSERT INTO workflow_coordinator_bindings(run_id,coordinator_id,previous_id,directory,group_id,generation,source,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(run_id) DO UPDATE SET coordinator_id=excluded.coordinator_id,previous_id=excluded.previous_id,directory=excluded.directory,group_id=excluded.group_id,generation=excluded.generation,source=excluded.source,updated_at=excluded.updated_at",params![request.run_id,request.coordinator_session_id,request.expected_coordinator_session_id,facts.target.directory,facts.target.group_id,generation,source,now as i64])?;
-    // Invalidate every old pump generation, even an already disabled policy.
     transaction.execute("UPDATE workflow_executors SET enabled=0,generation=generation+1,phase='paused',reason='coordinator_changed' WHERE run_id=?1",[&request.run_id])?;
     transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='paused',reason='coordinator_changed',coordinator_id=?2 WHERE run_id=?1",params![request.run_id,request.coordinator_session_id])?;
     transaction.execute("UPDATE workflow_deliveries SET phase='paused',blocker='coordinator_changed' WHERE run_id=?1 AND phase='queued'",[&request.run_id])?;

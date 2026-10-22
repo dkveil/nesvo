@@ -1,4 +1,3 @@
-//! Advisory launch-directory metadata. Demand is explicit and never native input.
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -349,7 +348,6 @@ impl Registry {
             let Some(attempt) = entry.attempt.checked_add(1) else {
                 continue;
             };
-            // Reserve result and expiry revisions before publishing checking.
             if entry
                 .revision
                 .checked_add(3)
@@ -606,7 +604,6 @@ impl Registry {
             used += delta;
             added.push(index);
         }
-        // Recheck the whole payload once; capacity never changes admission.
         if serde_json::to_vec(snapshot).map_or(true, |bytes| bytes.len() > baseline + available) {
             for index in added {
                 if let Some(session) = snapshot["sessions"][index].as_object_mut() {
@@ -847,7 +844,6 @@ mod tests {
     }
     impl Drop for RuntimeFixture {
         fn drop(&mut self) {
-            // Also retire both owned shell lifetimes on an assertion unwind.
             let _ = self.cleanup();
         }
     }
@@ -910,8 +906,6 @@ mod tests {
     #[tokio::test]
     async fn runtime_last_disconnect_drains_admitted_read_without_admitting_queued_directory() {
         use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-        // Real State/client authorization and two owned shell subscriptions;
-        // the inspector is the sole substituted adapter. No Git/provider runs.
         let mut fixture = RuntimeFixture::new();
         let clock = Arc::new(AtomicU64::new(crate::event_log::monotonic_millis()));
         let calls = Arc::new(AtomicUsize::new(0));
@@ -964,8 +958,6 @@ mod tests {
             "The other directory lost its last authorized demand"
         );
         clock.fetch_add(TTL_MS + 1, Ordering::SeqCst);
-        // A late close notification exercises the real bounded wake channel;
-        // it must not turn the advanced expiry clock into a new demand.
         fixture.state.lock().unwrap().disconnect(1);
         assert!(futures_util::poll!(&mut worker).is_pending());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -979,9 +971,6 @@ mod tests {
         stop.send_replace(true);
         assert!(worker.await);
 
-        // Aborting this same production loop while an admitted adapter future
-        // is blocked also drops that future. Native Git cleanup is separately
-        // covered by the real adapter's command-scope conformance tests.
         let (events, _received) = tokio::sync::mpsc::channel(128);
         let (cancelled, _cancel) = watch::channel(false);
         fixture.state.lock().unwrap().clients.insert(
@@ -1140,8 +1129,6 @@ mod tests {
         );
         assert!(registry.claim().is_none());
         assert!(registry.next_expiry().is_none());
-        // Wall time is not an input to expiry/cooldown: changing or moving it
-        // backwards cannot refresh an observation or extend these deadlines.
         registry.demand(1, std::slice::from_ref(&binding.id), 30_120);
         let work = registry.claim().unwrap();
         assert!(registry.finish(&work, Outcome::NotRepository, 1, 30_125));
@@ -1243,8 +1230,6 @@ mod tests {
         );
         assert!(!registry.finish(&orphan, Outcome::Unavailable, 12, 12));
 
-        // Revocation/disconnect still removes that new queued demand while the
-        // old inspection drains; it cannot become an automatic replacement.
         for revoked in [false, true] {
             let mut registry = Registry::default();
             registry.register(old.clone());

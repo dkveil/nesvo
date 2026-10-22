@@ -1,4 +1,3 @@
-//! Durable run control intents. Physical effects and exit observations are separate.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -318,8 +317,6 @@ fn prepare_job_timeout(
             |row| row.get(0),
         )?;
         if exact && issuer == timeout.issuer && matches!(kind.as_str(), "stop" | "cancel") {
-            // An accepted owner control owns its physical effect. The timeout
-            // links the exact evidence and never reclaims that control's token.
             crate::job_timeouts::control_prepared(&transaction, &timeout, &id, now)?;
             let view = view(&transaction, &actor, run_id, &id, 0)?;
             transaction.commit()?;
@@ -424,7 +421,6 @@ fn prepare_job_timeout(
         claim: (!exited).then_some(Claim { id, token }),
     })
 }
-/// Only trusted host process-exit observations call this; never provider text.
 pub fn observe_exit(transaction: &Transaction<'_>, session: &str, now: u64) -> Result<()> {
     transaction.execute("INSERT OR IGNORE INTO workflow_process_exits(session_id,observed_at) SELECT session_id,?2 FROM workflow_attempts WHERE session_id=?1",params![session,now as i64])?;
     let controls = {

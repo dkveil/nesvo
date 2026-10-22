@@ -131,9 +131,6 @@ async fn main() -> Result<()> {
         PathBuf::from("host/.local/pairing.json")
     });
     if let Some(command) = arguments.command {
-        // The headless dispatcher contains the SDK server and nested command
-        // futures. Keep it off the entrypoint stack, including before parsing
-        // --help on Windows' smaller default main-thread stack.
         let code = Box::pin(cli::execute(
             command,
             &pairing_path,
@@ -212,10 +209,6 @@ async fn main() -> Result<()> {
 }
 
 fn parse_arguments(args: Vec<std::ffi::OsString>) -> Result<Result<Arguments, clap::Error>> {
-    // Generated Clap augmentation is recursive across command families. The
-    // workflow family alone uses >500 KiB in a Windows debug build; keep that
-    // short-lived construction off the smaller OS main stack. Do not change
-    // global linker/runtime stacks or keep a parser thread after startup.
     std::thread::Builder::new()
         .name("nesvo-arguments".into())
         .stack_size(4 * 1024 * 1024)

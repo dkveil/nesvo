@@ -1,4 +1,3 @@
-//! Attempt ownership and explicit results; no native effects or inferred success.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, RunRevisionEvent},
@@ -390,8 +389,6 @@ pub fn mutate(
                 now,
             )?;
             crate::workflow_inbox::notify_result(connection, actor, &own, result)?;
-            // This is the report's deadline boundary after all validation and
-            // dependent metadata work; a refusal rolls the whole report back.
             crate::job_timeouts::guard_report(
                 connection,
                 attempt_id,

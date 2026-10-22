@@ -1,4 +1,3 @@
-//! Stable application error codes shared by all authenticated host clients.
 use std::fmt;
 #[derive(Debug)]
 pub struct Error {

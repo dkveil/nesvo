@@ -1,4 +1,3 @@
-//! Pure, bounded civil-calendar evaluation. The adapter runs it outside the host.
 use chrono::{DateTime, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use croner::Cron;
@@ -77,8 +76,7 @@ fn zone(name: &str) -> Result<Tz, Failure> {
     }
     name.parse().map_err(|_| invalid("Unknown IANA time zone"))
 }
-fn instant(zone: Tz, local: NaiveDateTime) -> Option<u64> {
-    // Generated gaps are absent; a fold denotes only the earlier UTC instant.
+fn earliest_instant(zone: Tz, local: NaiveDateTime) -> Option<u64> {
     let time = match zone.from_local_datetime(&local) {
         LocalResult::Single(time) => time,
         LocalResult::Ambiguous(a, b) => a.min(b),
@@ -130,8 +128,6 @@ pub fn evaluate(query: Query) -> Answer {
             let cron: Cron = expression
                 .parse()
                 .map_err(|_| invalid("Invalid five-field cron expression"))?;
-            // Search civil time in a fixed-offset clock: the cron engine must
-            // not normalize nonexistent wall times to a nonmatching time.
             let local = utc(query.after)?
                 .with_timezone(&zone)
                 .naive_local()
@@ -150,7 +146,8 @@ pub fn evaluate(query: Query) -> Answer {
                     .map_err(|_| {
                         invalid("No previous cron occurrence in the supported date range")
                     })?;
-                if let Some(at) = instant(zone, before.naive_utc()).filter(|at| *at <= query.after)
+                if let Some(at) =
+                    earliest_instant(zone, before.naive_utc()).filter(|at| *at <= query.after)
                 {
                     previous = Some(at);
                     break;
@@ -165,7 +162,9 @@ pub fn evaluate(query: Query) -> Answer {
                 let next = cron.find_next_occurrence(&cursor, false).map_err(|_| {
                     invalid("No cron occurrence in the engine's supported date range")
                 })?;
-                if let Some(at) = instant(zone, next.naive_utc()).filter(|at| *at > query.after) {
+                if let Some(at) =
+                    earliest_instant(zone, next.naive_utc()).filter(|at| *at > query.after)
+                {
                     return Ok(Window {
                         previous,
                         next: Some(at),
@@ -316,7 +315,7 @@ fn walk(
     let allowed = *budget;
     for candidate in expansion(plan, anchor).take(allowed) {
         *budget -= 1;
-        let Some(at) = instant(plan.zone, civil(candidate)?) else {
+        let Some(at) = earliest_instant(plan.zone, civil(candidate)?) else {
             continue;
         };
         if plan.until.is_some_and(|last| at as i64 > last)
@@ -354,7 +353,7 @@ fn probe(
     let allowed = *budget;
     for candidate in expansion(plan, anchor).take(allowed) {
         *budget -= 1;
-        if let Some(at) = instant(plan.zone, civil(candidate)?) {
+        if let Some(at) = earliest_instant(plan.zone, civil(candidate)?) {
             return Ok(at <= bound);
         }
     }
@@ -365,14 +364,7 @@ fn probe(
     })
 }
 
-fn plan(text: &str, start: &str, time_zone: &str, search: &Search) -> Result<Plan, Failure> {
-    if text.is_empty() || text.len() > 1024 || !text.is_ascii() || start.len() != 19 {
-        return Err(invalid(
-            "Use an RRULE within 1024 ASCII bytes and local start YYYY-MM-DDTHH:MM:SS",
-        ));
-    }
-    // The upstream parser intentionally ignores unknown/duplicate parts.
-    // Scheduling rejects them rather than accepting a different user intent.
+fn validate_rrule_parts_strictly(text: &str) -> Result<(), Failure> {
     let mut seen = BTreeSet::new();
     for part in text.split(';') {
         let (key, value) = part
@@ -404,6 +396,16 @@ fn plan(text: &str, start: &str, time_zone: &str, search: &Search) -> Result<Pla
             return Err(invalid("Zoned RRULE UNTIL must be UTC YYYYMMDDTHHMMSSZ"));
         }
     }
+    Ok(())
+}
+
+fn plan(text: &str, start: &str, time_zone: &str, search: &Search) -> Result<Plan, Failure> {
+    if text.is_empty() || text.len() > 1024 || !text.is_ascii() || start.len() != 19 {
+        return Err(invalid(
+            "Use an RRULE within 1024 ASCII bytes and local start YYYY-MM-DDTHH:MM:SS",
+        ));
+    }
+    validate_rrule_parts_strictly(text)?;
     let mut rule = IcalRecurRule::parse(text).map_err(|_| invalid("Invalid RRULE"))?;
     if !rule.problems().is_empty()
         || rule.freq == IcalRecurFreq::Secondly
@@ -430,7 +432,7 @@ fn plan(text: &str, start: &str, time_zone: &str, search: &Search) -> Result<Pla
     let zone = zone(time_zone)?;
     let start = NaiveDateTime::parse_from_str(start, "%Y-%m-%dT%H:%M:%S")
         .map_err(|_| invalid("Invalid RRULE start"))?;
-    if instant(zone, start).is_none() {
+    if earliest_instant(zone, start).is_none() {
         return Err(invalid(
             "RRULE start must name an existing time after the Unix epoch",
         ));

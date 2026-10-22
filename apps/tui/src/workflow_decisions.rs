@@ -1,4 +1,3 @@
-//! CLI/MCP DTOs for explicit questions. Native permission handling is separate.
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};

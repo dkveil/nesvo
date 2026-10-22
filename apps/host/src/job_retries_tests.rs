@@ -1,4 +1,3 @@
-//! SQLite lifecycle evidence with an injected clock; these fixtures launch no process.
 use super::Store;
 use crate::{
     job_attempts::{self, Dispatch},
@@ -166,8 +165,6 @@ fn passed_precheck() -> Value {
     json!({"state":"passed","reason":"exit_code_passed","exitCode":0,"stdout":"retained command observation","stderr":"","stdoutTruncated":false,"stderrTruncated":false,"durationMs":1,"cleanupConfirmed":true,"commandStarted":true})
 }
 
-/// Retain real-shaped authorization and native refusal evidence without starting
-/// either the approved command or a worker process.
 fn prechecked_source(store: &mut Store, prefix: &str, ordinal: u16) -> (Fixture, String, String) {
     let fixture = seed(store, prefix, Some(retry(3)), ordinal);
     let command: crate::job_prechecks::Command = serde_json::from_value(json!({
@@ -847,8 +844,6 @@ fn admission_revalidates_evidence_and_authority_and_blocks_without_rewriting_fai
             job_retries::view(&store.0, &fixture.source).unwrap(),
             decision
         );
-        // Native evidence changed deliberately above; the generation's own
-        // failed state, first finish and dispatch claim must remain unchanged.
         let retained = generation(&store.0, &fixture);
         for key in [
             "id",

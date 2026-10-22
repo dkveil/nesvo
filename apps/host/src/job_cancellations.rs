@@ -1,4 +1,3 @@
-//! Owner cancellation intent fences admissions before asynchronous native cleanup.
 use crate::{api_error::Error, job_definitions, orchestration::Actor};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -33,8 +32,6 @@ pub fn initialize(connection: &Connection) -> Result<()> {
 pub fn view(connection: &Connection, occurrence: &str) -> Result<Value> {
     Ok(connection.query_row("SELECT state,requested_at,observed_at,reason,control_key,control_id FROM harness_job_cancellations WHERE occurrence_id=?1",[occurrence],|r|Ok(json!({"state":r.get::<_,String>(0)?,"requestedAt":r.get::<_,i64>(1)?,"observedAt":r.get::<_,i64>(2)?,"reason":r.get::<_,Option<String>>(3)?,"controlKey":r.get::<_,String>(4)?,"controlId":r.get::<_,Option<String>>(5)?}))).optional()?.unwrap_or(Value::Null))
 }
-/// Applies even after completion: a canceled occurrence's run is never reused.
-/// Human direct PTY input does not pass through this automated admission fence.
 pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
     let canceled:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_cancellations c JOIN harness_job_occurrences o ON o.id=c.occurrence_id WHERE o.run_id=?1) OR EXISTS(SELECT 1 FROM harness_job_cancellations c JOIN harness_job_attempts a ON a.occurrence_id=c.occurrence_id WHERE a.run_id=?1)",[run],|r|r.get(0))?;
     if canceled {
@@ -179,7 +176,6 @@ pub fn finish(tx: &Transaction<'_>, claim: &Claim, result: Option<Value>, now: u
     refresh(tx, now)?;
     Ok(())
 }
-/// Reads existing native evidence only; never claims or repeats a stop operation.
 pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
     let mut statement=tx.prepare("SELECT c.occurrence_id,w.id,w.state FROM harness_job_cancellations c JOIN harness_job_occurrences o ON o.id=c.occurrence_id JOIN workflow_mutations m ON m.issuer=c.issuer AND m.key=c.control_key JOIN workflow_controls w ON w.id=json_extract(m.view,'$.control.id') AND w.run_id=o.run_id AND w.kind='cancel' WHERE c.token IS NULL AND c.state NOT IN ('completed','awaitingPrecheck')")?;
     let rows = statement
@@ -206,9 +202,6 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
             job_definitions::transition(tx, &occurrence, phase, Some(reason), finished, now)?;
         }
     }
-    // Another explicit owner control may have stopped this exact run while our
-    // admission was waiting or uncertain. Its latest completed control and
-    // terminal run state are exit evidence; neither alone is sufficient.
     let observed = {
         let mut q=tx.prepare("SELECT c.occurrence_id,w.id FROM harness_job_cancellations c JOIN harness_job_occurrences o ON o.id=c.occurrence_id JOIN workflow_runs r ON r.id=o.run_id JOIN workflow_controls w ON w.id=(SELECT id FROM workflow_controls WHERE run_id=o.run_id ORDER BY rowid DESC LIMIT 1) WHERE c.token IS NULL AND c.state NOT IN ('completed','abandoned','awaitingPrecheck') AND r.state IN ('canceled','stopped') AND w.state='completed'")?;
         q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
@@ -230,7 +223,6 @@ pub fn refresh(tx: &Transaction<'_>, now: u64) -> Result<()> {
             )?;
         }
     }
-    // A dispatch error before any control acceptance is still not exit proof.
     let unmatched = {
         let mut q = tx.prepare("SELECT o.id FROM harness_job_occurrences o JOIN harness_job_cancellations c ON c.occurrence_id=o.id WHERE c.state='unconfirmed' AND c.control_id IS NULL AND o.state='canceling'")?;
         q.query_map([], |r| r.get::<_, String>(0))?
@@ -268,12 +260,9 @@ pub fn precheck_finished(
     if let Some(attempt) = attempt {
         return precheck_finished_attempt(tx, occurrence, &attempt, confirmed, now);
     }
-    // Old unclaimed metadata can only settle an old, untargeted cancellation.
     tx.execute("UPDATE harness_job_cancellations SET state=?2,reason=?3,observed_at=?4 WHERE occurrence_id=?1 AND state='awaitingPrecheck' AND precheck_attempt_id IS NULL",params![occurrence,if confirmed {"completed"}else{"unconfirmed"},if confirmed {"owner_canceled"}else{"cleanup_unconfirmed"},now as i64])?;
     Ok(())
 }
-/// Cleanup evidence can settle only the generation canceled by its owner. A
-/// migrated untargeted record is compatible with generation 1, never a retry.
 pub fn precheck_finished_attempt(
     tx: &Transaction<'_>,
     occurrence: &str,
@@ -294,8 +283,6 @@ pub fn precheck_finished_attempt(
     Ok(())
 }
 pub fn recover(tx: &Transaction<'_>, now: u64) -> Result<()> {
-    // Even an unclaimed accepted native cancellation remains fenced. A restart
-    // cannot safely distinguish setup/stop effects from the old host generation.
     tx.execute("UPDATE harness_job_cancellations SET token=NULL,state='unconfirmed',reason='host_restarted',observed_at=?1 WHERE state NOT IN ('completed','blocked','abandoned') AND NOT EXISTS(SELECT 1 FROM harness_job_launch_resolutions r WHERE r.occurrence_id=harness_job_cancellations.occurrence_id)",[now as i64])?;
     Ok(())
 }

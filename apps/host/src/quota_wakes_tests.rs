@@ -521,8 +521,6 @@ fn retained_native_receipt_never_becomes_a_second_dispatch_even_with_an_imported
     let value = arm(11);
     armed(&mut store.0, &value);
     let dispatch = claimed(&mut store.0, &value).unwrap();
-    // Simulate inconsistent imported metadata; receipt replay remains a final
-    // no-redelivery fence even when the arm's projection is wrong.
     store
         .0
         .execute(

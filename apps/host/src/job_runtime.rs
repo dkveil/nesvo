@@ -1,4 +1,3 @@
-//! Job dispatch reuses durable workflow admission and native receipt guards.
 use crate::{
     caller::Authority,
     event_log::Service,
@@ -12,6 +11,9 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 
+const MAX_CLAIMS_PER_TICK: usize = 4;
+const MAX_RETAINED_DISPATCH_TASKS: usize = 64;
+
 fn shutdown_requested(stop: &watch::Receiver<bool>) -> bool {
     *stop.borrow() || stop.has_changed().is_err()
 }
@@ -24,8 +26,6 @@ async fn stopping(stop: &mut watch::Receiver<bool>) {
     }
 }
 
-/// Only rejected quota admission is retried. A parked continuation retains its
-/// original claim and completed phases, but gives back active dispatch capacity.
 async fn quota_step<T, F, G>(
     slots: &Arc<Semaphore>,
     permit: &mut Option<OwnedSemaphorePermit>,
@@ -51,8 +51,6 @@ where
                 permit=slots.clone().acquire_owned()=>permit.map_err(|_|anyhow!("Job dispatch capacity is closed"))?,
             });
         }
-        // Subscribe/consume before the store read so its release event cannot
-        // be lost between a refusal and parking.
         changed.borrow_and_update();
         match action().await {
             Err(error)
@@ -71,8 +69,6 @@ where
     }
 }
 
-/// Retain scheduling and command cleanup until the host's journal is drained.
-/// Dropping the sender is also a fail-closed stop, never permission to continue.
 pub struct Runtime {
     stop: watch::Sender<bool>,
     task: tokio::task::JoinHandle<Result<()>>,
@@ -95,8 +91,6 @@ impl Runtime {
         match tokio::time::timeout_at(drain, &mut self.task).await {
             Ok(result) => result.map_err(|_| anyhow!("Job runtime shutdown was interrupted"))?,
             Err(_) => {
-                // Preserve any in-flight durable claim as unconfirmed. Do not
-                // invent command cleanup or repeat native termination signals.
                 self.task.abort();
                 if tokio::time::timeout_at(deadline, &mut self.task)
                     .await
@@ -114,8 +108,6 @@ impl Runtime {
     }
 }
 
-/// The owned process future must remain polled while the store guard is slow.
-/// Guard reads have no native effects and can be dropped on timeout/completion.
 async fn supervise_precheck<C, G>(
     check: C,
     stop: tokio::sync::watch::Sender<Option<crate::job_precheck_adapter::Stop>>,
@@ -351,8 +343,6 @@ async fn run(
                 Err(_) => return Err(anyhow!("Job runtime state is unavailable")),
             };
             if checking {
-                // Bounded host version probes precede admission. A persisted due
-                // job must not interpret transient discovery as unsupported CLI.
                 tokio::select! {
                     _ = stopping(&mut shutdown) => break,
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
@@ -382,7 +372,6 @@ async fn run(
                                 "Calendar adapter was interrupted",
                             ))
                         });
-                        // A busy slot leaves original due intent for a later tick.
                         if !answer
                             .as_ref()
                             .err()
@@ -409,10 +398,10 @@ async fn run(
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 continue;
             }
-            // Parked claims do not occupy these four permits. The separate
-            // retained-task bound follows the 64-definition storage capacity.
             let mut reserved = Vec::new();
-            while reserved.len() < 4 && dispatches.len() + reserved.len() < 64 {
+            while reserved.len() < MAX_CLAIMS_PER_TICK
+                && dispatches.len() + reserved.len() < MAX_RETAINED_DISPATCH_TASKS
+            {
                 match runner.slots.clone().try_acquire_owned() {
                     Ok(permit) => reserved.push(permit),
                     Err(_) => break,
@@ -428,8 +417,6 @@ async fn run(
                 Ok(Reply::Claims(claims)) => {
                     delay = 1;
                     for (claim, permit) in claims.into_iter().zip(reserved) {
-                        // At most four durable claims per tick. The executor owns
-                        // bounded provider readiness/input; no model heartbeat.
                         let runner = runner.clone();
                         dispatches.spawn(async move {
                             let dispatch = claim.dispatch.clone();
@@ -466,10 +453,6 @@ async fn run(
         Ok::<_, anyhow::Error>(())
     }
     .await;
-    // Stop admission first, but keep every owned command future and the journal
-    // alive through its exact terminate/reap/empty observation and finish write.
-    // Detached executor/native operations retain their own receipt uncertainty;
-    // draining this runtime is not proof those separate operations completed.
     let mut failed = false;
     loop {
         while let Some(result) = dispatches.try_join_next() {

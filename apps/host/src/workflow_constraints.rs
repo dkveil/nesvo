@@ -1,4 +1,3 @@
-//! Owner constraints are append-only; handling acknowledgement is a separate act.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -141,8 +140,6 @@ pub fn execute(
                 .ok_or_else(|| anyhow!("Missing constraint revision"))?
                 + 1;
             transaction.execute("INSERT INTO workflow_constraints(id,run_id,revision,text,issuer,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![hex::encode(crate::wire::random::<16>()),run,next,text,actor.issuer,now as i64])?;
-            // Never silently keep scheduling an immutable plan after its owner
-            // changes the context. Existing model responses may still finish.
             transaction.execute("UPDATE workflow_executors SET enabled=0,generation=generation+1,phase='paused',reason='constraints_changed' WHERE run_id=?1 AND enabled=1",[run])?;
             transaction.execute("UPDATE workflow_wake_policies SET enabled=0,generation=generation+1,phase='paused',reason='constraints_changed' WHERE run_id=?1 AND enabled=1",[run])?;
             transaction.execute("UPDATE workflow_deliveries SET phase='paused',blocker='constraints_changed' WHERE run_id=?1 AND phase='queued'",[run])?;

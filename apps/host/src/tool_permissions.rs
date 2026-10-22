@@ -1,9 +1,7 @@
-//! Owner-selected native permission additions, not host capabilities or a sandbox.
 use crate::api_error::Error;
 use anyhow::Result;
 use std::collections::HashSet;
 
-/// Derived only by the native authority adapter, never deserialized from a caller.
 pub struct Grant {
     tools: Vec<String>,
     coordinator: Option<String>,
@@ -51,8 +49,6 @@ pub fn validate(tools: &[String]) -> Result<()> {
         )
         .into());
     }
-    // Shared public data contract, checked against the native MCP catalog by TUI
-    // tests. Neither application depends on the other's executable/library.
     let known: Vec<String> =
         serde_json::from_str(include_str!("../../../docs/harness-mcp-tools.json"))?;
     let mut seen = HashSet::new();

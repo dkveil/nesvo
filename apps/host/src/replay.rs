@@ -1,6 +1,5 @@
-//! Bounded transcript storage and historical terminal-query filtering.
-
 pub const BACKLOG_BYTES: usize = 128 * 1024;
+const DECID_FINAL: u8 = b'Z';
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,9 +86,7 @@ pub fn output_chunks(text: &str) -> impl Iterator<Item = &str> {
     })
 }
 
-// Replaying a terminal query must not provoke a fresh response into the running
-// shell. Preserve drawing escapes, but remove historical report requests.
-pub fn replay_history(text: &str) -> String {
+pub fn replay_history_without_terminal_queries(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());
     let mut index = 0;
@@ -101,7 +98,7 @@ pub fn replay_history(text: &str) -> String {
         }
         let mut end = index + 2;
         let remove = match bytes[index + 1] {
-            b'Z' => true, // DECID device attributes.
+            DECID_FINAL => true,
             b'[' => {
                 while end < bytes.len() && !(0x40..=0x7e).contains(&bytes[end]) {
                     end += 1;
@@ -138,9 +135,7 @@ pub fn replay_history(text: &str) -> String {
                     break;
                 }
                 let body = &bytes[index + 2..end];
-                let query = bytes[end] == b'q' && (body.ends_with(b"$") || body.ends_with(b"+"));
-                // DECRQSS ($q) and XTGETTCAP (+q) request replies. Preserve
-                // drawing DCS strings such as sixel, including their payload.
+                let query = is_decrqss_or_xtgettcap_request(bytes[end], body);
                 while end + 1 < bytes.len() && !(bytes[end] == 0x1b && bytes[end + 1] == b'\\') {
                     end += 1;
                 }
@@ -160,6 +155,10 @@ pub fn replay_history(text: &str) -> String {
     }
     output.push_str(&text[start..]);
     output
+}
+
+fn is_decrqss_or_xtgettcap_request(final_byte: u8, body: &[u8]) -> bool {
+    final_byte == b'q' && (body.ends_with(b"$") || body.ends_with(b"+"))
 }
 
 #[cfg(test)]
@@ -204,10 +203,18 @@ mod tests {
     #[test]
     fn replay_preserves_drawing_but_never_reissues_terminal_queries() {
         let history = "hello\x1b[31mred\x1b[6n\x1b[>0c\x1b[?1$p\x1b]10;?\x07world\x1b[0m";
-        assert_eq!(replay_history(history), "hello\x1b[31mredworld\x1b[0m");
-        assert_eq!(replay_history("zażółć 🦀\x1b[6n"), "zażółć 🦀");
         assert_eq!(
-            replay_history("a\x1bP$qm\x1b\\b\x1bP+q544e\x1b\\c\x1bPqDRAW\x1b\\"),
+            replay_history_without_terminal_queries(history),
+            "hello\x1b[31mredworld\x1b[0m"
+        );
+        assert_eq!(
+            replay_history_without_terminal_queries("zażółć 🦀\x1b[6n"),
+            "zażółć 🦀"
+        );
+        assert_eq!(
+            replay_history_without_terminal_queries(
+                "a\x1bP$qm\x1b\\b\x1bP+q544e\x1b\\c\x1bPqDRAW\x1b\\"
+            ),
             "abc\x1bPqDRAW\x1b\\"
         );
     }

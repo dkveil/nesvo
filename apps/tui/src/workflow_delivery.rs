@@ -1,4 +1,3 @@
-//! Strict task-instruction intent DTOs; no caller-supplied prompt or authority.
 use clap::Args;
 use serde::{Deserialize, Serialize};
 

@@ -1,4 +1,3 @@
-//! Prompt correlation is private evidence, independent of PTY delivery or idle.
 use crate::{
     agent_events::{Event, Identity},
     status::StatusState,
@@ -126,13 +125,10 @@ impl Correlation {
             json!({"turnId":self.turn,"sourceSequence":event.sequence,"generation":event.generation,"taskResult":null,"providerPromptObserved":true,"processingObserved":self.processing,"promptMatch":self.matched_by}),
         ))
     }
-    /// Explain unmatched pickup without exposing either fingerprint or prompt.
     pub fn diagnostic(&self) -> Value {
         json!({"closed":self.closed,"matchedBy":self.matched_by,"lastPromptSequence":self.last_prompt.map(|p|p.0),"lastPromptMatched":self.last_prompt.map(|p|p.1)})
     }
     pub(crate) fn can_resume_after_quota(&self, identity: &Identity) -> bool {
-        // Only the caller's current explicit quota/editor proof permits this
-        // supersession. Codex 0.156 has no documented StopFailure hook.
         !self.closed
             && self.turn.is_some()
             && self.launch == identity.launch_id
@@ -140,8 +136,6 @@ impl Correlation {
     }
 }
 
-/// Canonicalization is for matching only; sent prompt bytes are not changed.
-/// Providers may normalize terminal line endings and surrounding whitespace.
 pub fn digest(prompt: &str) -> Option<String> {
     if prompt.len() > 8192
         || prompt
@@ -156,9 +150,6 @@ pub fn digest(prompt: &str) -> Option<String> {
     ))
 }
 
-/// Claude can mark one whole pasted prompt in its hook payload. Preserve the raw
-/// fingerprint too: only this bounded, complete envelope adds an alternative.
-/// Inline/malformed tags and their contents are never generally rewritten.
 pub fn claude_paste_digest(prompt: &str) -> Option<String> {
     if prompt.len() > 8192 + 128 {
         return None;
@@ -318,7 +309,6 @@ mod tests {
         assert!(
             claude_paste_digest(&maximum.replace(&"x".repeat(8192), &"x".repeat(8193))).is_none()
         );
-        // Strip exactly one envelope; literal nested tags remain significant.
         let nested = format!("<pasted_content id=\"a\">\n{wrapped}\n</pasted_content id=\"a\">");
         assert_eq!(claude_paste_digest(&nested), digest(&wrapped));
     }

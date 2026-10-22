@@ -1,4 +1,3 @@
-//! Durable domain observations. Terminal replay has a separate cursor space.
 use crate::api_error::Error;
 use anyhow::{Result, anyhow, ensure};
 pub use nesvo_wire::events as model;
@@ -20,8 +19,6 @@ const RETENTION: u64 = 4096;
 const MAX_PAGE: usize = 32;
 const MAX_CURSOR: u64 = 9_007_199_254_740_991;
 
-/// A process-local elapsed clock for explicitly armed execution limits. Stored
-/// deadlines lose dispatch authority at recovery and never cross this origin.
 pub(crate) fn monotonic_millis() -> u64 {
     static ORIGIN: OnceLock<Instant> = OnceLock::new();
     ORIGIN
@@ -650,9 +647,6 @@ impl Service {
                     | crate::job_calendar::Schedule::External
             )
         {
-            // Keep computation off the SQLite worker. Even a failed evaluation
-            // is carried through to the domain: immutable key replay must be
-            // checked before fresh live-clock validation or helper errors.
             spec.calendar = Some(
                 crate::job_calendar_adapter::next(
                     spec.schedule.clone(),
@@ -817,8 +811,6 @@ impl Service {
         std::thread::Builder::new()
             .name("nesvo-events".into())
             .spawn(move || {
-                // Keep directory ownership while the writer drains, including
-                // error/cancellation paths after the async host future ends.
                 let _owner_guard = owner;
                 let mut store = match Store::open(&path) {
                     Ok(store) => store,
@@ -979,8 +971,6 @@ impl Service {
                                     );
                             let result =
                                 crate::orchestration::execute(&mut store.0, actor, request);
-                            // Also invalidate the projection when an authorized
-                            // read detects unavailable/corrupt policy storage.
                             let result = if budget_request {
                                 crate::budgets::publish(&store.0, &worker_budget).and(result)
                             } else {
@@ -1098,8 +1088,6 @@ impl Service {
             wait_slots: Arc::new(tokio::sync::Semaphore::new(32)),
         })
     }
-    /// Informational observations fail open; the health counter exposes any loss.
-    /// Critical workflow results use `append` and await durable acknowledgement.
     pub fn observe(&self, event: Observation) {
         if self
             .sender

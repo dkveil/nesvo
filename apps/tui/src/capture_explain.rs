@@ -1,4 +1,3 @@
-//! Pure, allowlisted presentation of launch-local capture receipts.
 use serde_json::Value;
 
 #[derive(Clone, Copy)]
@@ -71,7 +70,6 @@ fn reader_label(value: &Value) -> &'static str {
     }
 }
 
-/// These lines describe callback delivery, never backend permission or freshness.
 pub fn lines(capture: &Value) -> Vec<String> {
     if capture.get("configured").and_then(Value::as_bool) != Some(true) {
         return Vec::new();

@@ -1,4 +1,3 @@
-//! Deterministic competing-writer regression: no sleeps or model/native effects.
 use super::Store;
 use rusqlite::{Connection, TransactionBehavior};
 use serde_json::json;
@@ -91,8 +90,6 @@ fn pure_job_supervision_and_calendar_reads_do_not_request_the_writer_lock() {
     writer
         .execute("UPDATE domain_event_cursor SET head=head WHERE id=1", [])
         .unwrap();
-    // Any attempted writer reservation fails immediately. WAL snapshot reads
-    // must still succeed while a different connection owns the writer.
     store.0.busy_timeout(Duration::ZERO).unwrap();
     let before = store.0.total_changes();
     let error = crate::job_definitions::work(

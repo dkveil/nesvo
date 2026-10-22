@@ -1,5 +1,3 @@
-//! Exact configured-reader evidence for one native session's optional wake.
-//! A reader snapshot is not a historical or immutable provider account lease.
 use crate::{
     api_error::Error,
     quota_contexts::{ReaderSpec, Registry},
@@ -9,15 +7,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{ffi::OsString, path::PathBuf};
 
-/// Captured from the command, cwd and explicit home actually used at spawn.
-/// Capture does not register a reader or consume reader capacity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LaunchBinding {
     spec: ReaderSpec,
 }
 
-/// Private durable metadata. Monotonic fields are valid only in this host epoch;
-/// restart must pause an arm rather than adopt it into another process/clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WakeProof {
@@ -65,8 +59,6 @@ impl LaunchBinding {
         })
     }
 
-    /// Register this only when an owner arms a wake: Registry::register(spec,
-    /// false) pins it without changing the ambient workspace display reader.
     pub fn reader_spec(&self) -> ReaderSpec {
         self.spec.clone()
     }

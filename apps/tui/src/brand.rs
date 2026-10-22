@@ -1,4 +1,3 @@
-//! Exact shared block geometry, rendered as two pixels per terminal cell.
 use crate::theme::{BACKGROUND, TEXT, Theme};
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, widgets::Widget};
 use std::time::Duration;
@@ -29,7 +28,6 @@ pub fn frame_index(elapsed: Duration) -> usize {
         .unwrap_or(0)
 }
 
-/// Reserve a fixed masthead only when the logo and all home actions fit.
 pub fn area(content: Rect) -> Option<Rect> {
     (content.width >= WIDTH as u16 && content.height >= ROWS + 12).then_some(Rect::new(
         content.x,
@@ -103,27 +101,25 @@ impl Widget for Logo {
     }
 }
 
-/// Compact solid pixels retain the wordmark's top, counters and crossbars.
-#[allow(dead_code)] // Retained for the design concept exporter.
+#[allow(dead_code, reason = "retained for the design concept exporter")]
 pub struct CompactLogo(pub Theme);
 impl Widget for CompactLogo {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        // Sample each canonical glyph independently so the small wordmark keeps
-        // its stems and counters. No satellite, animation or private font glyphs.
-        const ROWS: [usize; 6] = [0, 2, 3, 4, 6, 7];
-        const COLUMNS: [[usize; 3]; 5] = [[1, 4, 7], [1, 4, 6], [1, 4, 6], [1, 3, 6], [1, 4, 6]];
+        const SAMPLED_ROWS: [usize; 6] = [0, 2, 3, 4, 6, 7];
+        const SAMPLED_COLUMNS: [[usize; 3]; 5] =
+            [[1, 4, 7], [1, 4, 6], [1, 4, 6], [1, 3, 6], [1, 4, 6]];
         let width = 19u16.min(area.width);
         let left = area.x + area.width.saturating_sub(width) / 2;
         for (index, glyph) in GLYPHS.iter().enumerate() {
             let ink = if index == 0 { self.0.accent() } else { TEXT };
             for y in 0..3usize.min(usize::from(area.height)) {
-                for (x, source_x) in COLUMNS[index].iter().enumerate() {
+                for (x, source_x) in SAMPLED_COLUMNS[index].iter().enumerate() {
                     let column = index * 4 + x;
                     if column >= usize::from(width) {
                         continue;
                     }
-                    let top = glyph[ROWS[y * 2]].as_bytes()[*source_x] == b'1';
-                    let bottom = glyph[ROWS[y * 2 + 1]].as_bytes()[*source_x] == b'1';
+                    let top = glyph[SAMPLED_ROWS[y * 2]].as_bytes()[*source_x] == b'1';
+                    let bottom = glyph[SAMPLED_ROWS[y * 2 + 1]].as_bytes()[*source_x] == b'1';
                     buffer[(left + column as u16, area.y + y as u16)]
                         .set_symbol("▀")
                         .set_style(
@@ -153,7 +149,6 @@ mod tests {
         assert_eq!(look_right[6][6], 2);
         assert_eq!(look_right[1][8], 1);
         assert_eq!(pixels(frame_index(Duration::from_millis(6000))), initial);
-        // The remaining wordmark never moves or changes during the animation.
         for index in 0..FRAMES.len() {
             for (initial_row, row) in initial.iter().zip(pixels(index)) {
                 assert_eq!(&initial_row[11..], &row[11..]);

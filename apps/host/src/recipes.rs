@@ -1,4 +1,3 @@
-//! Persisted launch descriptions; restoring never replays an old prompt.
 use crate::{jobs::LaunchSpec, storage::MetadataStore};
 use anyhow::{Result, ensure};
 use rusqlite::params;

@@ -1,10 +1,3 @@
-//! One live host owns a data directory. A stale file is not a stale OS lock.
-//!
-//! Unix `flock` ownership is shared by duplicated/forked descriptors. Explicit
-//! unlock ends this guard's ownership even while another descriptor remains open;
-//! close-on-exec alone does not cover the interval between fork and exec.
-//! See [Apple's flock(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)
-//! and [Linux flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html).
 use anyhow::{Context, Result};
 use std::{
     fs::{File, OpenOptions},
@@ -32,9 +25,6 @@ impl HostLock {
                 anyhow::anyhow!("Another nesvo-host already owns this pairing/data directory. Reuse it or choose a separate --pairing-dir; do not delete host.lock to bypass a live owner.")
             } else {anyhow::Error::new(error).context("Cannot exclusively lock host data directory")}
         })?;
-        // Never unlink: another process could otherwise lock a different inode.
-        // Rust opens Unix files close-on-exec and Windows handles non-inheritable.
-        // A Unix fork can still retain the shared lock until exec; Drop unlocks it.
         Ok(Self { _file: file })
     }
 }
@@ -42,17 +32,14 @@ impl HostLock {
 impl Drop for HostLock {
     fn drop(&mut self) {
         use std::os::fd::AsRawFd;
-        // SAFETY: this guard still owns a live file descriptor. LOCK_UN releases
-        // its shared open-file-description lock without waiting for another host.
-        // The File closes normally afterwards, including if unlock reports error.
+        // SAFETY: the guard owns a live descriptor and LOCK_UN never waits; the File closes after.
         let _ = unsafe { libc::flock(self._file.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 #[cfg(unix)]
 fn try_lock(file: &File) -> io::Result<()> {
     use std::os::fd::AsRawFd;
-    // SAFETY: this live File owns the descriptor. flock takes no pointers and
-    // LOCK_NB never waits for a different host to release its lock.
+    // SAFETY: the live File owns the descriptor, flock takes no pointers and LOCK_NB never waits.
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result == 0 {
         Ok(())
@@ -68,8 +55,7 @@ fn try_lock(file: &File) -> io::Result<()> {
         Storage::FileSystem::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx},
         System::IO::OVERLAPPED,
     };
-    // SAFETY: zeroed OVERLAPPED specifies offset zero and no event handle. The
-    // file is synchronous; FAIL_IMMEDIATELY prevents a pending lock operation.
+    // SAFETY: zeroed OVERLAPPED is offset zero, no event; FAIL_IMMEDIATELY leaves nothing pending.
     let mut overlap: OVERLAPPED = unsafe { std::mem::zeroed() };
     // SAFETY: File owns a valid, non-inheritable, read/write handle for the call.
     let result = unsafe {
@@ -121,8 +107,6 @@ mod tests {
     }
     impl Drop for Directory {
         fn drop(&mut self) {
-            // This private fixture is declared before its handles, so their
-            // guards close first even when an assertion unwinds the test.
             let _ = std::fs::remove_file(self.0.join("host.lock"));
             let _ = std::fs::remove_dir(&self.0);
         }
@@ -144,8 +128,6 @@ mod tests {
     fn dropping_owner_unlocks_a_retained_description_without_releasing_its_successor() {
         let directory = Directory::new();
         let first = HostLock::acquire(&directory.0).unwrap();
-        // Deterministically retain the same open file description as dup/fork.
-        // This tests that lifetime directly, not a particular child scheduler.
         let retained = first._file.try_clone().unwrap();
         assert!(HostLock::acquire(&directory.0).is_err());
         drop(first);

@@ -1,4 +1,3 @@
-//! Durable precheck authorization/outcome, before any model dispatch.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -10,9 +9,6 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
-/// Later generations retain their own command admission and outcome. The
-/// composite journal key also prevents a row from naming a different occurrence
-/// or using the legacy generation-1 storage slot.
 pub fn initialize(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS harness_job_attempts_precheck_membership ON harness_job_attempts(id,occurrence_id,ordinal);
@@ -66,8 +62,6 @@ fn current_attempt(connection: &Connection, occurrence: &str) -> Result<Option<S
         .ok_or_else(conflict)
 }
 
-/// This read resolves only the requested journal row; it never repairs or
-/// advances a claim, authorization, observation or finish timestamp.
 pub fn view_attempt(
     connection: &Connection,
     occurrence: &str,
@@ -106,7 +100,6 @@ pub fn view_attempt(
 pub fn view_current(connection: &Connection, occurrence: &str, detail: bool) -> Result<Value> {
     match current_attempt(connection, occurrence)? {
         Some(attempt) => view_attempt(connection, occurrence, &attempt, detail),
-        // Queued occurrences have no claim. Retain legacy pre-journal reads.
         None => view(connection, occurrence, detail),
     }
 }
@@ -144,8 +137,6 @@ fn approved_command(approval: &Approval) -> Option<job_prechecks::Command> {
         .then_some(command)
 }
 
-/// Fresh availability check for retry admission. A prior passed outcome does
-/// not grant permission to execute a command whose approval was revoked.
 pub fn approval_ready(connection: &Connection, id: &str) -> Result<bool> {
     Ok(approval(connection, id)?
         .as_ref()
@@ -166,8 +157,6 @@ fn guard_unbound(connection: &Connection, dispatch: &Dispatch, allowed: &[&str])
     Ok(ordinal)
 }
 
-/// Admission writes a new command snapshot before returning the command. The
-/// same generation cannot begin twice, including after an interrupted claim.
 pub fn begin_attempt(tx: &Transaction<'_>, dispatch: &Dispatch, now: u64) -> Result<Reply> {
     let ordinal = guard_unbound(tx, dispatch, &["dispatching"])?;
     if crate::job_cancellations::requested(tx, &dispatch.occurrence)? {
@@ -338,8 +327,6 @@ pub fn finish(
     finish_record(tx, id, None, true, result, now)
 }
 
-/// Completion must still possess the current producer token and exact journal
-/// membership. An old callback cannot settle the next generation or its cancel.
 pub fn finish_attempt(
     tx: &Transaction<'_>,
     dispatch: &Dispatch,
@@ -426,8 +413,6 @@ fn finish_record(
     Ok((passed, state, reason))
 }
 
-/// Restart only marks the current running command unknown. Historical command
-/// evidence, including its finish and retained output, remains immutable.
 pub fn recover_current(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<()> {
     let Some(attempt) = current_attempt(tx, occurrence)? else {
         tx.execute("UPDATE harness_job_prechecks SET state='unknown',reason='host_restarted',observed_at=?2,finished_at=NULL WHERE occurrence_id=?1 AND state='running'",params![occurrence,now as i64])?;
@@ -441,8 +426,6 @@ pub fn recover_current(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Resu
     Ok(())
 }
 
-/// The caller checks owner acknowledgement and occurrence reconciliation. A
-/// repeated digest never substitutes for the exact later generation identity.
 pub fn abandon(
     tx: &Transaction<'_>,
     occurrence: &str,
@@ -476,8 +459,6 @@ pub fn abandon(
     Ok(())
 }
 
-/// A committed result is checked against its own admission snapshot, not a
-/// previous generation's pass or a later change to approval availability.
 pub fn passed_current(connection: &Connection, occurrence: &str) -> Result<bool> {
     let Some(attempt) = current_attempt(connection, occurrence)? else {
         return Ok(false);

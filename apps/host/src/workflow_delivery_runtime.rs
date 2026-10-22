@@ -1,4 +1,3 @@
-//! An explicit queued intent survives client disconnect, never host restart.
 use crate::{
     caller::Authority,
     event_log::Service,
@@ -64,8 +63,6 @@ pub async fn execute_guarded(
     if let Some(pending) = pending {
         let was_controlled = controlled.contains(&pending.session_id);
         tokio::spawn(async move {
-            // An unexpected adapter/storage failure does not replay a native
-            // effect. Recovery keeps any committed claim uncertain.
             let id = pending.id.clone();
             if deliver(
                 state,
@@ -205,8 +202,6 @@ async fn deliver(
                 return Ok(());
             }
         }
-        // Consume our own blocker event before waiting. This timer checks only
-        // local readiness/deadlines; it never calls or types into an LLM.
         changed.borrow_and_update();
         let remaining = pending
             .deadline_at

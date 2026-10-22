@@ -1,4 +1,3 @@
-//! One-shot quota continuations. Durable intent never proves live input authority.
 use crate::{
     api_error::Error,
     receipts::{self, Receipt},
@@ -26,8 +25,6 @@ pub struct Arm {
     pub proof: WakeProof,
 }
 
-/// Private arm data remains available to the live-state guard. Only `public`
-/// exposes retained metadata; its clock values are wall-clock reset evidence.
 pub struct View {
     pub arm: Arm,
     pub phase: String,
@@ -112,8 +109,6 @@ pub fn initialize(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Persisted elapsed clocks and live session ownership never survive a restart.
-/// Existing native receipts remain untouched, including uncertain outcomes.
 pub fn recover(connection: &mut Connection) -> Result<()> {
     initialize(connection)?;
     connection.execute(
@@ -318,8 +313,6 @@ fn claim(connection: &mut Connection, arm_id: &str, expected: &Arm) -> Result<Op
         "send",
         request,
     )?;
-    // Reusing a retained receipt must never manufacture another dispatch, even
-    // if an inconsistent imported arm still says armed.
     let (phase, reason) = if accepted.is_new {
         accepted.receipt.result = linkage;
         transaction.execute(
@@ -342,8 +335,6 @@ fn claim(connection: &mut Connection, arm_id: &str, expected: &Arm) -> Result<Op
     }))
 }
 
-/// Ordinary sends return `None`. A retained quota operation must remain bound
-/// to a dispatching arm; disable and recovery revoke it without deleting proof.
 pub fn guard_dispatch(
     connection: &Connection,
     session_id: &str,

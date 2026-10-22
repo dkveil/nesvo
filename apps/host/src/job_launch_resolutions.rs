@@ -1,4 +1,3 @@
-//! Owner acknowledgment retires one proven no-effect launch, without inventing cleanup.
 use crate::{api_error::Error, job_definitions, orchestration::Actor};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -32,8 +31,6 @@ pub fn resolved_occurrence(connection: &Connection, occurrence: &str) -> Result<
     )?)
 }
 
-/// This permanent fence applies to automation and fresh controls, not reads or
-/// immutable-key replays. It does not claim that a process exited.
 pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
     if connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM harness_job_launch_resolutions WHERE run_id=?1)",
@@ -91,8 +88,6 @@ impl Evidence {
     }
 }
 
-/// Hash source material is private. Only the fixed descriptor and digest leave
-/// this module; native receipt bodies, precheck output and tokens never do.
 fn evidence(connection: &Connection, attempt: &str) -> Result<Option<Evidence>> {
     let row = connection.query_row("SELECT o.job_id,o.id,j.run_id,n.id,n.session_id,l.operation_id,o.spec,j.ordinal,o.state,j.dispatch_token,o.current_job_attempt_id,o.run_id
         FROM harness_job_attempts j JOIN harness_job_occurrences o ON o.id=j.occurrence_id
@@ -112,8 +107,6 @@ fn evidence(connection: &Connection, attempt: &str) -> Result<Option<Evidence>> 
     let parsed_spec = match serde_json::from_str::<job_definitions::Spec>(&spec) {
         Ok(spec) => spec,
         Err(_) => {
-            // A diagnostic is additive to legacy history. Unusable policy
-            // cannot authorize abandonment or make retained facts unreadable.
             evidence.refuse("launch_spec_unavailable");
             return Ok(Some(evidence));
         }
@@ -227,9 +220,6 @@ fn evidence(connection: &Connection, attempt: &str) -> Result<Option<Evidence>> 
     if evidence.reason.is_some() {
         return Ok(Some(evidence));
     }
-    // This first slice resolves only the frozen worker's launch. Retained
-    // coordinator identity or other run-native input expands that scope even
-    // if a current pointer was later cleared; no such effects are adopted.
     let expanded_scope:bool=connection.query_row("SELECT
         EXISTS(SELECT 1 FROM workflow_runs WHERE id=?1 AND coordinator_id IS NOT NULL)
         OR EXISTS(SELECT 1 FROM workflow_coordinator_bindings WHERE run_id=?1)
@@ -422,8 +412,6 @@ pub fn accept(
     if evidence.reason.is_some() || evidence.digest()?.as_deref() != Some(expected_digest) {
         return Err(conflict());
     }
-    // Persist terminal intent and the permanent admission fence atomically. No
-    // timeout, cancellation, native receipt, control, or process fact changes.
     job_definitions::transition(
         tx,
         occurrence,

@@ -1,4 +1,3 @@
-//! Explicit owner budget configuration through the shared workflow journal.
 use anyhow::Result;
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};

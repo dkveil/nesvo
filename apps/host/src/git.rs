@@ -1,4 +1,3 @@
-//! Bounded, read-only Git inspection on the machine owning the session.
 use anyhow::{Result, anyhow, ensure};
 use serde::Serialize;
 use std::{
@@ -15,6 +14,7 @@ const STATUS_PATHS: usize = 512;
 const CONFLICT_PATHS: usize = 32;
 const REF_LIMIT: usize = 256;
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
+const FRAME_HEADROOM_BYTES: usize = 2048;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -125,7 +125,6 @@ pub(crate) struct Output {
     pub code: Option<i32>,
 }
 
-/// No shell expansion, external diff drivers, pagers, or text conversion hooks.
 pub(crate) async fn run(
     cwd: &Path,
     args: &[&str],
@@ -517,8 +516,7 @@ pub async fn review(cwd: &Path, scope: &Scope) -> Result<Review> {
             deletions,
             truncated,
         });
-        // Wire frames are bounded at 64 KiB of plaintext, including JSON escaping.
-        if serde_json::to_vec(&review)?.len() > crate::wire::MAX_PLAINTEXT - 2048 {
+        if serde_json::to_vec(&review)?.len() > crate::wire::MAX_PLAINTEXT - FRAME_HEADROOM_BYTES {
             review.files.pop();
             review.truncated = true;
             break;
@@ -791,7 +789,6 @@ pub async fn readiness(
     })
 }
 
-/// Create a fresh branch from HEAD; never alter or clean the source checkout.
 pub async fn create_worktree(cwd: &Path) -> Result<PathBuf> {
     let root = toplevel(cwd).await?;
     let id = hex::encode(crate::wire::random::<8>());

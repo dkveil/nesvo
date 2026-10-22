@@ -1,4 +1,3 @@
-//! Session launch choices and form editing; no filesystem or process detection.
 use crate::session_kind::SessionKind;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -24,7 +23,6 @@ pub enum Program {
 impl Program {
     pub const ALL: [Self; 4] = [Self::Shell, Self::Claude, Self::Gemini, Self::Codex];
 
-    /// Portable marks, not private-use font glyphs. ASCII is an explicit fallback.
     pub fn icon(self, ascii: bool) -> &'static str {
         match (self, ascii) {
             (Self::Claude, false) => "✳",

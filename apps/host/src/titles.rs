@@ -1,4 +1,3 @@
-//! Bounded OSC 0/2 titles from the session's own terminal output. No transcript reads.
 #[derive(Default)]
 pub struct Titles {
     pending: Vec<u8>,

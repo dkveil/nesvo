@@ -1,4 +1,3 @@
-//! Durable addressed messages. Reading/ACK never executes or validates task work.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -448,7 +447,6 @@ pub fn execute(connection: &mut Connection, actor: Actor, request: Request) -> R
                 attempt_id.as_deref(),
                 Access::Ack,
             )?;
-            // Validate the whole batch before changing any acknowledgement.
             let mut rows = Vec::new();
             for id in &ids {
                 let row:Option<Stored>=transaction.query_row("SELECT sequence,data,acked_at,acked_by FROM workflow_messages WHERE id=?1 AND run_id=?2 AND recipient=?3",params![id,run_id,mailbox.recipient],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;

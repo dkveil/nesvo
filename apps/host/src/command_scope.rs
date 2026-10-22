@@ -1,4 +1,3 @@
-//! A waiting helper is contained before any configured command may execute.
 use anyhow::{Context, Result};
 use tokio::process::{Child, Command};
 
@@ -18,8 +17,7 @@ pub fn configure(command: &mut Command) {
 pub fn system_root() -> Result<std::ffi::OsString> {
     use std::os::windows::ffi::OsStringExt;
     let mut buffer = vec![0u16; 32768];
-    // SAFETY: initialized UTF16 output with its exact capacity. Query the OS,
-    // not an ambient environment value potentially changed by the caller.
+    // SAFETY: the UTF-16 buffer is initialized and its exact capacity is passed to the call.
     let length = unsafe {
         windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW(
             buffer.as_mut_ptr(),
@@ -50,9 +48,7 @@ impl Scope {
     pub fn terminate(&self) -> Result<()> {
         #[cfg(unix)]
         {
-            // SAFETY: this group was created for the exact helper. The parent
-            // retains Child without polling/reaping it until after this signal,
-            // so its leader identity cannot be recycled before termination.
+            // SAFETY: the group belongs to this helper; its unreaped leader prevents id reuse.
             if unsafe { libc::kill(-self.group, libc::SIGKILL) } == 0 {
                 return Ok(());
             }
@@ -72,9 +68,7 @@ impl Scope {
     pub fn empty(&self) -> Result<bool> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            // SAFETY: signal zero only observes existence/permission. This may be used
-            // after reaping the leader: a recycled numeric group can at worst
-            // retain capacity conservatively, never receive a terminating signal.
+            // SAFETY: signal zero only probes existence; a recycled group id is never terminated.
             if unsafe { libc::kill(-self.group, 0) } == 0 {
                 return Ok(false);
             }
@@ -98,11 +92,8 @@ impl Scope {
 
 #[cfg(target_os = "macos")]
 fn macos_group_terminated(group: i32) -> Result<bool> {
-    // Darwin counts unreaped zombies as successful kill(..., 0) targets. Read
-    // bounded group membership and process states instead; never signal them.
     let mut pids = vec![0i32; 4096];
-    // SAFETY: __error is this thread's errno; the initialized PID array has the
-    // exact byte capacity passed to libproc. No await or shared errno access.
+    // SAFETY: __error is this thread's errno and the initialized pid array's byte size is exact.
     let count = unsafe {
         *libc::__error() = 0;
         libc::proc_listpgrppids(
@@ -128,8 +119,7 @@ fn macos_group_terminated(group: i32) -> Result<bool> {
         anyhow::ensure!(pid > 0, "Invalid observed process identity");
         let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
         let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
-        // SAFETY: this flavor writes a proc_bsdinfo, with the exact output size.
-        // arg=1 includes zombie records. Only full successful writes are read.
+        // SAFETY: the flavor writes a proc_bsdinfo of the passed size; only full writes are read.
         let read = unsafe {
             *libc::__error() = 0;
             libc::proc_pidinfo(
@@ -151,15 +141,11 @@ fn macos_group_terminated(group: i32) -> Result<bool> {
         let info = unsafe { info.assume_init() };
         anyhow::ensure!(info.pbi_pid == pid as u32, "Process state identity changed");
         if info.pbi_status != libc::SZOMB {
-            // A reused/moved identity is conservative uncertainty too; repeat
-            // the membership query on the next observation, never send a signal.
             return Ok(false);
         }
     }
     Ok(true)
 }
-// The adapter retires termination ownership before/when it reaps the leader.
-// A retained observer may query signal zero, never terminate a recycled group.
 
 #[cfg(all(test, unix))]
 mod tests {
@@ -168,7 +154,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn a_live_group_is_not_assumed_empty() {
-        // SAFETY: queries the test process's group; empty uses signal zero only.
+        // SAFETY: getpgrp only queries the test process's own group.
         let group = unsafe { libc::getpgrp() };
         let observer = Scope { group };
         assert!(!observer.empty().unwrap());
@@ -177,8 +163,6 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_live_owned_group_is_not_assumed_empty() -> Result<()> {
-        // The CI runner's inherited group may include protected foreign
-        // members. Observe only this test's own separately enrolled group.
         let mut command = Command::new("/bin/sleep");
         command.arg("30").kill_on_drop(true);
         configure(&mut command);
@@ -206,7 +190,6 @@ mod tests {
             Ok::<_, anyhow::Error>(())
         })
         .await;
-        // Child is still unreaped: termination identity cannot have been reused.
         let _ = scope.terminate();
         child.wait().await?;
         observed.context("Observe terminated zombie before parent wait")??;

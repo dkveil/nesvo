@@ -1,4 +1,3 @@
-//! Strict native task-launch DTOs; host owns run admission and native authority.
 use clap::Args;
 use serde::{Deserialize, Serialize};
 

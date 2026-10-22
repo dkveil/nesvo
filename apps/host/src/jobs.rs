@@ -1,4 +1,3 @@
-//! Durable one-shot launches. A claimed job is never retried automatically.
 use crate::{
     launchers::Program,
     sessions::{PtyEvent, State},
@@ -36,7 +35,6 @@ pub struct LaunchSpec {
     pub claude_quota_capture: Option<crate::claude_statusline::Options>,
     #[serde(skip)]
     pub(crate) claude_quota_prepared: Option<crate::claude_statusline::Prepared>,
-    // Set only by owner-validated task preparation; scoped input cannot supply it.
     #[serde(skip)]
     pub(crate) claude_quota_owner_selected: bool,
     #[serde(default)]
@@ -55,7 +53,6 @@ pub struct LaunchSpec {
     pub resume_picker: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<crate::resume::Target>,
-    // Internal admission context is never accepted from serialized launch input.
     #[serde(skip)]
     pub(crate) quota_launch: Option<crate::quota_contexts::LaunchContext>,
 }

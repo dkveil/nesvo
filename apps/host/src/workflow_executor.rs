@@ -1,4 +1,3 @@
-//! Opt-in durable DAG scheduling policy. Native effects use existing receipts.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -162,8 +161,6 @@ fn event(transaction: &Transaction<'_>, id: &str, run: &str, now: u64) -> Result
         }],
     )
 }
-/// A job retry retires this generation's pump, not its retained Run evidence.
-/// Share the decision transaction so no stale pump can admit between them.
 pub(crate) fn pause_for_job_retry(
     transaction: &Transaction<'_>,
     run: &str,
@@ -236,7 +233,6 @@ pub fn guard(connection: &Connection, guard: &Guard, issuer: &str) -> Result<()>
     }
     Ok(())
 }
-/// Called only inside the same transaction as native worker reservation.
 pub fn record_launch(
     connection: &Connection,
     guard: &Guard,
@@ -451,8 +447,6 @@ pub fn execute(connection: &mut Connection, work: Work, now: u64) -> Result<Repl
                     Error::new("retry_requires_intent", "Automatic retry is disabled").into(),
                 );
             }
-            // First observed terminal failure starts the durable cooldown. The
-            // old process's launch timestamp can precede failure by hours.
             transaction.execute("INSERT OR IGNORE INTO workflow_executor_retries(executor_id,attempt_id,not_before) VALUES(?1,?2,?3)", params![guard.id,attempt,now.saturating_add(executor.spec.retry_delay_ms) as i64])?;
             let after: i64 = transaction.query_row("SELECT not_before FROM workflow_executor_retries WHERE executor_id=?1 AND attempt_id=?2", params![guard.id,attempt], |row| row.get(0))?;
             transaction.commit()?;

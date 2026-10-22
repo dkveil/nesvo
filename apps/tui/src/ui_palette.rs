@@ -1,4 +1,3 @@
-//! Session switcher geometry shared by rendering and mouse hit testing.
 use crate::{
     model::App,
     terminal::TerminalWidget,

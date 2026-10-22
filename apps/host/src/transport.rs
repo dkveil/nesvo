@@ -114,9 +114,6 @@ use tokio_tungstenite::{
 };
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
-// Eight simultaneous subscriptions can enqueue 8 * (32 replay chunks + 2
-// acknowledgments) before this connection's writer is scheduled again. Keep
-// this bounded, but leave room for that legitimate burst (~2 MiB of output).
 pub(crate) const CLIENT_EVENT_CAPACITY: usize = 512;
 
 fn origin_allowed(origin: Option<&str>, extra: &[String]) -> bool {
@@ -160,8 +157,10 @@ pub async fn handle(
     let binding = Arc::new(Mutex::new((key, crate::caller::Authority::Owner)));
     let chosen_binding = binding.clone();
     let scope_state = state.clone();
-    // tungstenite's callback requires this exact unboxed response error type.
-    #[allow(clippy::result_large_err)]
+    #[allow(
+        clippy::result_large_err,
+        reason = "tungstenite's handshake callback requires this exact unboxed response error type"
+    )]
     let handshake = move |request: &Request,
                           response: Response|
           -> std::result::Result<Response, ErrorResponse> {

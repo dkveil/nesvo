@@ -1,4 +1,3 @@
-//! Platform terminal lifecycle and application effects. Rendering stays pure.
 use crate::{
     brand, controller,
     model::{App, Dialog},
@@ -28,6 +27,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::oneshot;
+
+const MAX_NETWORK_EVENTS_PER_DRAIN: usize = 128;
 
 struct TerminalGuard;
 
@@ -69,7 +70,6 @@ pub fn run(
     override_url: Option<&str>,
     animate: bool,
 ) -> Result<()> {
-    // Panic diagnostics must appear after restoring the user's terminal as well.
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore_terminal();
@@ -78,8 +78,6 @@ pub fn run(
     let _guard = TerminalGuard::enter()?;
     let (cols, rows) = crossterm::terminal::size()?;
     let mut area = Rect::new(0, 0, cols, rows);
-    // Windows console size queries are synchronous round trips. Query once,
-    // then use resize events, including inside Ratatui's draw path.
     let batching = Rc::new(Cell::new(false));
     let mut terminal = Terminal::with_options(
         CrosstermBackend::new(FrameWriter::new(io::stdout(), batching.clone())),
@@ -194,8 +192,7 @@ pub fn run(
             }
             layout_saved_at = Instant::now();
         }
-        // Bound each drain so high-output sessions cannot starve the keyboard.
-        for _ in 0..128 {
+        for _ in 0..MAX_NETWORK_EVENTS_PER_DRAIN {
             match connection.events.try_recv() {
                 Ok(NetworkEvent::Message(message)) => {
                     if !app.connected {
@@ -321,8 +318,6 @@ pub fn run(
         if dirty && last_draw.elapsed() >= Duration::from_millis(16) {
             batching.set(true);
             terminal.draw(|frame| ui::render(frame, &app, logo_frame))?;
-            // Crossterm flushes after cursor commands too. Assemble the complete
-            // diff and cursor update first, then make one console write per frame.
             batching.set(false);
             terminal.backend_mut().flush()?;
             last_draw = Instant::now();
@@ -387,7 +382,6 @@ pub fn run(
                 {
                     app.notice = "Could not save preferences; changes apply to this run.".into();
                 }
-                // A failed write must not turn into I/O on every render frame.
                 saved_preferences = current_preferences;
                 dirty = true;
             }
@@ -396,8 +390,6 @@ pub fn run(
     Ok(())
 }
 
-// Only a lost connection may arm a one-shot selection restore. Healthy
-// snapshots must never reopen the pane: open_session deliberately leaves input.
 fn remember_disconnected_session(app: &App, pending: &mut Option<String>) {
     if !app.connected && pending.is_none() {
         *pending = app.active_id().map(str::to_owned);
@@ -560,8 +552,6 @@ mod tests {
         app.dialog = Some(crate::model::Dialog::Help { from_menu: false });
         assert_eq!(logo_frame_for(&app, area, true, blink), 0);
         app.dialog = None;
-        // Even when the other split pane is empty, terminal activity must not
-        // gain any periodic redraws from the decorative logo.
         app.split = true;
         app.panes[0] = Some("active-session".into());
         assert_eq!(logo_frame_for(&app, area, true, blink), 0);

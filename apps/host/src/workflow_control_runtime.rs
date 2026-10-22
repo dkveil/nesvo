@@ -1,4 +1,3 @@
-//! Native adapter for durable run control. Reads/replays never dispatch effects.
 use crate::{
     caller::Authority,
     event_log::Service,
@@ -75,15 +74,11 @@ async fn run_permit(
     }
 }
 
-/// Stop only the worker frozen by one due job generation. Existing controls are
-/// observed, never reclaimed, and a blocked/unknown claim is not redispatched.
 pub async fn timeout_job(
     state: Arc<Mutex<State>>,
     log: Service,
     timeout: crate::job_timeouts::Claim,
 ) -> Result<Value> {
-    // The durable timeout claim has already fenced reports/input/launches. An
-    // earlier admitted native launch may leave its critical section first.
     let _permit = run_permit(&state, &timeout.identity.run_id).await?;
     let actor = Actor {
         issuer: timeout.issuer.clone(),
@@ -130,10 +125,6 @@ pub async fn timeout_job(
     .await
 }
 
-/// Cancel the exact job-bound run through its ordinary native control guards.
-/// The persisted owner issuer and stable control key are supplied by job intent,
-/// never inferred from a focused session. An accepted key is inspected only:
-/// neither replay nor host recovery obtains another physical dispatch claim.
 pub async fn cancel_job(
     state: Arc<Mutex<State>>,
     log: Service,
@@ -145,8 +136,6 @@ pub async fn cancel_job(
         issuer,
         scope: Scope::Owner,
     };
-    // Target enumeration must follow any admitted physical launch or delivery.
-    // Keep the permit through preparation and dispatch, as ordinary control does.
     let _permit = run_permit(&state, &run_id).await?;
     let accepted = match log
         .workflow(
@@ -265,8 +254,6 @@ pub async fn execute(
                 )
                 .await?;
             }
-            // This is the immutable acceptance view, also recovered by its key.
-            // Current per-target receipts/exit proof are read explicitly below.
             Ok(view)
         }
         Request::Get {

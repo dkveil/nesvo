@@ -1,4 +1,3 @@
-//! Killable owner-approved command checks, with no provider/pairing environment.
 use crate::{
     command_scope,
     job_prechecks::{self, Command, Outcome, OutcomeState},
@@ -19,8 +18,6 @@ pub enum Stop {
     HostShutdown,
 }
 
-/// Includes observers retaining a slot after an unconfirmed termination. A
-/// returned adapter future alone is not proof that its native scope is empty.
 pub fn scopes_settled() -> bool {
     SLOTS.available_permits() == 2
 }
@@ -54,8 +51,6 @@ fn stopped(reason: Stop, input_released: bool) -> Outcome {
     };
     let mut outcome = Outcome::failed(state, reason);
     if input_released {
-        // A partially written frame may already have released the command.
-        // Cancellation is no evidence of whether execution actually started.
         outcome.command_started = None;
         outcome.cleanup_confirmed = false;
     }
@@ -164,9 +159,6 @@ fn helper(spec: Command) -> Outcome {
         }
         std::thread::sleep(Duration::from_millis(5));
     };
-    // The parent still owns a live helper leader and its whole process scope.
-    // It kills the scope before reaping that helper, including any descendants
-    // left by an exited command. Never report cleanup from inside the scope.
     let (stdout, stdout_truncated) = stdout.unwrap_or_default();
     let (stderr, stderr_truncated) = stderr.unwrap_or_default();
     Outcome {
@@ -186,8 +178,7 @@ fn helper(spec: Command) -> Outcome {
 pub fn stdio() -> anyhow::Result<()> {
     #[cfg(unix)]
     {
-        // SAFETY: queries current IDs; standalone invocation cannot signal the
-        // user's terminal group through the parent-death watcher below.
+        // SAFETY: both calls only query ids; the check proves this helper leads its own group.
         anyhow::ensure!(
             unsafe { libc::getpgrp() == libc::getpid() },
             "Precheck helper needs its own process group"
@@ -201,14 +192,11 @@ pub fn stdio() -> anyhow::Result<()> {
         "Invalid precheck input frame"
     );
     let spec: Command = serde_json::from_slice(&line)?;
-    // The parent keeps this pipe open until it kills/reaps this scope. On
-    // abrupt parent exit Unix helpers kill their own still-live process group.
-    // Windows uses a noninherited parent-owned kill-on-close Job Object.
     #[cfg(unix)]
     std::thread::spawn(move || {
         let mut byte = [0];
         let _ = input.read(&mut byte);
-        // SAFETY: process-group ownership was checked before starting the thread.
+        // SAFETY: leadership was checked up front, so kill(0) reaches only this helper's group.
         unsafe { libc::kill(0, libc::SIGKILL) };
     });
     let result = helper(spec);
@@ -216,8 +204,6 @@ pub fn stdio() -> anyhow::Result<()> {
     serde_json::to_writer(&mut output, &result)?;
     output.write_all(b"\n")?;
     output.flush()?;
-    // Keep the leader alive until the parent has terminated the entire scope;
-    // do not release its Unix identity while descendants could still exist.
     loop {
         std::thread::park_timeout(Duration::from_secs(60));
     }
@@ -328,9 +314,6 @@ pub async fn run(spec: Command, mut stop: tokio::sync::watch::Receiver<Option<St
         .as_ref()
         .is_some_and(|scope| scope.terminate().is_ok());
     let cleanup = tokio::time::timeout(Duration::from_secs(2), async {
-        // All termination signals are sent before polling/reaping the leader.
-        // Retire termination ownership immediately after wait. An observer may
-        // query group existence, but never terminate that numeric identity again.
         let result = owned.child.wait().await;
         owned.retire_termination();
         result.map_err(|_| ())?;
@@ -344,8 +327,6 @@ pub async fn run(spec: Command, mut stop: tokio::sync::watch::Receiver<Option<St
     if !outcome.cleanup_confirmed {
         outcome.state = OutcomeState::Unknown;
         outcome.reason = "cleanup_unconfirmed".into();
-        // Hold capacity and ownership until the exact child is reaped, even
-        // if an OS/filesystem operation has not yet responded to termination.
         tokio::spawn(async move {
             let _ = owned.child.wait().await;
             owned.retire_termination();

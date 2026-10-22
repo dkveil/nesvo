@@ -1,4 +1,3 @@
-//! Launch-local model selection. Requested flags are not resolved provider state.
 use crate::{
     api_error::Error,
     launchers::{Program, Version},
@@ -56,8 +55,6 @@ pub fn validate(program: Program, versions: &[Version], selection: &Selection) -
             Program::Claude => {
                 matches!(effort.as_str(), "low" | "medium" | "high" | "xhigh" | "max")
             }
-            // Codex 0.156 uses a model-advertised nonempty string, not a fixed enum.
-            // Accept a bounded literal identifier; the selected model validates support.
             Program::Codex => {
                 !effort.is_empty()
                     && effort.len() <= 32

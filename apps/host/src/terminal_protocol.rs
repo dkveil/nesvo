@@ -1,4 +1,3 @@
-//! Live-only protocol owner. Consumed queries never reach clients or replay.
 use crate::program_status::{self, MAX_SEQUENCE, Report};
 
 pub enum Event {

@@ -1,4 +1,3 @@
-//! Read-only subscription limits. Never read CLI credential stores or use model APIs.
 use crate::launchers::{Launchers, Program};
 use serde::Serialize;
 use serde_json::Value;
@@ -72,7 +71,6 @@ pub fn parse_codex_limits(response: &Value) -> Option<Vec<LimitWindow>> {
     (!windows.is_empty()).then_some(windows)
 }
 
-/// Local status-line cache contains quota windows only, never credentials.
 pub fn parse_claude_limits(value: &Value, now: i64) -> Vec<LimitWindow> {
     let Some(at) = value["at"].as_i64() else {
         return vec![];
@@ -149,6 +147,8 @@ pub(crate) async fn read_claude_observation() -> ClaudeObservation {
 
 const CLAUDE_CACHE_MAX_BYTES: u64 = 16_384;
 pub(crate) const CLAUDE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(unix)]
+const REPLACED_PATH_SAFE_OPEN_FLAGS: i32 = libc::O_NONBLOCK | libc::O_NOFOLLOW;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClaudeCacheFailure {
@@ -224,10 +224,8 @@ fn check_claude_cache_metadata(metadata: &std::fs::Metadata) -> Result<(), Claud
 async fn open_claude_cache(path: &Path) -> Result<tokio::fs::File, ClaudeCacheFailure> {
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
-    // A path can change after its preliminary metadata check. Never block opening a
-    // replacement FIFO or follow a replacement final symlink on Unix.
     #[cfg(unix)]
-    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    options.custom_flags(REPLACED_PATH_SAFE_OPEN_FLAGS);
     #[cfg(windows)]
     options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
     let file = options

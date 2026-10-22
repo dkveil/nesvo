@@ -1,4 +1,3 @@
-//! Run admission and native create identities commit before process setup.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -73,8 +72,6 @@ pub enum Work {
         actor: Actor,
         request: Request,
     },
-    /// Retains an effective native workspace under the sole live receipt claim.
-    /// This is internal evidence, never a replayable launch instruction.
     PreparedWorkspace {
         operation_id: String,
         token: String,
@@ -238,7 +235,6 @@ fn prepare(
     executor: Option<crate::workflow_executor::Guard>,
 ) -> Result<Reply> {
     orchestration::validate_key(&request.key)?;
-    // Refresh independently so a rejected reservation still latches exhaustion.
     orchestration::run(connection, &actor, &request.run_id)?;
     crate::workflow_budget::refresh(connection, &request.run_id, now)?;
     let fingerprint = hex::encode(
@@ -519,8 +515,6 @@ fn quota_hold(
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let (attempt, run) = live_claim(&transaction, operation, token)?;
-    // Recording already prepared workspace facts above remains legal after a
-    // constraint change. Releasing a continuation never renews old provenance.
     let session: String = transaction.query_row(
         "SELECT session_id FROM operation_receipts WHERE id=?1",
         [operation],

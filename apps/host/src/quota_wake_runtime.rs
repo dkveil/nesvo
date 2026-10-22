@@ -1,4 +1,3 @@
-//! Bounded host-owned quota wake dispatch, independent of connected clients.
 use crate::{
     api_error::Error,
     event_log::Service,
@@ -40,7 +39,6 @@ pub(crate) async fn configure(
             _ => return Err(anyhow!("Unexpected quota wake arm reply")),
         }
     } else {
-        // Fence native input before waiting for the writer, including an in-flight paste.
         state.lock().unwrap().disarm_quota_wake(&session);
         log.quota_wakes(Work::Disable(session.clone())).await?;
         let retained = match log.quota_wakes(Work::Current(session.clone())).await? {
@@ -106,8 +104,6 @@ impl Runtime {
                         _ => continue,
                     };
                     let target = dispatch.arm.clone();
-                    // One serial continuation uses the normal durable send/flush/fence path.
-                    // A lost response never causes another native attempt.
                     let _ = crate::operations::dispatch_quota_resume(
                         state.clone(),
                         log.clone(),

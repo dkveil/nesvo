@@ -1,4 +1,3 @@
-//! Metadata-only generation fixtures; no public retry or process is simulated.
 use super::{Store, job_retries_tests as retries};
 use crate::{
     job_attempts, job_cancellations,
@@ -349,8 +348,6 @@ fn history_is_bounded_and_tuple_scoped_and_detail_keeps_actual_evidence() {
     let tx = store.0.transaction().unwrap();
     let first = job_attempts::begin(&tx, "history", NOW as u64).unwrap();
     let foreign = job_attempts::begin(&tx, "foreign", NOW as u64).unwrap();
-    // Future-shaped metadata fixtures exercise paging only. No public API can
-    // create generation 2, and this is not evidence of implemented retries.
     for ordinal in 2..=10 {
         tx.execute("INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,created_at,claimed_at,state) VALUES(?1,'history',?2,?3,?3,'failed')",params![format!("synthetic-{ordinal}"),ordinal,NOW+ordinal]).unwrap();
     }
@@ -430,8 +427,6 @@ fn canceled_occurrence_fences_historical_runs_when_current_pointer_advances() {
         (NOW + 2) as u64,
     )
     .unwrap();
-    // Explicit future-shaped fixture: current production dispatch only creates
-    // ordinal 1. This protects the history fence needed before adding retries.
     tx.execute("INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,run_id,created_at,claimed_at,state) VALUES('future-generation','occurrence',2,'future-run',?1,?1,'dispatching')",[NOW+3]).unwrap();
     tx.execute(
         "UPDATE harness_job_occurrences SET run_id='future-run' WHERE id='occurrence'",
@@ -498,9 +493,6 @@ fn legacy_disk_reopen_backfills_once_and_preserves_original_evidence_and_keys() 
         legacy.0.execute("INSERT INTO workflow_launches(attempt_id,operation_id,operation_key,workspace,created_at) VALUES('disk-native-attempt','disk-launch','disk-launch-key','shared',?1)",[NOW+2]).unwrap();
         precheck(&legacy, "checking", "running", None);
         legacy.0.execute("INSERT INTO harness_job_mutations(issuer,key,digest,view) VALUES('owner','old-accepted-key','unchanged-legacy-fingerprint',?1)",[accepted]).unwrap();
-        // Persist a database with the actual old job tables/history but without
-        // the newly introduced journal. Reopening must run real initialization
-        // and recovery; the fixture never executes a native process or retry.
         legacy
             .0
             .execute_batch("DROP TABLE harness_job_attempts;")

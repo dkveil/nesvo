@@ -1,6 +1,3 @@
-//! Design fixtures only. Export actual Ratatui cells; never starts hosts or agents.
-//! Run: cargo run -p nesvo --example design_concepts -- <output-directory>
-//! Emits six cell-buffer JSON files (three layouts, workspace and search states).
 #[allow(dead_code)]
 #[path = "../src/brand.rs"]
 mod brand;
@@ -261,7 +258,6 @@ fn footer(b: &mut Buffer, focus: bool) {
     text(b, 91, H - 1, 36, "Claude 5h 42% · Codex 7d 28%", MUTED);
 }
 fn palette(b: &mut Buffer, variant: usize) {
-    // Fixed fixture geometry illustrates three different interaction surfaces.
     let (x, y, w, h) = match variant {
         0 => (18, 5, 94, 24),
         1 => (2, 4, 124, 23),

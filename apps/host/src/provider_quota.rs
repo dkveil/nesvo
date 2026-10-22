@@ -1,4 +1,3 @@
-//! Private quota observations. Reader evidence never grants a native process usage.
 use crate::{
     launchers::Program,
     usage::{ClaudeObservation, CodexObservation, LimitWindow, ReadOutcome, ReaderContext},
@@ -9,8 +8,6 @@ const READ_FRESHNESS_MS: u64 = 180_000;
 const CLAUDE_SOURCE_FRESHNESS_MS: u64 = 900_000;
 const SOURCE_FUTURE_TOLERANCE_MS: u64 = 60_000;
 
-/// This view contains no raw account, home, path, provider body or error text.
-/// `ready` describes metadata health, independently of ordinary usage permission.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct View {
@@ -25,7 +22,6 @@ pub(crate) struct View {
     pub expires_at: Option<u64>,
     #[serde(skip)]
     pub expires_elapsed_ms: Option<u64>,
-    /// Codex read-start age, or Claude's original cache-source age.
     pub age_ms: Option<u64>,
     pub freshness: &'static str,
     pub complete: bool,
@@ -33,14 +29,11 @@ pub(crate) struct View {
     pub windows: Vec<LimitWindow>,
     pub context_id: Option<String>,
     pub account_fingerprint: Option<String>,
-    /// Affirmative reader evidence only; never an account or native-session lock.
     pub ordinary_usage_eligible: bool,
     pub eligibility_reason: &'static str,
     pub scope: &'static str,
 }
 
-/// Private source evidence for a session-bound resume. Historical display data
-/// never supplies a current read start or renews a failed observation.
 pub(crate) struct ReadProof {
     pub view: View,
     pub started_elapsed_ms: Option<u64>,
@@ -50,8 +43,6 @@ pub(crate) struct ReadProof {
     pub identity_changed_revision: u64,
 }
 
-/// The caller supplies one random secret salt per host epoch. Neither the salt
-/// nor the unhashed account/context values are retained in a serializable view.
 pub(crate) struct Tracker {
     host_epoch_salt: [u8; 32],
     entries: Vec<Entry>,
@@ -213,8 +204,6 @@ impl Tracker {
         }
     }
 
-    /// Claude's observation records its wall-clock read start. The caller must
-    /// retain the monotonic start before awaiting I/O, plus completion afterward.
     pub fn apply_claude(
         &mut self,
         observation: ClaudeObservation,
@@ -308,8 +297,6 @@ impl Tracker {
 }
 
 impl Entry {
-    /// Every completed attempt advances the revision, including failures and
-    /// unchanged cache contents. Wall rollback cannot rewind the cache clock.
     fn attempt(
         &mut self,
         started_at_ms: u64,
@@ -336,9 +323,6 @@ impl Entry {
             self.fail("clock_regressed");
             return None;
         }
-        // A projection may have run after this read finished but before its
-        // result acquired State. Merge at the later anchor without rewinding
-        // the clock or rejecting that otherwise valid completed observation.
         let anchor_elapsed_ms = self.clock.map_or(finished_elapsed_ms, |clock| {
             clock.elapsed_ms.max(finished_elapsed_ms)
         });
@@ -405,9 +389,6 @@ impl Entry {
             .and_then(|clock| clock.wall_at(elapsed_ms))
             .map(|wall| wall.max(now_ms));
         if let Some(wall_ms) = effective_now {
-            // Viewing a forward wall clock is itself a clock observation. A
-            // later rollback cannot revive this revision or rejuvenate cache
-            // source age on a subsequent read.
             self.clock = Some(ClockAnchor {
                 wall_ms,
                 elapsed_ms,

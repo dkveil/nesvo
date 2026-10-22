@@ -1,4 +1,3 @@
-//! Batch Ratatui's text and cursor flushes into one Windows console write.
 use std::{
     cell::Cell,
     io::{self, Write},

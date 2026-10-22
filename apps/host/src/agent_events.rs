@@ -1,4 +1,3 @@
-//! Launch-scoped lifecycle journal. Sequence order does not depend on wall time.
 use crate::status::StatusState;
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
@@ -11,7 +10,6 @@ use std::{
 const RETENTION: u64 = 1024;
 const BATCH: u64 = 256;
 
-/// Aggregate observer work only. No launch identity or stored content is retained.
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReadCounts {
@@ -150,8 +148,6 @@ pub struct SourceEvent<'a> {
     pub paste_digest: Option<&'a str>,
 }
 
-/// A callback's conversation epoch, captured before reading its payload. This
-/// does not order callbacks within a generation or infer native turn identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EntryTicket {
     host_session_id: String,
@@ -202,7 +198,6 @@ pub(crate) fn append_entered(
     append_inner(report, source, Some(entry))
 }
 
-/// Direct trusted fixture appends have no stdin boundary to fence.
 #[cfg(test)]
 pub fn append_scoped(report: &Path, source: SourceEvent<'_>) -> Result<Option<u64>> {
     append_inner(report, source, None)
@@ -260,8 +255,6 @@ fn append_inner(
             || entry.provider_session_id != active
             || i64::try_from(entry.generation)? != generation)
     {
-        // No scope, native turn, event, rejection-counter or status mutation is
-        // allowed from an epoch that changed while the helper read its payload.
         return Ok(None);
     }
     let changed = active.as_deref() != provider_session;
@@ -300,7 +293,6 @@ fn append_inner(
                 |row| row.get(0),
             )?;
             if seen {
-                // Repeated pickup cannot supersede or duplicate the same native turn.
                 transaction.commit()?;
                 return Ok(None);
             }
@@ -323,8 +315,6 @@ fn append_inner(
     } else if event == "SessionStart" && turn_column && changed {
         transaction.execute("UPDATE scope SET provider_turn=NULL WHERE id=1", [])?;
     }
-    // Old launch journals remain readable/writable if a helper is upgraded while
-    // their host is still running. They simply provide no prompt correlation.
     let digest_column = has_digest_column(&transaction)?;
     let state = serde_json::to_string(&state)?;
     if digest_column && has_column(&transaction, "events", "paste_digest")? {
@@ -361,7 +351,6 @@ fn has_column(connection: &Connection, table: &'static str, wanted: &str) -> Res
     }
     Ok(false)
 }
-/// A private callback ticket never binds or changes lifecycle identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RootQuotaTicket {
     pub(crate) host_session_id: String,
@@ -381,8 +370,6 @@ pub(crate) fn quota_scope(
     )?)
 }
 
-/// Reserve ordering before reading stdin, so an older callback cannot replace a
-/// newer callback that completed first. Only one small snapshot is retained.
 pub(crate) fn begin_root_quota(report: &Path) -> Result<Option<RootQuotaTicket>> {
     let mut connection = open(report, true)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -434,7 +421,6 @@ pub(crate) fn reserve_root_quota(connection: &Connection) -> Result<Option<RootQ
     }))
 }
 
-/// The value is the receiver's typed projection, never the native JSON input.
 pub(crate) fn append_root_quota(
     report: &Path,
     ticket: &RootQuotaTicket,
@@ -803,10 +789,6 @@ pub(crate) struct Observed {
     pub quota: Option<crate::claude_quota::Observation>,
 }
 
-/// One launch's observer, moved into a blocking task only for each short read.
-/// Connections and transactions never survive a poll. Lifecycle columns are
-/// fixed per launch; the quota table can appear later on the first callback.
-/// An in-place lifecycle schema migration must invalidate the column cache.
 pub(crate) struct Observer {
     report: PathBuf,
     expected_session: String,
@@ -1896,8 +1878,6 @@ mod tests {
     fn retention_is_bounded_and_reports_cursor_gaps() {
         let report = fixture();
         initialize(&report, "session").unwrap();
-        // Seed the valid at-limit prefix in one fixture transaction; real appends
-        // still cross the boundary and exercise production pruning/durability.
         let mut connection = Connection::open(database(&report)).unwrap();
         let transaction = connection.transaction().unwrap();
         {

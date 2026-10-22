@@ -109,8 +109,6 @@ fn confirm(answer: tokio::sync::oneshot::Receiver<bool>) {
 
 impl Fixture {
     fn new() -> Self {
-        // A real owned shell supplies PTY lifetime and queue evidence only. No
-        // provider, model, auth command or environment mutation runs here.
         let workspace = std::env::temp_dir().canonicalize().unwrap();
         let mut state = OwnedState(State::new(
             workspace.clone(),
@@ -153,8 +151,6 @@ impl Fixture {
                 first_elapsed,
             )
             .unwrap();
-        // Observe an actual post-reset read through Registry's existing public
-        // cooldown. No private clock, slot or eligibility field is overwritten.
         let next_start = first_elapsed + 5001;
         let wait = next_start.saturating_sub(crate::event_log::monotonic_millis());
         std::thread::sleep(Duration::from_millis(wait));
@@ -221,8 +217,6 @@ impl Fixture {
         assert_eq!(session.lifecycle_cursor, 0);
         assert_eq!(session.human_control_epoch, self.arm.human_epoch);
         assert!(session.controller.is_none());
-        // The special quota path does not make ordinary send ready while the
-        // agent is blocked. This existing refusal must remain unchanged.
         let error = self
             .state
             .check_submission(
@@ -385,7 +379,6 @@ fn newer_native_root_program_reports_after_confirmed_quota_paste_reject_enter() 
                 .unwrap()
                 .queued
         );
-        // Exactly the fixed prompt was written: no one-byte CR/Enter was queued.
         assert!(paste.iter().all(|event| event.bytes > 1));
     }
 }

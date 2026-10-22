@@ -49,7 +49,6 @@ impl SessionSearchRank<'_> {
             .cmp(&self.relevance)
             .then_with(|| other.needs_you.cmp(&self.needs_you))
             .then_with(|| other.unread_completion.cmp(&self.unread_completion))
-            // Keep the current session last only within the same urgency bucket.
             .then_with(|| self.active.cmp(&other.active))
             .then_with(|| self.recent.cmp(&other.recent))
             .then_with(|| self.name.cmp(&other.name))
@@ -170,7 +169,6 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    // Optional metadata cannot make an otherwise valid legacy snapshot unusable.
     Ok(serde_json::from_value::<RepositoryContext>(value)
         .ok()
         .filter(RepositoryContext::valid))
@@ -286,8 +284,6 @@ impl Session {
         )
     }
     pub(crate) fn unread_completion(&self) -> bool {
-        // Historical notifications survive a new turn. They are not current
-        // completion evidence while the host reports new work in progress.
         let working = self
             .status
             .as_ref()
@@ -845,8 +841,6 @@ impl App {
         {
             return Program::Shell;
         }
-        // An agent started inside a shell has no launcher identity. Its current
-        // banner is a display hint only; the host still owns the real program.
         if screen.contains("Claude Code v") {
             Program::Claude
         } else if screen.contains("Gemini CLI") {
@@ -1122,7 +1116,6 @@ impl App {
             let belongs = match (group_id, session.group_id.as_deref()) {
                 (Some(group), Some(id)) => group == id,
                 (None, None) => true,
-                // A stale group reference must not make a live session disappear.
                 (None, Some(id)) => !self.groups.iter().any(|group| group.id == id),
                 _ => false,
             };
@@ -1194,7 +1187,6 @@ impl App {
     pub fn drop_hidden_subscriptions(&mut self) -> Vec<Value> {
         let mut commands = Vec::new();
         let count = self.leaf_count();
-        // Only currently visible panes are subscribed. Hidden shells keep running on the host.
         let stale: Vec<_> = self
             .subscribed
             .iter()
@@ -1212,7 +1204,6 @@ impl App {
         commands
     }
 
-    /// Explicitly entering a pane starts an unowned shell, but never takes a lease away.
     pub fn preview_session(&mut self, id: &str) -> Vec<Value> {
         let mut commands = Vec::new();
         let stale: Vec<_> = self
@@ -2527,7 +2518,6 @@ mod tests {
         assert_eq!(opened.len(), 1);
         assert_eq!(opened[0]["type"], "acquireControl");
         assert_eq!(opened[0]["takeOver"], false);
-        // Opening is only a request; input waits for the host's actual lease.
         assert!(app.input("x".into()).is_none());
         app.event(json!({"type":"control","sessionId":"s","controllerId":2,"cols":80,"rows":24}))
             .unwrap();

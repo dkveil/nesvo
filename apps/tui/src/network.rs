@@ -1,4 +1,3 @@
-//! Authenticated transport. This client never creates or owns local processes.
 use anyhow::{Context, Result, anyhow, ensure};
 use futures_util::{SinkExt, StreamExt};
 use nesvo_wire as wire;
@@ -196,8 +195,6 @@ impl std::fmt::Display for ConnectionOpenError {
 
 impl std::error::Error for ConnectionOpenError {}
 
-/// Only typed, fixed diagnostics may cross the CLI/MCP boundary. Unknown errors
-/// retain the caller's generic message; their text and sources are never exposed.
 pub(crate) fn open_failure_message(error: &anyhow::Error, fallback: &str) -> String {
     error
         .downcast_ref::<ConnectionOpenError>()
@@ -419,7 +416,6 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        // Dropping the socket releases leases. It never sends a process-close command.
         self.worker.abort();
     }
 }

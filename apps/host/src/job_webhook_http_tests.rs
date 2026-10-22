@@ -316,8 +316,6 @@ async fn real_http_parser_limits_headers_and_shutdown_closes_an_owned_idle_socke
             let written = socket.write_all(request).await;
             let mut response = Vec::new();
             let read = socket.read_to_end(&mut response).await;
-            // A parser can close with unread request bytes after its 431 reply.
-            // Preserve a complete received reply when the peer resets afterward.
             if response.is_empty() {
                 written?;
                 read?;
@@ -387,8 +385,6 @@ async fn real_http_parser_limits_headers_and_shutdown_closes_an_owned_idle_socke
         anyhow::ensure!(response.starts_with(b"HTTP/1.1 400"), "Conflicting lengths reached authenticated admission");
         anyhow::ensure!(log.read(0, 32, None).await?.head_cursor == before, "Rejected framing created journal acceptance");
 
-        // Hyper normalizes identical Content-Length fields. This unambiguous
-        // fixed-length framing is accepted, unlike conflicting or coded bodies.
         let equal = format!("{base}Content-Length: {}\r\nContent-Length: {}\r\n\r\n{body}", body.len(), body.len());
         let response = exchange(address, equal.as_bytes()).await?;
         anyhow::ensure!(response.starts_with(b"HTTP/1.1 202"), "Valid fixed-length signature was not accepted");

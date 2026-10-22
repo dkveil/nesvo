@@ -1,4 +1,3 @@
-//! Private dispatch capabilities fence metadata, old results and native intent.
 use super::Store;
 use crate::{
     job_attempts::{self, Dispatch},
@@ -192,7 +191,6 @@ fn current_dispatch_prepares_only_its_bound_run_and_cannot_replay_after_retireme
         json!({"action":"activate","key":format!("{prefix}:activate"),"runId":run,"expectedRevision":budget["run"]["revision"]}),
     );
     assert_eq!(active["run"]["state"], "active");
-    // Metadata-only fixture: Started tests token retirement, not process proof.
     job_definitions::work(
         &mut store.0,
         Work::Started {
@@ -338,8 +336,6 @@ fn every_late_job_producer_refuses_the_previous_generation_before_any_mutation()
         attempt: hex::encode(crate::wire::random::<16>()),
         token: hex::encode(crate::wire::random::<32>()),
     };
-    // A future-shaped assignment fixture, not production retry functionality.
-    // Keep the old command/claim intact to make stale producer mutation visible.
     store.0.execute("INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,run_id,created_at,claimed_at,state,dispatch_token) VALUES(?1,?2,2,?3,?4,?4,'dispatching',?5)",params![next.attempt,next.occurrence,run,NOW as i64,next.token]).unwrap();
     store.0.execute("UPDATE harness_job_occurrences SET current_job_attempt_id=?2,run_id=?3,state='dispatching' WHERE id=?1",params![old.id,next.attempt,run]).unwrap();
     let mut completed = Outcome::failed(OutcomeState::Passed, "stale passed command");
@@ -487,7 +483,6 @@ fn ongoing_run_guard_uses_current_assignment_even_after_preparation_token_retire
     }
     job_attempts::guard_run(&store.0, "old-run").unwrap();
     let next = hex::encode(crate::wire::random::<16>());
-    // Only this metadata fixture creates ordinal 2; no retry is dispatched.
     store.0.execute("INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,run_id,created_at,state) VALUES(?1,?2,2,'new-run',?3,'dispatching')",params![next,old.id,NOW as i64]).unwrap();
     store.0.execute("UPDATE harness_job_occurrences SET current_job_attempt_id=?2,run_id='new-run' WHERE id=?1",params![old.id,next]).unwrap();
     let before = snapshot(&store.0);
@@ -532,8 +527,6 @@ fn ongoing_run_guard_uses_current_assignment_even_after_preparation_token_retire
 #[test]
 fn published_journal_migration_adds_pointers_without_manufacturing_dispatch_authority() {
     let mut connection = Connection::open_in_memory().unwrap();
-    // Exact relevant pre-fence column shapes: generation 1 already exists, but
-    // neither private tokens nor occurrence current-assignment pointers exist.
     connection.execute_batch("PRAGMA foreign_keys=ON;
       CREATE TABLE workflow_runs(id TEXT PRIMARY KEY);
       CREATE TABLE harness_job_occurrences(id TEXT PRIMARY KEY,run_id TEXT REFERENCES workflow_runs(id),created_at INTEGER NOT NULL,started_at INTEGER,finished_at INTEGER,state TEXT NOT NULL,reason TEXT);

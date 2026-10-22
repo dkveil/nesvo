@@ -1,4 +1,3 @@
-//! VT state is interpreted locally; escape sequences never reach the outer terminal.
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -113,7 +112,6 @@ impl Widget for TerminalWidget<'_> {
                     target.set_symbol(" ");
                     continue;
                 }
-                // Never draw half a double-width glyph beyond a pane's right edge.
                 if cell.is_wide() && col + 1 >= area.width {
                     target.set_symbol(" ");
                 } else {

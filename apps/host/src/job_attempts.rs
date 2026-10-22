@@ -1,4 +1,3 @@
-//! Claimed job generations retain metadata evidence and fence native admission.
 use crate::api_error::Error;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -81,8 +80,6 @@ pub(crate) fn capacity(connection: &Connection, additional: usize) -> Result<()>
     }
     Ok(())
 }
-/// Copy historical claim evidence before restart changes its occurrence phase.
-/// No row is manufactured for a queued/skipped/canceled intent never claimed.
 pub fn backfill(tx: &Transaction<'_>) -> Result<()> {
     let mut query = tx.prepare("SELECT o.id FROM harness_job_occurrences o WHERE o.started_at IS NOT NULL AND o.state!='queued' AND NOT EXISTS(SELECT 1 FROM harness_job_attempts a WHERE a.occurrence_id=o.id AND a.ordinal=1) ORDER BY o.rowid")?;
     let occurrences = query
@@ -93,8 +90,6 @@ pub fn backfill(tx: &Transaction<'_>) -> Result<()> {
         let id = hex::encode(crate::wire::random::<16>());
         tx.execute("INSERT INTO harness_job_attempts(id,occurrence_id,ordinal,run_id,created_at,claimed_at,finished_at,state,reason) SELECT ?2,id,1,run_id,created_at,started_at,finished_at,state,reason FROM harness_job_occurrences WHERE id=?1",params![occurrence,id])?;
     }
-    // Already published generation rows acquire a pointer, never a new dispatch
-    // capability. Never rewind a later explicit generation pointer.
     tx.execute("UPDATE harness_job_occurrences SET current_job_attempt_id=(SELECT a.id FROM harness_job_attempts a WHERE a.occurrence_id=harness_job_occurrences.id AND a.ordinal=1) WHERE current_job_attempt_id IS NULL AND EXISTS(SELECT 1 FROM harness_job_attempts a WHERE a.occurrence_id=harness_job_occurrences.id AND a.ordinal=1)",[])?;
     Ok(())
 }
@@ -115,7 +110,6 @@ fn point_first(tx: &Transaction<'_>, occurrence: &str, attempt: &str) -> Result<
         _ => Err(conflict()),
     }
 }
-/// Admission already persisted started_at. It is not proof of process creation.
 pub fn begin(tx: &Transaction<'_>, occurrence: &str, _now: u64) -> Result<String> {
     if let Some(id) = tx
         .query_row(
@@ -138,8 +132,6 @@ pub fn begin(tx: &Transaction<'_>, occurrence: &str, _now: u64) -> Result<String
     point_first(tx, occurrence, &id)?;
     Ok(id)
 }
-/// Used only by fresh scheduler admission. Even a retired generation cannot
-/// obtain another token: original work is inspected, never implicitly rearmed.
 #[cfg(test)]
 pub fn claim(tx: &Transaction<'_>, occurrence: &str, now: u64) -> Result<Dispatch> {
     claim_at(tx, occurrence, now, now)
@@ -170,8 +162,6 @@ pub fn claim_at(
         token,
     })
 }
-/// A pure read fence. Native dispatch checks it in the same writer transaction
-/// as its admission; it neither refreshes state nor creates a replacement claim.
 pub fn guard(connection: &Connection, dispatch: &Dispatch, allowed: &[&str]) -> Result<()> {
     let phases: Option<(String,String)> = connection.query_row("SELECT o.state,a.state FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1 AND a.id=?2 AND a.dispatch_token=?3",params![dispatch.occurrence,dispatch.attempt,dispatch.token],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if !phases.is_some_and(|(occurrence, attempt)| {
@@ -181,8 +171,6 @@ pub fn guard(connection: &Connection, dispatch: &Dispatch, allowed: &[&str]) -> 
     }
     Ok(())
 }
-/// Preparation after binding must target this generation's exact run. Callers
-/// keep this read and their metadata mutation in the same writer transaction.
 pub fn guard_bound_run(connection: &Connection, dispatch: &Dispatch, run: &str) -> Result<()> {
     guard(connection, dispatch, &["dispatching"])?;
     let bound: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_occurrences o JOIN harness_job_attempts a ON a.id=o.current_job_attempt_id AND a.occurrence_id=o.id WHERE o.id=?1 AND a.id=?2 AND a.dispatch_token=?3 AND o.run_id=?4 AND a.run_id=?4)",params![dispatch.occurrence,dispatch.attempt,dispatch.token,run],|r|r.get(0))?;
@@ -195,8 +183,6 @@ pub fn retire(tx: &Transaction<'_>, dispatch: &Dispatch) -> Result<()> {
     if tx.execute("UPDATE harness_job_attempts SET dispatch_token=NULL WHERE id=?1 AND occurrence_id=?2 AND dispatch_token=?3",params![dispatch.attempt,dispatch.occurrence,dispatch.token])? != 1 { return Err(conflict()); }
     Ok(())
 }
-/// Ongoing native work needs current run assignment, not the already retired
-/// preparation token. Historical runs remain readable but cannot admit effects.
 pub fn guard_run(connection: &Connection, run: &str) -> Result<()> {
     crate::job_launch_resolutions::guard_run(connection, run)?;
     let retired: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.id=a.occurrence_id WHERE a.run_id=?1 AND (o.current_job_attempt_id IS NULL OR o.current_job_attempt_id<>a.id OR EXISTS(SELECT 1 FROM harness_job_retries retry WHERE retry.source_attempt_id=a.id AND retry.state<>'adopted' AND NOT (retry.state='waiting' AND retry.next_ordinal IS NULL))))",[run],|r|r.get(0))?;
@@ -247,8 +233,6 @@ pub fn sync(
     if crate::job_launch_resolutions::resolved_occurrence(tx, occurrence)? {
         return Ok(());
     }
-    // Backoff/cancellation belongs to the logical occurrence. Keep the failed
-    // source generation and its first completion evidence immutable.
     let retry_source: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM harness_job_attempts a JOIN harness_job_occurrences o ON o.current_job_attempt_id=a.id AND o.id=a.occurrence_id JOIN harness_job_retries retry ON retry.source_attempt_id=a.id WHERE o.id=?1 AND a.state='failed')", [occurrence], |r|r.get(0))?;
     if retry_source {
         return Ok(());
@@ -313,8 +297,6 @@ fn record(
     }
     Ok(value)
 }
-/// Authorization is performed by the parent job request; tuple membership is
-/// still checked here, so an ID from another occurrence cannot leak evidence.
 pub fn view(
     connection: &Connection,
     job: &str,

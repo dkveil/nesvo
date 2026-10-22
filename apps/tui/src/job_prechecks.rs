@@ -1,4 +1,3 @@
-//! Exact owner command approval over the authoritative host API.
 use crate::{cli, workflow};
 use anyhow::Result;
 use clap::Subcommand;

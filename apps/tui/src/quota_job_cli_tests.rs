@@ -1,4 +1,3 @@
-//! Shared owner CLI/MCP quota-job payloads; no host, provider or model activity.
 use super::*;
 use clap::Parser;
 

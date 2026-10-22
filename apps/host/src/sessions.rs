@@ -4,7 +4,7 @@ use crate::{
     launchers::{Launchers, Program, working_directory},
     protocol::Command,
     pty::Pty,
-    replay::{bounded_append, output_chunks, replay_history},
+    replay::{bounded_append, output_chunks, replay_history_without_terminal_queries},
     status::{StatusTracker, now_millis},
     storage::MetadataStore,
     usage::{self, LimitWindow, ProviderLimit},
@@ -25,6 +25,8 @@ use tokio::sync::{mpsc, watch};
 mod quota_wake_session;
 #[path = "session_quota.rs"]
 pub(crate) mod session_quota;
+
+const MAX_PROTOCOL_REPLY_BYTES_PER_CHUNK: usize = 4096;
 
 #[derive(Clone)]
 pub struct Client {
@@ -125,8 +127,6 @@ impl Session {
     }
 
     fn kill(&mut self) -> Result<()> {
-        // Early native stop can precede ConPTY's first query reaching the reader.
-        // Confirm its one reply before termination; the decoder consumes it later.
         #[cfg(windows)]
         {
             let reply_needed = self.terminal_protocol.initial_cursor_reply_needed();
@@ -574,8 +574,6 @@ impl State {
             _ => 0,
         };
         self.provider_quota.apply_codex(observation);
-        // The ambient display reader is not authority over another session's
-        // configured context. Each armed wake checks its exact pinned reader.
         self.quota_read_finished(Program::Codex);
         self.refresh_quota_projection();
     }
@@ -721,8 +719,6 @@ impl State {
             crate::api_error::Error::new("unsupported", "Host event journal is unavailable").into()
         })
     }
-    /// Serialize physical launch/control for one run; never hold the State lock
-    /// across native setup. Weak entries retain only currently active effects.
     pub fn native_run_permit(&mut self, run: &str) -> Result<tokio::sync::OwnedMutexGuard<()>> {
         if run.is_empty() || run.len() > 128 || run.chars().any(char::is_control) {
             return Err(
@@ -743,8 +739,6 @@ impl State {
             });
         gate.try_lock_owned().map_err(|_|crate::api_error::Error::new("busy","A native run launch/control is in progress; inspect original mutations and receipts before retrying").into())
     }
-    /// An explicit owner launch into a coordinator's run delegates this fresh
-    /// worker through that coordinator's existing bounded native capability.
     pub fn workflow_launch_authority(
         &self,
         authority: &crate::caller::Authority,
@@ -823,7 +817,6 @@ impl State {
                     "Replacement must be a live native coordinator with a scoped capability",
                 )
             })?;
-        // Metadata changes neither the target's lease/draft nor native control.
         let location = |s: &Session| Location {
             directory: s.info.cwd.clone(),
             group_id: s.info.group_id.clone(),
@@ -1034,9 +1027,6 @@ impl State {
             }
         }
     }
-    /// Captures native authority before an admitted quota launch starts waiting.
-    /// The global counter is compared only against the bound actor's own epoch:
-    /// an unrelated human session does not revoke coordinatorless owner jobs.
     pub(crate) fn quota_native_authority_epoch(
         &self,
         authority: &crate::caller::Authority,
@@ -1646,10 +1636,7 @@ impl State {
     }
 
     pub(crate) fn repository_view_requested(&mut self, client_id: u64) -> Result<()> {
-        // An expired/unknown scoped client never falls back to owner demand.
         self.caller_session(client_id)?;
-        // This advisory hook cannot revive work during drain. State::command
-        // retains its existing independent shutdown refusal for all commands.
         if self.shutting_down {
             return Ok(());
         }
@@ -1804,7 +1791,6 @@ impl State {
                 info["readiness"] = json!(session.readiness.snapshot());
                 info["lifecycle"] = json!({"process":{"running":session.info.running,"pid":session.pty.process_id()},
                     "agent":session.status.agent_projection(),"turn":session.turn.snapshot(session.elapsed_at_exit.unwrap_or_else(||session.started.elapsed())),"task":null});
-                // Legacy v2 clients accept screen evidence and ignore extra fields.
                 if session.status.status().source == crate::status::StatusSource::Hook {
                     info["status"]["source"] = json!("screen");
                     info["status"]["evidence"] = json!("hook");
@@ -1935,7 +1921,6 @@ impl State {
         Some(event)
     }
 
-    // The status tick never sends input. The durable quota runtime owns wakes.
     fn wake_after_reset(&mut self) -> bool {
         let now = crate::event_log::monotonic_millis();
         let mut changed = false;
@@ -2137,7 +2122,7 @@ impl State {
         let history = if original {
             backlog
         } else {
-            filtered = replay_history(backlog);
+            filtered = replay_history_without_terminal_queries(backlog);
             &filtered
         };
         for data in output_chunks(history) {
@@ -2215,8 +2200,6 @@ impl State {
         });
         self.human_control_epoch = self.human_control_epoch.saturating_add(1);
         session.human_control_epoch = self.human_control_epoch;
-        // Taking control is deliberate human priority, even without typing.
-        // Releasing that lease must not reactivate an earlier automatic wake.
         session.wake_at = None;
         let first_controller = !session.has_been_attached;
         session.has_been_attached = true;
@@ -2226,8 +2209,6 @@ impl State {
                 json!({"type":"attached", "sessionId":session_id}),
             );
         } else if first_controller {
-            // Subscription can observe startup queries before control is granted.
-            // Reset/replay only the first controller after it receives its lease.
             self.send(
                 client_id,
                 json!({"type":"subscribed", "sessionId":session_id, "cols":cols, "rows":rows}),
@@ -2322,9 +2303,8 @@ impl State {
     }
 
     fn admit_snapshot(&self, session: &Session) -> Result<()> {
-        // Keep headroom for status updates/request IDs within the legacy 64 KiB
-        // plaintext frame. A rejected candidate is never persisted or announced.
-        if serde_json::to_vec(&self.baseline_with_candidate(None, Some(session)))?.len() > 48 * 1024
+        if serde_json::to_vec(&self.baseline_with_candidate(None, Some(session)))?.len()
+            > crate::budgets::SNAPSHOT_BUDGET_BYTES
         {
             return Err(crate::api_error::Error::new(
                 "budget_snapshot_capacity",
@@ -2394,8 +2374,6 @@ impl State {
             .sessions
             .get_mut(id)
             .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
-        // The epoch fence and physical effect share this State lock. Releasing
-        // a lease cannot restore automatic timeout authority over a taken worker.
         action.check_human_priority(
             session.info.running,
             session.controller.is_some(),
@@ -2622,8 +2600,6 @@ impl State {
             .sessions
             .get_mut(id)
             .ok_or_else(|| Error::new("session_not_found", "Session no longer exists"))?;
-        // Queue admission must see PTY evidence newer than the last coalesced
-        // timer tick. Leave publication to that timer, including unchanged ticks.
         session.status_projection_dirty |= session.status.refresh(now_millis());
         session.status_projection_dirty |= session.readiness.observe(
             session.status.status(),
@@ -2689,9 +2665,6 @@ impl State {
                 crate::status::StatusState::Idle | crate::status::StatusState::Done
             ) || session.readiness.snapshot().phase != crate::readiness::Phase::Ready)
         {
-            // Pasting invalidates a screen-only prompt until the provider draws
-            // its editor again. Wait for new idle evidence, never send on I/O
-            // activity alone. Semantic work/permission evidence fails at once.
             if text.is_none()
                 && pending.queued
                 && session.readiness.snapshot().phase == crate::readiness::Phase::Ready
@@ -2741,8 +2714,6 @@ impl State {
             && (!matches!(phase, "delivered" | "received" | "started" | "waiting")
                 || session.info.program == Program::Shell)
         {
-            // A partial write or preempted Enter can leave a draft in the editor.
-            // A new idempotency key is not permission to append to that draft.
             if phase == "unknown"
                 && session
                     .pending_input
@@ -2940,7 +2911,6 @@ impl State {
                 },
             ),
         );
-        // Durable launches publish once the authenticated child's grant is installed.
         if reserved.is_none() {
             self.broadcast_list();
         }
@@ -3805,8 +3775,6 @@ impl State {
         Ok(())
     }
 
-    /// Fence new native launches and input while owned command scopes drain.
-    /// Existing PTYs stay available until the final resource shutdown below.
     pub fn begin_shutdown(&mut self) {
         self.shutting_down = true;
         self.repository.seal();
@@ -4029,7 +3997,6 @@ async fn flush_submission_updates(state: &Arc<Mutex<State>>) {
                         matches!(error.code, "stale_operation" | "operation_not_found")
                     }) =>
             {
-                // A fenced/terminal claim can never become writable by retrying.
                 let mut state = state.lock().unwrap();
                 for session in state.sessions.values_mut() {
                     if session
@@ -4072,7 +4039,6 @@ fn lifecycle_eligible(session: &Session) -> bool {
 
 pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receiver<PtyEvent>) {
     let weak = Arc::downgrade(&state);
-    // File I/O runs independently of PTY dispatch and outside the host mutex.
     let lifecycle_task = tokio::spawn(async move {
         let mut observers = HashMap::<String, crate::agent_events::Observer>::new();
         let mut tick = tokio::time::interval(Duration::from_millis(
@@ -4380,8 +4346,8 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         }
                         match event {
                             crate::terminal_protocol::Event::Reply(reply) => {
-                                // Bound reply amplification per PTY chunk and enqueue once.
-                                if replies.len() + reply.len() <= 4096 {
+                                if replies.len() + reply.len() <= MAX_PROTOCOL_REPLY_BYTES_PER_CHUNK
+                                {
                                     replies.push_str(reply);
                                 }
                             }
@@ -4401,8 +4367,6 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                             }
                         }
                     }
-                    // Protocol replies precede forwarding the DA1/output sentinel and
-                    // never pass through user input/turn accounting.
                     if !replies.is_empty()
                         && let Err(error) = session.pty.send_input(replies)
                     {
@@ -4463,7 +4427,6 @@ pub async fn dispatch_output(state: Arc<Mutex<State>>, mut events: mpsc::Receive
                         ),
                     );
                     state.repository_working_directory(&id, None);
-                    // The timer coalesces final state with other status changes.
                 }
             }
             PtyEvent::InputError(id) => {
@@ -5206,7 +5169,6 @@ mod tests {
     }
     #[test]
     fn quota_wake_never_types_over_a_human_draft_or_unsettled_submission() {
-        // One owned shell supplies native resource lifetime only; no model runs.
         let workspace = std::env::temp_dir().canonicalize().unwrap();
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
         let mut state = State::new(
@@ -5297,8 +5259,6 @@ mod tests {
         std::sync::mpsc::Receiver<crate::pty::InputTraceEvent>,
         mpsc::Receiver<PtyEvent>,
     ) {
-        // An owned ordinary shell gives us the real native input queue without
-        // starting any provider. All quota evidence below is explicit fixture data.
         let workspace = std::env::temp_dir().canonicalize().unwrap();
         let metadata = MetadataStore::open(Path::new(":memory:")).unwrap();
         let mut state = State::new(
@@ -5341,8 +5301,6 @@ mod tests {
         );
         session.wake_at = Some(now - 1);
         let trace = session.pty.trace_input();
-        // An empty confirmed barrier proves the real writer is live without
-        // submitting text or executing a command in this shell.
         let _barrier = session.pty.send_confirmed(String::new()).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
@@ -5366,8 +5324,6 @@ mod tests {
         assert!(state.sessions[&id].wake_at.is_none());
         assert!(state.sessions[&id].info.running);
         assert!(!state.wake_after_reset());
-        // Even a stale in-memory callback holding the old timer cannot bypass
-        // the final shutdown fence while terminal cleanup is still pending.
         state.sessions.get_mut(&id).unwrap().wake_at = Some(chrono::Utc::now().timestamp() - 1);
         assert!(!state.wake_after_reset());
         assert!(matches!(
@@ -5583,8 +5539,6 @@ mod tests {
             },
         );
         let history = "a".repeat(BACKLOG_BYTES);
-        // Exercise the real replay chunking and queue overflow path without a
-        // scheduler draining messages between subscriptions or any local PTYs.
         let sessions = usize::from(crate::budgets::Limits::default().max_sessions);
         for index in 0..sessions {
             let id = index.to_string();

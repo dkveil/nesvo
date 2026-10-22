@@ -1,4 +1,3 @@
-//! Bounded CLI/MCP inbox DTOs. Authorization and ACK state stay on the host.
 use anyhow::Result;
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};

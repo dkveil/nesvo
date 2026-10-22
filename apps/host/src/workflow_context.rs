@@ -1,4 +1,3 @@
-//! Constraint revisions fence native input; ACK never grants process authority.
 use crate::{api_error::Error, receipts};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -63,8 +62,6 @@ pub fn coordinator_generation(connection: &Connection, run: &str) -> Result<i64>
         .optional()?
         .unwrap_or(0))
 }
-/// Ordinary session sends share the same acceptance transaction and immutable
-/// context fence as host-generated task/wake input. Replay never renews it.
 pub fn accept_native(
     connection: &mut Connection,
     issuer: &str,

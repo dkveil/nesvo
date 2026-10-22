@@ -1,5 +1,3 @@
-//! Private review context. Accepted transaction order is authoritative; callback
-//! start order within one provider generation is deliberately not promised.
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -11,7 +9,6 @@ use std::{
 const DESCRIPTOR_LIMIT: u64 = 1024;
 const PATH_LIMIT: usize = 4096;
 
-/// Written once in the owned launch directory. Journal loss never changes mode.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum Descriptor {
@@ -41,7 +38,6 @@ pub(crate) struct Ticket {
     generation: u64,
 }
 
-/// Both variants select review context; only CwdChanged establishes actual cwd.
 pub(crate) enum Change {
     EditedFile(PathBuf),
     CwdChanged(PathBuf),
@@ -105,7 +101,6 @@ fn validate_descriptor(descriptor: &Descriptor) -> Result<()> {
     Ok(())
 }
 
-/// Called after journal initialization, before installing any native hook.
 pub(crate) fn install(report: &Path, session_id: Option<&str>) -> Result<Descriptor> {
     let descriptor = if let Some(session_id) = session_id {
         let mut connection = crate::agent_events::capture_connection(report)?;
@@ -142,7 +137,6 @@ pub(crate) fn install(report: &Path, session_id: Option<&str>) -> Result<Descrip
         bytes.len() <= DESCRIPTOR_LIMIT as usize,
         "Oversized context scope"
     );
-    // The fresh private directory is already owned. Never replace this anchor.
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -223,7 +217,6 @@ fn current(connection: &Connection, descriptor: &Descriptor) -> Result<Option<Ti
     }))
 }
 
-/// Capture before the first stdin read. This never binds a provider identity.
 pub(crate) fn begin(report: &Path, descriptor: &Descriptor) -> Result<Option<Ticket>> {
     if !descriptor.journal_backed() {
         return Ok(None);
@@ -278,7 +271,6 @@ fn stored(connection: &Connection) -> Result<Option<Stored>> {
     Ok(Some(value))
 }
 
-/// The input identity is independently checked; a ticket alone is insufficient.
 pub(crate) fn append(
     report: &Path,
     descriptor: &Descriptor,
@@ -320,7 +312,6 @@ pub(crate) fn append(
     Ok(true)
 }
 
-/// A single snapshot validates both current scope and the expected host session.
 pub(crate) fn read(
     report: &Path,
     descriptor: &Descriptor,

@@ -1,4 +1,3 @@
-//! Opt-in loopback HTTP boundary. Only the journal authenticates and admits jobs.
 use crate::{
     event_log::Service,
     job_triggers::{Acceptance, Inbound, Provider},
@@ -32,7 +31,6 @@ const ROUTE: &str = "/v1/job-triggers/";
 const WEBHOOK_HEADERS: [&str; 3] = ["x-nesvo-delivery", "x-nesvo-event", "x-nesvo-signature-256"];
 const GITHUB_HEADERS: [&str; 3] = ["x-github-delivery", "x-github-event", "x-hub-signature-256"];
 
-/// Owns the separate listener and all its sockets; no owner key is accepted.
 pub struct Listener {
     address: String,
     stop: Option<oneshot::Sender<()>>,
@@ -83,8 +81,6 @@ impl Listener {
     }
 }
 
-/// Returns whether ingress stopped unexpectedly. Retention prevents losing an
-/// exit that occurred before the host's runtime metadata observer was polled.
 pub async fn wait_for_exit(mut exited: watch::Receiver<Option<bool>>) -> bool {
     loop {
         let result = *exited.borrow_and_update();
@@ -102,7 +98,6 @@ impl Drop for Listener {
             let _ = stop.send(());
         }
         if let Some(task) = self.task.take() {
-            // Dropping the supervisor drops its JoinSet and aborts owned sockets.
             task.abort();
         }
     }
@@ -132,8 +127,6 @@ async fn run(listener: TcpListener, log: Service, mut stop: oneshot::Receiver<()
         }
     };
     drop(listener);
-    // Journal acceptance already queued by a disconnected request may commit.
-    // It remains recoverable only through that same authenticated delivery.
     if timeout(Duration::from_secs(1), async {
         while connections.join_next().await.is_some() {}
     })
@@ -169,7 +162,6 @@ async fn serve(socket: TcpStream, log: Service) {
             Ok::<_, Infallible>(response)
         }
     });
-    // Protocol failures close the socket without logging raw request data.
     let _ = builder
         .serve_connection(TokioIo::new(socket), service)
         .await;
@@ -345,10 +337,6 @@ fn request_head<B>(request: &Request<B>) -> Result<Inbound, Rejection> {
             message: "Job webhooks require application/json with UTF-8 encoding",
         });
     }
-    // Hyper discards Content-Length when Transfer-Encoding is present, so the
-    // boundary rejects every transfer coding rather than inspecting both here.
-    // Equal duplicate lengths are normalized by Hyper; conflicting lengths are
-    // rejected by its HTTP parser before this handler receives the request.
     let length = single(headers, "content-length")?
         .parse::<u64>()
         .map_err(|_| Rejection::invalid())?;

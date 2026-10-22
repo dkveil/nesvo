@@ -1,4 +1,3 @@
-//! Bounded run policy DTOs; authoritative admission belongs to the host.
 use anyhow::Result;
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};

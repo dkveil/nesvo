@@ -1,4 +1,3 @@
-//! Explicit immutable task profiles for the host-owned DAG executor.
 use anyhow::Result;
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};

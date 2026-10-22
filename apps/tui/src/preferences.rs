@@ -1,4 +1,3 @@
-//! Local presentation preferences. Pairing credentials are stored separately.
 use crate::theme::Theme;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};

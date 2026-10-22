@@ -1,4 +1,3 @@
-//! Bounded host receipt → snapshot enqueue latency. Provider emission is excluded.
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,

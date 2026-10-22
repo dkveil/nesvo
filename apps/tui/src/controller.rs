@@ -1,4 +1,3 @@
-//! Input intents and host commands live here, outside rendering.
 use crate::{
     input,
     launch::{Field, SessionForm},
@@ -38,7 +37,6 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
         Event::Key(key) => Event::Key(input::normalize_key(key)),
         other => other,
     };
-    // A later deliberate interaction supersedes an outstanding request to type.
     if matches!(&event, Event::Key(k) if k.kind != KeyEventKind::Release)
         || matches!(&event, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
     {
@@ -209,8 +207,6 @@ pub fn event(app: &mut App, event: Event, area: Rect) -> Outcome {
                     && let Some(command) = app.input(data)
                 {
                     outcome.commands.push(command);
-                    // Input is rendered when the host echoes it. Avoid a separate
-                    // console write for a key that has not changed the local view.
                     outcome.redraw = was_scrolled;
                 }
             } else if app.reviews.has_focus() {
@@ -1966,7 +1962,6 @@ mod tests {
                     .iter()
                     .any(|row| row.target.session_id() == Some("c"))
             );
-            // Even later restored evidence does not substitute or resurrect the old cursor.
             app.event(repository_search_snapshot()).unwrap();
             search_key(&mut app, KeyCode::F(2));
             let outcome = search_key(&mut app, KeyCode::Enter);

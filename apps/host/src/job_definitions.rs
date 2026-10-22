@@ -1,4 +1,3 @@
-//! Durable job definitions and occurrence admission; no process or clock I/O.
 pub use crate::job_calendar::Schedule;
 use crate::{
     api_error::Error,
@@ -55,7 +54,6 @@ pub struct Spec {
     pub overlap: Overlap,
     #[serde(default = "budget")]
     pub max_elapsed_ms: u64,
-    // Internal adapter result, neither accepted from the wire nor persisted.
     #[serde(skip)]
     pub calendar: Option<crate::job_calendar::Answer>,
 }
@@ -294,7 +292,6 @@ pub fn recover(connection: &mut Connection, now: u64) -> Result<()> {
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     crate::job_quota::recover(&transaction, now)?;
     crate::job_attempts::backfill(&transaction)?;
-    // A recovered row is historical evidence, never a new producer capability.
     transaction.execute(
         "UPDATE harness_job_attempts SET dispatch_token=NULL WHERE dispatch_token IS NOT NULL",
         [],
@@ -657,8 +654,6 @@ fn insert_occurrence(
     observe(transaction, job, Some(&id), state, now)?;
     Ok(id)
 }
-/// Restricted external admission shares the ordinary occurrence snapshot and
-/// overlap rules. Authentication and delivery dedupe belong to its caller's tx.
 pub(crate) fn insert_external_occurrence(
     tx: &Transaction<'_>,
     job_id: &str,
@@ -1123,8 +1118,6 @@ pub fn work_at(connection: &mut Connection, work: Work, now: u64, elapsed: u64) 
         &work,
         Work::CancelRequested { .. } | Work::CalendarDue | Work::QuotaNativeGuard { .. }
     ) {
-        // These branches only read. Repeated supervision/calendar queries must
-        // not compete for SQLite's single writer or delay native state locks.
         rusqlite::TransactionBehavior::Deferred
     } else {
         rusqlite::TransactionBehavior::Immediate
@@ -1315,8 +1308,6 @@ pub fn work_at(connection: &mut Connection, work: Work, now: u64, elapsed: u64) 
                 transaction.query_row("SELECT count(*) FROM harness_job_occurrences", [], |r| {
                     r.get(0)
                 })?;
-            // The off-worker result is a proposal, never authority over a
-            // concurrently edited/disabled calendar or another tick's cursor.
             if record["enabled"] == true
                 && record["revision"] == revision
                 && record["nextDueAt"] == due
@@ -1351,8 +1342,6 @@ pub fn work_at(connection: &mut Connection, work: Work, now: u64, elapsed: u64) 
                         failure.as_ref().map(serde_json::to_string).transpose()?
                     ],
                 )?;
-                // One retained occurrence represents the latest missed slot,
-                // with an explicit start of the coalesced interval for audit.
                 transaction.execute(
                     "UPDATE harness_job_occurrences SET coalesced_from=?2 WHERE id=?1",
                     params![occurrence, (at > due).then_some(due as i64)],

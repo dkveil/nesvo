@@ -96,8 +96,10 @@ fn unknown_open_errors_keep_the_callers_generic_message() {
 }
 
 #[tokio::test]
-// Tungstenite's handshake callback requires this exact unboxed response type.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "tungstenite's handshake callback requires this exact unboxed response error type"
+)]
 async fn http_rejection_reports_only_the_connect_stage_and_status() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut pairing = pairing(listener.local_addr().unwrap());
@@ -175,7 +177,6 @@ async fn challenge_frames_are_validated_before_authentication() {
         let error = mock_open_error(
             move |mut socket| async move {
                 socket.send(frame).await.unwrap();
-                // Invalid challenges must not produce an authentication frame.
                 assert!(!matches!(socket.next().await, Some(Ok(Message::Text(_)))));
             },
             HOST_PACED,
@@ -272,7 +273,6 @@ async fn stalled_challenge_and_authentication_reads_keep_distinct_timeout_stages
                 if during_auth {
                     auth(&mut socket).await;
                 }
-                // The client's read timeout must drop this connection without retrying.
                 assert!(!matches!(socket.next().await, Some(Ok(Message::Text(_)))));
             },
             timeouts,

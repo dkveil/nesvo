@@ -1,4 +1,3 @@
-//! Per-host presentation state. Restoring a layout never acquires terminal control.
 use crate::{
     layouts::{Library, MAX_LEAVES, PaneTree},
     model::App,

@@ -1,4 +1,3 @@
-//! Opt-in metadata-only push delivery. Network I/O never holds the host lock.
 use crate::{attention::Event, sessions::State, storage::MetadataStore};
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};

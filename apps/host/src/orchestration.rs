@@ -1,4 +1,3 @@
-//! Durable workflow plans. DAG readiness is independent from process/task success.
 use crate::{
     api_error::Error,
     event_log::{DomainEvent, Observation, append_transaction, model},
@@ -337,7 +336,6 @@ pub(crate) fn execute_at(
 ) -> Result<Value> {
     execute_inner(connection, actor, request, now, None, None)
 }
-/// Internal job preparation proof is never accepted from a public request.
 pub fn execute_for_job_at(
     connection: &mut Connection,
     actor: &Actor,
@@ -560,7 +558,6 @@ fn execute_inner(
             _ => unreachable!(),
         }
     }
-    // Recheck the run boundary even when recovering a historical mutation.
     if let Request::Drain { run_id, .. }
     | Request::Resume { run_id, .. }
     | Request::SetPlan { run_id, .. }

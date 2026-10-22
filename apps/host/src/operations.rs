@@ -1,4 +1,3 @@
-//! Durable intent precedes native effects; observation never dispatches input.
 use crate::{
     event_log::Service,
     jobs::LaunchSpec,
@@ -35,9 +34,7 @@ pub struct WaitRequest {
 pub enum ControlAction {
     Interrupt,
     Stop,
-    /// Run orchestration also protects a retained human draft without a lease.
     StopRunWorker,
-    /// A job timeout additionally refuses any prior human takeover of its worker.
     StopJobTimeoutWorker,
 }
 pub enum ControlDispatch {
@@ -247,7 +244,6 @@ async fn fence(
     ))
 }
 async fn flushed(answer: tokio::sync::oneshot::Receiver<bool>) -> Result<()> {
-    // Controls retain their existing conservative untyped failure projection.
     write_confirmation(answer, std::time::Duration::from_secs(5))
         .await
         .map_err(|_| anyhow!("Native terminal write was not confirmed"))
@@ -279,8 +275,6 @@ impl WriteConfirmationFailure {
     }
 }
 
-/// Confirmation distinguishes native write failure from missing evidence. A
-/// timeout does not cancel queued bytes or prove that no write took place.
 async fn write_confirmation(
     answer: tokio::sync::oneshot::Receiver<bool>,
     timeout: std::time::Duration,
@@ -408,7 +402,6 @@ impl std::fmt::Display for FenceDiagnostic {
 impl std::error::Error for FenceDiagnostic {}
 
 fn fence_error(error: anyhow::Error, substage: FenceSubstage) -> anyhow::Error {
-    // Preserve every existing domain code/message and its retry classification.
     if error.downcast_ref::<crate::api_error::Error>().is_some() {
         return error;
     }
@@ -418,8 +411,6 @@ fn fence_error(error: anyhow::Error, substage: FenceSubstage) -> anyhow::Error {
 
 type QueueAdmission = Result<tokio::sync::oneshot::Receiver<bool>>;
 
-/// The actual fence pipeline: no queue call can run before both read guards.
-/// Queue errors stay nested so only the original queue-domain refusals retry.
 async fn fenced_admission<G, L>(
     guard: G,
     lifecycle: L,
@@ -481,8 +472,6 @@ fn busy_backoff(retries: u32) -> std::time::Duration {
     (FENCE_DEADLINE / 64).saturating_mul(1 << retries.min(3))
 }
 
-/// Retry only rejected admission checks: this queue write accepted no bytes.
-/// Journal notification is registered before reading to avoid a lost wakeup.
 async fn enqueue_fenced(
     state: &Arc<Mutex<State>>,
     log: &Service,
@@ -547,8 +536,6 @@ async fn enqueue_fenced(
         };
         tokio::select! {
             _=tokio::time::sleep_until(deadline)=>return Err(busy_read.unwrap_or_else(|| Error::new("lifecycle_pending","Lifecycle fence/editor did not settle within two seconds; no further input was queued").into())),
-            // PTY evidence is coalesced by the status timer, and unchanged
-            // projections need not emit a journal event. Recheck every guard.
             _=tokio::time::sleep(pause)=>{},
             _=cancellation.changed()=>return Err(Error::new("submission_preempted","Submission was preempted while waiting for lifecycle evidence").into()),
             result=changed.changed()=>{if result.is_err(){return Err(fence_error(anyhow!("Host journal closed while waiting for lifecycle evidence"), FenceSubstage::RunGuard));}},
@@ -586,7 +573,6 @@ pub async fn send(
     )
     .await
 }
-/// Task delivery reserves this receipt atomically with its claim before input.
 pub(crate) async fn dispatch_send(
     state: Arc<Mutex<State>>,
     log: Service,
@@ -698,8 +684,6 @@ async fn dispatch_send_inner(
         write_confirmation(answer, std::time::Duration::from_secs(5))
             .await
             .map_err(WriteConfirmationFailure::into_error)?;
-        // Keep paste and submit separate. Frameworks may debounce a paste event;
-        // a human taking control in this interval cancels the Enter entirely.
         stage = SubmissionStage::PasteDelay;
         tokio::select! {
             _=tokio::time::sleep(std::time::Duration::from_millis(150))=>{},
@@ -770,7 +754,6 @@ pub async fn create(
     )
     .await
 }
-/// Internal adapter context, never accepted as a caller-supplied launch field.
 pub(crate) struct CreateContext {
     authority: crate::caller::Authority,
     task_tools: Option<Vec<String>>,
@@ -806,9 +789,6 @@ fn is_quota_wait(error: &anyhow::Error) -> bool {
         .is_some_and(|error| error.code == "quota_wait")
 }
 
-/// One live continuation owns the existing claim, prepared directory and
-/// reserved native identity. Nothing in this wait accepts another create or
-/// replays Git. Only the physical run mutex is released while evidence is held.
 struct QuotaContinuation<'a> {
     state: &'a Arc<Mutex<State>>,
     log: &'a Service,
@@ -870,8 +850,6 @@ impl QuotaContinuation<'_> {
     ) -> Result<tokio::sync::OwnedMutexGuard<()>> {
         let mut changed = self.log.subscribe();
         'wait: loop {
-            // Register before both reads; updates during either boundary must
-            // not be lost. A bounded poll also observes shutdown/clock expiry.
             changed.borrow_and_update();
             self.state
                 .lock()
@@ -898,8 +876,6 @@ impl QuotaContinuation<'_> {
                     .native_run_permit(&self.permit.run_id);
                 match acquired {
                     Ok(guard) => {
-                        // Another native control can have changed durable
-                        // authority before this mutex became available.
                         let durable = match self.durable_guard().await {
                             Ok(()) => true,
                             Err(error) if is_quota_wait(&error) => false,
@@ -992,9 +968,6 @@ async fn dispatch_quota_create(
         let mut worktree_plan = None;
         if derived_worktree {
             worktree_plan = Some(crate::worktrees::plan(&directory).await?);
-            // From this boundary Git may have left real repository artifacts.
-            // Every later refusal remains uncertain about effects, even when
-            // no native process was spawned.
             setup_started = true;
             directory = crate::git::create_worktree(&directory).await.map_err(|_| {
                 crate::api_error::Error::new(
@@ -1046,8 +1019,6 @@ async fn dispatch_quota_create(
                     continuation.hold(Some("quota_wait")).await?;
                 }
                 other => {
-                    // A native adapter error can occur after process creation;
-                    // its typed spelling alone is never no-effect evidence.
                     spawn_attempted = true;
                     return other;
                 }
@@ -1074,8 +1045,6 @@ async fn dispatch_quota_create(
         }
     }
 }
-/// Dispatch an already journaled create once. Workflow admission can reserve
-/// its attempt and this receipt atomically before reaching native setup.
 pub(crate) async fn dispatch_create(
     state: Arc<Mutex<State>>,
     events: mpsc::Sender<PtyEvent>,
@@ -1216,7 +1185,6 @@ mod tests {
     }
     impl Drop for FenceDirectory {
         fn drop(&mut self) {
-            // This exact randomly allocated directory belongs only to this test.
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }

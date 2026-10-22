@@ -1,4 +1,3 @@
-//! Bounded canonical-attention publication with durable ACK and local backoff.
 use crate::event_log::{DomainEvent, Observation, Service, model::AgentAttention};
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;

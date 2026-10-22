@@ -1,4 +1,3 @@
-//! Storage control transitions and human guards; no native processes or signals.
 use super::{Store, job_timeouts_tests::due_fixture};
 use crate::{
     job_timeouts,
@@ -171,8 +170,6 @@ fn timeout_control_is_exact_replayable_and_settles_only_after_exit_evidence() {
         "awaitingExit"
     );
 
-    // This metadata-only fixture adds a separate task after timeout preparation
-    // to exercise settlement scope even if a later manual binding is present.
     add_unrelated_attempt(&store, &timeout);
     workflow_controls::execute(
         &mut store.0,

@@ -125,6 +125,10 @@ The manifest is at most 16 KiB. It requires an absolute executable and at most
 Optional `padding` is 0–32, `refreshInterval` is 1–3600 seconds and
 `hideVimModeIndicator` is boolean. No refresh interval is added by default.
 
+The quota receiver reads at most 16 KiB of callback JSON. Larger or unreadable
+input stores only the fixed `inputOversized` or `inputReadFailed` parse reason
+and no windows.
+
 Forwarded input is at most 256 KiB and stdout 64 KiB. Stdin collection has a
 two-second bound. The enclosed helper's lifetime is bounded, including framing
 and display execution; cleanup terminates its owned process group/job and checks

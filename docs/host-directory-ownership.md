@@ -18,6 +18,14 @@ exposes the OS call already present transitively in the lockfile. Existing
 `windows-sys` receives filesystem/I/O features. This preserves Rust 1.88 instead
 of raising the minimum version for newer standard-library file-lock APIs.
 
+A Unix `flock` belongs to the open file description, so a duplicated or forked
+descriptor shares it. Rust opens the lock file close-on-exec on Unix and
+non-inheritable on Windows, but a forked child still holds the shared lock until it
+calls `exec`. The guard therefore ends its ownership with an explicit unlock on
+drop: close-on-exec alone does not cover the interval between `fork` and `exec`.
+See [Apple's flock(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)
+and [Linux flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html).
+
 This is coordination between upgraded hosts, not fencing of an older binary
 that never acquires this lock. Reuse or stop an older host deliberately before
 starting an upgraded host against the same directory. Process/worker adoption

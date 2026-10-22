@@ -1,4 +1,3 @@
-//! Handle-owned session jobs. Never enumerate and terminate reusable process IDs.
 use anyhow::{Context, Result};
 use portable_pty::{Child, ChildKiller};
 use std::{
@@ -42,9 +41,6 @@ pub fn killer(child: &dyn Child) -> Result<Box<dyn ChildKiller + Send + Sync>> {
     match enroll(process) {
         Ok(job) => Ok(Box::new(WindowsKiller(Arc::new(job)))),
         Err(error) => {
-            // Refuse an uncontained launch. Kill only this already-owned root;
-            // children created before enrollment cannot be claimed by this job.
-            // portable-pty 0.9.0 reverses TerminateProcess's success condition.
             if unsafe { TerminateProcess(process.as_raw_handle(), 1) } == 0 {
                 let mut status = 0;
                 let queried = unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut status) };
@@ -82,15 +78,13 @@ fn enroll(process: BorrowedHandle<'_>) -> Result<OwnedHandle> {
     {
         return Err(io::Error::last_os_error()).context("Set native session job lifetime");
     }
-    // SAFETY: both handles remain valid. No UI, breakaway or resource limits.
+    // SAFETY: both handles remain valid for the duration of the call.
     if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } == 0 {
         return Err(io::Error::last_os_error()).context("Assign exact native process to job");
     }
     Ok(job)
 }
 
-/// The helper cannot spawn a configured command until its parent sends input.
-/// Enroll that already-owned waiting helper before releasing the input gate.
 pub fn command_job(child: &tokio::process::Child) -> Result<OwnedHandle> {
     let raw = child
         .raw_handle()

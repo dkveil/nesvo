@@ -1,4 +1,3 @@
-//! Native task launch after atomic run/attempt/receipt admission.
 use crate::{
     caller::Authority,
     event_log::Service,
@@ -55,9 +54,6 @@ pub async fn execute_guarded(
         return Err(anyhow!("Unexpected launch preparation reply"));
     };
     if let Some(dispatch) = dispatch {
-        // A retained quota continuation reacquires this same physical fence
-        // before effects, but must release it while waiting for fresh evidence
-        // so an owner can stop or otherwise control the original run.
         if dispatch.quota.is_some() {
             drop(run_permit.take());
         }
@@ -67,8 +63,6 @@ pub async fn execute_guarded(
             .workflow_launch_authority(&authority, dispatch.coordinator.as_deref());
         match authority {
             Ok(authority) => {
-                // The ordinary native receipt retains any rejection/unknown
-                // effect. The workflow reply remains its immutable acceptance.
                 let _ = crate::operations::dispatch_create(
                     state,
                     events,
@@ -85,8 +79,6 @@ pub async fn execute_guarded(
                 .await;
             }
             Err(error) => {
-                // No native setup began; make that refusal recoverable under
-                // the preallocated native identity before releasing run capacity.
                 if let Some(claim) = log
                     .claim(actor.issuer.clone(), dispatch.receipt.id.clone())
                     .await?
