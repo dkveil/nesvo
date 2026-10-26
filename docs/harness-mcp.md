@@ -149,7 +149,8 @@ The journal records `mcp.pool_attached` (session-scoped `entryId`, `server`,
 reported or sent anywhere.
 
 The `nesvo` server stays dedicated. The pool serves the owner-approved external
-servers described next, through the host's own bridge command. Memory and process
+servers described next, through the host's own bridge command. The measured start
+times are in [measurements](engineering.md#measurements); memory and process
 counts against dedicated mode are not measured.
 
 ## External MCP servers
