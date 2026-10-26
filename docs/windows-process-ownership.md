@@ -57,10 +57,15 @@ also terminates the job, so the former kill-on-close behaviour is unchanged.
 
 After the terminal cleanup workers, shutdown waits for every recorded job until
 its console handle is released, the job reports zero active processes and every
-pinned member handle is signaled. The wait is event driven: a private completion
-port associated with the job wakes it on job notifications, and pinned members
-are waited on directly. It shares the existing eight-second terminal cleanup
-bound instead of adding a clock of its own. A job still unsettled at that bound
+pinned member handle is signaled. The wait is event driven: once the console
+handle is released it associates a private completion port with the job, and
+every wake first pins the job's current members again, so a descendant started
+after the termination request is held by handle too. While pinned members remain
+it waits on their handles directly; with none left it waits on the completion
+port for the next job notification. Pinning reads the job's process list at that
+moment, so a member that starts and exits between two reads is never pinned and
+settlement relies on the job's active-process count alone for it. It shares the
+existing eight-second terminal cleanup bound instead of adding a clock of its own. A job still unsettled at that bound
 is reported on the host log by session id, for example `Session job ID still had
 active processes at the shutdown bound`, and the host still exits; kill-on-close
 then ends any remaining member when the host process ends. On Unix the job is

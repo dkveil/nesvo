@@ -753,6 +753,13 @@ events and terminal markers require one send, no interrupt/stop/failure, and one
 natural settlement. The scenario keeps a ten-second acceptance deadline; this is
 controlled PTY coverage, not an original-model or general protocol conformance claim.
 
+The pool scenario (`support/mcp_pool.rs`) reads `nesvo mcp pool status` on an
+empty pool, launches harness Claude fixtures, checks that their `nesvo` server is
+listed `dedicated` with `sessionCredential` and that scoped callers are refused.
+The external server scenario (`support/mcp_servers.rs`, described in the
+[testing guide](testing.md#native-cli-reply-envelopes)) drives approved
+`[[mcp.server]]` declarations through the bridge, pooled and dedicated.
+
 The event resource scenario (`support/mcp_events.rs`) drives one `2026-07-28`
 discover client and one `2025-11-25` initialize client against a controlled host.
 It checks the resource catalog, not-found URIs, bounded reads, acknowledgment of

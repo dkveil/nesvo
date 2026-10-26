@@ -452,6 +452,9 @@ because occurrence IDs are random and dispatch starts as soon as `run-now` is
 accepted. The helper hooks `NESVO_WORKTREE_STEP_TEST_HELPER` and
 `NESVO_REPOSITORY_TEST_HELPER` gate helper processes inside host unit tests only;
 this one ships in the host binary because the native scenario runs the real host.
+It is reachable only through that variable in the host's own environment when the
+host starts: no flag, protocol command, configuration file or client can set or
+change it, and a host started without it never constructs the fault.
 
 ```powershell
 cargo test --package nesvo-host --locked executor_reply_fault
@@ -478,6 +481,30 @@ scenario creates a job with a `launchNoEffect` retry of three attempts and a
 - the journal holds two `run.executor_changed` events for the old run: its
   accepted start and exactly one pause. CLI and MCP envelopes are validated
   against `docs/harness-cli.schema.json`.
+
+### Native graceful stop
+
+```powershell
+cargo test --package nesvo --test mcp_host --locked shutdown:: -- --ignored --test-threads=1
+```
+
+`shutdown::graceful_stop_records_host_stopping_settles_native_jobs_and_retries_after_restart`
+starts a private host with a shell session, a job whose dispatch is parked by a
+quota denial after its approved precheck passed, and a second job whose approved
+precheck holds a three-level process tree. It then closes the host's stdin and
+requires a successful exit, removes the shell's folder and both precheck folders at
+once (no session or precheck job may still hold a file there) and confirms that
+every member of the precheck tree ended. After a restart the parked occurrence is
+`retryWaiting` with a single generation in `reconcile/host_stopping` whose retry
+classification is `uncertainEffect` with failure `host_restarted` and that never
+launched (no session, attempt or launch receipt); the tree job is
+`failed/precheck_refused` with precheck reason `host_shutdown` and confirmed
+cleanup; and no native session survives or is relaunched by restart recovery. The
+replies go through `tests/fixtures/validate-harness-json.cjs` against
+`docs/harness-cli.schema.json`. Host units cover the same ledger without a fixture:
+`dispatch_ended_by_graceful_shutdown_is_recorded_as_host_stopping` and
+`stopped_dispatch_keeps_host_stopping_and_restart_hands_it_to_retry_classification`
+in `job_runtime.rs`.
 
 ### Ultraviolet checks
 

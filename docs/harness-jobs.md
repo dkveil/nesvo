@@ -292,7 +292,8 @@ A generation is classified `uncertainEffect` only when it enters `reconcile`
 with `dispatch_unconfirmed` (the executor reply was lost or timed out after the
 native request was sent), `dispatch_interrupted` (the dispatch task failed),
 `launch_unconfirmed` (the native create receipt is `unknown`, for example a spawn
-timeout) or `host_restarted` (a crash between journal entries). Precheck
+timeout) or `host_restarted` (a crash between journal entries, or a dispatch that a
+graceful stop recorded with `host_stopping`, as described below). Precheck
 uncertainty, execution timeouts, cancellation and owner reconciliation keep their
 own rules, and a generation whose required precheck has not passed with confirmed
 cleanup is not classified. The occurrence becomes `retryWaiting` with `reason:retry_probe_pending`;
@@ -489,6 +490,24 @@ restarted in place; with a retry policy they are probed, and only a fenced absen
 admits a fresh generation. Persisted eligible retry decisions remain subject to their original
 backoff and current occurrence state. Retained results may still be inspected/validated. Unclaimed eligible
 queued intent can run once; it has not previously performed a native effect.
+
+A graceful host stop ends every dispatch still in flight. The job runtime records
+each one through the journal's `Work::Stopped` request: a dispatch in `dispatching`
+or `running` moves its occurrence and generation to `reconcile` with reason
+`host_stopping`, without `finishedAt` and without a retry decision, and its
+preparation token is retired. A precheck that already recorded its `host_shutdown`
+refusal keeps it (see [graceful host shutdown](harness-job-prechecks.md#graceful-host-shutdown));
+one still recorded as running is finished as an unknown `dispatch_interrupted`
+outcome and its occurrence enters `reconcile` with `precheck_unconfirmed`.
+`host_stopping` is not one of the uncertain reasons above, so nothing is classified
+while the host is down. At the next start, recovery hands every `reconcile`
+occurrence with `host_stopping` to the retry classification as `host_restarted`:
+with a retry policy it becomes `retryWaiting/retry_probe_pending` and is probed by
+its launch key like any uncertain generation; without one it stays in `reconcile`
+with `host_stopping`.
+A stop record the journal could not write is reported on the host log as `Job
+dispatch OCCURRENCE shutdown record is unconfirmed` and left to the ordinary
+`host_restarted` recovery.
 The scheduler waits for the host's bounded provider-version probes before
 admitting due work. Discovery still in progress must not be treated as an
 unsupported CLI. The chosen missed-run window still applies after that wait.

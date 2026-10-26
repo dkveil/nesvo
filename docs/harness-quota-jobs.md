@@ -34,8 +34,11 @@ reason and reset time; disconnecting abandons it before any effect. The queue ho
 most 64 entries host-wide and 16 interactive launches per client; a launch beyond its
 client's share is refused with `quota_hold_client_limit` and a full queue with `busy`,
 both before any effect. A host stop
-finishes held operations as failed with no effect. Plain `create`, restores and
-legacy one-shot schedules refuse with `quota_hold`.
+finishes held operations as failed with no effect. Plain `create`, an owner
+`restoreSession` or `resumeSession` and legacy one-shot schedules refuse with
+`quota_hold`. The startup restore of a session hibernated by a graceful stop waits
+on the gate instead, like a held launch, and resumes once a read admits it
+([restore after a host restart](harness-recovery-context.md#restore-after-a-host-restart)).
 
 `nesvo quota` and `nesvo_get_provider_quota` add `gate.providers` (verdict, reason,
 source, `resetsAt`, `freshUntil`) and `gate.holds` (kind, ID, program, reason,

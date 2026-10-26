@@ -101,6 +101,13 @@ their own uncertainty. Explicit enable does not prove process adoption, free an
 unknown slot, rearm delivery or validate work. End-to-end process/conversation
 adoption remains F41.
 
+A job-owned run has one more pause. When a job's uncertain-effect retry probe
+finds no effect, the same transaction disables that run's executor, increments its
+generation and records `paused/job_retry_waiting`, so the fenced run can never
+admit another launch, delivery or wake. Enabling it again is refused with
+`job_generation_retired`; the retry continues in a fresh run of its own
+([retry classes](harness-jobs.md#retry-classes)).
+
 At most 16 executors are enabled and 1024 are retained. Disabling frees the runtime
 slot, retaining all process/attempt/result history. Run stop/drain/time guards and
 global native budgets remain authoritative. Final success/cancellation completes
