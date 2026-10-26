@@ -8,6 +8,7 @@ the one named here is the source and the other links to it.
 | Document                                         | Covers                                                        |
 | ------------------------------------------------ | ------------------------------------------------------------- |
 | [Quick start](quick-start.md)                    | Host, desktop client and phone setup                          |
+| [Engine map](engine-map.md)                      | What the engine does and how to observe it, on one page       |
 | [TUI guide and keyboard](../apps/tui/README.md)  | Every TUI view and key; the source for key bindings           |
 | [Review and session workflows](tui-workflows.md) | Review, scheduling, worktree and palette workflows in the TUI |
 | [Compact navigation](tui-compact-navigation.md)  | Sidebar width, single-row sessions and provider marks         |
