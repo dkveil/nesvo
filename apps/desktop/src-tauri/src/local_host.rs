@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::time::sleep;
+use url::{Host, Url};
 
 pub const LOCAL_HOST_DIRECTORY: &str = "local-host";
 const PAIRING_FILE: &str = "pairing.json";
@@ -72,10 +73,25 @@ fn default_host_pairing_directory(
     }
 }
 
+pub fn is_loopback_url(url: &str) -> bool {
+    match Url::parse(url)
+        .ok()
+        .and_then(|url| url.host().map(|host| host.to_owned()))
+    {
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        Some(Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+        None => false,
+    }
+}
+
 pub async fn probe(directory: &Path) -> Option<LocalTarget> {
     let text = fs::read_to_string(directory.join(PAIRING_FILE)).ok()?;
     let pairing = Pairing::parse(&text).ok()?;
     let url = pairing.host_url(None).ok()?;
+    if !is_loopback_url(&url) {
+        return None;
+    }
     let key = pairing.key_bytes().ok()?;
     open(&url, key).await.ok()?;
     Some(LocalTarget { url, key })
@@ -270,6 +286,26 @@ mod tests {
     fn touch(path: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn only_loopback_hosts_are_accepted_as_local() {
+        for url in [
+            "ws://127.0.0.1:8791",
+            "ws://localhost:1",
+            "ws://[::1]:2",
+            "ws://127.0.0.2:3",
+        ] {
+            assert!(is_loopback_url(url), "{url}");
+        }
+        for url in [
+            "ws://192.168.1.5:8791",
+            "wss://example.com",
+            "ws://0.0.0.0:1",
+            "nonsense",
+        ] {
+            assert!(!is_loopback_url(url), "{url}");
+        }
     }
 
     #[test]
