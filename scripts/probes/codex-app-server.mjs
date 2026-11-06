@@ -3,10 +3,16 @@ import { createRecorder, fixturePath, killTree, parseArgs, repoRoot, spawnJsonLi
 const options = parseArgs(process.argv.slice(2));
 const CLIENT_INFO = { name: 'nesvo-probe', title: 'Nesvo probe', version: '0.0.0' };
 
+const EXPECTED_COMMAND_PATTERN = /echo nesvo-probe'?"?$/;
+
 const approvalResponse = (method, params) => {
-  if (method === 'item/permissions/requestApproval') return { permissions: params.permissions ?? {}, scope: 'turn' };
-  if (method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval') return { decision: 'accept' };
-  if (method === 'execCommandApproval' || method === 'applyPatchApproval') return { decision: 'approved' };
+  if (method === 'item/permissions/requestApproval') return { permissions: {}, scope: 'turn' };
+  if (method === 'item/commandExecution/requestApproval') {
+    const isExpectedCommand = EXPECTED_COMMAND_PATTERN.test(params.command ?? '');
+    return { decision: isExpectedCommand ? 'accept' : 'decline' };
+  }
+  if (method === 'item/fileChange/requestApproval') return { decision: 'decline' };
+  if (method === 'execCommandApproval' || method === 'applyPatchApproval') return { decision: 'denied' };
   return null;
 };
 

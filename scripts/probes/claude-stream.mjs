@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { createRecorder, fixturePath, killTree, parseArgs, repoRoot, spawnJsonLines, withTimeout } from './lib.mjs';
 
+const EXPECTED_COMMAND = 'echo nesvo-probe';
 const options = parseArgs(process.argv.slice(2));
 const PROBE_SETTINGS_PATH = fileURLToPath(new URL('./claude-probe-settings.json', import.meta.url));
 
@@ -18,9 +19,13 @@ const runTurn = async ({ prompt, resumeSessionId }) => {
       recorder.record('in', message);
       if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
       if (message.type === 'control_request' && message.request?.subtype === 'can_use_tool') {
+        const isExpectedCall = message.request.tool_name === 'Bash' && message.request.input?.command === EXPECTED_COMMAND;
+        const decision = isExpectedCall
+          ? { behavior: 'allow', updatedInput: message.request.input }
+          : { behavior: 'deny', message: 'probe only allows the expected echo command' };
         const response = {
           type: 'control_response',
-          response: { subtype: 'success', request_id: message.request_id, response: { behavior: 'allow', updatedInput: message.request.input } },
+          response: { subtype: 'success', request_id: message.request_id, response: decision },
         };
         recorder.record('out', response);
         proc.send(response);
