@@ -5,20 +5,31 @@ import { fileURLToPath } from 'node:url';
 import prettier from 'prettier';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const OUTPUT_DIRECTORY = 'apps/mobile/src/shared/api/contracts';
+const OUTPUT_DIRECTORIES = [
+  'apps/mobile/src/shared/api/contracts',
+  'apps/desktop/src/shared/api/contracts',
+];
 
-export const CONTRACT_TYPES = [
+const SCHEMAS = [
   {
     schema: 'docs/harness-cli.schema.json',
-    output: `${OUTPUT_DIRECTORY}/harness-cli.ts`,
+    file: 'harness-cli.ts',
     rootName: 'HarnessCliEnvelope',
   },
   {
     schema: 'docs/harness-events.schema.json',
-    output: `${OUTPUT_DIRECTORY}/harness-events.ts`,
+    file: 'harness-events.ts',
     rootName: 'HarnessEventRecord',
   },
 ];
+
+export const CONTRACT_TYPES = OUTPUT_DIRECTORIES.flatMap(directory =>
+  SCHEMAS.map(({ schema, file, rootName }) => ({
+    schema,
+    output: `${directory}/${file}`,
+    rootName,
+  })),
+);
 
 const DOCUMENTING_KEYWORDS = { description: 'string', maxItems: 'number', minItems: 'number' };
 

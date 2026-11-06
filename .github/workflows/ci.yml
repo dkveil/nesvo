@@ -92,6 +92,29 @@ jobs:
       - run: npm run test:sync
       - run: cargo run --package nesvo --locked -- --help
       - run: npm run test:tui
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - run: npm run desktop:typecheck
+      - run: npm run desktop:lint
+      - run: npm run desktop:test
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 15

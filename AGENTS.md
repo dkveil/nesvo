@@ -2,13 +2,15 @@ This is a monorepo for an Expo/React Native application and native Rust terminal
 
 The product is **nesvo**. Write repository documentation and code comments in English. Keep important architectural decisions, protocol contracts, launch instructions and verification guidance versioned with their implementation. Keep inspiration collections, competitor comparisons and research notes out of the repository. Preserve legacy pairing/storage and EAS identifiers unless a migration is explicitly implemented and tested.
 
-Applications live in `apps/mobile`, `apps/host` and `apps/tui`; shared Rust transport encoding lives in `crates/nesvo-wire`. The host is Rust; Node.js is only used by Expo tooling and tests. Do not replace the Rust host with a Node server. AI tools run as original CLI programs on the user's host, with their own subscription login; do not add AI API keys or direct model API calls.
+Applications live in `apps/mobile`, `apps/desktop`, `apps/host` and `apps/tui`; shared Rust transport encoding lives in `crates/nesvo-wire`. The host is Rust; Node.js is only used by Expo tooling and tests. Do not replace the Rust host with a Node server. AI tools run as original CLI programs on the user's host, with their own subscription login; do not add AI API keys or direct model API calls.
 
 The approved Ultraviolet identity lives in `packages/brand`. Use its semantic tokens and exact logo geometry across clients; do not recreate the wordmark with a font or duplicate animation timelines. Preserve reduced-motion and visibility behavior. Repository docs use English; imported original SVG metadata may retain the author's language.
 
 Run npm commands from the repository root unless a command explicitly needs the `apps/mobile` application directory. Root scripts forward to the `@nesvo/mobile` workspace. Rust uses the root Cargo workspace, one `Cargo.lock` and root `target/`. Preserve private `host/.local/` pairing data despite the source migration.
 
 Follow `docs/engineering.md` for architecture and language conventions. Keep domain rules, application commands, adapters and rendering separate. Host state is authoritative; clients derive their views and never identify sessions by display name. Use strict TypeScript, validate protocol boundaries, keep render paths free of I/O, and test lifecycle/concurrency invariants. New Rust changes require fmt, Clippy and relevant tests on the supported CI platforms.
+
+`apps/desktop` is a Tauri 2 client with its own Cargo workspace in `src-tauri`; the root `cargo clippy --workspace` does not cover it, `npm run desktop:lint` does. The Rust side owns the pairing key and talks to the host through `nesvo-wire`; protocol TypeScript types are generated into `apps/desktop/src/shared/api/contracts` by `npm run contracts:types`.
 
 Mobile source follows `app → widgets → features → entities → shared`. Workspace entities may compose other entities through public interfaces. Cross-slice imports go through `index.ts`; features must not reach into sibling features. Shared contains generic UI, theme, terminal and host transport adapters, not product-domain state or navigation. ESLint and `npm run test:architecture` enforce these boundaries and filename conventions.
 
@@ -45,6 +47,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --profile ci   # per-push CI check; install with: cargo install cargo-nextest --locked
 cargo test --workspace --locked                       # acceptable locally
+npm run desktop:typecheck  # also desktop:lint, desktop:test, desktop:dev, desktop:build
 ```
 
 From `apps/mobile`, use `npx expo install <package>` instead of npm/yarn/pnpm add for Expo/native dependencies; it resolves SDK-compatible versions. Use `npx expo-doctor` for diagnostics and `npx expo install --fix` when dependency corrections are required. Do not run Expo commands against the root tooling package.
