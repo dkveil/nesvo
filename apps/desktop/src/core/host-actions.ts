@@ -8,34 +8,53 @@ import {
   forgetPairing,
   loadHostConfig,
   refreshSessions,
+  saveHostBinary,
   saveHostPort,
   savePairing,
+  selectLocalHost,
+  stopLocalHost,
 } from '../modules/connection/integration/host-commands';
 import { $snapshot } from '../modules/sessions/core/sessions-store';
-import { $screen } from './navigation-store';
 
 export const startHostLink = async () => {
-  const config = await loadHostConfig();
-  $hostConfig.set(config);
-  if (config.hasPairing) await connectToHost();
+  $hostConfig.set(await loadHostConfig());
+  await connectToHost();
 };
 
-export const pairHost = async (pairing: string) => {
-  $hostConfig.set(await savePairing(pairing));
-  $screen.set('sessions');
+const reconnect = async () => {
+  $snapshot.set(null);
   await connectToHost();
+};
+
+export const pairRemoteHost = async (pairing: string) => {
+  $hostConfig.set(await savePairing(pairing));
+  await reconnect();
+};
+
+export const switchToLocalHost = async () => {
+  $hostConfig.set(await selectLocalHost());
+  await reconnect();
+};
+
+export const forgetRemoteHost = async () => {
+  $hostConfig.set(await forgetPairing());
+  await reconnect();
 };
 
 export const changeHostPort = async (port: number) => {
   $hostConfig.set(await saveHostPort(port));
-  await connectToHost();
+  await reconnect();
 };
 
-export const forgetHost = async () => {
-  $hostConfig.set(await forgetPairing());
+export const changeHostBinary = async (path: string | null) => {
+  $hostConfig.set(await saveHostBinary(path));
+  await reconnect();
+};
+
+export const shutDownLocalHost = async () => {
+  await stopLocalHost();
   $snapshot.set(null);
   $connectionState.set(IDLE_CONNECTION);
-  $screen.set('sessions');
 };
 
 export const refreshHostSessions = () => refreshSessions();

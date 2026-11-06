@@ -12,6 +12,10 @@ const SETTINGS_FILE: &str = "settings.json";
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub port: Option<u16>,
+    #[serde(default)]
+    pub remote: bool,
+    #[serde(default)]
+    pub host_binary: Option<String>,
 }
 
 pub struct ConfigStore {
@@ -21,6 +25,10 @@ pub struct ConfigStore {
 impl ConfigStore {
     pub fn new(directory: PathBuf) -> Self {
         Self { directory }
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
     }
 
     pub fn load_pairing(&self) -> Option<Pairing> {
@@ -116,7 +124,12 @@ mod tests {
         assert!(store.load_pairing().is_none());
         assert_eq!(store.load_settings(), Settings::default());
         store.save_pairing(&pairing()).unwrap();
-        store.save_settings(&Settings { port: Some(8791) }).unwrap();
+        store
+            .save_settings(&Settings {
+                port: Some(8791),
+                ..Settings::default()
+            })
+            .unwrap();
         assert_eq!(store.load_pairing(), Some(pairing()));
         assert_eq!(store.load_settings().port, Some(8791));
         store.clear_pairing().unwrap();

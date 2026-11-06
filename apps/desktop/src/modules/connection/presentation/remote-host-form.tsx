@@ -1,16 +1,15 @@
 import { type ChangeEvent, useState } from 'react';
 
 import { Button } from '../../../shared/components/button';
-import { Panel } from '../../../shared/components/panel';
 import { TextArea } from '../../../shared/components/text-area';
 
-export type PairScreenProps = {
+export type RemoteHostFormProps = {
   onPair: (pairing: string) => Promise<void>;
 };
 
 const MAX_PAIRING_FILE_BYTES = 16 * 1024;
 
-export const PairScreen = ({ onPair }: PairScreenProps) => {
+export const RemoteHostForm = ({ onPair }: RemoteHostFormProps) => {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,6 +27,7 @@ export const PairScreen = ({ onPair }: PairScreenProps) => {
     setError(null);
     try {
       await onPair(text);
+      setText('');
     } catch (failure) {
       setError(String(failure));
     } finally {
@@ -36,16 +36,12 @@ export const PairScreen = ({ onPair }: PairScreenProps) => {
   };
 
   return (
-    <Panel className="mx-auto mt-16 flex max-w-xl flex-col gap-3">
-      <h1 className="text-lg font-semibold">Pair with a host</h1>
-      <p className="text-muted">
-        Paste the contents of the host&apos;s <code>pairing.json</code> or load the file.
-      </p>
+    <div className="flex flex-col gap-3">
       <TextArea
-        rows={6}
+        rows={5}
         value={text}
         onChange={event => setText(event.target.value)}
-        placeholder='{"version":1,"url":"ws://127.0.0.1:8791","key":"..."}'
+        placeholder='{"version":1,"url":"ws://host:8787","key":"..."}'
         aria-label="Pairing JSON"
       />
       <input
@@ -59,6 +55,6 @@ export const PairScreen = ({ onPair }: PairScreenProps) => {
       <Button disabled={busy || text.trim() === ''} onClick={handleSubmit}>
         Pair and connect
       </Button>
-    </Panel>
+    </div>
   );
 };

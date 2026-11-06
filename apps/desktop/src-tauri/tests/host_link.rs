@@ -1,6 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use nesvo_desktop_lib::{
     link::open,
+    local_host::{LOCAL_HOST_DIRECTORY, LocalHostConfig, ensure},
     supervisor::{CommandSlot, Outbound, Sink, Status, supervise},
 };
 use nesvo_wire as wire;
@@ -147,4 +148,28 @@ async fn the_supervisor_reports_state_changes_and_forwards_snapshots() {
         })
         .collect();
     assert_eq!(statuses, [Status::Connecting, Status::Connected]);
+}
+
+#[tokio::test]
+async fn ensure_reuses_a_running_local_host_without_spawning() {
+    let (port, _host) = start_host(KEY).await;
+    let state = tempfile::tempdir().unwrap();
+    let directory = state.path().join(LOCAL_HOST_DIRECTORY);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("pairing.json"),
+        json!({"version": 1, "url": format!("ws://127.0.0.1:{port}"), "key": "07".repeat(32)})
+            .to_string(),
+    )
+    .unwrap();
+    let target = ensure(&LocalHostConfig {
+        state_dir: state.path().to_path_buf(),
+        port,
+        binary_override: None,
+    })
+    .await
+    .unwrap();
+    assert_eq!(target.url, format!("ws://127.0.0.1:{port}"));
+    assert_eq!(target.key, KEY);
+    assert!(!directory.join("host.pid").exists());
 }

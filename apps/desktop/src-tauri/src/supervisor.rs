@@ -1,4 +1,7 @@
-use crate::link::open;
+use crate::{
+    link::open,
+    local_host::{LocalHostConfig, ensure},
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -9,6 +12,7 @@ use tokio::{sync::mpsc, time::sleep};
 
 const MAX_BACKOFF_SECONDS: u64 = 15;
 const COMMAND_QUEUE: usize = 16;
+const LOCAL_FAILURE_LIMIT: u32 = 3;
 const MESSAGE_QUEUE: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -52,15 +56,22 @@ pub fn backoff(attempt: u32) -> Duration {
     Duration::from_secs(seconds.min(MAX_BACKOFF_SECONDS))
 }
 
-pub async fn supervise(url: String, key: [u8; 32], sink: Sink, slot: CommandSlot) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopEnd {
+    PermanentFailure,
+    TooManyFailures,
+}
+
+pub async fn run_link_loop(
+    url: &str,
+    key: [u8; 32],
+    sink: &Sink,
+    slot: &CommandSlot,
+    max_failures: Option<u32>,
+) -> LoopEnd {
     let mut attempt = 0u32;
-    sink(Outbound::State(ConnectionState::new(
-        Status::Connecting,
-        None,
-        0,
-    )));
     loop {
-        let failure = match open(&url, key).await {
+        let failure = match open(url, key).await {
             Ok(link) => {
                 attempt = 0;
                 let (commands, command_rx) = mpsc::channel(COMMAND_QUEUE);
@@ -90,7 +101,7 @@ pub async fn supervise(url: String, key: [u8; 32], sink: Sink, slot: CommandSlot
                     Some(error.message),
                     attempt,
                 )));
-                return;
+                return LoopEnd::PermanentFailure;
             }
             Err(error) => error.message,
         };
@@ -100,7 +111,58 @@ pub async fn supervise(url: String, key: [u8; 32], sink: Sink, slot: CommandSlot
             Some(failure),
             attempt,
         )));
+        if max_failures.is_some_and(|limit| attempt >= limit) {
+            return LoopEnd::TooManyFailures;
+        }
         sleep(backoff(attempt)).await;
+    }
+}
+
+pub async fn supervise(url: String, key: [u8; 32], sink: Sink, slot: CommandSlot) {
+    sink(Outbound::State(ConnectionState::new(
+        Status::Connecting,
+        None,
+        0,
+    )));
+    run_link_loop(&url, key, &sink, &slot, None).await;
+}
+
+pub async fn supervise_local(config: LocalHostConfig, sink: Sink, slot: CommandSlot) {
+    let mut permanent_failures = 0u32;
+    loop {
+        sink(Outbound::State(ConnectionState::new(
+            Status::Connecting,
+            Some("Starting the local host".to_owned()),
+            0,
+        )));
+        let target = match ensure(&config).await {
+            Ok(target) => target,
+            Err(error) => {
+                sink(Outbound::State(ConnectionState::new(
+                    Status::Failed,
+                    Some(error.to_string()),
+                    0,
+                )));
+                return;
+            }
+        };
+        match run_link_loop(
+            &target.url,
+            target.key,
+            &sink,
+            &slot,
+            Some(LOCAL_FAILURE_LIMIT),
+        )
+        .await
+        {
+            LoopEnd::TooManyFailures => sleep(backoff(1)).await,
+            LoopEnd::PermanentFailure => {
+                permanent_failures += 1;
+                if permanent_failures > 1 {
+                    return;
+                }
+            }
+        }
     }
 }
 

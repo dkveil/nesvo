@@ -6,9 +6,13 @@ export type ConnectionState = {
   attempt: number;
 };
 
+export type HostMode = 'local' | 'remote';
+
 export type HostConfig = {
-  hasPairing: boolean;
+  mode: HostMode;
+  hasRemotePairing: boolean;
   hostUrl: string | null;
   port: number;
   defaultPort: number;
+  hostBinary: string | null;
 };
