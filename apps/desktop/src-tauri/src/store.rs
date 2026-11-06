@@ -51,25 +51,49 @@ impl ConfigStore {
     }
 
     fn write(&self, name: &str, bytes: &[u8]) -> Result<()> {
-        fs::create_dir_all(&self.directory).context("Cannot create the config directory")?;
+        create_private_directory(&self.directory).context("Cannot create the config directory")?;
         let target = self.directory.join(name);
         let temporary = self.directory.join(format!("{name}.tmp"));
-        fs::write(&temporary, bytes)?;
-        restrict_permissions(&temporary)?;
+        write_private_file(&temporary, bytes)?;
         fs::rename(&temporary, &target)?;
         Ok(())
     }
 }
 
 #[cfg(unix)]
-fn restrict_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+fn create_private_directory(path: &Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<()> {
+fn create_private_directory(path: &Path) -> Result<()> {
+    fs::create_dir_all(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let _ = fs::remove_file(path);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes)?;
     Ok(())
 }
 
