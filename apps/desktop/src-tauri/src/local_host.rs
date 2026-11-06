@@ -86,7 +86,6 @@ pub struct BinarySearch {
     pub override_path: Option<PathBuf>,
     pub env_binary: Option<PathBuf>,
     pub executable_directory: Option<PathBuf>,
-    pub working_directory: Option<PathBuf>,
     pub cargo_target_directory: Option<PathBuf>,
     pub path_variable: Option<OsString>,
 }
@@ -99,7 +98,6 @@ impl BinarySearch {
             executable_directory: env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf)),
-            working_directory: env::current_dir().ok(),
             cargo_target_directory: env::var_os("CARGO_TARGET_DIR").map(PathBuf::from),
             path_variable: env::var_os("PATH"),
         }
@@ -118,16 +116,15 @@ impl BinarySearch {
                 .iter()
                 .map(|directory| directory.join(HOST_BINARY_NAME)),
         );
-        for start in [&self.executable_directory, &self.working_directory]
-            .into_iter()
-            .flatten()
-        {
-            for ancestor in start.ancestors() {
-                candidates.extend(build_outputs(&ancestor.join("target")));
+        if cfg!(debug_assertions) {
+            if let Some(start) = &self.executable_directory {
+                for ancestor in start.ancestors() {
+                    candidates.extend(build_outputs(&ancestor.join("target")));
+                }
             }
-        }
-        if let Some(target) = &self.cargo_target_directory {
-            candidates.extend(build_outputs(target));
+            if let Some(target) = &self.cargo_target_directory {
+                candidates.extend(build_outputs(target));
+            }
         }
         if let Some(path_variable) = &self.path_variable {
             candidates.extend(
@@ -325,6 +322,7 @@ mod tests {
         assert_eq!(search.resolve(), Some(env_path));
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn binary_resolution_finds_a_repository_build_above_the_executable() {
         let directory = tempfile::tempdir().unwrap();
