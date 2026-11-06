@@ -1,0 +1,31 @@
+[package]
+name = "nesvo-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "nesvo desktop client for the host protocol v2"
+
+[workspace]
+
+[lib]
+name = "nesvo_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1.0"
+futures-util = { version = "0.3", features = ["sink"] }
+hex = "0.4"
+nesvo-wire = { path = "../../../crates/nesvo-wire" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2", features = [] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+url = "2.5"
+
+[dev-dependencies]
+tempfile = "3"

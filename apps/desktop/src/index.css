@@ -1,0 +1,36 @@
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: var(--brand-background);
+  --color-surface: var(--brand-surface);
+  --color-elevated: var(--brand-elevated);
+  --color-border: var(--brand-border);
+  --color-text: var(--brand-text);
+  --color-muted: var(--brand-muted);
+  --color-faint: var(--brand-faint);
+  --color-accent: var(--brand-accent);
+  --color-accent-ink: var(--brand-accentInk);
+  --color-selection: var(--brand-selection);
+  --color-success: var(--brand-success);
+  --color-warning: var(--brand-warning);
+  --color-info: var(--brand-info);
+  --color-danger: var(--brand-danger);
+  --color-program-terminal: var(--brand-programTerminal);
+  --color-program-claude: var(--brand-programClaude);
+  --color-program-gemini: var(--brand-programGemini);
+  --color-program-codex: var(--brand-programCodex);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}

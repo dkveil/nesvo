@@ -6,3 +6,5 @@ artifacts
 **/target
 apps/mobile/src/shared/terminal/generated.ts
 package-lock.json
+
+**/src-tauri/gen

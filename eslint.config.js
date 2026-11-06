@@ -18,7 +18,14 @@ const layerPolicies = [
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['**/dist/**', '**/.expo/**', '**/target/**', '**/generated.ts', 'artifacts/**'],
+    ignores: [
+      '**/dist/**',
+      '**/src-tauri/gen/**',
+      '**/.expo/**',
+      '**/target/**',
+      '**/generated.ts',
+      'artifacts/**',
+    ],
   },
   {
     files: ['apps/mobile/src/**/*.{ts,tsx}'],
@@ -63,6 +70,19 @@ module.exports = defineConfig([
           ],
         },
       ],
+    },
+  },
+  {
+    files: ['apps/desktop/src/**/*.{ts,tsx}'],
+    plugins: { conventions },
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      'react/jsx-no-leaked-render': ['error', { validStrategies: ['coerce', 'ternary'] }],
+      'conventions/kebab-case': 'error',
     },
   },
   {
