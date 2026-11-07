@@ -14,7 +14,7 @@ import { ScrollArea } from '@/shared/ui/scroll-area';
 
 type Props = {
   sessions: Session[];
-  pendingReviews: number;
+  pendingActions: number;
   selectedId: string;
   inbox: boolean;
   onSelect: (id: string) => void;
@@ -24,7 +24,7 @@ type Props = {
 
 export function SessionSidebar({
   sessions,
-  pendingReviews,
+  pendingActions,
   selectedId,
   inbox,
   onSelect,
@@ -90,13 +90,13 @@ export function SessionSidebar({
           aria-current={inbox ? 'page' : undefined}
         >
           <Inbox />
-          Do odbioru
-          {pendingReviews > 0 && (
+          Do decyzji
+          {pendingActions > 0 && (
             <span
-              aria-label={`${pendingReviews} wyników do odbioru`}
+              aria-label={`${pendingActions} spraw do decyzji`}
               className="ml-auto text-xs tabular-nums text-muted-foreground"
             >
-              {pendingReviews}
+              {pendingActions}
             </span>
           )}
         </Button>

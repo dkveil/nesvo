@@ -40,6 +40,7 @@ import { Conversation } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
+import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import { desktopApi, useSessions } from './use-sessions';
 
@@ -47,7 +48,7 @@ export function Workspace() {
   const store = useSessions();
   const [selectedId, setSelectedId] = useState('');
   const [inbox, setInbox] = useState(false);
-  const [selectedReviewId, setSelectedReviewId] = useState('');
+  const [sessionTarget, setSessionTarget] = useState('');
   const [reviewFeedbacks, setReviewFeedbacks] = useState<
     Record<string, string>
   >({});
@@ -93,15 +94,15 @@ export function Workspace() {
   const activeRun = store.sessions.find(
     session => session.status === 'running' || session.status === 'stopping',
   );
-  const select = (id: string) => {
+  const select = (id: string, targetId = '') => {
     setSelectedId(id);
+    setSessionTarget(targetId);
     setInbox(false);
     setNavigationOpen(false);
     setDetailsOpen(false);
   };
   const openInbox = () => {
     setInbox(true);
-    setSelectedReviewId('');
     setNavigationOpen(false);
   };
   const openCreate = () => {
@@ -210,32 +211,28 @@ export function Workspace() {
       stopping.current.delete(runId);
     }
   };
-  const respondApproval = async (
-    requestId: string,
-    decision: RespondApprovalInput['decision'],
-  ) => {
+  const respondApproval = async (input: RespondApprovalInput) => {
+    const session = store.sessions.find(item => item.id === input.sessionId);
     if (
-      !selected?.runId ||
-      selected.status !== 'running' ||
+      !session ||
+      session.runId !== input.runId ||
+      session.status !== 'running' ||
       store.connection !== 'ready' ||
-      !selected.pendingApprovals.some(approval => approval.id === requestId)
+      store.loading ||
+      store.error ||
+      !session.pendingApprovals.some(
+        approval => approval.id === input.requestId,
+      )
     )
       return;
-    const { id: sessionId, runId } = selected;
+    const { sessionId, runId, requestId } = input;
     const key = `${sessionId}/${runId}/${requestId}`;
     if (approvalRequests.current.has(key)) return;
     approvalRequests.current.add(key);
     setApprovalPending(previous => ({ ...previous, [key]: true }));
     setErrors(previous => ({ ...previous, [sessionId]: '' }));
     try {
-      store.merge([
-        await desktopApi().respondApproval({
-          sessionId,
-          runId,
-          requestId,
-          decision,
-        }),
-      ]);
+      store.merge([await desktopApi().respondApproval(input)]);
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
@@ -258,37 +255,31 @@ export function Workspace() {
       });
     }
   };
-  const decideDelegation = async (
-    delegationId: string,
-    decision: DecideDelegationInput['decision'],
-  ) => {
+  const decideDelegation = async (input: DecideDelegationInput) => {
+    const session = store.sessions.find(item => item.id === input.sessionId);
     if (
-      !selected?.runId ||
-      selected.status !== 'running' ||
+      !session ||
+      session.runId !== input.runId ||
+      session.status !== 'running' ||
       store.connection !== 'ready' ||
-      !selected.delegations.some(
+      store.loading ||
+      store.error ||
+      !session.delegations.some(
         delegation =>
-          delegation.id === delegationId &&
-          delegation.runId === selected.runId &&
+          delegation.id === input.delegationId &&
+          delegation.runId === input.runId &&
           delegation.status === 'pending',
       )
     )
       return;
-    const { id: sessionId, runId } = selected;
+    const { sessionId, runId, delegationId } = input;
     const key = `${sessionId}/${runId}/${delegationId}`;
     if (delegationRequests.current.has(key)) return;
     delegationRequests.current.add(key);
     setDelegationPending(previous => ({ ...previous, [key]: true }));
     setErrors(previous => ({ ...previous, [sessionId]: '' }));
     try {
-      store.merge([
-        await desktopApi().decideDelegation({
-          sessionId,
-          runId,
-          delegationId,
-          decision,
-        }),
-      ]);
+      store.merge([await desktopApi().decideDelegation(input)]);
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
@@ -392,10 +383,37 @@ export function Workspace() {
       });
     }
   };
+  const reviewDecisionProps = {
+    blockedReason: reviewBlockedReason,
+    pending: reviewPending,
+    decisionErrors: reviewErrors,
+    feedbacks: reviewFeedbacks,
+    onFeedback: (reviewId: string, value: string) =>
+      setReviewFeedbacks(previous => ({ ...previous, [reviewId]: value })),
+    onDecision: (
+      review: Review,
+      decision: DecideReviewInput['decision'],
+      feedback: string,
+    ) => void decideReview(review, decision, feedback),
+  };
+  const operationEnabled =
+    store.connection === 'ready' && !store.loading && !store.error;
   const sidebarProps = {
     sessions: store.sessions,
-    pendingReviews: store.reviews.filter(review => review.status === 'pending')
-      .length,
+    pendingActions:
+      store.reviews.filter(review => review.status === 'pending').length +
+      store.sessions.reduce(
+        (count, session) =>
+          count +
+          (session.status === 'running' && session.runId
+            ? session.pendingApprovals.length +
+              session.delegations.filter(
+                item =>
+                  item.runId === session.runId && item.status === 'pending',
+              ).length
+            : 0),
+        0,
+      ),
     selectedId: selected?.id ?? '',
     inbox,
     onSelect: select,
@@ -447,13 +465,13 @@ export function Workspace() {
           )}
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-medium">
-              {inbox ? 'Do odbioru' : (selected?.title ?? 'Sesje')}
+              {inbox ? 'Do decyzji' : (selected?.title ?? 'Sesje')}
             </h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               {inbox ? (
                 <>
                   <Inbox className="size-3" />
-                  <span>Wyniki wszystkich sesji w jednym miejscu</span>
+                  <span>Sprawy wymagające Twojej decyzji</span>
                 </>
               ) : selected ? (
                 <>
@@ -565,39 +583,54 @@ export function Workspace() {
         <main className="flex min-h-0 min-w-0 flex-1">
           {inbox ? (
             <ReviewInbox
+              {...reviewDecisionProps}
               reviews={store.reviews}
+              sessions={store.sessions}
               loading={store.reviewsLoading}
               error={store.reviewsError}
-              selectedId={selectedReviewId}
-              blockedReason={reviewBlockedReason}
-              pending={reviewPending}
-              decisionErrors={reviewErrors}
-              feedbacks={reviewFeedbacks}
-              onFeedback={(reviewId, value) =>
-                setReviewFeedbacks(previous => ({
-                  ...previous,
-                  [reviewId]: value,
-                }))
-              }
-              onSelect={setSelectedReviewId}
+              operationEnabled={operationEnabled}
+              operationErrors={errors}
+              approvalPending={approvalPending}
+              delegationPending={delegationPending}
+              onApproval={input => void respondApproval(input)}
+              onDelegation={input => void decideDelegation(input)}
               onSession={select}
               onRefresh={store.refresh}
-              onDecision={(review, decision, feedback) =>
-                void decideReview(review, decision, feedback)
-              }
             />
           ) : selected ? (
             <Conversation
               session={selected}
+              focusTarget={sessionTarget}
               workers={workers}
+              results={
+                <SessionReviews
+                  {...reviewDecisionProps}
+                  reviews={store.reviews.filter(
+                    review => review.sessionId === selected.id,
+                  )}
+                  allReviews={store.reviews}
+                  focusedId={
+                    sessionTarget.startsWith('review-')
+                      ? sessionTarget.slice(7)
+                      : ''
+                  }
+                  onSession={select}
+                />
+              }
               delegations={
                 <Delegations
                   session={selected}
                   children={workers}
-                  enabled={store.connection === 'ready'}
+                  enabled={operationEnabled}
                   pending={delegationPending}
                   onDecision={(delegationId, decision) =>
-                    void decideDelegation(delegationId, decision)
+                    selected.runId &&
+                    void decideDelegation({
+                      sessionId: selected.id,
+                      runId: selected.runId,
+                      delegationId,
+                      decision,
+                    })
                   }
                   onSelect={select}
                 />
@@ -612,10 +645,16 @@ export function Workspace() {
                 !selectedProviderState.loading &&
                 !selectedProviderState.error
               }
-              approvalsEnabled={store.connection === 'ready'}
+              approvalsEnabled={operationEnabled}
               approvalPending={approvalPending}
               onApproval={(requestId, decision) =>
-                void respondApproval(requestId, decision)
+                selected.runId &&
+                void respondApproval({
+                  sessionId: selected.id,
+                  runId: selected.runId,
+                  requestId,
+                  decision,
+                })
               }
               otherRun={
                 !!activeRun &&

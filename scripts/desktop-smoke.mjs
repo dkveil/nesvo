@@ -66,6 +66,18 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  const conversation = page.getByRole('region', {
+    name: 'Rozmowa',
+    exact: true,
+  });
+  const message = text =>
+    conversation.getByRole('article').getByText(text, { exact: true });
+  const openInbox = async () => {
+    await page.getByRole('button', { name: /^Do decyzji/ }).click();
+    await page
+      .getByRole('region', { name: 'Skrzynka odbioru', exact: true })
+      .waitFor();
+  };
   const screenshot = async suffix => {
     if (!process.env.NESVO_SCREENSHOT) return;
     await page.evaluate(
@@ -129,7 +141,8 @@ try {
     );
   };
   const waitOwned = async (provider = 'Claude Code') => {
-    await page
+    await conversation
+      .getByRole('article')
       .getByText(
         provider === 'Codex'
           ? 'Codex fixture is waiting.'
@@ -191,13 +204,13 @@ try {
     .getByRole('button', { name: 'Utwórz sesję', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Analiza prototypu', exact: true })
+    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
     .waitFor();
   const first = (await page.evaluate(() => window.nesvo.listSessions()))[0];
   assert.equal(first.model, 'sonnet');
   assert.equal(first.messages.length, 0);
   await send('fixture:stream');
-  await page.getByText('Fixture streamed reply.', { exact: true }).waitFor();
+  await message('Fixture streamed reply.').waitFor();
   const firstCompleted = await waitState(first.id, 'completed');
   assert.equal(firstCompleted.actualModel, 'fixture-sonnet');
   assert.equal(firstCompleted.messages.at(-1).body, 'Fixture streamed reply.');
@@ -224,7 +237,7 @@ try {
     .getByRole('button', { name: 'Utwórz sesję', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Analiza w katalogu', exact: true })
+    .getByRole('heading', { name: 'Analiza w katalogu', exact: true, level: 1 })
     .waitFor();
   const navigation = page.getByRole('navigation', { name: 'Sesje' });
   await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
@@ -236,9 +249,9 @@ try {
   );
   await page.reload();
   await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
-  await page.getByText('Fixture streamed reply.', { exact: true }).waitFor();
+  await message('Fixture streamed reply.').waitFor();
   await send('fixture:continue');
-  await page.getByText('Fixture resumed reply.', { exact: true }).waitFor();
+  await message('Fixture resumed reply.').waitFor();
   await waitState(first.id, 'completed');
   await screenshot('');
   await send('fixture:hold');
@@ -285,7 +298,7 @@ try {
     .getByRole('button', { name: 'Utwórz sesję', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Codex nadzorowany', exact: true })
+    .getByRole('heading', { name: 'Codex nadzorowany', exact: true, level: 1 })
     .waitFor();
   const codex = (await page.evaluate(() => window.nesvo.listSessions())).find(
     session => session.title === 'Codex nadzorowany',
@@ -294,9 +307,7 @@ try {
   assert.equal(codex.model, 'fixture-codex');
   assert.equal(codex.mode, 'supervised');
   await send('fixture:stream');
-  await page
-    .getByText('Codex fixture streamed reply.', { exact: true })
-    .waitFor();
+  await message('Codex fixture streamed reply.').waitFor();
   const codexCompleted = await waitState(codex.id, 'completed');
   assert.equal(codexCompleted.actualModel, 'fixture-codex');
   assert.equal(
@@ -311,31 +322,53 @@ try {
   await send('fixture:approve');
   await approval.waitFor();
   await approval.getByText(/fixture write approved marker/).waitFor();
-  await screenshot('-approval');
-  await approval.getByRole('button', { name: 'Odmów', exact: true }).click();
+  const approvalTarget = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === codex.id);
+  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
   await page
-    .getByText('Codex fixture command declined.', { exact: true })
+    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
     .waitFor();
-  await waitState(codex.id, 'completed');
-  await approval.waitFor({ state: 'hidden' });
+  const unrelatedBeforeApproval = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === first.id);
+  await openInbox();
+  const operationRow = page.getByRole('article', {
+    name: `Zgoda na operację: ${codex.title}`,
+    exact: true,
+  });
+  await operationRow.getByText(/fixture write approved marker/).waitFor();
+  await screenshot('-approval');
+  await operationRow
+    .getByRole('button', { name: 'Odmów', exact: true })
+    .click();
+  const declinedOperation = await waitState(codex.id, 'completed');
+  assert.equal(declinedOperation.runId, approvalTarget.runId);
+  assert.equal(
+    declinedOperation.messages.at(-1).body,
+    'Codex fixture command declined.',
+  );
+  assert.deepEqual(
+    (await page.evaluate(() => window.nesvo.listSessions())).find(
+      session => session.id === first.id,
+    ),
+    unrelatedBeforeApproval,
+  );
+  await operationRow.waitFor({ state: 'hidden' });
+  await navigation.getByRole('button', { name: /^Codex nadzorowany/ }).click();
+  await message('Codex fixture command declined.').waitFor();
   await send('fixture:file');
   await approval.waitFor();
   await approval
     .getByRole('button', { name: 'Zezwól jednorazowo', exact: true })
     .click();
-  await page
-    .getByText('Codex fixture file accepted.', { exact: true })
-    .waitFor();
+  await message('Codex fixture file accepted.').waitFor();
   await waitState(codex.id, 'completed');
   await page.reload();
   await navigation.getByRole('button', { name: /^Codex nadzorowany/ }).click();
-  await page
-    .getByText('Codex fixture file accepted.', { exact: true })
-    .waitFor();
+  await message('Codex fixture file accepted.').waitFor();
   await send('fixture:continue');
-  await page
-    .getByText('Codex fixture resumed reply.', { exact: true })
-    .waitFor();
+  await message('Codex fixture resumed reply.').waitFor();
   const codexResumed = await waitState(codex.id, 'completed');
   assert.equal(
     codexResumed.providerSessionId,
@@ -393,7 +426,11 @@ try {
     .getByRole('button', { name: 'Utwórz sesję', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Orkiestracja prototypu', exact: true })
+    .getByRole('heading', {
+      name: 'Orkiestracja prototypu',
+      exact: true,
+      level: 1,
+    })
     .waitFor();
   const orchestrator = (
     await page.evaluate(() => window.nesvo.listSessions())
@@ -413,13 +450,36 @@ try {
     0,
   );
   await screenshot('-delegation');
-  await proposal('Fixture worker A')
+  const delegationTarget = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === orchestrator.id);
+  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await page
+    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .waitFor();
+  const unrelatedBeforeDelegation = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === first.id);
+  await openInbox();
+  const workerRow = title =>
+    page.getByRole('article', {
+      name: `Uruchomienie workera: ${title}`,
+      exact: true,
+    });
+  await workerRow('Fixture worker A')
     .getByRole('button', { name: 'Zatwierdź workera', exact: true })
     .click();
-  await proposal('Fixture worker B')
+  await workerRow('Fixture worker B')
     .getByRole('button', { name: 'Odrzuć propozycję', exact: true })
     .click();
   const firstDelegation = await waitState(orchestrator.id, 'completed');
+  assert.equal(firstDelegation.runId, delegationTarget.runId);
+  assert.deepEqual(
+    (await page.evaluate(() => window.nesvo.listSessions())).find(
+      session => session.id === first.id,
+    ),
+    unrelatedBeforeDelegation,
+  );
   const delegationResult = JSON.parse(
     firstDelegation.messages
       .at(-1)
@@ -430,20 +490,25 @@ try {
     ['completed', 'declined'],
   );
   assert.match(delegationResult.results[0].text, /worker a completed/);
+  await navigation
+    .getByRole('button', { name: /^Orkiestracja prototypu/ })
+    .click();
   await proposal('Fixture worker A')
     .getByRole('button', { name: 'Otwórz sesję workera', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Fixture worker A', exact: true })
+    .getByRole('heading', { name: 'Fixture worker A', exact: true, level: 1 })
     .waitFor();
-  await page
-    .getByText('Codex worker a completed its scoped task.', { exact: true })
-    .waitFor();
+  await message('Codex worker a completed its scoped task.').waitFor();
   await page
     .getByRole('button', { name: 'Wróć do orkiestratora', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Orkiestracja prototypu', exact: true })
+    .getByRole('heading', {
+      name: 'Orkiestracja prototypu',
+      exact: true,
+      level: 1,
+    })
     .waitFor();
   const waitWorkers = async runId => {
     const deadline = Date.now() + 20_000;
@@ -513,7 +578,7 @@ try {
     .getByRole('button', { name: 'Otwórz sesję workera', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Fixture worker A', exact: true })
+    .getByRole('heading', { name: 'Fixture worker A', exact: true, level: 1 })
     .waitFor();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await waitState(childA.id, 'stopped');
@@ -582,7 +647,7 @@ try {
     .getByRole('button', { name: 'Utwórz sesję', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Odbiór zmian', exact: true })
+    .getByRole('heading', { name: 'Odbiór zmian', exact: true, level: 1 })
     .waitFor();
   const writingSession = (
     await page.evaluate(() => window.nesvo.listSessions())
@@ -600,24 +665,39 @@ try {
     initialReview.diff.detail,
   );
   assert.equal(initialReview.diff.files.length, 3);
-  const openReview = async review => {
-    await page.getByRole('button', { name: /^Do odbioru/ }).click();
-    await page
-      .getByRole('region', { name: 'Skrzynka odbioru', exact: true })
-      .waitFor();
-    await page
-      .getByRole('button', {
-        name: `Otwórz wynik: Odbiór zmian, wersja ${review.version}`,
-        exact: true,
-      })
+  const reviewRow = review =>
+    page.getByRole('article', {
+      name: `Odbiór wyniku: Odbiór zmian, wersja ${review.version}`,
+      exact: true,
+    });
+  const reviewPanel = review => conversation.locator(`#review-${review.id}`);
+  const openReviewSession = async review => {
+    await reviewRow(review)
+      .getByRole('button', { name: 'Otwórz sesję: Odbiór zmian', exact: true })
       .click();
+    await page
+      .getByRole('heading', { name: 'Odbiór zmian', exact: true, level: 1 })
+      .waitFor();
+    await conversation.locator(`#review-${review.id}[open]`).waitFor();
+    assert.notEqual(await reviewPanel(review).getAttribute('open'), null);
+    assert.equal(
+      await navigation
+        .getByRole('button', { name: /^Odbiór zmian/ })
+        .getAttribute('aria-current'),
+      'page',
+    );
   };
-  await openReview(initialReview);
-  const reviewDetail = page.getByRole('region', {
-    name: 'Wynik do odbioru',
+  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await page
+    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .waitFor();
+  await openInbox();
+  await reviewRow(initialReview).waitFor();
+  await screenshot('-inbox');
+  await openReviewSession(initialReview);
+  const savedDiff = reviewPanel(initialReview).getByLabel('Zapisany diff', {
     exact: true,
   });
-  const savedDiff = reviewDetail.getByLabel('Zapisany diff', { exact: true });
   assert.match(await savedDiff.innerText(), /-user dirty baseline/);
   assert.match(await savedDiff.innerText(), /\+initial agent text/);
   assert.doesNotMatch(
@@ -625,25 +705,31 @@ try {
     /dirty\.txt|unrelated operator edits|\.nesvo-codex/,
   );
   await screenshot('-review');
+  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await page
+    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .waitFor();
+  await openInbox();
+  await reviewRow(initialReview)
+    .getByRole('button', { name: 'Odeślij do poprawy', exact: true })
+    .click();
   assert.equal(
-    await reviewDetail
-      .getByRole('button', { name: 'Odeślij do poprawy', exact: true })
+    await reviewRow(initialReview)
+      .getByRole('button', { name: 'Wyślij uwagi', exact: true })
       .isDisabled(),
     true,
   );
   const feedback = 'fixture:review-correct Please correct the result.';
-  await reviewDetail
+  await reviewRow(initialReview)
     .getByRole('textbox', { name: 'Uwagi do poprawy', exact: true })
     .fill(feedback);
-  await reviewDetail
-    .getByRole('button', { name: 'Odeślij do poprawy', exact: true })
+  await reviewRow(initialReview)
+    .getByRole('button', { name: 'Wyślij uwagi', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Odbiór zmian', exact: true })
+    .getByRole('heading', { name: 'Odbiór zmian', exact: true, level: 1 })
     .waitFor();
-  await page
-    .getByText('Codex fixture corrected files.', { exact: true })
-    .waitFor();
+  await message('Codex fixture corrected files.').waitFor();
   const correctedFiles = await waitState(writingSession.id, 'completed');
   assert.equal(
     correctedFiles.providerSessionId,
@@ -654,55 +740,50 @@ try {
     initialReview.version,
   );
   assert.equal(correctedReview.decision, null);
-  await openReview(correctedReview);
-  await reviewDetail
-    .getByRole('button', {
-      name: `Otwórz wersję ${initialReview.version}`,
-      exact: true,
-    })
-    .click();
-  assert.equal(
-    await reviewDetail
-      .getByRole('button', { name: 'Zaakceptuj wynik', exact: true })
-      .isDisabled(),
-    true,
-  );
-  await reviewDetail
+  await openInbox();
+  await openReviewSession(correctedReview);
+  if ((await reviewPanel(initialReview).getAttribute('open')) === null) {
+    await reviewPanel(initialReview)
+      .getByLabel(`Otwórz wersję ${initialReview.version}`, { exact: true })
+      .click();
+    await conversation.locator(`#review-${initialReview.id}[open]`).waitFor();
+  }
+  const staleAccept = reviewPanel(initialReview).getByRole('button', {
+    name: 'Zaakceptuj wynik',
+    exact: true,
+  });
+  if (await staleAccept.count())
+    assert.equal(await staleAccept.isDisabled(), true);
+  await reviewPanel(initialReview)
     .getByRole('paragraph')
     .filter({ hasText: feedback })
     .waitFor();
-  await reviewDetail
-    .getByRole('button', {
-      name: `Otwórz wersję ${correctedReview.version}`,
-      exact: true,
-    })
-    .click();
-  assert.match(await savedDiff.innerText(), /\+corrected agent text/);
+  assert.match(
+    await reviewPanel(correctedReview)
+      .getByLabel('Zapisany diff', { exact: true })
+      .innerText(),
+    /\+corrected agent text/,
+  );
   await screenshot('-correction');
-  await reviewDetail
+  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await page
+    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .waitFor();
+  await openInbox();
+  await reviewRow(correctedReview)
     .getByRole('button', { name: 'Zaakceptuj wynik', exact: true })
     .click();
-  await reviewDetail
-    .getByRole('status')
-    .filter({ hasText: 'Zaakceptowano' })
-    .waitFor();
+  await reviewRow(correctedReview).waitFor({ state: 'hidden' });
   assert.equal(
     await readFile(join(reviewDirectory, 'dirty.txt'), 'utf8'),
     'unrelated operator edits\n',
   );
   await page.reload();
-  await page.getByRole('button', { name: /^Do odbioru/ }).click();
-  await page.getByRole('combobox', { name: 'Wyniki', exact: true }).click();
+  await openInbox();
+  await page.getByRole('combobox', { name: 'Widok', exact: true }).click();
   await page.getByRole('option', { name: 'Historia', exact: true }).click();
-  await page
-    .getByRole('button', {
-      name: `Otwórz wynik: Odbiór zmian, wersja ${correctedReview.version}`,
-      exact: true,
-    })
-    .click();
-  await reviewDetail
-    .getByRole('status')
-    .filter({ hasText: 'Zaakceptowano' })
+  await reviewRow(correctedReview)
+    .getByText('Zaakceptowano', { exact: true })
     .waitFor();
   const persistedReview = (
     await page.evaluate(() => window.nesvo.listReviews())
@@ -710,6 +791,10 @@ try {
   assert.equal(persistedReview.status, 'accepted');
   assert.equal(persistedReview.decision.decision, 'accept');
   await screenshot('-accepted');
+  await openReviewSession(correctedReview);
+  await reviewPanel(correctedReview)
+    .getByText('Zaakceptowano', { exact: true })
+    .waitFor();
   await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
   await page
     .getByRole('button', { name: 'Nowa sesja', exact: true })

@@ -19,8 +19,10 @@ import { Textarea } from '@/shared/ui/textarea';
 
 type Props = {
   session: Session;
+  focusTarget: string;
   workers: Session[];
   delegations: ReactNode;
+  results: ReactNode;
   draft: string;
   sending: boolean;
   canSend: boolean;
@@ -39,8 +41,10 @@ type Props = {
 
 export function Conversation({
   session,
+  focusTarget,
   workers,
   delegations,
+  results,
   draft,
   sending,
   canSend,
@@ -85,6 +89,14 @@ export function Conversation({
     }
     visibleSession.current = session.id;
   }, [session.id, session.revision]);
+  useEffect(() => {
+    if (!focusTarget) return;
+    const target = document.getElementById(focusTarget);
+    if (target) {
+      target.scrollIntoView({ block: 'start' });
+      followOutput.current = false;
+    }
+  }, [session.id, focusTarget]);
   return (
     <section
       aria-label="Rozmowa"
@@ -145,6 +157,7 @@ export function Conversation({
             return (
               <section
                 key={`${session.runId}/${approval.id}`}
+                id={`approval-${approval.id}`}
                 aria-label="Zgoda operatora"
                 className="space-y-3 rounded-lg border p-4"
               >
@@ -191,6 +204,7 @@ export function Conversation({
               </section>
             );
           })}
+          {results}
           {session.activity && running && (
             <p
               role="status"

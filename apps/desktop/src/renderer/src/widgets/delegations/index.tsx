@@ -69,6 +69,7 @@ export function Delegations({
         return (
           <section
             key={delegation.id}
+            id={`delegation-${delegation.id}`}
             aria-label="Propozycja workera"
             className="space-y-3 rounded-lg border p-4"
           >
