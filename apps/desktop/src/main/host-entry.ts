@@ -7,7 +7,7 @@ if (!port || !directory)
   throw new Error('Host requires a parent port and data directory');
 
 async function* incoming() {
-  for await (const [event] of on(port, 'message')) {
+  for await (const [event] of on(port, 'message', { close: ['close'] })) {
     yield (event as { data: unknown }).data;
   }
 }

@@ -2,6 +2,11 @@ import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { startHost } from './host-client';
+import {
+  createSessionSchema,
+  sendMessageSchema,
+  stopRunSchema,
+} from '@nesvo/contracts';
 
 app.setName('Nesvo');
 nativeTheme.themeSource = 'dark';
@@ -53,7 +58,7 @@ void app.whenReady().then(() => {
       void next.loadFile(join(import.meta.dirname, '../renderer/index.html'));
     }
   };
-  ipcMain.handle('nesvo:health', async event => {
+  const authorize = (event: Electron.IpcMainInvokeEvent) => {
     if (
       !window ||
       event.sender !== window.webContents ||
@@ -61,7 +66,34 @@ void app.whenReady().then(() => {
     ) {
       throw new Error('Unauthorized caller');
     }
+  };
+  host.subscribe(event => {
+    if (window && !window.isDestroyed())
+      window.webContents.send('nesvo:event', event);
+  });
+  ipcMain.handle('nesvo:health', async event => {
+    authorize(event);
     return host.health();
+  });
+  ipcMain.handle('nesvo:claude-status', async event => {
+    authorize(event);
+    return host.claudeStatus();
+  });
+  ipcMain.handle('nesvo:list-sessions', async event => {
+    authorize(event);
+    return host.listSessions();
+  });
+  ipcMain.handle('nesvo:create-session', async (event, input: unknown) => {
+    authorize(event);
+    return host.createSession(createSessionSchema.parse(input));
+  });
+  ipcMain.handle('nesvo:send-message', async (event, input: unknown) => {
+    authorize(event);
+    return host.sendMessage(sendMessageSchema.parse(input));
+  });
+  ipcMain.handle('nesvo:stop-run', async (event, input: unknown) => {
+    authorize(event);
+    return host.stopRun(stopRunSchema.parse(input));
   });
   createWindow();
   app.on('activate', () => {
