@@ -8,6 +8,7 @@ import type {
 } from '@nesvo/contracts';
 import {
   ArrowLeft,
+  BookOpen,
   FolderOpen,
   Menu,
   PanelRight,
@@ -44,13 +45,14 @@ import { desktopApi, useSessions } from './use-sessions';
 
 const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
 const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
+const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
 export function Workspace() {
   const store = useSessions();
   const [selectedId, setSelectedId] = useState('');
   const [inbox, setInbox] = useState(false);
   const [sessionTarget, setSessionTarget] = useState('');
-  const [panel, setPanel] = useState<'diff' | 'files' | null>(null);
+  const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(null);
   const [diffTarget, setDiffTarget] = useState<{
     reviewId: string;
     path?: string;
@@ -541,6 +543,26 @@ export function Workspace() {
               type="button"
               variant="ghost"
               size="icon-sm"
+              aria-label="Open skills"
+              title="Skills"
+              aria-pressed={panel === 'skills'}
+              onClick={() => {
+                diffTrigger.current =
+                  document.activeElement instanceof HTMLElement
+                    ? document.activeElement
+                    : null;
+                setPanel('skills');
+              }}
+              className="text-muted-foreground"
+            >
+              <BookOpen className="size-4" />
+            </Button>
+          )}
+          {!inbox && selected && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
               aria-label="Open files"
               title="Workspace files"
               aria-pressed={panel === 'files'}
@@ -842,6 +864,25 @@ export function Workspace() {
                 api={desktopApi()}
                 savedVersion={diffReview?.version}
                 onSavedDiff={() => setPanel('diff')}
+                onClose={closeDiff}
+              />
+            </Suspense>
+          )}
+          {panel === 'skills' && !inbox && selected && (
+            <Suspense
+              fallback={
+                <aside
+                  role="status"
+                  className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
+                >
+                  Loading skills…
+                </aside>
+              }
+            >
+              <SessionSkills
+                key={selected.id}
+                session={selected}
+                api={desktopApi()}
                 onClose={closeDiff}
               />
             </Suspense>
