@@ -31,6 +31,7 @@ export class SessionStore {
     const session: Session = {
       ...input,
       id: randomUUID(),
+      role: 'standalone',
       providerSessionId: input.provider === 'Claude Code' ? randomUUID() : null,
       providerInitialized: false,
       pendingApprovals: [],
@@ -47,10 +48,7 @@ export class SessionStore {
       parentId: null,
       parentRunId: null,
       scope: null,
-      delegationEnabled:
-        input.provider === 'Codex' &&
-        input.role === 'orchestrator' &&
-        input.mode === 'read-only',
+      delegationEnabled: input.provider === 'Codex',
       delegations: [],
     };
     this.save(session);
@@ -122,7 +120,7 @@ export class SessionStore {
       if (session.status === 'running' || session.status === 'stopping') {
         session.status = 'interrupted';
         session.error =
-          'Sesja została przerwana przez zamknięcie hosta. Możesz kontynuować rozmowę.';
+          'The session was interrupted when the host closed. You can continue the conversation.';
         session.activity = null;
         session.pendingApprovals = [];
         for (const message of session.messages) {
@@ -134,7 +132,7 @@ export class SessionStore {
         if (proposal.status !== 'pending' && proposal.status !== 'running')
           continue;
         proposal.status = 'interrupted';
-        proposal.error = 'Delegacja została przerwana przez zamknięcie hosta.';
+        proposal.error = 'Delegation was interrupted when the host closed.';
         changed = true;
       }
       if (changed) this.save(session);

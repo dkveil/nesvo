@@ -283,7 +283,6 @@ test(
     const create = directory => ({
       title: 'Fixture conversation',
       model: 'sonnet',
-      role: 'standalone',
       directory,
     });
     assert.equal(
@@ -567,6 +566,9 @@ test(
       });
       assert.equal(response.type, 'session', JSON.stringify(response));
       assert.equal(response.session.providerSessionId, null);
+      assert.equal(response.session.role, 'standalone');
+      assert.equal(response.session.mode, mode);
+      assert.equal(response.session.delegationEnabled, true);
       assert.deepEqual(response.session.pendingApprovals, []);
       return response.session;
     };
@@ -894,6 +896,114 @@ test(
         value.status === 'completed',
     );
     assert.equal(legacyCompleted.delegationEnabled, false);
+    const legacyResume = await sendCodex(
+      checked,
+      legacyCompleted,
+      'fixture:continue',
+    );
+    const legacyResumed = await checked.event(
+      value =>
+        value.id === legacySession.id &&
+        value.runId === legacyResume.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(
+      legacyResumed.providerSessionId,
+      legacyCompleted.providerSessionId,
+    );
+    assert.equal(legacyResumed.delegationEnabled, false);
+    const supervisedPlanRun = await sendCodex(
+      checked,
+      supervised,
+      'fixture:delegate-mixed',
+    );
+    const supervisedPlan = await checked.event(
+      value =>
+        value.id === supervised.id &&
+        value.runId === supervisedPlanRun.runId &&
+        value.delegations.filter(item => item.runId === value.runId).length ===
+          2,
+    );
+    assert.equal(supervisedPlan.role, 'orchestrator');
+    assert.equal(supervisedPlan.mode, 'supervised');
+    const supervisedProposals = supervisedPlan.delegations.filter(
+      item => item.runId === supervisedPlanRun.runId,
+    );
+    assert.ok(supervisedProposals.every(item => item.mode === 'read-only'));
+    for (const [index, proposal] of supervisedProposals.entries()) {
+      const decision = await checked.request('decide-delegation', {
+        sessionId: supervised.id,
+        runId: supervisedPlanRun.runId,
+        delegationId: proposal.id,
+        decision: index === 0 ? 'accept' : 'decline',
+      });
+      assert.equal(decision.type, 'session', JSON.stringify(decision));
+    }
+    const supervisedDelegated = await checked.event(
+      value =>
+        value.id === supervised.id &&
+        value.runId === supervisedPlanRun.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(supervisedDelegated.mode, 'supervised');
+    assert.equal(
+      supervisedDelegated.providerSessionId,
+      supervisedPlanRun.providerSessionId,
+    );
+    assert.deepEqual(
+      JSON.parse(
+        agent(supervisedDelegated).body.slice(
+          'Codex delegation results: '.length,
+        ),
+      ).results.map(item => item.status),
+      ['completed', 'declined'],
+    );
+    const supervisedResult = await checked.review(
+      value => value.runId === supervisedPlanRun.runId,
+    );
+    assert.equal(
+      supervisedResult.diff.status,
+      'complete',
+      supervisedResult.diff.detail,
+    );
+    assert.equal(supervisedResult.dependencies.length, 1);
+    const rejectedWriteRun = await sendCodex(
+      checked,
+      supervised,
+      'fixture:delegate-writable',
+    );
+    const rejectedWritePlan = await checked.event(
+      value =>
+        value.id === supervised.id &&
+        value.runId === rejectedWriteRun.runId &&
+        value.status === 'completed',
+    );
+    const rejectedWriteResult = JSON.parse(
+      agent(rejectedWritePlan).body.slice('Codex delegation results: '.length),
+    );
+    assert.match(
+      rejectedWriteResult.error,
+      /write access can delegate read-only workers/,
+    );
+    assert.equal(rejectedWritePlan.mode, 'supervised');
+    assert.equal(
+      rejectedWritePlan.providerSessionId,
+      supervisedPlanRun.providerSessionId,
+    );
+    assert.equal(
+      rejectedWritePlan.delegations.filter(
+        item => item.runId === rejectedWriteRun.runId,
+      ).length,
+      0,
+    );
+    assert.equal(
+      (await checked.request('list-sessions')).sessions.filter(
+        value =>
+          value.parentId === supervised.id &&
+          value.parentRunId === rejectedWriteRun.runId,
+      ).length,
+      0,
+    );
     const rootResponse = await checked.request('create-session', {
       ...create(''),
       provider: 'Codex',
@@ -903,6 +1013,7 @@ test(
     });
     assert.equal(rootResponse.type, 'session', JSON.stringify(rootResponse));
     const root = rootResponse.session;
+    assert.equal(root.role, 'standalone');
     assert.equal(root.delegationEnabled, true);
     assert.equal(root.parentId, null);
     const outside = join(directory, 'outside-delegation');
@@ -955,6 +1066,12 @@ test(
     };
     const beforeProposalPids = (await readdir(pidFile + '.workers')).sort();
     const firstPlan = await plan(checked);
+    assert.equal(
+      (await checked.request('list-sessions')).sessions.find(
+        value => value.id === root.id,
+      ).role,
+      'orchestrator',
+    );
     assert.equal(firstPlan.proposals.length, 2);
     assert.equal(
       (await checked.request('list-sessions')).sessions.filter(
@@ -1396,6 +1513,39 @@ test(
         value => value.parentId === root.id,
       ).length,
       persistedGroup.filter(value => value.parentId === root.id).length,
+    );
+    const historyDatabase = new DatabaseSync(path);
+    try {
+      const boundedRoot = JSON.parse(
+        historyDatabase
+          .prepare('SELECT document FROM sessions WHERE id = ?')
+          .get(root.id).document,
+      );
+      boundedRoot.delegations = Array.from({ length: 100 }, () => ({
+        ...boundedRoot.delegations[0],
+        id: randomUUID(),
+        runId: randomUUID(),
+        status: 'declined',
+        childSessionId: null,
+        error: null,
+      }));
+      historyDatabase
+        .prepare('UPDATE sessions SET document = ? WHERE id = ?')
+        .run(JSON.stringify(boundedRoot), root.id);
+    } finally {
+      historyDatabase.close();
+    }
+    const historyRun = await sendCodex(
+      afterGroup,
+      root,
+      'fixture:delegate-mixed',
+    );
+    const historyBound = await parentResult(afterGroup, { run: historyRun });
+    assert.match(historyBound.result.error, /delegation history limit/);
+    assert.equal(historyBound.parent.delegations.length, 100);
+    assert.equal(
+      historyBound.parent.providerSessionId,
+      persistedRoot.providerSessionId,
     );
     const reviewWorkspace = join(directory, 'review-workspace');
     await mkdir(reviewWorkspace);

@@ -112,7 +112,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'error',
                 id: request.id,
                 code: 'unavailable',
-                message: 'Nie udało się sprawdzić dostawcy. Spróbuj ponownie.',
+                message: 'The provider could not be checked. Try again.',
               }),
             )
             .catch(() => undefined);
@@ -133,7 +133,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 message:
                   error instanceof SessionError
                     ? error.message
-                    : 'Nie udało się zapisać decyzji. Odśwież wyniki i spróbuj ponownie.',
+                    : 'Your decision could not be saved. Refresh results and try again.',
               }),
             )
             .catch(() => undefined);
@@ -205,7 +205,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               message:
                 error instanceof SessionError
                   ? error.message
-                  : 'Host nie może wykonać operacji. Odśwież stan i spróbuj ponownie.',
+                  : 'The host could not complete this operation. Refresh and try again.',
             };
           }
         });

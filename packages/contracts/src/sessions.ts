@@ -65,7 +65,7 @@ export const createSessionSchema = z
     provider: providerSchema.default('Claude Code'),
     model: modelSchema,
     mode: sessionModeSchema.default('read-only'),
-    role: z.enum(['orchestrator', 'standalone']),
+    role: z.enum(['orchestrator', 'standalone']).optional(),
     directory: z.string().trim().max(4096),
   })
   .superRefine((value, context) => {

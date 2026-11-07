@@ -884,7 +884,7 @@ export function startCodex(options: {
         approval: {
           id,
           kind: command ? 'command' : 'file-change',
-          title: command ? 'Wykonanie polecenia' : 'Zmiana plików',
+          title: command ? 'Run command' : 'Change files',
           detail,
           directory,
         },
@@ -1016,13 +1016,8 @@ export function startCodex(options: {
         throw new Error('Codex working directory must be an absolute path.');
       if (!['read-only', 'supervised'].includes(options.mode))
         throw new Error('Unsupported Codex permission mode.');
-      if (
-        options.onDelegate &&
-        (!object(options.delegationSchema) || options.mode !== 'read-only')
-      )
-        throw new Error(
-          'Codex delegation requires a read-only orchestrator and an explicit input schema.',
-        );
+      if (options.onDelegate && !object(options.delegationSchema))
+        throw new Error('Codex delegation requires an explicit input schema.');
       if (
         options.resume &&
         (!options.sessionId || options.sessionId.length > 200)
@@ -1124,8 +1119,7 @@ export function startCodex(options: {
                   {
                     type: 'function',
                     name: 'nesvo_delegate',
-                    description:
-                      'Propose one or two visible workers for separate, explicitly described tasks and scopes. Each worker starts only after operator approval. Use existing directories within the root workspace ("." is allowed). Choose an available Codex model ID or a Claude alias (default, opus, sonnet, haiku). The tool waits for every operator decision and actual worker outcome. Workers cannot delegate. Keep the root read-only while workers operate.',
+                    description: `When the task benefits from delegation, propose one or two visible workers with separate tasks and explicit scopes. Each worker starts only after operator approval. Use existing directories within this workspace ("." is allowed). Choose an available Codex model ID or a Claude alias (default, opus, sonnet, haiku). The tool waits for every operator decision and actual worker outcome. Workers cannot delegate. ${options.mode === 'supervised' ? 'This session has write access, so every proposed worker must use read-only mode. Use a separate read-only session when workers need to change files.' : 'This session is read-only. Workers may use supervised mode to change files in non-overlapping directories.'}`,
                     inputSchema: options.delegationSchema,
                     deferLoading: false,
                   },

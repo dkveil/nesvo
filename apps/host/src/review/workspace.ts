@@ -43,7 +43,7 @@ const excluded = new Set([
   '.nesvo',
 ]);
 
-const exclusions = `Pomijane katalogi na każdym poziomie: ${[...excluded].join(', ')}.`;
+const exclusions = `Directories excluded at every level: ${[...excluded].join(', ')}.`;
 
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -91,12 +91,12 @@ export async function captureWorkspace(
   signal?: AbortSignal,
 ): Promise<WorkspaceSnapshot> {
   const controller = new AbortController();
-  let reason = 'Anulowano odczyt katalogu roboczego.';
+  let reason = 'Workspace capture was cancelled.';
   const cancel = () => controller.abort();
   signal?.addEventListener('abort', cancel, { once: true });
   if (signal?.aborted) cancel();
   const timer = setTimeout(() => {
-    reason = `Odczyt katalogu roboczego przekroczył ${limits.milliseconds / 1000} sekund.`;
+    reason = `Workspace capture exceeded ${limits.milliseconds / 1000} seconds.`;
     controller.abort();
   }, limits.milliseconds);
   const check = () => {
@@ -112,7 +112,7 @@ export async function captureWorkspace(
   const scan = async (): Promise<WorkspaceSnapshot> => {
     check();
     if (!isAbsolute(directory))
-      throw new Error('Katalog roboczy wymaga pełnej ścieżki.');
+      throw new Error('The workspace requires an absolute path.');
     root = await realpath(directory);
     check();
     const files = new Map<string, WorkspaceFile>();
@@ -127,10 +127,10 @@ export async function captureWorkspace(
       check();
       if (stat.isSymbolicLink())
         throw new Error(
-          'Katalog zawiera dowiązanie symboliczne. Odczyt dowiązań jest wyłączony.',
+          'The workspace contains a symbolic link. Following links is disabled.',
         );
       if (!stat.isDirectory() && !stat.isFile())
-        throw new Error('Katalog zawiera nieobsługiwany plik specjalny.');
+        throw new Error('The workspace contains an unsupported special file.');
       const canonical = await realpath(path);
       check();
       const expected = resolve(path);
@@ -139,7 +139,7 @@ export async function captureWorkspace(
         (process.platform === 'win32' ? expected.toLowerCase() : expected)
       )
         throw new Error(
-          'Ścieżka zmieniła się podczas odczytu lub prowadzi przez dowiązanie symboliczne.',
+          'A path changed during capture or passes through a symbolic link.',
         );
       const inside = relative(root!, canonical);
       if (
@@ -147,7 +147,7 @@ export async function captureWorkspace(
         inside === '..' ||
         inside.startsWith(`..${sep}`)
       )
-        throw new Error('Ścieżka wychodzi poza katalog roboczy.');
+        throw new Error('A path is outside the workspace.');
       observed.set(path, signature(stat));
       return stat;
     };
@@ -158,16 +158,16 @@ export async function captureWorkspace(
     ): Promise<void> => {
       if (depth > limits.depth)
         throw new Error(
-          `Katalog przekracza limit ${limits.depth} poziomów zagnieżdżenia.`,
+          `The workspace exceeds the limit of ${limits.depth} nested levels.`,
         );
       const stat = await inspect(path);
       if (!name && !stat.isDirectory())
-        throw new Error('Ścieżka robocza nie wskazuje katalogu.');
+        throw new Error('The workspace path is not a directory.');
       const mode = (stat.mode & 0o7777n).toString(8);
       if (stat.isDirectory()) {
         if (++directories > limits.directories)
           throw new Error(
-            `Katalog przekracza limit ${limits.directories} podkatalogów.`,
+            `The workspace exceeds the limit of ${limits.directories} directories.`,
           );
         files.set(name, {
           type: 'directory',
@@ -184,7 +184,7 @@ export async function captureWorkspace(
             if (!entry) break;
             if (++entries > limits.entries)
               throw new Error(
-                `Katalog przekracza limit ${limits.entries} wpisów.`,
+                `The workspace exceeds the limit of ${limits.entries} entries.`,
               );
             if (entry.isDirectory() && excluded.has(entry.name)) continue;
             await visit(
@@ -199,14 +199,16 @@ export async function captureWorkspace(
         return;
       }
       if (++fileCount > limits.files)
-        throw new Error(`Katalog przekracza limit ${limits.files} plików.`);
+        throw new Error(
+          `The workspace exceeds the limit of ${limits.files} files.`,
+        );
       if (stat.size > BigInt(limits.fileBytes))
         throw new Error(
-          `Katalog zawiera plik większy niż ${limits.fileBytes / 1024} KiB.`,
+          `The workspace contains a file larger than ${limits.fileBytes / 1024} KiB.`,
         );
       if (bytes + Number(stat.size) > limits.bytes)
         throw new Error(
-          `Łączny rozmiar plików przekracza ${limits.bytes / 1024 / 1024} MiB.`,
+          `The total file size exceeds ${limits.bytes / 1024 / 1024} MiB.`,
         );
       const handle = await open(
         path,
@@ -218,7 +220,7 @@ export async function captureWorkspace(
         check();
         const before = await handle.stat({ bigint: true });
         if (!before.isFile() || signature(before) !== signature(stat))
-          throw new Error('Plik zmienił się podczas otwierania.');
+          throw new Error('A file changed while it was being opened.');
         const buffer = Buffer.alloc(Number(stat.size) + 1);
         let offset = 0;
         while (offset < buffer.length) {
@@ -239,7 +241,7 @@ export async function captureWorkspace(
           offset !== Number(stat.size) ||
           signature(before) !== signature(after)
         )
-          throw new Error('Plik zmienił się podczas odczytu.');
+          throw new Error('A file changed during capture.');
         content = buffer.subarray(0, offset);
       } finally {
         await handle.close();
@@ -256,7 +258,7 @@ export async function captureWorkspace(
     for (const [path, expected] of observed) {
       check();
       if (signature(await inspect(path)) !== expected)
-        throw new Error('Zawartość katalogu zmieniła się podczas odczytu.');
+        throw new Error('The workspace contents changed during capture.');
     }
     check();
     const sorted = new Map(
@@ -290,9 +292,9 @@ export async function captureWorkspace(
         ? reason
         : error instanceof Error
           ? 'code' in error
-            ? `Nie można odczytać katalogu lub pliku (${String(error.code)}).`
+            ? `A directory or file could not be read (${String(error.code)}).`
             : error.message
-          : 'Nie udało się odczytać katalogu roboczego.',
+          : 'The workspace could not be captured.',
       root,
     );
   } finally {
@@ -385,8 +387,8 @@ export function compareWorkspace(
   if (before.status !== 'complete' || after.status !== 'complete')
     return unavailable(
       before.status !== 'complete'
-        ? (before.detail ?? 'Początkowa migawka katalogu jest niedostępna.')
-        : (after.detail ?? 'Końcowa migawka katalogu jest niedostępna.'),
+        ? (before.detail ?? 'The initial workspace snapshot is unavailable.')
+        : (after.detail ?? 'The final workspace snapshot is unavailable.'),
     );
   if (
     !before.root ||
@@ -395,7 +397,7 @@ export function compareWorkspace(
     !after.fingerprint
   )
     return unavailable(
-      'Migawki dotyczą różnych katalogów lub nie mają odcisku zawartości.',
+      'The snapshots refer to different workspaces or have no content fingerprint.',
     );
   const paths = [
     ...new Set([...before.files.keys(), ...after.files.keys()]),
@@ -415,7 +417,7 @@ export function compareWorkspace(
       continue;
     if (files.length >= limits.files)
       return unavailable(
-        `Przegląd przekracza limit ${limits.files} zmienionych wpisów. ${exclusions}`,
+        `The review exceeds the limit of ${limits.files} changed entries. ${exclusions}`,
         patch,
         files,
       );
@@ -434,17 +436,16 @@ export function compareWorkspace(
             : 'modified',
     });
     const part = isBinary
-      ? `diff --git ${label('a', path)} ${label('b', path)}\nZmieniono zawartość binarną. Dokładne bajty uwzględniono w hashu; nie są wyświetlane w przeglądzie.\n`
+      ? `diff --git ${label('a', path)} ${label('b', path)}\nBinary contents changed. The exact bytes are included in the hash and are not displayed in this review.\n`
       : unified(path, previous, next);
     const count = part.split('\n').length - 1;
     if (
       patch.length + part.length > limits.patchCharacters - 100 ||
       patchLines + count > limits.patchLines - 1
     ) {
-      const marker =
-        '[Skrócono różnice: przekroczono limit rozmiaru lub liczby wierszy.]\n';
+      const marker = '[Diff truncated: the size or line limit was exceeded.]\n';
       return unavailable(
-        `Różnice przekraczają limit ${limits.patchCharacters} znaków lub ${limits.patchLines} wierszy. ${exclusions}`,
+        `The diff exceeds the limit of ${limits.patchCharacters} characters or ${limits.patchLines} lines. ${exclusions}`,
         `${patch}${marker}`,
         files,
       );
@@ -454,7 +455,7 @@ export function compareWorkspace(
   }
   if (binary)
     return unavailable(
-      `Zmian binarnych nie można w pełni sprawdzić w tym przeglądzie. ${exclusions}`,
+      `Binary changes cannot be fully inspected in this review. ${exclusions}`,
       patch,
       files,
     );

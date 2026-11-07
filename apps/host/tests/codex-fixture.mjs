@@ -362,7 +362,6 @@ if (args.length === 1 && args[0] === '--version') {
           assert.equal(tools[0].name, 'nesvo_delegate');
           assert.equal(tools[0].type, 'function');
           assert.ok(tools[0].inputSchema.properties.workers);
-          assert.equal(supervised, false);
         }
         writeFileSync(
           statePath(thread.id),

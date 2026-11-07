@@ -88,7 +88,7 @@ export class SessionService {
       )
         throw new SessionError(
           'invalid-request',
-          'Identyfikator decyzji jest już używany.',
+          'This decision ID is already in use.',
         );
       return recorded;
     }
@@ -100,7 +100,7 @@ export class SessionService {
     )
       throw new SessionError(
         'busy',
-        'Poczekaj na zakończenie aktywnej grupy i zapis jej wyniku.',
+        'Wait for the active group to finish and its result to be saved.',
       );
     const review = this.reviews.get(input.reviewId);
     const session = review ? this.store.get(review.sessionId) : undefined;
@@ -115,7 +115,7 @@ export class SessionService {
     )
       throw new SessionError(
         'invalid-request',
-        'Ten wynik nie jest już aktualny lub został rozstrzygnięty. Odśwież skrzynkę.',
+        'This result is no longer current or has already been reviewed. Refresh the inbox.',
       );
     for (const dependency of review.dependencies) {
       const current = this.reviews.latest(dependency.sessionId);
@@ -129,7 +129,7 @@ export class SessionService {
       )
         throw new SessionError(
           'invalid-request',
-          'Wynik workera zmienił się. Poproś orkiestratora o aktualne podsumowanie.',
+          'A worker result has changed. Ask the parent session for an updated summary.',
         );
     }
     const controller = new AbortController();
@@ -147,7 +147,7 @@ export class SessionService {
           if (artifact.diff.status !== 'complete' || !artifact.diff.fingerprint)
             throw new SessionError(
               'invalid-request',
-              'Brak pełnego podglądu zmian wyniku lub jego workera. Odeślij właściwy wynik do poprawy w mniejszym zakresie.',
+              'The result or its worker has no complete diff. Request changes to the affected result with a smaller scope.',
             );
           const current = await captureWorkspace(
             artifact.directory,
@@ -159,14 +159,14 @@ export class SessionService {
           )
             throw new SessionError(
               'invalid-request',
-              'Pliki wyniku lub jego workera zmieniły się od zapisania albo nie można ich sprawdzić. Popraw właściwą sesję i odbierz aktualne wyniki.',
+              'Files for this result or its worker have changed since capture or cannot be checked. Revise the affected session and review its current result.',
             );
         }
       }
       if (this.closing || controller.signal.aborted)
         throw new SessionError(
           'busy',
-          'Host jest zamykany. Decyzja nie została zapisana.',
+          'The host is closing. Your decision was not saved.',
         );
       const decided = this.reviews.change(review, {
         status: input.decision === 'accept' ? 'accepted' : 'changes-requested',
@@ -183,9 +183,9 @@ export class SessionService {
         if (session.messages.some(message => message.id === input.decisionId))
           throw new SessionError(
             'invalid-request',
-            'Identyfikator decyzji jest już używany przez wiadomość.',
+            'This decision ID is already used by a message.',
           );
-        const text = `Poprawka do wersji ${review.version}:\n${input.feedback}`;
+        const text = `Correction to version ${review.version}:\n${input.feedback}`;
         const prompt = `Revise your previous result using the operator feedback below. Keep the same permissions and assigned scope. Do not delegate additional work unless this session already has a delegation tool.\n\nOriginal task:\n${review.task}\n\nScope:\n${session.scope ?? session.directory}\n\nOperator feedback:\n${input.feedback}`;
         this.prepareRun(session, input.decisionId, text);
         const changed = [
@@ -212,7 +212,7 @@ export class SessionService {
     if (JSON.stringify(session).length > 4_000_000)
       throw new SessionError(
         'invalid-request',
-        'Ta rozmowa osiągnęła limit prototypu. Utwórz nową sesję.',
+        'This conversation has reached the prototype limit. Create a new session.',
       );
   }
 
@@ -254,7 +254,7 @@ export class SessionService {
       if (this.unsaved.size)
         throw new SessionError(
           'busy',
-          'Ostatnia odpowiedź nie została zapisana. Odśwież historię po przywróceniu dostępu do bazy.',
+          'The last response was not saved. Refresh history after database access is restored.',
         );
     }
     const session =
@@ -263,7 +263,7 @@ export class SessionService {
     if (!session)
       throw new SessionError(
         'not-found',
-        'Nie znaleziono sesji. Odśwież listę.',
+        'Session not found. Refresh the list.',
       );
     const existing = session.messages.find(
       message => message.id === input.messageId,
@@ -272,14 +272,14 @@ export class SessionService {
       if (existing.author !== 'operator' || existing.body !== input.text)
         throw new SessionError(
           'invalid-request',
-          'Identyfikator wiadomości jest już używany.',
+          'This message ID is already in use.',
         );
       return structuredClone(session);
     }
     if (this.closing || this.active.size || this.reviewDecision)
       throw new SessionError(
         'busy',
-        'Poczekaj na zakończenie aktywnej grupy lub użyj Stop.',
+        'Wait for the active group to finish or use Stop.',
       );
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
@@ -310,7 +310,7 @@ export class SessionService {
     )
       throw new SessionError(
         'invalid-request',
-        'Ta propozycja delegacji nie jest już aktywna.',
+        'This worker proposal is no longer active.',
       );
     if (input.decision === 'decline') {
       proposal.status = 'declined';
@@ -351,13 +351,12 @@ export class SessionService {
     if (!active || active.session.runId !== input.runId) {
       const session =
         this.unsaved.get(input.sessionId) ?? this.store.get(input.sessionId);
-      if (!session)
-        throw new SessionError('not-found', 'Nie znaleziono sesji.');
+      if (!session) throw new SessionError('not-found', 'Session not found.');
       return structuredClone(session);
     }
     if (active.finalizing) return structuredClone(active.session);
     active.session.status = 'stopping';
-    active.session.activity = 'Zatrzymywanie…';
+    active.session.activity = 'Stopping…';
     active.session.pendingApprovals = [];
     try {
       this.cancelDelegations(active.session);
@@ -383,7 +382,7 @@ export class SessionService {
     )
       throw new SessionError(
         'invalid-request',
-        'Ta prośba o zgodę nie jest już aktywna w tej sesji.',
+        'This approval request is no longer active in this session.',
       );
     const pending = active.session.pendingApprovals;
     active.session.pendingApprovals = pending.filter(
@@ -401,7 +400,7 @@ export class SessionService {
       void active.handle.stop().catch(() => undefined);
       throw new SessionError(
         'invalid-request',
-        'Nie udało się przekazać decyzji. Sesja jest zatrzymywana.',
+        'Your decision could not be delivered. The session is stopping.',
       );
     }
     return structuredClone(active.session);
@@ -436,7 +435,7 @@ export class SessionService {
     session.status = 'running';
     session.error = null;
     session.pendingApprovals = [];
-    session.activity = `Uruchamianie ${session.provider}…`;
+    session.activity = `Starting ${session.provider}…`;
     session.messages.push(
       {
         id: messageId,
@@ -482,9 +481,9 @@ export class SessionService {
     };
     const canDelegate =
       session.delegationEnabled &&
-      session.role === 'orchestrator' &&
       session.provider === 'Codex' &&
-      session.mode === 'read-only';
+      session.parentId === null &&
+      session.role !== 'worker';
     const controller = new AbortController();
     let baseline: WorkspaceSnapshot | null = null;
     let provider: ActiveRun['handle'] | undefined;
@@ -542,7 +541,7 @@ export class SessionService {
         await Promise.all(children.map(child => child.finished));
         session.status = active.persistenceError ? 'failed' : result.status;
         session.error = active.persistenceError
-          ? 'Zapis rozmowy nie powiódł się. Odpowiedź została zatrzymana.'
+          ? 'The conversation could not be saved. The response was stopped.'
           : result.error;
         session.activity = null;
         session.pendingApprovals = [];
@@ -556,7 +555,7 @@ export class SessionService {
             : {
                 status: 'not-applicable',
                 detail:
-                  'Sesja tylko do odczytu. Odbiór dotyczy zapisanej odpowiedzi, bez podglądu zmian plików.',
+                  'Read-only session. Review covers the saved response, without a file diff.',
                 patch: '',
                 files: [],
                 fingerprint: null,
@@ -575,7 +574,7 @@ export class SessionService {
         await Promise.all(children.map(child => child.finished));
         session.status = 'failed';
         session.error =
-          'Nie udało się zapisać lub zakończyć odpowiedzi. Odśwież sesję przed kontynuowaniem.';
+          'The response could not be saved or finalized. Refresh the session before continuing.';
         session.activity = null;
         session.pendingApprovals = [];
         session.messages.at(-1)!.state = 'failed';
@@ -642,7 +641,7 @@ export class SessionService {
     if (parent.delegations.length + parsed.data.workers.length > 100)
       return JSON.stringify({
         error:
-          'This conversation reached the delegation history limit. Create a new orchestrator.',
+          'This conversation reached the delegation history limit. Create a new session.',
       });
     const proposals: Delegation[] = parsed.data.workers.map(worker => ({
       ...worker,
@@ -666,12 +665,15 @@ export class SessionService {
           this.waiters.set(proposal.id, resolve),
         ),
     );
+    const previousRole = parent.role;
+    parent.role = 'orchestrator';
     parent.delegations.push(...proposals);
-    parent.activity = 'Oczekiwanie na decyzję o delegacji…';
+    parent.activity = 'Waiting for worker approval…';
     try {
       this.publish(parent);
     } catch (error) {
       parent.delegations.splice(parent.delegations.length - proposals.length);
+      parent.role = previousRole;
       for (const proposal of proposals) this.waiters.delete(proposal.id);
       throw error;
     }
@@ -774,6 +776,14 @@ export class SessionService {
     parent: Session,
     proposals: Delegation[],
   ): void {
+    if (
+      parent.mode === 'supervised' &&
+      proposals.some(proposal => proposal.mode === 'supervised')
+    )
+      throw new SessionError(
+        'invalid-request',
+        'A session with write access can delegate read-only workers. Start a read-only session to delegate file changes.',
+      );
     const directories = proposals.map(proposal => {
       const proposed = this.workerDirectory(parent, proposal.directory);
       if (!proposal.childSessionId) return proposed;
@@ -795,7 +805,7 @@ export class SessionService {
         )
           throw new SessionError(
             'invalid-directory',
-            'Katalogi workerów nie mogą się nakładać, gdy którykolwiek worker może zapisywać pliki.',
+            'Worker directories must not overlap when either worker has write access.',
           );
       }
     }
@@ -809,14 +819,14 @@ export class SessionService {
     )
       throw new SessionError(
         'invalid-directory',
-        'Worker wymaga istniejącego katalogu względnego wewnątrz katalogu sesji.',
+        'A worker requires an existing relative directory inside the session workspace.',
       );
     const root = this.resolveDirectory(parent.directory);
     const target = this.resolveDirectory(resolve(root, directory));
     if (!this.within(root, target))
       throw new SessionError(
         'invalid-directory',
-        'Katalog workera wychodzi poza katalog sesji.',
+        'The worker directory is outside the session workspace.',
       );
     return target;
   }
@@ -841,7 +851,7 @@ export class SessionService {
       session.providerSessionId = event.sessionId;
       session.providerInitialized = true;
       session.actualModel = event.model;
-      session.activity = `${session.provider} pracuje…`;
+      session.activity = `${session.provider} is working…`;
       this.publish(session);
     } else if (event.type === 'approval') {
       if (session.status !== 'running') return;
@@ -854,24 +864,23 @@ export class SessionService {
       )
         throw new Error('Duplicate provider approval');
       session.pendingApprovals.push(event.approval);
-      session.activity = 'Oczekiwanie na Twoją decyzję…';
+      session.activity = 'Waiting for your decision…';
       this.publish(session);
     } else if (event.type === 'approval-resolved') {
       session.pendingApprovals = session.pendingApprovals.filter(
         approval => approval.id !== event.id,
       );
       if (session.status === 'running' && !session.pendingApprovals.length)
-        session.activity = `${session.provider} pracuje…`;
+        session.activity = `${session.provider} is working…`;
       this.publish(session);
     } else if (event.type === 'text') {
       session.messages.at(-1)!.body = event.text;
-      session.activity =
-        session.status === 'stopping' ? 'Zatrzymywanie…' : null;
+      session.activity = session.status === 'stopping' ? 'Stopping…' : null;
     } else if (session.status !== 'stopping') {
       session.activity = event.text;
     }
     if (session.pendingApprovals.length)
-      session.activity = 'Oczekiwanie na Twoją decyzję…';
+      session.activity = 'Waiting for your decision…';
     if (active && !active.timer) {
       active.timer = setTimeout(() => {
         active.timer = undefined;
@@ -903,7 +912,7 @@ export class SessionService {
     } catch {
       throw new SessionError(
         'invalid-directory',
-        'Katalog nie istnieje lub jest niedostępny. Podaj pełną ścieżkę do folderu.',
+        'The directory does not exist or cannot be accessed. Enter its absolute path.',
       );
     }
   }
