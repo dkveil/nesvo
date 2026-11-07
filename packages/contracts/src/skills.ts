@@ -10,6 +10,10 @@ export const skillLimits = {
 } as const;
 
 export const discoverSkillsSchema = z.strictObject({ sessionId: z.uuid() });
+export const skillOriginsSchema = z
+  .array(z.enum(['Claude Code', 'Codex', 'Shared']))
+  .max(3);
+export const skillHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const skillEntrySchema = z.strictObject({
   id: z.string().min(1).max(8192),
@@ -22,15 +26,24 @@ export const skillEntrySchema = z.strictObject({
   userInvocable: z.boolean().nullable(),
   modelInvocable: z.boolean().nullable(),
   detail: z.string().max(skillLimits.detail).nullable(),
+  origins: skillOriginsSchema.optional(),
+  invocation: z.enum(['native', 'instructions', 'blocked']).optional(),
+  invocationReason: z.string().max(skillLimits.detail).nullable().optional(),
+  contentHash: skillHashSchema.optional(),
 });
 
 export const skillReferenceSchema = skillEntrySchema
   .pick({ id: true, name: true, path: true, source: true })
-  .extend({ path: z.string().min(1).max(skillLimits.path) });
+  .extend({
+    path: z.string().min(1).max(skillLimits.path),
+    origins: skillOriginsSchema.optional(),
+    delivery: z.enum(['native', 'instructions']).optional(),
+    contentHash: skillHashSchema.optional(),
+  });
 
 export const skillDiscoverySchema = z.strictObject({
   provider: z.enum(['Claude Code', 'Codex']),
-  method: z.enum(['native', 'filesystem']),
+  method: z.enum(['native', 'filesystem', 'library']),
   status: z.enum(['ready', 'partial', 'unsupported', 'unavailable']),
   skills: z.array(skillEntrySchema).max(skillLimits.entries),
   issues: z
