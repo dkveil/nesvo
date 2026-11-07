@@ -480,10 +480,13 @@ function rejectRequest(peer: RpcPeer, message: RecordValue): void {
   }
 }
 
-async function initialize(peer: RpcPeer): Promise<string> {
+async function initialize(
+  peer: RpcPeer,
+  experimentalApi = false,
+): Promise<string> {
   const result = await peer.request('initialize', {
     clientInfo: { name: 'nesvo', title: 'Nesvo', version: '0.1.0' },
-    capabilities: { experimentalApi: false, requestAttestation: false },
+    capabilities: { experimentalApi, requestAttestation: false },
   });
   const version =
     typeof result.userAgent === 'string'
@@ -605,6 +608,8 @@ export function startCodex(options: {
   mode: 'read-only' | 'supervised';
   prompt: string;
   onEvent: (event: CodexEvent) => void;
+  onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
+  delegationSchema?: Record<string, unknown>;
 }): {
   done: Promise<CodexResult>;
   stop: () => Promise<void>;
@@ -623,6 +628,12 @@ export function startCodex(options: {
     { rpcId: RpcId; threadId: string; turnId: string }
   >();
   const seenRequests = new Set<string>();
+  const seenCalls = new Set<string>();
+  const pendingDelegates = new Map<
+    string,
+    { rpcId: RpcId; threadId: string; turnId: string }
+  >();
+  const delegationController = new AbortController();
   const queued: RecordValue[] = [];
   const messages = new Map<string, string>();
   const items = new Map<string, RecordValue>();
@@ -634,6 +645,8 @@ export function startCodex(options: {
   });
   const fail = (message: string) => {
     failure ??= safeMessage(message);
+    delegationController.abort();
+    pendingDelegates.clear();
     resolveTurn({ status: 'failed', error: failure });
     void peer?.close();
   };
@@ -679,13 +692,111 @@ export function startCodex(options: {
         typeof rpcId !== 'string' &&
         (typeof rpcId !== 'number' || !Number.isSafeInteger(rpcId))
       )
-        throw new Error('Codex returned an invalid approval request ID.');
+        throw new Error('Codex returned an invalid server request ID.');
       const id = approvalId(rpcId);
       if (id.length > 200 || seenRequests.has(id) || seenRequests.size >= 1000)
         throw new Error(
-          'Codex returned an invalid or repeated approval request ID.',
+          'Codex returned an invalid or repeated server request ID.',
         );
       seenRequests.add(id);
+      if (message.method === 'item/tool/call') {
+        if (
+          !options.onDelegate ||
+          !threadId ||
+          !turnId ||
+          params?.threadId !== threadId ||
+          params.turnId !== turnId ||
+          params.namespace !== null ||
+          params.tool !== 'nesvo_delegate' ||
+          typeof params.callId !== 'string' ||
+          !params.callId ||
+          params.callId.length > 200 ||
+          seenCalls.has(params.callId) ||
+          seenCalls.size >= 1000
+        ) {
+          peer.send({
+            id: rpcId,
+            result: {
+              contentItems: [
+                {
+                  type: 'inputText',
+                  text: 'Unsupported or stale delegation request.',
+                },
+              ],
+              success: false,
+            },
+          });
+          throw new Error(
+            'Codex returned an unsupported, duplicate or stale delegation request.',
+          );
+        }
+        const callId = params.callId;
+        seenCalls.add(callId);
+        const pending = { rpcId, threadId, turnId };
+        pendingDelegates.set(callId, pending);
+        const respond = (text: string, success: boolean) => {
+          if (
+            stopped ||
+            finished ||
+            failure ||
+            delegationController.signal.aborted ||
+            !peer ||
+            pendingDelegates.get(callId) !== pending ||
+            pending.threadId !== threadId ||
+            pending.turnId !== turnId
+          )
+            return;
+          if (
+            typeof text !== 'string' ||
+            Buffer.byteLength(text) > maxTextBytes ||
+            Buffer.byteLength(
+              JSON.stringify({
+                id: rpcId,
+                result: {
+                  contentItems: [{ type: 'inputText', text }],
+                  success,
+                },
+              }),
+            ) > maxLineBytes
+          ) {
+            text = 'Worker results exceeded the supported response size.';
+            success = false;
+          }
+          pendingDelegates.delete(callId);
+          try {
+            peer.send({
+              id: rpcId,
+              result: { contentItems: [{ type: 'inputText', text }], success },
+            });
+          } catch (error) {
+            fail(
+              error instanceof Error
+                ? error.message
+                : 'Codex delegation response failed.',
+            );
+          }
+        };
+        void Promise.resolve()
+          .then(() => {
+            if (delegationController.signal.aborted)
+              throw new Error('Delegation stopped.');
+            return options.onDelegate!(
+              params.arguments,
+              delegationController.signal,
+            );
+          })
+          .then(
+            text => respond(text, true),
+            error =>
+              respond(
+                safeMessage(
+                  error instanceof Error ? error.message : 'Delegation failed.',
+                ),
+                false,
+              ),
+          );
+        return;
+      }
       const command =
         message.method === 'item/commandExecution/requestApproval';
       const file = message.method === 'item/fileChange/requestApproval';
@@ -775,6 +886,16 @@ export function startCodex(options: {
     if (!params || params.threadId !== threadId || !turnId) return;
     if (message.method === 'serverRequest/resolved') {
       if (
+        [...pendingDelegates.values()].some(
+          pending => pending.rpcId === params.requestId,
+        )
+      ) {
+        fail(
+          'Codex cancelled a delegation request before receiving worker outcomes.',
+        );
+        return;
+      }
+      if (
         typeof params.requestId === 'string' ||
         typeof params.requestId === 'number'
       )
@@ -784,6 +905,12 @@ export function startCodex(options: {
     if (message.method === 'turn/completed') {
       const turn = object(params.turn);
       if (turn?.id !== turnId) return;
+      if (pendingDelegates.size > 0)
+        throw new Error(
+          'Codex completed the turn before receiving worker outcomes.',
+        );
+      delegationController.abort();
+      pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
       if (turn.status === 'completed')
         resolveTurn(
@@ -882,6 +1009,13 @@ export function startCodex(options: {
       if (!['read-only', 'supervised'].includes(options.mode))
         throw new Error('Unsupported Codex permission mode.');
       if (
+        options.onDelegate &&
+        (!object(options.delegationSchema) || options.mode !== 'read-only')
+      )
+        throw new Error(
+          'Codex delegation requires a read-only orchestrator and an explicit input schema.',
+        );
+      if (
         options.resume &&
         (!options.sessionId || options.sessionId.length > 200)
       )
@@ -930,7 +1064,7 @@ export function startCodex(options: {
         consume,
         Object.keys(disabledServers),
       );
-      await initialize(peer);
+      await initialize(peer, Boolean(options.onDelegate));
       const isolated = await peer.request('config/read', {
         includeLayers: false,
         cwd: options.directory,
@@ -976,6 +1110,20 @@ export function startCodex(options: {
             ? { threadId: options.sessionId, excludeTurns: true }
             : {}),
           ...model,
+          ...(!options.resume && options.onDelegate
+            ? {
+                dynamicTools: [
+                  {
+                    type: 'function',
+                    name: 'nesvo_delegate',
+                    description:
+                      'Propose one or two visible workers for separate, explicitly described tasks and scopes. Each worker starts only after operator approval. Use existing directories within the root workspace ("." is allowed). Choose an available Codex model ID or a Claude alias (default, opus, sonnet, haiku). The tool waits for every operator decision and actual worker outcome. Workers cannot delegate. Keep the root read-only while workers operate.',
+                    inputSchema: options.delegationSchema,
+                    deferLoading: false,
+                  },
+                ],
+              }
+            : {}),
           cwd: options.directory,
           approvalPolicy,
           approvalsReviewer: 'user',
@@ -1050,6 +1198,8 @@ export function startCodex(options: {
     } finally {
       clearTimeout(timer);
       finished = true;
+      delegationController.abort();
+      pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
       const exit = await peer?.close();
       if (exit && !exit.confirmed)
@@ -1066,6 +1216,8 @@ export function startCodex(options: {
     stop: () => {
       stopTask ??= (async () => {
         stopped = true;
+        delegationController.abort();
+        pendingDelegates.clear();
         resolveTurn({ status: 'stopped', error: null });
         for (const id of approvals.keys()) resolveApproval(id);
         if (peer && threadId && turnId)
