@@ -43,6 +43,7 @@ export const delegationSchema = workerProposalSchema.safeExtend({
     'interrupted',
   ]),
   childSessionId: z.uuid().nullable(),
+  childRunId: z.uuid().nullable().optional(),
   error: z.string().nullable(),
 });
 export const approvalSchema = z.strictObject({
@@ -61,6 +62,12 @@ export const sessionStateSchema = z.enum([
   'failed',
   'interrupted',
 ]);
+export const sessionInterruptionSchema = z.strictObject({
+  runId: z.uuid(),
+  reason: z.enum(['host-shutdown', 'host-restart', 'provider-disconnected']),
+  at: z.iso.datetime(),
+});
+export type SessionInterruption = z.infer<typeof sessionInterruptionSchema>;
 export const createSessionSchema = z
   .strictObject({
     title: z.string().trim().min(1).max(100),
@@ -115,6 +122,7 @@ export const sessionMessageSchema = z.strictObject({
   skillId: z.string().min(1).max(8192).optional(),
   skillHash: skillHashSchema.optional(),
   skill: skillReferenceSchema.optional(),
+  interruption: sessionInterruptionSchema.nullable().optional(),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -135,6 +143,7 @@ export const sessionSchema = z.strictObject({
   directory: z.string(),
   status: sessionStateSchema,
   error: z.string().nullable(),
+  interruption: sessionInterruptionSchema.nullable().optional(),
   activity: z.string().nullable(),
   activities: z
     .array(sessionActivitySchema)

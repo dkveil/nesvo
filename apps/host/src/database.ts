@@ -4,6 +4,28 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Effect } from 'effect';
 
+export const ownDataDirectory = (directory: string) =>
+  Effect.acquireRelease(
+    Effect.try(() => {
+      mkdirSync(directory, { recursive: true });
+      const ownership = new DatabaseSync(join(directory, 'ownership.sqlite'));
+      try {
+        ownership.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE');
+        return ownership;
+      } catch (error) {
+        ownership.close();
+        if ((error as { errcode?: number }).errcode === 5) {
+          console.error('Another Nesvo host already owns this data directory.');
+          throw new Error(
+            'Another Nesvo host already owns this data directory.',
+          );
+        }
+        throw error;
+      }
+    }),
+    ownership => Effect.sync(() => ownership.close()),
+  );
+
 export const openDatabase = (directory: string) =>
   Effect.acquireRelease(
     Effect.try(() => {

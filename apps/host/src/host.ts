@@ -7,7 +7,7 @@ import {
   type HostResponse,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
-import { openDatabase } from './database';
+import { openDatabase, ownDataDirectory } from './database';
 import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
@@ -25,6 +25,7 @@ type HostTransport = {
 export const serveHost = ({ directory, incoming, send }: HostTransport) =>
   Effect.scoped(
     Effect.gen(function* () {
+      yield* ownDataDirectory(directory);
       const database = yield* openDatabase(directory);
       const store = new SessionStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
@@ -55,6 +56,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         })),
         state =>
           Effect.promise(async () => {
+            await sessions.close();
             state.controller.abort();
             await Promise.all(state.pending);
           }),
