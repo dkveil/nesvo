@@ -3,7 +3,7 @@
 Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
 The product enables technical orchestration with visible workers and operator-controlled review.
 
-P0 and P1 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. Damian then accepted the delivered P3 scope and authorized P4 in D51. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
+P0, P1, the delivered Codex scope of P3 and P4 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. D51 accepted the delivered P3 scope; D52 accepted P4 and authorized P5. P5 is ready for separate owner review. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
 
 [Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
 and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
@@ -31,6 +31,8 @@ P4 uses new read-only Codex orchestrators with a native delegation tool and at m
 Damian accepted P4 and authorized P5 in D52. Real Windows Codex execution demonstrated two concurrent workers, correct result attribution, independent child Stop and preserved history. See docs/platforms.md for separate automated native evidence.
 
 P5 adds saved results with independent content versions and human decisions. The inbox shows the response, author, scope and a before/after workspace diff for writable runs. Corrections return to the same session and require a new acceptance. Prior dirty files are the baseline, not attributed to the new run. Read-only results are reviewed as responses; parent summaries reference exact child result versions. The host rejects stale decisions and never merges files. P5 ends with a separate owner review.
+
+P5 implementation 32c1861 passed real Codex execution on Windows: a file change, inbox feedback, correction in the same thread, rejection of the old version, acceptance of version 2 and preserved decision after reload. Native application and unpacked-package checks passed independently on all three operating systems using fixtures. See docs/platforms.md and REV-270 for evidence. P6 has not started and waits for Damian's P5 acceptance.
 
 P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
 Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.

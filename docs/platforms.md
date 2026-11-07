@@ -1,8 +1,18 @@
 # Platform verification
 
+## P5 result review
+
+Damian accepted P4 and authorized P5 in D52. P5 remains subject to his separate acceptance.
+
+On Windows, installed Codex 0.156.0 with the existing login and model gpt-6-sol completed a real Electron flow in an isolated non-Git directory. It changed note.txt from the existing baseline to Status: draft and Owner: Damian. The saved version 1 contained the actual before/after diff. Operator feedback through the inbox resumed the same provider thread and changed only the first line to Status: ready. Version 2 started pending with its own incremental diff; version 1 retained the correction decision. Accepting version 1 was rejected. Version 2 was accepted through the UI and retained its decision after renderer reload. An unrelated file remained unchanged. Native file-operation approvals were exercised separately from result acceptance. Screenshots and the recorded run are attached to REV-270.
+
+Local Windows passed strict types, ESLint, Prettier, build, both host integration cases and the expanded desktop scenario. The selective checks cover correction idempotency, old-version rejection, dirty baseline preservation, external edits, incomplete binary diffs, parent/worker result references and durable decisions. Independent host review found and corrected missing dependency fingerprint checks and lost child references on parent correction; both have focused regression coverage inside the existing host cases.
+
+The [foundation checks](https://github.com/dkveil/nesvo/actions/runs/42399007104) passed at implementation 32c1861. The [native application and unpacked-package checks](https://github.com/dkveil/nesvo/actions/runs/42399013114) passed independently on Windows, macOS and Linux at that same implementation. Every platform ran the two host cases and the full desktop flow in both the built app and the unpacked native package. These checks use explicit provider fixtures. Real account execution is verified on Windows only; successful Claude work remains open in P2. P5 is ready for Damian's review; automated acceptance of a sample result is not his acceptance of the stage.
+
 ## P4 visible delegation
 
-Damian accepted the delivered Codex scope in P3 and authorized P4 in D51. Successful Claude task evidence remains in P2. P4 is awaiting the owner's separate acceptance.
+Damian accepted the delivered Codex scope in P3 and authorized P4 in D51. Successful Claude task evidence remains in P2. He accepted P4 and authorized P5 in D52.
 
 Windows real-account evidence uses installed Codex 0.156.0, the existing login and model gpt-6-sol through Electron. The first group proposed two workers, created no child before approval, ran two workers concurrently and returned A=42 and B=17 from separate temporary files. The parent attributed both results correctly. The next turn resumed the same parent thread and again ran two workers. Stopping worker A through the UI left worker B able to finish with B=17; the parent reported A as stopped rather than successful. Both runs retained conversations and relationships after reload.
 
