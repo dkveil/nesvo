@@ -554,8 +554,64 @@ try {
   );
   assert.equal(await readFile(userSkillPath, 'utf8'), userSkillText);
   await closeSkills();
+  assert.ok(
+    (await readSkillsTrace()).every(
+      trace =>
+        !trace.methods.some(method =>
+          /^(?:account|model|thread|turn)\//.test(method),
+        ),
+    ),
+  );
   await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
+  const messageEditor = page.getByRole('textbox', {
+    name: 'Message',
+    exact: true,
+  });
+  const skillPicker = page.getByRole('listbox', {
+    name: 'Skills',
+    exact: true,
+  });
+  const projectSkillOption = skillPicker.getByRole('option', {
+    name: 'Fixture project skill',
+    exact: true,
+  });
+  const selectedSkillChip = page.getByLabel(
+    'Selected skill: Fixture project skill',
+    { exact: true },
+  );
+  await messageEditor.fill('/Fixture project');
+  await projectSkillOption.waitFor();
+  await messageEditor.press('Escape');
+  await skillPicker.waitFor({ state: 'hidden' });
+  assert.equal(await messageEditor.inputValue(), '/Fixture project');
+  await messageEditor.fill('');
+  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await projectSkillOption.waitFor();
+  assert.equal(
+    await skillPicker
+      .getByRole('option', { name: 'Fixture user skill', exact: true })
+      .getAttribute('aria-disabled'),
+    'true',
+  );
+  await messageEditor.press('ArrowDown');
+  await messageEditor.press('Enter');
+  await selectedSkillChip.waitFor();
+  assert.match(
+    await selectedSkillChip.getAttribute('title'),
+    /fixture-project-skill/,
+  );
+  await page.getByRole('button', { name: 'Remove skill', exact: true }).click();
+  await selectedSkillChip.waitFor({ state: 'hidden' });
+  await messageEditor.fill('/Fixture project');
+  await projectSkillOption.waitFor();
+  await messageEditor.press('Tab');
+  await selectedSkillChip.waitFor();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
+  assert.equal(await selectedSkillChip.count(), 0);
+  await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
+  await selectedSkillChip.waitFor();
   await send('fixture:stream');
+  await selectedSkillChip.waitFor({ state: 'hidden' });
   await message('Codex fixture streamed reply.').waitFor();
   const codexCompleted = await waitState(codex.id, 'completed');
   assert.equal(codexCompleted.actualModel, 'fixture-codex');
@@ -564,6 +620,33 @@ try {
     'Codex fixture streamed reply.',
   );
   assert.equal(codexCompleted.messages.at(-1).state, 'completed');
+  const requestedSkillMessage = codexCompleted.messages.at(-2);
+  assert.equal(requestedSkillMessage.skillId, requestedSkillMessage.skill.id);
+  assert.equal(requestedSkillMessage.skill.name, 'Fixture project skill');
+  assert.equal(requestedSkillMessage.skill.source, 'project');
+  const requestedSkillBadge = conversation.getByLabel(
+    'Requested skill: Fixture project skill',
+    { exact: true },
+  );
+  await requestedSkillBadge.waitFor();
+  assert.ok(
+    (await requestedSkillBadge.getAttribute('title')).includes(
+      requestedSkillMessage.skill.path,
+    ),
+  );
+  const selectedTurn = (await readSkillsTrace()).find(
+    trace =>
+      trace.directory === codex.directory && trace.method === 'turn/start',
+  );
+  assert.deepEqual(selectedTurn.input, [
+    { type: 'text', text: 'fixture:stream', text_elements: [] },
+    {
+      type: 'skill',
+      name: requestedSkillMessage.skill.name,
+      path: requestedSkillMessage.skill.path,
+    },
+  ]);
+  assert.equal(codexCompleted.mode, 'supervised');
   const completedActivities = runActivities(
     codexCompleted,
     codexCompleted.runId,
@@ -645,7 +728,17 @@ try {
     runActivities(restoredActivitySession, codexCompleted.runId),
     completedActivities,
   );
+  assert.deepEqual(
+    restoredActivitySession.messages.find(
+      message => message.id === requestedSkillMessage.id,
+    ).skill,
+    requestedSkillMessage.skill,
+  );
+  await requestedSkillBadge.waitFor();
   await message('Codex fixture file accepted.').waitFor();
+  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await projectSkillOption.click();
+  await selectedSkillChip.waitFor();
   await send('fixture:continue');
   await message('Codex fixture resumed reply.').waitFor();
   const codexResumed = await waitState(codex.id, 'completed');
@@ -656,6 +749,10 @@ try {
   assert.equal(
     codexResumed.messages.at(-1).body,
     'Codex fixture resumed reply.',
+  );
+  assert.deepEqual(
+    codexResumed.messages.at(-2).skill,
+    requestedSkillMessage.skill,
   );
   await send('fixture:approval-hold');
   await approval.waitFor();
