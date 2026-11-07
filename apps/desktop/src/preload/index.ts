@@ -18,6 +18,8 @@ import {
   workspaceDirectorySchema,
   workspaceSearchSchema,
   workspaceFileSchema,
+  discoverSkillsSchema,
+  skillCatalogSchema,
   type DesktopApi,
 } from '@nesvo/contracts';
 
@@ -48,6 +50,13 @@ const api: DesktopApi = {
       .parse(await ipcRenderer.invoke('nesvo:list-sessions')),
   listReviews: async () =>
     reviewSchema.array().parse(await ipcRenderer.invoke('nesvo:list-reviews')),
+  discoverSkills: async input =>
+    skillCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:discover-skills',
+        discoverSkillsSchema.parse(input),
+      ),
+    ),
   listWorkspaceDirectory: async input =>
     workspaceDirectorySchema.parse(
       await ipcRenderer.invoke(

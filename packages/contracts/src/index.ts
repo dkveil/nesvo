@@ -37,6 +37,12 @@ import {
   type WorkspaceSearch,
   type WorkspaceFile,
 } from './workspace';
+import {
+  discoverSkillsSchema,
+  skillCatalogSchema,
+  type DiscoverSkillsInput,
+  type SkillCatalog,
+} from './skills';
 
 export * from './sessions';
 export * from './activities';
@@ -61,6 +67,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ id: z.uuid(), method: z.literal('codex-status') }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-sessions') }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-reviews') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('discover-skills'),
+    input: discoverSkillsSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('list-workspace-directory'),
@@ -115,6 +126,11 @@ export const hostHealthSchema = z.strictObject({
 });
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('skills'),
+    id: z.uuid(),
+    catalog: skillCatalogSchema,
+  }),
   z.strictObject({
     type: z.literal('workspace-directory'),
     id: z.uuid(),
@@ -194,6 +210,7 @@ export type DesktopApi = {
   codexStatus: () => Promise<CodexStatus>;
   listSessions: () => Promise<Session[]>;
   listReviews: () => Promise<Review[]>;
+  discoverSkills: (input: DiscoverSkillsInput) => Promise<SkillCatalog>;
   listWorkspaceDirectory: (
     input: ListWorkspaceDirectoryInput,
   ) => Promise<WorkspaceDirectory>;

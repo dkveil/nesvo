@@ -12,6 +12,7 @@ import {
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
+  discoverSkillsSchema,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -104,6 +105,10 @@ void app.whenReady().then(() => {
   ipcMain.handle('nesvo:list-reviews', async event => {
     authorize(event);
     return host.listReviews();
+  });
+  ipcMain.handle('nesvo:discover-skills', async (event, input: unknown) => {
+    authorize(event);
+    return host.discoverSkills(discoverSkillsSchema.parse(input));
   });
   ipcMain.handle(
     'nesvo:list-workspace-directory',

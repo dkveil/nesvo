@@ -16,6 +16,7 @@ import {
   type ListWorkspaceDirectoryInput,
   type SearchWorkspaceFilesInput,
   type ReadWorkspaceFileInput,
+  type DiscoverSkillsInput,
 } from '@nesvo/contracts';
 
 export function startHost(directory: string) {
@@ -83,7 +84,11 @@ export function startHost(directory: string) {
           pending.delete(id);
           reject(new Error('Host timed out'));
         },
-        method === 'claude-status' || method === 'codex-status' ? 30000 : 15000,
+        method === 'claude-status' ||
+          method === 'codex-status' ||
+          method === 'discover-skills'
+          ? 30000
+          : 15000,
       );
       pending.set(id, { resolve, reject, timer });
       try {
@@ -148,6 +153,12 @@ export function startHost(directory: string) {
       if (response.type !== 'reviews')
         throw new Error('Unexpected host response');
       return response.reviews;
+    },
+    discoverSkills: async (input: DiscoverSkillsInput) => {
+      const response = await request('discover-skills', input);
+      if (response.type !== 'skills')
+        throw new Error('Unexpected host response');
+      return response.catalog;
     },
     listWorkspaceDirectory: async (input: ListWorkspaceDirectoryInput) => {
       const response = await request('list-workspace-directory', input);
