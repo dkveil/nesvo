@@ -3,6 +3,8 @@
 Nesvo uses open-source dependencies recorded in bun.lock. Their licenses remain applicable.
 Electron distributions retain their included license files.
 
+The saved-diff viewer uses @pierre/diffs, licensed under Apache-2.0. Its license and the notices for its bundled dependencies are preserved in apps/desktop/THIRD_PARTY_DIFF_LICENSES.txt and included as THIRD_PARTY_DIFF_LICENSES.txt in desktop distributions.
+
 ## shadcn UI components
 
 The UI component source files in apps/desktop/src/renderer/src/shared/ui are distributed under the following license.

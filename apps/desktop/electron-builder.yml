@@ -13,6 +13,8 @@ extraFiles:
     to: LICENSE.nesvo
   - from: ../../THIRD_PARTY_NOTICES.md
     to: THIRD_PARTY_NOTICES.md
+  - from: THIRD_PARTY_DIFF_LICENSES.txt
+    to: THIRD_PARTY_DIFF_LICENSES.txt
 win:
   target: zip
 mac:
