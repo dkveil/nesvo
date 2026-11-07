@@ -4,13 +4,7 @@ import type {
   RespondApprovalInput,
   Session,
 } from '@nesvo/contracts';
-import {
-  ArrowUpRight,
-  CheckCheck,
-  GitBranch,
-  Inbox,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowUpRight, Inbox } from 'lucide-react';
 import {
   compactPreview,
   reviewDate,
@@ -18,7 +12,7 @@ import {
   reviewStatusLabels,
   type Review,
 } from '@/entities/review';
-import { modeLabels, modelLabel, roleLabels } from '@/entities/session';
+import { directoryLabel, modeLabels, modelLabel } from '@/entities/session';
 import {
   ReviewDecision,
   type ReviewDecisionProps,
@@ -89,11 +83,11 @@ function approvalPreview(approval: Session['pendingApprovals'][number]) {
         return fallback;
       const action =
         change.type === 'add'
-          ? 'Zapis'
+          ? 'Write'
           : change.type === 'delete'
-            ? 'Usunięcie'
+            ? 'Delete'
             : change.type === 'update'
-              ? 'Edycja'
+              ? 'Edit'
               : '';
       if (!action) return fallback;
       const destination =
@@ -105,7 +99,7 @@ function approvalPreview(approval: Session['pendingApprovals'][number]) {
       const source = relativePath(header[2]!.trim());
       changes.push(
         typeof destination === 'string'
-          ? `Przeniesienie: ${source} → ${relativePath(destination)}`
+          ? `Move: ${source} → ${relativePath(destination)}`
           : `${action}: ${source}`,
       );
     } catch {
@@ -174,38 +168,46 @@ export function ReviewInbox({
       right.at.localeCompare(left.at) || left.id.localeCompare(right.id),
   );
   const sessionLink = (sessionId: string, title: string, target: string) => (
-    <Button
+    <button
       type="button"
-      variant="link"
-      size="sm"
-      className="h-auto min-w-0 justify-start px-0 py-0 text-left text-sm font-medium whitespace-normal [overflow-wrap:anywhere]"
-      aria-label={`Otwórz sesję: ${title}`}
+      className="inline-flex max-w-full items-center gap-1.5 text-left text-sm font-medium text-foreground hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      aria-label={`Open session: ${title}`}
       onClick={() => onSession(sessionId, target)}
     >
-      {title}
-      <ArrowUpRight className="size-3 shrink-0" />
-    </Button>
+      <span className="truncate">{title}</span>
+      <ArrowUpRight className="size-3 shrink-0 text-muted-foreground" />
+    </button>
   );
+  const directory = (path: string) => (
+    <span
+      className="truncate"
+      title={path}
+      aria-label={`Working directory: ${path}`}
+    >
+      {directoryLabel(path)}
+    </span>
+  );
+  const rowClass =
+    'grid grid-cols-1 items-start gap-x-5 gap-y-2 py-3.5 md:grid-cols-[minmax(0,1fr)_auto]';
+  const actionClass = 'flex flex-wrap items-center gap-1.5 self-center';
   return (
     <ScrollArea className="min-h-0 min-w-0 flex-1">
       <section
-        aria-label="Skrzynka odbioru"
-        className="mx-auto max-w-3xl space-y-6 px-5 py-8 lg:px-6"
+        aria-label="Inbox"
+        className="mx-auto w-full max-w-5xl px-5 py-5 lg:px-8"
       >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            {rows.length}{' '}
             {filter === 'history'
-              ? 'Historia decyzji'
+              ? 'past decisions'
               : filter === 'all'
-                ? 'Wszystkie sprawy'
-                : `Oczekujące · ${rows.length}`}
-          </h2>
+                ? 'items'
+                : 'pending'}
+          </span>
           <div className="flex items-center gap-2">
-            <Label
-              htmlFor="inbox-filter"
-              className="text-xs text-muted-foreground"
-            >
-              Widok
+            <Label htmlFor="inbox-filter" className="sr-only">
+              View
             </Label>
             <Select
               value={filter}
@@ -218,115 +220,112 @@ export function ReviewInbox({
                   setFilter(value);
               }}
             >
-              <SelectTrigger id="inbox-filter" className="w-40">
+              <SelectTrigger
+                id="inbox-filter"
+                size="sm"
+                className="h-7 w-28 border-transparent bg-transparent text-xs shadow-none dark:bg-transparent"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="pending">Do decyzji</SelectItem>
-                <SelectItem value="history">Historia</SelectItem>
-                <SelectItem value="all">Wszystkie</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="history">History</SelectItem>
+                <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </div>
         {error && (
-          <div className="space-y-2">
+          <div className="mb-4 flex flex-wrap items-center gap-3">
             <p
               role="alert"
-              className="text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
+              className="text-xs text-destructive [overflow-wrap:anywhere]"
             >
               {error}
             </p>
-            <Button size="sm" variant="outline" onClick={onRefresh}>
-              Odśwież wyniki
+            <Button size="sm" variant="ghost" onClick={onRefresh}>
+              Refresh results
             </Button>
           </div>
         )}
         {loading && (
-          <p role="status" className="text-xs text-muted-foreground">
-            Wczytywanie wyników…
+          <p role="status" className="py-3 text-xs text-muted-foreground">
+            Loading results…
           </p>
         )}
+        {filter !== 'history' &&
+          decisionProps.blockedReason &&
+          reviews.some(review => review.status === 'pending') && (
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              {decisionProps.blockedReason}
+            </p>
+          )}
+        {filter !== 'history' &&
+          !operationEnabled &&
+          rows.some(row => row.type !== 'review') && (
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              Reconnect to respond to pending requests.
+            </p>
+          )}
         {rows.length > 0 ? (
-          <div className="divide-y border-y">
+          <div className="divide-y divide-border/80">
             {rows.map(row => {
               if (row.type === 'review') {
                 const { review } = row;
-                const sessionTitle =
+                const title =
                   sessions.find(session => session.id === review.sessionId)
                     ?.title ?? review.title;
                 return (
                   <article
                     key={`review/${row.id}`}
-                    aria-label={`Odbiór wyniku: ${review.title}, wersja ${review.version}`}
-                    className="space-y-2.5 px-1 py-5"
+                    aria-label={`Review result: ${review.title}, version ${review.version}`}
+                    className={rowClass}
                   >
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <CheckCheck className="size-3.5" />
-                      <span>Odbiór wyniku</span>
-                      <span>·</span>
-                      <span>Wersja {review.version}</span>
-                      <span>·</span>
-                      <span>{reviewStatusLabels[review.status]}</span>
+                    <div className="min-w-0 space-y-1">
+                      {sessionLink(
+                        review.sessionId,
+                        title,
+                        `review-${review.id}`,
+                      )}
+                      <p className="line-clamp-2 text-[13px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+                        {reviewPreview(review)}
+                      </p>
+                      <p className="flex flex-wrap gap-x-2 gap-y-1 text-[11px] leading-4 text-muted-foreground">
+                        <span>
+                          Result · v{review.version} ·{' '}
+                          {reviewStatusLabels[review.status]}
+                        </span>
+                        {review.diff.status === 'unavailable' && (
+                          <span>· Diff unavailable</span>
+                        )}
+                        <time dateTime={review.createdAt}>
+                          {reviewDate(review.createdAt)}
+                        </time>
+                      </p>
+                      {review.decision?.feedback && (
+                        <p
+                          className="line-clamp-1 text-[11px] text-muted-foreground"
+                          title={review.decision.feedback}
+                        >
+                          {compactPreview(review.decision.feedback, 200)}
+                        </p>
+                      )}
                     </div>
-                    {sessionLink(
-                      review.sessionId,
-                      sessionTitle,
-                      `review-${review.id}`,
-                    )}
-                    {review.title !== sessionTitle && (
-                      <h3 className="text-sm font-medium [overflow-wrap:anywhere]">
-                        {review.title}
-                      </h3>
-                    )}
-                    <p className="text-sm leading-relaxed [overflow-wrap:anywhere]">
-                      {reviewPreview(review)}
-                    </p>
-                    <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <span>
-                        {roleLabels[review.role]} · {review.provider}
-                      </span>
-                      <span>
-                        {review.diff.status === 'complete'
-                          ? `Pliki w porównaniu: ${review.diff.files.length}`
-                          : review.diff.status === 'not-applicable'
-                            ? 'Podsumowanie analizy'
-                            : 'Porównanie zmian niedostępne'}
-                      </span>
-                      <time dateTime={review.createdAt}>
-                        {reviewDate(review.createdAt)}
-                      </time>
-                    </p>
                     {review.status === 'pending' ? (
-                      <ReviewDecision review={review} {...decisionProps} />
+                      <ReviewDecision
+                        compact
+                        review={review}
+                        {...decisionProps}
+                      />
                     ) : (
-                      <>
-                        {review.decision && (
-                          <div className="space-y-1 text-xs leading-relaxed text-muted-foreground">
-                            <p>
-                              {review.decision.decision === 'accept'
-                                ? 'Zaakceptowano tę wersję.'
-                                : 'Odesłano tę wersję do poprawy.'}{' '}
-                              <time dateTime={review.decision.at}>
-                                {reviewDate(review.decision.at)}
-                              </time>
-                            </p>
-                            {review.decision.feedback && (
-                              <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-                                {compactPreview(review.decision.feedback, 360)}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        {decisionProps.decisionErrors[review.id] && (
-                          <p
-                            role="alert"
-                            className="text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
-                          >
-                            {decisionProps.decisionErrors[review.id]}
-                          </p>
-                        )}
-                      </>
+                      decisionProps.decisionErrors[review.id] && (
+                        <p
+                          role="alert"
+                          className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
+                        >
+                          {decisionProps.decisionErrors[review.id]}
+                        </p>
+                      )
                     )}
                   </article>
                 );
@@ -336,39 +335,43 @@ export function ReviewInbox({
                 const { approval } = row;
                 const deciding = !!approvalPending[row.id];
                 const enabled = operationEnabled && !deciding;
+                const preview = approvalPreview(approval) || approval.title;
                 return (
                   <article
                     key={`approval/${row.id}`}
-                    aria-label={`Zgoda na operację: ${session.title}`}
+                    aria-label={`Operation approval: ${session.title}`}
                     data-approval-id={approval.id}
-                    className="space-y-2.5 px-1 py-5"
+                    className={rowClass}
                   >
-                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <ShieldCheck className="size-3.5" />
-                      {approval.kind === 'command'
-                        ? 'Zgoda na polecenie'
-                        : 'Zgoda na zmianę plików'}
-                    </p>
-                    {sessionLink(
-                      session.id,
-                      session.title,
-                      `approval-${approval.id}`,
-                    )}
-                    <h3 className="text-sm font-medium [overflow-wrap:anywhere]">
-                      {approval.title}
-                    </h3>
-                    {approval.detail && (
-                      <p className="text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-                        {approvalPreview(approval)}
+                    <div className="min-w-0 space-y-1">
+                      {sessionLink(
+                        session.id,
+                        session.title,
+                        `approval-${approval.id}`,
+                      )}
+                      <p
+                        className="line-clamp-2 text-[13px] leading-5 [overflow-wrap:anywhere]"
+                        title={`${approval.title}\n${approval.detail}`}
+                      >
+                        {preview}
                       </p>
-                    )}
-                    <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                      Katalog pracy: {approval.directory ?? session.directory}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
+                      <p className="flex items-center gap-2 text-[11px] leading-4 text-muted-foreground">
+                        <span className="shrink-0">
+                          {approval.kind === 'command'
+                            ? 'Command approval'
+                            : 'File approval'}{' '}
+                          · {session.provider}
+                        </span>
+                        <span>·</span>
+                        {directory(approval.directory ?? session.directory)}
+                      </p>
+                    </div>
+                    <div className={actionClass}>
                       <Button
                         type="button"
                         size="sm"
+                        variant="secondary"
+                        className="h-7 px-2.5 text-[13px] font-normal"
                         disabled={!enabled}
                         onClick={() => {
                           if (session.runId)
@@ -380,12 +383,13 @@ export function ReviewInbox({
                             });
                         }}
                       >
-                        Zezwól jednorazowo
+                        Allow once
                       </Button>
                       <Button
                         type="button"
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
+                        className="h-7 px-2 text-[13px] font-normal text-muted-foreground"
                         disabled={!enabled}
                         onClick={() => {
                           if (session.runId)
@@ -397,20 +401,21 @@ export function ReviewInbox({
                             });
                         }}
                       >
-                        Odmów
+                        Deny
                       </Button>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {deciding
-                        ? 'Przekazywanie decyzji…'
-                        : operationEnabled
-                          ? 'Decyzja dotyczy tylko tej operacji. Pełne szczegóły są w sesji.'
-                          : 'Połącz ponownie z hostem, aby podjąć decyzję.'}
-                    </p>
+                    {deciding && (
+                      <p
+                        role="status"
+                        className="col-span-full text-[11px] text-muted-foreground"
+                      >
+                        Sending decision…
+                      </p>
+                    )}
                     {operationErrors[session.id] && (
                       <p
                         role="alert"
-                        className="text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
+                        className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
                       >
                         {operationErrors[session.id]}
                       </p>
@@ -424,37 +429,43 @@ export function ReviewInbox({
               return (
                 <article
                   key={`delegation/${row.id}`}
-                  aria-label={`Uruchomienie workera: ${delegation.title}`}
-                  className="space-y-2.5 px-1 py-5"
+                  aria-label={`Start worker: ${delegation.title}`}
+                  className={rowClass}
                 >
-                  <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <GitBranch className="size-3.5" />
-                    Uruchomienie workera
-                  </p>
-                  {sessionLink(
-                    session.id,
-                    session.title,
-                    `delegation-${delegation.id}`,
-                  )}
-                  <h3 className="text-sm font-medium [overflow-wrap:anywhere]">
-                    {delegation.title}
-                  </h3>
-                  <p className="text-sm leading-relaxed [overflow-wrap:anywhere]">
-                    {compactPreview(delegation.task, 320)}
-                  </p>
-                  <p className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-                    Zakres: {delegation.scope}
-                  </p>
-                  <p className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-                    {delegation.provider} · {modelLabel(delegation.model)} ·{' '}
-                    {modeLabels[delegation.mode]}
-                    <br />
-                    Katalog względem sesji: {delegation.directory}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="min-w-0 space-y-1">
+                    {sessionLink(
+                      session.id,
+                      session.title,
+                      `delegation-${delegation.id}`,
+                    )}
+                    <p
+                      className="line-clamp-2 text-[13px] leading-5 [overflow-wrap:anywhere]"
+                      title={delegation.task}
+                    >
+                      {delegation.title}: {compactPreview(delegation.task, 180)}
+                    </p>
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-4 text-muted-foreground">
+                      <span>
+                        Worker · {delegation.provider} ·{' '}
+                        {modelLabel(delegation.model)} ·{' '}
+                        {modeLabels[delegation.mode]}
+                      </span>
+                      <span
+                        title={delegation.scope}
+                        aria-label={`Scope: ${delegation.scope}`}
+                        className="max-w-40 truncate"
+                      >
+                        {delegation.scope}
+                      </span>
+                      {directory(delegation.directory)}
+                    </p>
+                  </div>
+                  <div className={actionClass}>
                     <Button
                       type="button"
                       size="sm"
+                      variant="secondary"
+                      className="h-7 px-2.5 text-[13px] font-normal"
                       disabled={!enabled}
                       onClick={() => {
                         if (session.runId)
@@ -466,12 +477,13 @@ export function ReviewInbox({
                           });
                       }}
                     >
-                      Zatwierdź workera
+                      Approve worker
                     </Button>
                     <Button
                       type="button"
                       size="sm"
-                      variant="outline"
+                      variant="ghost"
+                      className="h-7 px-2 text-[13px] font-normal text-muted-foreground"
                       disabled={!enabled}
                       onClick={() => {
                         if (session.runId)
@@ -483,20 +495,21 @@ export function ReviewInbox({
                           });
                       }}
                     >
-                      Odrzuć propozycję
+                      Decline
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    {deciding
-                      ? 'Przekazywanie decyzji…'
-                      : operationEnabled
-                        ? 'Zgoda uruchamia tego workera w pokazanym zakresie i trybie.'
-                        : 'Połącz ponownie z hostem, aby podjąć decyzję.'}
-                  </p>
+                  {deciding && (
+                    <p
+                      role="status"
+                      className="col-span-full text-[11px] text-muted-foreground"
+                    >
+                      Sending decision…
+                    </p>
+                  )}
                   {operationErrors[session.id] && (
                     <p
                       role="alert"
-                      className="text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
+                      className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
                     >
                       {operationErrors[session.id]}
                     </p>
@@ -508,17 +521,17 @@ export function ReviewInbox({
         ) : (
           !loading &&
           !error && (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-center">
-              <Inbox className="size-7 text-muted-foreground" />
-              <h3 className="text-lg font-medium">
+            <div className="flex min-h-64 flex-col items-center justify-center gap-2 text-center">
+              <Inbox className="mb-1 size-5 text-muted-foreground" />
+              <h2 className="text-sm font-medium">
                 {filter === 'history'
-                  ? 'Brak decyzji w historii'
-                  : 'Nie ma teraz decyzji do podjęcia'}
-              </h3>
-              <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+                  ? 'No past decisions'
+                  : 'You are all caught up'}
+              </h2>
+              <p className="max-w-sm text-xs leading-5 text-muted-foreground">
                 {filter === 'history'
-                  ? 'Zapisane odbiory wyników i uwagi do poprawy pojawią się tutaj.'
-                  : 'Tutaj pojawią się zgody na operacje, propozycje workerów i ukończone wyniki.'}
+                  ? 'Decisions and feedback will appear here.'
+                  : 'Requests and completed results will appear here.'}
               </p>
             </div>
           )
