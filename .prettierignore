@@ -22,6 +22,7 @@
 !apps/host/tests/
 !apps/host/tests/host.integration.test.mjs
 !apps/host/tests/claude-fixture.mjs
+!apps/host/tests/codex-fixture.mjs
 !packages/
 !packages/contracts/
 !packages/contracts/**

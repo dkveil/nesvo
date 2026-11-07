@@ -20,13 +20,24 @@ import { fileURLToPath } from 'node:url';
 const fixturePath = fileURLToPath(
   new URL('./claude-fixture.mjs', import.meta.url),
 );
+const codexFixturePath = fileURLToPath(
+  new URL('./codex-fixture.mjs', import.meta.url),
+);
 
 function bounded(promise, description, timeout = 10_000) {
   let timer;
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(description)), timeout);
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              typeof description === 'function' ? description() : description,
+            ),
+          ),
+        timeout,
+      );
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -38,6 +49,8 @@ function launch(directory, pidFile) {
       NESVO_DATA_DIR: directory,
       NESVO_CLAUDE_EXECUTABLE: fixturePath,
       NESVO_FIXTURE_PID_FILE: pidFile,
+      NESVO_CODEX_EXECUTABLE: codexFixturePath,
+      NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -118,9 +131,11 @@ function launch(directory, pidFile) {
         Object.assign(waiter, { resolve, reject });
         waiters.add(waiter);
       });
-      return bounded(promise, `Session event timed out: ${stderr}`).finally(
-        () => waiters.delete(waiter),
-      );
+      return bounded(
+        promise,
+        () =>
+          `Session event timed out: ${stderr}\n${JSON.stringify(observed.slice(-4).map(session => ({ provider: session.provider, status: session.status, error: session.error, body: agent(session)?.body, approvals: session.pendingApprovals?.map(approval => ({ id: approval.id, kind: approval.kind, detail: approval.detail.slice(0, 300) })) })))}`,
+      ).finally(() => waiters.delete(waiter));
     },
     stop: async () => {
       assert.equal((await request('shutdown')).type, 'shutdown');
@@ -383,7 +398,7 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 3);
     migrated.close();
     const reopened = open();
     assert.equal(
@@ -414,11 +429,18 @@ test(
     interrupted.status = 'running';
     interrupted.activity = 'Lost host';
     agent(interrupted).state = 'running';
+    delete interrupted.mode;
+    delete interrupted.pendingApprovals;
     recovery
       .prepare('UPDATE sessions SET document = ? WHERE id = ?')
       .run(JSON.stringify(interrupted), session.id);
+    recovery.exec('PRAGMA user_version = 2');
     recovery.close();
     const recovered = open();
+    assert.equal(
+      (await recovered.request('health')).health.instanceId,
+      instanceId,
+    );
     const recoveredSession = (
       await recovered.request('list-sessions')
     ).sessions.find(value => value.id === session.id);
@@ -427,6 +449,9 @@ test(
     assert.equal(recoveredSession.activity, null);
     assert.ok(recoveredSession.error);
     assert.ok(recoveredSession.revision > resumed.revision);
+    assert.equal(recoveredSession.mode, 'read-only');
+    assert.deepEqual(recoveredSession.pendingApprovals, []);
+    assert.equal(recoveredSession.provider, 'Claude Code');
     const shutdownRun = await hold(recovered);
     await recovered.stop();
     await processesGone(shutdownRun.pids);
@@ -444,7 +469,278 @@ test(
     ).sessions.find(value => value.id === session.id);
     assert.equal(finalSession.status, 'stopped');
     assert.equal(agent(finalSession).state, 'stopped');
+    const codexStatus = await finalHost.request('codex-status');
+    assert.equal(codexStatus.type, 'codex-status');
+    assert.equal(
+      codexStatus.status.status,
+      'ready',
+      JSON.stringify(codexStatus),
+    );
+    assert.equal(codexStatus.status.version, '0.156.0');
+    assert.ok(
+      codexStatus.status.models.some(model => model.id === 'fixture-codex'),
+    );
+    const createCodex = async mode => {
+      const response = await finalHost.request('create-session', {
+        ...create(''),
+        provider: 'Codex',
+        model: 'fixture-codex',
+        mode,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      assert.equal(response.session.providerSessionId, null);
+      assert.deepEqual(response.session.pendingApprovals, []);
+      return response.session;
+    };
+    const sendCodex = async (currentHost, target, text) => {
+      const response = await currentHost.request('send-message', {
+        sessionId: target.id,
+        messageId: randomUUID(),
+        text,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const readOnly = await createCodex('read-only');
+    const codexRun = await sendCodex(finalHost, readOnly, 'fixture:stream');
+    await finalHost.event(
+      value =>
+        value.runId === codexRun.runId &&
+        agent(value).body === 'Codex fixture streamed ',
+    );
+    assert.equal(
+      finalHost.observed.some(
+        value => value.runId === codexRun.runId && value.status === 'completed',
+      ),
+      false,
+    );
+    assert.equal((await finalHost.request('health')).health.status, 'ready');
+    const codexCompleted = await finalHost.event(
+      value => value.runId === codexRun.runId && value.status === 'completed',
+    );
+    assert.equal(agent(codexCompleted).body, 'Codex fixture streamed reply.');
+    assert.equal(codexCompleted.actualModel, 'fixture-codex');
+    assert.ok(codexCompleted.providerSessionId);
+    const unsafeRead = await sendCodex(finalHost, readOnly, 'fixture:approve');
+    const rejectedRead = await finalHost.event(
+      value => value.runId === unsafeRead.runId && value.status === 'failed',
+    );
+    assert.deepEqual(rejectedRead.pendingApprovals, []);
+    await assert.rejects(
+      readFile(
+        join(
+          readOnly.directory,
+          `.nesvo-codex-action-${codexCompleted.providerSessionId}-command.json`,
+        ),
+      ),
+      { code: 'ENOENT' },
+    );
+
+    const supervised = await createCodex('supervised');
+    for (const prompt of [
+      'fixture:missing-command',
+      'fixture:missing-changes',
+      'fixture:oversize-approval',
+    ]) {
+      const malformed = await sendCodex(finalHost, supervised, prompt);
+      const refused = await finalHost.event(
+        value => value.runId === malformed.runId && value.status === 'failed',
+      );
+      assert.ok(refused.error);
+      assert.deepEqual(refused.pendingApprovals, []);
+      assert.equal(
+        finalHost.observed.some(
+          value =>
+            value.runId === malformed.runId &&
+            value.pendingApprovals.length > 0,
+        ),
+        false,
+      );
+      for (const kind of ['command', 'file']) {
+        await assert.rejects(
+          readFile(
+            join(
+              supervised.directory,
+              `.nesvo-codex-action-${refused.providerSessionId}-${kind}.json`,
+            ),
+          ),
+          { code: 'ENOENT' },
+        );
+      }
+    }
+    const requestApproval = async (currentHost, prompt) => {
+      const run = await sendCodex(currentHost, supervised, prompt);
+      const pending = await currentHost.event(
+        value =>
+          value.runId === run.runId && value.pendingApprovals.length === 1,
+      );
+      assert.equal(pending.status, 'running');
+      return { run, pending, approval: pending.pendingApprovals[0] };
+    };
+    const decision = (pending, choice, overrides = {}) => ({
+      sessionId: supervised.id,
+      runId: pending.run.runId,
+      requestId: pending.approval.id,
+      decision: choice,
+      ...overrides,
+    });
+    const command = await requestApproval(finalHost, 'fixture:approve');
+    assert.equal(command.approval.kind, 'command');
+    assert.equal(command.approval.directory, supervised.directory);
+    assert.match(command.approval.detail, /fixture write approved marker/);
+    for (const overrides of [
+      { sessionId: readOnly.id },
+      { runId: randomUUID() },
+      { requestId: 'stale-request' },
+    ]) {
+      assert.equal(
+        (
+          await finalHost.request(
+            'respond-approval',
+            decision(command, 'accept', overrides),
+          )
+        ).code,
+        'invalid-request',
+      );
+    }
+    await assert.rejects(
+      readFile(
+        join(
+          supervised.directory,
+          `.nesvo-codex-action-${command.pending.providerSessionId}-command.json`,
+        ),
+      ),
+      { code: 'ENOENT' },
+    );
+    assert.equal(
+      (
+        await finalHost.request(
+          'respond-approval',
+          decision(command, 'decline'),
+        )
+      ).type,
+      'session',
+    );
+    const declined = await finalHost.event(
+      value =>
+        value.runId === command.run.runId && value.status === 'completed',
+    );
+    assert.equal(agent(declined).body, 'Codex fixture command declined.');
+    assert.deepEqual(declined.pendingApprovals, []);
+    await assert.rejects(
+      readFile(
+        join(
+          supervised.directory,
+          `.nesvo-codex-action-${declined.providerSessionId}-command.json`,
+        ),
+      ),
+      { code: 'ENOENT' },
+    );
+    for (const [prompt, kind] of [
+      ['fixture:file', 'file-change'],
+      ['fixture:approve', 'command'],
+    ]) {
+      const approval = await requestApproval(finalHost, prompt);
+      assert.equal(approval.approval.kind, kind);
+      assert.equal(
+        (
+          await finalHost.request(
+            'respond-approval',
+            decision(approval, 'accept'),
+          )
+        ).type,
+        'session',
+      );
+      const accepted = await finalHost.event(
+        value =>
+          value.runId === approval.run.runId && value.status === 'completed',
+      );
+      const actionKind = kind === 'file-change' ? 'file' : 'command';
+      assert.equal(
+        agent(accepted).body,
+        `Codex fixture ${actionKind} accepted.`,
+      );
+      assert.deepEqual(accepted.pendingApprovals, []);
+      const marker = JSON.parse(
+        await readFile(
+          join(
+            supervised.directory,
+            `.nesvo-codex-action-${accepted.providerSessionId}-${actionKind}.json`,
+          ),
+          'utf8',
+        ),
+      );
+      assert.equal(marker.kind, actionKind);
+      assert.equal(marker.decision, 'accept');
+      assert.equal(
+        (
+          await finalHost.request(
+            'respond-approval',
+            decision(approval, 'accept'),
+          )
+        ).code,
+        'invalid-request',
+      );
+    }
+    const codexHold = async currentHost => {
+      const pending = await requestApproval(
+        currentHost,
+        'fixture:approval-hold',
+      );
+      const pids = JSON.parse(await readFile(pidFile + '.codex', 'utf8'));
+      assert.equal(pids.sessionId, pending.pending.providerSessionId);
+      assert.ok(alive(pids.pid));
+      assert.ok(alive(pids.childPid));
+      ownedPids.push(pids.pid, pids.childPid);
+      return { ...pending, pids: [pids.pid, pids.childPid] };
+    };
+    const approvalStopped = await codexHold(finalHost);
+    await finalHost.request('stop-run', {
+      sessionId: supervised.id,
+      runId: approvalStopped.run.runId,
+    });
+    const stoppedApproval = await finalHost.event(
+      value =>
+        value.runId === approvalStopped.run.runId && value.status === 'stopped',
+    );
+    assert.deepEqual(stoppedApproval.pendingApprovals, []);
+    await processesGone(approvalStopped.pids);
+    assert.equal(
+      (
+        await finalHost.request(
+          'respond-approval',
+          decision(approvalStopped, 'accept'),
+        )
+      ).code,
+      'invalid-request',
+    );
     await finalHost.stop();
+    const codexReopened = open();
+    const nativeContinuation = await sendCodex(
+      codexReopened,
+      readOnly,
+      'fixture:continue',
+    );
+    const nativeResumed = await codexReopened.event(
+      value =>
+        value.runId === nativeContinuation.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(agent(nativeResumed).body, 'Codex fixture resumed reply.');
+    assert.equal(
+      nativeResumed.providerSessionId,
+      codexCompleted.providerSessionId,
+    );
+    const awaitingShutdown = await codexHold(codexReopened);
+    await codexReopened.stop();
+    await processesGone(awaitingShutdown.pids);
+    const checked = open();
+    const shutdownSession = (
+      await checked.request('list-sessions')
+    ).sessions.find(value => value.id === supervised.id);
+    assert.equal(shutdownSession.status, 'stopped');
+    assert.deepEqual(shutdownSession.pendingApprovals, []);
+    await checked.stop();
   },
 );
 
