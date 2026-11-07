@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ClaudeStatus, DesktopApi, Session } from '@nesvo/contracts';
-import { errorDetail } from '@/entities/session';
+import type { DesktopApi, Session } from '@nesvo/contracts';
+import {
+  errorDetail,
+  providers,
+  type Provider,
+  type ProviderStates,
+} from '@/entities/session';
 
 export function desktopApi(): DesktopApi {
   if (!window.nesvo)
@@ -10,6 +15,13 @@ export function desktopApi(): DesktopApi {
   return window.nesvo;
 }
 
+function initialProviders(): ProviderStates {
+  return {
+    'Claude Code': { status: null, loading: true, error: '' },
+    Codex: { status: null, loading: true, error: '' },
+  };
+}
+
 export function useSessions() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [connection, setConnection] = useState<
@@ -17,11 +29,12 @@ export function useSessions() {
   >('connecting');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [claude, setClaude] = useState<ClaudeStatus | null>(null);
-  const [claudeLoading, setClaudeLoading] = useState(true);
-  const [claudeError, setClaudeError] = useState('');
+  const [providerStates, setProviderStates] = useState(initialProviders);
   const [attempt, setAttempt] = useState(0);
-  const statusRequest = useRef(0);
+  const statusRequests = useRef<Record<Provider, number>>({
+    'Claude Code': 0,
+    Codex: 0,
+  });
   const merge = useCallback((updates: Session[]) => {
     setSessions(previous => {
       const merged = new Map(previous.map(session => [session.id, session]));
@@ -37,11 +50,39 @@ export function useSessions() {
       );
     });
   }, []);
+  const inspectProvider = useCallback(async (provider: Provider) => {
+    const request = ++statusRequests.current[provider];
+    setProviderStates(previous => ({
+      ...previous,
+      [provider]: { ...previous[provider], loading: true, error: '' },
+    }));
+    try {
+      const api = desktopApi();
+      const status = await (provider === 'Claude Code'
+        ? api.claudeStatus()
+        : api.codexStatus());
+      if (request === statusRequests.current[provider])
+        setProviderStates(previous => ({
+          ...previous,
+          [provider]: { status, loading: false, error: '' },
+        }));
+    } catch (failure) {
+      if (request === statusRequests.current[provider])
+        setProviderStates(previous => ({
+          ...previous,
+          [provider]: {
+            ...previous[provider],
+            loading: false,
+            error: `Nie udało się sprawdzić ${provider}. ${errorDetail(failure)}`,
+          },
+        }));
+    }
+  }, []);
   useEffect(() => {
+    const requestCounters = statusRequests.current;
     let active = true;
     let disconnected = false;
     let unsubscribe = () => {};
-    const request = ++statusRequest.current;
     try {
       const api = desktopApi();
       unsubscribe = api.subscribe(event => {
@@ -74,59 +115,37 @@ export function useSessions() {
           setLoading(false);
         },
       );
-      void api.claudeStatus().then(
-        status => {
-          if (active && request === statusRequest.current) {
-            setClaude(status);
-            setClaudeError('');
-            setClaudeLoading(false);
-          }
-        },
-        failure => {
-          if (active && request === statusRequest.current) {
-            setClaudeError(
-              `Nie udało się sprawdzić Claude Code. ${errorDetail(failure)}`,
-            );
-            setClaudeLoading(false);
-          }
-        },
-      );
+      queueMicrotask(() => {
+        if (active)
+          for (const provider of providers) void inspectProvider(provider);
+      });
     } catch (failure) {
       queueMicrotask(() => {
         if (!active) return;
         setConnection('unavailable');
         setLoading(false);
-        setClaudeLoading(false);
+        setProviderStates(
+          previous =>
+            Object.fromEntries(
+              providers.map(provider => [
+                provider,
+                { ...previous[provider], loading: false },
+              ]),
+            ) as ProviderStates,
+        );
         setError(errorDetail(failure));
       });
     }
     return () => {
       active = false;
-      statusRequest.current += 1;
+      for (const provider of providers) requestCounters[provider] += 1;
       unsubscribe();
     };
-  }, [attempt, merge]);
+  }, [attempt, inspectProvider, merge]);
   const refresh = () => {
     setLoading(true);
     setConnection('connecting');
-    setClaudeLoading(true);
     setAttempt(value => value + 1);
-  };
-  const refreshClaude = async () => {
-    const request = ++statusRequest.current;
-    setClaudeLoading(true);
-    setClaudeError('');
-    try {
-      const status = await desktopApi().claudeStatus();
-      if (request === statusRequest.current) setClaude(status);
-    } catch (failure) {
-      if (request === statusRequest.current)
-        setClaudeError(
-          `Nie udało się sprawdzić Claude Code. ${errorDetail(failure)}`,
-        );
-    } finally {
-      if (request === statusRequest.current) setClaudeLoading(false);
-    }
   };
   const recover = async () => {
     const history = await desktopApi().listSessions();
@@ -138,12 +157,10 @@ export function useSessions() {
     connection,
     loading,
     error,
-    claude,
-    claudeLoading,
-    claudeError,
+    providerStates,
     merge,
     refresh,
-    refreshClaude,
+    refreshProvider: inspectProvider,
     recover,
   };
 }

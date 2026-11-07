@@ -9,7 +9,7 @@ export function ReviewInbox() {
       <Inbox className="size-7 text-muted-foreground" />
       <h2 className="text-lg font-medium">Skrzynka jest pusta</h2>
       <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-        Odbiór wyników pojawi się w kolejnym etapie. Odpowiedzi Claude Code są
+        Odbiór wyników pojawi się w kolejnym etapie. Odpowiedzi agentów są
         dostępne w rozmowach.
       </p>
     </section>

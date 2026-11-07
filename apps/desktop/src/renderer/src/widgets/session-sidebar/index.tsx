@@ -90,7 +90,11 @@ export function SessionSidebar({
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{session.title}</span>
                 <span className="block pt-0.5 text-xs font-normal text-muted-foreground">
-                  {statusLabels[session.status]}
+                  {session.provider} ·{' '}
+                  {session.pendingApprovals.length > 0 &&
+                  session.status === 'running'
+                    ? 'Czeka na zgodę'
+                    : statusLabels[session.status]}
                 </span>
               </span>
             </Button>

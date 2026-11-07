@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react';
-import type {
-  ClaudeStatus,
-  CreateSessionInput,
-  Session,
-} from '@nesvo/contracts';
-import { errorDetail } from '@/entities/session';
+import type { CreateSessionInput, Session } from '@nesvo/contracts';
+import {
+  errorDetail,
+  modeLabels,
+  providerStatusLabel,
+  type Provider,
+  type ProviderStates,
+} from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -26,7 +28,8 @@ import {
 
 type Props = {
   open: boolean;
-  models: ClaudeStatus['models'];
+  statuses: ProviderStates;
+  onRefreshProvider: (provider: Provider) => void;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: CreateSessionInput) => Promise<Session>;
   onReturnFocus: () => void;
@@ -34,13 +37,21 @@ type Props = {
 
 export function CreateSession({
   open,
-  models,
+  statuses,
+  onRefreshProvider,
   onOpenChange,
   onCreate,
   onReturnFocus,
 }: Props) {
   const [title, setTitle] = useState('');
-  const [model, setModel] = useState<CreateSessionInput['model']>('default');
+  const [provider, setProvider] = useState<Provider>('Claude Code');
+  const [model, setModel] = useState('default');
+  const [mode, setMode] = useState<CreateSessionInput['mode']>('read-only');
+  const providerState = statuses[provider];
+  const models = providerState.status?.models ?? [];
+  const selectedModel = models.some(option => option.id === model)
+    ? model
+    : (models[0]?.id ?? 'default');
   const [role, setRole] = useState<CreateSessionInput['role']>('orchestrator');
   const [directory, setDirectory] = useState('');
   const [pending, setPending] = useState(false);
@@ -53,7 +64,9 @@ export function CreateSession({
     try {
       await onCreate({
         title: title.trim() || 'Nowa sesja',
-        model,
+        provider,
+        model: selectedModel,
+        mode,
         role,
         directory: directory.trim(),
       });
@@ -81,8 +94,8 @@ export function CreateSession({
         <DialogHeader>
           <DialogTitle>Nowa sesja</DialogTitle>
           <DialogDescription>
-            Rozmowa zostanie zapisana lokalnie. Claude Code uruchomi się po
-            wysłaniu pierwszej wiadomości.
+            Rozmowa zostanie zapisana lokalnie. Agent uruchomi się po wysłaniu
+            pierwszej wiadomości.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={event => void submit(event)} className="space-y-5">
@@ -100,29 +113,32 @@ export function CreateSession({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="session-provider">Provider</Label>
-              <Select value="Claude Code" disabled>
+              <Select
+                value={provider}
+                disabled={pending}
+                onValueChange={value => {
+                  if (value === 'Claude Code' || value === 'Codex') {
+                    setProvider(value);
+                    setModel('default');
+                    setMode('read-only');
+                  }
+                }}
+              >
                 <SelectTrigger id="session-provider" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Claude Code">Claude Code</SelectItem>
+                  <SelectItem value="Codex">Codex</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="session-model">Model</Label>
               <Select
-                value={model}
+                value={selectedModel}
                 disabled={pending || models.length === 0}
-                onValueChange={value => {
-                  if (
-                    value === 'default' ||
-                    value === 'opus' ||
-                    value === 'sonnet' ||
-                    value === 'haiku'
-                  )
-                    setModel(value);
-                }}
+                onValueChange={setModel}
               >
                 <SelectTrigger id="session-model" className="w-full">
                   <SelectValue placeholder="Domyślny" />
@@ -137,10 +153,72 @@ export function CreateSession({
               </Select>
             </div>
           </div>
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span role="status" className="text-muted-foreground">
+                {providerStatusLabel(provider, providerState)}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={pending || providerState.loading}
+                onClick={() => onRefreshProvider(provider)}
+              >
+                Odśwież status
+              </Button>
+            </div>
+            {providerState.error && (
+              <p
+                role="alert"
+                className="text-destructive [overflow-wrap:anywhere]"
+              >
+                {providerState.error}
+              </p>
+            )}
+            {providerState.status?.detail && (
+              <p className="text-muted-foreground [overflow-wrap:anywhere]">
+                {providerState.status.detail}
+              </p>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">
-            Obsługiwane aliasy Claude Code. Dostępność modelu na koncie zostanie
-            sprawdzona przy uruchomieniu.
+            {provider === 'Claude Code'
+              ? 'Obsługiwane aliasy Claude Code. Dostępność modelu na koncie zostanie sprawdzona przy uruchomieniu.'
+              : 'Modele udostępnione przez lokalny Codex. Dostępność na koncie zostanie sprawdzona przy uruchomieniu.'}
           </p>
+          <div className="space-y-2">
+            <Label htmlFor="session-mode">Tryb pracy</Label>
+            <Select
+              value={mode}
+              disabled={pending || provider === 'Claude Code'}
+              onValueChange={value => {
+                if (value === 'read-only' || value === 'supervised')
+                  setMode(value);
+              }}
+            >
+              <SelectTrigger id="session-mode" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="read-only">
+                  {modeLabels['read-only']}
+                </SelectItem>
+                {provider === 'Codex' && (
+                  <SelectItem value="supervised">
+                    {modeLabels.supervised}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {mode === 'read-only'
+                ? provider === 'Claude Code'
+                  ? 'Claude Code może czytać i wyszukiwać pliki. Edycja i polecenia terminala są wyłączone.'
+                  : 'Codex może czytać pliki i uruchamiać polecenia służące do odczytu. Zapis plików i podwyższanie uprawnień są wyłączone.'
+                : 'Codex może zmieniać pliki w katalogu pracy. O zgodę zapyta przy operacjach wymagających potwierdzenia; nie każda zmiana wymaga zgody.'}
+            </p>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="session-role">Rola sesji</Label>
             <Select
@@ -181,7 +259,7 @@ export function CreateSession({
               className="text-xs leading-relaxed text-muted-foreground"
             >
               Puste pole tworzy osobny lokalny folder. Wybrany katalog nie musi
-              być repozytorium Git. Analiza odbywa się tylko w trybie odczytu.
+              być repozytorium Git.
             </p>
           </div>
           {error && (

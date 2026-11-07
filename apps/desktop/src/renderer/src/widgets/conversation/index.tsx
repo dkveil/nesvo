@@ -6,7 +6,13 @@ import {
   MessageSquare,
   Square,
 } from 'lucide-react';
-import { roleLabels, statusLabels, type Session } from '@/entities/session';
+import type { RespondApprovalInput } from '@nesvo/contracts';
+import {
+  modeLabels,
+  roleLabels,
+  statusLabels,
+  type Session,
+} from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
@@ -17,6 +23,12 @@ type Props = {
   sending: boolean;
   canSend: boolean;
   otherRun: boolean;
+  approvalsEnabled: boolean;
+  approvalPending: Record<string, boolean>;
+  onApproval: (
+    requestId: string,
+    decision: RespondApprovalInput['decision'],
+  ) => void;
   error: string;
   onDraft: (value: string) => void;
   onSend: () => void;
@@ -29,6 +41,9 @@ export function Conversation({
   sending,
   canSend,
   otherRun,
+  approvalsEnabled,
+  approvalPending,
+  onApproval,
   error,
   onDraft,
   onSend,
@@ -69,8 +84,8 @@ export function Conversation({
               <MessageSquare className="size-7 text-muted-foreground" />
               <h2 className="text-lg font-medium">Od czego zaczynamy?</h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-                Opisz cel i zakres analizy. Claude Code może czytać pliki i
-                przygotować odpowiedź.
+                Opisz cel i zakres analizy. Agent odpowie w wybranym trybie
+                pracy.
               </p>
             </div>
           )}
@@ -90,7 +105,7 @@ export function Conversation({
                     : roleLabels[session.role]}
                   {message.author === 'agent' && (
                     <span className="text-xs font-normal text-muted-foreground">
-                      Claude Code · {statusLabels[message.state]}
+                      {session.provider} · {statusLabels[message.state]}
                     </span>
                   )}
                 </div>
@@ -103,6 +118,65 @@ export function Conversation({
               </div>
             </article>
           ))}
+          {session.pendingApprovals.map(approval => {
+            const pending =
+              !!approvalPending[
+                `${session.id}/${session.runId}/${approval.id}`
+              ];
+            const enabled =
+              approvalsEnabled &&
+              session.status === 'running' &&
+              !!session.runId &&
+              !pending;
+            return (
+              <section
+                key={`${session.runId}/${approval.id}`}
+                aria-label="Zgoda operatora"
+                className="space-y-3 rounded-lg border p-4"
+              >
+                <p className="text-xs text-muted-foreground">
+                  {approval.kind === 'command'
+                    ? 'Polecenie wymaga zgody'
+                    : 'Zmiana plików wymaga zgody'}
+                </p>
+                <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
+                  {approval.title}
+                </h2>
+                <pre className="max-h-60 overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {approval.detail}
+                </pre>
+                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  Katalog pracy: {approval.directory ?? session.directory}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!enabled}
+                    onClick={() => onApproval(approval.id, 'accept')}
+                  >
+                    Zezwól jednorazowo
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!enabled}
+                    onClick={() => onApproval(approval.id, 'decline')}
+                  >
+                    Odmów
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {pending
+                    ? 'Przekazywanie decyzji…'
+                    : enabled
+                      ? 'Decyzja dotyczy tylko tej operacji.'
+                      : 'Zgoda jest nieaktywna. Odśwież połączenie, aby sprawdzić aktualny stan.'}
+                </p>
+              </section>
+            );
+          })}
           {session.activity && running && (
             <p
               role="status"
@@ -162,7 +236,9 @@ export function Conversation({
                   ? 'Trwa praca w innej sesji'
                   : sending
                     ? 'Wysyłanie…'
-                    : 'Analiza · tylko odczyt'}
+                    : session.pendingApprovals.length > 0
+                      ? 'Oczekuje na decyzję operatora'
+                      : modeLabels[session.mode]}
               </span>
               {running ? (
                 <Button

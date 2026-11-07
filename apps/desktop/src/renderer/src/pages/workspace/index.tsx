@@ -1,5 +1,8 @@
 import { useRef, useState } from 'react';
-import type { CreateSessionInput } from '@nesvo/contracts';
+import type {
+  CreateSessionInput,
+  RespondApprovalInput,
+} from '@nesvo/contracts';
 import {
   Inbox,
   Menu,
@@ -10,7 +13,10 @@ import {
 } from 'lucide-react';
 import {
   errorDetail,
-  modelLabels,
+  modelLabel,
+  modeLabels,
+  providers,
+  providerStatusLabel,
   roleLabels,
   statusLabels,
 } from '@/entities/session';
@@ -43,6 +49,10 @@ export function Workspace() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
+  const [approvalPending, setApprovalPending] = useState<
+    Record<string, boolean>
+  >({});
+  const approvalRequests = useRef(new Set<string>());
   const draftVersions = useRef<Record<string, number>>({});
   const sendAttempts = useRef<
     Record<string, { text: string; messageId: string }>
@@ -52,6 +62,9 @@ export function Workspace() {
   const selected =
     store.sessions.find(session => session.id === selectedId) ??
     store.sessions[0];
+  const selectedProviderState = selected
+    ? store.providerStates[selected.provider]
+    : undefined;
   const activeRun = store.sessions.find(
     session => session.status === 'running' || session.status === 'stopping',
   );
@@ -89,9 +102,9 @@ export function Workspace() {
       sendingRef.current ||
       activeRun ||
       store.connection !== 'ready' ||
-      store.claude?.status !== 'ready' ||
-      store.claudeLoading ||
-      store.claudeError
+      selectedProviderState?.status?.status !== 'ready' ||
+      selectedProviderState.loading ||
+      selectedProviderState.error
     )
       return;
     const sessionId = selected.id;
@@ -171,6 +184,54 @@ export function Workspace() {
       stopping.current.delete(runId);
     }
   };
+  const respondApproval = async (
+    requestId: string,
+    decision: RespondApprovalInput['decision'],
+  ) => {
+    if (
+      !selected?.runId ||
+      selected.status !== 'running' ||
+      store.connection !== 'ready' ||
+      !selected.pendingApprovals.some(approval => approval.id === requestId)
+    )
+      return;
+    const { id: sessionId, runId } = selected;
+    const key = `${sessionId}/${runId}/${requestId}`;
+    if (approvalRequests.current.has(key)) return;
+    approvalRequests.current.add(key);
+    setApprovalPending(previous => ({ ...previous, [key]: true }));
+    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    try {
+      store.merge([
+        await desktopApi().respondApproval({
+          sessionId,
+          runId,
+          requestId,
+          decision,
+        }),
+      ]);
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [sessionId]: `Nie udało się przekazać decyzji. ${errorDetail(failure)}`,
+      }));
+      try {
+        await store.recover();
+      } catch (recoveryFailure) {
+        setErrors(previous => ({
+          ...previous,
+          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)}`,
+        }));
+      }
+    } finally {
+      approvalRequests.current.delete(key);
+      setApprovalPending(previous => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+    }
+  };
   const sidebarProps = {
     sessions: store.sessions,
     selectedId: selected?.id ?? '',
@@ -179,15 +240,12 @@ export function Workspace() {
     onInbox: openInbox,
     onCreate: openCreate,
   };
-  const providerLabel = store.claudeLoading
-    ? 'Sprawdzanie Claude Code…'
-    : {
-        ready: 'Claude Code jest gotowy',
-        missing: 'Nie znaleziono Claude Code',
-        unauthenticated: 'Claude Code wymaga logowania',
-        unsupported: 'Ta wersja Claude Code nie jest obsługiwana',
-        error: 'Claude Code jest niedostępny',
-      }[store.claude?.status ?? 'error'];
+  const noticeProviders = (selected ? [selected.provider] : providers).filter(
+    provider => {
+      const state = store.providerStates[provider];
+      return state.error || state.status?.status !== 'ready';
+    },
+  );
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       <aside className="hidden w-56 shrink-0 md:block">
@@ -228,10 +286,10 @@ export function Workspace() {
                 <>
                   <span>{roleLabels[selected.role]}</span>
                   <span>·</span>
-                  <span>Claude Code</span>
+                  <span>{selected.provider}</span>
                   <span>·</span>
                   <span>
-                    {selected.actualModel ?? modelLabels[selected.model]}
+                    {selected.actualModel ?? modelLabel(selected.model)}
                   </span>
                 </>
               ) : (
@@ -279,10 +337,8 @@ export function Workspace() {
             </Sheet>
           )}
         </header>
-        {(store.error ||
-          store.claudeError ||
-          store.claude?.status !== 'ready') && (
-          <div className="shrink-0 space-y-2 border-b px-5 py-3 text-xs lg:px-8">
+        {(store.error || noticeProviders.length > 0) && (
+          <div className="max-h-48 shrink-0 space-y-2 overflow-y-auto border-b px-5 py-3 text-xs lg:px-8">
             {store.error && (
               <div role="alert" className="space-y-2">
                 <p className="leading-relaxed text-destructive [overflow-wrap:anywhere]">
@@ -297,26 +353,40 @@ export function Workspace() {
                 </Button>
               </div>
             )}
-            {store.claudeError && (
-              <p
-                role="alert"
-                className="text-destructive [overflow-wrap:anywhere]"
-              >
-                {store.claudeError}
-              </p>
-            )}
-            <span role="status">{providerLabel}</span>
-            {store.claude?.detail && (
-              <p className="leading-relaxed whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
-                {store.claude.detail}
-              </p>
-            )}
-            {store.claude?.status === 'unauthenticated' && (
-              <p className="text-muted-foreground">
-                Zaloguj się w terminalu poleceniem{' '}
-                <code>claude auth login</code>, a następnie odśwież status.
-              </p>
-            )}
+            {noticeProviders.map(provider => {
+              const state = store.providerStates[provider];
+              return (
+                <div key={provider} className="space-y-2">
+                  {state.error && (
+                    <p
+                      role="alert"
+                      className="text-destructive [overflow-wrap:anywhere]"
+                    >
+                      {state.error}
+                    </p>
+                  )}
+                  <span role="status">
+                    {providerStatusLabel(provider, state)}
+                  </span>
+                  {state.status?.detail && (
+                    <p className="leading-relaxed whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                      {state.status.detail}
+                    </p>
+                  )}
+                  {state.status?.status === 'unauthenticated' && (
+                    <p className="text-muted-foreground">
+                      Zaloguj się w terminalu poleceniem{' '}
+                      <code>
+                        {provider === 'Claude Code'
+                          ? 'claude auth login'
+                          : 'codex login'}
+                      </code>
+                      , a następnie odśwież status.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         <main className="flex min-h-0 min-w-0 flex-1">
@@ -331,9 +401,14 @@ export function Workspace() {
                 !sending &&
                 !activeRun &&
                 store.connection === 'ready' &&
-                store.claude?.status === 'ready' &&
-                !store.claudeLoading &&
-                !store.claudeError
+                selectedProviderState?.status?.status === 'ready' &&
+                !selectedProviderState.loading &&
+                !selectedProviderState.error
+              }
+              approvalsEnabled={store.connection === 'ready'}
+              approvalPending={approvalPending}
+              onApproval={(requestId, decision) =>
+                void respondApproval(requestId, decision)
               }
               otherRun={!!activeRun && activeRun.id !== selected.id}
               error={errors[selected.id] ?? ''}
@@ -359,7 +434,7 @@ export function Workspace() {
                   ? 'Odczytujemy lokalną historię.'
                   : store.error
                     ? 'Odśwież połączenie, aby ponowić odczyt zapisanych sesji.'
-                    : 'Utwórz sesję Claude Code i opisz zadanie do analizy.'}
+                    : 'Wybierz providera, utwórz sesję i opisz zadanie.'}
               </p>
               {!store.loading && !store.error && (
                 <Button onClick={openCreate}>
@@ -371,20 +446,30 @@ export function Workspace() {
           )}
         </main>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 text-xs text-muted-foreground lg:px-6">
-          <span>Analiza · tylko odczyt</span>
+          <span>
+            {selected && !inbox
+              ? modeLabels[selected.mode]
+              : 'Przestrzeń lokalna'}
+          </span>
           <div className="flex flex-wrap items-center gap-3">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-1 text-xs text-muted-foreground"
-              aria-label="Odśwież status Claude Code"
-              title={providerLabel}
-              disabled={store.claudeLoading}
-              onClick={() => void store.refreshClaude()}
-            >
-              <RefreshCw />
-              Claude Code
-            </Button>
+            {providers.map(provider => (
+              <Button
+                key={provider}
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1 text-xs text-muted-foreground"
+                aria-label={`Odśwież status ${provider}`}
+                title={providerStatusLabel(
+                  provider,
+                  store.providerStates[provider],
+                )}
+                disabled={store.providerStates[provider].loading}
+                onClick={() => void store.refreshProvider(provider)}
+              >
+                <RefreshCw />
+                {provider}
+              </Button>
+            ))}
             <HostStatus
               connection={store.connection}
               onRefresh={store.refresh}
@@ -395,7 +480,8 @@ export function Workspace() {
       {creating && (
         <CreateSession
           open={creating}
-          models={store.claude?.models ?? []}
+          statuses={store.providerStates}
+          onRefreshProvider={provider => void store.refreshProvider(provider)}
           onOpenChange={setCreating}
           onCreate={create}
           onReturnFocus={() => {

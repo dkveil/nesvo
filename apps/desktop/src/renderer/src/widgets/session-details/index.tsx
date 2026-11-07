@@ -1,6 +1,7 @@
 import { Folder, ShieldCheck } from 'lucide-react';
 import {
-  modelLabels,
+  modelLabel,
+  modeLabels,
   roleLabels,
   statusLabels,
   type Session,
@@ -25,7 +26,7 @@ export function SessionDetails({ session }: Props) {
           </div>
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Wybrany model</dt>
-            <dd>{modelLabels[session.model]}</dd>
+            <dd>{modelLabel(session.model)}</dd>
           </div>
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Model uruchomienia</dt>
@@ -49,11 +50,14 @@ export function SessionDetails({ session }: Props) {
       <section className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <ShieldCheck className="size-4" />
-          Analiza · tylko odczyt
+          {modeLabels[session.mode]}
         </h2>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Claude Code może czytać i wyszukiwać pliki. Edycja plików, polecenia
-          terminala i delegacja będą dostępne w kolejnych etapach.
+          {session.provider === 'Claude Code'
+            ? 'Claude Code może czytać i wyszukiwać pliki. Edycja i polecenia terminala są wyłączone.'
+            : session.mode === 'read-only'
+              ? 'Codex może czytać pliki i uruchamiać polecenia służące do odczytu. Zapis plików i podwyższanie uprawnień są wyłączone.'
+              : 'Codex może zmieniać pliki w katalogu pracy. O zgodę zapyta przy operacjach wymagających potwierdzenia; nie każda zmiana wymaga zgody. Decyzja dotyczy jednej operacji.'}
         </p>
       </section>
     </div>
