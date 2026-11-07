@@ -49,7 +49,7 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
             </span>
           </div>
           {skill.description && (
-            <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+            <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted-foreground group-open:hidden [overflow-wrap:anywhere]">
               {skill.description}
             </p>
           )}
@@ -75,10 +75,18 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
           </dd>
           <dt>Format</dt>
           <dd>{skill.kind === 'skill' ? 'Skill' : 'Command'}</dd>
-          <dt>User invocation</dt>
-          <dd>{declaredValue(skill.userInvocable)}</dd>
-          <dt>Model invocation</dt>
-          <dd>{declaredValue(skill.modelInvocable)}</dd>
+          {skill.userInvocable !== null && (
+            <>
+              <dt>Declared manual use</dt>
+              <dd>{declaredValue(skill.userInvocable)}</dd>
+            </>
+          )}
+          {skill.modelInvocable !== null && (
+            <>
+              <dt>Declared automatic use</dt>
+              <dd>{declaredValue(skill.modelInvocable)}</dd>
+            </>
+          )}
         </dl>
         {skill.path && (
           <div>
