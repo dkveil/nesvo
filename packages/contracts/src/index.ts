@@ -3,7 +3,6 @@ import {
   claudeStatusSchema,
   codexStatusSchema,
   createSessionSchema,
-  desktopEventSchema,
   sendMessageSchema,
   sessionSchema,
   stopRunSchema,
@@ -12,15 +11,31 @@ import {
   type ClaudeStatus,
   type CodexStatus,
   type CreateSessionInput,
-  type DesktopEvent,
   type SendMessageInput,
   type Session,
   type StopRunInput,
   type RespondApprovalInput,
   type DecideDelegationInput,
 } from './sessions';
+import {
+  reviewSchema,
+  decideReviewSchema,
+  type Review,
+  type DecideReviewInput,
+} from './reviews';
 
 export * from './sessions';
+export * from './reviews';
+
+export const desktopEventSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('session-changed'),
+    session: sessionSchema,
+  }),
+  z.strictObject({ type: z.literal('review-changed'), review: reviewSchema }),
+  z.strictObject({ type: z.literal('host-disconnected') }),
+]);
+export type DesktopEvent = z.infer<typeof desktopEventSchema>;
 
 export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ id: z.uuid(), method: z.literal('health') }),
@@ -28,6 +43,12 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ id: z.uuid(), method: z.literal('claude-status') }),
   z.strictObject({ id: z.uuid(), method: z.literal('codex-status') }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-sessions') }),
+  z.strictObject({ id: z.uuid(), method: z.literal('list-reviews') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-review'),
+    input: decideReviewSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('create-session'),
@@ -62,6 +83,16 @@ export const hostHealthSchema = z.strictObject({
 });
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('reviews'),
+    id: z.uuid(),
+    reviews: z.array(reviewSchema),
+  }),
+  z.strictObject({
+    type: z.literal('review'),
+    id: z.uuid(),
+    review: reviewSchema,
+  }),
   z.strictObject({
     type: z.literal('health'),
     id: z.uuid(),
@@ -115,6 +146,8 @@ export type DesktopApi = {
   claudeStatus: () => Promise<ClaudeStatus>;
   codexStatus: () => Promise<CodexStatus>;
   listSessions: () => Promise<Session[]>;
+  listReviews: () => Promise<Review[]>;
+  decideReview: (input: DecideReviewInput) => Promise<Review>;
   createSession: (input: CreateSessionInput) => Promise<Session>;
   sendMessage: (input: SendMessageInput) => Promise<Session>;
   stopRun: (input: StopRunInput) => Promise<Session>;

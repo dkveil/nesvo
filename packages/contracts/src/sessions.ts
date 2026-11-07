@@ -149,13 +149,6 @@ export const claudeStatusSchema = z.strictObject({
 export const codexStatusSchema = claudeStatusSchema.extend({
   models: z.array(z.strictObject({ id: modelSchema, label: z.string() })),
 });
-export const desktopEventSchema = z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('session-changed'),
-    session: sessionSchema,
-  }),
-  z.strictObject({ type: z.literal('host-disconnected') }),
-]);
 
 export type Session = z.infer<typeof sessionSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
@@ -171,4 +164,3 @@ export type WorkerProposal = z.infer<typeof workerProposalSchema>;
 export type Delegation = z.infer<typeof delegationSchema>;
 export type DelegationPlan = z.infer<typeof delegationPlanSchema>;
 export type DecideDelegationInput = z.infer<typeof decideDelegationSchema>;
-export type DesktopEvent = z.infer<typeof desktopEventSchema>;
