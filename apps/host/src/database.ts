@@ -13,11 +13,11 @@ export const openDatabase = (directory: string) =>
         const version = database
           .prepare('PRAGMA user_version')
           .get()?.user_version;
-        if (typeof version !== 'number' || version > 1) {
+        if (typeof version !== 'number' || version > 2) {
           throw new Error('Unsupported database version');
         }
         database.exec(
-          'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;',
+          'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250;',
         );
         database.exec('BEGIN IMMEDIATE');
         try {
@@ -29,7 +29,10 @@ export const openDatabase = (directory: string) =>
               'INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)',
             )
             .run('instance_id', randomUUID());
-          database.exec('PRAGMA user_version = 1; COMMIT');
+          database.exec(
+            'CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL)',
+          );
+          database.exec('PRAGMA user_version = 2; COMMIT');
         } catch (error) {
           database.exec('ROLLBACK');
           throw error;
