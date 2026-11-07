@@ -72,6 +72,42 @@ try {
   });
   const message = text =>
     conversation.getByRole('article').getByText(text, { exact: true });
+  const activityFor = runId =>
+    conversation.getByRole('region', {
+      name: `Activity for run ${runId}`,
+      exact: true,
+    });
+  const runActivities = (session, runId) =>
+    session.activities.filter(activity => activity.runId === runId);
+  const checkActivityRows = async (runId, activities) => {
+    const region = activityFor(runId);
+    const toggle = region.getByLabel('Toggle activity', { exact: true });
+    if (!(await toggle.evaluate(node => node.closest('details')?.open)))
+      await toggle.click();
+    for (const group of await region.getByLabel(/^Toggle .+ activity$/).all()) {
+      if (!(await group.evaluate(node => node.closest('details')?.open)))
+        await group.click();
+    }
+    await region
+      .locator('[data-activity-id]')
+      .first()
+      .waitFor({ state: 'visible' });
+    const rendered = await region
+      .locator('[data-activity-id]')
+      .evaluateAll(rows =>
+        rows.map(row => ({
+          id: row.getAttribute('data-activity-id'),
+          kind: row.getAttribute('data-activity-kind'),
+          status: row.getAttribute('data-activity-status'),
+        })),
+      );
+    assert.deepEqual(
+      rendered.toSorted((left, right) => left.id.localeCompare(right.id)),
+      activities
+        .map(({ id, kind, status }) => ({ id, kind, status }))
+        .toSorted((left, right) => left.id.localeCompare(right.id)),
+    );
+  };
   const openInbox = async () => {
     await page.getByRole('button', { name: /^Inbox/ }).click();
     await page.getByRole('region', { name: 'Inbox', exact: true }).waitFor();
@@ -336,6 +372,28 @@ try {
     'Codex fixture streamed reply.',
   );
   assert.equal(codexCompleted.messages.at(-1).state, 'completed');
+  const completedActivities = runActivities(
+    codexCompleted,
+    codexCompleted.runId,
+  );
+  assert.ok(completedActivities.length >= 2);
+  assert.deepEqual(
+    completedActivities.map(activity => activity.kind).toSorted(),
+    ['command', 'read'],
+  );
+  for (const activity of completedActivities) {
+    assert.equal(activity.status, 'completed');
+    assert.ok(
+      Date.parse(activity.completedAt) >= Date.parse(activity.startedAt),
+    );
+  }
+  assert.match(
+    await activityFor(codexCompleted.runId)
+      .getByLabel('Toggle activity', { exact: true })
+      .innerText(),
+    /Worked for/,
+  );
+  await checkActivityRows(codexCompleted.runId, completedActivities);
   const approval = page.getByRole('region', {
     name: 'Operation approval',
     exact: true,
@@ -385,6 +443,13 @@ try {
   await waitState(codex.id, 'completed');
   await page.reload();
   await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
+  const restoredActivitySession = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === codex.id);
+  assert.deepEqual(
+    runActivities(restoredActivitySession, codexCompleted.runId),
+    completedActivities,
+  );
   await message('Codex fixture file accepted.').waitFor();
   await send('fixture:continue');
   await message('Codex fixture resumed reply.').waitFor();
@@ -400,10 +465,52 @@ try {
   await send('fixture:approval-hold');
   await approval.waitFor();
   const codexStopped = await waitOwned('Codex');
+  const beforeActivityStop = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === codex.id);
+  const runningActivities = runActivities(
+    beforeActivityStop,
+    beforeActivityStop.runId,
+  );
+  assert.ok(
+    runningActivities.some(
+      activity =>
+        activity.status === 'running' && activity.completedAt === null,
+    ),
+  );
+  assert.match(
+    await activityFor(beforeActivityStop.runId)
+      .getByLabel('Toggle activity', { exact: true })
+      .innerText(),
+    /Working for/,
+  );
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   const codexStoppedSession = await waitState(codex.id, 'stopped');
   assert.equal(codexStoppedSession.messages.at(-1).state, 'stopped');
   assert.deepEqual(codexStoppedSession.pendingApprovals, []);
+  const stoppedActivities = runActivities(
+    codexStoppedSession,
+    beforeActivityStop.runId,
+  );
+  for (const running of runningActivities.filter(
+    activity => activity.status === 'running',
+  )) {
+    const stopped = stoppedActivities.find(
+      activity => activity.id === running.id,
+    );
+    assert.equal(stopped.status, 'stopped');
+    assert.ok(Date.parse(stopped.completedAt) >= Date.parse(stopped.startedAt));
+  }
+  assert.ok(
+    Date.parse(codexStoppedSession.messages.at(-1).completedAt) >=
+      Date.parse(codexStoppedSession.messages.at(-1).createdAt),
+  );
+  assert.match(
+    await activityFor(beforeActivityStop.runId)
+      .getByLabel('Toggle activity', { exact: true })
+      .innerText(),
+    /Stopped after/,
+  );
   await approval.waitFor({ state: 'hidden' });
   await Promise.all([
     waitDead(codexStopped.pid),
@@ -418,6 +525,20 @@ try {
     ),
     [],
   );
+  await page.reload();
+  await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
+  const restoredStoppedSession = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === codex.id);
+  assert.deepEqual(
+    runActivities(restoredStoppedSession, beforeActivityStop.runId),
+    stoppedActivities,
+  );
+  assert.equal(
+    restoredStoppedSession.messages.at(-1).completedAt,
+    codexStoppedSession.messages.at(-1).completedAt,
+  );
+  await checkActivityRows(beforeActivityStop.runId, stoppedActivities);
   await page
     .getByRole('button', { name: 'New session', exact: true })
     .first()
@@ -681,6 +802,73 @@ try {
       exact: true,
     });
   const reviewPanel = review => conversation.locator(`#review-${review.id}`);
+  const diffPanel = page.getByRole('region', {
+    name: 'Saved result diff',
+    exact: true,
+  });
+  const openSavedDiff = async (review, before, after) => {
+    const opener = reviewPanel(review).getByRole('button', {
+      name: `View diff for version ${review.version}`,
+      exact: true,
+    });
+    await opener.click();
+    await diffPanel.waitFor();
+    assert.equal(await diffPanel.getAttribute('data-review-id'), review.id);
+    assert.equal(
+      await diffPanel.getAttribute('data-review-version'),
+      String(review.version),
+    );
+    await diffPanel
+      .getByRole('button', { name: 'View changes in tracked.txt', exact: true })
+      .click();
+    const viewer = diffPanel.getByTestId('saved-diff-content');
+    const removedLine = viewer
+      .locator('[data-line][data-line-type="change-deletion"]')
+      .filter({ hasText: before });
+    const addedLine = viewer
+      .locator('[data-line][data-line-type="change-addition"]')
+      .filter({ hasText: after });
+    await removedLine.waitFor({ state: 'visible' });
+    await addedLine.waitFor({ state: 'visible' });
+    assert.ok(Number(await removedLine.getAttribute('data-line')) > 0);
+    assert.ok(Number(await addedLine.getAttribute('data-line')) > 0);
+    await viewer
+      .locator('[data-line-number-content]')
+      .first()
+      .waitFor({ state: 'visible' });
+    assert.equal(await viewer.getAttribute('data-file-path'), 'tracked.txt');
+    assert.equal(
+      await diffPanel
+        .getByRole('button', {
+          name: 'View changes in tracked.txt',
+          exact: true,
+        })
+        .getAttribute('aria-pressed'),
+      'true',
+    );
+    const savedPatch = diffPanel.getByLabel('Saved patch', { exact: true });
+    if (!(await savedPatch.isVisible()))
+      await diffPanel.getByText('Raw patch', { exact: true }).click();
+    const patch = await savedPatch.innerText();
+    assert.ok(patch.includes('tracked.txt'));
+    assert.ok(patch.split('\n').includes(`-${before}`));
+    assert.ok(patch.split('\n').includes(`+${after}`));
+    return { opener, patch };
+  };
+  const closeSavedDiff = async opener => {
+    await page.keyboard.press('Escape');
+    await diffPanel.waitFor({ state: 'hidden' });
+    const deadline = Date.now() + 2000;
+    while (
+      !(await opener.evaluate(node => node === document.activeElement)) &&
+      Date.now() < deadline
+    )
+      await delay(25);
+    assert.equal(
+      await opener.evaluate(node => node === document.activeElement),
+      true,
+    );
+  };
   const openReviewSession = async review => {
     await reviewRow(review)
       .getByRole('button', {
@@ -708,16 +896,17 @@ try {
   await reviewRow(initialReview).waitFor();
   await screenshot('-inbox');
   await openReviewSession(initialReview);
-  const savedDiff = reviewPanel(initialReview).getByLabel('Saved diff', {
-    exact: true,
-  });
-  assert.match(await savedDiff.innerText(), /-user dirty baseline/);
-  assert.match(await savedDiff.innerText(), /\+initial agent text/);
+  const initialDiff = await openSavedDiff(
+    initialReview,
+    'user dirty baseline',
+    'initial agent text',
+  );
   assert.doesNotMatch(
-    await savedDiff.innerText(),
+    initialDiff.patch,
     /dirty\.txt|unrelated operator edits|\.nesvo-codex/,
   );
   await screenshot('-review');
+  await closeSavedDiff(initialDiff.opener);
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
     .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
@@ -772,13 +961,20 @@ try {
     .getByRole('paragraph')
     .filter({ hasText: feedback })
     .waitFor();
-  assert.match(
-    await reviewPanel(correctedReview)
-      .getByLabel('Saved diff', { exact: true })
-      .innerText(),
-    /\+corrected agent text/,
+  const historicalDiff = await openSavedDiff(
+    initialReview,
+    'user dirty baseline',
+    'initial agent text',
+  );
+  assert.doesNotMatch(historicalDiff.patch, /corrected agent text/);
+  await closeSavedDiff(historicalDiff.opener);
+  const correctedDiff = await openSavedDiff(
+    correctedReview,
+    'initial agent text',
+    'corrected agent text',
   );
   await screenshot('-correction');
+  await closeSavedDiff(correctedDiff.opener);
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
     .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
@@ -851,7 +1047,30 @@ try {
     ),
     true,
   );
+  await page.getByRole('button', { name: 'Open sessions' }).click();
+  await sidebar.getByRole('button', { name: /^Review changes/ }).click();
+  await sidebar.waitFor({ state: 'hidden' });
+  if ((await reviewPanel(correctedReview).getAttribute('open')) === null) {
+    await reviewPanel(correctedReview)
+      .getByLabel(`Open version ${correctedReview.version}`, { exact: true })
+      .click();
+  }
+  const compactDiff = await openSavedDiff(
+    correctedReview,
+    'initial agent text',
+    'corrected agent text',
+  );
+  const bounds = await diffPanel.boundingBox();
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewportWidth + 1);
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+    true,
+  );
   await screenshot('-compact');
+  await closeSavedDiff(compactDiff.opener);
   await page.getByRole('button', { name: 'Open sessions' }).click();
   await sidebar
     .getByRole('button', { name: /^Prototype orchestration/ })
