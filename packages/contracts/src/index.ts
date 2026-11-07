@@ -42,6 +42,7 @@ export * from './sessions';
 export * from './activities';
 export * from './reviews';
 export * from './workspace';
+export * from './skills';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({

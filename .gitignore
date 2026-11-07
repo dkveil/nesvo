@@ -28,6 +28,7 @@
 !/apps/host/src/sessions/
 !/apps/host/src/review/
 !/apps/host/src/workspace/
+!/apps/host/src/skills/
 !/apps/host/tests/
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs
