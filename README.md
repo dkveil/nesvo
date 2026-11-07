@@ -86,12 +86,13 @@ Writable review uses a bounded local snapshot: 500 files, 512 KiB per file, 8 Mi
 
 ## P6 skill walkthrough
 
-1. Open a Codex session. Type `/` at the start of a draft or use Choose skill. Search the native catalog; disabled entries cannot be selected.
-2. Choose one skill with the mouse or arrow keys and Enter/Tab. Escape closes the menu. The selected skill appears above the message and can be removed before sending.
-3. Write the task and send it. Nesvo verifies the selection again in the execution process, then submits the native skill input with your message. The existing session permissions still apply. An unavailable selection produces a clear failure without silently sending a plain prompt.
-4. Inspect the response and the selected skill in message history. Its source tooltip records the resolved name and path, not a frozen copy of its contents or a guarantee that every instruction was followed. Reopen the app to inspect the saved reference.
+1. Open either provider session. Type `/` at the start of a draft or use Choose skill to search the shared local library.
+2. Inspect the source and delivery label. Codex uses Native skill; Claude uses compatible static content as Shared instructions. Unsupported entries explain why they cannot be selected.
+3. Select with the mouse or arrow keys and Enter/Tab. Escape closes the menu. One removable skill is attached to the current draft.
+4. Send your task. Nesvo revalidates the source and selected content hash. A changed, disabled or incompatible selection fails explicitly without widening session permissions.
+5. Inspect the result and source reference in history. The reference includes origin, delivery and content hash and survives reopening the app. The hash does not freeze supporting files or later native reads.
 
-Claude's Skills panel remains a partial file inventory. Explicit selection and invocation through this connection are not enabled yet. This is an integration limit, not a claim that Claude Code lacks skills.
+The catalog covers known project/user/managed sources and the isolated native Codex catalog, with explicit coverage limits. It does not promise every plugin or remote skill. Claude's Shared instructions delivery is distinct from native Claude skill execution. Real Codex use of a Claude-source skill is verified on Windows; a successful real Claude task remains open because the account reached its weekly limit.
 
 ## Working agreement
 
