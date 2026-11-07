@@ -13,6 +13,9 @@ import {
   type StopRunInput,
   type HostRequest,
   type HostResponse,
+  type ListWorkspaceDirectoryInput,
+  type SearchWorkspaceFilesInput,
+  type ReadWorkspaceFileInput,
 } from '@nesvo/contracts';
 
 export function startHost(directory: string) {
@@ -145,6 +148,24 @@ export function startHost(directory: string) {
       if (response.type !== 'reviews')
         throw new Error('Unexpected host response');
       return response.reviews;
+    },
+    listWorkspaceDirectory: async (input: ListWorkspaceDirectoryInput) => {
+      const response = await request('list-workspace-directory', input);
+      if (response.type !== 'workspace-directory')
+        throw new Error('Unexpected host response');
+      return response.directory;
+    },
+    searchWorkspaceFiles: async (input: SearchWorkspaceFilesInput) => {
+      const response = await request('search-workspace-files', input);
+      if (response.type !== 'workspace-search')
+        throw new Error('Unexpected host response');
+      return response.search;
+    },
+    readWorkspaceFile: async (input: ReadWorkspaceFileInput) => {
+      const response = await request('read-workspace-file', input);
+      if (response.type !== 'workspace-file')
+        throw new Error('Unexpected host response');
+      return response.file;
     },
     decideReview: async (input: DecideReviewInput) => {
       const response = await request('decide-review', input);

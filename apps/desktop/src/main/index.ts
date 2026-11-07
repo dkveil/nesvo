@@ -9,6 +9,9 @@ import {
   respondApprovalSchema,
   sendMessageSchema,
   stopRunSchema,
+  listWorkspaceDirectorySchema,
+  searchWorkspaceFilesSchema,
+  readWorkspaceFileSchema,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -101,6 +104,26 @@ void app.whenReady().then(() => {
   ipcMain.handle('nesvo:list-reviews', async event => {
     authorize(event);
     return host.listReviews();
+  });
+  ipcMain.handle(
+    'nesvo:list-workspace-directory',
+    async (event, input: unknown) => {
+      authorize(event);
+      return host.listWorkspaceDirectory(
+        listWorkspaceDirectorySchema.parse(input),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:search-workspace-files',
+    async (event, input: unknown) => {
+      authorize(event);
+      return host.searchWorkspaceFiles(searchWorkspaceFilesSchema.parse(input));
+    },
+  );
+  ipcMain.handle('nesvo:read-workspace-file', async (event, input: unknown) => {
+    authorize(event);
+    return host.readWorkspaceFile(readWorkspaceFileSchema.parse(input));
   });
   ipcMain.handle('nesvo:decide-review', async (event, input: unknown) => {
     authorize(event);

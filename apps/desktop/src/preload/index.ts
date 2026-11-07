@@ -12,6 +12,12 @@ import {
   sendMessageSchema,
   sessionSchema,
   stopRunSchema,
+  listWorkspaceDirectorySchema,
+  searchWorkspaceFilesSchema,
+  readWorkspaceFileSchema,
+  workspaceDirectorySchema,
+  workspaceSearchSchema,
+  workspaceFileSchema,
   type DesktopApi,
 } from '@nesvo/contracts';
 
@@ -42,6 +48,27 @@ const api: DesktopApi = {
       .parse(await ipcRenderer.invoke('nesvo:list-sessions')),
   listReviews: async () =>
     reviewSchema.array().parse(await ipcRenderer.invoke('nesvo:list-reviews')),
+  listWorkspaceDirectory: async input =>
+    workspaceDirectorySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-workspace-directory',
+        listWorkspaceDirectorySchema.parse(input),
+      ),
+    ),
+  searchWorkspaceFiles: async input =>
+    workspaceSearchSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:search-workspace-files',
+        searchWorkspaceFilesSchema.parse(input),
+      ),
+    ),
+  readWorkspaceFile: async input =>
+    workspaceFileSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-workspace-file',
+        readWorkspaceFileSchema.parse(input),
+      ),
+    ),
   decideReview: async input =>
     reviewSchema.parse(
       await ipcRenderer.invoke(
