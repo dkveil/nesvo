@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -26,6 +33,7 @@ const env = {
   NESVO_CODEX_EXECUTABLE: resolve('apps/host/tests/codex-fixture.mjs'),
   NESVO_CODEX_FIXTURE_PID_FILE: codexPidFile,
   NESVO_CODEX_FIXTURE_PID_DIR: workerPidDirectory,
+  NESVO_CODEX_FIXTURE_STATE_DIR: join(directory, 'codex-state'),
 };
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
@@ -102,6 +110,23 @@ try {
     await page
       .getByRole('button', { name: 'Wyślij wiadomość', exact: true })
       .click();
+  };
+  const waitReview = async (sessionId, afterVersion = 0) => {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const reviews = await page.evaluate(() => window.nesvo.listReviews());
+      const review = reviews.find(
+        review =>
+          review.sessionId === sessionId &&
+          review.version > afterVersion &&
+          review.status === 'pending',
+      );
+      if (review) return review;
+      await delay(100);
+    }
+    assert.fail(
+      `No pending review for session ${sessionId} after version ${afterVersion}`,
+    );
   };
   const waitOwned = async (provider = 'Claude Code') => {
     await page
@@ -518,11 +543,173 @@ try {
       .filter(item => item.runId === concurrent.parent.runId)
       .every(item => item.status === 'stopped'),
   );
-  await page.getByRole('button', { name: 'Do odbioru', exact: true }).click();
+  const reviewDirectory = join(directory, 'review-workspace');
+  await mkdir(reviewDirectory);
+  await Promise.all([
+    writeFile(join(reviewDirectory, 'tracked.txt'), 'user dirty baseline\n'),
+    writeFile(join(reviewDirectory, 'deleted.txt'), 'delete this baseline\n'),
+    writeFile(join(reviewDirectory, 'dirty.txt'), 'unrelated operator edits\n'),
+  ]);
+  await page
+    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .first()
+    .click();
+  await dialog
+    .getByRole('textbox', { name: 'Nazwa sesji' })
+    .fill('Odbiór zmian');
+  await dialog.getByRole('combobox', { name: 'Provider', exact: true }).click();
+  await page.getByRole('option', { name: 'Codex', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Model', exact: true }).click();
+  await page
+    .getByRole('option', { name: 'Codex fixture', exact: true })
+    .click();
+  await dialog
+    .getByRole('combobox', { name: 'Rola sesji', exact: true })
+    .click();
+  await page
+    .getByRole('option', { name: 'Samodzielna sesja', exact: true })
+    .click();
+  await dialog
+    .getByRole('combobox', { name: 'Tryb pracy', exact: true })
+    .click();
+  await page
+    .getByRole('option', { name: 'Praca nadzorowana', exact: true })
+    .click();
+  await dialog
+    .getByRole('textbox', { name: /Katalog pracy/ })
+    .fill(reviewDirectory);
+  await dialog
+    .getByRole('button', { name: 'Utwórz sesję', exact: true })
+    .click();
+  await page
+    .getByRole('heading', { name: 'Odbiór zmian', exact: true })
+    .waitFor();
+  const writingSession = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.title === 'Odbiór zmian');
+  await send('fixture:review-write');
+  const initialFiles = await waitState(writingSession.id, 'completed');
   assert.equal(
-    await page.getByRole('button', { name: 'Zaakceptuj wynik' }).count(),
-    0,
+    initialFiles.messages.at(-1).body,
+    'Codex fixture initial files.',
   );
+  const initialReview = await waitReview(writingSession.id);
+  assert.equal(
+    initialReview.diff.status,
+    'complete',
+    initialReview.diff.detail,
+  );
+  assert.equal(initialReview.diff.files.length, 3);
+  const openReview = async review => {
+    await page.getByRole('button', { name: /^Do odbioru/ }).click();
+    await page
+      .getByRole('region', { name: 'Skrzynka odbioru', exact: true })
+      .waitFor();
+    await page
+      .getByRole('button', {
+        name: `Otwórz wynik: Odbiór zmian, wersja ${review.version}`,
+        exact: true,
+      })
+      .click();
+  };
+  await openReview(initialReview);
+  const reviewDetail = page.getByRole('region', {
+    name: 'Wynik do odbioru',
+    exact: true,
+  });
+  const savedDiff = reviewDetail.getByLabel('Zapisany diff', { exact: true });
+  assert.match(await savedDiff.innerText(), /-user dirty baseline/);
+  assert.match(await savedDiff.innerText(), /\+initial agent text/);
+  assert.doesNotMatch(
+    await savedDiff.innerText(),
+    /dirty\.txt|unrelated operator edits|\.nesvo-codex/,
+  );
+  await screenshot('-review');
+  assert.equal(
+    await reviewDetail
+      .getByRole('button', { name: 'Odeślij do poprawy', exact: true })
+      .isDisabled(),
+    true,
+  );
+  const feedback = 'fixture:review-correct Please correct the result.';
+  await reviewDetail
+    .getByRole('textbox', { name: 'Uwagi do poprawy', exact: true })
+    .fill(feedback);
+  await reviewDetail
+    .getByRole('button', { name: 'Odeślij do poprawy', exact: true })
+    .click();
+  await page
+    .getByRole('heading', { name: 'Odbiór zmian', exact: true })
+    .waitFor();
+  await page
+    .getByText('Codex fixture corrected files.', { exact: true })
+    .waitFor();
+  const correctedFiles = await waitState(writingSession.id, 'completed');
+  assert.equal(
+    correctedFiles.providerSessionId,
+    initialFiles.providerSessionId,
+  );
+  const correctedReview = await waitReview(
+    writingSession.id,
+    initialReview.version,
+  );
+  assert.equal(correctedReview.decision, null);
+  await openReview(correctedReview);
+  await reviewDetail
+    .getByRole('button', {
+      name: `Otwórz wersję ${initialReview.version}`,
+      exact: true,
+    })
+    .click();
+  assert.equal(
+    await reviewDetail
+      .getByRole('button', { name: 'Zaakceptuj wynik', exact: true })
+      .isDisabled(),
+    true,
+  );
+  await reviewDetail
+    .getByRole('paragraph')
+    .filter({ hasText: feedback })
+    .waitFor();
+  await reviewDetail
+    .getByRole('button', {
+      name: `Otwórz wersję ${correctedReview.version}`,
+      exact: true,
+    })
+    .click();
+  assert.match(await savedDiff.innerText(), /\+corrected agent text/);
+  await screenshot('-correction');
+  await reviewDetail
+    .getByRole('button', { name: 'Zaakceptuj wynik', exact: true })
+    .click();
+  await reviewDetail
+    .getByRole('status')
+    .filter({ hasText: 'Zaakceptowano' })
+    .waitFor();
+  assert.equal(
+    await readFile(join(reviewDirectory, 'dirty.txt'), 'utf8'),
+    'unrelated operator edits\n',
+  );
+  await page.reload();
+  await page.getByRole('button', { name: /^Do odbioru/ }).click();
+  await page.getByRole('combobox', { name: 'Wyniki', exact: true }).click();
+  await page.getByRole('option', { name: 'Historia', exact: true }).click();
+  await page
+    .getByRole('button', {
+      name: `Otwórz wynik: Odbiór zmian, wersja ${correctedReview.version}`,
+      exact: true,
+    })
+    .click();
+  await reviewDetail
+    .getByRole('status')
+    .filter({ hasText: 'Zaakceptowano' })
+    .waitFor();
+  const persistedReview = (
+    await page.evaluate(() => window.nesvo.listReviews())
+  ).find(review => review.id === correctedReview.id);
+  assert.equal(persistedReview.status, 'accepted');
+  assert.equal(persistedReview.decision.decision, 'accept');
+  await screenshot('-accepted');
   await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
   await page
     .getByRole('button', { name: 'Nowa sesja', exact: true })

@@ -10,6 +10,7 @@ import {
   realpath,
   rm,
   symlink,
+  writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +55,7 @@ function launch(directory, pidFile) {
       NESVO_CODEX_EXECUTABLE: codexFixturePath,
       NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
       NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
+      NESVO_CODEX_FIXTURE_STATE_DIR: pidFile + '.state',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -63,6 +65,9 @@ function launch(directory, pidFile) {
   const events = [];
   const observed = [];
   const waiters = new Set();
+  const reviewEvents = [];
+  const reviewWaiters = new Set();
+  const observedReviews = [];
   let transportError;
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', data => {
@@ -70,7 +75,8 @@ function launch(directory, pidFile) {
   });
   const fail = error => {
     transportError ??= error;
-    for (const item of [...pending.values(), ...waiters]) item.reject(error);
+    for (const item of [...pending.values(), ...waiters, ...reviewWaiters])
+      item.reject(error);
   };
   const lines = createInterface({ input: child.stdout });
   lines.on('line', line => {
@@ -83,6 +89,15 @@ function launch(directory, pidFile) {
           waiters.delete(waiter);
           waiter.resolve(message.session);
         } else events.push(message.session);
+      } else if (message.type === 'review-changed') {
+        observedReviews.push(message.review);
+        const waiter = [...reviewWaiters].find(item =>
+          item.match(message.review),
+        );
+        if (waiter) {
+          reviewWaiters.delete(waiter);
+          waiter.resolve(message.review);
+        } else reviewEvents.push(message.review);
       } else {
         const response = pending.get(message.id);
         assert.ok(response, `Uncorrelated response: ${line}`);
@@ -122,9 +137,26 @@ function launch(directory, pidFile) {
     child,
     exited,
     observed,
+    observedReviews,
     request,
     send,
     error: () => stderr,
+    review: match => {
+      if (transportError) return Promise.reject(transportError);
+      const index = reviewEvents.findIndex(match);
+      if (index !== -1)
+        return Promise.resolve(reviewEvents.splice(index, 1)[0]);
+      const waiter = { match };
+      const promise = new Promise((resolve, reject) => {
+        Object.assign(waiter, { resolve, reject });
+        reviewWaiters.add(waiter);
+      });
+      return bounded(
+        promise,
+        () =>
+          `Review event timed out: ${stderr}\n${JSON.stringify(observedReviews.slice(-4).map(review => ({ id: review.id, sessionId: review.sessionId, runId: review.runId, version: review.version, status: review.status, diff: review.diff.status, summary: review.summary.slice(0, 200) })))}`,
+      ).finally(() => reviewWaiters.delete(waiter));
+    },
     event: match => {
       if (transportError) return Promise.reject(transportError);
       const index = events.findIndex(match);
@@ -373,6 +405,12 @@ test(
         value => value.runId === failedRun.runId && value.status === 'failed',
       );
       assert.equal(agent(failed).state, 'failed');
+      assert.equal(
+        (await host.request('list-reviews')).reviews.some(
+          value => value.runId === failedRun.runId,
+        ),
+        false,
+      );
       assert.match(
         failed.error,
         /Fixture (account limit reached|unsuccessful result)/,
@@ -403,7 +441,7 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 4);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 5);
     migrated.close();
     const reopened = open();
     assert.equal(
@@ -561,11 +599,74 @@ test(
     assert.equal(agent(codexCompleted).body, 'Codex fixture streamed reply.');
     assert.equal(codexCompleted.actualModel, 'fixture-codex');
     assert.ok(codexCompleted.providerSessionId);
+    const readOnlyReview = await finalHost.review(
+      value => value.runId === codexRun.runId && value.status === 'pending',
+    );
+    assert.equal(readOnlyReview.sessionId, readOnly.id);
+    assert.equal(readOnlyReview.summary, 'Codex fixture streamed reply.');
+    assert.equal(readOnlyReview.version, 1);
+    assert.equal(readOnlyReview.diff.status, 'not-applicable');
+    assert.deepEqual(readOnlyReview.diff.files, []);
+    const acceptReadOnly = {
+      reviewId: readOnlyReview.id,
+      version: readOnlyReview.version,
+      decisionId: randomUUID(),
+      decision: 'accept',
+      feedback: '',
+    };
+    const acceptedReadOnly = await finalHost.request(
+      'decide-review',
+      acceptReadOnly,
+    );
+    assert.equal(
+      acceptedReadOnly.type,
+      'review',
+      JSON.stringify(acceptedReadOnly),
+    );
+    assert.equal(acceptedReadOnly.review.status, 'accepted');
+    assert.equal(
+      acceptedReadOnly.review.decision.id,
+      acceptReadOnly.decisionId,
+    );
+    assert.deepEqual(
+      (await finalHost.request('decide-review', acceptReadOnly)).review,
+      acceptedReadOnly.review,
+    );
+    assert.equal(
+      (
+        await finalHost.request('decide-review', {
+          ...acceptReadOnly,
+          version: readOnlyReview.version + 1,
+          decisionId: randomUUID(),
+        })
+      ).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (
+        await finalHost.request('decide-review', {
+          ...acceptReadOnly,
+          decision: 'request-changes',
+          feedback: 'Different decision with the same ID',
+        })
+      ).code,
+      'invalid-request',
+    );
     const unsafeRead = await sendCodex(finalHost, readOnly, 'fixture:approve');
     const rejectedRead = await finalHost.event(
       value => value.runId === unsafeRead.runId && value.status === 'failed',
     );
     assert.deepEqual(rejectedRead.pendingApprovals, []);
+    const afterNewRun = (await finalHost.request('list-reviews')).reviews;
+    const supersededReadOnly = afterNewRun.find(
+      value => value.id === readOnlyReview.id,
+    );
+    assert.equal(supersededReadOnly.status, 'superseded');
+    assert.equal(supersededReadOnly.decision.id, acceptReadOnly.decisionId);
+    assert.equal(
+      afterNewRun.some(value => value.runId === unsafeRead.runId),
+      false,
+    );
     await assert.rejects(
       readFile(
         join(
@@ -899,6 +1000,21 @@ test(
     assert.equal(firstChild.scope, firstPlan.proposals[0].scope);
     assert.equal(firstChild.messages[0].body, firstPlan.proposals[0].task);
     assert.match(agent(firstChild).body, /worker a completed/);
+    const firstChildReview = await checked.review(
+      value => value.runId === firstChild.runId && value.status === 'pending',
+    );
+    assert.equal(
+      (
+        await checked.request('decide-review', {
+          reviewId: firstChildReview.id,
+          version: firstChildReview.version,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          feedback: '',
+        })
+      ).code,
+      'busy',
+    );
     assert.equal(
       (await decide(checked, firstPlan, firstPlan.proposals[0], 'accept')).code,
       'invalid-request',
@@ -916,6 +1032,104 @@ test(
     assert.equal(firstResults.result.results[0].childSessionId, firstChild.id);
     assert.match(firstResults.result.results[0].text, /worker a completed/);
     assert.equal(firstResults.result.results[1].childSessionId, null);
+    const parentReview = await checked.review(
+      value =>
+        value.runId === firstPlan.run.runId && value.status === 'pending',
+    );
+    assert.deepEqual(parentReview.dependencies, [
+      {
+        sessionId: firstChild.id,
+        reviewId: firstChildReview.id,
+        version: firstChildReview.version,
+      },
+    ]);
+    const parentCorrection = await checked.request('decide-review', {
+      reviewId: parentReview.id,
+      version: parentReview.version,
+      decisionId: randomUUID(),
+      decision: 'request-changes',
+      feedback: 'fixture:continue Refine the summary without new delegation.',
+    });
+    assert.equal(
+      parentCorrection.type,
+      'review',
+      JSON.stringify(parentCorrection),
+    );
+    const correctedParent = await checked.event(
+      value =>
+        value.id === root.id &&
+        value.runId !== firstPlan.run.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(
+      correctedParent.providerSessionId,
+      firstResults.parent.providerSessionId,
+    );
+    const correctedParentReview = await checked.review(
+      value =>
+        value.runId === correctedParent.runId && value.status === 'pending',
+    );
+    assert.deepEqual(
+      correctedParentReview.dependencies,
+      parentReview.dependencies,
+    );
+    const parentDecisionId = randomUUID();
+    assert.equal(
+      (
+        await checked.request('decide-review', {
+          reviewId: correctedParentReview.id,
+          version: correctedParentReview.version,
+          decisionId: parentDecisionId,
+          decision: 'accept',
+          feedback: '',
+        })
+      ).review.status,
+      'accepted',
+    );
+    const childCorrection = await checked.request('decide-review', {
+      reviewId: firstChildReview.id,
+      version: firstChildReview.version,
+      decisionId: randomUUID(),
+      decision: 'request-changes',
+      feedback: 'fixture:worker-complete:a Refine the scoped answer.',
+    });
+    assert.equal(
+      childCorrection.type,
+      'review',
+      JSON.stringify(childCorrection),
+    );
+    const correctedChild = await checked.event(
+      value =>
+        value.id === firstChild.id &&
+        value.runId !== firstChild.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(
+      correctedChild.providerSessionId,
+      firstChild.providerSessionId,
+    );
+    const correctedChildReview = await checked.review(
+      value =>
+        value.runId === correctedChild.runId && value.status === 'pending',
+    );
+    assert.ok(correctedChildReview.version > firstChildReview.version);
+    const invalidatedParent = (
+      await checked.request('list-reviews')
+    ).reviews.find(value => value.id === correctedParentReview.id);
+    assert.equal(invalidatedParent.status, 'superseded');
+    assert.equal(invalidatedParent.decision.id, parentDecisionId);
+    assert.equal(
+      (
+        await checked.request('decide-review', {
+          reviewId: correctedParentReview.id,
+          version: correctedParentReview.version,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          feedback: '',
+        })
+      ).code,
+      'invalid-request',
+    );
 
     for (const prompt of [
       'fixture:delegate-too-many',
@@ -964,6 +1178,66 @@ test(
         value => value.parentId === recursiveChildId,
       ),
       false,
+    );
+
+    await rm(join(root.directory, 'outside-link'));
+    await Promise.all([
+      writeFile(join(root.directory, 'tracked.txt'), 'worker dirty baseline\n'),
+      writeFile(
+        join(root.directory, 'deleted.txt'),
+        'worker deletion baseline\n',
+      ),
+      writeFile(
+        join(root.directory, 'dirty.txt'),
+        'unrelated worker baseline\n',
+      ),
+    ]);
+    const writablePlan = await plan(checked, 'fixture:delegate-writable');
+    await decide(checked, writablePlan, writablePlan.proposals[0], 'accept');
+    const writableResults = await parentResult(checked, writablePlan);
+    const writableChildId = writableResults.result.results[0].childSessionId;
+    const writableChildReview = await checked.review(
+      value =>
+        value.sessionId === writableChildId && value.status === 'pending',
+    );
+    assert.equal(
+      writableChildReview.diff.status,
+      'complete',
+      writableChildReview.diff.detail,
+    );
+    const writableParentReview = await checked.review(
+      value =>
+        value.runId === writablePlan.run.runId && value.status === 'pending',
+    );
+    assert.equal(writableParentReview.diff.status, 'not-applicable');
+    assert.deepEqual(writableParentReview.dependencies, [
+      {
+        sessionId: writableChildId,
+        reviewId: writableChildReview.id,
+        version: writableChildReview.version,
+      },
+    ]);
+    await writeFile(
+      join(root.directory, 'tracked.txt'),
+      'external edit after worker result\n',
+    );
+    assert.equal(
+      (
+        await checked.request('decide-review', {
+          reviewId: writableParentReview.id,
+          version: writableParentReview.version,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          feedback: '',
+        })
+      ).code,
+      'invalid-request',
+    );
+    assert.notEqual(
+      (await checked.request('list-reviews')).reviews.find(
+        value => value.id === writableParentReview.id,
+      ).status,
+      'accepted',
     );
 
     const runningChildren = async (currentHost, planned) => {
@@ -1054,6 +1328,14 @@ test(
       value => value.id === root.id,
     );
     assert.equal(settled.status, 'stopped');
+    assert.equal(
+      (await checked.request('list-reviews')).reviews.some(
+        value =>
+          value.runId === concurrent.run.runId ||
+          workers.some(worker => worker.child.runId === value.runId),
+      ),
+      false,
+    );
     assert.ok(settled.revision >= stoppedRevision);
     assert.equal(
       checked.observed.some(
@@ -1115,7 +1397,220 @@ test(
       ).length,
       persistedGroup.filter(value => value.parentId === root.id).length,
     );
+    const reviewWorkspace = join(directory, 'review-workspace');
+    await mkdir(reviewWorkspace);
+    await Promise.all([
+      writeFile(join(reviewWorkspace, 'tracked.txt'), 'user dirty baseline\n'),
+      writeFile(join(reviewWorkspace, 'deleted.txt'), 'delete this baseline\n'),
+      writeFile(
+        join(reviewWorkspace, 'dirty.txt'),
+        'unrelated operator edits\n',
+      ),
+    ]);
+    const writing = (
+      await afterGroup.request('create-session', {
+        ...create(reviewWorkspace),
+        provider: 'Codex',
+        model: 'fixture-codex',
+        mode: 'supervised',
+      })
+    ).session;
+    const writingRun = await sendCodex(
+      afterGroup,
+      writing,
+      'fixture:review-write',
+    );
+    const initialFiles = await afterGroup.event(
+      value =>
+        value.id === writing.id &&
+        value.runId === writingRun.runId &&
+        value.status === 'completed',
+    );
+    const initialReview = await afterGroup.review(
+      value => value.runId === writingRun.runId && value.status === 'pending',
+    );
+    assert.equal(initialReview.summary, 'Codex fixture initial files.');
+    assert.equal(initialReview.version, 1);
+    assert.ok(initialFiles.revision > initialReview.version);
+    assert.equal(
+      initialReview.diff.status,
+      'complete',
+      initialReview.diff.detail,
+    );
+    assert.deepEqual(
+      initialReview.diff.files.toSorted((left, right) =>
+        left.path.localeCompare(right.path),
+      ),
+      [
+        { path: 'created.txt', kind: 'added' },
+        { path: 'deleted.txt', kind: 'deleted' },
+        { path: 'tracked.txt', kind: 'modified' },
+      ],
+    );
+    assert.match(initialReview.diff.patch, /-user dirty baseline/);
+    assert.match(initialReview.diff.patch, /\+initial agent text/);
+    assert.doesNotMatch(
+      initialReview.diff.patch,
+      /dirty\.txt|unrelated operator edits|\.nesvo-codex/,
+    );
+    assert.equal(
+      await readFile(join(reviewWorkspace, 'dirty.txt'), 'utf8'),
+      'unrelated operator edits\n',
+    );
+    const correctionInput = {
+      reviewId: initialReview.id,
+      version: initialReview.version,
+      decisionId: randomUUID(),
+      decision: 'request-changes',
+      feedback: 'fixture:review-correct Please correct the result.',
+    };
+    const correction = await afterGroup.request(
+      'decide-review',
+      correctionInput,
+    );
+    assert.equal(correction.type, 'review', JSON.stringify(correction));
+    assert.equal(correction.review.decision.id, correctionInput.decisionId);
+    assert.deepEqual(
+      (await afterGroup.request('decide-review', correctionInput)).review,
+      correction.review,
+    );
+    const correctedFiles = await afterGroup.event(
+      value =>
+        value.id === writing.id &&
+        value.runId !== writingRun.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(
+      correctedFiles.providerSessionId,
+      initialFiles.providerSessionId,
+    );
+    assert.equal(
+      correctedFiles.messages.length,
+      initialFiles.messages.length + 2,
+    );
+    assert.match(correctedFiles.messages.at(-2).body, /fixture:review-correct/);
+    const correctedReview = await afterGroup.review(
+      value =>
+        value.runId === correctedFiles.runId && value.status === 'pending',
+    );
+    assert.ok(correctedReview.version > initialReview.version);
+    assert.equal(correctedReview.summary, 'Codex fixture corrected files.');
+    assert.equal(correctedReview.decision, null);
+    assert.match(correctedReview.diff.patch, /-initial agent text/);
+    assert.match(correctedReview.diff.patch, /\+corrected agent text/);
+    assert.equal(
+      (
+        await afterGroup.request('decide-review', {
+          reviewId: initialReview.id,
+          version: initialReview.version,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          feedback: '',
+        })
+      ).code,
+      'invalid-request',
+    );
+    const acceptCorrected = {
+      reviewId: correctedReview.id,
+      version: correctedReview.version,
+      decisionId: randomUUID(),
+      decision: 'accept',
+      feedback: '',
+    };
+    const acceptedFiles = await afterGroup.request(
+      'decide-review',
+      acceptCorrected,
+    );
+    assert.equal(acceptedFiles.type, 'review', JSON.stringify(acceptedFiles));
+    assert.equal(acceptedFiles.review.status, 'accepted');
+    assert.deepEqual(
+      (await afterGroup.request('decide-review', acceptCorrected)).review,
+      acceptedFiles.review,
+    );
     await afterGroup.stop();
+    const reviewsReopened = open();
+    const restoredReviews = (await reviewsReopened.request('list-reviews'))
+      .reviews;
+    assert.deepEqual(
+      restoredReviews.find(value => value.id === correctedReview.id),
+      acceptedFiles.review,
+    );
+    assert.equal(
+      restoredReviews.find(value => value.id === initialReview.id).decision
+        .feedback,
+      correctionInput.feedback,
+    );
+    const refreshRun = await sendCodex(
+      reviewsReopened,
+      writing,
+      'fixture:continue',
+    );
+    await reviewsReopened.event(
+      value =>
+        value.id === writing.id &&
+        value.runId === refreshRun.runId &&
+        value.status === 'completed',
+    );
+    const refreshed = await reviewsReopened.review(
+      value => value.runId === refreshRun.runId && value.status === 'pending',
+    );
+    assert.ok(refreshed.version > correctedReview.version);
+    assert.equal(
+      (await reviewsReopened.request('list-reviews')).reviews.find(
+        value => value.id === correctedReview.id,
+      ).status,
+      'superseded',
+    );
+    await writeFile(
+      join(reviewWorkspace, 'tracked.txt'),
+      'external edit after the result\n',
+    );
+    assert.equal(
+      (
+        await reviewsReopened.request('decide-review', {
+          reviewId: refreshed.id,
+          version: refreshed.version,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          feedback: '',
+        })
+      ).code,
+      'invalid-request',
+    );
+    assert.notEqual(
+      (await reviewsReopened.request('list-reviews')).reviews.find(
+        value => value.id === refreshed.id,
+      ).status,
+      'accepted',
+    );
+    const binaryRun = await sendCodex(
+      reviewsReopened,
+      writing,
+      'fixture:review-binary',
+    );
+    await reviewsReopened.event(
+      value =>
+        value.id === writing.id &&
+        value.runId === binaryRun.runId &&
+        value.status === 'completed',
+    );
+    const binaryReview = await reviewsReopened.review(
+      value => value.runId === binaryRun.runId && value.status === 'pending',
+    );
+    assert.equal(binaryReview.diff.status, 'unavailable');
+    assert.equal(
+      (
+        await reviewsReopened.request('decide-review', {
+          reviewId: binaryReview.id,
+          version: binaryReview.version,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          feedback: '',
+        })
+      ).code,
+      'invalid-request',
+    );
+    await reviewsReopened.stop();
   },
 );
 

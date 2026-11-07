@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -39,7 +45,11 @@ if (args.length === 1 && args[0] === '--version') {
   const delegations = new Map();
   const response = (id, result) => emit({ id, result });
   const notify = (method, params) => emit({ method, params });
-  const statePath = id => join(thread.cwd, `.nesvo-codex-fixture-${id}.json`);
+  const statePath = id => {
+    const directory = process.env.NESVO_CODEX_FIXTURE_STATE_DIR ?? thread.cwd;
+    mkdirSync(directory, { recursive: true });
+    return join(directory, `.nesvo-codex-fixture-${id}.json`);
+  };
   const policy = () =>
     thread.supervised
       ? {
@@ -136,6 +146,14 @@ if (args.length === 1 && args[0] === '--version') {
     else if (variant === 'mixed')
       workers = [worker('a', 'complete'), worker('b', 'fail')];
     else if (variant === 'recursive') workers = [worker('a', 'recursive')];
+    else if (variant === 'writable')
+      workers = [
+        {
+          ...worker('a', 'complete'),
+          task: 'fixture:review-write',
+          mode: 'supervised',
+        },
+      ];
     else if (variant === 'too-many') workers.push(worker('c', 'complete'));
     else if (variant === 'escape')
       workers = [{ ...worker('a', 'complete'), directory: '../outside' }];
@@ -388,6 +406,7 @@ if (args.length === 1 && args[0] === '--version') {
         }),
       );
       const prompt = params.input[0].text;
+      const command = prompt.split('\n')[0].trim();
       const worker =
         /fixture:worker-(hold|complete|fail|recursive):([a-z])/.exec(prompt);
       if (worker) {
@@ -409,8 +428,40 @@ if (args.length === 1 && args[0] === '--version') {
             },
           });
         } else complete(`Codex worker ${worker[2]} completed its scoped task.`);
-      } else if (/^fixture:delegate(?:-|$)/.test(prompt)) {
-        delegate(prompt.slice('fixture:delegate-'.length) || 'default');
+      } else if (prompt.includes('fixture:review-binary')) {
+        assert.equal(thread.supervised, true);
+        writeFileSync(
+          join(thread.cwd, 'binary.bin'),
+          Buffer.from([0, 1, 0, 2]),
+        );
+        complete('Codex fixture binary result.');
+      } else if (prompt.includes('fixture:review-correct')) {
+        assert.equal(thread.supervised, true);
+        assert.equal(
+          thread.resumed,
+          true,
+          'Correction must resume the same native thread',
+        );
+        writeFileSync(
+          join(thread.cwd, 'tracked.txt'),
+          'corrected agent text\n',
+        );
+        writeFileSync(
+          join(thread.cwd, 'created.txt'),
+          'corrected created text\n',
+        );
+        complete('Codex fixture corrected files.');
+      } else if (prompt.includes('fixture:review-write')) {
+        assert.equal(thread.supervised, true);
+        writeFileSync(join(thread.cwd, 'tracked.txt'), 'initial agent text\n');
+        writeFileSync(
+          join(thread.cwd, 'created.txt'),
+          'initial created text\n',
+        );
+        unlinkSync(join(thread.cwd, 'deleted.txt'));
+        complete('Codex fixture initial files.');
+      } else if (/^fixture:delegate(?:-|$)/.test(command)) {
+        delegate(command.slice('fixture:delegate-'.length) || 'default');
       } else if (prompt === 'fixture:stream') {
         delta('Codex fixture streamed ');
         setTimeout(() => {
