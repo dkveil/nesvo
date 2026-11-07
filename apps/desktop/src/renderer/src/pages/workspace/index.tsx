@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import type {
   CreateSessionInput,
   DecideDelegationInput,
+  DecideReviewInput,
+  Review,
   RespondApprovalInput,
 } from '@nesvo/contracts';
 import {
@@ -45,6 +47,16 @@ export function Workspace() {
   const store = useSessions();
   const [selectedId, setSelectedId] = useState('');
   const [inbox, setInbox] = useState(false);
+  const [selectedReviewId, setSelectedReviewId] = useState('');
+  const [reviewFeedbacks, setReviewFeedbacks] = useState<
+    Record<string, string>
+  >({});
+  const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({});
+  const [reviewPending, setReviewPending] = useState<Record<string, boolean>>(
+    {},
+  );
+  const reviewRequests = useRef(new Set<string>());
+  const reviewAttempts = useRef<Record<string, DecideReviewInput>>({});
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -89,6 +101,7 @@ export function Workspace() {
   };
   const openInbox = () => {
     setInbox(true);
+    setSelectedReviewId('');
     setNavigationOpen(false);
   };
   const openCreate = () => {
@@ -298,8 +311,91 @@ export function Workspace() {
       });
     }
   };
+  const reviewBlockedReason =
+    store.connection !== 'ready'
+      ? 'Połącz ponownie z hostem, aby podjąć decyzję.'
+      : store.loading || store.error
+        ? 'Najpierw odśwież stan sesji, aby podjąć decyzję.'
+        : activeRun || sending
+          ? 'Poczekaj na zakończenie pracy wszystkich sesji i workerów.'
+          : '';
+  const decideReview = async (
+    review: Review,
+    decision: DecideReviewInput['decision'],
+    feedback: string,
+  ) => {
+    if (reviewRequests.current.has(review.id) || reviewBlockedReason) return;
+    if (
+      review.status !== 'pending' ||
+      (decision === 'accept' && review.diff.status === 'unavailable') ||
+      (decision === 'request-changes' && !feedback.trim())
+    )
+      return;
+    const prior = reviewAttempts.current[review.id];
+    const attempt =
+      prior?.version === review.version &&
+      prior.decision === decision &&
+      prior.feedback === feedback.trim()
+        ? prior
+        : {
+            reviewId: review.id,
+            version: review.version,
+            decisionId: crypto.randomUUID(),
+            decision,
+            feedback: feedback.trim(),
+          };
+    reviewAttempts.current[review.id] = attempt;
+    reviewRequests.current.add(review.id);
+    setReviewPending(previous => ({ ...previous, [review.id]: true }));
+    setReviewErrors(previous => ({ ...previous, [review.id]: '' }));
+    const acknowledge = (result: Review) => {
+      store.mergeReviews([result]);
+      setReviewErrors(previous => ({ ...previous, [review.id]: '' }));
+      delete reviewAttempts.current[review.id];
+      if (attempt.decision === 'request-changes') {
+        select(result.sessionId);
+        void store.recover().catch(failure =>
+          setErrors(previous => ({
+            ...previous,
+            [result.sessionId]: `Poprawa została zlecona, ale nie udało się odświeżyć rozmowy. ${errorDetail(failure)}`,
+          })),
+        );
+      }
+    };
+    try {
+      acknowledge(await desktopApi().decideReview(attempt));
+    } catch (failure) {
+      setReviewErrors(previous => ({
+        ...previous,
+        [review.id]: `Nie udało się zapisać decyzji. ${errorDetail(failure)}`,
+      }));
+      try {
+        const history = await store.recoverReviews();
+        const confirmed = history.find(
+          result =>
+            result.id === review.id &&
+            result.decision?.id === attempt.decisionId,
+        );
+        if (confirmed) acknowledge(confirmed);
+      } catch (recoveryFailure) {
+        setReviewErrors(previous => ({
+          ...previous,
+          [review.id]: `${previous[review.id] ?? ''} Nie udało się odświeżyć wyników. ${errorDetail(recoveryFailure)} Ponowienie tej samej decyzji nie utworzy drugiego zlecenia.`,
+        }));
+      }
+    } finally {
+      reviewRequests.current.delete(review.id);
+      setReviewPending(previous => {
+        const next = { ...previous };
+        delete next[review.id];
+        return next;
+      });
+    }
+  };
   const sidebarProps = {
     sessions: store.sessions,
+    pendingReviews: store.reviews.filter(review => review.status === 'pending')
+      .length,
     selectedId: selected?.id ?? '',
     inbox,
     onSelect: select,
@@ -468,7 +564,28 @@ export function Workspace() {
         )}
         <main className="flex min-h-0 min-w-0 flex-1">
           {inbox ? (
-            <ReviewInbox />
+            <ReviewInbox
+              reviews={store.reviews}
+              loading={store.reviewsLoading}
+              error={store.reviewsError}
+              selectedId={selectedReviewId}
+              blockedReason={reviewBlockedReason}
+              pending={reviewPending}
+              decisionErrors={reviewErrors}
+              feedbacks={reviewFeedbacks}
+              onFeedback={(reviewId, value) =>
+                setReviewFeedbacks(previous => ({
+                  ...previous,
+                  [reviewId]: value,
+                }))
+              }
+              onSelect={setSelectedReviewId}
+              onSession={select}
+              onRefresh={store.refresh}
+              onDecision={(review, decision, feedback) =>
+                void decideReview(review, decision, feedback)
+              }
+            />
           ) : selected ? (
             <Conversation
               session={selected}

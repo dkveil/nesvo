@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DesktopApi, Session } from '@nesvo/contracts';
+import type { DesktopApi, Review, Session } from '@nesvo/contracts';
 import {
   errorDetail,
   providers,
@@ -24,6 +24,9 @@ function initialProviders(): ProviderStates {
 
 export function useSessions() {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [reviewsError, setReviewsError] = useState('');
   const [connection, setConnection] = useState<
     'connecting' | 'ready' | 'unavailable'
   >('connecting');
@@ -46,6 +49,22 @@ export function useSessions() {
       return [...merged.values()].sort(
         (left, right) =>
           right.updatedAt.localeCompare(left.updatedAt) ||
+          left.id.localeCompare(right.id),
+      );
+    });
+  }, []);
+  const mergeReviews = useCallback((updates: Review[]) => {
+    setReviews(previous => {
+      const merged = new Map(previous.map(review => [review.id, review]));
+      for (const review of updates) {
+        const current = merged.get(review.id);
+        if (!current || review.revision > current.revision)
+          merged.set(review.id, review);
+      }
+      return [...merged.values()].sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) ||
+          right.version - left.version ||
           left.id.localeCompare(right.id),
       );
     });
@@ -88,7 +107,8 @@ export function useSessions() {
       unsubscribe = api.subscribe(event => {
         if (!active) return;
         if (event.type === 'session-changed') merge([event.session]);
-        else {
+        else if (event.type === 'review-changed') mergeReviews([event.review]);
+        else if (event.type === 'host-disconnected') {
           disconnected = true;
           setConnection('unavailable');
           setError(
@@ -115,6 +135,21 @@ export function useSessions() {
           setLoading(false);
         },
       );
+      void api.listReviews().then(
+        history => {
+          if (!active) return;
+          mergeReviews(history);
+          setReviewsError('');
+          setReviewsLoading(false);
+        },
+        failure => {
+          if (!active) return;
+          setReviewsError(
+            `Nie udało się odczytać wyników. ${errorDetail(failure)}`,
+          );
+          setReviewsLoading(false);
+        },
+      );
       queueMicrotask(() => {
         if (active)
           for (const provider of providers) void inspectProvider(provider);
@@ -124,6 +159,8 @@ export function useSessions() {
         if (!active) return;
         setConnection('unavailable');
         setLoading(false);
+        setReviewsLoading(false);
+        setReviewsError(errorDetail(failure));
         setProviderStates(
           previous =>
             Object.fromEntries(
@@ -141,9 +178,10 @@ export function useSessions() {
       for (const provider of providers) requestCounters[provider] += 1;
       unsubscribe();
     };
-  }, [attempt, inspectProvider, merge]);
+  }, [attempt, inspectProvider, merge, mergeReviews]);
   const refresh = () => {
     setLoading(true);
+    setReviewsLoading(true);
     setConnection('connecting');
     setAttempt(value => value + 1);
   };
@@ -152,8 +190,19 @@ export function useSessions() {
     merge(history);
     return history;
   };
+  const recoverReviews = async () => {
+    const history = await desktopApi().listReviews();
+    mergeReviews(history);
+    setReviewsError('');
+    return history;
+  };
   return {
     sessions,
+    reviews,
+    reviewsLoading,
+    reviewsError,
+    mergeReviews,
+    recoverReviews,
     connection,
     loading,
     error,
