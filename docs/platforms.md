@@ -1,5 +1,13 @@
 # Platform verification
 
+## P6.2 native skill invocation
+
+Implementation 684558b connects the slash picker to explicit native Codex skill input. Windows passed strict types, ESLint, Prettier, build, the same two host cases and the principal desktop scenario. The checks cover disabled or stale selection rejection before thread creation, source persistence, selected resume, message idempotency, Stop during validation, keyboard selection, per-session drafts and existing approval/review/delegation flows. A focused compact-window check also verified identical slash reopening and preservation of trailing task text.
+
+A separate built-Electron task on Windows used installed Codex 0.156.0 with gpt-6-sol and a controlled project skill in read-only mode. The model reviewed a sample plan and returned the format and unique code present only in the skill body. The application preserved the exact messages, resolved source and provider thread after a full restart. Sample files and sampled provider configuration files remained unchanged. The plan shown in screenshots is test material, not a statement about Nesvo platform readiness. Claude availability probing used a fixture; no successful Claude model task is claimed.
+
+[Foundation checks](https://github.com/dkveil/nesvo/actions/runs/42418919155) passed at 684558b. The [native application and package workflow](https://github.com/dkveil/nesvo/actions/runs/42418918823) passed host checks, built-application execution and unpacked-package execution independently on Windows, macOS and Linux. These checks use provider fixtures; the real skill task above is Windows-only. Screenshots and real-invocation-evidence.json are attached to REV-275. P6.2 is In Review for Damian; successful checks do not constitute owner acceptance. The supported Claude picker remains discovery-only.
+
 ## P6.1 skill discovery
 
 Implementation 653ad2d delivers native Codex skill discovery and a bounded Claude filesystem inventory through the session Skills panel. Windows passed strict types, ESLint, Prettier, build, the same two host integration cases and the principal desktop scenario. Checks cover provider metadata, disabled entries, unsupported/malformed replies, isolated configuration, no model-turn requests, independent Stop, refresh and late responses after switching sessions. Final cosmetic metadata changes received a focused visual check.

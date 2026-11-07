@@ -56,3 +56,5 @@ Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin m
 The prototype prioritizes operator satisfaction, visible control and a coherent working flow.
 
 D60 authorizes P6.2: slash selection, one skill per message, native Codex invocation and persisted source attribution. The selected skill is verified again in the isolated execution process; unavailable selections fail without silently running an ordinary prompt. The supported Claude picker remains discovery-only until exact invocation is verified. The stage requires a real Codex task and owner review; it does not authorize P7 through P10.
+
+P6.2 is delivered at 684558b and In Review in REV-275. The slash picker selects one native Codex skill per message; the host revalidates it before the provider turn and saves its resolved source in history. A real Windows task proved instruction delivery and persistence after application restart. Native application and unpacked-package scenarios passed independently on Windows, macOS and Linux using fixtures; see docs/platforms.md. Claude's supported picker remains discovery-only. Damian's acceptance is still required; later stages have not started.
