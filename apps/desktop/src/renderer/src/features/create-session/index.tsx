@@ -1,5 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import type { PreviewSession, Provider, SessionRole } from '@/entities/session';
+import type {
+  ClaudeStatus,
+  CreateSessionInput,
+  Session,
+} from '@nesvo/contracts';
+import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -19,45 +24,53 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 
-const models: Record<Provider, string[]> = {
-  'Claude Code': ['Domyślny model', 'Opus', 'Sonnet', 'Haiku'],
-  Codex: ['Domyślny model', 'Codex', 'GPT'],
-};
-
 type Props = {
   open: boolean;
+  models: ClaudeStatus['models'];
   onOpenChange: (open: boolean) => void;
-  onCreate: (session: PreviewSession) => void;
+  onCreate: (input: CreateSessionInput) => Promise<Session>;
   onReturnFocus: () => void;
 };
 
 export function CreateSession({
   open,
+  models,
   onOpenChange,
   onCreate,
   onReturnFocus,
 }: Props) {
   const [title, setTitle] = useState('');
-  const [provider, setProvider] = useState<Provider>('Claude Code');
-  const [model, setModel] = useState('Domyślny model');
-  const [role, setRole] = useState<SessionRole>('orchestrator');
+  const [model, setModel] = useState<CreateSessionInput['model']>('default');
+  const [role, setRole] = useState<CreateSessionInput['role']>('orchestrator');
   const [directory, setDirectory] = useState('');
-  const submit = (event: FormEvent) => {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    onCreate({
-      id: crypto.randomUUID(),
-      title: title.trim() || 'Nowa sesja',
-      provider,
-      model,
-      role,
-      directory: directory.trim(),
-      status: 'ready',
-      messages: [],
-    });
-    onOpenChange(false);
+    if (pending) return;
+    setPending(true);
+    setError('');
+    try {
+      await onCreate({
+        title: title.trim() || 'Nowa sesja',
+        model,
+        role,
+        directory: directory.trim(),
+      });
+      onOpenChange(false);
+    } catch (failure) {
+      setError(`Nie udało się utworzyć sesji. ${errorDetail(failure)}`);
+    } finally {
+      setPending(false);
+    }
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={value => {
+        if (!pending) onOpenChange(value);
+      }}
+    >
       <DialogContent
         className="max-h-[90dvh] overflow-y-auto"
         onCloseAutoFocus={event => {
@@ -68,11 +81,11 @@ export function CreateSession({
         <DialogHeader>
           <DialogTitle>Nowa sesja</DialogTitle>
           <DialogDescription>
-            Wybierz, z kim chcesz pracować. W tym podglądzie sesja nie uruchamia
-            agenta i znika po zamknięciu aplikacji.
+            Rozmowa zostanie zapisana lokalnie. Claude Code uruchomi się po
+            wysłaniu pierwszej wiadomości.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-5">
+        <form onSubmit={event => void submit(event)} className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="session-title">Nazwa sesji</Label>
             <Input
@@ -81,39 +94,43 @@ export function CreateSession({
               value={title}
               onChange={event => setTitle(event.target.value)}
               maxLength={100}
+              disabled={pending}
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="session-provider">Provider</Label>
-              <Select
-                value={provider}
-                onValueChange={value => {
-                  if (value === 'Claude Code' || value === 'Codex') {
-                    setProvider(value);
-                    setModel('Domyślny model');
-                  }
-                }}
-              >
+              <Select value="Claude Code" disabled>
                 <SelectTrigger id="session-provider" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Claude Code">Claude Code</SelectItem>
-                  <SelectItem value="Codex">Codex</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="session-model">Model</Label>
-              <Select value={model} onValueChange={setModel}>
+              <Select
+                value={model}
+                disabled={pending || models.length === 0}
+                onValueChange={value => {
+                  if (
+                    value === 'default' ||
+                    value === 'opus' ||
+                    value === 'sonnet' ||
+                    value === 'haiku'
+                  )
+                    setModel(value);
+                }}
+              >
                 <SelectTrigger id="session-model" className="w-full">
-                  <SelectValue />
+                  <SelectValue placeholder="Domyślny" />
                 </SelectTrigger>
                 <SelectContent>
-                  {models[provider].map(value => (
-                    <SelectItem key={value} value={value}>
-                      {value}
+                  {models.map(option => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -121,12 +138,14 @@ export function CreateSession({
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Lista modeli jest przykładowa.
+            Obsługiwane aliasy Claude Code. Dostępność modelu na koncie zostanie
+            sprawdzona przy uruchomieniu.
           </p>
           <div className="space-y-2">
             <Label htmlFor="session-role">Rola sesji</Label>
             <Select
               value={role}
+              disabled={pending}
               onValueChange={value => {
                 if (value === 'orchestrator' || value === 'standalone')
                   setRole(value);
@@ -153,25 +172,38 @@ export function CreateSession({
               placeholder="Wpisz ścieżkę lub zostaw puste"
               value={directory}
               onChange={event => setDirectory(event.target.value)}
+              maxLength={4096}
+              disabled={pending}
               aria-describedby="directory-help"
             />
             <p
               id="directory-help"
               className="text-xs leading-relaxed text-muted-foreground"
             >
-              Możesz zacząć bez katalogu. Wybrany folder nie musi być
-              repozytorium Git.
+              Puste pole tworzy osobny lokalny folder. Wybrany katalog nie musi
+              być repozytorium Git. Analiza odbywa się tylko w trybie odczytu.
             </p>
           </div>
+          {error && (
+            <p
+              role="alert"
+              className="text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
+            >
+              {error}
+            </p>
+          )}
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
+              disabled={pending}
               onClick={() => onOpenChange(false)}
             >
               Anuluj
             </Button>
-            <Button type="submit">Utwórz w podglądzie</Button>
+            <Button type="submit" disabled={pending}>
+              {pending ? 'Tworzenie…' : 'Utwórz sesję'}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

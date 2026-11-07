@@ -3,34 +3,60 @@ import {
   ArrowUp,
   Bot,
   CircleUserRound,
-  Inbox,
   MessageSquare,
-  ShieldCheck,
+  Square,
 } from 'lucide-react';
-import { roleLabels, type PreviewSession } from '@/entities/session';
+import { roleLabels, statusLabels, type Session } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
 
 type Props = {
-  session: PreviewSession;
+  session: Session;
   draft: string;
+  sending: boolean;
+  canSend: boolean;
+  otherRun: boolean;
+  error: string;
   onDraft: (value: string) => void;
   onSend: () => void;
-  onInbox: () => void;
+  onStop: () => void;
 };
 
 export function Conversation({
   session,
   draft,
+  sending,
+  canSend,
+  otherRun,
+  error,
   onDraft,
   onSend,
-  onInbox,
+  onStop,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
+  const followOutput = useRef(true);
+  const visibleSession = useRef('');
+  const running = session.status === 'running' || session.status === 'stopping';
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: 'end' });
-  }, [session.id, session.messages.length]);
+    const viewport = bottom.current?.closest<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    if (!viewport) return;
+    const trackPosition = () => {
+      followOutput.current =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96;
+    };
+    viewport.addEventListener('scroll', trackPosition, { passive: true });
+    return () => viewport.removeEventListener('scroll', trackPosition);
+  }, [session.id]);
+  useEffect(() => {
+    if (visibleSession.current !== session.id || followOutput.current) {
+      bottom.current?.scrollIntoView({ block: 'end' });
+      followOutput.current = true;
+    }
+    visibleSession.current = session.id;
+  }, [session.id, session.revision]);
   return (
     <section
       aria-label="Rozmowa"
@@ -43,8 +69,8 @@ export function Conversation({
               <MessageSquare className="size-7 text-muted-foreground" />
               <h2 className="text-lg font-medium">Od czego zaczynamy?</h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-                Opisz cel i zakres pracy. W podglądzie możesz dodać wiadomość,
-                aby sprawdzić układ rozmowy.
+                Opisz cel i zakres analizy. Claude Code może czytać pliki i
+                przygotować odpowiedź.
               </p>
             </div>
           )}
@@ -64,54 +90,48 @@ export function Conversation({
                     : roleLabels[session.role]}
                   {message.author === 'agent' && (
                     <span className="text-xs font-normal text-muted-foreground">
-                      {session.provider}
+                      Claude Code · {statusLabels[message.state]}
                     </span>
                   )}
                 </div>
                 <p className="text-sm leading-6 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {message.body}
+                  {message.body ||
+                    (message.state === 'running'
+                      ? 'Oczekiwanie na odpowiedź…'
+                      : 'Brak treści odpowiedzi.')}
                 </p>
               </div>
             </article>
           ))}
-          {session.status === 'review' && (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-              <div className="flex items-center gap-3">
-                <Inbox className="size-4 text-muted-foreground" />
-                <div>
-                  <p className="text-sm font-medium">Wynik gotowy do odbioru</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Przykładowe podsumowanie i zmiany
-                  </p>
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" onClick={onInbox}>
-                Otwórz wynik
-              </Button>
-            </div>
+          {session.activity && running && (
+            <p
+              role="status"
+              className="text-xs text-muted-foreground [overflow-wrap:anywhere]"
+            >
+              {session.activity}
+            </p>
           )}
-          {session.status === 'approval' && (
-            <div className="space-y-3 border-t pt-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <ShieldCheck className="size-4" />
-                Zgoda na uruchomienie podglądu
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Worker chce uruchomić podgląd formularza, aby sprawdzić
-                nawigację klawiaturą.
-              </p>
-              <div className="flex gap-2">
-                <Button size="sm" disabled>
-                  Zezwól
-                </Button>
-                <Button size="sm" variant="outline" disabled>
-                  Odmów
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Miejsce na decyzję operatora. Akcje są nieaktywne w podglądzie.
-              </p>
-            </div>
+          {session.error && (
+            <p
+              role="alert"
+              className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]"
+            >
+              {session.error}
+            </p>
+          )}
+          {session.status === 'interrupted' && (
+            <p className="text-sm text-muted-foreground">
+              Uruchomienie zostało przerwane. Historia jest zachowana; możesz
+              wysłać kolejną wiadomość.
+            </p>
+          )}
+          {error && (
+            <p
+              role="alert"
+              className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]"
+            >
+              {error}
+            </p>
           )}
           <div ref={bottom} />
         </div>
@@ -121,7 +141,7 @@ export function Conversation({
           className="mx-auto max-w-3xl"
           onSubmit={event => {
             event.preventDefault();
-            if (draft.trim()) onSend();
+            if (draft.trim() && canSend) onSend();
           }}
         >
           <label htmlFor="message-input" className="sr-only">
@@ -133,18 +153,40 @@ export function Conversation({
               placeholder="Napisz, czym chcesz się zająć…"
               value={draft}
               onChange={event => onDraft(event.target.value)}
+              maxLength={32000}
               className="max-h-40 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
-            <div className="flex justify-end px-1 pt-1">
-              <Button
-                type="submit"
-                size="icon-sm"
-                disabled={!draft.trim()}
-                aria-label="Dodaj wiadomość do podglądu"
-                title="Dodaj wiadomość do podglądu"
-              >
-                <ArrowUp />
-              </Button>
+            <div className="flex items-center justify-between gap-3 px-1 pt-1">
+              <span className="text-xs text-muted-foreground">
+                {otherRun
+                  ? 'Trwa praca w innej sesji'
+                  : sending
+                    ? 'Wysyłanie…'
+                    : 'Analiza · tylko odczyt'}
+              </span>
+              {running ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={session.status === 'stopping'}
+                  onClick={onStop}
+                  aria-label="Stop"
+                >
+                  <Square />
+                  {session.status === 'stopping' ? 'Zatrzymywanie…' : 'Stop'}
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  size="icon-sm"
+                  disabled={!draft.trim() || !canSend}
+                  aria-label="Wyślij wiadomość"
+                  title="Wyślij wiadomość"
+                >
+                  <ArrowUp />
+                </Button>
+              )}
             </div>
           </div>
         </form>

@@ -1,26 +1,12 @@
-import { useEffect, useState } from 'react';
 import { Circle, RefreshCw } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 
-type Connection = 'connecting' | 'ready' | 'unavailable';
+type Props = {
+  connection: 'connecting' | 'ready' | 'unavailable';
+  onRefresh: () => void;
+};
 
-export function HostStatus() {
-  const [connection, setConnection] = useState<Connection>('connecting');
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let active = true;
-    window.nesvo.health().then(
-      () => {
-        if (active) setConnection('ready');
-      },
-      () => {
-        if (active) setConnection('unavailable');
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [attempt]);
+export function HostStatus({ connection, onRefresh }: Props) {
   const label = {
     connecting: 'Łączenie z hostem…',
     ready: 'Połączono z lokalnym hostem',
@@ -37,15 +23,7 @@ export function HostStatus() {
           className={connection === 'ready' ? 'size-2 fill-current' : 'size-2'}
           aria-hidden="true"
         />
-        <span className="hidden lg:inline">{label}</span>
-        <span className="lg:hidden">
-          {connection === 'ready'
-            ? 'Połączono'
-            : connection === 'connecting'
-              ? 'Łączenie…'
-              : 'Brak hosta'}
-        </span>
-        <span className="sr-only lg:hidden">{label}</span>
+        <span>{label}</span>
       </span>
       <Button
         size="icon-xs"
@@ -53,10 +31,7 @@ export function HostStatus() {
         aria-label="Odśwież połączenie"
         title="Odśwież połączenie"
         disabled={connection === 'connecting'}
-        onClick={() => {
-          setConnection('connecting');
-          setAttempt(value => value + 1);
-        }}
+        onClick={onRefresh}
       >
         <RefreshCw />
       </Button>

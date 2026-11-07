@@ -1,9 +1,18 @@
 import { useRef, useState } from 'react';
-import { Inbox, Menu, PanelRight, Plus } from 'lucide-react';
+import type { CreateSessionInput } from '@nesvo/contracts';
 import {
+  Inbox,
+  Menu,
+  MessageSquare,
+  PanelRight,
+  Plus,
+  RefreshCw,
+} from 'lucide-react';
+import {
+  errorDetail,
+  modelLabels,
   roleLabels,
   statusLabels,
-  type PreviewSession,
 } from '@/entities/session';
 import { CreateSession } from '@/features/create-session';
 import { HostStatus } from '@/features/host-status';
@@ -21,19 +30,31 @@ import { Conversation } from '@/widgets/conversation';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
 import { SessionSidebar } from '@/widgets/session-sidebar';
-import { demoReview, demoSessions } from './demo-data';
+import { desktopApi, useSessions } from './use-sessions';
 
 export function Workspace() {
-  const [sessions, setSessions] = useState(demoSessions);
-  const [selectedId, setSelectedId] = useState('contact-plan');
+  const store = useSessions();
+  const [selectedId, setSelectedId] = useState('');
   const [inbox, setInbox] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const draftVersions = useRef<Record<string, number>>({});
+  const sendAttempts = useRef<
+    Record<string, { text: string; messageId: string }>
+  >({});
+  const stopping = useRef(new Set<string>());
   const createTrigger = useRef<HTMLElement | null>(null);
   const selected =
-    sessions.find(session => session.id === selectedId) ?? sessions[0]!;
+    store.sessions.find(session => session.id === selectedId) ??
+    store.sessions[0];
+  const activeRun = store.sessions.find(
+    session => session.status === 'running' || session.status === 'stopping',
+  );
   const select = (id: string) => {
     setSelectedId(id);
     setInbox(false);
@@ -52,39 +73,121 @@ export function Workspace() {
     setNavigationOpen(false);
     setCreating(true);
   };
-  const create = (session: PreviewSession) => {
-    setSessions(previous => [session, ...previous]);
+  const create = async (input: CreateSessionInput) => {
+    const session = await desktopApi().createSession(input);
+    store.merge([session]);
     select(session.id);
+    return session;
   };
-  const send = () => {
-    const body = drafts[selected.id]?.trim();
-    if (!body) return;
-    setSessions(previous =>
-      previous.map(session =>
-        session.id === selected.id
-          ? {
-              ...session,
-              messages: [
-                ...session.messages,
-                { id: crypto.randomUUID(), author: 'operator', body },
-              ],
-            }
-          : session,
-      ),
-    );
-    setDrafts(previous => ({ ...previous, [selected.id]: '' }));
+  const changeDraft = (id: string, value: string) => {
+    draftVersions.current[id] = (draftVersions.current[id] ?? 0) + 1;
+    setDrafts(previous => ({ ...previous, [id]: value }));
+  };
+  const send = async () => {
+    if (
+      !selected ||
+      sendingRef.current ||
+      activeRun ||
+      store.connection !== 'ready' ||
+      store.claude?.status !== 'ready' ||
+      store.claudeLoading ||
+      store.claudeError
+    )
+      return;
+    const sessionId = selected.id;
+    const text = drafts[sessionId]?.trim();
+    if (!text || text.length > 32000) return;
+    const version = draftVersions.current[sessionId] ?? 0;
+    const prior = sendAttempts.current[sessionId];
+    const attempt =
+      prior?.text === text ? prior : { text, messageId: crypto.randomUUID() };
+    sendAttempts.current[sessionId] = attempt;
+    sendingRef.current = true;
+    setSending(true);
+    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    const acknowledge = () => {
+      delete sendAttempts.current[sessionId];
+      if ((draftVersions.current[sessionId] ?? 0) === version)
+        setDrafts(previous => ({ ...previous, [sessionId]: '' }));
+    };
+    try {
+      const session = await desktopApi().sendMessage({
+        sessionId,
+        messageId: attempt.messageId,
+        text,
+      });
+      store.merge([session]);
+      acknowledge();
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [sessionId]: `Nie udało się potwierdzić wysłania wiadomości. ${errorDetail(failure)}`,
+      }));
+      try {
+        const history = await store.recover();
+        if (
+          history
+            .find(session => session.id === sessionId)
+            ?.messages.some(message => message.id === attempt.messageId)
+        )
+          acknowledge();
+      } catch (recoveryFailure) {
+        setErrors(previous => ({
+          ...previous,
+          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)} Możesz ponowić wysyłanie tej samej wiadomości.`,
+        }));
+      }
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  };
+  const stop = async () => {
+    if (
+      !selected?.runId ||
+      selected.status !== 'running' ||
+      stopping.current.has(selected.runId)
+    )
+      return;
+    const { id: sessionId, runId } = selected;
+    stopping.current.add(runId);
+    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    try {
+      store.merge([await desktopApi().stopRun({ sessionId, runId })]);
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [sessionId]: `Nie udało się zatrzymać uruchomienia. ${errorDetail(failure)}`,
+      }));
+      try {
+        await store.recover();
+      } catch (recoveryFailure) {
+        setErrors(previous => ({
+          ...previous,
+          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)}`,
+        }));
+      }
+    } finally {
+      stopping.current.delete(runId);
+    }
   };
   const sidebarProps = {
-    sessions,
-    selectedId,
+    sessions: store.sessions,
+    selectedId: selected?.id ?? '',
     inbox,
     onSelect: select,
     onInbox: openInbox,
     onCreate: openCreate,
   };
-  const details = (
-    <SessionDetails session={selected} sessions={sessions} onSelect={select} />
-  );
+  const providerLabel = store.claudeLoading
+    ? 'Sprawdzanie Claude Code…'
+    : {
+        ready: 'Claude Code jest gotowy',
+        missing: 'Nie znaleziono Claude Code',
+        unauthenticated: 'Claude Code wymaga logowania',
+        unsupported: 'Ta wersja Claude Code nie jest obsługiwana',
+        error: 'Claude Code jest niedostępny',
+      }[store.claude?.status ?? 'error'];
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       <aside className="hidden w-56 shrink-0 md:block">
@@ -113,7 +216,7 @@ export function Workspace() {
           </Sheet>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-medium">
-              {inbox ? 'Do odbioru' : selected.title}
+              {inbox ? 'Do odbioru' : (selected?.title ?? 'Sesje')}
             </h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               {inbox ? (
@@ -121,18 +224,22 @@ export function Workspace() {
                   <Inbox className="size-3" />
                   <span>Wyniki wszystkich sesji w jednym miejscu</span>
                 </>
-              ) : (
+              ) : selected ? (
                 <>
                   <span>{roleLabels[selected.role]}</span>
                   <span>·</span>
-                  <span>{selected.provider}</span>
+                  <span>Claude Code</span>
                   <span>·</span>
-                  <span>{selected.model}</span>
+                  <span>
+                    {selected.actualModel ?? modelLabels[selected.model]}
+                  </span>
                 </>
+              ) : (
+                <span>Twoja lokalna przestrzeń pracy</span>
               )}
             </div>
           </div>
-          {!inbox && (
+          {!inbox && selected && (
             <span className="hidden text-xs text-muted-foreground sm:inline">
               {statusLabels[selected.status]}
             </span>
@@ -146,7 +253,7 @@ export function Workspace() {
           >
             <Plus />
           </Button>
-          {!inbox && (
+          {!inbox && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
                 <Button
@@ -162,37 +269,133 @@ export function Workspace() {
                 <SheetHeader>
                   <SheetTitle>Kontekst sesji</SheetTitle>
                   <SheetDescription>
-                    Informacje, delegacja i kontrola operatora.
+                    Informacje o sesji i zakresie analizy.
                   </SheetDescription>
                 </SheetHeader>
-                <ScrollArea className="min-h-0 flex-1">{details}</ScrollArea>
+                <ScrollArea className="min-h-0 flex-1">
+                  <SessionDetails session={selected} />
+                </ScrollArea>
               </SheetContent>
             </Sheet>
           )}
         </header>
+        {(store.error ||
+          store.claudeError ||
+          store.claude?.status !== 'ready') && (
+          <div className="shrink-0 space-y-2 border-b px-5 py-3 text-xs lg:px-8">
+            {store.error && (
+              <div role="alert" className="space-y-2">
+                <p className="leading-relaxed text-destructive [overflow-wrap:anywhere]">
+                  {store.error}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => window.location.reload()}
+                >
+                  Odśwież okno
+                </Button>
+              </div>
+            )}
+            {store.claudeError && (
+              <p
+                role="alert"
+                className="text-destructive [overflow-wrap:anywhere]"
+              >
+                {store.claudeError}
+              </p>
+            )}
+            <span role="status">{providerLabel}</span>
+            {store.claude?.detail && (
+              <p className="leading-relaxed whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                {store.claude.detail}
+              </p>
+            )}
+            {store.claude?.status === 'unauthenticated' && (
+              <p className="text-muted-foreground">
+                Zaloguj się w terminalu poleceniem{' '}
+                <code>claude auth login</code>, a następnie odśwież status.
+              </p>
+            )}
+          </div>
+        )}
         <main className="flex min-h-0 min-w-0 flex-1">
           {inbox ? (
-            <ReviewInbox review={demoReview} onSession={select} />
-          ) : (
+            <ReviewInbox />
+          ) : selected ? (
             <Conversation
               session={selected}
               draft={drafts[selected.id] ?? ''}
-              onDraft={value =>
-                setDrafts(previous => ({ ...previous, [selected.id]: value }))
+              sending={sending}
+              canSend={
+                !sending &&
+                !activeRun &&
+                store.connection === 'ready' &&
+                store.claude?.status === 'ready' &&
+                !store.claudeLoading &&
+                !store.claudeError
               }
-              onSend={send}
-              onInbox={openInbox}
+              otherRun={!!activeRun && activeRun.id !== selected.id}
+              error={errors[selected.id] ?? ''}
+              onDraft={value => changeDraft(selected.id, value)}
+              onSend={() => void send()}
+              onStop={() => void stop()}
             />
+          ) : (
+            <section
+              className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
+              aria-label="Lista sesji"
+            >
+              <MessageSquare className="size-7 text-muted-foreground" />
+              <h2 className="text-lg font-medium">
+                {store.loading
+                  ? 'Wczytywanie sesji…'
+                  : store.error
+                    ? 'Historia jest niedostępna'
+                    : 'Zacznij nową rozmowę'}
+              </h2>
+              <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+                {store.loading
+                  ? 'Odczytujemy lokalną historię.'
+                  : store.error
+                    ? 'Odśwież połączenie, aby ponowić odczyt zapisanych sesji.'
+                    : 'Utwórz sesję Claude Code i opisz zadanie do analizy.'}
+              </p>
+              {!store.loading && !store.error && (
+                <Button onClick={openCreate}>
+                  <Plus />
+                  Nowa sesja
+                </Button>
+              )}
+            </section>
           )}
         </main>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 text-xs text-muted-foreground lg:px-6">
-          <span>Podgląd · dane demonstracyjne, bez uruchamiania agentów</span>
-          <HostStatus />
+          <span>Analiza · tylko odczyt</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1 text-xs text-muted-foreground"
+              aria-label="Odśwież status Claude Code"
+              title={providerLabel}
+              disabled={store.claudeLoading}
+              onClick={() => void store.refreshClaude()}
+            >
+              <RefreshCw />
+              Claude Code
+            </Button>
+            <HostStatus
+              connection={store.connection}
+              onRefresh={store.refresh}
+            />
+          </div>
         </footer>
       </div>
       {creating && (
         <CreateSession
           open={creating}
+          models={store.claude?.models ?? []}
           onOpenChange={setCreating}
           onCreate={create}
           onReturnFocus={() => {

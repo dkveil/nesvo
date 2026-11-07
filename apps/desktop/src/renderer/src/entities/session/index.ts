@@ -1,34 +1,29 @@
-export type SessionRole = 'orchestrator' | 'worker' | 'standalone';
-export type SessionStatus = 'ready' | 'planning' | 'review' | 'approval';
-export type Provider = 'Claude Code' | 'Codex';
+import type { Session } from '@nesvo/contracts';
 
-export type Message = {
-  id: string;
-  author: 'operator' | 'agent';
-  body: string;
-};
+export type { Session } from '@nesvo/contracts';
 
-export type PreviewSession = {
-  id: string;
-  title: string;
-  provider: Provider;
-  model: string;
-  role: SessionRole;
-  status: SessionStatus;
-  directory: string;
-  parentId?: string;
-  messages: Message[];
-};
-
-export const roleLabels: Record<SessionRole, string> = {
+export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orkiestrator',
-  worker: 'Worker',
   standalone: 'Samodzielna',
 };
 
-export const statusLabels: Record<SessionStatus, string> = {
-  ready: 'Gotowa',
-  planning: 'Planowanie',
-  review: 'Do odbioru',
-  approval: 'Czeka na zgodę',
+export const modelLabels: Record<Session['model'], string> = {
+  default: 'Domyślny',
+  opus: 'Opus',
+  sonnet: 'Sonnet',
+  haiku: 'Haiku',
 };
+
+export const statusLabels: Record<Session['status'], string> = {
+  ready: 'Gotowa',
+  running: 'Pracuje',
+  stopping: 'Zatrzymywanie…',
+  completed: 'Ukończona',
+  stopped: 'Zatrzymana',
+  failed: 'Błąd',
+  interrupted: 'Przerwana',
+};
+
+export function errorDetail(error: unknown) {
+  return error instanceof Error ? error.message : 'Nieznany błąd.';
+}

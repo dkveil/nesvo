@@ -1,21 +1,15 @@
-import { GitBranch, ShieldCheck, CornerDownRight, Folder } from 'lucide-react';
+import { Folder, ShieldCheck } from 'lucide-react';
 import {
+  modelLabels,
   roleLabels,
   statusLabels,
-  type PreviewSession,
+  type Session,
 } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';
 
-type Props = {
-  session: PreviewSession;
-  sessions: PreviewSession[];
-  onSelect: (id: string) => void;
-};
+type Props = { session: Session };
 
-export function SessionDetails({ session, sessions, onSelect }: Props) {
-  const root = sessions.find(item => item.id === session.parentId) ?? session;
-  const children = sessions.filter(item => item.parentId === root.id);
+export function SessionDetails({ session }: Props) {
   return (
     <div className="space-y-6 p-5">
       <section aria-label="Informacje o sesji" className="space-y-4">
@@ -30,73 +24,36 @@ export function SessionDetails({ session, sessions, onSelect }: Props) {
             <dd>{session.provider}</dd>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Model</dt>
-            <dd>{session.model}</dd>
+            <dt className="text-muted-foreground">Wybrany model</dt>
+            <dd>{modelLabels[session.model]}</dd>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Stan przykładowy</dt>
+            <dt className="text-muted-foreground">Model uruchomienia</dt>
+            <dd className="break-all text-right">
+              {session.actualModel ?? 'Po wysłaniu wiadomości'}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt className="text-muted-foreground">Stan</dt>
             <dd>{statusLabels[session.status]}</dd>
           </div>
         </dl>
         <div className="flex items-start gap-2 text-xs text-muted-foreground">
-          <Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <Folder className="mt-0.5 size-4 shrink-0" />
           <span className="min-w-0 break-all leading-relaxed">
-            {session.directory || 'Bez katalogu pracy'}
+            {session.directory}
           </span>
         </div>
-      </section>
-      <Separator />
-      <section aria-label="Drzewo delegacji" className="space-y-3">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <GitBranch className="size-4" />
-          Delegacja
-          <span className="ml-auto text-xs font-normal text-muted-foreground">
-            {children.length}/2
-          </span>
-        </h2>
-        <Button
-          variant={root.id === session.id ? 'secondary' : 'ghost'}
-          className="h-auto w-full justify-start px-3 py-2 text-left"
-          onClick={() => onSelect(root.id)}
-        >
-          <span className="min-w-0">
-            <span className="block truncate text-xs">{root.title}</span>
-            <span className="block pt-1 text-xs font-normal text-muted-foreground">
-              {roleLabels[root.role]}
-            </span>
-          </span>
-        </Button>
-        {children.map(child => (
-          <Button
-            key={child.id}
-            variant={child.id === session.id ? 'secondary' : 'ghost'}
-            className="h-auto w-full justify-start px-3 py-2 text-left"
-            onClick={() => onSelect(child.id)}
-          >
-            <CornerDownRight className="shrink-0 text-muted-foreground" />
-            <span className="min-w-0">
-              <span className="block truncate text-xs">{child.title}</span>
-              <span className="block pt-1 text-xs font-normal text-muted-foreground">
-                {statusLabels[child.status]}
-              </span>
-            </span>
-          </Button>
-        ))}
-        {children.length === 0 && (
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Tutaj pojawią się podsesje wydzielone przez orkiestratora.
-          </p>
-        )}
       </section>
       <Separator />
       <section className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <ShieldCheck className="size-4" />
-          Kontrola operatora
+          Analiza · tylko odczyt
         </h2>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Miejsce na zgody dotyczące pracy tej sesji i uruchamiania workerów.
-          Wyniki trafiają do wspólnej skrzynki do odbioru.
+          Claude Code może czytać i wyszukiwać pliki. Edycja plików, polecenia
+          terminala i delegacja będą dostępne w kolejnych etapach.
         </p>
       </section>
     </div>

@@ -1,19 +1,12 @@
 import { useState } from 'react';
-import {
-  GitBranch,
-  Inbox,
-  MessageSquare,
-  Plus,
-  Search,
-  CornerDownRight,
-} from 'lucide-react';
-import { statusLabels, type PreviewSession } from '@/entities/session';
+import { GitBranch, Inbox, MessageSquare, Plus, Search } from 'lucide-react';
+import { statusLabels, type Session } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 
 type Props = {
-  sessions: PreviewSession[];
+  sessions: Session[];
   selectedId: string;
   inbox: boolean;
   onSelect: (id: string) => void;
@@ -30,17 +23,10 @@ export function SessionSidebar({
   onCreate,
 }: Props) {
   const [search, setSearch] = useState('');
-  const matches = (session: PreviewSession) =>
+  const filtered = sessions.filter(session =>
     session.title
       .toLocaleLowerCase()
-      .includes(search.trim().toLocaleLowerCase());
-  const roots = sessions.filter(
-    session =>
-      !session.parentId &&
-      (matches(session) ||
-        sessions.some(
-          child => child.parentId === session.id && matches(child),
-        )),
+      .includes(search.trim().toLocaleLowerCase()),
   );
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -64,9 +50,6 @@ export function SessionSidebar({
         >
           <Inbox />
           Do odbioru
-          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-            1
-          </span>
         </Button>
         <div className="relative mt-3">
           <Search
@@ -87,64 +70,34 @@ export function SessionSidebar({
           <p className="px-2 pb-2 text-xs font-medium text-muted-foreground">
             Sesje
           </p>
-          {roots.map(root => (
-            <div key={root.id} className="mb-2">
-              <Button
-                variant={
-                  !inbox && selectedId === root.id ? 'secondary' : 'ghost'
-                }
-                className="h-auto w-full justify-start px-2 py-2 text-left font-normal"
-                onClick={() => onSelect(root.id)}
-                aria-current={
-                  !inbox && selectedId === root.id ? 'page' : undefined
-                }
-              >
-                {root.role === 'orchestrator' ? (
-                  <GitBranch className="text-muted-foreground" />
-                ) : (
-                  <MessageSquare className="text-muted-foreground" />
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{root.title}</span>
-                  <span className="block pt-0.5 text-xs font-normal text-muted-foreground">
-                    {root.provider}
-                  </span>
+          {filtered.map(session => (
+            <Button
+              key={session.id}
+              variant={
+                !inbox && selectedId === session.id ? 'secondary' : 'ghost'
+              }
+              className="h-auto w-full justify-start px-2 py-2 text-left font-normal"
+              onClick={() => onSelect(session.id)}
+              aria-current={
+                !inbox && selectedId === session.id ? 'page' : undefined
+              }
+            >
+              {session.role === 'orchestrator' ? (
+                <GitBranch className="text-muted-foreground" />
+              ) : (
+                <MessageSquare className="text-muted-foreground" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{session.title}</span>
+                <span className="block pt-0.5 text-xs font-normal text-muted-foreground">
+                  {statusLabels[session.status]}
                 </span>
-              </Button>
-              {sessions
-                .filter(
-                  child =>
-                    child.parentId === root.id &&
-                    (matches(root) || matches(child)),
-                )
-                .map(child => (
-                  <Button
-                    key={child.id}
-                    variant={
-                      !inbox && selectedId === child.id ? 'secondary' : 'ghost'
-                    }
-                    className="mt-0.5 h-auto w-full justify-start py-2 pr-2 pl-4 text-left font-normal"
-                    onClick={() => onSelect(child.id)}
-                    aria-current={
-                      !inbox && selectedId === child.id ? 'page' : undefined
-                    }
-                  >
-                    <CornerDownRight className="text-muted-foreground" />
-                    <span className="min-w-0">
-                      <span className="block truncate text-xs">
-                        {child.title}
-                      </span>
-                      <span className="block pt-0.5 text-xs text-muted-foreground">
-                        {statusLabels[child.status]}
-                      </span>
-                    </span>
-                  </Button>
-                ))}
-            </div>
+              </span>
+            </Button>
           ))}
-          {roots.length === 0 && (
+          {filtered.length === 0 && (
             <p className="px-2 py-6 text-sm text-muted-foreground">
-              Brak pasujących sesji.
+              {search ? 'Brak pasujących sesji.' : 'Brak zapisanych sesji.'}
             </p>
           )}
         </nav>
