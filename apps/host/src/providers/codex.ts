@@ -1085,7 +1085,7 @@ export function startCodex(options: {
   prompt: string;
   skillId?: string;
   skillRoots?: string[];
-  onSkillResolved?: (skill: SkillReference) => void;
+  onSkillResolved?: (skill: SkillReference) => void | Promise<void>;
   onEvent: (event: CodexEvent) => void;
   onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
   delegationSchema?: Record<string, unknown>;
@@ -1737,10 +1737,10 @@ export function startCodex(options: {
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
       if (skill) {
         try {
-          options.onSkillResolved?.(skill);
+          await options.onSkillResolved?.(skill);
         } catch {
           throw new Error(
-            'The selected skill could not be saved. No provider turn was started.',
+            'The selected skill could not be verified or saved. No provider turn was started.',
           );
         }
       }
