@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type {
   CreateSessionInput,
   DecideDelegationInput,
@@ -43,6 +43,7 @@ import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import { desktopApi, useSessions } from './use-sessions';
+import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 
 const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
 const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
@@ -50,14 +51,17 @@ const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
 export function Workspace() {
   const store = useSessions();
-  const [selectedId, setSelectedId] = useState('');
-  const [inbox, setInbox] = useState(false);
+  const [location] = useState(readWorkspaceLocation);
+  const [selectedId, setSelectedId] = useState(location.selectedId);
+  const [inbox, setInbox] = useState(location.inbox);
   const [sessionTarget, setSessionTarget] = useState('');
-  const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(null);
+  const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(
+    location.diff ? 'diff' : null,
+  );
   const [diffTarget, setDiffTarget] = useState<{
     reviewId: string;
     path?: string;
-  } | null>(null);
+  } | null>(location.diff);
   const diffTrigger = useRef<HTMLElement | null>(null);
   const [reviewFeedbacks, setReviewFeedbacks] = useState<
     Record<string, string>
@@ -118,6 +122,31 @@ export function Workspace() {
             review.sessionId === selected?.id,
         )
       : undefined;
+  const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
+  useEffect(() => {
+    if (
+      store.loading ||
+      store.error ||
+      store.reviewsLoading ||
+      store.reviewsError
+    )
+      return;
+    saveWorkspaceLocation({
+      selectedId: selected?.id ?? '',
+      inbox,
+      diff: !inbox && panel === 'diff' && diffReview ? diffTarget : null,
+    });
+  }, [
+    selected?.id,
+    inbox,
+    panel,
+    diffReview,
+    diffTarget,
+    store.loading,
+    store.error,
+    store.reviewsLoading,
+    store.reviewsError,
+  ]);
   const openDiff = (reviewId: string, path?: string) => {
     diffTrigger.current =
       document.activeElement instanceof HTMLElement
@@ -376,7 +405,10 @@ export function Workspace() {
   const reviewBlockedReason =
     store.connection !== 'ready'
       ? 'Reconnect before making a decision.'
-      : store.loading || store.error
+      : store.loading ||
+          store.error ||
+          store.reviewsLoading ||
+          store.reviewsError
         ? 'Refresh the session state before making a decision.'
         : activeRun || sending
           ? 'Result review is available once all sessions and workers finish.'
@@ -735,7 +767,7 @@ export function Workspace() {
             />
           ) : selected ? (
             <div
-              className={`flex min-h-0 min-w-0 flex-1 ${panel ? 'max-[1200px]:hidden' : ''}`}
+              className={`flex min-h-0 min-w-0 flex-1 ${visiblePanel ? 'max-[1200px]:hidden' : ''}`}
             >
               <Conversation
                 session={selected}
@@ -863,9 +895,12 @@ export function Workspace() {
               }
             >
               <ReviewDiff
-                key={`${diffReview.id}:${diffTarget.path ?? ''}`}
+                key={diffReview.id}
                 review={diffReview}
-                initialPath={diffTarget.path}
+                selectedPath={diffTarget.path}
+                onSelectPath={path =>
+                  setDiffTarget({ reviewId: diffReview.id, path })
+                }
                 onClose={closeDiff}
                 onFiles={() => setPanel('files')}
               />

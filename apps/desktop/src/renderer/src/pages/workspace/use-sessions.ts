@@ -112,7 +112,7 @@ export function useSessions() {
           disconnected = true;
           setConnection('unavailable');
           setError(
-            'The host disconnected. Refresh the connection or reopen Nesvo to restore your history.',
+            'The host stopped. Reopen Nesvo to restore saved history. The outcome of active work is unconfirmed; no commands will be replayed automatically.',
           );
         }
       });

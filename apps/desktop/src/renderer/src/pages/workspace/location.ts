@@ -1,0 +1,51 @@
+export type WorkspaceLocation = {
+  selectedId: string;
+  inbox: boolean;
+  diff: { reviewId: string; path?: string } | null;
+};
+
+const key = 'nesvo.workspace-location.v1';
+const identifier = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const initial: WorkspaceLocation = { selectedId: '', inbox: false, diff: null };
+
+export function readWorkspaceLocation(): WorkspaceLocation {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw || raw.length > 8192) return initial;
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      return initial;
+    const saved = value as Record<string, unknown>;
+    if (
+      typeof saved.selectedId !== 'string' ||
+      (saved.selectedId !== '' && !identifier.test(saved.selectedId)) ||
+      typeof saved.inbox !== 'boolean'
+    )
+      return initial;
+    let diff: WorkspaceLocation['diff'] = null;
+    if (saved.diff && typeof saved.diff === 'object') {
+      const target = saved.diff as Record<string, unknown>;
+      if (
+        typeof target.reviewId === 'string' &&
+        identifier.test(target.reviewId) &&
+        (target.path === undefined ||
+          (typeof target.path === 'string' && target.path.length <= 4096))
+      )
+        diff = {
+          reviewId: target.reviewId,
+          ...(typeof target.path === 'string' ? { path: target.path } : {}),
+        };
+    }
+    return { selectedId: saved.selectedId, inbox: saved.inbox, diff };
+  } catch {
+    return initial;
+  }
+}
+
+export function saveWorkspaceLocation(location: WorkspaceLocation): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(location));
+  } catch {
+    return;
+  }
+}

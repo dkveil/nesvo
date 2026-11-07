@@ -23,7 +23,8 @@ import { Button } from '@/shared/ui/button';
 
 type Props = {
   review: Review;
-  initialPath?: string;
+  selectedPath?: string;
+  onSelectPath: (path: string) => void;
   onClose: () => void;
   onFiles: () => void;
 };
@@ -143,15 +144,16 @@ function FileViewer({ file, wrap }: { file: FileDiffMetadata; wrap: boolean }) {
 
 export default function ReviewDiff({
   review,
-  initialPath,
+  selectedPath,
+  onSelectPath,
   onClose,
   onFiles,
 }: Props) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
-  const [path, setPath] = useState(
-    initialPath ?? review.diff.files[0]?.path ?? '',
-  );
+  const path = review.diff.files.some(file => file.path === selectedPath)
+    ? selectedPath!
+    : (review.diff.files[0]?.path ?? '');
   const [wrap, setWrap] = useState(false);
   const parsed = useMemo(() => parseReview(review), [review]);
   const selectedFile = parsed.files.get(path);
@@ -275,7 +277,7 @@ export default function ReviewDiff({
               aria-label={`View changes in ${file.path}`}
               aria-pressed={path === file.path}
               title={file.path}
-              onClick={() => setPath(file.path)}
+              onClick={() => onSelectPath(file.path)}
               className="flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left text-xs text-muted-foreground hover:bg-white/5 focus-visible:outline-ring aria-pressed:bg-white/5 aria-pressed:text-foreground"
             >
               <span className="min-w-0 flex-1 truncate">{file.path}</span>
