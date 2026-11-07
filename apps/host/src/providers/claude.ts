@@ -60,7 +60,7 @@ const requiredFlags = [
 ];
 const maxLineBytes = 1024 * 1024;
 const maxOutputBytes = 16 * 1024 * 1024;
-const maxTextBytes = 2 * 1024 * 1024;
+const maxTextBytes = 2_000_000;
 const probeTimeoutMs = 5_000;
 const runTimeoutMs = 10 * 60_000;
 const cleanupTimeoutMs = 4_000;
@@ -216,7 +216,9 @@ async function executablePath(): Promise<Executable | null> {
     try {
       await access(
         candidate,
-        process.platform === 'win32' ? constants.F_OK : constants.X_OK,
+        process.platform === 'win32' || /\.(?:mjs|cjs|js)$/i.test(candidate)
+          ? constants.F_OK
+          : constants.X_OK,
       );
       const resolved = await realpath(candidate);
       if (/\.(?:mjs|cjs|js)$/i.test(resolved)) {
