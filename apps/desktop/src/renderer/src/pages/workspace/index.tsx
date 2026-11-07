@@ -428,11 +428,11 @@ export function Workspace() {
   );
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
-      <aside className="hidden w-56 shrink-0 md:block">
+      <aside className="hidden w-60 shrink-0 border-r bg-[#080808] md:block">
         <SessionSidebar {...sidebarProps} />
       </aside>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card/40 md:my-2 md:mr-2 md:rounded-lg md:border">
-        <header className="flex min-h-16 shrink-0 items-center gap-3 border-b px-4 py-3 lg:px-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <header className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-1.5 lg:px-5">
           <Sheet open={navigationOpen} onOpenChange={setNavigationOpen}>
             <SheetTrigger asChild>
               <Button
@@ -463,11 +463,11 @@ export function Workspace() {
               <ArrowLeft />
             </Button>
           )}
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-medium">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <h1 className="min-w-0 truncate text-[13px] font-medium">
               {inbox ? 'Do decyzji' : (selected?.title ?? 'Sesje')}
             </h1>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <div className="hidden min-w-0 items-center gap-2 truncate text-[11px] text-muted-foreground lg:flex">
               {inbox ? (
                 <>
                   <Inbox className="size-3" />
@@ -489,7 +489,7 @@ export function Workspace() {
             </div>
           </div>
           {!inbox && selected && (
-            <span className="hidden text-xs text-muted-foreground sm:inline">
+            <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
               {sessionStatusLabel(selected)}
             </span>
           )}
@@ -514,9 +514,9 @@ export function Workspace() {
                   <PanelRight />
                 </Button>
               </SheetTrigger>
-              <SheetContent className="gap-0">
-                <SheetHeader>
-                  <SheetTitle>Kontekst sesji</SheetTitle>
+              <SheetContent className="gap-0 bg-card">
+                <SheetHeader className="border-b px-5 py-4">
+                  <SheetTitle className="text-sm">Kontekst sesji</SheetTitle>
                   <SheetDescription>
                     Informacje o sesji i zakresie analizy.
                   </SheetDescription>
@@ -529,7 +529,7 @@ export function Workspace() {
           )}
         </header>
         {(store.error || noticeProviders.length > 0) && (
-          <div className="max-h-48 shrink-0 space-y-2 overflow-y-auto border-b px-5 py-3 text-xs lg:px-8">
+          <div className="max-h-40 shrink-0 space-y-2 overflow-y-auto border-b bg-card/50 px-5 py-3 text-xs lg:px-8">
             {store.error && (
               <div role="alert" className="space-y-2">
                 <p className="leading-relaxed text-destructive [overflow-wrap:anywhere]">
@@ -669,11 +669,11 @@ export function Workspace() {
             />
           ) : (
             <section
-              className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
+              className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center"
               aria-label="Lista sesji"
             >
-              <MessageSquare className="size-7 text-muted-foreground" />
-              <h2 className="text-lg font-medium">
+              <MessageSquare className="mb-1 size-5 text-muted-foreground" />
+              <h2 className="text-2xl font-medium tracking-tight">
                 {store.loading
                   ? 'Wczytywanie sesji…'
                   : store.error
@@ -696,19 +696,19 @@ export function Workspace() {
             </section>
           )}
         </main>
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 text-xs text-muted-foreground lg:px-6">
+        <footer className="flex min-h-7 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border/60 px-4 py-0.5 text-[10px] text-muted-foreground lg:px-5">
           <span>
             {selected && !inbox
               ? modeLabels[selected.mode]
               : 'Przestrzeń lokalna'}
           </span>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             {providers.map(provider => (
               <Button
                 key={provider}
                 size="sm"
                 variant="ghost"
-                className="h-6 px-1 text-xs text-muted-foreground"
+                className="h-5 gap-1 px-1 text-[10px] text-muted-foreground [&_svg]:size-3"
                 aria-label={`Odśwież status ${provider}`}
                 title={providerStatusLabel(
                   provider,

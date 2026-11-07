@@ -35,7 +35,7 @@ void app.whenReady().then(() => {
       minWidth: 640,
       minHeight: 480,
       title: 'Nesvo',
-      backgroundColor: '#0a0a0a',
+      backgroundColor: '#000000',
       show: !smokeTest,
       autoHideMenuBar: true,
       webPreferences: {

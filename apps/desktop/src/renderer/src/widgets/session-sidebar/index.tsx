@@ -7,7 +7,11 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
-import { sessionStatusLabel, type Session } from '@/entities/session';
+import {
+  roleLabels,
+  sessionStatusLabel,
+  type Session,
+} from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -50,46 +54,49 @@ export function SessionSidebar({
     <Button
       key={session.id}
       variant={!inbox && selectedId === session.id ? 'secondary' : 'ghost'}
-      className={`h-auto w-full justify-start py-2 text-left font-normal ${child ? 'pr-2 pl-5' : 'px-2'}`}
+      title={`${session.provider} · ${roleLabels[session.role]}`}
+      className={`h-auto min-h-10 w-full justify-start gap-2 py-1.5 text-left text-[13px] font-normal ${child ? 'pr-2 pl-5' : 'px-2'}`}
       onClick={() => onSelect(session.id)}
       aria-current={!inbox && selectedId === session.id ? 'page' : undefined}
     >
       {child ? (
-        <CornerDownRight className="text-muted-foreground" />
+        <CornerDownRight className="size-3.5 text-muted-foreground" />
       ) : session.role === 'orchestrator' ? (
-        <GitBranch className="text-muted-foreground" />
+        <GitBranch className="size-3.5 text-muted-foreground" />
       ) : (
-        <MessageSquare className="text-muted-foreground" />
+        <MessageSquare className="size-3.5 text-muted-foreground" />
       )}
       <span className="min-w-0 flex-1">
         <span className="block truncate">{session.title}</span>
-        <span className="block pt-0.5 text-xs font-normal text-muted-foreground">
-          {session.provider} · {sessionStatusLabel(session)}
+        <span className="block truncate pt-0.5 text-[11px] font-normal text-muted-foreground">
+          {roleLabels[session.role]} · {sessionStatusLabel(session)}
         </span>
       </span>
     </Button>
   );
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-16 shrink-0 items-center px-5">
-        <span className="text-sm font-semibold">Nesvo</span>
-      </div>
-      <div className="space-y-1 px-3 pb-5">
+    <div className="flex h-full min-h-0 flex-col bg-[#080808]">
+      <div className="flex h-11 shrink-0 items-center justify-between px-4">
+        <span className="text-[13px] font-semibold tracking-tight">Nesvo</span>
         <Button
           variant="ghost"
-          className="w-full justify-start"
+          size="icon-sm"
+          className="size-7 text-muted-foreground"
+          aria-label="Nowa sesja"
+          title="Nowa sesja"
           onClick={onCreate}
         >
-          <Plus />
-          Nowa sesja
+          <Plus className="size-4" />
         </Button>
+      </div>
+      <div className="space-y-2 px-2.5 pt-2 pb-5">
         <Button
           variant={inbox ? 'secondary' : 'ghost'}
-          className="w-full justify-start"
+          className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-normal"
           onClick={onInbox}
           aria-current={inbox ? 'page' : undefined}
         >
-          <Inbox />
+          <Inbox className="size-3.5 text-muted-foreground" />
           Do decyzji
           {pendingActions > 0 && (
             <span
@@ -100,23 +107,23 @@ export function SessionSidebar({
             </span>
           )}
         </Button>
-        <div className="relative mt-3">
+        <div className="relative">
           <Search
-            className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground"
+            className="pointer-events-none absolute top-2 left-2 size-3.5 text-muted-foreground"
             aria-hidden="true"
           />
           <Input
             aria-label="Szukaj sesji"
             placeholder="Szukaj sesji…"
-            className="border-transparent pl-9 shadow-none dark:bg-transparent"
+            className="h-8 border-transparent bg-transparent pl-7 text-xs shadow-none placeholder:text-muted-foreground/80 focus-visible:border-input focus-visible:ring-1 dark:bg-transparent"
             value={search}
             onChange={event => setSearch(event.target.value)}
           />
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <nav aria-label="Sesje" className="space-y-1 px-3 pb-4">
-          <p className="px-2 pb-2 text-xs font-medium text-muted-foreground">
+        <nav aria-label="Sesje" className="space-y-1 px-2.5 pb-4">
+          <p className="px-2 pb-2 text-[11px] font-medium text-muted-foreground">
             Sesje
           </p>
           {filtered.map(root => (
@@ -143,7 +150,7 @@ export function SessionSidebar({
           )}
         </nav>
       </ScrollArea>
-      <p className="px-5 py-4 text-xs text-muted-foreground">
+      <p className="border-t px-4 py-3 text-[11px] text-muted-foreground">
         Przestrzeń lokalna
       </p>
     </div>
