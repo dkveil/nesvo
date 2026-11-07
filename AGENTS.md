@@ -3,7 +3,7 @@
 ## Current scope and owner gates
 
 This repository contains the approved desktop prototype, planned for November 16, 2026.
-P0 and P1 are accepted. The current stage is P2, the first real Claude Code session. Read docs/roadmap.md and the linked Linear issue before starting a package.
+P0 and P1 are accepted. Damian authorized Codex in P3 while the real Claude success evidence for P2 waits for quota recovery (D50). Read docs/roadmap.md and the linked Linear issue before starting a package. This exception does not accept P2 or P3.
 Finish a small stage, provide a working demonstration and evidence, then wait for Damian's acceptance before starting the next stage.
 In Review means ready for the owner; Done requires his explicit acceptance. Keep Linear status and STATUS comments current.
 Discuss changes in Polish. Write code, repository documentation and commit messages in English.
@@ -12,6 +12,7 @@ Discuss changes in Polish. Write code, repository documentation and commit messa
 
 - TypeScript strict, Electron desktop, React renderer, base shadcn components, Bun workspaces and scripts.
 - Node.js host with Effect for resource ownership and service composition; SQLite persistence.
+- Wait for stable Drizzle support for the chosen SQLite driver. Do not introduce a release candidate.
 - Electron supplies the Node runtime for its host utility process. The standalone host targets the version in .node-version.
 - packages/contracts owns Zod schemas and inferred public types. It imports no UI, Electron, Effect or host implementation.
 - Keep Effect inside apps/host. Electron adapters call the host entry point; renderer and simple domain rules use plain TypeScript.
@@ -26,7 +27,7 @@ Use base shadcn components with neutral dark defaults. Black is the primary appe
 Keep the workspace minimal: flat session rows, few badges, conversation-first space and session details on demand. Minimal Geist alignment may be accepted by Damian.
 Do not restore the previous logo, palette or theme. Present UI changes for acceptance before expanding them.
 Keep technical runtime details out of product flows unless they help the operator make a decision.
-P2 uses real host-owned sessions and installed Claude Code with existing login. Keep analysis read-only (Read, Glob, Grep), without shell, edits or implicit permission bypass. Interactive permissions belong to P3. Never present fixture output or account-limit errors as successful model execution; review and delegation remain future stages.
+Claude Code retains read-only analysis (Read, Glob, Grep), without shell, edits or implicit permission bypass. P3 adds installed Codex with existing login, provider-specific modes and one-time approval responses. Never promise that every workspace edit requires approval when the provider permits it within its sandbox. Never present fixture output or account-limit errors as successful model execution; review and delegation remain future stages.
 Repository content describes Nesvo and its implementation. Keep external product comparisons and research elsewhere.
 Preserve required third-party license notices.
 

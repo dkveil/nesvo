@@ -3,7 +3,7 @@
 Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
 The product enables technical orchestration with visible workers and operator-controlled review.
 
-P0 and P1 are accepted. Damian authorized P2 on November 7. P2 implementation and verification are in progress; starting P3 requires a separate acceptance after a successful real Claude task.
+P0 and P1 are accepted. Damian authorized P2 on November 7. D50 then authorized starting Codex in P3 because the Claude account quota prevents real successful-task evidence. P2 remains pending that evidence and owner acceptance; this exception does not accept either stage.
 
 [Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
 and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
@@ -23,7 +23,7 @@ and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji
 | P10   | Nov 16 | Pinned demonstration version and instructions                     | Accept version for demonstration           | [REV-277](https://linear.app/reveil/issue/REV-277) |
 
 Dates are delivery targets, not permission to skip acceptance or silently reduce scope.
-Every stage waits for Damian's acceptance of the previous stage. Corrections stay within the current stage.
+Every stage waits for Damian's acceptance of the previous stage unless he explicitly authorizes an exception, as recorded for P3 in D50. Corrections stay within the current stage.
 Provider modes are based on real capabilities; never simulate unsupported features.
 
 P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
