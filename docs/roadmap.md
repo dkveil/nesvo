@@ -3,7 +3,7 @@
 Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
 The product enables technical orchestration with visible workers and operator-controlled review.
 
-P0, P1, the delivered Codex scope of P3 and P4 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. D51 accepted the delivered P3 scope; D52 accepted P4 and authorized P5. P5 is ready for owner review after the D54 visual refinement and D53 inline decision flow. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
+P0, P1, the delivered Codex scope of P3 and P4 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. D51 accepted the delivered P3 scope; D52 accepted P4 and authorized P5. P5 is receiving the D55 English interface, compact views and intent-driven delegation refinement. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
 
 [Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
 and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
@@ -26,7 +26,7 @@ Dates are delivery targets, not permission to skip acceptance or silently reduce
 Every stage waits for Damian's acceptance of the previous stage unless he explicitly authorizes an exception, as recorded for P3 in D50. Corrections stay within the current stage.
 Provider modes are based on real capabilities; never simulate unsupported features.
 
-P4 uses new read-only Codex orchestrators with a native delegation tool and at most two visible workers per run. The operator decides on each proposal before launch. Workers can use Codex or Claude capabilities already implemented; real P4 demonstration uses Codex while Claude remains quota-limited. Worker scopes stay within the parent directory, and overlapping writable directories are rejected. Stop on the parent cancels its group; Stop on a worker leaves its sibling running. Existing conversations keep their provider threads and do not acquire delegation silently.
+P4 originally used explicitly selected read-only Codex orchestrators with a native delegation tool and at most two visible workers per run. D55 removes that role prerequisite for new Codex sessions while retaining permissions and operator approval. Workers can use Codex or Claude capabilities already implemented; real P4 demonstration uses Codex while Claude remains quota-limited. Worker scopes stay within the parent directory, and overlapping writable directories are rejected. Stop on the parent cancels its group; Stop on a worker leaves its sibling running. Existing conversations keep their provider threads and recorded delegation capabilities.
 
 Damian accepted P4 and authorized P5 in D52. Real Windows Codex execution demonstrated two concurrent workers, correct result attribution, independent child Stop and preserved history. See docs/platforms.md for separate automated native evidence.
 
@@ -41,6 +41,7 @@ The D53 refinement at ed8a1f7 passed real Windows Codex execution for inline fil
 D54 delivers a further P5 visual refinement: a flat black workspace, compact sidebar and header, a focused empty-session composer and restrained panels. The inline decision flow and saved result details remain intact. The desktop scenario passed on Windows during the refinement; the final layout at a9c6b2d passed a focused visual check including normal and compact dialogs, drafts, inline feedback and session links. P5 is In Review and still requires owner acceptance; no later stage is authorized by these visual references.
 
 P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
+D55 is a P5 correction, not a new stage. The application defaults to English, presents compact decision rows and moves routine diagnostics on demand. New Codex sessions start without a role choice; a valid worker proposal makes orchestration visible without changing access permissions. A writable parent may delegate read-only workers only until isolated workspaces exist, preserving attribution of file changes. Unsupported proposals are rejected explicitly rather than silently downgraded. P5 is In Progress for this correction; P6 remains unstarted.
 Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.
 
 Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin marketplace are deferred.
