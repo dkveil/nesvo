@@ -88,7 +88,10 @@ export function Workspace() {
   const delegationRequests = useRef(new Set<string>());
   const draftVersions = useRef<Record<string, number>>({});
   const sendAttempts = useRef<
-    Record<string, { text: string; skillId?: string; messageId: string }>
+    Record<
+      string,
+      { text: string; skillId?: string; skillHash?: string; messageId: string }
+    >
   >({});
   const stopping = useRef(new Set<string>());
   const createTrigger = useRef<HTMLElement | null>(null);
@@ -197,11 +200,14 @@ export function Workspace() {
     if (!text || text.length > 32000) return;
     const version = draftVersions.current[sessionId] ?? 0;
     const skillId = selectedSkills[sessionId]?.id;
+    const skillHash = selectedSkills[sessionId]?.contentHash;
     const prior = sendAttempts.current[sessionId];
     const attempt =
-      prior?.text === text && prior.skillId === skillId
+      prior?.text === text &&
+      prior.skillId === skillId &&
+      prior.skillHash === skillHash
         ? prior
-        : { text, skillId, messageId: crypto.randomUUID() };
+        : { text, skillId, skillHash, messageId: crypto.randomUUID() };
     sendAttempts.current[sessionId] = attempt;
     sendingRef.current = true;
     setSending(true);
@@ -219,6 +225,7 @@ export function Workspace() {
         messageId: attempt.messageId,
         text,
         ...(skillId ? { skillId } : {}),
+        ...(skillHash ? { skillHash } : {}),
       });
       store.merge([session]);
       acknowledge();
@@ -558,7 +565,7 @@ export function Workspace() {
               variant="ghost"
               size="icon-sm"
               aria-label="Open skills"
-              title="Skills"
+              title="Shared library"
               aria-pressed={panel === 'skills'}
               onClick={() => {
                 diffTrigger.current =

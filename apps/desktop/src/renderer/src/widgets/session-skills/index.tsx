@@ -45,7 +45,9 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
               {skill.name}
             </span>
             <span className="shrink-0 text-[10px] text-muted-foreground">
-              {sourceLabels[skill.source]}
+              {[skill.origins?.join(', '), sourceLabels[skill.source]]
+                .filter(Boolean)
+                .join(' · ')}
             </span>
           </div>
           {skill.description && (
@@ -53,8 +55,17 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
               {skill.description}
             </p>
           )}
-          {skill.enabled === false && (
-            <p className="mt-1 text-[10px] text-muted-foreground">Disabled</p>
+          {skill.invocation && (
+            <p className="mt-1 text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+              {skill.invocation === 'blocked'
+                ? skill.invocationReason || 'Unavailable for this connection'
+                : skill.invocation === 'instructions'
+                  ? 'Shared instructions'
+                  : 'Native skill'}
+            </p>
+          )}
+          {!skill.invocation && skill.enabled === false && (
+            <p className="mt-1 text-[11px] text-muted-foreground">Disabled</p>
           )}
         </div>
       </summary>
@@ -65,16 +76,34 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
           </p>
         )}
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-          <dt>Status</dt>
+          <dt>Source flag</dt>
           <dd>
             {skill.enabled === null
-              ? 'Detected on disk'
+              ? 'Not reported'
               : skill.enabled
-                ? 'Enabled in provider'
-                : 'Disabled'}
+                ? 'Enabled at source'
+                : 'Disabled at source'}
           </dd>
           <dt>Format</dt>
           <dd>{skill.kind === 'skill' ? 'Skill' : 'Command'}</dd>
+          {skill.invocation && (
+            <>
+              <dt>Delivery</dt>
+              <dd>
+                {skill.invocation === 'instructions'
+                  ? 'Shared instructions · static snapshot for this message'
+                  : skill.invocation === 'native'
+                    ? 'Native skill'
+                    : skill.invocationReason || 'Blocked for this connection'}
+              </dd>
+            </>
+          )}
+          {skill.origins?.length ? (
+            <>
+              <dt>Origins</dt>
+              <dd>{skill.origins.join(', ')}</dd>
+            </>
+          ) : null}
           {skill.userInvocable !== null && (
             <>
               <dt>Declared manual use</dt>
@@ -98,6 +127,14 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
         )}
         {skill.detail && (
           <p className="[overflow-wrap:anywhere]">{skill.detail}</p>
+        )}
+        {skill.contentHash && (
+          <div>
+            <p>Content SHA-256</p>
+            <p className="font-mono text-[10px] [overflow-wrap:anywhere]">
+              {skill.contentHash}
+            </p>
+          </div>
         )}
       </div>
     </details>
@@ -168,13 +205,14 @@ function Catalog({
         skill.description,
         skill.path,
         sourceLabels[skill.source],
+        ...(skill.origins ?? []),
       ].some(value => value?.toLowerCase().includes(term)),
     ) ?? [];
   return (
     <>
       <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2.5">
         <BookOpen className="size-4 text-muted-foreground" />
-        <h2 className="text-xs font-medium">Skills</h2>
+        <h2 className="text-xs font-medium">Shared library</h2>
         <span className="text-[11px] text-muted-foreground">
           {session.provider}
         </span>
@@ -225,7 +263,9 @@ function Catalog({
           <span>
             {catalog.method === 'native'
               ? 'Provider catalog'
-              : 'Local skill files'}
+              : catalog.method === 'library'
+                ? 'Shared library'
+                : 'Local skill files'}
           </span>
         </div>
       )}
@@ -287,8 +327,8 @@ function Catalog({
         {catalog?.method === 'filesystem'
           ? 'File metadata only. Provider availability is not verified. '
           : ''}
-        {session.provider === 'Claude Code'
-          ? 'Skill invocation is not enabled for this Claude connection.'
+        {catalog?.method === 'library'
+          ? 'Type / to choose a skill. Delivery and compatibility are shown per entry; permissions stay unchanged.'
           : catalog?.invocationSupported
             ? 'Type / in your message or choose Skills in the composer to select one skill.'
             : 'Skill invocation is unavailable for this connection.'}

@@ -128,12 +128,26 @@ export function Conversation({
                   title={[
                     selectedSkill.description,
                     `${selectedSkill.source} · ${selectedSkill.path}`,
+                    selectedSkill.origins?.join(', '),
+                    selectedSkill.delivery === 'instructions'
+                      ? 'Shared instructions · static snapshot for this message'
+                      : selectedSkill.delivery === 'native'
+                        ? 'Native skill'
+                        : '',
+                    selectedSkill.contentHash
+                      ? `SHA-256: ${selectedSkill.contentHash}`
+                      : '',
                   ]
                     .filter(Boolean)
                     .join('\n')}
                   className="max-w-[calc(100%-2rem)] truncate rounded-md border bg-secondary/60 px-2 py-1 text-xs"
                 >
                   {selectedSkill.name}
+                  {selectedSkill.delivery === 'instructions' && (
+                    <span className="ml-2 text-muted-foreground">
+                      Shared instructions
+                    </span>
+                  )}
                 </span>
                 <Button
                   type="button"
@@ -307,12 +321,30 @@ export function Conversation({
                         }
                         title={
                           message.skill
-                            ? `${message.skill.source} · ${message.skill.path}`
+                            ? [
+                                `${message.skill.source} · ${message.skill.path}`,
+                                message.skill.origins?.join(', '),
+                                message.skill.delivery === 'instructions'
+                                  ? 'Shared instructions · static snapshot for this message'
+                                  : message.skill.delivery === 'native'
+                                    ? 'Native skill'
+                                    : '',
+                                message.skill.contentHash
+                                  ? `SHA-256: ${message.skill.contentHash}`
+                                  : message.skillHash
+                                    ? `SHA-256: ${message.skillHash}`
+                                    : '',
+                              ]
+                                .filter(Boolean)
+                                .join('\n')
                             : 'A skill was requested, but its source was not resolved.'
                         }
                         className="max-w-[70%] truncate rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
                       >
                         {message.skill?.name ?? 'Requested skill'}
+                        {message.skill?.delivery === 'instructions' && (
+                          <span className="ml-2">Shared instructions</span>
+                        )}
                       </span>
                     )}
                   {message.author === 'agent' &&
