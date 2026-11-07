@@ -62,7 +62,6 @@ const isolatedFeatures = [
   'browser_use_external',
   'browser_use_full_cdp_access',
   'computer_use',
-  'code_mode_host',
   'image_generation',
   'in_app_browser',
   'workspace_dependencies',
